@@ -9,6 +9,10 @@ import pytest
 
 import main
 
+# A currency that is deliberately not the tenant default, so a report
+# keeping two apart is genuinely keeping two apart.
+OTHER_CURRENCY = "GBP"
+
 
 @pytest.fixture(autouse=True)
 def _reset_limiter():
@@ -39,7 +43,8 @@ def detail(tenant, contact_id):
     return res.json()
 
 
-def amount(totals, currency="GBP"):
+def amount(totals, currency=None):
+    currency = currency or main.DEFAULT_CURRENCY
     for t in totals or []:
         if t["currency"] == currency:
             return t["value"]
@@ -87,10 +92,10 @@ def test_paying_moves_the_balance(tenant, customer):
 
 
 def test_two_currencies_give_two_balances(tenant, customer):
-    bill(tenant, 100.0, currency="GBP")
+    bill(tenant, 100.0, currency=OTHER_CURRENCY)
     bill(tenant, 5000.0, currency="INR")
     billed = detail(tenant, customer["id"])["summary"]["billed"]
-    assert {t["currency"]: t["value"] for t in billed} == {"GBP": 100.0, "INR": 5000.0}
+    assert {t["currency"]: t["value"] for t in billed} == {OTHER_CURRENCY: 100.0, main.DEFAULT_CURRENCY: 5000.0}
 
 
 def test_their_quotes_are_listed(tenant, customer):

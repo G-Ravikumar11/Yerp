@@ -10,6 +10,10 @@ import pytest
 
 import main
 
+# A currency that is deliberately not the tenant default, so a report
+# keeping two apart is genuinely keeping two apart.
+OTHER_CURRENCY = "GBP"
+
 
 @pytest.fixture(autouse=True)
 def _reset_limiter():
@@ -49,9 +53,10 @@ def make_invoice(tenant, status="Awaiting Payment", price=400.0, due_in=14):
 
 
 
-def amount(totals, currency="GBP"):
+def amount(totals, currency=None):
     """Money is reported per currency now, because adding GBP to INR without a
     rate produces a number nobody can act on."""
+    currency = currency or main.DEFAULT_CURRENCY
     for t in totals or []:
         if t["currency"] == currency:
             return t["value"]
@@ -214,7 +219,7 @@ def test_currencies_are_totalled_separately(tenant):
     tenant.post("/api/invoices", json={
         "contact": "UK", "email": "uk@example.com",
         "issue_date": "2026-01-01", "due_date": "2026-01-31",
-        "status": "Awaiting Payment", "tax_type": "none", "currency": "GBP",
+        "status": "Awaiting Payment", "tax_type": "none", "currency": OTHER_CURRENCY,
         "line_items": [{"description": "w", "qty": 1, "price": 100.0, "tax_rate": "No Tax"}],
     })
     tenant.post("/api/invoices", json={
@@ -227,10 +232,10 @@ def test_currencies_are_totalled_separately(tenant):
     b = board(tenant)
     invoiced = next(s for s in b["stages"] if s["key"] == "invoiced")
     by = {t["currency"]: t["value"] for t in invoiced["totals"]}
-    assert by == {"GBP": 100.0, "INR": 5000.0}
+    assert by == {OTHER_CURRENCY: 100.0, main.DEFAULT_CURRENCY: 5000.0}
     # Never one merged number.
     assert len(invoiced["totals"]) == 2
-    assert {t["currency"]: t["value"] for t in b["outstanding"]} == {"GBP": 100.0, "INR": 5000.0}
+    assert {t["currency"]: t["value"] for t in b["outstanding"]} == {OTHER_CURRENCY: 100.0, main.DEFAULT_CURRENCY: 5000.0}
 
 
 def test_a_long_column_is_capped_with_a_count(tenant):

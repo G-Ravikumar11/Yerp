@@ -1443,3 +1443,73 @@ select option:hover {
     box-shadow: 0 1px 2px rgba(79, 70, 229, 0.28);
 }
 .btn-primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+
+
+/* ===== SCREENS BUILT BEFORE THE PALETTE =====
+   Invoices, payroll, recruitment and the rest were styled one screen at a
+   time, with their status colours written inline. These rules bring them onto
+   the same system without touching each file: one definition of what "paid"
+   or "overdue" looks like, so the same word is never two colours in two
+   places. */
+
+.status-pill, .badge, .tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 10px; border-radius: 999px;
+    font-size: 0.72rem; font-weight: 600; letter-spacing: 0.01em;
+    border: 1px solid transparent; white-space: nowrap;
+}
+.status-paid, .status-approved, .status-active, .status-completed {
+    background: var(--success-soft); color: var(--success-color);
+    border-color: color-mix(in srgb, var(--success-color) 22%, transparent);
+}
+.status-overdue, .status-rejected, .status-failed, .status-void {
+    background: var(--danger-soft); color: var(--danger-color);
+    border-color: color-mix(in srgb, var(--danger-color) 22%, transparent);
+}
+.status-pending, .status-awaiting, .status-partial, .status-sent {
+    background: var(--warning-soft); color: var(--warning-color);
+    border-color: color-mix(in srgb, var(--warning-color) 24%, transparent);
+}
+.status-draft, .status-new {
+    background: var(--surface-sunken); color: var(--text-secondary);
+    border-color: var(--border-color);
+}
+
+/* Page headings, wherever a screen sets one. */
+.dashboard h1, .view-section h1 {
+    font-size: 1.4rem; font-weight: 700; letter-spacing: -0.02em;
+    color: var(--text-primary);
+}
+.subtitle { color: var(--text-secondary); font-size: 0.82rem; }
+
+/* Tabs above a list. */
+.tab {
+    border-radius: 8px; font-weight: 500; color: var(--text-secondary);
+    transition: background-color 0.15s, color 0.15s;
+}
+.tab:hover { background: var(--border-light); color: var(--text-primary); }
+.tab.active {
+    background: var(--primary-soft); color: var(--primary-hover); font-weight: 600;
+}
+
+/* Inputs, so a form on an older screen matches a form on a new one. */
+.form-control, .search-input, input[type="text"], input[type="number"],
+input[type="date"], input[type="email"], select, textarea {
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    background: var(--surface-color);
+    color: var(--text-primary);
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.form-control:focus, .search-input:focus, input:focus, select:focus, textarea:focus {
+    outline: none; border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 16%, transparent);
+}
+label { color: var(--text-secondary); font-size: 0.78rem; font-weight: 600; }
+
+/* Modals get the same lift as the nav dropdowns. */
+.modal {
+    border-radius: 16px; box-shadow: var(--shadow-lg);
+    border: 1px solid var(--border-color);
+}
+.modal-overlay { backdrop-filter: blur(2px); background: rgba(22, 25, 43, 0.35); }

@@ -10,6 +10,10 @@ import pytest
 
 import main
 
+# A currency that is deliberately not the tenant default, so a report
+# keeping two apart is genuinely keeping two apart.
+OTHER_CURRENCY = "GBP"
+
 
 @pytest.fixture(autouse=True)
 def _reset_limiter():
@@ -60,56 +64,56 @@ def test_one_currency_reports_nothing_extra(tenant, path):
     exactly as they did, with no stray foreign block."""
     invoice(tenant, 400.0)
     report = tenant.get(path).json()
-    assert report["currency"] == "GBP"
+    assert report["currency"] == main.DEFAULT_CURRENCY
     assert report["other_currencies"] == []
 
 
 # --- the mixed case -----------------------------------------------------------
 
 def test_aged_receivables_keeps_currencies_apart(tenant):
-    invoice(tenant, 400.0, currency="GBP")
-    invoice(tenant, 90000.0, currency="INR")
+    invoice(tenant, 400.0)
+    invoice(tenant, 90000.0, currency=OTHER_CURRENCY)
 
     report = tenant.get("/api/reports/aged-receivables").json()
-    assert report["currency"] == "GBP"
-    assert report["total_outstanding"] == 400.0, "rupees must not land in the pound total"
+    assert report["currency"] == main.DEFAULT_CURRENCY
+    assert report["total_outstanding"] == 400.0, "a foreign total must not land in the base total"
 
-    rupees = other(report, "INR")
+    rupees = other(report, OTHER_CURRENCY)
     assert rupees is not None, "the rupee invoice must still be reported"
     assert rupees["total_outstanding"] == 90000.0
 
 
 def test_every_aged_row_says_what_currency_it_is_in(tenant):
-    invoice(tenant, 400.0, currency="GBP")
+    invoice(tenant, 400.0)
     report = tenant.get("/api/reports/aged-receivables").json()
-    assert all(r["currency"] == "GBP" for r in report["invoices"])
+    assert all(r["currency"] == main.DEFAULT_CURRENCY for r in report["invoices"])
 
 
 def test_profit_and_loss_keeps_currencies_apart(tenant):
-    paid_invoice(tenant, 400.0, currency="GBP")
-    paid_invoice(tenant, 90000.0, currency="INR")
+    paid_invoice(tenant, 400.0)
+    paid_invoice(tenant, 90000.0, currency=OTHER_CURRENCY)
 
     report = tenant.get("/api/reports/profit-loss").json()
     assert report["total_revenue"] == 400.0
-    assert other(report, "INR")["total_revenue"] == 90000.0
+    assert other(report, OTHER_CURRENCY)["total_revenue"] == 90000.0
 
 
 def test_the_balance_sheet_keeps_currencies_apart(tenant):
-    paid_invoice(tenant, 400.0, currency="GBP")
-    paid_invoice(tenant, 90000.0, currency="INR")
+    paid_invoice(tenant, 400.0)
+    paid_invoice(tenant, 90000.0, currency=OTHER_CURRENCY)
 
     report = tenant.get("/api/reports/balance-sheet").json()
     assert report["assets"]["cash_collected"] == 400.0
-    assert other(report, "INR")["assets"]["cash_collected"] == 90000.0
+    assert other(report, OTHER_CURRENCY)["assets"]["cash_collected"] == 90000.0
 
 
 def test_cash_summary_keeps_currencies_apart(tenant):
-    paid_invoice(tenant, 400.0, currency="GBP")
-    paid_invoice(tenant, 90000.0, currency="INR")
+    paid_invoice(tenant, 400.0)
+    paid_invoice(tenant, 90000.0, currency=OTHER_CURRENCY)
 
     report = tenant.get("/api/reports/cash-summary").json()
     assert sum(report["money_in"]) == 400.0
-    assert sum(other(report, "INR")["money_in"]) == 90000.0
+    assert sum(other(report, OTHER_CURRENCY)["money_in"]) == 90000.0
 
 
 # --- bills --------------------------------------------------------------------
@@ -117,21 +121,21 @@ def test_cash_summary_keeps_currencies_apart(tenant):
 def test_bills_stay_with_the_base_currency(tenant):
     """A bill has no currency column, so it is always in the books' currency.
     It must never be counted against a foreign invoice."""
-    paid_invoice(tenant, 90000.0, currency="INR")
+    paid_invoice(tenant, 90000.0, currency=OTHER_CURRENCY)
     tenant.post("/api/bills", json={
         "vendor_name": "Supplier", "issue_date": "2026-01-05",
         "due_date": "2026-01-20", "amount": 100.0, "total": 100.0})
 
     report = tenant.get("/api/reports/profit-loss").json()
     assert report["total_expenses"] == 100.0
-    assert other(report, "INR")["total_expenses"] == 0.0
+    assert other(report, OTHER_CURRENCY)["total_expenses"] == 0.0
 
 
 # --- the shape the UI relies on ----------------------------------------------
 
 def test_an_empty_account_still_names_its_currency(tenant):
     report = tenant.get("/api/reports/balance-sheet").json()
-    assert report["currency"] == "GBP"
+    assert report["currency"] == main.DEFAULT_CURRENCY
     assert report["total_assets"] == 0.0
 
 

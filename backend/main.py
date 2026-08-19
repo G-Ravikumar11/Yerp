@@ -582,6 +582,8 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
                 models.DBClient.id == member.client_id).first()
             if not owner or not owner.is_active:
                 raise HTTPException(status_code=403, detail="Account disabled")
+            request.session.pop("employee_id", None)
+            request.session.pop("employee_client_id", None)
             request.session["client_id"] = owner.id
             request.session["member_id"] = member.id
             member.last_login = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -594,6 +596,8 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
     if not client.is_active:
         log_login(db, client.id, body.email, "client", "password", request, "disabled")
         raise HTTPException(status_code=403, detail="Account disabled")
+    request.session.pop("employee_id", None)
+    request.session.pop("employee_client_id", None)
     request.session["client_id"] = client.id
     request.session.pop("member_id", None)
     log_login(db, client.id, body.email, "client", "password", request, "success")
@@ -1022,6 +1026,8 @@ def superadmin_impersonate(client_id: int, request: Request, db: Session = Depen
         raise HTTPException(status_code=404, detail="Client not found")
     if not client.is_active:
         raise HTTPException(status_code=400, detail="Client account is disabled")
+    request.session.pop('employee_id', None)
+    request.session.pop('employee_client_id', None)
     request.session['client_id'] = client.id
     log_audit(db, client.id, "impersonate", "client", client.id, client.company_name or client.email, "Super admin logged in as client", request, user_type="superadmin", user_name="superadmin")
     db.commit()
@@ -2510,17 +2516,56 @@ BOM_COLUMNS = ["fg_code", "rm_code", "rm_name", "qty", "uom", "rate"]
 BOM_HEADERS = ["FG Code", "RM Code", "RM Name", "Qty", "UOM", "Rate"]
 
 
-def sheet_response(headers, sample, filename):
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(headers)
-    writer.writerows(sample)
+def sheet_response(headers, sample, filename, fmt="xlsx"):
+    """The template, as a real workbook by default.
+
+    A workbook is what people asked for and what they will edit; CSV stays
+    available for anything that has to be read by a script.
+    """
+    if fmt == "csv" or filename.endswith(".csv"):
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(headers)
+        writer.writerows(sample)
+        return Response(
+            # utf-8-sig so Excel opens it in the right encoding rather than
+            # mangling anything non-ASCII in a description.
+            content=buf.getvalue().encode("utf-8-sig"),
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="%s"' % filename},
+        )
+
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill
+    except ImportError:
+        return sheet_response(headers, sample, filename.rsplit(".", 1)[0] + ".csv", "csv")
+
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "Sheet1"
+    sheet.append(list(headers))
+    for row in sample:
+        sheet.append(list(row))
+
+    header_font = Font(bold=True, color="FFFFFF")
+    fill = PatternFill("solid", fgColor="4F46E5")
+    for cell in sheet[1]:
+        cell.font = header_font
+        cell.fill = fill
+    # Width from the longest value in each column, so nothing opens as ####.
+    for index, name in enumerate(headers, start=1):
+        longest = max([len(str(name))] + [len(str(r[index - 1])) for r in sample
+                                          if index - 1 < len(r)])
+        sheet.column_dimensions[openpyxl.utils.get_column_letter(index)].width = min(40, longest + 4)
+    sheet.freeze_panes = "A2"
+
+    stream = io.BytesIO()
+    book.save(stream)
     return Response(
-        # utf-8-sig so Excel opens it in the right encoding rather than
-        # mangling anything non-ASCII in a description.
-        content=buf.getvalue().encode("utf-8-sig"),
-        media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        content=stream.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="%s"' % filename},
     )
 
 
@@ -2811,9 +2856,45 @@ def validate_items(db, client_id, rows, kind):
             "importable": max(0, len(rows) - len(skipped) - len(errors))}
 
 
-def require_items_access(request, db):
-    """Item and contract master data sits with whoever runs the money side."""
-    return get_client_user(request, db)
+def require_items_access(request, db, permission="items.manage"):
+    """The tenant behind this request, from either kind of session.
+
+    The account holder owns the tenancy and holds everything. A member of
+    staff needs the named right, which HR grants. Returns the tenant either
+    way, so every caller keeps working off `client.id` and none of them has to
+    know which sort of session it was.
+    """
+    try:
+        return get_client_user(request, db)
+    except HTTPException as exc:
+        # 401 means "no owner session" - a member of staff may still be signed
+        # in. Anything else (a disabled account, a read-only member) is a real
+        # refusal and must not be retried as somebody else.
+        if exc.status_code != 401:
+            raise
+
+    emp = get_employee_user(request, db)
+    if permission and not employee_can(emp, permission):
+        label = next((p["label"] for p in PORTAL_PERMISSIONS if p["key"] == permission),
+                     permission)
+        raise HTTPException(
+            status_code=403,
+            detail="Your access does not include: " + label + ". Ask HR if you need it.")
+    client = db.query(models.DBClient).filter(
+        models.DBClient.id == emp.client_id).first()
+    if not client or not client.is_active:
+        raise HTTPException(status_code=403, detail="Account disabled")
+    return client
+
+
+def require_workorder_access(request, db):
+    return require_items_access(request, db, "workorders.manage")
+
+
+def require_erp_read(request, db):
+    """Reading the master data. Anyone signed in to this tenancy: a person
+    picking a code from a list has to be able to see the list."""
+    return require_items_access(request, db, None)
 
 
 @app.get("/api/erp/items/template")
@@ -2826,7 +2907,7 @@ def erp_item_template(kind: str = "RM", request: Request = None,
     prefix = "RM" if kind == "RM" else "FG"
     sample = [[f"{prefix}0001", "20MM LMS PVC ISI CONDUIT", "", "20MM LMS PVC ISI CONDUIT",
                CATEGORY_BY_KIND[kind], kind, "3917", "18%", "Purchased", "Meters", ""]]
-    return sheet_response(ITEM_HEADERS, sample, f"item_template_{kind}.csv")
+    return sheet_response(ITEM_HEADERS, sample, f"item_template_{kind}.xlsx")
 
 
 @app.post("/api/erp/items/validate")
@@ -2882,22 +2963,74 @@ async def erp_items_upload(request: Request, file: UploadFile = File(...),
                        + (f" {len(skipped)} already in the master and reused." if skipped else "")}
 
 
+def looks_like_xlsx(raw: bytes) -> bool:
+    """An .xlsx is a zip archive, so it starts with the zip magic number.
+
+    Sniffing the bytes rather than trusting the filename: people rename files,
+    and a .csv that is really a workbook should still open.
+    """
+    return raw[:4] == b"PK\x03\x04"
+
+
+def read_xlsx_table(raw: bytes):
+    """Rows from the first worksheet, as strings.
+
+    Everything downstream compares and cleans text, so the numbers Excel hands
+    back as floats are rendered the way they were written - 5000 rather than
+    5000.0, which would otherwise reach a code column and not match.
+    """
+    try:
+        import openpyxl
+    except ImportError:
+        raise HTTPException(
+            400, "Excel workbooks are not supported on this server yet. "
+                 "Save the sheet as CSV and upload that.")
+    try:
+        book = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    except Exception as exc:
+        raise HTTPException(400, "That workbook could not be opened (%s)." % exc)
+
+    def cell(value):
+        if value is None:
+            return ""
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        if isinstance(value, datetime):
+            return value.strftime("%Y-%m-%d")
+        return str(value).strip()
+
+    try:
+        sheet = book[book.sheetnames[0]]
+        return [[cell(c) for c in row] for row in sheet.iter_rows(values_only=True)]
+    finally:
+        book.close()
+
+
 async def read_sheet_rows(upload: UploadFile):
-    """Split an upload into its header row and its data rows, unparsed."""
+    """Split an upload into its header row and its data rows, unparsed.
+
+    Takes a real Excel workbook or a CSV; which one is decided by the bytes,
+    not the extension.
+    """
     raw = await upload.read()
-    if len(raw) > 5_000_000:
+    if len(raw) > 8_000_000:
         raise HTTPException(400, "That file is too large. Split it and upload in parts.")
-    try:
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        text = raw.decode("latin-1")
-    try:
-        # newline="" because Excel writes CRLF; without it the CR is read as
-        # part of the field and the whole file is refused.
-        table = list(csv.reader(io.StringIO(text, newline="")))
-    except csv.Error as exc:
-        raise HTTPException(400, f"That file could not be read as a sheet ({exc}). "
-                                 "Save it as CSV from Excel and try again.")
+
+    if looks_like_xlsx(raw):
+        table = read_xlsx_table(raw)
+    else:
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = raw.decode("latin-1")
+        try:
+            # newline="" because Excel writes CRLF; without it the CR is read
+            # as part of the field and the whole file is refused.
+            table = list(csv.reader(io.StringIO(text, newline="")))
+        except csv.Error as exc:
+            raise HTTPException(400, f"That file could not be read as a sheet ({exc}). "
+                                     "Save it as CSV or .xlsx and try again.")
+
     table = [r for r in table if any((c or "").strip() for c in r)]
     if len(table) < 2:
         raise HTTPException(400, "That file had no rows under its header.")
@@ -3126,7 +3259,7 @@ class ItemIn(BaseModel):
 @app.get("/api/erp/vocabulary")
 def erp_vocabulary(request: Request, db: Session = Depends(get_db)):
     """Everything the pickers need, so the browser never invents an option."""
-    require_items_access(request, db)
+    require_erp_read(request, db)
     return {
         "kinds": list(ITEM_KINDS),
         "item_types": list(ITEM_TYPES),
@@ -3307,7 +3440,7 @@ def erp_build_work_order(body: WorkOrderIn, request: Request,
     the "code not found" failure a sheet produces cannot arise at all; what is
     left to check is quantities and prices.
     """
-    client = require_items_access(request, db)
+    client = require_workorder_access(request, db)
     job = job_or_404(db, client.id, body.job_id)
     if not body.lines:
         raise HTTPException(400, "Add at least one line")
@@ -3370,7 +3503,7 @@ class BomIn(BaseModel):
 @app.post("/api/erp/bom/build")
 def erp_build_bom(body: BomIn, request: Request, db: Session = Depends(get_db)):
     """The budget, allocated on screen against the lines actually sold."""
-    client = require_items_access(request, db)
+    client = require_workorder_access(request, db)
     wo = work_order_or_404(db, client.id, body.work_order_id)
     if (wo.approval_status or "none") == "pending":
         raise HTTPException(409, "This order is with an approver; its budget cannot change.")
@@ -3413,7 +3546,7 @@ def erp_build_bom(body: BomIn, request: Request, db: Session = Depends(get_db)):
 @app.get("/api/erp/items")
 def erp_list_items(request: Request, kind: str = "", q: str = "",
                    db: Session = Depends(get_db)):
-    client = require_items_access(request, db)
+    client = require_erp_read(request, db)
     query = db.query(models.DBItem).filter(models.DBItem.client_id == client.id)
     if kind:
         query = query.filter(models.DBItem.kind == kind.upper())
@@ -3550,7 +3683,7 @@ def rows_from(header, body, mapping):
 async def erp_wo_analyse(request: Request, file: UploadFile = File(...),
                          db: Session = Depends(get_db)):
     """Read a work-order sheet and price it, without saving anything."""
-    client = require_items_access(request, db)
+    client = require_workorder_access(request, db)
     header, body = await read_sheet_rows(file)
     mapping, unmapped = map_headers_with(header, WO_HEADER_ALIASES)
     if "fg_code" not in mapping.values():
@@ -3619,7 +3752,7 @@ async def erp_bom_analyse(request: Request, file: UploadFile = File(...),
                           work_order_id: int = Form(...),
                           db: Session = Depends(get_db)):
     """Read a budget sheet against one work order, without saving anything."""
-    client = require_items_access(request, db)
+    client = require_workorder_access(request, db)
     wo = work_order_or_404(db, client.id, work_order_id)
     header, body = await read_sheet_rows(file)
     mapping, unmapped = map_headers_with(header, BOM_HEADER_ALIASES)
@@ -3687,10 +3820,10 @@ async def erp_bom_analyse(request: Request, file: UploadFile = File(...),
 
 @app.get("/api/erp/work-orders/template")
 def erp_wo_template(request: Request, db: Session = Depends(get_db)):
-    require_items_access(request, db)
+    require_workorder_access(request, db)
     return sheet_response(WO_HEADERS,
                           [["FG0001", "20MM LMS PVC ISI CONDUIT", "Supply", "5000", "Meters", "62.00"]],
-                          "work_order_template.csv")
+                          "work_order_template.xlsx")
 
 
 def validate_work_order_sheet(db, client_id, rows):
@@ -3741,14 +3874,14 @@ def validate_work_order_sheet(db, client_id, rows):
 @app.post("/api/erp/work-orders/validate")
 async def erp_wo_validate(request: Request, file: UploadFile = File(...),
                           db: Session = Depends(get_db)):
-    client = require_items_access(request, db)
+    client = require_workorder_access(request, db)
     return validate_work_order_sheet(db, client.id, await parse_sheet(file, WO_COLUMNS))
 
 
 @app.post("/api/erp/work-orders")
 async def erp_wo_upload(request: Request, file: UploadFile = File(...),
                         job_id: int = Form(...), db: Session = Depends(get_db)):
-    client = require_items_access(request, db)
+    client = require_workorder_access(request, db)
     job = job_or_404(db, client.id, job_id)
 
     rows = await parse_sheet(file, WO_COLUMNS)
@@ -3778,7 +3911,7 @@ async def erp_wo_upload(request: Request, file: UploadFile = File(...),
 @app.get("/api/erp/work-orders")
 def erp_list_work_orders(request: Request, job_id: int = 0,
                          db: Session = Depends(get_db)):
-    client = require_items_access(request, db)
+    client = require_erp_read(request, db)
     query = db.query(models.DBWorkOrder).filter(models.DBWorkOrder.client_id == client.id)
     if job_id:
         query = query.filter(models.DBWorkOrder.job_id == job_id)
@@ -3794,7 +3927,7 @@ def erp_list_work_orders(request: Request, job_id: int = 0,
 
 @app.get("/api/erp/work-orders/{wo_id}")
 def erp_get_work_order(wo_id: int, request: Request, db: Session = Depends(get_db)):
-    client = require_items_access(request, db)
+    client = require_erp_read(request, db)
     return work_order_to_dict(db, work_order_or_404(db, client.id, wo_id), detail=True)
 
 
@@ -3806,7 +3939,7 @@ def erp_wo_submit(wo_id: int, request: Request, body: dict = None,
     Refused before it is budgeted: approving an order without knowing what it
     costs is approving a number, not a margin.
     """
-    client = require_items_access(request, db)
+    client = require_workorder_access(request, db)
     wo = work_order_or_404(db, client.id, wo_id)
     if not db.query(models.DBBomLine).filter(
             models.DBBomLine.work_order_id == wo.id).count():
@@ -3830,7 +3963,7 @@ def erp_wo_submit(wo_id: int, request: Request, body: dict = None,
 
 @app.delete("/api/erp/work-orders/{wo_id}")
 def erp_delete_work_order(wo_id: int, request: Request, db: Session = Depends(get_db)):
-    client = require_items_access(request, db)
+    client = require_workorder_access(request, db)
     wo = work_order_or_404(db, client.id, wo_id)
     if (wo.approval_status or "none") == "approved":
         raise HTTPException(409, "This order has been approved and cannot be deleted.")
@@ -3850,10 +3983,10 @@ def erp_delete_work_order(wo_id: int, request: Request, db: Session = Depends(ge
 
 @app.get("/api/erp/bom/template")
 def erp_bom_template(request: Request, db: Session = Depends(get_db)):
-    require_items_access(request, db)
+    require_workorder_access(request, db)
     return sheet_response(BOM_HEADERS,
                           [["FG0001", "RM0001", "20MM LMS PVC ISI CONDUIT", "5100", "Meters", "48.00"]],
-                          "budget_bom_template.csv")
+                          "budget_bom_template.xlsx")
 
 
 def validate_bom_sheet(db, client_id, rows, wo):
@@ -3902,7 +4035,7 @@ def validate_bom_sheet(db, client_id, rows, wo):
 @app.post("/api/erp/bom/validate")
 async def erp_bom_validate(request: Request, file: UploadFile = File(...),
                            work_order_id: int = Form(...), db: Session = Depends(get_db)):
-    client = require_items_access(request, db)
+    client = require_workorder_access(request, db)
     wo = work_order_or_404(db, client.id, work_order_id)
     return validate_bom_sheet(db, client.id, await parse_sheet(file, BOM_COLUMNS), wo)
 
@@ -3910,7 +4043,7 @@ async def erp_bom_validate(request: Request, file: UploadFile = File(...),
 @app.post("/api/erp/bom")
 async def erp_bom_upload(request: Request, file: UploadFile = File(...),
                          work_order_id: int = Form(...), db: Session = Depends(get_db)):
-    client = require_items_access(request, db)
+    client = require_workorder_access(request, db)
     wo = work_order_or_404(db, client.id, work_order_id)
     if (wo.approval_status or "none") == "pending":
         raise HTTPException(409, "This order is with an approver; its budget cannot change.")
@@ -7753,6 +7886,10 @@ PORTAL_PERMISSIONS = [
      "label": "Run payroll and issue payslips"},
     {"key": "recruitment.manage", "group": "People",
      "label": "Manage jobs, candidates and offers"},
+    {"key": "items.manage", "group": "Contracts",
+     "label": "Maintain the item master of material and finished goods codes"},
+    {"key": "workorders.manage", "group": "Contracts",
+     "label": "Raise work orders and allocate their budgets"},
 ]
 PERMISSION_KEYS = {p["key"] for p in PORTAL_PERMISSIONS}
 
@@ -7782,7 +7919,8 @@ PERMISSION_ROLES = [
                        "sight of all costs and the financial reports.",
         "permissions": ["self.service", "bills.submit", "bills.approve",
                         "bills.view_all", "attendance.view_team",
-                        "leave.approve", "reports.view"],
+                        "leave.approve", "reports.view",
+                        "items.manage", "workorders.manage"],
     },
     {
         "code": "finance",
@@ -7791,7 +7929,7 @@ PERMISSION_ROLES = [
                        "invoices and quotes, sees the reports.",
         "permissions": ["self.service", "bills.submit", "bills.approve",
                         "bills.view_all", "bills.pay", "invoices.manage",
-                        "reports.view"],
+                        "reports.view", "items.manage", "workorders.manage"],
     },
     {
         "code": "hr_admin",
@@ -9975,6 +10113,11 @@ def employee_login(request: Request, body: dict = None, db: Session = Depends(ge
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if emp.status in ("terminated",):
         raise HTTPException(status_code=403, detail="Account deactivated")
+    # One identity per session. Signing in as staff ends any owner session in
+    # this browser; without that the owner's rights survive underneath and
+    # every permission check below is answered by the wrong person.
+    request.session.pop('client_id', None)
+    request.session.pop('member_id', None)
     request.session['employee_id'] = emp.id
     request.session['employee_client_id'] = emp.client_id
     today = datetime.now().strftime("%Y-%m-%d")

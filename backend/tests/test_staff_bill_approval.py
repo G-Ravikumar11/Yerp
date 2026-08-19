@@ -38,8 +38,26 @@ def sign_in(client, emp):
     return client
 
 
+# A session now holds one identity at a time, so signing a member of staff out
+# does not silently restore the owner underneath. Tests that go back to the
+# owner's own screens have to sign in as the owner again, which is exactly what
+# a person would do.
+_OWNER = {}
+
+
+@pytest.fixture(autouse=True)
+def _remember_owner(account):
+    _OWNER["email"] = account["email"]
+    _OWNER["password"] = account["password"]
+    yield
+    _OWNER.clear()
+
+
 def sign_out(client):
     client.post("/api/employee/auth/logout")
+    if _OWNER:
+        client.post("/api/client/login", json={"email": _OWNER["email"],
+                                               "password": _OWNER["password"]})
 
 
 def raise_bill(client, **overrides):

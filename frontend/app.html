@@ -28,8 +28,8 @@
         }}
       };
     </script>
-    <link rel="stylesheet" href="styles.css?v=53">
-    <link rel="stylesheet" href="mobile.css?v=53">
+    <link rel="stylesheet" href="styles.css?v=54">
+    <link rel="stylesheet" href="mobile.css?v=54">
 </head>
 <body>
     <a class="skip-link" href="#main-content-region">Skip to main content</a>
@@ -2770,8 +2770,8 @@
                                 <label for="item-file"
                                        class="block border-2 border-dashed border-slate-300 rounded-xl px-6 py-6 text-center
                                               cursor-pointer hover:border-brand hover:bg-blue-50/40 transition-colors">
-                                    <input type="file" id="item-file" accept=".csv" class="hidden" onchange="analyseItemSheet()">
-                                    <p class="text-[13px] font-semibold text-ink">Choose a sheet</p>
+                                    <input type="file" id="item-file" accept=".xlsx,.xls,.csv" class="hidden" onchange="analyseItemSheet()">
+                                    <p class="text-[13px] font-semibold text-ink">Choose a sheet (.xlsx or .csv)</p>
                                     <p id="item-file-name" class="text-xxs font-mono text-brand mt-1"></p>
                                 </label>
                                 <div id="item-analysis" class="mt-4"></div>
@@ -3007,7 +3007,7 @@
                 <div class="form-group">
                     <label>Work order sheet (FG codes) *</label>
                     <button class="btn btn-outline btn-sm" onclick="window.location='/api/erp/work-orders/template'">Download template</button>
-                    <input type="file" id="wo-file" accept=".csv" class="form-control" style="margin-top:10px;">
+                    <input type="file" id="wo-file" accept=".xlsx,.xls,.csv" class="form-control" style="margin-top:10px;">
                     <p style="font-size:0.78rem;color:var(--text-secondary);margin-top:6px;">
                         Every FG code must already be in the item master.
                     </p>
@@ -3033,7 +3033,7 @@
                 <input type="hidden" id="bom-wo-id">
                 <p id="bom-context" style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:14px;"></p>
                 <button class="btn btn-outline btn-sm" onclick="window.location='/api/erp/bom/template'">Download template</button>
-                <input type="file" id="bom-file" accept=".csv" class="form-control" style="margin-top:10px;">
+                <input type="file" id="bom-file" accept=".xlsx,.xls,.csv" class="form-control" style="margin-top:10px;">
                 <p style="font-size:0.78rem;color:var(--text-secondary);margin-top:6px;">
                     Maps each sold FG code to the RM it consumes. Re-uploading replaces the previous allocation.
                 </p>
@@ -3371,18 +3371,18 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=53"></script>
+    <script src="app.js?v=54"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
-    <script src="staff-portal.js?v=53"></script>
+    <script src="staff-portal.js?v=54"></script>
     <!-- Jobs, job costing and purchase orders. -->
-    <script src="jobs.js?v=53"></script>
+    <script src="jobs.js?v=54"></script>
     <!-- Item master, work orders and budget allocation. -->
-    <script src="erp.js?v=53"></script>
+    <script src="erp.js?v=54"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
-    <script src="erp-build.js?v=53"></script>
+    <script src="erp-build.js?v=54"></script>
     <!-- Preview and correct a sheet that arrived from outside. -->
-    <script src="erp-preview.js?v=53"></script>
+    <script src="erp-preview.js?v=54"></script>
 
     <!-- AI Core Orb -->
     <div class="ai-core" onclick="toggleAIChat()" role="button" tabindex="0" aria-label="Open the assistant" title="Ask the assistant" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAIChat();}">
