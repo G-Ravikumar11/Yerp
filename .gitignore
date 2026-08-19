@@ -1,0 +1,27 @@
+# Secrets. backend/.env holds the live SECRET_KEY and any API keys; it must
+# never be committed. .env.example documents the shape instead.
+.env
+.env.*
+!.env.example
+
+# Databases. These are runtime state, not source.
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+venv/
+.venv/
+env/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Node, if it ever appears
+node_modules/

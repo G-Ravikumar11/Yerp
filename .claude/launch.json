@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "portal",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["backend/run_demo.py"],
+      "port": 8931
+    },
+    {
+      "name": "contracts-erp",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "uvicorn", "main:app", "--reload", "--port", "8000",
+                      "--app-dir", "prototypes/contracts_erp"],
+      "port": 8000
+    }
+  ]
+}

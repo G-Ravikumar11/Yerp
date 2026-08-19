@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Careers</title>
+    <meta name="description" content="Open roles and how to apply.">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128188;</text></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: #f8fafc; color: #1e293b; min-height: 100vh;
+            background-image: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(37,99,235,0.08), transparent);
+            line-height: 1.6;
+        }
+        a { color: inherit; text-decoration: none; }
+        .wrap { max-width: 860px; margin: 0 auto; padding: 56px 20px 80px; }
+        .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+        .brand img { max-height: 44px; max-width: 160px; }
+        h1 { font-size: clamp(26px, 5vw, 38px); font-weight: 800; letter-spacing: -0.02em; }
+        .sub { color: #94a3b8; margin-bottom: 36px; }
+        .count { font-size: 13px; color: #64748b; margin-bottom: 16px; }
+
+        .job {
+            border: 1px solid rgba(0,0,0,0.08); border-radius: 14px;
+            background: rgba(255,255,255,0.95); padding: 22px; margin-bottom: 14px;
+            transition: border-color 0.2s, transform 0.2s;
+        }
+        .job:hover { border-color: rgba(37,99,235,0.45); transform: translateY(-2px); }
+        .job-top { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+        .job h2 { font-size: 19px; font-weight: 700; flex: 1; min-width: 180px; }
+        .ref { font-size: 12px; color: #64748b; white-space: nowrap; }
+        .meta { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+        .chip {
+            font-size: 12px; padding: 4px 11px; border-radius: 20px;
+            background: rgba(0,0,0,0.04); border: 1px solid rgba(0,0,0,0.08); color: #64748b;
+        }
+        .chip.pay { background: rgba(57,255,20,0.10); border-color: rgba(57,255,20,0.28); color: #86efac; }
+        .desc { color: #94a3b8; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+        details summary {
+            cursor: pointer; color: #22d3ee; font-size: 13px; font-weight: 600;
+            margin-top: 10px; min-height: 32px; display: flex; align-items: center;
+        }
+        details[open] summary { margin-bottom: 8px; }
+        .req { color: #94a3b8; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .apply {
+            display: inline-flex; align-items: center; gap: 8px; margin-top: 16px;
+            background: #2563eb; color: #ffffff; font-weight: 700; font-size: 14px;
+            padding: 11px 22px; border-radius: 10px; min-height: 44px;
+            transition: background 0.2s;
+        }
+        .apply:hover { background: #1d4ed8; }
+        .apply.closed { background: rgba(0,0,0,0.06); color: #64748b; cursor: not-allowed; }
+        .empty { text-align: center; padding: 70px 20px; color: #64748b; }
+        .foot { margin-top: 48px; text-align: center; font-size: 12px; color: #475569; }
+        :focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; border-radius: 6px; }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { transition-duration: 0.01ms !important; }
+        }
+        @media (max-width: 1024px) { input, select, textarea, button { font-size: 16px; } }
+    </style>
+    <link rel="stylesheet" href="mobile.css?v=43">
+</head>
+<body>
+    <div class="wrap">
+        <div class="brand">
+            <img id="logo" alt="" style="display:none;">
+            <div>
+                <h1 id="company">Careers</h1>
+                <p class="sub" id="tagline">Open roles</p>
+            </div>
+        </div>
+        <p class="count" id="count"></p>
+        <div id="list"><p class="empty">Loading open roles&hellip;</p></div>
+        <p class="foot">Powered by Billing</p>
+    </div>
+
+    <script>
+        function esc(s) {
+            if (s === null || s === undefined) return '';
+            return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        function money(v, cur) {
+            var symbols = { GBP: '£', USD: '$', EUR: '€', INR: '₹', AUD: 'A$', CAD: 'C$' };
+            var sym = symbols[cur] || (cur ? cur + ' ' : '');
+            return sym + Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+        }
+
+        function payChip(job) {
+            // salary_min/max come back as null when the employer hides pay.
+            if (job.salary_min === null || job.salary_max === null) return '';
+            if (!job.salary_min && !job.salary_max) return '';
+            var cur = job.salary_currency;
+            var text = job.salary_min && job.salary_max
+                ? money(job.salary_min, cur) + ' – ' + money(job.salary_max, cur)
+                : money(job.salary_min || job.salary_max, cur);
+            return '<span class="chip pay">' + esc(text) + '</span>';
+        }
+
+        function render(data) {
+            document.title = (data.company ? data.company + ' — ' : '') + 'Careers';
+            if (data.company) document.getElementById('company').textContent = data.company;
+            if (data.logo_url) {
+                var img = document.getElementById('logo');
+                img.src = data.logo_url;
+                img.alt = data.company || '';
+                img.style.display = 'block';
+            }
+            var jobs = data.jobs || [];
+            document.getElementById('count').textContent =
+                jobs.length ? jobs.length + ' open role' + (jobs.length === 1 ? '' : 's') : '';
+            var list = document.getElementById('list');
+            if (!jobs.length) {
+                list.innerHTML = '<p class="empty">There are no open roles right now.<br>Please check back soon.</p>';
+                return;
+            }
+            list.innerHTML = jobs.map(function (j) {
+                // A remote role often has "Remote" as both its location and its
+                // work mode; showing that twice looks like a bug.
+                var seen = {};
+                var chips = [
+                    j.location, String(j.work_mode || '').replace('_', ' '),
+                    String(j.employment_type || '').replace('_', ' '),
+                    j.department, j.level
+                ].filter(function (c) {
+                    if (!c) return false;
+                    var key = String(c).trim().toLowerCase();
+                    if (seen[key]) return false;
+                    seen[key] = true;
+                    return true;
+                }).map(function (c) { return '<span class="chip">' + esc(c) + '</span>'; }).join('');
+                var apply = j.apply_token
+                    ? '<a class="apply" href="/recruitment.html?token=' + encodeURIComponent(j.apply_token) + '">Apply for this role &rarr;</a>'
+                    : '<span class="apply closed">Applications not open yet</span>';
+                return '<article class="job">' +
+                    '<div class="job-top"><h2>' + esc(j.title) + '</h2><span class="ref">' + esc(j.reference) + '</span></div>' +
+                    '<div class="meta">' + chips + payChip(j) + '</div>' +
+                    (j.description ? '<p class="desc">' + esc(j.description) + '</p>' : '') +
+                    (j.requirements ? '<details><summary>What we are looking for</summary><p class="req">' +
+                        esc(j.requirements) + '</p></details>' : '') +
+                    (j.closing_date ? '<p class="ref" style="margin-top:10px;">Closes ' + esc(j.closing_date) + '</p>' : '') +
+                    apply +
+                '</article>';
+            }).join('');
+        }
+
+        (async function () {
+            var params = new URLSearchParams(window.location.search);
+            var ref = params.get('c');
+            if (!ref) {
+                document.getElementById('list').innerHTML =
+                    '<p class="empty">This careers page needs a company reference in the link.</p>';
+                return;
+            }
+            try {
+                var res = await fetch('/api/public/jobs/' + encodeURIComponent(ref));
+                if (!res.ok) throw new Error('not found');
+                render(await res.json());
+            } catch (e) {
+                document.getElementById('list').innerHTML =
+                    '<p class="empty">We could not load these roles. Please check the link and try again.</p>';
+            }
+        })();
+    </script>
+</body>
+</html>

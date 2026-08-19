@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Billing — Application Form</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: #f8fafc; color: #1e293b; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding: 40px 16px; }
+
+        .bg-shapes { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+        .bg-shape { position: absolute; border-radius: 50%; filter: blur(128px); }
+        .bg-shape-1 { top: -160px; left: -160px; width: 500px; height: 500px; background: rgba(6,182,212,0.2); }
+        .bg-shape-2 { top: 33%; right: -128px; width: 400px; height: 400px; background: rgba(37,99,235,0.2); }
+        .bg-shape-3 { bottom: -160px; left: 33%; width: 500px; height: 500px; background: rgba(34,211,238,0.15); }
+
+        .form-container { position: relative; z-index: 10; max-width: 640px; width: 100%; }
+
+        .form-header { text-align: center; margin-bottom: 32px; }
+        .form-header h1 { font-size: 2rem; font-weight: 800; margin-bottom: 8px; background: linear-gradient(135deg, #22d3ee, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .form-header p { color: #94a3b8; font-size: 0.95rem; }
+
+        .glass-card { background: rgba(255,255,255,0.95); backdrop-filter: blur(12px); border: 1px solid rgba(0,0,0,0.08); border-radius: 16px; padding: 32px; }
+
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; font-size: 0.85rem; font-weight: 600; color: #64748b; margin-bottom: 6px; }
+        .form-group label .required { color: #f87171; }
+
+        .form-control { width: 100%; padding: 10px 14px; background: rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.12); border-radius: 8px; color: #1e293b; font-size: 0.9rem; font-family: inherit; outline: none; transition: border-color 0.2s; }
+        .form-control:focus { border-color: #2563eb; }
+        .form-control::placeholder { color: #64748b; }
+        textarea.form-control { resize: vertical; min-height: 80px; }
+        select.form-control { cursor: pointer; }
+
+        .file-upload { position: relative; border: 2px dashed rgba(0,0,0,0.15); border-radius: 8px; padding: 24px; text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s; }
+        .file-upload:hover { border-color: #2563eb; background: rgba(37,99,235,0.05); }
+        .file-upload input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+        .file-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+        .file-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px;
+                    background: rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.1); font-size: 13px; }
+        .file-row-name { flex: 1; overflow-wrap: anywhere; }
+        .file-row-size { opacity: 0.6; font-size: 12px; white-space: nowrap; }
+        .file-row-remove { background: none; border: none; color: #f87171; cursor: pointer;
+                           font-size: 20px; line-height: 1; min-width: 32px; min-height: 32px; }
+        .file-upload .file-icon { font-size: 2rem; margin-bottom: 8px; }
+        .file-upload .file-text { font-size: 0.85rem; color: #94a3b8; }
+        .file-upload .file-name { color: #22d3ee; font-weight: 600; font-size: 0.9rem; margin-top: 8px; }
+
+        .btn { display: inline-flex; align-items: center; justify-content: center; padding: 12px 28px; border: none; border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .btn-primary { background: linear-gradient(135deg, #22d3ee, #3b82f6); color: white; width: 100%; }
+        .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+        .success-msg { display: none; text-align: center; padding: 48px 32px; }
+        .success-msg .icon { font-size: 4rem; margin-bottom: 16px; }
+        .success-msg h2 { font-size: 1.5rem; font-weight: 700; margin-bottom: 8px; color: #4ade80; }
+        .success-msg p { color: #94a3b8; }
+
+        .error-msg { display: none; text-align: center; padding: 32px; color: #f87171; }
+
+        .loading-msg { text-align: center; padding: 48px; color: #94a3b8; }
+
+        .powered-by { text-align: center; margin-top: 32px; font-size: 0.75rem; color: #475569; }
+        .powered-by a { color: #22d3ee; }
+    </style>
+    <link rel="stylesheet" href="mobile.css?v=43">
+</head>
+<body>
+    <div class="bg-shapes">
+        <div class="bg-shape bg-shape-1"></div>
+        <div class="bg-shape bg-shape-2"></div>
+        <div class="bg-shape bg-shape-3"></div>
+    </div>
+
+    <div class="form-container">
+        <div id="form-loading" class="loading-msg">Loading application form...</div>
+
+        <div id="form-content" style="display:none;">
+            <div class="form-header">
+                <h1 id="form-title"></h1>
+                <p id="form-desc"></p>
+            </div>
+
+            <div class="glass-card">
+                <form id="application-form" onsubmit="submitApplication(event)">
+                    <div id="form-fields"></div>
+                    <button type="submit" class="btn btn-primary" id="submit-btn">Submit Application</button>
+                </form>
+            </div>
+        </div>
+
+        <div id="form-success" class="glass-card success-msg">
+            <div class="icon">&#10003;</div>
+            <h2>Application Submitted!</h2>
+            <p>Thank you for your application. We'll review it and get back to you soon.</p>
+        </div>
+
+        <div id="form-error" class="glass-card error-msg">
+            <p id="form-error-text"></p>
+        </div>
+
+        <div class="powered-by">Powered by <a href="/">Billing</a></div>
+    </div>
+
+    <script>
+        let formFields = [];
+
+        async function loadForm() {
+            const params = new URLSearchParams(window.location.search);
+            const token = params.get('token');
+            if (!token) {
+                showError('No form link provided.');
+                return;
+            }
+            try {
+                const res = await fetch('/api/recruitment/form/' + token);
+                if (!res.ok) { showError('Form not found or no longer active.'); return; }
+                const data = await res.json();
+                document.getElementById('form-title').textContent = data.title;
+                document.getElementById('form-desc').textContent = data.description || '';
+                formFields = typeof data.fields === 'string' ? JSON.parse(data.fields) : (data.fields || []);
+                renderFields();
+                document.getElementById('form-loading').style.display = 'none';
+                document.getElementById('form-content').style.display = 'block';
+            } catch (e) {
+                showError('Failed to load form. Please try again later.');
+            }
+        }
+
+        function renderFields() {
+            const container = document.getElementById('form-fields');
+            container.innerHTML = formFields.map((f, i) => {
+                const req = f.required ? '<span class="required">*</span>' : '';
+                const reqAttr = f.required ? 'required' : '';
+                let input = '';
+                if (f.type === 'textarea') {
+                    input = `<textarea class="form-control" id="field-${i}" name="${esc(f.label)}" rows="3" placeholder="Enter your answer..." ${reqAttr}></textarea>`;
+                } else if (f.type === 'select') {
+                    const opts = (f.options || '').split(',').map(o => o.trim()).filter(Boolean);
+                    input = `<select class="form-control" id="field-${i}" name="${esc(f.label)}" ${reqAttr}>
+                        <option value="">Select...</option>
+                        ${opts.map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('')}
+                    </select>`;
+                } else if (f.type === 'file') {
+                    input = `<div class="file-upload" id="file-upload-${i}">
+                        <input type="file" multiple accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.txt" onchange="handleFileUpload(this,${i})">
+                        <div class="file-icon">&#128196;</div>
+                        <div class="file-text">Click to attach up to ${MAX_FILES} files &mdash; CV, cover letter, certificates</div>
+                        <div class="file-text" style="font-size:12px;opacity:0.7;">PDF, Word, images or text &middot; max ${MAX_MB}MB each</div>
+                    </div>
+                    <div class="file-list" id="file-list-${i}"></div>`;
+                } else {
+                    const type = f.type === 'email' ? 'email' : f.type === 'phone' ? 'tel' : 'text';
+                    input = `<input type="${type}" class="form-control" id="field-${i}" name="${esc(f.label)}" placeholder="Enter ${esc(f.label).toLowerCase()}..." ${reqAttr}>`;
+                }
+                return `<div class="form-group"><label>${esc(f.label)} ${reqAttr ? req : ''}</label>${input}</div>`;
+            }).join('');
+        }
+
+        // Applicants routinely need to send more than one document, so the
+        // picker accepts several and validates each before it is queued.
+        const MAX_FILES = 6;
+        const MAX_MB = 5;
+        const ALLOWED_EXT = ['pdf', 'doc', 'docx', 'png', 'jpg', 'jpeg', 'webp', 'txt'];
+        let uploadedFiles = [];
+
+        function renderFileList(idx) {
+            const list = document.getElementById('file-list-' + idx);
+            if (!list) return;
+            list.innerHTML = uploadedFiles.map(function (f, n) {
+                return '<div class="file-row"><span class="file-row-name">' + esc(f.name) + '</span>' +
+                       '<span class="file-row-size">' + (f.size / 1024).toFixed(0) + ' KB</span>' +
+                       '<button type="button" class="file-row-remove" onclick="removeFile(' + n + ',' + idx + ')" ' +
+                       'aria-label="Remove ' + esc(f.name) + '">&times;</button></div>';
+            }).join('');
+        }
+
+        function removeFile(n, idx) {
+            uploadedFiles.splice(n, 1);
+            renderFileList(idx);
+        }
+
+        function handleFileUpload(input, idx) {
+            const chosen = Array.from(input.files || []);
+            input.value = '';   // allow re-picking the same file after a removal
+            for (const file of chosen) {
+                if (uploadedFiles.length >= MAX_FILES) {
+                    showError('You can attach at most ' + MAX_FILES + ' files.');
+                    break;
+                }
+                const ext = (file.name.split('.').pop() || '').toLowerCase();
+                if (ALLOWED_EXT.indexOf(ext) < 0) {
+                    showError('"' + file.name + '" is not an accepted file type.');
+                    continue;
+                }
+                if (file.size > MAX_MB * 1024 * 1024) {
+                    showError('"' + file.name + '" is larger than ' + MAX_MB + 'MB.');
+                    continue;
+                }
+                if (uploadedFiles.some(function (f) { return f.name === file.name && f.size === file.size; })) {
+                    continue;   // already attached
+                }
+                (function (f) {
+                    const reader = new FileReader();
+                    reader.onload = function (e) {
+                        uploadedFiles.push({
+                            name: f.name, type: f.type, size: f.size,
+                            data: e.target.result.split(',')[1]
+                        });
+                        renderFileList(idx);
+                    };
+                    reader.readAsDataURL(f);
+                })(file);
+            }
+        }
+
+        async function submitApplication(e) {
+            e.preventDefault();
+            const btn = document.getElementById('submit-btn');
+            btn.disabled = true;
+            btn.textContent = 'Submitting...';
+
+            const answers = {};
+            let candidateName = '';
+            let candidateEmail = '';
+            formFields.forEach((f, i) => {
+                const el = document.getElementById('field-' + i);
+                const val = el ? el.value.trim() : '';
+                answers[f.label] = val;
+                if (f.type === 'email') candidateEmail = val;
+                if (f.label.toLowerCase().includes('name')) candidateName = candidateName || val;
+            });
+
+            const body = {
+                answers: JSON.stringify(answers),
+                candidate_name: candidateName,
+                candidate_email: candidateEmail,
+            };
+            if (uploadedFiles.length) {
+                body.documents = uploadedFiles.map(function (f, n) {
+                    return {
+                        doc_type: n === 0 ? 'resume' : 'supporting',
+                        file_name: f.name, file_type: f.type, file_data: f.data
+                    };
+                });
+            }
+
+            const params = new URLSearchParams(window.location.search);
+            const token = params.get('token');
+
+            try {
+                const res = await fetch('/api/recruitment/form/' + token + '/submit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                if (res.ok) {
+                    document.getElementById('form-content').style.display = 'none';
+                    document.getElementById('form-success').style.display = 'block';
+                } else {
+                    const err = await res.json();
+                    showError(err.detail || 'Submission failed. Please try again.');
+                    btn.disabled = false;
+                    btn.textContent = 'Submit Application';
+                }
+            } catch (e) {
+                showError('Network error. Please try again.');
+                btn.disabled = false;
+                btn.textContent = 'Submit Application';
+            }
+        }
+
+        function showError(msg) {
+            document.getElementById('form-loading').style.display = 'none';
+            document.getElementById('form-content').style.display = 'none';
+            document.getElementById('form-error').style.display = 'block';
+            document.getElementById('form-error-text').textContent = msg;
+        }
+
+        function esc(s) {
+            if (!s) return '';
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        loadForm();
+    </script>
+</body>
+</html>

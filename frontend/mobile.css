@@ -1,0 +1,74 @@
+/* ===========================================================================
+   mobile.css - cross-device essentials shared by every page.
+
+   Several pages (the login screens, the employee portal, the public
+   application form, onboarding, the meeting room) carry their own bespoke
+   styling and do not load styles.css. This file carries only the
+   device-level fixes that must hold everywhere, and deliberately avoids
+   opinions about colour or layout so it can be dropped into any of them.
+   =========================================================================== */
+
+html {
+    -webkit-text-size-adjust: 100%;   /* no text inflation in iOS landscape */
+    text-size-adjust: 100%;
+}
+
+body {
+    /* One wide element must never make the whole page pan sideways. */
+    overflow-x: hidden;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Media shrinks to its container instead of forcing a scrollbar. */
+img, svg, video, canvas, iframe { max-width: 100%; }
+img, video { height: auto; }
+
+/* Long unbroken strings (emails, reference codes, URLs) are the usual cause
+   of horizontal overflow on narrow screens. */
+h1, h2, h3, h4, p, td, th, li { overflow-wrap: anywhere; }
+
+/* Any element opting into full-height should track the visible viewport, not
+   the taller layout viewport that hides behind mobile browser chrome. */
+@supports (height: 100dvh) {
+    .min-h-screen { min-height: 100dvh; }
+    .h-screen { height: 100dvh; }
+}
+
+/* Keep fixed bottom bars and page ends clear of the home indicator. */
+body { padding-bottom: env(safe-area-inset-bottom, 0px); }
+
+/* iOS Safari zooms the page whenever a focused field is under 16px. Locking
+   the viewport would "fix" it at the cost of pinch-to-zoom, which low-vision
+   users rely on, so meet the 16px threshold instead. */
+@media (max-width: 1024px) {
+    input, select, textarea, button { font-size: 16px; }
+}
+
+/* Finger-sized targets on touch devices. */
+@media (hover: none) and (pointer: coarse) {
+    button, [role="button"], a.btn, input[type="submit"], input[type="button"], select {
+        min-height: 44px;
+    }
+}
+
+/* Visible keyboard focus. */
+:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+}
+
+/* Honour the OS reduced-motion preference. */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* Wide tables scroll inside their own box. */
+.table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}

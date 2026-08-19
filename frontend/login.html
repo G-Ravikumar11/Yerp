@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Login - Billing</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#f8fafc">
+    <link rel="apple-touch-icon" href="/icons/icon-192.png">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #f8fafc;
+            color: #1e293b;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-image:
+                radial-gradient(ellipse 80% 50% at 50% -20%, rgba(120, 119, 198, 0.15), transparent),
+                radial-gradient(ellipse 60% 40% at 80% 60%, rgba(37, 99, 235, 0.05), transparent);
+        }
+        .auth-container { width: 100%; max-width: 440px; padding: 24px; }
+        .auth-card {
+            background: #ffffff;
+            border: 1px solid rgba(0,0,0,0.08);
+            border-radius: 20px;
+            padding: 48px 40px;
+            box-shadow: 0 25px 60px rgba(0,0,0,0.1);
+        }
+        .brand { text-align: center; margin-bottom: 36px; }
+        .brand-icon {
+            width: 56px; height: 56px;
+            background: linear-gradient(135deg, #2563eb, #7877c6);
+            border-radius: 16px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 16px;
+            font-size: 24px;
+        }
+        .brand h1 { font-size: 1.4rem; font-weight: 700; color: #1e293b; margin-bottom: 4px; }
+        .brand p { font-size: 0.85rem; color: #94a3b8; }
+
+        .form-group { margin-bottom: 16px; }
+        .form-group label {
+            display: block; font-size: 0.82rem; font-weight: 600;
+            color: #475569; margin-bottom: 6px;
+        }
+        .form-input {
+            width: 100%; padding: 12px 14px;
+            background: #f8fafc; border: 1px solid #e2e8f0;
+            border-radius: 10px; color: #1e293b;
+            font-size: 0.9rem; font-family: inherit;
+            outline: none; transition: all 0.2s;
+        }
+        .form-input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+        .form-input::placeholder { color: #94a3b8; }
+
+        .btn-primary {
+            width: 100%; padding: 13px;
+            background: #2563eb; color: #fff;
+            border: none; border-radius: 10px;
+            font-weight: 700; font-size: 0.9rem;
+            cursor: pointer; font-family: inherit;
+            transition: all 0.2s;
+        }
+        .btn-primary:hover { background: #1d4ed8; transform: translateY(-1px); box-shadow: 0 8px 24px rgba(37,99,235,0.25); }
+        .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+        .error-msg {
+            background: #fef2f2; border: 1px solid #fecaca;
+            color: #dc2626; padding: 12px 16px;
+            border-radius: 10px; font-size: 0.85rem;
+            margin-bottom: 20px; display: none;
+        }
+        .success-msg {
+            background: #f0fdf4; border: 1px solid #bbf7d0;
+            color: #16a34a; padding: 12px 16px;
+            border-radius: 10px; font-size: 0.85rem;
+            margin-bottom: 20px; display: none;
+        }
+        .divider {
+            display: flex; align-items: center; gap: 12px;
+            margin: 20px 0; color: #94a3b8;
+            font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: #e2e8f0; }
+        .links { text-align: center; margin-top: 20px; }
+        .links a { color: #64748b; text-decoration: none; font-size: 0.82rem; }
+        .links a:hover { color: #2563eb; }
+        .links a + a { margin-left: 16px; }
+        .loading { display: none; text-align: center; padding: 20px; }
+        .spinner {
+            width: 32px; height: 32px;
+            border: 3px solid #e2e8f0; border-top-color: #2563eb;
+            border-radius: 50%; animation: spin 0.8s linear infinite;
+            margin: 0 auto 12px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+    <link rel="stylesheet" href="mobile.css?v=43">
+</head>
+<body>
+    <div class="auth-container">
+        <div class="auth-card">
+            <div class="brand">
+                <div class="brand-icon">A</div>
+                <h1>Billing</h1>
+                <p>Sign in to your account</p>
+            </div>
+
+            <div class="error-msg" id="error-msg"></div>
+            <div class="success-msg" id="success-msg"></div>
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p style="color:#94a3b8;font-size:0.85rem;">Signing you in...</p>
+            </div>
+
+            <div id="login-content">
+                <form id="loginForm" onsubmit="handleLogin(event)">
+                    <div class="form-group">
+                        <label>Email Address</label>
+                        <input type="email" id="email" class="form-input" placeholder="you@company.com" autocomplete="username" required autofocus>
+                    </div>
+                    <div class="form-group">
+                        <label>Password</label>
+                        <input type="password" id="password" class="form-input" placeholder="Enter your password" autocomplete="current-password" required>
+                    </div>
+                    <button type="submit" class="btn-primary" id="loginBtn">Sign In</button>
+                </form>
+            </div>
+
+            <div class="links">
+                <a href="/superadmin-login.html">Super Admin</a>
+            </div>
+            <div class="links" style="margin-top:12px;">
+                <a href="/">Back to home</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        var params = new URLSearchParams(window.location.search);
+        var error = params.get('error');
+        if (error) {
+            var msg = 'Something went wrong. Please try again.';
+            if (error === 'auth_failed') msg = 'Authentication failed. Please try again.';
+            document.getElementById('error-msg').textContent = msg;
+            document.getElementById('error-msg').style.display = 'block';
+        }
+
+        function showError(msg) {
+            var el = document.getElementById('error-msg');
+            el.textContent = msg;
+            el.style.display = 'block';
+            document.getElementById('login-content').style.display = 'block';
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        function nextTarget(fallback) {
+            var next = params.get('next') || '';
+            if (next.charAt(0) === '/' && next.charAt(1) !== '/') return next;
+            return fallback;
+        }
+
+        // One door for the whole business. Whether this address belongs to the
+        // account holder or to a member of staff is the server's business, not
+        // something anyone should have to know before they can sign in.
+        fetch('/api/client/me').then(function(r) {
+            if (r.ok) { window.location.href = nextTarget('/app.html'); return; }
+            return fetch('/api/employee/auth/me');
+        }).then(function(r) {
+            if (r && r.ok) { window.location.href = nextTarget('/app.html'); return; }
+            return fetch('/api/superadmin/me');
+        }).then(function(r) {
+            if (r && r.ok) { window.location.href = '/superadmin.html'; }
+        }).catch(function() {});
+
+        async function signInAsOwner(email, password) {
+            var res = await fetch('/api/client/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: email, password: password })
+            });
+            if (!res.ok) return null;
+            return await res.json();
+        }
+
+        async function signInAsStaff(email, password) {
+            var res = await fetch('/api/employee/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: email, password: password,
+                    device_info: navigator.userAgent.slice(0, 200)
+                })
+            });
+            if (!res.ok) return null;
+            return await res.json();
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            var btn = document.getElementById('loginBtn');
+            var email = document.getElementById('email').value.trim();
+            var password = document.getElementById('password').value;
+            if (!email || !password) { showError('Enter your email and password.'); return; }
+
+            btn.disabled = true; btn.textContent = 'Signing in...';
+            document.getElementById('error-msg').style.display = 'none';
+            document.getElementById('login-content').style.display = 'none';
+            document.getElementById('loading').style.display = 'block';
+
+            try {
+                var owner = await signInAsOwner(email, password);
+                if (owner) {
+                    window.location.href = owner.is_onboarded === false
+                        ? nextTarget('/onboard.html')
+                        : nextTarget('/app.html');
+                    return;
+                }
+                // Not the account holder - try them as a member of staff before
+                // giving up. Both land in the same portal.
+                var staff = await signInAsStaff(email, password);
+                if (staff) { window.location.href = nextTarget('/app.html'); return; }
+
+                throw new Error('That email and password did not match an account.');
+            } catch (err) {
+                btn.disabled = false; btn.textContent = 'Sign In';
+                showError(err.message);
+            }
+        }
+    </script>
+</body>
+</html>
