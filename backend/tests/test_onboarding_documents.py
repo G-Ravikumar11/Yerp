@@ -113,24 +113,24 @@ def test_sync_applies_new_rules_to_existing_staff(tenant):
 # --- the employee side ------------------------------------------------------
 
 @pytest.fixture
-def staffer(client, tenant):
+def staffer(portal, client, tenant):
     emp = make_employee(tenant, password="EmpPass123")
-    client.post("/api/employee/auth/login", json={"email": emp["email"], "password": "EmpPass123"})
+    portal.post("/api/employee/auth/login", json={"email": emp["email"], "password": "EmpPass123"})
     return emp
 
 
-def test_employee_sees_what_is_required(client, staffer):
-    data = client.get("/api/employee/document-requests").json()
+def test_employee_sees_what_is_required(portal, client, staffer):
+    data = portal.get("/api/employee/document-requests").json()
     assert data["outstanding"] > 0
     assert data["complete"] is False
     assert data["limits"]["max_mb"] >= 1
     assert ".pdf" in data["limits"]["allowed"]
 
 
-def test_employee_upload_reaches_the_hr_queue(client, tenant, staffer):
+def test_employee_upload_reaches_the_hr_queue(portal, client, tenant, staffer):
     """The point of the feature: what the employee sends lands in HR's queue."""
-    req = client.get("/api/employee/document-requests").json()["requests"][0]
-    res = client.post(f"/api/employee/document-requests/{req['id']}/upload", json={
+    req = portal.get("/api/employee/document-requests").json()["requests"][0]
+    res = portal.post(f"/api/employee/document-requests/{req['id']}/upload", json={
         "file_name": "passport.pdf", "file_type": "application/pdf", "file_data": b64(),
     })
     assert res.status_code == 200, res.text
@@ -148,15 +148,15 @@ def test_employee_upload_reaches_the_hr_queue(client, tenant, staffer):
     ({"file_name": "huge.pdf", "file_type": "application/pdf", "file_data": base64.b64encode(b"x" * 6 * 1024 * 1024).decode()}, 413),
     ({"file_name": "empty.pdf", "file_type": "application/pdf", "file_data": ""}, 400),
 ])
-def test_employee_upload_is_validated(client, staffer, payload, code):
-    req = client.get("/api/employee/document-requests").json()["requests"][0]
-    assert client.post(f"/api/employee/document-requests/{req['id']}/upload", json=payload).status_code == code
+def test_employee_upload_is_validated(portal, client, staffer, payload, code):
+    req = portal.get("/api/employee/document-requests").json()["requests"][0]
+    assert portal.post(f"/api/employee/document-requests/{req['id']}/upload", json=payload).status_code == code
 
 
-def test_employee_cannot_upload_against_someone_elses_request(client, tenant, staffer):
+def test_employee_cannot_upload_against_someone_elses_request(portal, client, tenant, staffer):
     other = make_employee(tenant, password="OtherPass123")
     other_req = tenant.get(f"/api/employees/{other['id']}/document-requests").json()[0]
-    res = client.post(f"/api/employee/document-requests/{other_req['id']}/upload", json={
+    res = portal.post(f"/api/employee/document-requests/{other_req['id']}/upload", json={
         "file_name": "x.pdf", "file_type": "application/pdf", "file_data": b64(),
     })
     assert res.status_code == 404
@@ -164,16 +164,16 @@ def test_employee_cannot_upload_against_someone_elses_request(client, tenant, st
 
 # --- review -----------------------------------------------------------------
 
-def submit_first(client, tenant, staffer):
-    req = client.get("/api/employee/document-requests").json()["requests"][0]
-    client.post(f"/api/employee/document-requests/{req['id']}/upload", json={
+def submit_first(portal, client, tenant, staffer):
+    req = portal.get("/api/employee/document-requests").json()["requests"][0]
+    portal.post(f"/api/employee/document-requests/{req['id']}/upload", json={
         "file_name": "id.pdf", "file_type": "application/pdf", "file_data": b64(),
     })
     return req
 
 
-def test_approve_a_submission(client, tenant, staffer):
-    req = submit_first(client, tenant, staffer)
+def test_approve_a_submission(portal, client, tenant, staffer):
+    req = submit_first(portal, client, tenant, staffer)
     res = tenant.post(f"/api/onboarding/document-requests/{req['id']}/review",
                       json={"decision": "approve"})
     assert res.status_code == 200
@@ -181,8 +181,8 @@ def test_approve_a_submission(client, tenant, staffer):
     assert res.json()["reviewed_at"]
 
 
-def test_rejection_requires_a_reason_and_allows_resubmission(client, tenant, staffer):
-    req = submit_first(client, tenant, staffer)
+def test_rejection_requires_a_reason_and_allows_resubmission(portal, client, tenant, staffer):
+    req = submit_first(portal, client, tenant, staffer)
     assert tenant.post(f"/api/onboarding/document-requests/{req['id']}/review",
                        json={"decision": "reject"}).status_code == 400
 
@@ -192,21 +192,21 @@ def test_rejection_requires_a_reason_and_allows_resubmission(client, tenant, sta
     assert res.json()["status"] == "rejected"
 
     # The employee sees why and can send a replacement.
-    mine = client.get("/api/employee/document-requests").json()["requests"]
+    mine = portal.get("/api/employee/document-requests").json()["requests"]
     rejected = next(r for r in mine if r["id"] == req["id"])
     assert rejected["review_note"] == "Photo is unreadable"
 
-    again = client.post(f"/api/employee/document-requests/{req['id']}/upload", json={
+    again = portal.post(f"/api/employee/document-requests/{req['id']}/upload", json={
         "file_name": "id2.pdf", "file_type": "application/pdf", "file_data": b64(),
     })
     assert again.status_code == 200
     assert again.json()["status"] == "submitted"
 
 
-def test_approved_document_cannot_be_overwritten(client, tenant, staffer):
-    req = submit_first(client, tenant, staffer)
+def test_approved_document_cannot_be_overwritten(portal, client, tenant, staffer):
+    req = submit_first(portal, client, tenant, staffer)
     tenant.post(f"/api/onboarding/document-requests/{req['id']}/review", json={"decision": "approve"})
-    res = client.post(f"/api/employee/document-requests/{req['id']}/upload", json={
+    res = portal.post(f"/api/employee/document-requests/{req['id']}/upload", json={
         "file_name": "swap.pdf", "file_type": "application/pdf", "file_data": b64(),
     })
     assert res.status_code == 409
@@ -220,8 +220,8 @@ def test_reviewing_something_never_submitted_is_refused(tenant):
     assert res.status_code == 400
 
 
-def test_hr_can_download_what_was_submitted(client, tenant, staffer):
-    req = submit_first(client, tenant, staffer)
+def test_hr_can_download_what_was_submitted(portal, client, tenant, staffer):
+    req = submit_first(portal, client, tenant, staffer)
     res = tenant.get(f"/api/onboarding/document-requests/{req['id']}/file")
     assert res.status_code == 200
     assert res.json()["file_name"] == "id.pdf"
@@ -237,9 +237,9 @@ def test_profile_shows_outstanding_paperwork(tenant):
 
 # --- isolation --------------------------------------------------------------
 
-def test_document_records_are_tenant_scoped(client, tenant, staffer):
-    req = submit_first(client, tenant, staffer)
-    client.post("/api/employee/auth/logout")
+def test_document_records_are_tenant_scoped(portal, client, tenant, staffer):
+    req = submit_first(portal, client, tenant, staffer)
+    portal.post("/api/employee/auth/logout")
     client.post("/api/client/register", json={"email": "prying@example.com", "password": "Passw0rdTest"})
     client.post("/api/client/login", json={"email": "prying@example.com", "password": "Passw0rdTest"})
 

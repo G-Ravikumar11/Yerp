@@ -21,14 +21,14 @@ def test_working_days_between(start, end, expected):
 # --- leave requests --------------------------------------------------------
 
 @pytest.fixture
-def employee_session(client, tenant):
+def employee_session(portal, client, tenant):
     """An employee logged into the employee portal."""
     emp = make_employee(tenant, password="EmpPass123")
-    res = client.post("/api/employee/auth/login", json={
+    res = portal.post("/api/employee/auth/login", json={
         "email": emp["email"], "password": "EmpPass123",
     })
     assert res.status_code == 200, res.text
-    return {"employee": emp, "client": client}
+    return {"employee": emp, "client": portal}
 
 
 def test_leave_days_are_computed_server_side(employee_session):
@@ -76,27 +76,27 @@ def test_leave_dates_must_be_valid(employee_session):
     }).status_code == 400
 
 
-def test_leave_balance_reflects_pending_and_approved(client, tenant):
+def test_leave_balance_reflects_pending_and_approved(portal, client, tenant):
     emp = make_employee(tenant, password="EmpPass123")
-    client.post("/api/employee/auth/login", json={"email": emp["email"], "password": "EmpPass123"})
-    client.post("/api/employee/leave", json={
+    portal.post("/api/employee/auth/login", json={"email": emp["email"], "password": "EmpPass123"})
+    portal.post("/api/employee/leave", json={
         "leave_type": "annual", "start_date": "2026-07-06", "end_date": "2026-07-10",
     })
-    balance = client.get("/api/employee/leave").json()["balance"]
+    balance = portal.get("/api/employee/leave").json()["balance"]
     assert balance["annual_total"] == 25
     assert balance["annual_pending"] == 5.0
     assert balance["annual_remaining"] == 20.0
 
 
-def test_hr_can_approve_only_once(client, account):
+def test_hr_can_approve_only_once(portal, client, account):
     tenant = account["client"]
     emp = make_employee(tenant, password="EmpPass123")
 
-    client.post("/api/employee/auth/login", json={"email": emp["email"], "password": "EmpPass123"})
-    client.post("/api/employee/leave", json={
+    portal.post("/api/employee/auth/login", json={"email": emp["email"], "password": "EmpPass123"})
+    portal.post("/api/employee/leave", json={
         "leave_type": "annual", "start_date": "2026-08-03", "end_date": "2026-08-07",
     })
-    client.post("/api/employee/auth/logout")
+    portal.post("/api/employee/auth/logout")
     client.post("/api/client/login", json={"email": account["email"], "password": account["password"]})
 
     requests = tenant.get("/api/leave/requests").json()
@@ -123,7 +123,7 @@ def test_leave_entitlement_is_configurable(tenant):
 
 # --- employee lifecycle ----------------------------------------------------
 
-def test_employee_with_history_can_be_deleted(client, tenant):
+def test_employee_with_history_can_be_deleted(portal, client, tenant):
     """Deleting anyone who had clocked in, booked leave or had a payslip used to
     fail on a foreign key violation."""
     emp = make_employee(tenant, password="EmpPass123")
@@ -134,12 +134,12 @@ def test_employee_with_history_can_be_deleted(client, tenant):
     })
     tenant.post(f"/api/employees/{emp['id']}/goals", json={"title": "Ship the thing"})
 
-    client.post("/api/employee/auth/login", json={"email": emp["email"], "password": "EmpPass123"})
-    client.post("/api/employee/attendance/clock-in", json={})
-    client.post("/api/employee/leave", json={
+    portal.post("/api/employee/auth/login", json={"email": emp["email"], "password": "EmpPass123"})
+    portal.post("/api/employee/attendance/clock-in", json={})
+    portal.post("/api/employee/leave", json={
         "leave_type": "annual", "start_date": "2026-09-07", "end_date": "2026-09-08",
     })
-    client.post("/api/employee/auth/logout")
+    portal.post("/api/employee/auth/logout")
 
     res = tenant.delete(f"/api/employees/{emp['id']}")
     assert res.status_code == 200, res.text
@@ -162,34 +162,34 @@ def test_deleting_a_department_detaches_employees(tenant):
 
 # --- attendance ------------------------------------------------------------
 
-def test_login_clocks_in_and_clock_out_records_hours(client, tenant):
+def test_login_clocks_in_and_clock_out_records_hours(portal, client, tenant):
     """Logging into the employee portal clocks you in automatically, so a
     second explicit clock-in is a duplicate."""
     work_every_day(tenant)
     emp = make_employee(tenant, password="EmpPass123")
-    login = client.post("/api/employee/auth/login", json={
+    login = portal.post("/api/employee/auth/login", json={
         "email": emp["email"], "password": "EmpPass123",
     })
     assert login.status_code == 200
     assert login.json()["clock_in"]
 
-    assert client.post("/api/employee/attendance/clock-in", json={}).status_code == 400
+    assert portal.post("/api/employee/attendance/clock-in", json={}).status_code == 400
 
-    out = client.post("/api/employee/attendance/clock-out")
+    out = portal.post("/api/employee/attendance/clock-out")
     assert out.status_code == 200, out.text
     # Hours may round to ~0 in a fast test, but must never go negative - that
     # would feed a negative figure straight into payroll.
     assert out.json()["total_hours"] >= 0
     # Clocking out twice is refused.
-    assert client.post("/api/employee/attendance/clock-out").status_code == 400
+    assert portal.post("/api/employee/attendance/clock-out").status_code == 400
 
 
-def test_clock_out_after_already_clocking_out_is_refused(client, tenant):
+def test_clock_out_after_already_clocking_out_is_refused(portal, client, tenant):
     work_every_day(tenant)
     emp = make_employee(tenant, password="EmpPass123")
-    client.post("/api/employee/auth/login", json={"email": emp["email"], "password": "EmpPass123"})
-    assert client.post("/api/employee/attendance/clock-out").status_code == 200
-    assert client.post("/api/employee/attendance/clock-out").status_code == 400
+    portal.post("/api/employee/auth/login", json={"email": emp["email"], "password": "EmpPass123"})
+    assert portal.post("/api/employee/attendance/clock-out").status_code == 200
+    assert portal.post("/api/employee/attendance/clock-out").status_code == 400
 
 
 # --- isolation -------------------------------------------------------------
@@ -205,8 +205,8 @@ def test_employees_are_tenant_scoped(client, tenant):
     assert client.delete(f"/api/employees/{emp['id']}").status_code == 404
 
 
-def test_employee_endpoints_require_employee_session(client):
-    client.post("/api/employee/auth/logout")
+def test_employee_endpoints_require_employee_session(portal, client):
+    portal.post("/api/employee/auth/logout")
     client.post("/api/client/logout")
-    assert client.get("/api/employee/leave").status_code == 401
-    assert client.post("/api/employee/attendance/clock-in", json={}).status_code == 401
+    assert portal.get("/api/employee/leave").status_code == 401
+    assert portal.post("/api/employee/attendance/clock-in", json={}).status_code == 401

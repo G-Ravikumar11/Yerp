@@ -19,12 +19,12 @@ def test_profile_returns_every_section(tenant, person):
         assert key in d, f"missing {key}"
 
 
-def test_profile_leave_balance_tracks_requests(client, tenant, person):
-    client.post("/api/employee/auth/login", json={"email": person["email"], "password": "EmpPass123"})
-    client.post("/api/employee/leave", json={
+def test_profile_leave_balance_tracks_requests(portal, client, tenant, person):
+    portal.post("/api/employee/auth/login", json={"email": person["email"], "password": "EmpPass123"})
+    portal.post("/api/employee/leave", json={
         "leave_type": "annual", "start_date": "2026-09-07", "end_date": "2026-09-11",
     })
-    client.post("/api/employee/auth/logout")
+    portal.post("/api/employee/auth/logout")
 
     d = tenant.get(f"/api/employees/{person['id']}").json()
     assert d["leave_balance"]["annual_pending"] == 5.0
@@ -33,16 +33,16 @@ def test_profile_leave_balance_tracks_requests(client, tenant, person):
     assert d["leave_requests"][0]["status"] == "pending"
 
 
-def test_profile_reflects_approval_without_a_separate_call(client, account):
+def test_profile_reflects_approval_without_a_separate_call(portal, client, account):
     """Approving in the Leave tab must show up on the profile, since both read
     the same records."""
     tenant = account["client"]
     emp = make_employee(tenant, password="EmpPass123")
-    client.post("/api/employee/auth/login", json={"email": emp["email"], "password": "EmpPass123"})
-    client.post("/api/employee/leave", json={
+    portal.post("/api/employee/auth/login", json={"email": emp["email"], "password": "EmpPass123"})
+    portal.post("/api/employee/leave", json={
         "leave_type": "annual", "start_date": "2026-10-05", "end_date": "2026-10-09",
     })
-    client.post("/api/employee/auth/logout")
+    portal.post("/api/employee/auth/logout")
     client.post("/api/client/login", json={"email": account["email"], "password": account["password"]})
 
     leave_id = tenant.get("/api/leave/requests").json()[0]["id"]
@@ -54,20 +54,20 @@ def test_profile_reflects_approval_without_a_separate_call(client, account):
     assert d["leave_requests"][0]["status"] == "approved"
 
 
-def test_profile_shows_someone_currently_clocked_in(client, tenant, person):
+def test_profile_shows_someone_currently_clocked_in(portal, client, tenant, person):
     # Logging in clocks the employee in; they stay clocked in until logout.
     work_every_day(tenant)
-    client.post("/api/employee/auth/login", json={"email": person["email"], "password": "EmpPass123"})
+    portal.post("/api/employee/auth/login", json={"email": person["email"], "password": "EmpPass123"})
     a = tenant.get(f"/api/employees/{person['id']}").json()["attendance_summary"]
     assert a["days_present"] == 1
     assert a["clocked_in_today"] is True
     assert a["today_clock_in"]
 
 
-def test_profile_shows_a_completed_day(client, tenant, person):
+def test_profile_shows_a_completed_day(portal, client, tenant, person):
     work_every_day(tenant)
-    client.post("/api/employee/auth/login", json={"email": person["email"], "password": "EmpPass123"})
-    client.post("/api/employee/auth/logout")   # logout clocks them out
+    portal.post("/api/employee/auth/login", json={"email": person["email"], "password": "EmpPass123"})
+    portal.post("/api/employee/auth/logout")   # logout clocks them out
     a = tenant.get(f"/api/employees/{person['id']}").json()["attendance_summary"]
     assert a["days_present"] == 1
     assert a["clocked_in_today"] is False

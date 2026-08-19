@@ -46,7 +46,7 @@ def test_turning_on_expiry_reaches_staff_already_assigned(tenant, hired_first):
     assert _their_request(tenant, emp["id"])["requires_expiry"] is True
 
 
-def test_the_employee_is_then_asked_for_a_date(client, tenant, hired_first):
+def test_the_employee_is_then_asked_for_a_date(portal, client, tenant, hired_first):
     req = hired_first["requirement"]
     emp = hired_first["employee"]
     res = tenant.put(f"/api/onboarding/requirements/{req['id']}", json={
@@ -54,14 +54,14 @@ def test_the_employee_is_then_asked_for_a_date(client, tenant, hired_first):
     })
     assert res.status_code == 200, res.text
 
-    client.post("/api/employee/auth/login", json={
+    portal.post("/api/employee/auth/login", json={
         "email": emp["email"], "password": "EmpPass123"})
-    rows = client.get("/api/employee/document-requests").json()["requests"]
+    rows = portal.get("/api/employee/document-requests").json()["requests"]
     mine = next(r for r in rows if r["name"] == "Right to work visa")
     assert mine["requires_expiry"] is True
 
     # Uploading without one is refused, which is what prompts the portal to ask.
-    res = client.post(f"/api/employee/document-requests/{mine['id']}/upload", json={
+    res = portal.post(f"/api/employee/document-requests/{mine['id']}/upload", json={
         "file_name": "visa.pdf", "file_type": "application/pdf",
         "file_data": "JVBERi0xLjQK", "expires_on": "",
     })
@@ -69,7 +69,7 @@ def test_the_employee_is_then_asked_for_a_date(client, tenant, hired_first):
     assert "expiry date" in res.json()["detail"].lower()
 
 
-def test_the_date_is_stored_and_surfaces_to_hr(client, tenant, hired_first):
+def test_the_date_is_stored_and_surfaces_to_hr(portal, client, tenant, hired_first):
     req = hired_first["requirement"]
     emp = hired_first["employee"]
     res = tenant.put(f"/api/onboarding/requirements/{req['id']}", json={
@@ -77,12 +77,12 @@ def test_the_date_is_stored_and_surfaces_to_hr(client, tenant, hired_first):
     })
     assert res.status_code == 200, res.text
 
-    client.post("/api/employee/auth/login", json={
+    portal.post("/api/employee/auth/login", json={
         "email": emp["email"], "password": "EmpPass123"})
-    rows = client.get("/api/employee/document-requests").json()["requests"]
+    rows = portal.get("/api/employee/document-requests").json()["requests"]
     mine = next(r for r in rows if r["name"] == "Right to work visa")
 
-    res = client.post(f"/api/employee/document-requests/{mine['id']}/upload", json={
+    res = portal.post(f"/api/employee/document-requests/{mine['id']}/upload", json={
         "file_name": "visa.pdf", "file_type": "application/pdf",
         "file_data": "JVBERi0xLjQK", "expires_on": "2027-06-30",
     })
@@ -119,16 +119,16 @@ def test_renaming_a_requirement_reaches_them_too(tenant, hired_first):
     assert _their_request(tenant, emp["id"], "Visa (right to work)")
 
 
-def test_a_document_already_submitted_is_left_alone(client, tenant, hired_first):
+def test_a_document_already_submitted_is_left_alone(portal, client, tenant, hired_first):
     """Changing the rule must not reopen something already handed in."""
     req = hired_first["requirement"]
     emp = hired_first["employee"]
 
-    client.post("/api/employee/auth/login", json={
+    portal.post("/api/employee/auth/login", json={
         "email": emp["email"], "password": "EmpPass123"})
-    rows = client.get("/api/employee/document-requests").json()["requests"]
+    rows = portal.get("/api/employee/document-requests").json()["requests"]
     mine = next(r for r in rows if r["name"] == "Right to work visa")
-    client.post(f"/api/employee/document-requests/{mine['id']}/upload", json={
+    portal.post(f"/api/employee/document-requests/{mine['id']}/upload", json={
         "file_name": "visa.pdf", "file_type": "application/pdf",
         "file_data": "JVBERi0xLjQK",
     })
@@ -144,21 +144,21 @@ def test_a_document_already_submitted_is_left_alone(client, tenant, hired_first)
     assert after["requires_expiry"] is False
 
 
-def test_a_date_is_not_kept_for_a_document_that_does_not_expire(client, tenant, hired_first):
+def test_a_date_is_not_kept_for_a_document_that_does_not_expire(portal, client, tenant, hired_first):
     """Defence in depth for the portal bug where a date left over from a failed
     upload rode along on the next document."""
     emp = hired_first["employee"]
-    client.post("/api/employee/auth/login", json={
+    portal.post("/api/employee/auth/login", json={
         "email": emp["email"], "password": "EmpPass123"})
-    rows = client.get("/api/employee/document-requests").json()["requests"]
+    rows = portal.get("/api/employee/document-requests").json()["requests"]
     plain = next(r for r in rows if not r["requires_expiry"])
 
-    res = client.post(f"/api/employee/document-requests/{plain['id']}/upload", json={
+    res = portal.post(f"/api/employee/document-requests/{plain['id']}/upload", json={
         "file_name": "id.png", "file_type": "image/png",
         "file_data": "aGVsbG8=", "expires_on": "2030-12-31",
     })
     assert res.status_code == 200, res.text
 
-    after = next(r for r in client.get("/api/employee/document-requests").json()["requests"]
+    after = next(r for r in portal.get("/api/employee/document-requests").json()["requests"]
                  if r["id"] == plain["id"])
     assert after["expires_on"] == ""

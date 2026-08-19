@@ -57,6 +57,38 @@ def client():
         yield c
 
 
+# The credentials of the account holder in the test currently running, so a
+# test that signs somebody in as staff can get back to the owner's own screens.
+_OWNER = {}
+
+
+def as_owner(client):
+    """Sign back in as the account holder.
+
+    A session holds one identity at a time - signing in as staff ends the
+    owner's session, which is the point: otherwise a member of staff keeps the
+    owner's rights underneath. A test that switches between the two has to
+    sign in again, exactly as a person would in a second browser.
+    """
+    if not _OWNER:
+        return client          # nobody to return to; leave the session alone
+    res = client.post("/api/client/login", json=dict(_OWNER))
+    assert res.status_code == 200, res.text
+    return client
+
+
+@pytest.fixture
+def portal():
+    """A second browser.
+
+    A session holds one identity, so a test covering both the owner's screens
+    and the staff portal needs two clients - one cookie jar each - rather than
+    signing in twice on the same one and hoping both survive.
+    """
+    with TestClient(main.app) as c:
+        yield c
+
+
 @pytest.fixture
 def account(client):
     """A registered, logged-in tenant. Returns the TestClient with its session
@@ -69,6 +101,8 @@ def account(client):
     assert res.status_code == 200, res.text
     res = client.post("/api/client/login", json={"email": email, "password": password})
     assert res.status_code == 200, res.text
+    _OWNER.clear()
+    _OWNER.update({"email": email, "password": password})
     return {"client": client, "email": email, "password": password}
 
 

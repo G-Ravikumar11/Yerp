@@ -90,38 +90,38 @@ def test_money_on_another_job_stays_there(tenant):
     assert tenant.get(f"/api/jobs/{b['id']}").json()["costing"]["spent"] == 0.0
 
 
-def test_a_rejected_cost_is_not_a_cost(tenant):
+def test_a_rejected_cost_is_not_a_cost(portal, tenant):
     boss = staff(tenant, permission_role="manager")
     hand = staff(tenant, reports_to=boss["id"])
     job = make_job(tenant)
 
-    sign_in(tenant, hand)
-    bill = tenant.post("/api/employee/bills", json={
+    sign_in(portal, hand)
+    bill = portal.post("/api/employee/bills", json={
         "vendor_name": "Jewson", "amount": 900.0, "job_id": job["id"]}).json()["bill"]
-    sign_out(tenant)
+    sign_out(portal)
 
     assert tenant.get(f"/api/jobs/{job['id']}").json()["costing"]["spent"] == 900.0
 
-    sign_in(tenant, boss)
-    step = tenant.get("/api/employee/approvals").json()["pending"][0]
-    tenant.post(f"/api/employee/approvals/{step['step_id']}/action",
+    sign_in(portal, boss)
+    step = portal.get("/api/employee/approvals").json()["pending"][0]
+    portal.post(f"/api/employee/approvals/{step['step_id']}/action",
                 json={"action": "reject", "notes": "Not ours"})
-    sign_out(tenant)
+    sign_out(portal)
 
     assert tenant.get(f"/api/jobs/{job['id']}").json()["costing"]["spent"] == 0.0
 
 
-def test_labour_hours_reach_the_job(tenant):
+def test_labour_hours_reach_the_job(portal, tenant):
     job = make_job(tenant)
     hand = staff(tenant, hourly_rate=25.0)
     tenant.put("/api/attendance/settings", json={"working_days": "1,2,3,4,5,6,7"})
 
-    sign_in(tenant, hand)
-    tenant.post("/api/employee/attendance/clock-in", json={})
-    tenant.post("/api/employee/attendance/clock-out", json={})
-    res = tenant.post("/api/employee/attendance/job", json={"job_id": job["id"]})
+    sign_in(portal, hand)
+    portal.post("/api/employee/attendance/clock-in", json={})
+    portal.post("/api/employee/attendance/clock-out", json={})
+    res = portal.post("/api/employee/attendance/job", json={"job_id": job["id"]})
     assert res.status_code == 200, res.text
-    sign_out(tenant)
+    sign_out(portal)
 
     c = tenant.get(f"/api/jobs/{job['id']}").json()["costing"]
     assert c["labour_hours"] >= 0
@@ -186,13 +186,13 @@ def test_a_document_cannot_point_at_another_tenants_job(client):
 
 # --- Purchase orders --------------------------------------------------------
 
-def test_an_order_goes_up_the_line_before_the_money_is_spent(tenant):
+def test_an_order_goes_up_the_line_before_the_money_is_spent(portal, tenant):
     boss = staff(tenant, permission_role="manager")
     hand = staff(tenant, reports_to=boss["id"])
     job = make_job(tenant)
 
-    sign_in(tenant, hand)
-    res = tenant.post("/api/employee/purchase-orders", json={
+    sign_in(portal, hand)
+    res = portal.post("/api/employee/purchase-orders", json={
         "supplier_name": "Travis Perkins", "amount": 2000.0, "tax_amount": 400.0,
         "job_id": job["id"], "notes": "Blockwork"})
     assert res.status_code == 200, res.text
@@ -200,27 +200,27 @@ def test_an_order_goes_up_the_line_before_the_money_is_spent(tenant):
     assert out["status"] == "pending"
     assert out["order"]["status"] == "Awaiting Approval"
     assert out["order"]["total"] == 2400.0
-    sign_out(tenant)
+    sign_out(portal)
 
-    sign_in(tenant, boss)
-    queue = tenant.get("/api/employee/approvals").json()["pending"]
+    sign_in(portal, boss)
+    queue = portal.get("/api/employee/approvals").json()["pending"]
     assert queue[0]["kind"] == "Purchase order"
-    tenant.post(f"/api/employee/approvals/{queue[0]['step_id']}/action",
+    portal.post(f"/api/employee/approvals/{queue[0]['step_id']}/action",
                 json={"action": "approve", "notes": "Priced right"})
-    sign_out(tenant)
+    sign_out(portal)
 
     order = tenant.get(f"/api/purchase-orders/{out['order']['id']}").json()
     assert order["status"] == "Approved"
     assert order["approval_status"] == "approved"
 
 
-def test_an_approved_order_is_committed_cost_not_spend(tenant):
+def test_an_approved_order_is_committed_cost_not_spend(portal, tenant):
     job = make_job(tenant)
     top = staff(tenant, permission_role="manager")
-    sign_in(tenant, top)
-    tenant.post("/api/employee/purchase-orders", json={
+    sign_in(portal, top)
+    portal.post("/api/employee/purchase-orders", json={
         "supplier_name": "Speedy Hire", "amount": 1000.0, "job_id": job["id"]})
-    sign_out(tenant)
+    sign_out(portal)
 
     c = tenant.get(f"/api/jobs/{job['id']}").json()["costing"]
     assert c["committed"] == 1000.0
@@ -228,13 +228,13 @@ def test_an_approved_order_is_committed_cost_not_spend(tenant):
     assert c["forecast_cost"] == 1000.0
 
 
-def test_a_matched_bill_replaces_the_commitment(tenant):
+def test_a_matched_bill_replaces_the_commitment(portal, tenant):
     job = make_job(tenant)
     top = staff(tenant, permission_role="manager")
-    sign_in(tenant, top)
-    order = tenant.post("/api/employee/purchase-orders", json={
+    sign_in(portal, top)
+    order = portal.post("/api/employee/purchase-orders", json={
         "supplier_name": "Speedy Hire", "amount": 1000.0, "job_id": job["id"]}).json()["order"]
-    sign_out(tenant)
+    sign_out(portal)
 
     tenant.post("/api/bills", json={"number": "B1", "vendor_name": "Speedy Hire",
                                     "amount": 1000.0, "total": 1000.0,
@@ -245,13 +245,13 @@ def test_a_matched_bill_replaces_the_commitment(tenant):
     assert c["spent"] == 1000.0
 
 
-def test_a_bill_cannot_be_matched_to_an_unapproved_order(tenant):
+def test_a_bill_cannot_be_matched_to_an_unapproved_order(portal, tenant):
     boss = staff(tenant, permission_role="manager")
     hand = staff(tenant, reports_to=boss["id"])
-    sign_in(tenant, hand)
-    order = tenant.post("/api/employee/purchase-orders", json={
+    sign_in(portal, hand)
+    order = portal.post("/api/employee/purchase-orders", json={
         "supplier_name": "X", "amount": 100.0}).json()["order"]
-    sign_out(tenant)
+    sign_out(portal)
 
     res = tenant.post("/api/bills", json={"number": "B1", "vendor_name": "X",
                                           "amount": 100.0, "total": 100.0,
@@ -259,12 +259,12 @@ def test_a_bill_cannot_be_matched_to_an_unapproved_order(tenant):
     assert res.status_code == 409, res.text
 
 
-def test_a_bill_over_its_order_is_flagged(tenant):
+def test_a_bill_over_its_order_is_flagged(portal, tenant):
     top = staff(tenant, permission_role="manager")
-    sign_in(tenant, top)
-    order = tenant.post("/api/employee/purchase-orders", json={
+    sign_in(portal, top)
+    order = portal.post("/api/employee/purchase-orders", json={
         "supplier_name": "Jewson", "amount": 500.0}).json()["order"]
-    sign_out(tenant)
+    sign_out(portal)
 
     tenant.post("/api/bills", json={"number": "B1", "vendor_name": "Jewson",
                                     "amount": 800.0, "total": 800.0,
@@ -276,34 +276,34 @@ def test_a_bill_over_its_order_is_flagged(tenant):
     assert listing is not None
 
 
-def test_an_order_with_a_bill_against_it_cannot_be_deleted(tenant):
+def test_an_order_with_a_bill_against_it_cannot_be_deleted(portal, tenant):
     top = staff(tenant, permission_role="manager")
-    sign_in(tenant, top)
-    order = tenant.post("/api/employee/purchase-orders", json={
+    sign_in(portal, top)
+    order = portal.post("/api/employee/purchase-orders", json={
         "supplier_name": "X", "amount": 100.0}).json()["order"]
-    sign_out(tenant)
+    sign_out(portal)
     tenant.post("/api/bills", json={"number": "B1", "vendor_name": "X", "amount": 100.0,
                                     "total": 100.0, "purchase_order_id": order["id"]})
     assert tenant.delete(f"/api/purchase-orders/{order['id']}").status_code == 409
 
 
-def test_an_order_awaiting_approval_cannot_be_edited(tenant):
+def test_an_order_awaiting_approval_cannot_be_edited(portal, tenant):
     boss = staff(tenant, permission_role="manager")
     hand = staff(tenant, reports_to=boss["id"])
-    sign_in(tenant, hand)
-    order = tenant.post("/api/employee/purchase-orders", json={
+    sign_in(portal, hand)
+    order = portal.post("/api/employee/purchase-orders", json={
         "supplier_name": "X", "amount": 100.0}).json()["order"]
-    sign_out(tenant)
+    sign_out(portal)
     res = tenant.put(f"/api/purchase-orders/{order['id']}",
                      json={"supplier_name": "X", "amount": 50.0})
     assert res.status_code == 409
 
 
-def test_an_order_needs_a_supplier_and_an_amount(tenant):
+def test_an_order_needs_a_supplier_and_an_amount(portal, tenant):
     hand = staff(tenant)
-    sign_in(tenant, hand)
-    assert tenant.post("/api/employee/purchase-orders", json={"amount": 10}).status_code == 400
-    assert tenant.post("/api/employee/purchase-orders",
+    sign_in(portal, hand)
+    assert portal.post("/api/employee/purchase-orders", json={"amount": 10}).status_code == 400
+    assert portal.post("/api/employee/purchase-orders",
                        json={"supplier_name": "X"}).status_code == 400
 
 
@@ -316,81 +316,81 @@ def set_rules(tenant, auto_below=0, finance_above=0):
     return res.json()
 
 
-def test_a_small_cost_does_not_trouble_the_director(tenant):
+def test_a_small_cost_does_not_trouble_the_director(portal, tenant):
     boss = staff(tenant, permission_role="manager")
     hand = staff(tenant, reports_to=boss["id"])
     set_rules(tenant, auto_below=50.0)
 
-    sign_in(tenant, hand)
-    out = tenant.post("/api/employee/bills",
+    sign_in(portal, hand)
+    out = portal.post("/api/employee/bills",
                       json={"vendor_name": "Screwfix", "amount": 12.0}).json()
     assert out["status"] == "approved"
     assert out["bill"]["status"] == "Approved for payment"
     assert "limit" in out["message"]
-    sign_out(tenant)
+    sign_out(portal)
 
-    sign_in(tenant, boss)
-    assert tenant.get("/api/employee/approvals").json()["pending"] == []
+    sign_in(portal, boss)
+    assert portal.get("/api/employee/approvals").json()["pending"] == []
 
 
-def test_a_cost_on_the_limit_still_goes_up(tenant):
+def test_a_cost_on_the_limit_still_goes_up(portal, tenant):
     boss = staff(tenant, permission_role="manager")
     hand = staff(tenant, reports_to=boss["id"])
     set_rules(tenant, auto_below=50.0)
-    sign_in(tenant, hand)
-    out = tenant.post("/api/employee/bills",
+    sign_in(portal, hand)
+    out = portal.post("/api/employee/bills",
                       json={"vendor_name": "Screwfix", "amount": 50.0}).json()
     assert out["status"] == "pending"
 
 
-def test_a_large_cost_picks_up_finance(tenant):
+def test_a_large_cost_picks_up_finance(portal, tenant):
     boss = staff(tenant, permission_role="manager")
     hand = staff(tenant, reports_to=boss["id"])
     purse = staff(tenant, permission_role="finance")
     set_rules(tenant, finance_above=1000.0)
 
-    sign_in(tenant, hand)
-    out = tenant.post("/api/employee/bills",
+    sign_in(portal, hand)
+    out = portal.post("/api/employee/bills",
                       json={"vendor_name": "Jewson", "amount": 5000.0}).json()
     # The manager, then finance on top.
     assert out["chain_length"] == 2
-    sign_out(tenant)
+    sign_out(portal)
 
-    sign_in(tenant, boss)
-    step = tenant.get("/api/employee/approvals").json()["pending"][0]
-    tenant.post(f"/api/employee/approvals/{step['step_id']}/action",
+    sign_in(portal, boss)
+    step = portal.get("/api/employee/approvals").json()["pending"][0]
+    portal.post(f"/api/employee/approvals/{step['step_id']}/action",
                 json={"action": "approve", "notes": "ok"})
-    sign_out(tenant)
+    sign_out(portal)
 
-    sign_in(tenant, purse)
-    assert len(tenant.get("/api/employee/approvals").json()["pending"]) == 1
+    sign_in(portal, purse)
+    assert len(portal.get("/api/employee/approvals").json()["pending"]) == 1
 
 
-def test_a_small_cost_stays_a_short_chain(tenant):
+def test_a_small_cost_stays_a_short_chain(portal, tenant):
     boss = staff(tenant, permission_role="manager")
     hand = staff(tenant, reports_to=boss["id"])
     staff(tenant, permission_role="finance")
     set_rules(tenant, finance_above=1000.0)
-    sign_in(tenant, hand)
-    out = tenant.post("/api/employee/bills",
+    sign_in(portal, hand)
+    out = portal.post("/api/employee/bills",
                       json={"vendor_name": "Jewson", "amount": 200.0}).json()
     assert out["chain_length"] == 1
 
 
-def test_a_bill_over_its_order_never_auto_approves(tenant):
+def test_a_bill_over_its_order_never_auto_approves(portal, tenant):
     boss = staff(tenant, permission_role="manager")
     hand = staff(tenant, reports_to=boss["id"])
     set_rules(tenant, auto_below=500.0)
 
     top = staff(tenant, permission_role="manager")
-    sign_in(tenant, top)
-    order = tenant.post("/api/employee/purchase-orders",
+    sign_in(portal, top)
+    order = portal.post("/api/employee/purchase-orders",
                         json={"supplier_name": "Jewson", "amount": 100.0}).json()["order"]
-    sign_out(tenant)
+    sign_out(portal)
 
-    sign_in(tenant, hand)
+    sign_in(portal, hand)
     # Under the £500 limit, but more than the £100 that was agreed.
-    out = tenant.post("/api/employee/bills", json={
+    out = portal.post("/api/employee/bills", json={
         "vendor_name": "Jewson", "amount": 300.0,
         "purchase_order_id": order["id"]}).json()
     assert out["status"] == "pending", "overspend must always be looked at"

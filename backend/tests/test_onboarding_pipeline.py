@@ -100,12 +100,12 @@ def test_someone_added_by_hand_has_no_hired_from(tenant):
     assert card["hired_from"] is None
 
 
-def test_uploading_moves_them_to_review(client, tenant):
+def test_uploading_moves_them_to_review(portal, client, tenant):
     emp = make_employee(tenant, password="EmpPass123")
-    client.post("/api/employee/auth/login",
+    portal.post("/api/employee/auth/login",
                 json={"email": emp["email"], "password": "EmpPass123"})
-    for row in client.get("/api/employee/document-requests").json()["requests"]:
-        client.post(f"/api/employee/document-requests/{row['id']}/upload", json={
+    for row in portal.get("/api/employee/document-requests").json()["requests"]:
+        portal.post(f"/api/employee/document-requests/{row['id']}/upload", json={
             "file_name": "d.pdf", "file_type": "application/pdf",
             "file_data": "JVBERi0xLjQK",
             "expires_on": "2030-01-01" if row["requires_expiry"] else "",
@@ -116,12 +116,12 @@ def test_uploading_moves_them_to_review(client, tenant):
     assert card["awaiting_hr"]
 
 
-def test_approving_everything_moves_them_to_setup(client, tenant):
+def test_approving_everything_moves_them_to_setup(portal, client, tenant):
     emp = make_employee(tenant, password="EmpPass123")
-    client.post("/api/employee/auth/login",
+    portal.post("/api/employee/auth/login",
                 json={"email": emp["email"], "password": "EmpPass123"})
-    for row in client.get("/api/employee/document-requests").json()["requests"]:
-        client.post(f"/api/employee/document-requests/{row['id']}/upload", json={
+    for row in portal.get("/api/employee/document-requests").json()["requests"]:
+        portal.post(f"/api/employee/document-requests/{row['id']}/upload", json={
             "file_name": "d.pdf", "file_type": "application/pdf",
             "file_data": "JVBERi0xLjQK",
             "expires_on": "2030-01-01" if row["requires_expiry"] else "",
@@ -146,11 +146,11 @@ def test_the_board_counts_who_is_blocked(client, tenant):
 
 # --- completion --------------------------------------------------------------
 
-def finish_everything(client, tenant, emp):
-    client.post("/api/employee/auth/login",
+def finish_everything(portal, client, tenant, emp):
+    portal.post("/api/employee/auth/login",
                 json={"email": emp["email"], "password": "EmpPass123"})
-    for row in client.get("/api/employee/document-requests").json()["requests"]:
-        client.post(f"/api/employee/document-requests/{row['id']}/upload", json={
+    for row in portal.get("/api/employee/document-requests").json()["requests"]:
+        portal.post(f"/api/employee/document-requests/{row['id']}/upload", json={
             "file_name": "d.pdf", "file_type": "application/pdf",
             "file_data": "JVBERi0xLjQK",
             "expires_on": "2030-01-01" if row["requires_expiry"] else "",
@@ -162,17 +162,17 @@ def finish_everything(client, tenant, emp):
         tenant.put(f"/api/onboarding/{item['id']}", json={"is_completed": True})
 
 
-def test_finishing_takes_them_off_the_board(client, tenant):
+def test_finishing_takes_them_off_the_board(portal, client, tenant):
     """Everyone starts onboarding, so the way off the board is to finish."""
     emp = make_employee(tenant, password="EmpPass123")
     assert stage_of(tenant, emp["id"])[0] is not None
-    finish_everything(client, tenant, emp)
+    finish_everything(portal, client, tenant, emp)
     assert stage_of(tenant, emp["id"])[0] is None
 
 
-def test_finishing_both_halves_makes_them_active(client, tenant):
+def test_finishing_both_halves_makes_them_active(portal, client, tenant):
     emp = make_employee(tenant, password="EmpPass123")
-    finish_everything(client, tenant, emp)
+    finish_everything(portal, client, tenant, emp)
     assert tenant.get(f"/api/employees/{emp['id']}").json()["status"] == "active"
 
 
@@ -196,9 +196,9 @@ def test_completing_by_hand_is_refused_while_something_is_outstanding(tenant):
     assert "waiting on" in detail or "checklist" in detail
 
 
-def test_completing_by_hand_works_once_nothing_is_outstanding(client, tenant):
+def test_completing_by_hand_works_once_nothing_is_outstanding(portal, client, tenant):
     emp = make_employee(tenant, password="EmpPass123")
-    finish_everything(client, tenant, emp)
+    finish_everything(portal, client, tenant, emp)
     # Already active by then, so a second attempt should say so rather than
     # pretend to do something.
     res = tenant.post(f"/api/employees/{emp['id']}/complete-onboarding")
@@ -208,22 +208,22 @@ def test_completing_by_hand_works_once_nothing_is_outstanding(client, tenant):
 
 # --- nudging -----------------------------------------------------------------
 
-def test_a_nudge_tells_the_starter_what_is_missing(client, tenant):
+def test_a_nudge_tells_the_starter_what_is_missing(portal, client, tenant):
     emp = make_employee(tenant, password="EmpPass123")
     res = tenant.post(f"/api/employees/{emp['id']}/nudge")
     assert res.status_code == 200, res.text
     assert res.json()["items"]
 
-    client.post("/api/employee/auth/login",
+    portal.post("/api/employee/auth/login",
                 json={"email": emp["email"], "password": "EmpPass123"})
-    notes = client.get("/api/employee/notifications").json()
+    notes = portal.get("/api/employee/notifications").json()
     titles = [n["title"] for n in (notes if isinstance(notes, list) else notes.get("notifications", []))]
     assert "Documents still needed" in titles
 
 
-def test_nudging_someone_with_nothing_outstanding_is_refused(client, tenant):
+def test_nudging_someone_with_nothing_outstanding_is_refused(portal, client, tenant):
     emp = make_employee(tenant, password="EmpPass123")
-    finish_everything(client, tenant, emp)
+    finish_everything(portal, client, tenant, emp)
     res = tenant.post(f"/api/employees/{emp['id']}/nudge")
     assert res.status_code == 400
 
@@ -244,7 +244,7 @@ def test_the_board_needs_a_session(client):
     assert client.get("/api/onboarding/pipeline").status_code == 401
 
 
-def test_the_last_document_approval_can_be_what_finishes_it(client, tenant):
+def test_the_last_document_approval_can_be_what_finishes_it(portal, client, tenant):
     """Whichever half finishes last has to be the one that completes them, so
     completion is checked on the document review as well as the checklist."""
     emp = make_employee(tenant, password="EmpPass123")
@@ -253,10 +253,10 @@ def test_the_last_document_approval_can_be_what_finishes_it(client, tenant):
         tenant.put(f"/api/onboarding/{item['id']}", json={"is_completed": True})
     assert tenant.get(f"/api/employees/{emp['id']}").json()["status"] == "onboarding"
 
-    client.post("/api/employee/auth/login",
+    portal.post("/api/employee/auth/login",
                 json={"email": emp["email"], "password": "EmpPass123"})
-    for row in client.get("/api/employee/document-requests").json()["requests"]:
-        client.post(f"/api/employee/document-requests/{row['id']}/upload", json={
+    for row in portal.get("/api/employee/document-requests").json()["requests"]:
+        portal.post(f"/api/employee/document-requests/{row['id']}/upload", json={
             "file_name": "d.pdf", "file_type": "application/pdf",
             "file_data": "JVBERi0xLjQK",
             "expires_on": "2030-01-01" if row["requires_expiry"] else "",
@@ -268,13 +268,13 @@ def test_the_last_document_approval_can_be_what_finishes_it(client, tenant):
     assert tenant.get(f"/api/employees/{emp['id']}").json()["status"] == "active"
 
 
-def test_a_rejected_document_puts_them_back_in_paperwork(client, tenant):
+def test_a_rejected_document_puts_them_back_in_paperwork(portal, client, tenant):
     emp = make_employee(tenant, password="EmpPass123")
-    client.post("/api/employee/auth/login",
+    portal.post("/api/employee/auth/login",
                 json={"email": emp["email"], "password": "EmpPass123"})
-    rows = client.get("/api/employee/document-requests").json()["requests"]
+    rows = portal.get("/api/employee/document-requests").json()["requests"]
     first = next(r for r in rows if r["is_mandatory"])
-    client.post(f"/api/employee/document-requests/{first['id']}/upload", json={
+    portal.post(f"/api/employee/document-requests/{first['id']}/upload", json={
         "file_name": "d.pdf", "file_type": "application/pdf", "file_data": "JVBERi0xLjQK",
         "expires_on": "2030-01-01" if first["requires_expiry"] else "",
     })

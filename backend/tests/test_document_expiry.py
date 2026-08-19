@@ -44,14 +44,14 @@ def expiring_requirement(tenant):
 
 
 @pytest.fixture
-def staffer(client, tenant, expiring_requirement):
+def staffer(portal, client, tenant, expiring_requirement):
     emp = make_employee(tenant, password="EmpPass123")
-    client.post("/api/employee/auth/login", json={"email": emp["email"], "password": "EmpPass123"})
+    portal.post("/api/employee/auth/login", json={"email": emp["email"], "password": "EmpPass123"})
     return emp
 
 
-def visa_request(client):
-    rows = client.get("/api/employee/document-requests").json()["requests"]
+def visa_request(portal, client):
+    rows = portal.get("/api/employee/document-requests").json()["requests"]
     return next(r for r in rows if r["name"] == "Right to work visa")
 
 
@@ -75,24 +75,24 @@ def test_requirement_defaults_to_no_expiry(tenant):
     assert row["requires_expiry"] is False
 
 
-def test_the_flag_reaches_the_employees_request(client, staffer):
-    assert visa_request(client)["requires_expiry"] is True
+def test_the_flag_reaches_the_employees_request(portal, client, staffer):
+    assert visa_request(portal, client)["requires_expiry"] is True
 
 
 # --- employee supplies the date --------------------------------------------
 
-def test_upload_is_refused_without_an_expiry_date(client, staffer):
-    req = visa_request(client)
-    res = client.post(f"/api/employee/document-requests/{req['id']}/upload", json={
+def test_upload_is_refused_without_an_expiry_date(portal, client, staffer):
+    req = visa_request(portal, client)
+    res = portal.post(f"/api/employee/document-requests/{req['id']}/upload", json={
         "file_name": "visa.pdf", "file_type": "application/pdf", "file_data": b64(),
     })
     assert res.status_code == 400
     assert "needs an expiry date" in res.json()["detail"]
 
 
-def test_an_already_expired_document_is_refused(client, staffer):
-    req = visa_request(client)
-    res = client.post(f"/api/employee/document-requests/{req['id']}/upload", json={
+def test_an_already_expired_document_is_refused(portal, client, staffer):
+    req = visa_request(portal, client)
+    res = portal.post(f"/api/employee/document-requests/{req['id']}/upload", json={
         "file_name": "visa.pdf", "file_type": "application/pdf",
         "file_data": b64(), "expires_on": past(10),
     })
@@ -100,9 +100,9 @@ def test_an_already_expired_document_is_refused(client, staffer):
     assert "already expired" in res.json()["detail"]
 
 
-def test_a_malformed_date_is_refused(client, staffer):
-    req = visa_request(client)
-    res = client.post(f"/api/employee/document-requests/{req['id']}/upload", json={
+def test_a_malformed_date_is_refused(portal, client, staffer):
+    req = visa_request(portal, client)
+    res = portal.post(f"/api/employee/document-requests/{req['id']}/upload", json={
         "file_name": "visa.pdf", "file_type": "application/pdf",
         "file_data": b64(), "expires_on": "next tuesday",
     })
@@ -110,10 +110,10 @@ def test_a_malformed_date_is_refused(client, staffer):
     assert "YYYY-MM-DD" in res.json()["detail"]
 
 
-def test_upload_with_a_valid_expiry_is_recorded(client, tenant, staffer):
-    req = visa_request(client)
+def test_upload_with_a_valid_expiry_is_recorded(portal, client, tenant, staffer):
+    req = visa_request(portal, client)
     expiry = future(400)
-    res = client.post(f"/api/employee/document-requests/{req['id']}/upload", json={
+    res = portal.post(f"/api/employee/document-requests/{req['id']}/upload", json={
         "file_name": "visa.pdf", "file_type": "application/pdf",
         "file_data": b64(), "expires_on": expiry,
     })
@@ -126,10 +126,10 @@ def test_upload_with_a_valid_expiry_is_recorded(client, tenant, staffer):
     assert row["days_until_expiry"] > 300
 
 
-def test_a_document_without_expiry_does_not_demand_one(client, staffer):
-    rows = client.get("/api/employee/document-requests").json()["requests"]
+def test_a_document_without_expiry_does_not_demand_one(portal, client, staffer):
+    rows = portal.get("/api/employee/document-requests").json()["requests"]
     plain = next(r for r in rows if not r["requires_expiry"])
-    res = client.post(f"/api/employee/document-requests/{plain['id']}/upload", json={
+    res = portal.post(f"/api/employee/document-requests/{plain['id']}/upload", json={
         "file_name": "id.pdf", "file_type": "application/pdf", "file_data": b64(),
     })
     assert res.status_code == 200
@@ -137,7 +137,7 @@ def test_a_document_without_expiry_does_not_demand_one(client, staffer):
 
 # --- templates -------------------------------------------------------------
 
-def test_hr_attaches_a_template_and_the_employee_can_fetch_it(client, tenant, expiring_requirement, staffer):
+def test_hr_attaches_a_template_and_the_employee_can_fetch_it(portal, client, tenant, expiring_requirement, staffer):
     res = tenant.post(f"/api/onboarding/requirements/{expiring_requirement['id']}/template", json={
         "file_name": "visa-form.pdf", "file_type": "application/pdf", "file_data": b64(),
     })
@@ -149,7 +149,7 @@ def test_hr_attaches_a_template_and_the_employee_can_fetch_it(client, tenant, ex
     assert row["template_file_name"] == "visa-form.pdf"
 
     # The employee sees it exists and can download it.
-    mine = visa_request(client)
+    mine = visa_request(portal, client)
     assert mine["has_template"] is True
     got = client.get(f"/api/onboarding/requirements/{expiring_requirement['id']}/template")
     assert got.status_code == 200
@@ -189,9 +189,9 @@ def test_templates_are_tenant_scoped(client, tenant, expiring_requirement):
 
 # --- the watchlist ---------------------------------------------------------
 
-def approve_with_expiry(client, tenant, expiry):
-    req = visa_request(client)
-    client.post(f"/api/employee/document-requests/{req['id']}/upload", json={
+def approve_with_expiry(portal, client, tenant, expiry):
+    req = visa_request(portal, client)
+    portal.post(f"/api/employee/document-requests/{req['id']}/upload", json={
         "file_name": "visa.pdf", "file_type": "application/pdf",
         "file_data": b64(), "expires_on": expiry,
     })
@@ -199,33 +199,33 @@ def approve_with_expiry(client, tenant, expiry):
     return req
 
 
-def test_a_document_expiring_soon_is_flagged(client, tenant, staffer):
-    approve_with_expiry(client, tenant, future(20))
+def test_a_document_expiring_soon_is_flagged(portal, client, tenant, staffer):
+    approve_with_expiry(portal, client, tenant, future(20))
     data = tenant.get("/api/onboarding/expiring-documents?days=60").json()
     assert data["expiring"], "a document 20 days out should be on the watchlist"
     assert data["expiring"][0]["employee_name"]
     assert data["expiring"][0]["days_until_expiry"] <= 20
 
 
-def test_a_far_future_document_is_not_flagged(client, tenant, staffer):
-    approve_with_expiry(client, tenant, future(400))
+def test_a_far_future_document_is_not_flagged(portal, client, tenant, staffer):
+    approve_with_expiry(portal, client, tenant, future(400))
     data = tenant.get("/api/onboarding/expiring-documents?days=60").json()
     assert not data["expiring"]
     assert not data["expired"]
 
 
-def test_expiry_state_is_derived_not_stored(client, tenant, staffer):
+def test_expiry_state_is_derived_not_stored(portal, client, tenant, staffer):
     """Storing a flag would go stale the day after it was written."""
-    req = approve_with_expiry(client, tenant, future(10))
+    req = approve_with_expiry(portal, client, tenant, future(10))
     row = next(r for r in tenant.get(f"/api/employees/{staffer['id']}/document-requests").json()
                if r["id"] == req["id"])
     assert row["expiring_soon"] is True      # inside the 45-day reminder window
     assert row["is_expired"] is False
 
 
-def test_watchlist_is_tenant_scoped(client, tenant, staffer):
-    approve_with_expiry(client, tenant, future(15))
-    client.post("/api/employee/auth/logout")
+def test_watchlist_is_tenant_scoped(portal, client, tenant, staffer):
+    approve_with_expiry(portal, client, tenant, future(15))
+    portal.post("/api/employee/auth/logout")
     client.post("/api/client/register", json={"email": "rival-exp@example.com", "password": "Passw0rdTest"})
     client.post("/api/client/login", json={"email": "rival-exp@example.com", "password": "Passw0rdTest"})
     data = client.get("/api/onboarding/expiring-documents").json()

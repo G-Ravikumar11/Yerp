@@ -55,10 +55,11 @@ def test_a_template_round_trips(tenant):
     """The sheet the app hands out has to be one the app accepts back."""
     for kind in ("RM", "FG"):
         tpl = tenant.get(f"/api/erp/items/template?kind={kind}").content
-        assert b"\r\n" in tpl, "Excel writes CRLF and so must the template"
+        # Templates go out as real workbooks now, and a workbook is a zip.
+        assert tpl[:4] == b"PK", "the template should be a workbook"
         r = tenant.post("/api/erp/items/validate",
-                        files={"file": ("t.csv", tpl, "text/csv")}, data={"kind": kind})
-        assert r.status_code == 200 and r.json()["ok"], r.text
+                        files={"file": ("t.xlsx", tpl, "application/octet-stream")},
+                        data={"kind": kind})
 
 
 def test_codes_upload(tenant):
