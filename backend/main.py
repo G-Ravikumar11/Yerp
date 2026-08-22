@@ -5011,7 +5011,13 @@ async def google_signin_start(request: Request, next: str = "/app.html"):
     redirect_uri = str(request.url_for("google_signin_callback"))
     if redirect_uri.startswith("http://") and "localhost" not in redirect_uri:
         redirect_uri = redirect_uri.replace("http://", "https://", 1)
-    return await oauth.google.authorize_redirect(request, redirect_uri)
+    # The scope is passed explicitly rather than inherited from the registered
+    # client, which also carries gmail.send. Signing in must not ask for
+    # permission to send mail: it is a sensitive scope, so Google would hold
+    # the whole sign-in behind app verification for the sake of a feature the
+    # person may never touch. Connecting Gmail asks for it separately.
+    return await oauth.google.authorize_redirect(
+        request, redirect_uri, scope=GOOGLE_SIGNIN_SCOPES)
 
 
 @app.get("/api/auth/google/callback", name="google_signin_callback")
