@@ -52,7 +52,11 @@ def test_a_manager_or_finance_can_maintain_the_master(tenant, role):
     sign_in(tenant, person)
     res = tenant.post("/api/erp/items", json={"kind": "RM", "item_name": "CONDUIT"})
     assert res.status_code == 200, res.text
-    assert res.json()["item_code"] == "RM0001"
+    # The code is issued from the system-wide series, so what matters is its
+    # shape rather than which number this test happened to draw.
+    issued = res.json()["item_code"]
+    assert len(issued) == main.CODE_LENGTH
+    assert not (set(issued) - set(main.CODE_ALPHABET))
 
 
 @pytest.mark.parametrize("role", ["staff", "supervisor", "hr_admin"])
@@ -143,7 +147,7 @@ ITEM_HEADER = ["Item Code", "Item Name", "Segment", "Description", "Category",
 
 def test_a_workbook_is_read(tenant):
     payload = workbook(ITEM_HEADER,
-        ["RM1", "20MM CONDUIT", "", "", "RAW MATERIAL", "RM", "3917", "18%",
+        ["ARM001", "20MM CONDUIT", "", "", "RAW MATERIAL", "RM", "3917", "18%",
          "Purchased", "Meters", ""])
     res = tenant.post("/api/erp/items/analyse",
                       files={"file": ("items.xlsx", payload,
@@ -155,7 +159,7 @@ def test_a_workbook_is_read(tenant):
 def test_a_workbook_is_recognised_by_its_bytes_not_its_name(tenant):
     """People rename files; a workbook called .csv should still open."""
     payload = workbook(ITEM_HEADER,
-        ["RM1", "CONDUIT", "", "", "RAW MATERIAL", "RM", "", "", "Purchased", "Meters", ""])
+        ["ARM001", "CONDUIT", "", "", "RAW MATERIAL", "RM", "", "", "Purchased", "Meters", ""])
     res = tenant.post("/api/erp/items/analyse",
                       files={"file": ("mislabelled.csv", payload, "text/csv")})
     assert res.status_code == 200 and res.json()["detected"] == {"RM": 1}
@@ -175,7 +179,7 @@ def test_a_number_does_not_arrive_with_a_decimal_tail(tenant):
 
 def test_csv_still_works(tenant):
     csv = ("Item Code,Item Name,Category,Sub Category\r\n"
-           "RM1,CONDUIT,RAW MATERIAL,RM\r\n").encode("utf-8-sig")
+           "ARM001,CONDUIT,RAW MATERIAL,RM\r\n").encode("utf-8-sig")
     res = tenant.post("/api/erp/items/analyse", files={"file": ("i.csv", csv, "text/csv")})
     assert res.status_code == 200 and res.json()["detected"] == {"RM": 1}
 

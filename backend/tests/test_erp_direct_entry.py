@@ -7,6 +7,9 @@ issued, and every picker is built from the same list the server validates
 against. These tests hold that line.
 """
 
+import main
+
+
 
 def make_job(tenant, **over):
     payload = {"name": "Plot 7", "customer_name": "Acme", "status": "in_progress"}
@@ -23,45 +26,105 @@ def add(tenant, **over):
 # --- Codes are issued, not typed -------------------------------------------
 
 def test_a_code_is_issued_when_none_is_given(tenant):
-    assert add(tenant).json()["item_code"] == "RM0001"
-    assert add(tenant, item_name="25MM").json()["item_code"] == "RM0002"
+    code = add(tenant).json()["item_code"]
+    assert len(code) == main.CODE_LENGTH
+    assert not (set(code) - set(main.CODE_ALPHABET))
 
 
-def test_the_two_series_are_independent(tenant):
-    assert add(tenant, kind="RM").json()["item_code"] == "RM0001"
-    assert add(tenant, kind="FG", item_name="SUPPLY").json()["item_code"] == "FG0001"
+def test_codes_run_in_one_sequence(tenant):
+    """One series for everything. A code identifies an item, not an item of a
+    particular kind, so raw material and finished goods share the run."""
+    codes = [add(tenant, kind="RM").json()["item_code"],
+             add(tenant, kind="FG", item_name="SUPPLY").json()["item_code"],
+             add(tenant, kind="RM", item_name="MORE").json()["item_code"]]
+    assert len(set(codes)) == 3
+    # Sequential, so they sort in the order they were issued.
+    assert codes == sorted(codes)
 
 
-def test_the_next_code_can_be_asked_for_before_saving(tenant):
-    add(tenant)
-    assert tenant.get("/api/erp/items/next-code?kind=RM").json()["item_code"] == "RM0002"
+def test_every_code_is_six_characters_from_the_alphabet(tenant):
+    for _ in range(5):
+        code = add(tenant, item_name="X").json()["item_code"]
+        assert len(code) == 6
+        assert not (set(code) - set(main.CODE_ALPHABET))
+
+
+def test_the_alphabet_leaves_out_what_people_mistype(tenant):
+    """I and 1, O and 0 are the pairs that get read wrong off paper."""
+    for ambiguous in "ILOU":
+        assert ambiguous not in main.CODE_ALPHABET
+
+
+def test_the_next_code_can_be_seen_before_it_is_taken(tenant):
+    peek = tenant.get("/api/erp/items/next-code").json()
+    assert peek["preview"] is True
+    # Peeking twice does not burn a code, and the next save takes the one shown.
+    again = tenant.get("/api/erp/items/next-code").json()["item_code"]
+    assert again == peek["item_code"]
+    assert add(tenant).json()["item_code"] == peek["item_code"]
 
 
 def test_a_batch_does_not_issue_one_code_twice(tenant):
-    """Each row must claim its own number even though none are committed yet."""
     r = tenant.post("/api/erp/items/bulk", json={"items": [
         {"kind": "RM", "item_name": "A"},
-        {"kind": "RM", "item_name": "B"},
+        {"kind": "FG", "item_name": "B"},
         {"kind": "RM", "item_name": "C"}]}).json()
-    assert r["codes"] == ["RM0001", "RM0002", "RM0003"]
-    assert len(set(r["codes"])) == 3
+    assert len(set(r["codes"])) == 3, "each row takes its own number"
+    assert r["codes"] == sorted(r["codes"])
+    assert all(len(c) == main.CODE_LENGTH for c in r["codes"])
 
 
-def test_an_existing_scheme_can_still_be_typed(tenant):
-    assert add(tenant, item_code="LEGACY-77").json()["item_code"] == "LEGACY-77"
+def test_no_two_items_anywhere_share_a_code(client):
+    """The rule: one code, one item, across the whole system - not per tenant."""
+    import uuid as _uuid
+
+    def register():
+        email = "user-%s@example.com" % _uuid.uuid4().hex[:10]
+        client.post("/api/client/register", json={"email": email, "password": "Passw0rdTest"})
+        client.post("/api/client/login", json={"email": email, "password": "Passw0rdTest"})
+
+    register()
+    first = client.post("/api/erp/items", json={"kind": "RM", "item_name": "THEIRS"}).json()
+    register()
+    second = client.post("/api/erp/items", json={"kind": "RM", "item_name": "OURS"}).json()
+    assert first["item_code"] != second["item_code"], "the series continues across tenants"
+
+    # And the first tenant's code cannot be claimed by the second.
+    clash = client.post("/api/erp/items",
+                        json={"kind": "RM", "item_name": "CLASH",
+                              "item_code": first["item_code"]})
+    assert clash.status_code == 409
+
+
+def test_a_code_can_be_typed_if_it_fits_the_format(tenant):
+    assert add(tenant, item_code="ZZZ999").json()["item_code"] == "ZZZ999"
 
 
 def test_a_typed_code_that_clashes_is_refused(tenant):
-    add(tenant, item_code="LEGACY-77")
-    res = add(tenant, item_code="LEGACY-77", item_name="OTHER")
+    add(tenant, item_code="ZZZ999")
+    res = add(tenant, item_code="ZZZ999", item_name="OTHER")
     assert res.status_code == 409
     assert "already in use" in res.json()["detail"]
 
 
-def test_a_code_issued_around_a_gap_stays_free(tenant):
-    add(tenant, item_code="RM0005")
-    # Highest is 5, so the next issued is 6 - it does not reuse 1.
-    assert add(tenant, item_name="NEXT").json()["item_code"] == "RM0006"
+def test_a_typed_code_of_the_wrong_shape_is_refused(tenant):
+    assert add(tenant, item_code="TOOLONG1").status_code == 400
+    assert add(tenant, item_code="AB1").status_code == 400
+
+
+def test_the_letters_that_are_not_in_the_alphabet_are_translated(tenant):
+    """I, L, O and U are absent from the alphabet precisely because they get
+    typed for 1, 1, 0 and V. A code written with them is read, not refused."""
+    assert add(tenant, item_code="ZZZIII").json()["item_code"] == "ZZZ111"
+    assert add(tenant, item_code="ZZZOOO", item_name="X").json()["item_code"] == "ZZZ000"
+
+
+def test_a_typed_code_is_read_the_way_it_was_written(tenant):
+    """Somebody copying off paper types O for 0 and I for 1."""
+    made = add(tenant, item_code="zzz 0 0 1").json()
+    assert made["item_code"] == "ZZZ001"
+    # The same code typed with the lookalikes finds the one already there.
+    assert add(tenant, item_code="ZZZOO1", item_name="X").status_code == 409
 
 
 # --- Only valid values are accepted, from the same list the pickers use -----

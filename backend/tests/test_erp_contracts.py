@@ -43,10 +43,10 @@ def make_job(tenant, **over):
 
 
 def seed_codes(tenant):
-    upload_items(tenant, "RM", item_row("RM1", "20MM CONDUIT", "RM"),
-                 item_row("RM2", "20MM COUPLER", "RM", uom="Nos"))
-    upload_items(tenant, "FG", item_row("FG1", "20MM CONDUIT SUPPLY", "FG"),
-                 item_row("FG2", "INSTALLATION", "FG", itype="Service"))
+    upload_items(tenant, "RM", item_row("CRM001", "20MM CONDUIT", "RM"),
+                 item_row("CRM002", "20MM COUPLER", "RM", uom="Nos"))
+    upload_items(tenant, "FG", item_row("CFG001", "20MM CONDUIT SUPPLY", "FG"),
+                 item_row("CFG002", "INSTALLATION", "FG", itype="Service"))
 
 
 # --- Item master ------------------------------------------------------------
@@ -63,35 +63,35 @@ def test_a_template_round_trips(tenant):
 
 
 def test_codes_upload(tenant):
-    r = upload_items(tenant, "RM", item_row("RM1", "20MM CONDUIT", "RM"))
+    r = upload_items(tenant, "RM", item_row("CRM001", "20MM CONDUIT", "RM"))
     assert r.status_code == 200 and r.json()["created"] == 1, r.text
     assert tenant.get("/api/erp/items").json()["counts"]["RM"] == 1
 
 
 def test_a_duplicate_fg_code_is_refused(tenant):
-    upload_items(tenant, "FG", item_row("FG1", "SUPPLY", "FG"))
-    r = upload_items(tenant, "FG", item_row("FG1", "SUPPLY AGAIN", "FG")).json()
+    upload_items(tenant, "FG", item_row("CFG001", "SUPPLY", "FG"))
+    r = upload_items(tenant, "FG", item_row("CFG001", "SUPPLY AGAIN", "FG")).json()
     assert r["created"] == 0
     assert "unique" in r["errors"][0]["message"]
 
 
 def test_a_duplicate_rm_code_is_reused_not_refused(tenant):
-    upload_items(tenant, "RM", item_row("RM1", "20MM CONDUIT", "RM"))
-    r = upload_items(tenant, "RM", item_row("RM1", "20MM CONDUIT", "RM"),
-                     item_row("RM9", "90MM CONDUIT", "RM")).json()
+    upload_items(tenant, "RM", item_row("CRM001", "20MM CONDUIT", "RM"))
+    r = upload_items(tenant, "RM", item_row("CRM001", "20MM CONDUIT", "RM"),
+                     item_row("CRM009", "90MM CONDUIT", "RM")).json()
     assert r["ok"] is True
     assert r["created"] == 1, "the existing material is reused, the new one created"
     assert "reused" in r["warnings"][0]["message"]
 
 
 def test_a_code_repeated_inside_one_sheet_is_refused(tenant):
-    r = upload_items(tenant, "RM", item_row("RM1", "A", "RM"), item_row("RM1", "B", "RM")).json()
+    r = upload_items(tenant, "RM", item_row("CRM001", "A", "RM"), item_row("CRM001", "B", "RM")).json()
     assert r["created"] == 0
     assert "Duplicated in this file" in r["errors"][0]["message"]
 
 
 def test_the_wrong_category_for_the_kind_is_refused(tenant):
-    bad = item_row("FG1", "MISLABELLED", "RM")  # RAW MATERIAL on an FG upload
+    bad = item_row("CFG001", "MISLABELLED", "RM")  # RAW MATERIAL on an FG upload
     r = upload_items(tenant, "FG", bad).json()
     assert r["created"] == 0
     assert "FINISHED GOOD" in r["errors"][0]["message"]
@@ -103,17 +103,19 @@ def test_a_sheet_that_is_not_a_sheet_is_a_400_not_a_500(tenant):
     assert r.status_code == 400, r.text
 
 
-def test_codes_are_per_business(client):
+def test_a_code_belongs_to_one_item_everywhere(client):
     def register():
         email = f"user-{uuid.uuid4().hex[:10]}@example.com"
         client.post("/api/client/register", json={"email": email, "password": "Passw0rdTest"})
         client.post("/api/client/login", json={"email": email, "password": "Passw0rdTest"})
 
     register()
-    upload_items(client, "FG", item_row("FG1", "THEIRS", "FG"))
+    assert upload_items(client, "FG", item_row("CFG001", "THEIRS", "FG")).json()["created"] == 1
     register()
-    # The same code is free for another business to use.
-    assert upload_items(client, "FG", item_row("FG1", "OURS", "FG")).json()["created"] == 1
+    # One code, one item, everywhere. A second business cannot claim it.
+    second = upload_items(client, "FG", item_row("CFG001", "OURS", "FG")).json()
+    assert second["created"] == 0
+    assert "unique" in second["errors"][0]["message"]
 
 
 # --- Work orders ------------------------------------------------------------
@@ -123,8 +125,8 @@ def test_a_work_order_prices_the_sold_scope(tenant):
     job = make_job(tenant)
     r = tenant.post("/api/erp/work-orders",
                     files={"file": ("wo.csv", sheet(WO_HEADER,
-                           "FG1,20MM CONDUIT SUPPLY,supply,5000,Meters,62",
-                           "FG2,INSTALLATION,install,5000,Meters,18"), "text/csv")},
+                           "CFG001,20MM CONDUIT SUPPLY,supply,5000,Meters,62",
+                           "CFG002,INSTALLATION,install,5000,Meters,18"), "text/csv")},
                     data={"job_id": job["id"]}).json()
     assert r["work_order"]["total_value"] == 400000.0
     assert r["work_order"]["line_count"] == 2
@@ -137,7 +139,7 @@ def test_an_unknown_fg_code_is_the_gate(tenant):
     job = make_job(tenant)
     r = tenant.post("/api/erp/work-orders",
                     files={"file": ("wo.csv", sheet(WO_HEADER,
-                           "FGNOPE,GHOST,x,10,Nos,5"), "text/csv")},
+                           "ZZNOPE,GHOST,x,10,Nos,5"), "text/csv")},
                     data={"job_id": job["id"]}).json()
     assert r["work_order"] is None
     assert "Upload this FG code first" in r["errors"][0]["message"]
@@ -147,7 +149,7 @@ def test_an_rm_code_cannot_be_sold(tenant):
     seed_codes(tenant)
     job = make_job(tenant)
     r = tenant.post("/api/erp/work-orders",
-                    files={"file": ("wo.csv", sheet(WO_HEADER, "RM1,RAW,x,10,Meters,5"), "text/csv")},
+                    files={"file": ("wo.csv", sheet(WO_HEADER, "CRM001,RAW,x,10,Meters,5"), "text/csv")},
                     data={"job_id": job["id"]}).json()
     assert r["work_order"] is None, "raw material is not a deliverable"
 
@@ -159,11 +161,11 @@ def order_with_budget(tenant):
     job = make_job(tenant)
     wo = tenant.post("/api/erp/work-orders",
                      files={"file": ("wo.csv", sheet(WO_HEADER,
-                            "FG1,SUPPLY,supply,5000,Meters,62"), "text/csv")},
+                            "CFG001,SUPPLY,supply,5000,Meters,62"), "text/csv")},
                      data={"job_id": job["id"]}).json()["work_order"]
     tenant.post("/api/erp/bom",
                 files={"file": ("b.csv", sheet(BOM_HEADER,
-                       "FG1,RM1,20MM CONDUIT,5100,Meters,46"), "text/csv")},
+                       "CFG001,CRM001,20MM CONDUIT,5100,Meters,46"), "text/csv")},
                 data={"work_order_id": wo["id"]})
     return job, wo
 
@@ -181,7 +183,7 @@ def test_budgeting_a_line_that_was_never_sold_is_refused(tenant):
     job, wo = order_with_budget(tenant)
     r = tenant.post("/api/erp/bom",
                     files={"file": ("b.csv", sheet(BOM_HEADER,
-                           "FG2,RM1,X,10,Meters,5"), "text/csv")},
+                           "CFG002,CRM001,X,10,Meters,5"), "text/csv")},
                     data={"work_order_id": wo["id"]}).json()
     assert r["created"] == 0
     assert "Only sold lines can be budgeted" in r["errors"][0]["message"]
@@ -191,7 +193,7 @@ def test_re_uploading_replaces_rather_than_doubles(tenant):
     job, wo = order_with_budget(tenant)
     tenant.post("/api/erp/bom",
                 files={"file": ("b.csv", sheet(BOM_HEADER,
-                       "FG1,RM1,20MM CONDUIT,1000,Meters,10"), "text/csv")},
+                       "CFG001,CRM001,20MM CONDUIT,1000,Meters,10"), "text/csv")},
                 data={"work_order_id": wo["id"]})
     after = tenant.get(f"/api/erp/work-orders/{wo['id']}").json()
     assert after["budget_cost"] == 10000.0, "the second upload replaces the first"
@@ -201,7 +203,7 @@ def test_an_unknown_rm_code_is_refused(tenant):
     job, wo = order_with_budget(tenant)
     r = tenant.post("/api/erp/bom",
                     files={"file": ("b.csv", sheet(BOM_HEADER,
-                           "FG1,RMNOPE,GHOST,10,Meters,5"), "text/csv")},
+                           "CFG001,ZZNOPE,GHOST,10,Meters,5"), "text/csv")},
                     data={"work_order_id": wo["id"]}).json()
     assert "Upload this RM code first" in r["errors"][0]["message"]
 
@@ -213,7 +215,7 @@ def test_an_unbudgeted_order_cannot_be_sent_for_approval(tenant):
     job = make_job(tenant)
     wo = tenant.post("/api/erp/work-orders",
                      files={"file": ("wo.csv", sheet(WO_HEADER,
-                            "FG1,SUPPLY,supply,10,Meters,5"), "text/csv")},
+                            "CFG001,SUPPLY,supply,10,Meters,5"), "text/csv")},
                      data={"job_id": job["id"]}).json()["work_order"]
     r = tenant.post(f"/api/erp/work-orders/{wo['id']}/submit")
     assert r.status_code == 409

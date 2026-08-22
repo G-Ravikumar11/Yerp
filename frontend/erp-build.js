@@ -98,6 +98,24 @@ async function refreshRowCode(i) {
     } catch (e) { /* leave it; the server issues one on save */ }
 }
 
+/* Ask the server for the next number in the series. The button exists because
+   a code is a thing you are given, not a thing you invent - and somebody who
+   has cleared the field needs a way back to a valid one. */
+async function issueCode(index) {
+    try {
+        var r = await (await fetch('/api/erp/items/next-code')).json();
+        var offset = _newItems.slice(0, index).filter(function (row) {
+            return (row.item_code || '').length === (r.item_code || '').length;
+        }).length;
+        _newItems[index].item_code = offset ? '' : r.item_code;
+        // Rows above this one will take the numbers in between, so anything
+        // after the first is left blank and issued properly on save.
+        renderItemComposer();
+        if (offset) showToast('This row is issued its number when you save', 'info');
+    } catch (e) { showToast('Could not reach the code series', 'error'); }
+}
+window.issueCode = issueCode;
+
 function renderItemComposer() {
     var host = document.getElementById('item-composer');
     if (!host) return;

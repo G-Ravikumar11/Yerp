@@ -474,7 +474,10 @@ class DBItem(Base):
     """
     __tablename__ = "erp_items"
     __table_args__ = (
-        UniqueConstraint('client_id', 'kind', 'item_code', name='uq_client_item_code'),
+        # Unique across the whole system, not per tenant. A code is issued
+        # from one global sequence, so one code is one item everywhere and a
+        # code read off a delivery note never means two different things.
+        UniqueConstraint('item_code', name='uq_item_code'),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -493,6 +496,21 @@ class DBItem(Base):
     make = Column(String, default="")
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBCodeSequence(Base):
+    """The counter behind the issued codes.
+
+    A row per series, incremented under a row lock, so two people saving at the
+    same moment cannot be handed the same number. Deriving the next code by
+    scanning the items table instead would race exactly where it matters.
+    """
+    __tablename__ = "code_sequences"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False, index=True)
+    next_value = Column(Integer, default=1, nullable=False)
+    updated_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
 class DBWorkOrder(Base):

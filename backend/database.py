@@ -16,17 +16,30 @@ if not DATABASE_URL:
     print("WARNING: No DATABASE_URL found in .env, falling back to SQLite")
     DATABASE_URL = "sqlite:///./invoicing.db"
 
+# Neon closes idle connections and sits behind a pooler, so a connection left
+# in the pool is often already dead by the time it is handed back out.
+# pool_pre_ping spends one round trip checking, which is the difference
+# between a request working and a random OperationalError under light traffic.
+ENGINE_OPTIONS = {"pool_pre_ping": True}
+
 if DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+    # One file, many threads: FastAPI serves each request on its own.
+    ENGINE_OPTIONS["connect_args"] = {"check_same_thread": False}
 else:
-    engine = create_engine(
-        DATABASE_URL,
-        pool_size=2,
-        max_overflow=3,
-        pool_timeout=10,
-        pool_recycle=1800,
-        pool_pre_ping=True
-    )
+    ENGINE_OPTIONS.update({
+        # Recycle before Neon's own idle timeout rather than after it.
+        "pool_recycle": 280,
+        "pool_size": int(os.getenv("DB_POOL_SIZE", "5")),
+        "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "10")),
+        "pool_timeout": 30,
+    })
+    # Neon requires TLS. Its dashboard copies a URL with sslmode already on it,
+    # but a hand-typed one usually has not, and the failure then reads as a
+    # refused connection rather than anything about certificates.
+    if "sslmode=" not in DATABASE_URL:
+        DATABASE_URL += ("&" if "?" in DATABASE_URL else "?") + "sslmode=require"
+
+engine = create_engine(DATABASE_URL, **ENGINE_OPTIONS)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

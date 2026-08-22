@@ -77,6 +77,29 @@ def as_owner(client):
     return client
 
 
+@pytest.fixture(autouse=True)
+def _clear_global_codes():
+    """Empty the item master between tests.
+
+    Item codes are unique across the whole system, not per tenant, so unlike
+    every other table this one is a shared namespace. The suite runs on a
+    single database, so without this two tests that both use a literal code
+    collide - and the second one fails for a reason that has nothing to do
+    with what it is testing.
+    """
+    yield
+    session = database.SessionLocal()
+    try:
+        session.query(models.DBItem).delete()
+        # The sequence is deliberately left where it is. Resetting it made the
+        # next test reuse a code that an earlier test's work order still
+        # pointed at, and the item then looked to be in use. A real sequence
+        # never goes backwards either.
+        session.commit()
+    finally:
+        session.close()
+
+
 @pytest.fixture
 def portal():
     """A second browser.

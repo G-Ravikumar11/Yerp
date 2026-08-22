@@ -353,7 +353,7 @@ async def lifespan(app: FastAPI):
         if task:
             task.cancel()
 
-app = FastAPI(title="Accounting Platform API", lifespan=lifespan)
+app = FastAPI(title="Y ERP", lifespan=lifespan)
 
 class AdminAuth(AuthenticationBackend):
     async def login(self, request: Request) -> bool:
@@ -2801,9 +2801,16 @@ def suggest_free_code(code, taken):
     return None
 
 
-def item_codes_for(db, client_id, kind):
-    return {i.item_code.upper() for i in db.query(models.DBItem).filter(
-        models.DBItem.client_id == client_id, models.DBItem.kind == kind).all()}
+def item_codes_for(db, client_id=None, kind=None):
+    """Every code already issued, anywhere.
+
+    A code identifies one item across the whole system, so the check that a
+    code is free cannot be scoped to one tenant or one kind - it would let two
+    businesses hold the same code and a delivery note would stop being
+    unambiguous. Codes are issued from a single sequence, so in normal use two
+    tenants never come near each other's numbers anyway.
+    """
+    return {i.item_code.upper() for i in db.query(models.DBItem).all()}
 
 
 def validate_items(db, client_id, rows, kind):
@@ -3219,28 +3226,93 @@ def erp_items_commit(body: ItemCommitIn, request: Request, db: Session = Depends
 # out of another system.
 # ===========================================================================
 
-def next_item_code(db, client_id, kind, taken=None) -> str:
-    """The next free code in this tenant's series for this kind.
+# --- Serial codes -----------------------------------------------------------
+#
+# Six characters, issued in sequence, unique across the whole system.
+#
+# The alphabet is Crockford's base 32: the digits plus the letters, with I, L,
+# O and U left out. I and 1, O and 0 are the pairs people mistype off a printed
+# delivery note, and U is dropped because a random run of letters should not be
+# able to spell something unfortunate. Thirty-two symbols in six places is a
+# little over a billion codes, which is more than any one business will issue.
 
-    `taken` carries codes claimed earlier in the same batch. Without it a
-    second row would re-read the database, which has not been flushed yet, and
-    be issued the number the first row is already using.
+CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+CODE_LENGTH = 6
+CODE_CAPACITY = len(CODE_ALPHABET) ** CODE_LENGTH
+
+# What a person might type instead, when reading a code off paper.
+CODE_CONFUSIONS = {"I": "1", "L": "1", "O": "0", "U": "V"}
+
+
+def encode_serial(number: int) -> str:
+    """A counter as six symbols, most significant first, so codes sort in the
+    order they were issued."""
+    if number < 0 or number >= CODE_CAPACITY:
+        raise HTTPException(500, "The code series is exhausted.")
+    out = []
+    for _ in range(CODE_LENGTH):
+        number, remainder = divmod(number, len(CODE_ALPHABET))
+        out.append(CODE_ALPHABET[remainder])
+    return "".join(reversed(out))
+
+
+def normalise_code(raw) -> str:
+    """Read a code the way somebody typed it.
+
+    Lower case, spaces and hyphens are tidied away, and the four characters
+    that do not exist in the alphabet are mapped to the ones they are always
+    mistaken for - so 'rm-0O1' finds RM001 rather than nothing.
     """
-    prefix = kind.upper()
-    claimed = {c.upper() for c in (taken or set())}
-    highest = 0
-    for item in db.query(models.DBItem).filter(
-            models.DBItem.client_id == client_id,
-            models.DBItem.kind == prefix).all():
-        claimed.add((item.item_code or "").upper())
-    for code in claimed:
-        match = re.match(r"^" + prefix + r"0*(\d+)$", code)
-        if match:
-            highest = max(highest, int(match.group(1)))
-    candidate = highest + 1
-    while "%s%04d" % (prefix, candidate) in claimed:
-        candidate += 1
-    return "%s%04d" % (prefix, candidate)
+    text = re.sub(r"[^A-Za-z0-9]", "", str(raw or "")).upper()
+    return "".join(CODE_CONFUSIONS.get(c, c) for c in text)
+
+
+def next_serial(db, series: str = "item") -> int:
+    """Take the next number in a series, under a lock.
+
+    SELECT ... FOR UPDATE holds the row for the length of the transaction, so
+    two requests arriving together queue rather than both reading the same
+    value. SQLite ignores the hint and serialises writes anyway.
+    """
+    row = db.query(models.DBCodeSequence).filter(
+        models.DBCodeSequence.name == series).with_for_update().first()
+    if not row:
+        row = models.DBCodeSequence(name=series, next_value=1)
+        db.add(row)
+        db.flush()
+    value = row.next_value or 1
+    row.next_value = value + 1
+    row.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return value
+
+
+def issue_item_code(db, taken=None) -> str:
+    """The next unused code.
+
+    The sequence is the source of truth, but it is checked against what has
+    actually been issued: a restored backup or an imported code could otherwise
+    leave the counter behind the data, and the insert would fail on the unique
+    index rather than here where it can be explained.
+    """
+    claimed = {normalise_code(c) for c in (taken or set())}
+    for _ in range(64):
+        code = encode_serial(next_serial(db, "item"))
+        if code in claimed:
+            continue
+        if db.query(models.DBItem).filter(models.DBItem.item_code == code).first():
+            continue
+        return code
+    raise HTTPException(500, "Could not issue a free code; the series may need resetting.")
+
+
+def next_item_code(db, client_id=None, kind=None, taken=None) -> str:
+    """Kept for callers that still name a tenant and a kind.
+
+    Codes are no longer per tenant or per kind - one code is one item across
+    the whole system - so both arguments are ignored.
+    """
+    return issue_item_code(db, taken)
+
 
 
 class ItemIn(BaseModel):
@@ -3272,11 +3344,15 @@ def erp_vocabulary(request: Request, db: Session = Depends(get_db)):
 @app.get("/api/erp/items/next-code")
 def erp_next_item_code(request: Request, kind: str = "RM",
                        db: Session = Depends(get_db)):
-    client = require_items_access(request, db)
-    kind = kind.upper()
-    if kind not in ITEM_KINDS:
-        raise HTTPException(400, "kind must be RM or FG")
-    return {"kind": kind, "item_code": next_item_code(db, client.id, kind)}
+    require_items_access(request, db)
+    # Peek only: nothing is reserved until the item is saved, so a picker that
+    # is opened and abandoned does not burn a code.
+    row = db.query(models.DBCodeSequence).filter(
+        models.DBCodeSequence.name == "item").first()
+    return {"kind": (kind or "").upper(),
+            "item_code": encode_serial(row.next_value if row else 1),
+            "preview": True,
+            "format": "%d characters, %s" % (CODE_LENGTH, "".join(CODE_ALPHABET))}
 
 
 def build_item(db, client_id, body, taken):
@@ -3287,13 +3363,22 @@ def build_item(db, client_id, body, taken):
     if not name:
         raise HTTPException(400, "An item name is required")
 
-    typed = (body.item_code or "").strip().upper()
-    code = typed or next_item_code(db, client_id, kind, taken)
-    if code in taken:
-        if typed:
+    typed = normalise_code(body.item_code)
+    if typed:
+        if len(typed) != CODE_LENGTH:
             raise HTTPException(
-                409, code + " is already in use. Clear the code to be issued the next one.")
-        code = next_item_code(db, client_id, kind, taken)
+                400, "A code is exactly %d characters. Leave it blank to be issued one."
+                     % CODE_LENGTH)
+        if set(typed) - set(CODE_ALPHABET):
+            raise HTTPException(
+                400, "A code uses %s only." % "".join(CODE_ALPHABET))
+        if typed in taken or db.query(models.DBItem).filter(
+                models.DBItem.item_code == typed).first():
+            raise HTTPException(
+                409, typed + " is already in use. Leave the code blank to be issued the next one.")
+        code = typed
+    else:
+        code = issue_item_code(db, taken)
 
     unit = (body.units_of_measure or "").strip() or "Nos"
     if unit not in UNITS_OF_MEASURE:
@@ -3560,7 +3645,12 @@ def erp_list_items(request: Request, kind: str = "", q: str = "",
                    "category": i.category, "item_type": i.item_type,
                    "units_of_measure": i.units_of_measure, "hsn_code": i.hsn_code,
                    "item_tax_type": i.item_tax_type} for i in items],
-        "counts": {k: len(item_codes_for(db, client.id, k)) for k in ITEM_KINDS},
+        "counts": {
+            k: db.query(models.DBItem).filter(
+                models.DBItem.client_id == client.id,
+                models.DBItem.kind == k).count()
+            for k in ITEM_KINDS
+        },
     }
 
 
@@ -4882,6 +4972,97 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse(url="/login.html?error=callback_failed")
 
     return RedirectResponse(url=target_dashboard)
+
+
+# ============================================================================
+# SIGNING IN WITH GOOGLE
+#
+# Separate from the Gmail connection under /api/auth/*, which asks for
+# permission to send mail on a tenant's behalf. This asks only who somebody is.
+# Keeping them apart means granting one never quietly grants the other.
+# ============================================================================
+
+GOOGLE_SIGNIN_SCOPES = "openid email profile"
+
+
+def google_configured() -> bool:
+    return bool(os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET"))
+
+
+@app.get("/api/auth/google/status")
+def google_status():
+    """Whether the button should be offered at all.
+
+    A sign-in button that cannot work is worse than no button: people try it,
+    it fails, and they conclude the account is broken rather than unconfigured.
+    """
+    return {"configured": google_configured()}
+
+
+@app.get("/api/auth/google/start")
+async def google_signin_start(request: Request, next: str = "/app.html"):
+    if not google_configured():
+        # Back to the sign-in page with something readable, rather than a raw
+        # server error. Somebody can reach this from a stale tab long after the
+        # button stopped being offered.
+        return RedirectResponse("/login.html?error=google_unconfigured")
+    # Only a path on this site, so the redirect cannot be pointed elsewhere.
+    request.session["google_next"] = next if next.startswith("/") and not next.startswith("//") else "/app.html"
+    redirect_uri = str(request.url_for("google_signin_callback"))
+    if redirect_uri.startswith("http://") and "localhost" not in redirect_uri:
+        redirect_uri = redirect_uri.replace("http://", "https://", 1)
+    return await oauth.google.authorize_redirect(request, redirect_uri)
+
+
+@app.get("/api/auth/google/callback", name="google_signin_callback")
+async def google_signin_callback(request: Request, db: Session = Depends(get_db)):
+    """Come back from Google, work out who this is, and sign them in.
+
+    An address is matched against the account holders first and then against
+    the staff, so somebody who is both signs in as the owner - the same
+    precedence the password form uses.
+    """
+    try:
+        token = await oauth.google.authorize_access_token(request)
+    except Exception:
+        logger.exception("Google sign-in failed at the token exchange")
+        return RedirectResponse("/login.html?error=google_failed")
+
+    info = token.get("userinfo") or {}
+    email = (info.get("email") or "").strip().lower()
+    if not email:
+        return RedirectResponse("/login.html?error=google_no_email")
+    if info.get("email_verified") is False:
+        return RedirectResponse("/login.html?error=google_unverified")
+
+    target = request.session.pop("google_next", "/app.html")
+
+    client = db.query(models.DBClient).filter(
+        sqlfunc.lower(models.DBClient.email) == email).first()
+    if client:
+        if not client.is_active:
+            return RedirectResponse("/login.html?error=account_disabled")
+        request.session.pop("employee_id", None)
+        request.session.pop("employee_client_id", None)
+        request.session["client_id"] = client.id
+        log_login(db, client.id, email, "client", "google", request)
+        return RedirectResponse(target if client.is_onboarded else "/onboard.html")
+
+    emp = db.query(models.DBEmployee).filter(
+        sqlfunc.lower(models.DBEmployee.email) == email).first()
+    if emp and emp.status != "terminated":
+        request.session.pop("client_id", None)
+        request.session.pop("member_id", None)
+        request.session["employee_id"] = emp.id
+        request.session["employee_client_id"] = emp.client_id
+        log_login(db, emp.client_id, email, "employee", "google", request)
+        return RedirectResponse(target)
+
+    # Deliberately no account creation. On a system where HR issues the
+    # addresses, anyone with a Google account could otherwise let themselves
+    # in and land in a tenancy they have nothing to do with.
+    log_login(db, None, email, "google", "google", request, status="failed")
+    return RedirectResponse("/login.html?error=google_unknown")
 
 @app.get("/api/health")
 def health_check(db: Session = Depends(get_db)):
