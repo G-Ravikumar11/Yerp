@@ -4751,14 +4751,45 @@ async function requireAuth() {
 }
 window.requireAuth = requireAuth;
 
+/* Take the cover off, once there is something real underneath. */
+function openBootGate() {
+    var gate = document.getElementById('boot-gate');
+    if (gate) gate.remove();
+}
+window.openBootGate = openBootGate;
+
+/* Leave it up, and say why. A blank cover with no explanation is worse than
+   the broken page it is hiding. */
+function failBootGate(message) {
+    var msg = document.getElementById('boot-gate-msg');
+    var link = document.getElementById('boot-gate-link');
+    if (msg) msg.textContent = message;
+    if (link) link.style.display = 'inline';
+    var spinner = document.querySelector('#boot-gate div');
+    if (spinner) spinner.style.display = 'none';
+}
+window.failBootGate = failBootGate;
+
 document.addEventListener('DOMContentLoaded', async function() {
-    // Nothing else runs until we know there is a session, so the page
-    // never renders an empty shell behind a redirect.
-    if (!(await requireAuth())) return;
+    // Nothing renders until we know who is signed in. Before this, a failure
+    // anywhere in the boot left the static shell on screen - a full navigation
+    // and a dashboard of zeros - which reads as a working app with no data
+    // rather than as a page that did not load.
+    try {
+        if (!(await requireAuth())) return;
+    } catch (e) {
+        failBootGate('Could not reach the server.');
+        return;
+    }
     // The nav is built for the fullest case and then cut down, so a screen is
     // never briefly offered to somebody who cannot open it.
-    applyPermissions();
-    paintUserChip();
+    try {
+        applyPermissions();
+        paintUserChip();
+    } catch (e) {
+        console.error('Boot: could not build the navigation', e);
+    }
+    openBootGate();
 
     if (isEmployee()) {
         // Staff boot: none of the owner's setup below applies to them, and

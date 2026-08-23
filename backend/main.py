@@ -490,6 +490,13 @@ async def security_middleware(request: Request, call_next):
     if path.endswith(".html") or path == "/":
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
+    elif path.endswith((".js", ".css")):
+        # Revalidate rather than trusting a cached copy. Versioned URLs cover
+        # the normal case, but a browser holding an older script alongside a
+        # fresh page produces a half-working app that no amount of reloading
+        # fixes, and the person has no way to tell that is what they are
+        # looking at. One conditional request is a cheap price for that.
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"

@@ -28,10 +28,21 @@
         }}
       };
     </script>
-    <link rel="stylesheet" href="styles.css?v=56">
-    <link rel="stylesheet" href="mobile.css?v=56">
+    <link rel="stylesheet" href="styles.css?v=57">
+    <link rel="stylesheet" href="mobile.css?v=57">
 </head>
 <body>
+    <!-- Held back until the boot confirms who is signed in. See #boot-gate. -->
+    <div id="boot-gate" style="position:fixed;inset:0;z-index:9999;background:#f7f8fb;
+         display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;">
+        <div style="width:34px;height:34px;border:3px solid #e5e8ef;border-top-color:#4f46e5;
+             border-radius:50%;animation:bootspin .8s linear infinite;"></div>
+        <p id="boot-gate-msg" style="font:500 13px Inter,sans-serif;color:#5b6478;">Loading Y ERP…</p>
+        <a id="boot-gate-link" href="/login.html" style="display:none;font:600 13px Inter,sans-serif;
+           color:#4f46e5;text-decoration:underline;">Go to sign in</a>
+    </div>
+    <style>@keyframes bootspin{to{transform:rotate(360deg)}}</style>
+
     <a class="skip-link" href="#main-content-region">Skip to main content</a>
     <div id="toast-container"></div>
 
@@ -3416,20 +3427,20 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=56"></script>
+    <script src="app.js?v=57"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
-    <script src="staff-portal.js?v=56"></script>
+    <script src="staff-portal.js?v=57"></script>
     <!-- Jobs, job costing and purchase orders. -->
-    <script src="jobs.js?v=56"></script>
+    <script src="jobs.js?v=57"></script>
     <!-- Item master, work orders and budget allocation. -->
-    <script src="erp.js?v=56"></script>
+    <script src="erp.js?v=57"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
-    <script src="erp-build.js?v=56"></script>
+    <script src="erp-build.js?v=57"></script>
     <!-- The spreadsheet grid the item master is entered through. -->
-    <script src="erp-grid.js?v=56"></script>
+    <script src="erp-grid.js?v=57"></script>
     <!-- Preview and correct a sheet that arrived from outside. -->
-    <script src="erp-preview.js?v=56"></script>
+    <script src="erp-preview.js?v=57"></script>
 
     <!-- AI Core Orb -->
     <div class="ai-core" onclick="toggleAIChat()" role="button" tabindex="0" aria-label="Open the assistant" title="Ask the assistant" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAIChat();}">

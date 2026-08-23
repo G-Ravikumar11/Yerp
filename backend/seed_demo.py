@@ -115,13 +115,33 @@ def main_seed():
                       {"fg_code": fg[1], "rm_code": codes[2], "qty": 600, "rate": 12},
                       {"fg_code": fg[2], "rm_code": codes[3], "qty": 400, "rate": 18}]})
 
-        # A little money moving, so no screen opens empty.
+        # Money actually moving. Left as drafts these are correctly excluded
+        # from "invoiced", and the dashboard then opens on a wall of zeros that
+        # reads as a broken page rather than a quiet month.
+        first = c.post("/api/invoices", json={
+            "contact": "Fairview Homes", "email": "accounts@fairviewhomes.in",
+            "issue_date": "2026-07-02", "due_date": "2026-08-01",
+            "job_id": jobs[0]["id"], "tax_type": "exclusive",
+            "status": "Awaiting Payment",
+            "line_items": [{"description": "Groundworks and conduit, first run",
+                            "qty": 1, "price": 850000, "tax_rate": "18% GST"}]}).json()
+        # One settled, one outstanding, one overdue - so every headline figure
+        # on the dashboard has something behind it.
+        c.post("/api/invoices/%s/mark-paid" % first["number"])
+        c.post("/api/invoices", json={
+            "contact": "Aniprotech Infra", "email": "po@aniprotech.in",
+            "issue_date": "2026-08-05", "due_date": "2026-09-04",
+            "job_id": jobs[1]["id"], "tax_type": "exclusive",
+            "status": "Awaiting Payment",
+            "line_items": [{"description": "Substation conduit works",
+                            "qty": 1, "price": 420000, "tax_rate": "18% GST"}]})
         c.post("/api/invoices", json={
             "contact": "Fairview Homes", "email": "accounts@fairviewhomes.in",
-            "issue_date": "2026-08-01", "due_date": "2026-08-31",
+            "issue_date": "2026-06-01", "due_date": "2026-06-30",
             "job_id": jobs[0]["id"], "tax_type": "exclusive",
-            "line_items": [{"description": "Groundworks and conduit, first run",
-                            "qty": 1, "price": 850000, "tax_rate": "18% GST"}]})
+            "status": "Awaiting Payment",
+            "line_items": [{"description": "Site setup and mobilisation",
+                            "qty": 1, "price": 180000, "tax_rate": "18% GST"}]})
         c.post("/api/bills", json={
             "number": "BILL-0001", "vendor_name": "Travis Perkins",
             "issue_date": "2026-08-04", "due_date": "2026-09-03",
