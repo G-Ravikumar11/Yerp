@@ -2460,15 +2460,136 @@ def delete_job(job_id: int, request: Request, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+
+def cost_jobs(db, client_id, jobs):
+    """Every job on the list, costed, in a fixed number of queries.
+
+    Same figures as job_costing produces one at a time; this reads each table
+    once for the whole set and buckets the rows by job. Kept beside it rather
+    than replacing it, because a single job opened on its own is still cheaper
+    to cost directly.
+    """
+    if not jobs:
+        return []
+    ids = [j.id for j in jobs]
+
+    def bucket(rows, key="job_id"):
+        out = {}
+        for row in rows:
+            out.setdefault(getattr(row, key), []).append(row)
+        return out
+
+    invoices = bucket(db.query(models.DBInvoice).filter(
+        models.DBInvoice.client_id == client_id,
+        models.DBInvoice.job_id.in_(ids)).all())
+    bills = bucket(db.query(models.DBBill).filter(
+        models.DBBill.client_id == client_id,
+        models.DBBill.job_id.in_(ids)).all())
+    orders = bucket(db.query(models.DBPurchaseOrder).filter(
+        models.DBPurchaseOrder.client_id == client_id,
+        models.DBPurchaseOrder.job_id.in_(ids)).all())
+    work_orders = bucket(db.query(models.DBWorkOrder).filter(
+        models.DBWorkOrder.client_id == client_id,
+        models.DBWorkOrder.job_id.in_(ids)).all())
+    attendance = bucket(db.query(models.DBAttendance).filter(
+        models.DBAttendance.client_id == client_id,
+        models.DBAttendance.job_id.in_(ids)).all())
+
+    wo_ids = [w.id for group in work_orders.values() for w in group]
+    bom_by_wo = {}
+    if wo_ids:
+        for line in db.query(models.DBBomLine).filter(
+                models.DBBomLine.work_order_id.in_(wo_ids)).all():
+            bom_by_wo.setdefault(line.work_order_id, []).append(line)
+
+    rates = {e.id: (e.hourly_rate or 0.0) for e in db.query(models.DBEmployee).filter(
+        models.DBEmployee.client_id == client_id).all()}
+    managers = {e.id: employee_name(e) for e in db.query(models.DBEmployee).filter(
+        models.DBEmployee.client_id == client_id).all()}
+
+    out = []
+    for job in jobs:
+        live_invoices = [i for i in invoices.get(job.id, []) if i.status != "Void"]
+        invoiced = money(sum(invoice_total(i) for i in live_invoices))
+        received = money(sum(i.paid or 0 for i in live_invoices))
+
+        real_bills = [b for b in bills.get(job.id, [])
+                      if (b.approval_status or "none") != "rejected" and b.status != "Cancelled"]
+        spent = money(sum(b.total or 0 for b in real_bills))
+        unpaid = money(sum((b.total or 0) - (b.amount_paid or 0) for b in real_bills))
+        billed_po_ids = {b.purchase_order_id for b in real_bills if b.purchase_order_id}
+
+        open_orders = [o for o in orders.get(job.id, [])
+                       if (o.approval_status or "none") == "approved"
+                       and o.id not in billed_po_ids
+                       and o.status not in ("Closed", "Cancelled")]
+        committed = money(sum(o.total or 0 for o in open_orders))
+
+        days = attendance.get(job.id, [])
+        hours = round(sum(d.total_hours or 0.0 for d in days), 2)
+        labour = money(sum((d.total_hours or 0.0) * rates.get(d.employee_id, 0.0) for d in days))
+
+        live_wos = [w for w in work_orders.get(job.id, [])
+                    if (w.approval_status or "none") != "rejected"]
+        ordered = money(sum(w.total_value or 0 for w in live_wos))
+        budgeted = money(sum(l.amount or 0 for w in live_wos
+                             for l in bom_by_wo.get(w.id, [])))
+
+        quoted = money(job.quoted_value or 0) or ordered
+        total_cost = money(spent + labour)
+        profit = money(invoiced - total_cost)
+        budget = money(job.budget or 0)
+
+        out.append({
+            "id": job.id, "number": job.number, "name": job.name,
+            "customer_name": job.customer_name or "", "contact_id": job.contact_id,
+            "site_address": job.site_address or "", "description": job.description or "",
+            "status": job.status or "quoting",
+            "start_date": job.start_date or "", "target_end_date": job.target_end_date or "",
+            "completed_at": job.completed_at or "",
+            "quoted_value": job.quoted_value or 0.0, "budget": job.budget or 0.0,
+            "currency": job.currency or "", "reference": job.reference or "",
+            "manager_id": job.manager_id,
+            "manager_name": managers.get(job.manager_id, ""),
+            "created_at": job.created_at or "",
+            "costing": {
+                "quoted": quoted, "budget": budget,
+                "invoiced": invoiced, "received": received,
+                "outstanding": money(invoiced - received),
+                "spent": spent, "unpaid_bills": unpaid, "committed": committed,
+                "labour_cost": labour, "labour_hours": hours,
+                "total_cost": total_cost,
+                "forecast_cost": money(total_cost + committed),
+                "profit": profit,
+                "margin_percent": round(profit / invoiced * 100, 1) if invoiced else 0.0,
+                "budget_remaining": money(budget - total_cost - committed) if budget else 0.0,
+                "over_budget": bool(budget and (total_cost + committed) > budget),
+                "ordered": ordered, "budgeted": budgeted,
+                "expected_margin": money(ordered - budgeted) if budgeted else 0.0,
+                "counts": {
+                    "invoices": len(live_invoices), "bills": len(real_bills),
+                    "open_orders": len(open_orders), "work_orders": len(live_wos),
+                },
+            },
+        })
+    return out
+
+
 @app.get("/api/jobs-summary")
 def jobs_summary(request: Request, db: Session = Depends(get_db)):
-    """The board: every live job with what it is making, worst margin first."""
+    """The board: every live job with what it is making, worst margin first.
+
+    Costed in bulk. Asking job_costing for each job in turn issued roughly
+    seven queries per row, so a business with fifty live jobs spent three
+    hundred and fifty round trips drawing one screen - and every job added made
+    it worse. Everything is read once here and grouped in memory instead.
+    """
     client = get_client_user(request, db)
     jobs = db.query(models.DBJob).filter(
         models.DBJob.client_id == client.id,
         ~models.DBJob.status.in_(JOB_CLOSED_STATUSES),
     ).all()
-    rows = [job_to_dict(db, j, costing=True) for j in jobs]
+    rows = cost_jobs(db, client.id, jobs)
     rows.sort(key=lambda r: r["costing"]["margin_percent"])
     totals = {
         "invoiced": money(sum(r["costing"]["invoiced"] for r in rows)),
@@ -2801,16 +2922,29 @@ def suggest_free_code(code, taken):
     return None
 
 
-def item_codes_for(db, client_id=None, kind=None):
-    """Every code already issued, anywhere.
+def codes_in_use(db, codes) -> set:
+    """Which of these codes already belong to something.
 
-    A code identifies one item across the whole system, so the check that a
-    code is free cannot be scoped to one tenant or one kind - it would let two
-    businesses hold the same code and a delivery note would stop being
-    unambiguous. Codes are issued from a single sequence, so in normal use two
-    tenants never come near each other's numbers anyway.
+    Asks about the codes in hand rather than loading the item master to find
+    out. The earlier version pulled every row in the system on each call - fine
+    with a demo, ruinous once a business has a hundred thousand parts, and it
+    ran on every save. The lookup is an indexed IN, chunked because databases
+    have a ceiling on how many bind parameters one statement may carry.
     """
-    return {i.item_code.upper() for i in db.query(models.DBItem).all()}
+    wanted = {normalise_code(c) for c in codes if c}
+    if not wanted:
+        return set()
+    found, batch = set(), 900
+    ordered = list(wanted)
+    for start in range(0, len(ordered), batch):
+        chunk = ordered[start:start + batch]
+        found.update(row[0].upper() for row in db.query(models.DBItem.item_code).filter(
+            models.DBItem.item_code.in_(chunk)).all())
+    return found
+
+
+def code_is_free(db, code) -> bool:
+    return normalise_code(code) not in codes_in_use(db, [code])
 
 
 def validate_items(db, client_id, rows, kind):
@@ -2822,7 +2956,7 @@ def validate_items(db, client_id, rows, kind):
     existing master kept, and the upload still goes through.
     """
     errors, warnings, seen = [], [], {}
-    already = item_codes_for(db, client_id, kind)
+    already = codes_in_use(db, [r.get("item_code") for r in rows])
     expected_cat, expected_sub = CATEGORY_BY_KIND[kind], kind
 
     for row in rows:
@@ -3113,7 +3247,8 @@ async def erp_items_analyse(request: Request, file: UploadFile = File(...),
     # Duplicates are judged per kind, because RM and FG codes are separate
     # series and the same digits in each are two different things.
     counts, seen_by_kind = {}, {"RM": {}, "FG": {}}
-    taken_by_kind = {k: item_codes_for(db, client.id, k) for k in ITEM_KINDS}
+    on_file = codes_in_use(db, [r.get("item_code") for r in rows])
+    taken_by_kind = {k: on_file for k in ITEM_KINDS}
     for row in rows:
         k = row.get("_kind")
         if not k:
@@ -3162,7 +3297,8 @@ def erp_items_commit(body: ItemCommitIn, request: Request, db: Session = Depends
     """
     client = require_items_access(request, db)
     seen_by_kind = {"RM": {}, "FG": {}}
-    taken_by_kind = {k: item_codes_for(db, client.id, k) for k in ITEM_KINDS}
+    on_file = codes_in_use(db, [r.get("item_code") for r in body.rows])
+    taken_by_kind = {k: set(on_file) for k in ITEM_KINDS}
     errors, created, reused = [], 0, 0
 
     for row in body.rows:
@@ -3411,8 +3547,7 @@ def item_row(item):
 @app.post("/api/erp/items")
 def erp_create_item(body: ItemIn, request: Request, db: Session = Depends(get_db)):
     client = require_items_access(request, db)
-    taken = item_codes_for(db, client.id, (body.kind or "").upper())
-    item = build_item(db, client.id, body, taken)
+    item = build_item(db, client.id, body, set())
     log_audit(db, client.id, "erp_item_created", "item", None, item.item_code,
               item.item_name, request)
     db.commit()
@@ -3435,12 +3570,13 @@ def erp_create_items_bulk(body: ItemBulkIn, request: Request,
     client = require_items_access(request, db)
     if not body.items:
         raise HTTPException(400, "Nothing to save")
-    taken = {k: item_codes_for(db, client.id, k) for k in ITEM_KINDS}
+    # One set for the whole batch: codes are a single series now, so a row
+    # cannot take a number just because it is a different kind.
+    claimed = set()
     created = []
     try:
         for row in body.items:
-            created.append(build_item(db, client.id, row,
-                                      taken[(row.kind or "").upper()]))
+            created.append(build_item(db, client.id, row, claimed))
     except HTTPException:
         db.rollback()
         raise
@@ -9729,7 +9865,7 @@ def send_payslip_email(ps_id: int, request: Request, background_tasks: Backgroun
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
     if not emp.email or not validate_email_address(emp.email):
-        raise HTTPException(status_code=400, detail=f"Invalid employee email address")
+        raise HTTPException(status_code=400, detail="Invalid employee email address")
 
     settings_rows = db.query(models.DBSettings).filter(models.DBSettings.client_id == client.id).all()
     settings_map = {s.key: s.value for s in settings_rows}
