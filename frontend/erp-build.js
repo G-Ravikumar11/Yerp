@@ -458,3 +458,76 @@ async function openWorkOrderBuilder() {
     await startWorkOrderBuilder();
 }
 window.openWorkOrderBuilder = openWorkOrderBuilder;
+
+/* =========================================================================
+   THE ITEM MASTER AS A SHEET
+
+   The grid is mounted when the screen opens rather than waiting for a button,
+   because an empty panel that needs a click first is the thing people said
+   was missing. Codes are deliberately not a column you can type in: they are
+   issued on save, so the sheet shows what each row will be given.
+   ========================================================================= */
+
+async function mountItemGrid() {
+    var host = document.getElementById('item-grid');
+    if (!host || typeof mountGrid !== 'function') return;
+    var v = await vocabulary();
+    var next = '';
+    try {
+        next = (await (await fetch('/api/erp/items/next-code')).json()).item_code;
+    } catch (e) { /* shown as a dash below */ }
+
+    mountGrid('item-grid', [
+        { key: 'kind', label: 'Kind', width: '80px',
+          options: ['RM', 'FG'], def: 'RM' },
+        { key: 'item_code', label: 'Code', width: '90px', readonly: true,
+          hint: 'issued', placeholder: next || '—' },
+        { key: 'item_name', label: 'Item name', width: '260px',
+          placeholder: 'What is it?' },
+        { key: 'item_type', label: 'Type', width: '120px',
+          options: v.item_types || ['Purchased', 'Service'], def: 'Purchased' },
+        { key: 'units_of_measure', label: 'Unit', width: '110px',
+          options: v.units || ['Nos'], def: 'Nos' },
+        { key: 'hsn_code', label: 'HSN', width: '90px' },
+        { key: 'item_tax_type', label: 'Tax', width: '90px',
+          options: v.tax_rates || ['18%'], def: '18%' },
+    ], { minRows: 8 });
+}
+window.mountItemGrid = mountItemGrid;
+
+async function saveGridItems() {
+    var rows = (typeof gridData === 'function' ? gridData() : [])
+        .filter(function (r) { return (r.item_name || '').trim(); });
+    var out = document.getElementById('grid-result');
+    if (!rows.length) {
+        showToast('Give at least one row an item name', 'error');
+        return;
+    }
+    try {
+        var res = await fetch('/api/erp/items/bulk', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items: rows.map(function (r) {
+                return { kind: r.kind, item_name: r.item_name,
+                         item_type: r.item_type, units_of_measure: r.units_of_measure,
+                         hsn_code: r.hsn_code, item_tax_type: r.item_tax_type };
+            }) })
+        });
+        var data = await res.json();
+        if (!res.ok) {
+            out.innerHTML = '<div class="border border-red-300 bg-red-50 rounded-lg p-3 ' +
+                'text-[13px] text-red-800">' + esc(data.detail || 'Nothing was saved') + '</div>';
+            showToast(data.detail || 'Nothing was saved', 'error');
+            return;
+        }
+        /* The codes it was given, listed, because they were issued rather than
+           chosen and the person has not seen them before. */
+        out.innerHTML = '<div class="border border-emerald-300 bg-emerald-50 rounded-lg p-3 ' +
+            'text-[13px] text-emerald-900">' + esc(data.message) +
+            ' <span class="font-mono">' + data.codes.map(esc).join(', ') + '</span></div>';
+        showToast(data.message, 'success');
+        gridReset();
+        loadItems();
+        mountItemGrid();
+    } catch (e) { showToast('Could not save those rows', 'error'); }
+}
+window.saveGridItems = saveGridItems;

@@ -28,8 +28,8 @@
         }}
       };
     </script>
-    <link rel="stylesheet" href="styles.css?v=54">
-    <link rel="stylesheet" href="mobile.css?v=54">
+    <link rel="stylesheet" href="styles.css?v=55">
+    <link rel="stylesheet" href="mobile.css?v=55">
 </head>
 <body>
     <a class="skip-link" href="#main-content-region">Skip to main content</a>
@@ -2737,33 +2737,34 @@
                     </div>
                     <div class="stats-grid" id="items-stats"></div>
 
-                    <!-- Adding a code is a form, not a file. The code is issued, and the
-                         units and types come from the same lists the server validates
-                         against, so an invalid item cannot be entered in the first place.
-                         Import is kept for migrating out of another system. -->
+                    <!-- The sheet is the screen. People know how to work a spreadsheet;
+                         taking the file away and replacing it with a form loses the
+                         keyboard, loses paste, and loses seeing twenty rows at once.
+                         So the grid is here on arrival, not behind a button. -->
                     <div class="bg-white border border-slate-200 rounded-xl mt-5 overflow-hidden">
-                        <div class="flex items-start justify-between gap-4 px-5 py-3.5 border-b border-slate-200">
+                        <div class="flex flex-wrap items-start justify-between gap-3 px-5 py-3.5 border-b border-slate-200">
                             <div>
                                 <h3 class="font-semibold text-ink">Add codes</h3>
                                 <p class="text-xxs text-ink-soft mt-0.5">
-                                    Type them straight in. Codes are issued automatically and the
-                                    pickers only offer values that will be accepted.
+                                    Type or paste straight in. Codes are issued when you save,
+                                    and the pickers only offer values that will be accepted.
                                 </p>
                             </div>
-                            <div class="flex gap-2 shrink-0">
-                                <button class="btn btn-primary btn-sm" onclick="startNewItems('RM')">+ Raw material</button>
-                                <button class="btn btn-primary btn-sm" onclick="startNewItems('FG')">+ Finished goods</button>
+                            <div class="flex flex-wrap gap-2 shrink-0">
+                                <button class="btn btn-primary btn-sm" onclick="saveGridItems()">Save rows</button>
+                                <button class="btn btn-outline btn-sm" onclick="gridReset()">Clear</button>
                                 <button class="btn btn-outline btn-sm" onclick="toggleImportPanel()">Import a file</button>
                             </div>
                         </div>
                         <div class="p-5">
-                            <div id="item-composer"></div>
+                            <div id="item-grid"></div>
+                            <div id="grid-result" class="mt-3"></div>
 
-                            <!-- Secondary: bulk migration from another system. -->
-                            <div id="import-panel" hidden class="mt-4 pt-4 border-t border-slate-200">
+                            <!-- Secondary: bringing a list across from another system. -->
+                            <div id="import-panel" hidden class="mt-5 pt-5 border-t border-slate-200">
                                 <p class="text-xxs text-ink-soft mb-3">
-                                    For bringing a list across from another system. Columns are matched
-                                    by name and obvious corrections are applied and listed.
+                                    For migrating out of another system. Columns are matched by name
+                                    and obvious corrections are applied and listed.
                                     <button class="underline" onclick="downloadItemTemplate('RM')">RM template</button> &middot;
                                     <button class="underline" onclick="downloadItemTemplate('FG')">FG template</button>
                                 </p>
@@ -3371,18 +3372,20 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=54"></script>
+    <script src="app.js?v=55"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
-    <script src="staff-portal.js?v=54"></script>
+    <script src="staff-portal.js?v=55"></script>
     <!-- Jobs, job costing and purchase orders. -->
-    <script src="jobs.js?v=54"></script>
+    <script src="jobs.js?v=55"></script>
     <!-- Item master, work orders and budget allocation. -->
-    <script src="erp.js?v=54"></script>
+    <script src="erp.js?v=55"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
-    <script src="erp-build.js?v=54"></script>
+    <script src="erp-build.js?v=55"></script>
+    <!-- The spreadsheet grid the item master is entered through. -->
+    <script src="erp-grid.js?v=55"></script>
     <!-- Preview and correct a sheet that arrived from outside. -->
-    <script src="erp-preview.js?v=54"></script>
+    <script src="erp-preview.js?v=55"></script>
 
     <!-- AI Core Orb -->
     <div class="ai-core" onclick="toggleAIChat()" role="button" tabindex="0" aria-label="Open the assistant" title="Ask the assistant" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAIChat();}">
