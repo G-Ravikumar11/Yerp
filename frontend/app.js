@@ -430,7 +430,6 @@ function showView(viewId) {
     if (viewId === 'jobs-view' && typeof loadJobs === 'function') loadJobs();
     if (viewId === 'orders-view' && typeof loadOrders === 'function') loadOrders();
     if (viewId === 'items-view' && typeof loadItems === 'function') loadItems();
-    if (viewId === 'items-view' && typeof mountItemGrid === 'function') mountItemGrid();
     if (viewId === 'workorders-view' && typeof loadWorkOrders === 'function') loadWorkOrders();
     if (viewId === 'my-orders-view' && typeof loadMyOrders === 'function') loadMyOrders();
     // Close mobile menu

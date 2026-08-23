@@ -3185,7 +3185,7 @@ def check_item_row(row, kind, seen, taken):
     code = (row.get("item_code") or "").strip().upper()
 
     if not code:
-        problems.append({"field": "item_code", "message": "An item code is required", "fix": None})
+        pass                    # issued on upload, like everywhere else
     elif code in seen:
         problems.append({"field": "item_code",
                          "message": f"Also on line {seen[code]} of this file",
@@ -3308,12 +3308,14 @@ def erp_items_commit(body: ItemCommitIn, request: Request, db: Session = Depends
             errors.append({"line": line, "field": "category",
                            "message": "Choose whether this is raw material or a finished good"})
             continue
-        code = (row.get("item_code") or "").strip().upper()
+        code = normalise_code(row.get("item_code"))
         problems = check_item_row({**row, "item_code": code}, kind,
                                   seen_by_kind[kind], taken_by_kind[kind])
         if problems:
             errors.extend([{**p, "line": line} for p in problems])
             continue
+        if not code:
+            code = issue_item_code(db, set(seen_by_kind[kind]) | taken_by_kind[kind])
         seen_by_kind[kind][code] = line
 
         # An RM code already held is the same material, reused. Nothing to

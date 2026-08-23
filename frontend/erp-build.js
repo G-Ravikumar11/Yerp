@@ -531,3 +531,54 @@ async function saveGridItems() {
     } catch (e) { showToast('Could not save those rows', 'error'); }
 }
 window.saveGridItems = saveGridItems;
+
+/* --- The Excel path, as two explicit steps ------------------------------
+   Validate and Upload are separate buttons because that is the flow people
+   already run: check the file first, commit it second. Validate writes
+   nothing at all. */
+
+function toggleTypeIn() {
+    var panel = document.getElementById('typein-panel');
+    if (!panel) return;
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden && typeof mountItemGrid === 'function') mountItemGrid();
+}
+window.toggleTypeIn = toggleTypeIn;
+
+async function validateItemFile() {
+    var out = document.getElementById('item-analysis');
+    var input = document.getElementById('item-file');
+    if (!input || !input.files.length) { showToast('Choose a file first', 'error'); return; }
+    out.innerHTML = '<p class="text-[13px] text-ink-soft">Reading the file…</p>';
+
+    var fd = new FormData();
+    fd.append('file', input.files[0]);
+    try {
+        var res = await fetch('/api/erp/items/analyse', { method: 'POST', body: fd });
+        var data = await res.json();
+        if (!res.ok) {
+            out.innerHTML = '<div class="border border-red-300 bg-red-50 rounded-lg p-3 ' +
+                'text-[13px] text-red-800">' + esc(data.detail || 'That file could not be read') + '</div>';
+            return;
+        }
+        _analysis = data;
+        renderAnalysis();
+        showToast(data.ok ? 'Validated — nothing saved yet'
+                          : data.summary.blocked + ' row(s) need fixing', data.ok ? 'success' : 'error');
+    } catch (e) {
+        out.innerHTML = '<div class="border border-red-300 bg-red-50 rounded-lg p-3 text-[13px] text-red-800">' +
+            'Could not read that file.</div>';
+    }
+}
+window.validateItemFile = validateItemFile;
+
+/* Upload validates again on the way through rather than trusting that the
+   button beside it was pressed first. */
+async function uploadItemFile() {
+    if (!_analysis) {
+        await validateItemFile();
+        if (!_analysis) return;
+    }
+    await commitItemSheet();
+}
+window.uploadItemFile = uploadItemFile;
