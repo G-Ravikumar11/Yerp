@@ -474,6 +474,20 @@ window.openWorkOrderBuilder = openWorkOrderBuilder;
    issued on save, so the sheet shows what each row will be given.
    ========================================================================= */
 
+/* The nth code after this one, keeping the prefix and the zero padding.
+   Shown rather than a repeated placeholder so the sheet says what each row
+   will actually be called - which is the only reason to show a code that has
+   not been issued yet. */
+function nextCodeAfter(code, n) {
+    var m = /^(.*?)(\d+)$/.exec(code || '');
+    if (!m) return '';
+    var num = String(parseInt(m[2], 10) + n);
+    return m[1] + (num.length >= m[2].length ? num
+        : new Array(m[2].length - num.length + 1).join('0') + num);
+}
+window.nextCodeAfter = nextCodeAfter;
+
+
 async function mountItemGrid() {
     var host = document.getElementById('item-grid');
     if (!host || typeof mountGrid !== 'function') return;
@@ -487,7 +501,7 @@ async function mountItemGrid() {
         { key: 'kind', label: 'Kind', width: '80px',
           options: ['RM', 'FG'], def: 'RM' },
         { key: 'item_code', label: 'Code', width: '90px', readonly: true,
-          hint: 'issued', placeholder: next || '—' },
+          hint: 'issued on save', derive: function (n) { return nextCodeAfter(next, n); } },
         { key: 'item_name', label: 'Item name', width: '260px',
           placeholder: 'What is it?' },
         { key: 'item_type', label: 'Type', width: '120px',

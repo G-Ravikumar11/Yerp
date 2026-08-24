@@ -62,15 +62,38 @@ function renderGrid(focus) {
         }).join('') +
         '<th class="w-8 bg-slate-50 border-b border-slate-200"></th>';
 
+    // How many rows above this one will actually be saved. A derived column
+    // needs it to say what each row will be given, rather than repeating one
+    // answer down the whole sheet.
+    var savedSoFar = 0;
+
+    // Only the first empty row is prompted. The prompt is an instruction, and
+    // an instruction repeated down eight identical rows stops reading as one
+    // and starts reading as content - the sheet looked full of the words
+    // "What is it?" rather than empty and waiting.
+    var firstBlank = -1;
+    GRID.rows.forEach(function (row, i) {
+        if (firstBlank < 0 && gridIsBlank(row)) firstBlank = i;
+    });
+
     var body = GRID.rows.map(function (row, r) {
         var filled = !gridIsBlank(row);
+        var prompt = (r === firstBlank);
+        var ordinal = savedSoFar;
+        if (filled) savedSoFar++;
         var cells = GRID.columns.map(function (c, col) {
             var common = 'data-r="' + r + '" data-c="' + col + '" ' +
                 'class="gridcell w-full bg-transparent px-2 py-1.5 text-[13px] border-0 ' +
                 'focus:outline-none focus:ring-2 focus:ring-brand focus:bg-white rounded-sm"';
             if (c.readonly) {
+                // A derived column answers per row. Codes are issued in
+                // sequence on save, so every row showing the same next number
+                // said the same untrue thing eight times over; a row that is
+                // not going to be saved is given no code at all.
+                var shown = row[c.key] ||
+                    (c.derive ? (filled ? c.derive(ordinal) : '') : (c.placeholder || ''));
                 return '<td class="border-b border-r border-slate-100 px-2 py-1.5 text-[13px] ' +
-                    'font-mono text-ink-faint">' + esc(row[c.key] || c.placeholder || '') + '</td>';
+                    'font-mono text-ink-faint">' + esc(shown) + '</td>';
             }
             if (c.options) {
                 return '<td class="border-b border-r border-slate-100 p-0">' +
@@ -81,7 +104,7 @@ function renderGrid(focus) {
             }
             return '<td class="border-b border-r border-slate-100 p-0">' +
                 '<input ' + common + ' value="' + esc(row[c.key] || '') + '"' +
-                (c.placeholder ? ' placeholder="' + esc(c.placeholder) + '"' : '') +
+                (c.placeholder && prompt ? ' placeholder="' + esc(c.placeholder) + '"' : '') +
                 ' oninput="gridSet(' + r + ',' + col + ',this.value)"></td>';
         }).join('');
 
@@ -125,6 +148,7 @@ window.gridFocus = gridFocus;
 
 function gridSet(r, c, value) {
     var col = GRID.columns[c];
+    var wasBlank = gridIsBlank(GRID.rows[r]);
     GRID.rows[r][col.key] = value;
     // Typing in the last row makes another, the way a sheet always has one
     // more line waiting underneath.
@@ -137,6 +161,19 @@ function gridSet(r, c, value) {
         }
         return;
     }
+    // A row starting or stopping counting shifts every code below it, so the
+    // derived column has to be drawn again. Only on that flip, not on every
+    // keystroke - redrawing the sheet under someone mid-word loses the caret.
+    if (wasBlank !== gridIsBlank(GRID.rows[r]) &&
+        GRID.columns.some(function (x) { return x.derive; })) {
+        renderGrid({ r: r, c: c });
+        var moved = gridCell(r, c);
+        if (moved && moved.setSelectionRange) {
+            try { moved.setSelectionRange(value.length, value.length); } catch (e) {}
+        }
+        return;
+    }
+
     var counter = GRID.host.querySelector('p.text-xxs.font-semibold');
     if (counter) {
         var used = GRID.rows.filter(function (x) { return !gridIsBlank(x); }).length;

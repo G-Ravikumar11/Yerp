@@ -759,8 +759,31 @@ textarea.table-input.item-desc {
     .data-table tr:hover { background-color: transparent; }
 }
 
-/* Mobile landscape / small tablets */
-@media (max-width: 768px) {
+/* The band between a wide desktop and the drawer.
+   Nine top-level items, the wordmark and the signed-in chip all want the same
+   row. The links do not shrink - white-space: nowrap is what keeps "Work Order
+   Inquiry" on one line - so when the row ran short they did not compress, they
+   ran straight under the user chip and out of the bar. Space is given up in
+   the order it is least missed: the tagline first, then the person's name
+   (their avatar still says who they are), then the padding around the links. */
+@media (max-width: 1250px) {
+    .topbar-left { gap: 14px; }
+    .brand-sub { display: none; }
+    .user-text { display: none; }
+    .nav-item { padding: 8px 9px; }
+    .top-nav-menu { gap: 0; }
+}
+
+/* Below this even the tightened row cannot hold nine items, so the nav becomes
+   the drawer it already is on a phone. It used to wait until 768px, which left
+   a whole band of ordinary laptop widths where the links overlapped the user
+   chip rather than moving out of its way.
+
+   The threshold leaves room to spare rather than sitting on the exact width
+   the row happens to need today: Approvals carries a count when something is
+   waiting, and a row that only just fits while the badge is absent starts
+   overlapping the moment somebody has work to approve. */
+@media (max-width: 1080px) {
     .hamburger { display: flex; }
     .top-nav-menu {
         position: fixed; top: var(--topbar-height); left: 0; right: 0;
@@ -778,7 +801,8 @@ textarea.table-input.item-desc {
     .top-nav-menu::-webkit-scrollbar { display: none; }
     .top-nav-menu.mobile-open { transform: translateY(0); }
     .nav-item { width: 100%; padding: 14px 16px; border-radius: 8px; min-height: 44px; }
-    .search-bar { display: none; }
+    /* The name comes back: the drawer freed the row that was crowding it. */
+    .user-text { display: block; }
 
     /* In the drawer a group is not a floating menu but a section that pushes
        the rest of the list down, so nothing is hidden behind an overlay on a
@@ -797,6 +821,11 @@ textarea.table-input.item-desc {
     }
     .nav-group.open > .nav-group-items { display: block; }
     .nav-group-items .nav-item { padding: 12px 14px; font-size: 0.9rem; }
+}
+
+@media (max-width: 768px) {
+    .search-bar { display: none; }
+    .user-text { display: none; }
     .enterprise-topbar {
         gap: 10px;
         padding: 0 max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px));
@@ -1133,6 +1162,23 @@ select option:hover {
     transform: scale(1.05);
     box-shadow: var(--shadow-lg);
 }
+
+/* The maker's credit. Beside the assistant button rather than beneath it:
+   both were pinned to the bottom right corner at offsets that put the badge
+   inside the button's circle, so the two sat on top of one another. */
+.powered-by {
+    position: fixed; bottom: 34px; right: 104px;
+    font-size: 0.72rem; color: var(--text-secondary); opacity: 0.55;
+    pointer-events: none; z-index: 9999; white-space: nowrap;
+}
+/* On a phone the corner belongs to the button; a credit is not worth the
+   room or the collision. */
+@media (max-width: 768px) { .powered-by { display: none; } }
+
+/* Both are pinned over the page, so the foot of a long list has to be able
+   to clear them - otherwise the last row of every table sits under the
+   button and cannot be read or clicked. */
+.views-container { padding-bottom: 96px; }
 
 .ai-chat-window {
     position: fixed;
