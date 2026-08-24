@@ -1199,6 +1199,17 @@ def ensure_columns():
                     ("bills", "purchase_order_id", "INTEGER"),
                     ("quotes", "job_id", "INTEGER"),
                     ("attendance", "job_id", "INTEGER"),
+                    # A customer is more than a name once contracts are involved.
+                    ("contacts", "code", "VARCHAR DEFAULT ''"),
+                    ("contacts", "contact_person", "VARCHAR DEFAULT ''"),
+                    ("contacts", "gstin", "VARCHAR DEFAULT ''"),
+                    ("contacts", "address", "VARCHAR DEFAULT ''"),
+                    ("contacts", "city", "VARCHAR DEFAULT ''"),
+                    ("contacts", "state", "VARCHAR DEFAULT ''"),
+                    ("contacts", "pincode", "VARCHAR DEFAULT ''"),
+                    ("contacts", "notes", "TEXT DEFAULT ''"),
+                    ("contacts", "is_active", "BOOLEAN DEFAULT TRUE"),
+                    ("contacts", "created_at", "VARCHAR DEFAULT ''"),
                 ):
                     conn.execute(text(
                         f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
@@ -1258,6 +1269,12 @@ def migrate_sqlite():
             add_col("bills", "purchase_order_id", "INTEGER")
             add_col("quotes", "job_id", "INTEGER")
             add_col("attendance", "job_id", "INTEGER")
+
+            # Customer detail, for the contracts side.
+            for column in ("code", "contact_person", "gstin", "address",
+                           "city", "state", "pincode", "notes", "created_at"):
+                add_col("contacts", column, "VARCHAR DEFAULT ''")
+            add_col("contacts", "is_active", "BOOLEAN DEFAULT 1")
 
             # Create approval_chains table
             conn.execute(text("""

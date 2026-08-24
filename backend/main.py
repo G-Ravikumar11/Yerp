@@ -223,6 +223,26 @@ def money(val) -> float:
     return float(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
+def unit_rate(val) -> float:
+    """A rate per unit, kept to four places.
+
+    Two is enough for a sum of money and not enough for a multiplier. This
+    trade quotes wire at 12.222 the metre; rounded to 12.22 and taken across
+    the twelve thousand metres actually being laid, the budget walks away from
+    the spreadsheet it was copied from - by six thousand rupees over one
+    project, on lines that each looked right to the paisa.
+
+    Only the multiplier is held this wide. Amounts, totals and anything that
+    reaches an invoice are still money(), because those are sums of money and
+    a bill cannot ask for a fraction of a paisa.
+    """
+    try:
+        d = Decimal(str(val or 0))
+    except (InvalidOperation, ValueError, TypeError):
+        return 0.0
+    return float(d.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
+
+
 def line_net_amount(qty, price, disc) -> float:
     """Amount for a single line after its percentage discount."""
     amount = float(qty or 0) * float(price or 0)
@@ -2383,6 +2403,16 @@ def create_job(body: JobIn, request: Request, db: Session = Depends(get_db)):
             raise HTTPException(status_code=400, detail="Unknown customer")
         contact_id = contact.id
         customer_name = customer_name or contact.name
+    elif customer_name:
+        # Named but not picked. The jobs screen only ever asks for a name, so
+        # without this a project raised there belongs to a customer the
+        # customer record never hears about - and the same business ends up
+        # on both sides of the system with nothing joining them.
+        known = db.query(models.DBContact).filter(
+            models.DBContact.client_id == client.id,
+            sqlfunc.lower(models.DBContact.name) == customer_name.lower()).first()
+        if known:
+            contact_id = known.id
 
     job = models.DBJob(
         client_id=client.id,
@@ -2644,17 +2674,27 @@ BOM_COLUMNS = ["fg_code", "rm_code", "rm_name", "qty", "uom", "rate"]
 BOM_HEADERS = ["FG Code", "RM Code", "RM Name", "Qty", "UOM", "Rate"]
 
 
-def sheet_response(headers, sample, filename, fmt="xlsx"):
+def sheet_response(headers, sample, filename, fmt="xlsx", preamble=None, closing=None):
     """The template, as a real workbook by default.
 
     A workbook is what people asked for and what they will edit; CSV stays
     available for anything that has to be read by a script.
+
+    A report may pass a preamble - who it is for, when it was printed, which
+    order it covers - and a closing set of totals. They are written above and
+    below the table rather than into it, so what sits between the headings and
+    the totals stays a rectangle that can still be sorted and filtered.
     """
+    preamble = list(preamble or [])
+    closing = list(closing or [])
+
     if fmt == "csv" or filename.endswith(".csv"):
         buf = io.StringIO()
         writer = csv.writer(buf)
+        writer.writerows(preamble)
         writer.writerow(headers)
         writer.writerows(sample)
+        writer.writerows(closing)
         return Response(
             # utf-8-sig so Excel opens it in the right encoding rather than
             # mangling anything non-ASCII in a description.
@@ -2667,18 +2707,26 @@ def sheet_response(headers, sample, filename, fmt="xlsx"):
         import openpyxl
         from openpyxl.styles import Font, PatternFill
     except ImportError:
-        return sheet_response(headers, sample, filename.rsplit(".", 1)[0] + ".csv", "csv")
+        return sheet_response(headers, sample, filename.rsplit(".", 1)[0] + ".csv",
+                              "csv", preamble, closing)
 
     book = openpyxl.Workbook()
     sheet = book.active
     sheet.title = "Sheet1"
+    for row in preamble:
+        sheet.append(list(row))
+    header_row = len(preamble) + 1
     sheet.append(list(headers))
     for row in sample:
         sheet.append(list(row))
+    for row in closing:
+        sheet.append(list(row))
 
+    if preamble:
+        sheet.cell(row=1, column=1).font = Font(bold=True, size=13)
     header_font = Font(bold=True, color="FFFFFF")
     fill = PatternFill("solid", fgColor="4F46E5")
-    for cell in sheet[1]:
+    for cell in sheet[header_row]:
         cell.font = header_font
         cell.fill = fill
     # Width from the longest value in each column, so nothing opens as ####.
@@ -2686,7 +2734,8 @@ def sheet_response(headers, sample, filename, fmt="xlsx"):
         longest = max([len(str(name))] + [len(str(r[index - 1])) for r in sample
                                           if index - 1 < len(r)])
         sheet.column_dimensions[openpyxl.utils.get_column_letter(index)].width = min(40, longest + 4)
-    sheet.freeze_panes = "A2"
+    # Freeze under the headings, so the columns stay named while the rows move.
+    sheet.freeze_panes = "A%d" % (header_row + 1)
 
     stream = io.BytesIO()
     book.save(stream)
@@ -2697,36 +2746,29 @@ def sheet_response(headers, sample, filename, fmt="xlsx"):
     )
 
 
-async def parse_sheet(upload: UploadFile, columns):
+async def parse_sheet(upload: UploadFile, columns, aliases=None):
     """Read an uploaded sheet into dicts keyed by our column names.
 
-    Positional rather than by header text, so retitling a column in Excel does
-    not silently drop it. newline="" is required: Excel writes CRLF, and
-    without it csv treats the CR as data and refuses the file.
+    By header where the sheet is headed in words we know, by position only as a
+    fallback. Position used to be the whole rule, and it had two ways of being
+    wrong at once. It read the workbook we hand out as a template by decoding
+    the zip as latin-1 and letting the csv module make rows of the wreckage,
+    which failed as a mess of unreadable codes rather than as an error. And on
+    the work order template people actually fill in - whose fifth column is a
+    price where ours is a unit - it banked the price as the unit of measure and
+    the discount as the rate, silently, on a document that prices a contract.
     """
-    raw = await upload.read()
-    if len(raw) > 5_000_000:
-        raise HTTPException(400, "That file is too large. Split it and upload in parts.")
-    try:
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        text = raw.decode("latin-1")
+    header, body = await read_sheet_rows(upload)
 
-    rows = []
-    try:
-        for index, values in enumerate(csv.reader(io.StringIO(text, newline=""))):
-            if index == 0 or not any((v or "").strip() for v in values):
-                continue
-            row = {c: (values[i].strip() if i < len(values) else "")
-                   for i, c in enumerate(columns)}
-            row["_line"] = index + 1
-            rows.append(row)
-    except csv.Error as exc:
-        raise HTTPException(400, f"That file could not be read as a sheet ({exc}). "
-                                 "Save it as CSV from Excel and try again.")
-    if not rows:
-        raise HTTPException(400, "That file had no rows in it.")
-    return rows
+    mapping = {}
+    if aliases:
+        mapping, _ = match_headers(header, aliases)
+    # One lucky hit is not recognition. A sheet we cannot read the headings of
+    # is still read in our own column order, which is what the template says.
+    if len(mapping) < 2:
+        mapping = {index: name for index, name in enumerate(columns)}
+
+    return rows_from(header, body, mapping)
 
 
 # --- Reading a sheet somebody actually sent ---------------------------------
@@ -2773,43 +2815,61 @@ def squash(text) -> str:
     return re.sub(r"[^a-z0-9]", "", str(text or "").lower())
 
 
-def map_headers(header_row):
+def header_score(key, field, aliases) -> int:
+    """How well a header's squashed text names a field. 0 means it does not."""
+    if key == squash(field):
+        return 3                # the field's own name
+    if key in aliases:
+        return 2                # a name we were told to expect
+    for alias in aliases:
+        if len(alias) >= 4 and (alias in key or key in alias):
+            return 1            # a partial, and the last resort
+    return 0
+
+
+def match_headers(header_row, alias_map):
     """Work out which column is which, by name rather than by position.
 
     Positional parsing breaks silently the moment somebody inserts a column,
     and the data lands one field to the left with no complaint. Matching on the
     header means a reordered - or entirely foreign - sheet still reads right.
+
+    Scored rather than first-match: "Units" is the exact name of a unit column
+    and a loose match for a quantity one, and whichever field happened to be
+    written first in the vocabulary used to win. Settling the best matches
+    first means an exact name always beats a partial one, whatever the order.
     """
-    mapping, taken, unmapped = {}, set(), []
+    scored = []
     for index, raw in enumerate(header_row):
         key = squash(raw)
         if not key:
             continue
-        field = None
-        for candidate, aliases in HEADER_ALIASES.items():
-            if candidate in taken:
-                continue
-            if key == squash(candidate) or key in aliases:
-                field = candidate
-                break
-        if field is None:
-            # Nothing exact: allow a containment match, longest alias first so
-            # "itemcode" wins over "code" when both could apply.
-            for candidate, aliases in HEADER_ALIASES.items():
-                if candidate in taken:
-                    continue
-                for alias in sorted(aliases, key=len, reverse=True):
-                    if len(alias) >= 4 and (alias in key or key in alias):
-                        field = candidate
-                        break
-                if field:
-                    break
-        if field:
-            mapping[index] = field
-            taken.add(field)
-        else:
-            unmapped.append(str(raw).strip())
+        for field, aliases in alias_map.items():
+            points = header_score(key, field, aliases)
+            if points:
+                scored.append((points, index, list(alias_map).index(field), field))
+
+    # Best score first, then left to right. So where one header names two
+    # fields equally well - a budget sheet with two "Product Code" columns, the
+    # ordered item and then the material - the leftmost takes the first field
+    # the vocabulary declares, and the next takes the one after it.
+    scored.sort(key=lambda s: (-s[0], s[1], s[2]))
+
+    mapping, taken = {}, set()
+    for _, index, _, field in scored:
+        if index in mapping or field in taken:
+            continue
+        mapping[index] = field
+        taken.add(field)
+
+    unmapped = [str(raw).strip() for index, raw in enumerate(header_row)
+                if squash(raw) and index not in mapping]
     return mapping, unmapped
+
+
+def map_headers(header_row):
+    """Which column is which, against the item master's vocabulary."""
+    return match_headers(header_row, HEADER_ALIASES)
 
 
 def detect_row_kind(row):
@@ -3065,7 +3125,8 @@ async def erp_items_validate(request: Request, file: UploadFile = File(...),
     kind = kind.upper()
     if kind not in ITEM_KINDS:
         raise HTTPException(400, "kind must be RM or FG")
-    return validate_items(db, client.id, await parse_sheet(file, ITEM_COLUMNS), kind)
+    rows = await parse_sheet(file, ITEM_COLUMNS, HEADER_ALIASES)
+    return validate_items(db, client.id, rows, kind)
 
 
 @app.post("/api/erp/items/upload")
@@ -3078,7 +3139,7 @@ async def erp_items_upload(request: Request, file: UploadFile = File(...),
     if kind not in ITEM_KINDS:
         raise HTTPException(400, "kind must be RM or FG")
 
-    rows = await parse_sheet(file, ITEM_COLUMNS)
+    rows = await parse_sheet(file, ITEM_COLUMNS, HEADER_ALIASES)
     result = validate_items(db, client.id, rows, kind)
     if not result["ok"]:
         return {**result, "created": 0,
@@ -3154,11 +3215,36 @@ def read_xlsx_table(raw: bytes):
         book.close()
 
 
+# The templates people actually fill in carry a row of instructions under the
+# header - "Without Spaces", "Please Select Option From Dropdown" - and it
+# stays there, because it is what tells the typist what to enter. Read as data
+# it becomes a row whose item code is "Without Spaces", and it fails every
+# check on every upload for ever.
+HINT_PHRASES = re.compile(
+    r"please\s*select|drop\s*down|dropdown|without\b|only\s*num|mandatory|"
+    r"do\s*not\b|choose\s*from|select\s*from|for\s*example|as\s*shown|^e\.?g\.?\b",
+    re.IGNORECASE)
+
+
+def is_hint_row(values) -> bool:
+    """Whether a row is guidance for the typist rather than data.
+
+    Every filled cell has to read as an instruction. One real value - a code, a
+    quantity, a name - and the row is data again, which is what stops a
+    description that happens to say "do not exceed" from taking its row with it.
+    """
+    filled = [str(v).strip() for v in values if str(v or "").strip()]
+    return bool(filled) and all(HINT_PHRASES.search(v) for v in filled)
+
+
 async def read_sheet_rows(upload: UploadFile):
     """Split an upload into its header row and its data rows, unparsed.
 
     Takes a real Excel workbook or a CSV; which one is decided by the bytes,
-    not the extension.
+    not the extension. Each data row is returned with the line it came from,
+    because blank rows and the hint row are dropped on the way past - and a
+    complaint about "line 1945" has to mean the row somebody can scroll to,
+    not the row it happened to end up at once we had thrown some away.
     """
     raw = await upload.read()
     if len(raw) > 8_000_000:
@@ -3179,10 +3265,17 @@ async def read_sheet_rows(upload: UploadFile):
             raise HTTPException(400, f"That file could not be read as a sheet ({exc}). "
                                      "Save it as CSV or .xlsx and try again.")
 
-    table = [r for r in table if any((c or "").strip() for c in r)]
-    if len(table) < 2:
+    numbered = [(line, row) for line, row in enumerate(table, start=1)
+                if any((c or "").strip() for c in row)]
+    if len(numbered) < 2:
         raise HTTPException(400, "That file had no rows under its header.")
-    return table[0], table[1:]
+
+    header, body = numbered[0][1], numbered[1:]
+    if is_hint_row(body[0][1]):
+        body = body[1:]
+    if not body:
+        raise HTTPException(400, "That file had no rows under its header.")
+    return header, body
 
 
 def check_item_row(row, kind, seen, taken):
@@ -3233,10 +3326,7 @@ async def erp_items_analyse(request: Request, file: UploadFile = File(...),
         raise HTTPException(400, "kind must be RM or FG")
 
     rows, repairs, unknown_kind = [], [], 0
-    for offset, values in enumerate(body):
-        row = {field: (values[i].strip() if i < len(values) else "")
-               for i, field in mapping.items()}
-        row["_line"] = offset + 2
+    for row in rows_from(header, body, mapping):
         row_kind = forced or detect_row_kind(row)
         if not row_kind:
             unknown_kind += 1
@@ -3275,7 +3365,7 @@ async def erp_items_analyse(request: Request, file: UploadFile = File(...),
 
     return {
         "ok": not blocked,
-        "mapping": {header[i]: f for i, f in mapping.items()},
+        "mapping": mapping_report(header, mapping),
         "unmapped_headers": unmapped,
         "detected": counts,
         "unknown_kind": unknown_kind,
@@ -3688,7 +3778,7 @@ def erp_build_work_order(body: WorkOrderIn, request: Request,
         if code in seen:
             raise HTTPException(400, "Line %d: %s is already on this order" % (index, code))
         seen.add(code)
-        qty, rate = money(line.qty), money(line.rate)
+        qty, rate = money(line.qty), unit_rate(line.rate)
         if qty <= 0:
             raise HTTPException(400, "Line %d: quantity must be more than zero" % index)
         if rate < 0:
@@ -3751,7 +3841,7 @@ def erp_build_bom(body: BomIn, request: Request, db: Session = Depends(get_db)):
             raise HTTPException(400, "Line %d: %s is not on %s" % (index, fg, wo.number))
         if rm not in rm_master:
             raise HTTPException(400, "Line %d: %s is not a raw material code" % (index, rm))
-        qty, rate = money(line.qty), money(line.rate)
+        qty, rate = money(line.qty), unit_rate(line.rate)
         if qty <= 0:
             raise HTTPException(400, "Line %d: quantity must be more than zero" % index)
         item = rm_master[rm]
@@ -3853,63 +3943,81 @@ def work_order_or_404(db, client_id, wo_id):
 # checked. Both analysers return lines in exactly the shape /build accepts, so
 # the review grid commits through the same validated path as on-screen entry.
 
+# "Nos" and "Units" are units, not quantities, and naming them as quantities
+# is what made a budget sheet read its unit column as its quantity. The
+# misspellings are the ones on the templates in circulation, kept because the
+# file people have on their desk is the one that has to open.
 WO_HEADER_ALIASES = {
     "fg_code": ["fgcode", "code", "itemcode", "productcode", "sku", "erpcode"],
-    "item_name": ["itemname", "name", "description", "particulars", "scope", "workdescription"],
-    "description": ["longdescription", "details", "remarks", "notes", "specification"],
-    "qty": ["qty", "quantity", "nos", "units", "volume"],
-    "uom": ["uom", "unit", "units", "measure", "unitofmeasure"],
+    "item_name": ["itemname", "name", "productname", "particulars", "scope",
+                  "workdescription"],
+    "description": ["description", "productdiscription", "discription",
+                    "longdescription", "details", "remarks", "notes", "specification"],
+    "qty": ["qty", "quantity", "volume", "orderqty", "woqty"],
+    "uom": ["uom", "unit", "units", "measure", "unitofmeasure", "unitsofmeasure"],
     "rate": ["rate", "price", "unitrate", "unitprice", "amountperunit"],
 }
 
+# Their budget sheet heads the ordered item and the material it consumes with
+# the same words - "Product Code" twice over. The scoring settles that by
+# position: the leftmost takes fg_code because it is declared first here.
 BOM_HEADER_ALIASES = {
-    "fg_code": ["fgcode", "finishedgood", "sellingcode", "outputcode", "againstcode"],
-    "rm_code": ["rmcode", "materialcode", "rawmaterial", "inputcode", "consumescode"],
-    "rm_name": ["rmname", "materialname", "material", "particulars", "description"],
-    "qty": ["qty", "quantity", "consumption", "usage", "nos"],
-    "uom": ["uom", "unit", "units", "measure"],
-    "rate": ["rate", "price", "cost", "unitrate", "unitcost"],
+    "fg_code": ["fgcode", "finishedgood", "sellingcode", "outputcode", "againstcode",
+                "ordereditems", "ordereditem", "productcode", "itemcode"],
+    "rm_code": ["rmcode", "materialcode", "rawmaterial", "inputcode", "consumescode",
+                "componentcode", "component", "productcode", "itemcode"],
+    "rm_name": ["rmname", "materialname", "material", "particulars", "description",
+                "productname", "itemname"],
+    "qty": ["qty", "quantity", "consumption", "usage", "bomqty", "bomquantity"],
+    "uom": ["uom", "unit", "units", "measure", "unitofmeasure", "unitsofmeasure"],
+    "rate": ["rate", "price", "cost", "unitrate", "unitcost", "finalrate"],
 }
 
 
 def map_headers_with(header_row, aliases):
     """Same name-matching as the item intake, against a different vocabulary."""
-    mapping, taken, unmapped = {}, set(), []
-    for index, raw in enumerate(header_row):
-        key = squash(raw)
-        if not key:
-            continue
-        field = None
-        for candidate, options in aliases.items():
-            if candidate in taken:
-                continue
-            if key == squash(candidate) or key in options:
-                field = candidate
-                break
-        if field is None:
-            for candidate, options in aliases.items():
-                if candidate in taken:
-                    continue
-                for option in sorted(options, key=len, reverse=True):
-                    if len(option) >= 3 and (option in key or key in option):
-                        field = candidate
-                        break
-                if field:
-                    break
-        if field:
-            mapping[index] = field
-            taken.add(field)
-        else:
-            unmapped.append(str(raw).strip())
-    return mapping, unmapped
+    return match_headers(header_row, aliases)
+
+
+def mapping_report(header, mapping):
+    """Which heading we read as which field, for showing back to the person.
+
+    Keyed by the heading, which is what somebody checking the import wants to
+    read. A sheet is allowed to use one heading twice, though - the budget
+    sheet heads both the ordered item and the material it consumes "Product
+    Code" - and keyed by text alone the second would land on top of the first,
+    reporting one column where we read two. The column number separates them,
+    because "we read both of these, and differently" is the whole of what is
+    being checked.
+    """
+    seen, report = {}, {}
+    for index in sorted(mapping):
+        name = (str(header[index]).strip() if index < len(header) else "")
+        name = name or "Column %d" % (index + 1)
+        seen[name] = seen.get(name, 0) + 1
+        if seen[name] > 1:
+            name = "%s (column %d)" % (name, index + 1)
+        report[name] = mapping[index]
+    return report
 
 
 def rows_from(header, body, mapping):
+    """Rows keyed by our field names, with the ones that are not lines left out.
+
+    A sheet off a real desk ends in its own totals: a number alone in a column
+    we never read, sitting under fifteen hundred priced lines. Read as a line
+    it has no code, no quantity and no rate, so it fails - and because nothing
+    is saved unless every line passes, it takes the whole order down with it.
+    A row with nothing in any column we mapped is not a line we are failing to
+    read; it is a row that was never addressed to us.
+    """
     rows = []
-    for offset, values in enumerate(body):
+    for line, values in body:
         row = {field: (values[i].strip() if i < len(values) else "")
                for i, field in mapping.items()}
-        row["_line"] = offset + 2
+        if not any(row.values()):
+            continue
+        row["_line"] = line
         rows.append(row)
     return rows
 
@@ -3932,7 +4040,7 @@ async def erp_wo_analyse(request: Request, file: UploadFile = File(...),
     for row in rows_from(header, body, mapping):
         line = row["_line"]
         code = (row.get("fg_code") or "").strip().upper()
-        qty, rate = money(row.get("qty") or 0), money(row.get("rate") or 0)
+        qty, rate = money(row.get("qty") or 0), unit_rate(row.get("rate") or 0)
         problems = []
 
         if not code:
@@ -3970,7 +4078,7 @@ async def erp_wo_analyse(request: Request, file: UploadFile = File(...),
     blocked = [l for l in lines if l["_problems"]]
     return {
         "ok": not blocked,
-        "mapping": {header[i]: f for i, f in mapping.items()},
+        "mapping": mapping_report(header, mapping),
         "unmapped_headers": unmapped,
         "lines": lines, "repairs": repairs,
         "choices": sorted([{"code": i.item_code, "name": i.item_name,
@@ -4005,7 +4113,7 @@ async def erp_bom_analyse(request: Request, file: UploadFile = File(...),
         line = row["_line"]
         fg = (row.get("fg_code") or "").strip().upper()
         rm = (row.get("rm_code") or "").strip().upper()
-        qty, rate = money(row.get("qty") or 0), money(row.get("rate") or 0)
+        qty, rate = money(row.get("qty") or 0), unit_rate(row.get("rate") or 0)
         problems = []
 
         # A sheet with one sold line needs no FG column at all.
@@ -4040,7 +4148,7 @@ async def erp_bom_analyse(request: Request, file: UploadFile = File(...),
     value = money(wo.total_value or 0)
     return {
         "ok": not blocked,
-        "mapping": {header[i]: f for i, f in mapping.items()},
+        "mapping": mapping_report(header, mapping),
         "unmapped_headers": unmapped,
         "lines": lines, "repairs": repairs,
         "sold": [{"code": c, "name": l.item_name} for c, l in sold.items()],
@@ -4089,17 +4197,22 @@ def validate_work_order_sheet(db, client_id, rows):
             continue
         seen[code] = line
 
-        qty, rate = money(row.get("qty") or 0), money(row.get("rate") or 0)
+        qty, rate = money(row.get("qty") or 0), unit_rate(row.get("rate") or 0)
         if qty <= 0:
             fail("Qty", "Quantity must be greater than zero")
         if rate < 0:
             fail("Rate", "Rate cannot be negative")
 
         item = master[code]
+        # The unit belongs to the code, not to the sheet quoting it. Their
+        # files write the same unit three ways - "Meter", "Meters", "Mtr" -
+        # and taking whichever spelling arrived would leave one item measured
+        # differently on every order. The preview path already read it this
+        # way round; this is the direct upload agreeing with it.
         lines.append({"fg_code": code,
                       "item_name": (row.get("item_name") or item.item_name).strip(),
                       "description": (row.get("description") or item.description).strip(),
-                      "qty": qty, "uom": (row.get("uom") or item.units_of_measure).strip(),
+                      "qty": qty, "uom": (item.units_of_measure or row.get("uom") or "").strip(),
                       "rate": rate, "amount": money(qty * rate)})
 
     return {"ok": not errors, "errors": errors, "lines": lines,
@@ -4110,7 +4223,8 @@ def validate_work_order_sheet(db, client_id, rows):
 async def erp_wo_validate(request: Request, file: UploadFile = File(...),
                           db: Session = Depends(get_db)):
     client = require_workorder_access(request, db)
-    return validate_work_order_sheet(db, client.id, await parse_sheet(file, WO_COLUMNS))
+    rows = await parse_sheet(file, WO_COLUMNS, WO_HEADER_ALIASES)
+    return validate_work_order_sheet(db, client.id, rows)
 
 
 @app.post("/api/erp/work-orders")
@@ -4119,7 +4233,7 @@ async def erp_wo_upload(request: Request, file: UploadFile = File(...),
     client = require_workorder_access(request, db)
     job = job_or_404(db, client.id, job_id)
 
-    rows = await parse_sheet(file, WO_COLUMNS)
+    rows = await parse_sheet(file, WO_COLUMNS, WO_HEADER_ALIASES)
     result = validate_work_order_sheet(db, client.id, rows)
     if not result["ok"]:
         return {**result, "work_order": None,
@@ -4252,14 +4366,14 @@ def validate_bom_sheet(db, client_id, rows, wo):
             fail("RM Code", "Not in the item master. Upload this RM code first.")
             continue
 
-        qty, rate = money(row.get("qty") or 0), money(row.get("rate") or 0)
+        qty, rate = money(row.get("qty") or 0), unit_rate(row.get("rate") or 0)
         if qty <= 0:
             fail("Qty", "Quantity must be greater than zero")
 
         item = rm_master[rm]
         allocations.append({"fg_code": fg, "rm_code": rm,
                             "rm_name": (row.get("rm_name") or item.item_name).strip(),
-                            "qty": qty, "uom": (row.get("uom") or item.units_of_measure).strip(),
+                            "qty": qty, "uom": (item.units_of_measure or row.get("uom") or "").strip(),
                             "rate": rate, "amount": money(qty * rate)})
 
     return {"ok": not errors, "errors": errors, "lines": allocations,
@@ -4272,7 +4386,8 @@ async def erp_bom_validate(request: Request, file: UploadFile = File(...),
                            work_order_id: int = Form(...), db: Session = Depends(get_db)):
     client = require_workorder_access(request, db)
     wo = work_order_or_404(db, client.id, work_order_id)
-    return validate_bom_sheet(db, client.id, await parse_sheet(file, BOM_COLUMNS), wo)
+    rows = await parse_sheet(file, BOM_COLUMNS, BOM_HEADER_ALIASES)
+    return validate_bom_sheet(db, client.id, rows, wo)
 
 
 @app.post("/api/erp/bom")
@@ -4283,7 +4398,7 @@ async def erp_bom_upload(request: Request, file: UploadFile = File(...),
     if (wo.approval_status or "none") == "pending":
         raise HTTPException(409, "This order is with an approver; its budget cannot change.")
 
-    rows = await parse_sheet(file, BOM_COLUMNS)
+    rows = await parse_sheet(file, BOM_COLUMNS, BOM_HEADER_ALIASES)
     result = validate_bom_sheet(db, client.id, rows, wo)
     if not result["ok"]:
         return {**result, "created": 0,
@@ -4301,6 +4416,138 @@ async def erp_bom_upload(request: Request, file: UploadFile = File(...),
     return {**result, "created": len(result["lines"]),
             "message": f"Budget allocated for {wo.number}: "
                        f"{len(result['lines'])} material line(s)."}
+
+
+# --- The Budget Entry Report ------------------------------------------------
+#
+# What the allocation is read back as. Grouped under the item that was sold,
+# because the question being asked of it is never "what did we buy" but "what
+# does this line cost us against what we are charging for it".
+
+BUDGET_REPORT_HEADERS = ["Ordered Items", "RM code - Description", "Quantity",
+                         "Units", "Price", "WO Qty", "Total Amount"]
+
+
+def financial_year(on_date: str):
+    """The Indian financial year containing a date: April to March."""
+    try:
+        d = datetime.strptime((on_date or "")[:10], "%Y-%m-%d")
+    except (ValueError, TypeError):
+        d = datetime.now()
+    start = d.year if d.month >= 4 else d.year - 1
+    return "01/04/%d - 31/03/%d" % (start, start + 1)
+
+
+def budget_report(db, client, wo):
+    """The allocation, gathered under the lines it was allocated against.
+
+    Every sold line appears, including the ones nothing has been budgeted
+    against yet. A material that was never costed is the single thing this
+    report exists to make visible, and leaving those lines out would hide
+    exactly the case somebody is printing it to find.
+    """
+    job = db.query(models.DBJob).filter(models.DBJob.id == wo.job_id).first()
+    sold = db.query(models.DBWorkOrderLine).filter(
+        models.DBWorkOrderLine.work_order_id == wo.id).all()
+    allocated = db.query(models.DBBomLine).filter(
+        models.DBBomLine.work_order_id == wo.id).all()
+
+    by_fg = {}
+    for b in allocated:
+        by_fg.setdefault((b.fg_code or "").upper(), []).append(b)
+
+    groups = []
+    for line in sold:
+        code = (line.fg_code or "").upper()
+        materials = [{
+            "rm_code": b.rm_code, "rm_name": b.rm_name,
+            "description": "%s  -  %s" % (b.rm_code, b.rm_name),
+            "qty": money(b.qty), "uom": b.uom or "",
+            "rate": unit_rate(b.rate), "wo_qty": money(line.qty),
+            "amount": money(b.amount),
+        } for b in by_fg.get(code, [])]
+        cost = money(sum(m["amount"] for m in materials))
+        value = money(line.amount)
+        groups.append({
+            "fg_code": line.fg_code, "item_name": line.item_name,
+            "description": line.description or "",
+            "qty": money(line.qty), "uom": line.uom or "",
+            "rate": unit_rate(line.rate), "value": value,
+            "cost": cost, "margin": money(value - cost),
+            "budgeted": bool(materials), "lines": materials,
+        })
+
+    cost = money(sum(g["cost"] for g in groups))
+    value = money(wo.total_value or 0)
+    return {
+        "title": "Budget Entry Report",
+        "company": client.company_name or "",
+        "printed_at": datetime.now().strftime("%d/%m/%Y   %H:%M"),
+        "fiscal_year": financial_year(wo.order_date),
+        "sale_order_no": wo.reference or wo.number,
+        "work_order_no": wo.number,
+        "order_date": wo.order_date or "",
+        "project": (job.name if job else ""),
+        "project_number": (job.number if job else ""),
+        "customer": (job.customer_name if job else ""),
+        "status": wo.status or "Draft",
+        "approval_status": wo.approval_status or "none",
+        "groups": groups,
+        "totals": {
+            "ordered_lines": len(groups),
+            "material_lines": len(allocated),
+            "unbudgeted_lines": len([g for g in groups if not g["budgeted"]]),
+            "value": value, "cost": cost, "margin": money(value - cost),
+            "margin_percent": round((value - cost) / value * 100, 1) if value else 0.0,
+        },
+    }
+
+
+@app.get("/api/erp/work-orders/{wo_id}/budget-report")
+def erp_budget_report(wo_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return budget_report(db, client, work_order_or_404(db, client.id, wo_id))
+
+
+@app.get("/api/erp/work-orders/{wo_id}/budget-report.xlsx")
+def erp_budget_report_xlsx(wo_id: int, request: Request, db: Session = Depends(get_db)):
+    """The same report as a workbook, which is where it gets worked on.
+
+    The header block is written above the table rather than into it, so the
+    rows underneath stay a rectangle somebody can sort and filter.
+    """
+    client = require_erp_read(request, db)
+    wo = work_order_or_404(db, client.id, wo_id)
+    report = budget_report(db, client, wo)
+
+    rows = []
+    for group in report["groups"]:
+        if not group["lines"]:
+            rows.append([group["fg_code"], "-  not budgeted", "", "", "",
+                         group["qty"], ""])
+            continue
+        for material in group["lines"]:
+            rows.append([group["fg_code"], material["description"], material["qty"],
+                         material["uom"], material["rate"], material["wo_qty"],
+                         material["amount"]])
+
+    preamble = [
+        [report["title"], "", "", "", "", "", report["company"]],
+        ["Print Out Date: " + report["printed_at"]],
+        ["Fiscal Year: " + report["fiscal_year"]],
+        ["Sale order No: " + report["sale_order_no"]],
+        ["Project: " + report["project"]],
+        [],
+    ]
+    closing = [
+        [],
+        ["", "Order value", report["totals"]["value"]],
+        ["", "Budgeted cost", report["totals"]["cost"]],
+        ["", "Margin", report["totals"]["margin"]],
+    ]
+    return sheet_response(BUDGET_REPORT_HEADERS, rows,
+                          "budget_entry_report_%s.xlsx" % wo.number,
+                          preamble=preamble, closing=closing)
 
 
 # --- Approval Chain Helpers ---------------------------------------------------
@@ -5214,6 +5461,257 @@ async def google_signin_callback(request: Request, db: Session = Depends(get_db)
     # in and land in a tenancy they have nothing to do with.
     log_login(db, None, email, "google", "google", request, status="failed")
     return RedirectResponse("/login.html?error=google_unknown")
+
+
+# ============================================================================
+# CUSTOMERS, PLACING AN ORDER, AND THE MD'S APPROVAL
+#
+# The last three steps of the contracts flow. A customer is the party a
+# project belongs to; placing an order is the moment priced lines stop being a
+# draft; and the inquiry screen is where the whole thing is signed off.
+# ============================================================================
+
+class CustomerIn(BaseModel):
+    name: str
+    contact_person: Optional[str] = ""
+    email: Optional[str] = ""
+    phone_number: Optional[str] = ""
+    gstin: Optional[str] = ""
+    address: Optional[str] = ""
+    city: Optional[str] = ""
+    state: Optional[str] = ""
+    pincode: Optional[str] = ""
+    notes: Optional[str] = ""
+
+
+def next_customer_code(db, client_id) -> str:
+    highest = 0
+    for row in db.query(models.DBContact).filter(
+            models.DBContact.client_id == client_id).all():
+        match = re.match(r"^CUST-0*(\d+)$", (row.code or "").upper())
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return "CUST-%04d" % (highest + 1)
+
+
+def customer_to_dict(db, contact, with_counts=False):
+    row = {
+        "id": contact.id, "code": contact.code or "", "name": contact.name or "",
+        "contact_person": contact.contact_person or "", "email": contact.email or "",
+        "phone_number": contact.phone_number or "", "gstin": contact.gstin or "",
+        "address": contact.address or "", "city": contact.city or "",
+        "state": contact.state or "", "pincode": contact.pincode or "",
+        "notes": contact.notes or "",
+        "is_active": bool(contact.is_active) if contact.is_active is not None else True,
+        "created_at": contact.created_at or "",
+    }
+    if with_counts:
+        # By the link where a job has one, and by name where it does not. A
+        # job raised from the jobs screen only ever carried the customer's
+        # name, so counting the link alone reported nought projects against
+        # customers who plainly had several - the column read as broken.
+        row["projects"] = db.query(models.DBJob).filter(
+            models.DBJob.client_id == contact.client_id,
+            or_(models.DBJob.contact_id == contact.id,
+                and_(models.DBJob.contact_id.is_(None),
+                     sqlfunc.lower(models.DBJob.customer_name)
+                     == (contact.name or "").lower()))).count()
+    return row
+
+
+def backfill_customer_codes(db, client_id) -> bool:
+    """Give a code to customers who predate there being one.
+
+    The contacts a business already had were names and phone numbers, from
+    before a customer needed identifying on a contract. They are the same
+    customers, so they are numbered into the same series rather than being
+    left blank next to the ones added since.
+    """
+    missing = db.query(models.DBContact).filter(
+        models.DBContact.client_id == client_id,
+        or_(models.DBContact.code.is_(None), models.DBContact.code == "")
+    ).order_by(models.DBContact.id).all()
+    if not missing:
+        return False
+    for contact in missing:
+        contact.code = next_customer_code(db, client_id)
+        db.flush()
+    db.commit()
+    return True
+
+
+@app.get("/api/customers")
+def list_customers(request: Request, q: str = "", db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    backfill_customer_codes(db, client.id)
+    query = db.query(models.DBContact).filter(models.DBContact.client_id == client.id)
+    if q:
+        query = query.filter(or_(models.DBContact.name.ilike("%" + q + "%"),
+                                 models.DBContact.code.ilike("%" + q + "%"),
+                                 models.DBContact.gstin.ilike("%" + q + "%")))
+    rows = query.order_by(models.DBContact.id.desc()).limit(500).all()
+    return {"customers": [customer_to_dict(db, c, with_counts=True) for c in rows]}
+
+
+@app.post("/api/customers")
+def create_customer(body: CustomerIn, request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "A customer name is required")
+    # Case-insensitive, because "Fairview Homes" and "FAIRVIEW HOMES" are one
+    # customer and two rows would split their projects between them.
+    clash = db.query(models.DBContact).filter(
+        models.DBContact.client_id == client.id,
+        sqlfunc.lower(models.DBContact.name) == name.lower()).first()
+    if clash:
+        raise HTTPException(409, "'" + name + "' is already on the customer list")
+
+    contact = models.DBContact(
+        client_id=client.id, code=next_customer_code(db, client.id), name=name,
+        contact_person=(body.contact_person or "").strip(),
+        email=(body.email or "").strip(), phone_number=(body.phone_number or "").strip(),
+        gstin=(body.gstin or "").strip().upper(), address=(body.address or "").strip(),
+        city=(body.city or "").strip(), state=(body.state or "").strip(),
+        pincode=(body.pincode or "").strip(), notes=(body.notes or "").strip(),
+        is_active=True)
+    db.add(contact)
+    log_audit(db, client.id, "customer_created", "customer", None, name, "", request)
+    db.commit()
+    db.refresh(contact)
+    return dict(customer_to_dict(db, contact), message=contact.code + " added.")
+
+
+@app.put("/api/customers/{customer_id}")
+def update_customer(customer_id: int, body: CustomerIn, request: Request,
+                    db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    contact = db.query(models.DBContact).filter(
+        models.DBContact.id == customer_id,
+        models.DBContact.client_id == client.id).first()
+    if not contact:
+        raise HTTPException(404, "Customer not found")
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "A customer name is required")
+    contact.name = name
+    for field in ("contact_person", "email", "phone_number", "address",
+                  "city", "state", "pincode", "notes"):
+        setattr(contact, field, (getattr(body, field) or "").strip())
+    contact.gstin = (body.gstin or "").strip().upper()
+    db.commit()
+    return dict(customer_to_dict(db, contact), message="Customer updated.")
+
+
+@app.post("/api/erp/work-orders/{wo_id}/place-order")
+def erp_place_order(wo_id: int, request: Request, db: Session = Depends(get_db)):
+    """A draft becomes a placed order.
+
+    Kept as its own step because the moment an order is placed is the moment
+    those prices are committed to a customer, and that should be somebody
+    pressing a button rather than a side effect of uploading a file.
+    """
+    client = require_workorder_access(request, db)
+    wo = work_order_or_404(db, client.id, wo_id)
+    if wo.status != "Draft":
+        raise HTTPException(409, wo.number + " is already " + (wo.status or "").lower())
+    if not db.query(models.DBWorkOrderLine).filter(
+            models.DBWorkOrderLine.work_order_id == wo.id).count():
+        raise HTTPException(409, "There is nothing on this order to place.")
+    wo.status = "Placed"
+    log_audit(db, client.id, "work_order_placed", "work_order", wo.id, wo.number,
+              "Order placed, value %s" % wo.total_value, request)
+    db.commit()
+    db.refresh(wo)
+    return {"ok": True, "work_order": work_order_to_dict(db, wo),
+            "message": wo.number + " placed."}
+
+
+@app.get("/api/erp/inquiry")
+def erp_work_order_inquiry(request: Request, db: Session = Depends(get_db)):
+    """The screen the flow ends on.
+
+    Every order with what it is worth, whether its budget has been allocated,
+    and where its approval has got to - which together are the three things
+    somebody signing off a project needs on one line.
+    """
+    client = require_erp_read(request, db)
+    orders = db.query(models.DBWorkOrder).filter(
+        models.DBWorkOrder.client_id == client.id).order_by(
+            models.DBWorkOrder.id.desc()).limit(300).all()
+
+    rows = [work_order_to_dict(db, w) for w in orders]
+    for row in rows:
+        row["bom_status"] = "Allocated" if row["budgeted"] else "Not allocated"
+        row["md_approval"] = {"approved": "Approved", "rejected": "Rejected",
+                              "pending": "Awaiting"}.get(row["approval_status"], "Not sent")
+        row["can_place"] = row["status"] == "Draft"
+        row["can_approve"] = row["budgeted"] and row["approval_status"] != "approved"
+    return {
+        "rows": rows,
+        "summary": {
+            "orders": len(rows),
+            "awaiting_approval": len([r for r in rows if r["approval_status"] == "pending"]),
+            "not_budgeted": len([r for r in rows if not r["budgeted"]]),
+            "total_value": money(sum(r["total_value"] for r in rows)),
+            "total_margin": money(sum(r["margin"] for r in rows if r["budgeted"])),
+        },
+    }
+
+
+class MDDecision(BaseModel):
+    approve: bool = True
+    notes: Optional[str] = ""
+
+
+@app.post("/api/erp/inquiry/{wo_id}/md-approval")
+def erp_md_approval(wo_id: int, body: MDDecision, request: Request,
+                    db: Session = Depends(get_db)):
+    """The managing director's own sign-off.
+
+    The reporting chain exists for costs raised by staff. A project approval is
+    one person's decision, so this records it directly rather than walking a
+    ladder - but it is written to the same approval history, so a work order
+    has one story regardless of which route the signature came by.
+    """
+    client = require_items_access(request, db, "workorders.manage")
+    wo = work_order_or_404(db, client.id, wo_id)
+
+    if body.approve and not db.query(models.DBBomLine).filter(
+            models.DBBomLine.work_order_id == wo.id).count():
+        raise HTTPException(
+            409, "Allocate the budget first - there is no cost to approve against.")
+    if wo.status == "Draft":
+        raise HTTPException(409, "Place the order before approving it.")
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    wo.approval_status = "approved" if body.approve else "rejected"
+    wo.current_approval_step = 0
+    set_approval_display_status(wo, "work_order", wo.approval_status)
+    if not body.approve:
+        wo.rejection_reason = (body.notes or "").strip()
+
+    # Recorded on the same chain the staff route writes to, so the history
+    # reads as one sequence however the decision was reached.
+    db.query(models.DBApprovalChain).filter(
+        models.DBApprovalChain.entity_type == "work_order",
+        models.DBApprovalChain.entity_id == wo.id,
+        models.DBApprovalChain.status == "pending").update(
+            {"status": "cancelled"}, synchronize_session=False)
+    db.add(models.DBApprovalChain(
+        client_id=client.id, entity_type="work_order", entity_id=wo.id,
+        employee_id=wo.submitted_by, approver_id=None, level="MD", step=99,
+        status=wo.approval_status, notes=(body.notes or "").strip() or "Managing Director",
+        decided_at=now, created_at=now))
+
+    log_audit(db, client.id, "work_order_md_" + wo.approval_status, "work_order",
+              wo.id, wo.number, (body.notes or "").strip(), request)
+    db.commit()
+    db.refresh(wo)
+    return {"ok": True, "work_order": work_order_to_dict(db, wo),
+            "message": wo.number + " " + ("approved by the MD."
+                                          if body.approve else "sent back.")}
+
 
 @app.get("/api/health")
 def health_check(db: Session = Depends(get_db)):
@@ -8103,7 +8601,7 @@ Powered by Aniprotech"""
 # HR MODULE - Departments, Employees, Payroll, Onboarding
 # ============================================================================
 
-from sqlalchemy import func as sqlfunc, or_
+from sqlalchemy import func as sqlfunc, or_, and_
 
 class DepartmentCreate(BaseModel):
     name: str

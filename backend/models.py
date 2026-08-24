@@ -601,6 +601,13 @@ class DBSettings(Base):
 
 
 class DBContact(Base):
+    """A customer. Invoices address one, projects belong to one.
+
+    The billing side only ever needed a name and a way to reach somebody. A
+    contract needs the rest - who signs, where to send the invoice, and the
+    GST number that has to appear on it - so those live here rather than being
+    retyped onto every document.
+    """
     __tablename__ = "contacts"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -608,6 +615,17 @@ class DBContact(Base):
     name = Column(String, index=True)
     email = Column(String)
     phone_number = Column(String)
+
+    code = Column(String, default="", index=True)
+    contact_person = Column(String, default="")
+    gstin = Column(String, default="")
+    address = Column(String, default="")
+    city = Column(String, default="")
+    state = Column(String, default="")
+    pincode = Column(String, default="")
+    notes = Column(Text, default="")
+    is_active = Column(Boolean, default=True, index=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     client = relationship("DBClient", back_populates="contacts")
 

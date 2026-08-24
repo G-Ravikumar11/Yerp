@@ -1513,3 +1513,46 @@ label { color: var(--text-secondary); font-size: 0.78rem; font-weight: 600; }
     border: 1px solid var(--border-color);
 }
 .modal-overlay { backdrop-filter: blur(2px); background: rgba(22, 25, 43, 0.35); }
+
+/* ===========================================================================
+   The Budget Entry Report
+
+   Made to be printed, so it is laid out as it is read on paper: the block
+   that names the order at the top, the ordered line standing above the
+   materials it consumes, and headings that repeat when the table breaks
+   across a page - it runs to sixty-five of them on a real project.
+   =========================================================================== */
+
+.report-head { padding: 18px 20px 12px; border-bottom: 2px solid var(--border-color); }
+.report-head-top {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 16px; flex-wrap: wrap;
+}
+.report-head-top h2 { margin: 0; font-size: 1.15rem; }
+.report-meta {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 2px 18px; margin-top: 10px;
+    font-size: 0.82rem; color: var(--text-secondary);
+}
+.report-table thead th { position: sticky; top: 0; }
+.report-table tr.report-group td {
+    background: var(--bg-subtle, rgba(79, 70, 229, 0.06));
+    font-weight: 600; border-top: 1px solid var(--border-color);
+}
+.report-table tfoot td { border-top: 2px solid var(--border-color); }
+
+@media print {
+    .no-print { display: none !important; }
+    #budget-report-sheet { border: none !important; box-shadow: none !important; }
+    .report-head { border-bottom: 2px solid #000 !important; }
+    .report-meta { color: #000 !important; }
+    /* Repeat the headings on every sheet, and never split a row in half. */
+    .report-table thead { display: table-header-group; }
+    .report-table tfoot { display: table-footer-group; }
+    .report-table tr { page-break-inside: avoid; }
+    .report-table th, .report-table td {
+        border-bottom: 1px solid #ddd !important; color: #000 !important;
+        font-size: 0.75rem; padding: 4px 6px !important;
+    }
+    .report-table tr.report-group td { background: #eee !important; }
+}

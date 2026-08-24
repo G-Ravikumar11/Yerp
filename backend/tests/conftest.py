@@ -134,6 +134,24 @@ def tenant(account):
     return account["client"]
 
 
+@pytest.fixture
+def second_tenant():
+    """Somebody else's business, signed in on their own browser.
+
+    Needed for the tests that check one tenancy cannot reach into another's
+    records. It has to be a separate client because a session holds one
+    identity, so signing in here must not disturb the first tenant's cookie.
+    """
+    import uuid as _uuid
+    with TestClient(main.app) as c:
+        email = f"other-{_uuid.uuid4().hex[:10]}@example.com"
+        c.post("/api/client/register", json={
+            "email": email, "password": "Passw0rdTest", "company_name": "Rival Ltd"})
+        assert c.post("/api/client/login", json={
+            "email": email, "password": "Passw0rdTest"}).status_code == 200
+        yield c
+
+
 def make_employee(tenant, **overrides):
     """Create an employee and return its API representation."""
     payload = {
