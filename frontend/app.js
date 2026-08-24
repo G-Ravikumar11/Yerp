@@ -382,6 +382,7 @@ function showView(viewId) {
         'customers-view': 'nav-customers',
         'inquiry-view': 'nav-inquiry',
         'budget-report-view': 'nav-inquiry',
+        'viewer-view': 'nav-viewer',
         'my-orders-view': 'nav-my-orders',
         'my-overview-view': 'nav-my-overview',
         'my-timesheet-view': 'nav-my-timesheet',

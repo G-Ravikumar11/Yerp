@@ -65,6 +65,7 @@ async function previewWorkOrderSheet() {
     if (!input || !input.files.length) { showToast('Choose a file first', 'error'); return; }
     var fd = new FormData();
     fd.append('file', input.files[0]);
+    fd.append('sheet', chosenSheet('wo-sheet'));
     try {
         var res = await fetch('/api/erp/work-orders/analyse', { method: 'POST', body: fd });
         var data = await res.json();
@@ -166,6 +167,7 @@ async function previewBomSheet() {
     var fd = new FormData();
     fd.append('file', input.files[0]);
     fd.append('work_order_id', parseInt(document.getElementById('bom-wo-id').value));
+    fd.append('sheet', chosenSheet('bom-sheet'));
     try {
         var res = await fetch('/api/erp/bom/analyse', { method: 'POST', body: fd });
         var data = await res.json();

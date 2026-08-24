@@ -99,6 +99,7 @@ async function analyseItemSheet() {
 
     var fd = new FormData();
     fd.append('file', input.files[0]);
+    fd.append('sheet', typeof chosenSheet === 'function' ? chosenSheet('item-sheet') : '');
     try {
         var res = await fetch('/api/erp/items/analyse', { method: 'POST', body: fd });
         var data = await res.json();
@@ -326,20 +327,30 @@ async function loadItems() {
     var body = document.getElementById('items-body');
     if (!body) return;
     var q = (document.getElementById('item-search') || {}).value || '';
+
+    // Only the fetch is guarded. It used to wrap the rendering as well, so a
+    // missing element on the page - a counter that had been taken out of the
+    // markup - threw, was caught here, and reported itself as "could not load
+    // items" under a panel that was plainly showing the counts it had just
+    // loaded. The failure to say what actually broke cost more than the break.
+    var data;
     try {
-        var data = await (await fetch('/api/erp/items?q=' + encodeURIComponent(q))).json();
-        _items = data.items || [];
-        var stats = document.getElementById('items-stats');
-        if (stats) {
-            stats.innerHTML = statCard('Raw material codes', data.counts.RM) +
-                statCard('Finished goods codes', data.counts.FG) +
-                statCard('Total items', data.counts.RM + data.counts.FG);
-        }
-        document.getElementById('item-count').textContent = _items.length + ' items';
+        data = await (await fetch('/api/erp/items?q=' + encodeURIComponent(q))).json();
     } catch (e) {
         body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text-secondary);">Could not load items.</td></tr>';
         return;
     }
+
+    _items = data.items || [];
+    var counts = data.counts || { RM: 0, FG: 0 };
+    var stats = document.getElementById('items-stats');
+    if (stats) {
+        stats.innerHTML = statCard('Raw material codes', counts.RM) +
+            statCard('Finished goods codes', counts.FG) +
+            statCard('Total items', counts.RM + counts.FG);
+    }
+    var counter = document.getElementById('item-count');
+    if (counter) counter.textContent = _items.length + ' items';
     body.innerHTML = _items.length ? _items.map(function (i) {
         return '<tr><td style="font-family:monospace;font-weight:600;">' + esc(i.item_code) + '</td>' +
             '<td>' + esc(i.item_name) + '</td>' +
@@ -429,7 +440,8 @@ function closeWorkOrderModal() {
 window.closeWorkOrderModal = closeWorkOrderModal;
 
 async function validateWorkOrderSheet() {
-    var r = await postSheet('/api/erp/work-orders/validate', 'wo-file', {});
+    var r = await postSheet('/api/erp/work-orders/validate', 'wo-file',
+                            { sheet: chosenSheet('wo-sheet') });
     if (!r) return;
     document.getElementById('wo-modal-result').innerHTML = sheetIssues(r) +
         (r.ok ? '<p style="font-size:0.85rem;">Order value <strong>' +
@@ -442,7 +454,8 @@ window.validateWorkOrderSheet = validateWorkOrderSheet;
 async function uploadWorkOrderSheet() {
     var jobId = parseInt(document.getElementById('wo-job').value);
     if (!jobId) { showToast('Create a job first', 'error'); return; }
-    var r = await postSheet('/api/erp/work-orders', 'wo-file', { job_id: jobId });
+    var r = await postSheet('/api/erp/work-orders', 'wo-file',
+                            { job_id: jobId, sheet: chosenSheet('wo-sheet') });
     if (!r) return;
     document.getElementById('wo-modal-result').innerHTML = sheetIssues(r);
     showToast(r.message, r.ok ? 'success' : 'error');
@@ -485,7 +498,8 @@ window.closeBomModal = closeBomModal;
 
 async function uploadBomSheet() {
     var id = parseInt(document.getElementById('bom-wo-id').value);
-    var r = await postSheet('/api/erp/bom', 'bom-file', { work_order_id: id });
+    var r = await postSheet('/api/erp/bom', 'bom-file',
+                            { work_order_id: id, sheet: chosenSheet('bom-sheet') });
     if (!r) return;
     document.getElementById('bom-result').innerHTML = sheetIssues(r) +
         (r.ok ? '<p style="font-size:0.85rem;">Budgeted cost <strong>' +

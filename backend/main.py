@@ -1,5 +1,6 @@
 import asyncio
 import calendar
+import contextvars
 import hashlib
 import hmac
 import secrets
@@ -2746,7 +2747,7 @@ def sheet_response(headers, sample, filename, fmt="xlsx", preamble=None, closing
     )
 
 
-async def parse_sheet(upload: UploadFile, columns, aliases=None):
+async def parse_sheet(upload: UploadFile, columns, aliases=None, sheet=""):
     """Read an uploaded sheet into dicts keyed by our column names.
 
     By header where the sheet is headed in words we know, by position only as a
@@ -2758,7 +2759,7 @@ async def parse_sheet(upload: UploadFile, columns, aliases=None):
     price where ours is a unit - it banked the price as the unit of measure and
     the discount as the rate, silently, on a document that prices a contract.
     """
-    header, body = await read_sheet_rows(upload)
+    header, body = await read_sheet_rows(upload, sheet)
 
     mapping = {}
     if aliases:
@@ -3120,18 +3121,20 @@ def erp_item_template(kind: str = "RM", request: Request = None,
 
 @app.post("/api/erp/items/validate")
 async def erp_items_validate(request: Request, file: UploadFile = File(...),
-                             kind: str = Form("RM"), db: Session = Depends(get_db)):
+                             kind: str = Form("RM"), sheet: str = Form(""),
+                             db: Session = Depends(get_db)):
     client = require_items_access(request, db)
     kind = kind.upper()
     if kind not in ITEM_KINDS:
         raise HTTPException(400, "kind must be RM or FG")
-    rows = await parse_sheet(file, ITEM_COLUMNS, HEADER_ALIASES)
+    rows = await parse_sheet(file, ITEM_COLUMNS, HEADER_ALIASES, sheet)
     return validate_items(db, client.id, rows, kind)
 
 
 @app.post("/api/erp/items/upload")
 async def erp_items_upload(request: Request, file: UploadFile = File(...),
-                           kind: str = Form("RM"), db: Session = Depends(get_db)):
+                           kind: str = Form("RM"), sheet: str = Form(""),
+                           db: Session = Depends(get_db)):
     """Validation runs again here rather than trusting that /validate was
     called first: a check the caller can skip is not a check."""
     client = require_items_access(request, db)
@@ -3139,7 +3142,7 @@ async def erp_items_upload(request: Request, file: UploadFile = File(...),
     if kind not in ITEM_KINDS:
         raise HTTPException(400, "kind must be RM or FG")
 
-    rows = await parse_sheet(file, ITEM_COLUMNS, HEADER_ALIASES)
+    rows = await parse_sheet(file, ITEM_COLUMNS, HEADER_ALIASES, sheet)
     result = validate_items(db, client.id, rows, kind)
     if not result["ok"]:
         return {**result, "created": 0,
@@ -3181,13 +3184,44 @@ def looks_like_xlsx(raw: bytes) -> bool:
     return raw[:4] == b"PK\x03\x04"
 
 
-def read_xlsx_table(raw: bytes):
-    """Rows from the first worksheet, as strings.
+# Which sheet of which workbook the request in hand is reading. A ContextVar
+# rather than a global because requests are served concurrently, and two
+# uploads landing together must not describe each other's file.
+_SHEET_CONTEXT = contextvars.ContextVar("sheet_context", default=None)
 
-    Everything downstream compares and cleans text, so the numbers Excel hands
-    back as floats are rendered the way they were written - 5000 rather than
-    5000.0, which would otherwise reach a code column and not match.
+
+def workbook_context(raw: bytes, sheet: str):
+    """The name of the sheet being read, and the others that were available."""
+    try:
+        book = open_workbook(raw)
+    except HTTPException:
+        return None
+    try:
+        names = list(book.sheetnames)
+        _, chosen = pick_sheet(book, sheet)
+        return {"sheet": chosen, "sheets": names}
+    finally:
+        book.close()
+
+
+def sheet_note() -> str:
+    """A sentence naming the tab that was read, when there was a choice.
+
+    Appended to the refusals about missing columns. "No item code column
+    found" is a fair complaint about the sheet it read and a baffling one
+    about the file, which may well have the codes on the next tab along.
     """
+    ctx = _SHEET_CONTEXT.get()
+    if not ctx or len(ctx["sheets"]) < 2:
+        return ""
+    others = [n for n in ctx["sheets"] if n != ctx["sheet"]]
+    return (" This was read from the '%s' sheet; the file also has %s. "
+            "Open it under Contracts → Open a file to look at the others."
+            % (ctx["sheet"], ", ".join("'%s'" % n for n in others)))
+
+
+def open_workbook(raw: bytes):
+    """The workbook, or a plain refusal saying why it would not open."""
     try:
         import openpyxl
     except ImportError:
@@ -3195,22 +3229,60 @@ def read_xlsx_table(raw: bytes):
             400, "Excel workbooks are not supported on this server yet. "
                  "Save the sheet as CSV and upload that.")
     try:
-        book = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        return openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
     except Exception as exc:
         raise HTTPException(400, "That workbook could not be opened (%s)." % exc)
 
-    def cell(value):
-        if value is None:
-            return ""
-        if isinstance(value, float) and value.is_integer():
-            return str(int(value))
-        if isinstance(value, datetime):
-            return value.strftime("%Y-%m-%d")
-        return str(value).strip()
 
+def cell_text(value):
+    """One cell as the text it was written as.
+
+    Everything downstream compares and cleans text, so the numbers Excel hands
+    back as floats are rendered the way they were written - 5000 rather than
+    5000.0, which would otherwise reach a code column and not match.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d")
+    return str(value).strip()
+
+
+def pick_sheet(book, wanted):
+    """The worksheet asked for, by name or by position, else the first.
+
+    A workbook off somebody's desk is rarely one sheet. A programme arrives
+    with eight - a Gantt chart, two revisions of it, a manpower tab - and
+    reading whichever happened to be saved first means the file is judged on
+    a sheet nobody meant to send.
+    """
+    names = book.sheetnames
+    wanted = (str(wanted) if wanted is not None else "").strip()
+    if not wanted:
+        return book[names[0]], names[0]
+    for name in names:                          # by name, exactly
+        if name == wanted:
+            return book[name], name
+    for name in names:                          # then case-insensitively
+        if name.strip().lower() == wanted.lower():
+            return book[name], name
+    if re.fullmatch(r"\d+", wanted):            # then by position
+        index = int(wanted)
+        if 0 <= index < len(names):
+            return book[names[index]], names[index]
+    raise HTTPException(
+        400, "This workbook has no sheet called '%s'. It has: %s."
+             % (wanted, ", ".join("'%s'" % n for n in names)))
+
+
+def read_xlsx_table(raw: bytes, sheet: str = ""):
+    """Rows from one worksheet, as strings."""
+    book = open_workbook(raw)
     try:
-        sheet = book[book.sheetnames[0]]
-        return [[cell(c) for c in row] for row in sheet.iter_rows(values_only=True)]
+        worksheet, _ = pick_sheet(book, sheet)
+        return [[cell_text(c) for c in row] for row in worksheet.iter_rows(values_only=True)]
     finally:
         book.close()
 
@@ -3237,7 +3309,140 @@ def is_hint_row(values) -> bool:
     return bool(filled) and all(HINT_PHRASES.search(v) for v in filled)
 
 
-async def read_sheet_rows(upload: UploadFile):
+# What a sheet looks like it is, so the file can say so itself rather than
+# the person having to know before they upload.
+SHEET_KINDS = [
+    ("items", "Item master", lambda h: match_headers(h, HEADER_ALIASES)[0]),
+    ("work_order", "Work order", lambda h: match_headers(h, WO_HEADER_ALIASES)[0]),
+    ("bom", "Budget / BOM", lambda h: match_headers(h, BOM_HEADER_ALIASES)[0]),
+]
+
+
+def guess_sheet_kind(header):
+    """Which importer this sheet's headings look like they belong to.
+
+    Scored by how many columns each vocabulary recognises, because a sheet
+    that is nobody's format matches nothing and should say so plainly rather
+    than being pushed at whichever importer was tried first.
+    """
+    best, scores = None, {}
+    for key, label, match in SHEET_KINDS:
+        fields = set(match(header).values())
+        # A code column is what makes a sheet importable at all; without one
+        # the rest is a coincidence of common words like "Quantity".
+        anchor = {"items": "item_code", "work_order": "fg_code", "bom": "rm_code"}[key]
+        scores[key] = len(fields) if anchor in fields else 0
+        if scores[key] and (best is None or scores[key] > scores[best[0]]):
+            best = (key, label)
+    return {"kind": best[0] if best else "", "label": best[1] if best else "",
+            "scores": scores}
+
+
+def find_header_row(rows, limit: int = 15):
+    """Which row is the headings, when it is not the first one.
+
+    A sheet off a real desk opens with a title, a company name, a project and
+    a blank line before it gets to naming its columns. Taking row one on faith
+    reads "SCHEDULE" as the entire header and everything under it as data.
+
+    A row scores for being recognised by one of our vocabularies, and failing
+    that for simply being the widest thing near the top - a heading row names
+    every column, where a title fills one cell and a total fills two.
+    """
+    best_index, best_score = 0, -1
+    for index, row in enumerate(rows[:limit]):
+        filled = [c for c in row if str(c or "").strip()]
+        if len(filled) < 2:
+            continue
+        known = max(len(set(match_headers(row, aliases)[0].values()))
+                    for aliases in (HEADER_ALIASES, WO_HEADER_ALIASES, BOM_HEADER_ALIASES))
+        # Recognised columns count for far more than width, so a genuine
+        # header beats a long row of dates sitting above it.
+        score = known * 10 + len(filled)
+        if score > best_score:
+            best_index, best_score = index, score
+    return best_index
+
+
+def sheet_overview(raw: bytes, sheet: str = "", preview_rows: int = 25):
+    """Every tab in the workbook, and a look at one of them."""
+    if not looks_like_xlsx(raw):
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = raw.decode("latin-1")
+        table = list(csv.reader(io.StringIO(text, newline="")))
+        sheets = [{"name": "(the file)", "rows": len(table),
+                   "columns": max([len(r) for r in table] or [0])}]
+        chosen, grid = "(the file)", table
+    else:
+        book = open_workbook(raw)
+        try:
+            sheets = [{"name": n, "rows": book[n].max_row or 0,
+                       "columns": book[n].max_column or 0} for n in book.sheetnames]
+            worksheet, chosen = pick_sheet(book, sheet)
+            grid = [[cell_text(c) for c in row]
+                    for row in worksheet.iter_rows(values_only=True)]
+        finally:
+            book.close()
+
+    filled = [r for r in grid if any((c or "").strip() for c in r)]
+    header_at = find_header_row(filled) if filled else 0
+    header = filled[header_at] if filled else []
+    body = filled[header_at + 1:]
+    if body and is_hint_row(body[0]):
+        body = body[1:]
+
+    # Wide sheets are usually wide for a reason that is not data - a Gantt
+    # chart carries a column per day - so the preview is capped rather than
+    # sending two hundred columns of dates to a browser.
+    width = min(max([len(r) for r in filled] or [0]), 40)
+
+    def row_out(values):
+        return [(values[i] if i < len(values) else "") for i in range(width)]
+
+    guess = guess_sheet_kind(header) if header else {"kind": "", "label": "", "scores": {}}
+    columns = match_headers(header, {
+        "items": HEADER_ALIASES, "work_order": WO_HEADER_ALIASES,
+        "bom": BOM_HEADER_ALIASES}[guess["kind"]])[0] if guess["kind"] else {}
+    return {
+        "sheets": sheets,
+        "sheet": chosen,
+        "header_row": header_at + 1,
+        "header": row_out(header),
+        # By position, not by heading text. A budget sheet heads two different
+        # columns "Product Code", and a lookup by what the heading says would
+        # label both of them whatever the first one turned out to be.
+        "fields": [columns.get(i, "") for i in range(width)],
+        "rows": [row_out(r) for r in body[:preview_rows]],
+        "total_rows": len(body),
+        "columns": width,
+        "truncated_columns": max([len(r) for r in filled] or [0]) > width,
+        "guess": guess,
+        "mapping": mapping_report(header, match_headers(
+            header, {"items": HEADER_ALIASES, "work_order": WO_HEADER_ALIASES,
+                     "bom": BOM_HEADER_ALIASES}.get(guess["kind"], HEADER_ALIASES))[0])
+        if guess["kind"] else {},
+    }
+
+
+@app.post("/api/erp/sheets/inspect")
+async def erp_inspect_sheet(request: Request, file: UploadFile = File(...),
+                            sheet: str = Form(""), db: Session = Depends(get_db)):
+    """Open any workbook and say what is in it, without saving a thing.
+
+    The step that was missing. Every other route asks you to declare what a
+    file is before it will open it, so a file that is not what you thought is
+    refused with a message about a column, having read a sheet you never chose.
+    """
+    require_erp_read(request, db)
+    raw = await file.read()
+    if len(raw) > 8_000_000:
+        raise HTTPException(400, "That file is too large. Split it and upload in parts.")
+    return dict(sheet_overview(raw, sheet), filename=file.filename or "")
+
+
+async def read_sheet_rows(upload: UploadFile, sheet: str = ""):
     """Split an upload into its header row and its data rows, unparsed.
 
     Takes a real Excel workbook or a CSV; which one is decided by the bytes,
@@ -3251,8 +3456,14 @@ async def read_sheet_rows(upload: UploadFile):
         raise HTTPException(400, "That file is too large. Split it and upload in parts.")
 
     if looks_like_xlsx(raw):
-        table = read_xlsx_table(raw)
+        table = read_xlsx_table(raw, sheet)
+        # Remembered so a complaint further down can say which of a workbook's
+        # tabs it was actually looking at. Being told a column is missing is
+        # no use at all when the file has eight sheets and you never got to
+        # say which one you meant.
+        _SHEET_CONTEXT.set(workbook_context(raw, sheet))
     else:
+        _SHEET_CONTEXT.set(None)
         try:
             text = raw.decode("utf-8-sig")
         except UnicodeDecodeError:
@@ -3305,7 +3516,8 @@ def check_item_row(row, kind, seen, taken):
 
 @app.post("/api/erp/items/analyse")
 async def erp_items_analyse(request: Request, file: UploadFile = File(...),
-                            kind: str = Form(""), db: Session = Depends(get_db)):
+                            kind: str = Form(""), sheet: str = Form(""),
+                            db: Session = Depends(get_db)):
     """Read a sheet, work out what it is, and repair what is unambiguous.
 
     Deliberately writes nothing. It returns the rows it made of the file, the
@@ -3314,12 +3526,12 @@ async def erp_items_analyse(request: Request, file: UploadFile = File(...),
     being bounced back to Excel to be uploaded again.
     """
     client = require_items_access(request, db)
-    header, body = await read_sheet_rows(file)
+    header, body = await read_sheet_rows(file, sheet)
     mapping, unmapped = map_headers(header)
     if "item_code" not in mapping.values():
         raise HTTPException(
             400, "No item code column found. Expected a column headed something "
-                 "like 'Item Code', 'Material Code' or 'SKU'.")
+                 "like 'Item Code', 'Material Code' or 'SKU'." + sheet_note())
 
     forced = (kind or "").upper() or None
     if forced and forced not in ITEM_KINDS:
@@ -4024,14 +4236,14 @@ def rows_from(header, body, mapping):
 
 @app.post("/api/erp/work-orders/analyse")
 async def erp_wo_analyse(request: Request, file: UploadFile = File(...),
-                         db: Session = Depends(get_db)):
+                         sheet: str = Form(""), db: Session = Depends(get_db)):
     """Read a work-order sheet and price it, without saving anything."""
     client = require_workorder_access(request, db)
-    header, body = await read_sheet_rows(file)
+    header, body = await read_sheet_rows(file, sheet)
     mapping, unmapped = map_headers_with(header, WO_HEADER_ALIASES)
     if "fg_code" not in mapping.values():
         raise HTTPException(400, "No item code column found. Expected something "
-                                 "headed 'FG Code', 'Item Code' or 'SKU'.")
+                                 "headed 'FG Code', 'Item Code' or 'SKU'." + sheet_note())
 
     master = {i.item_code.upper(): i for i in db.query(models.DBItem).filter(
         models.DBItem.client_id == client.id, models.DBItem.kind == "FG").all()}
@@ -4092,16 +4304,16 @@ async def erp_wo_analyse(request: Request, file: UploadFile = File(...),
 
 @app.post("/api/erp/bom/analyse")
 async def erp_bom_analyse(request: Request, file: UploadFile = File(...),
-                          work_order_id: int = Form(...),
+                          work_order_id: int = Form(...), sheet: str = Form(""),
                           db: Session = Depends(get_db)):
     """Read a budget sheet against one work order, without saving anything."""
     client = require_workorder_access(request, db)
     wo = work_order_or_404(db, client.id, work_order_id)
-    header, body = await read_sheet_rows(file)
+    header, body = await read_sheet_rows(file, sheet)
     mapping, unmapped = map_headers_with(header, BOM_HEADER_ALIASES)
     if "rm_code" not in mapping.values():
         raise HTTPException(400, "No material code column found. Expected something "
-                                 "headed 'RM Code' or 'Material Code'.")
+                                 "headed 'RM Code' or 'Material Code'." + sheet_note())
 
     rm_master = {i.item_code.upper(): i for i in db.query(models.DBItem).filter(
         models.DBItem.client_id == client.id, models.DBItem.kind == "RM").all()}
@@ -4221,19 +4433,20 @@ def validate_work_order_sheet(db, client_id, rows):
 
 @app.post("/api/erp/work-orders/validate")
 async def erp_wo_validate(request: Request, file: UploadFile = File(...),
-                          db: Session = Depends(get_db)):
+                          sheet: str = Form(""), db: Session = Depends(get_db)):
     client = require_workorder_access(request, db)
-    rows = await parse_sheet(file, WO_COLUMNS, WO_HEADER_ALIASES)
+    rows = await parse_sheet(file, WO_COLUMNS, WO_HEADER_ALIASES, sheet)
     return validate_work_order_sheet(db, client.id, rows)
 
 
 @app.post("/api/erp/work-orders")
 async def erp_wo_upload(request: Request, file: UploadFile = File(...),
-                        job_id: int = Form(...), db: Session = Depends(get_db)):
+                        job_id: int = Form(...), sheet: str = Form(""),
+                        db: Session = Depends(get_db)):
     client = require_workorder_access(request, db)
     job = job_or_404(db, client.id, job_id)
 
-    rows = await parse_sheet(file, WO_COLUMNS, WO_HEADER_ALIASES)
+    rows = await parse_sheet(file, WO_COLUMNS, WO_HEADER_ALIASES, sheet)
     result = validate_work_order_sheet(db, client.id, rows)
     if not result["ok"]:
         return {**result, "work_order": None,
@@ -4383,22 +4596,24 @@ def validate_bom_sheet(db, client_id, rows, wo):
 
 @app.post("/api/erp/bom/validate")
 async def erp_bom_validate(request: Request, file: UploadFile = File(...),
-                           work_order_id: int = Form(...), db: Session = Depends(get_db)):
+                           work_order_id: int = Form(...), sheet: str = Form(""),
+                           db: Session = Depends(get_db)):
     client = require_workorder_access(request, db)
     wo = work_order_or_404(db, client.id, work_order_id)
-    rows = await parse_sheet(file, BOM_COLUMNS, BOM_HEADER_ALIASES)
+    rows = await parse_sheet(file, BOM_COLUMNS, BOM_HEADER_ALIASES, sheet)
     return validate_bom_sheet(db, client.id, rows, wo)
 
 
 @app.post("/api/erp/bom")
 async def erp_bom_upload(request: Request, file: UploadFile = File(...),
-                         work_order_id: int = Form(...), db: Session = Depends(get_db)):
+                         work_order_id: int = Form(...), sheet: str = Form(""),
+                         db: Session = Depends(get_db)):
     client = require_workorder_access(request, db)
     wo = work_order_or_404(db, client.id, work_order_id)
     if (wo.approval_status or "none") == "pending":
         raise HTTPException(409, "This order is with an approver; its budget cannot change.")
 
-    rows = await parse_sheet(file, BOM_COLUMNS, BOM_HEADER_ALIASES)
+    rows = await parse_sheet(file, BOM_COLUMNS, BOM_HEADER_ALIASES, sheet)
     result = validate_bom_sheet(db, client.id, rows, wo)
     if not result["ok"]:
         return {**result, "created": 0,

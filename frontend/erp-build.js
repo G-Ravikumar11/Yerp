@@ -273,8 +273,14 @@ function renderWorkOrderLines() {
         ['Item', 'Type', 'Qty', 'Unit', 'Rate', 'Amount', ''].map(function (h) {
             return '<th class="px-2 py-2 text-left font-semibold text-ink-soft">' + h + '</th>';
         }).join('') + '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+        // Offered only while there is something left to add. Every code being
+        // on the order already is an ordinary end to the list, not a mistake,
+        // and a live button that answers with an error each time it is pressed
+        // is how three identical complaints end up stacked on the screen.
         '<div class="flex items-center justify-between mt-3 flex-wrap gap-3">' +
-        '<button class="btn btn-outline btn-sm" onclick="addWorkOrderLine()">+ Add line</button>' +
+        (_woDraft.lines.length < _fgMaster.length
+            ? '<button class="btn btn-outline btn-sm" onclick="addWorkOrderLine()">+ Add line</button>'
+            : '<span class="text-xxs text-ink-soft">Every finished goods code is on this order.</span>') +
         '<div class="text-[15px]">Order value <strong class="ml-2">' + formatCurrency(total) + '</strong></div>' +
         '</div>' +
         '<div class="flex gap-2 mt-3">' +
