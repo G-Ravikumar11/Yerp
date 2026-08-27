@@ -1470,3 +1470,143 @@ class DBBrandingTheme(Base):
 
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     updated_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+# ============================================================================
+# SUBCONTRACT WORK ORDERS
+#
+# The order a contractor issues *out* to a subcontractor, which is a different
+# document from the priced scope sold *in* to a customer (DBWorkOrder above).
+# This one carries a BOQ, the legal clauses the trade argues over, statutory
+# deductions, and a signature chain - so it lives in its own tables rather
+# than growing more nullable columns onto the sales side.
+# ============================================================================
+
+class DBBusinessUnit(Base):
+    """The legal entity issuing the order. Its GSTIN prints on the document."""
+    __tablename__ = "business_units"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), index=True)
+    name = Column(String, default="")
+    code = Column(String, default="", index=True)
+    gstin = Column(String, default="")
+    pan = Column(String, default="")
+    address = Column(Text, default="")
+    is_active = Column(Boolean, default=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBContractor(Base):
+    """A subcontractor. Kept apart from customers: the money runs the other way,
+    and what has to be held about them - PAN, bank, GST - is what makes a
+    payment legal rather than what makes an invoice addressable."""
+    __tablename__ = "contractors"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), index=True)
+    vendor_code = Column(String, default="", index=True)
+    company_name = Column(String, default="", index=True)
+    contact_person = Column(String, default="")
+    email = Column(String, default="")
+    phone_number = Column(String, default="")
+    pan = Column(String, default="")
+    gst_number = Column(String, default="")
+    bank_name = Column(String, default="")
+    bank_account = Column(String, default="")
+    bank_ifsc = Column(String, default="")
+    address = Column(Text, default="")
+    is_active = Column(Boolean, default=True, index=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBSubcontractOrder(Base):
+    """A work order issued to a subcontractor."""
+    __tablename__ = "subcontract_orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), index=True)
+    wo_number = Column(String, default="", index=True)
+    status = Column(String, default="DRAFT", index=True)
+    amendment_no = Column(Integer, default=0)
+    supersedes_id = Column(Integer, ForeignKey("subcontract_orders.id"), nullable=True)
+
+    business_unit_id = Column(Integer, ForeignKey("business_units.id"), nullable=True, index=True)
+    contractor_id = Column(Integer, ForeignKey("contractors.id"), nullable=True, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    work_type = Column(String, default="")
+    department = Column(String, default="")
+
+    subject = Column(Text, default="")
+    scope_of_work = Column(Text, default="")
+
+    commencement_date = Column(String, default="")
+    completion_date = Column(String, default="")
+    duration_months = Column(Float, default=0.0)
+    defect_liability_months = Column(Integer, default=0)
+
+    bank_guarantee_applicable = Column(Boolean, default=False)
+    bank_guarantee_amount = Column(Float, default=0.0)
+    bank_guarantee_validity = Column(String, default="")
+
+    # Held rather than recomputed on read, so an approved order still prints
+    # the figures it was approved on after a rate is edited elsewhere.
+    gross_amount = Column(Float, default=0.0)
+    gst_rate = Column(Float, default=18.0)
+    gst_amount = Column(Float, default=0.0)
+    tds_rate = Column(Float, default=1.0)
+    tds_amount = Column(Float, default=0.0)
+    net_order_value = Column(Float, default=0.0)
+
+    submitted_by = Column(Integer, nullable=True)
+    approved_by = Column(Integer, nullable=True)
+    approved_at = Column(String, default="")
+    executed_at = Column(String, default="")
+    rejection_reason = Column(Text, default="")
+
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    updated_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBSubcontractItem(Base):
+    """One BOQ line."""
+    __tablename__ = "subcontract_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("subcontract_orders.id"), index=True)
+    activity_no = Column(String, default="")
+    item_code = Column(String, default="")
+    item_description = Column(Text, default="")
+    uom = Column(String, default="")
+    quantity = Column(Float, default=0.0)
+    unit_rate = Column(Float, default=0.0)
+    total_amount = Column(Float, default=0.0)
+    cost_centre = Column(String, default="")
+    display_order = Column(Integer, default=0)
+
+
+class DBSubcontractTerm(Base):
+    """A clause. Ordered, because these are read as a numbered schedule."""
+    __tablename__ = "subcontract_terms"
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("subcontract_orders.id"), index=True)
+    clause_category = Column(String, default="")
+    clause_text = Column(Text, default="")
+    display_order = Column(Integer, default=0)
+
+
+class DBSubcontractApproval(Base):
+    """Who did what to the order, and what they said about it."""
+    __tablename__ = "subcontract_approvals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("subcontract_orders.id"), index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), index=True)
+    actor_id = Column(Integer, nullable=True)
+    actor_name = Column(String, default="")
+    action = Column(String, default="")
+    from_status = Column(String, default="")
+    to_status = Column(String, default="")
+    comments = Column(Text, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))

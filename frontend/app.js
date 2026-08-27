@@ -383,6 +383,8 @@ function showView(viewId) {
         'inquiry-view': 'nav-inquiry',
         'budget-report-view': 'nav-inquiry',
         'viewer-view': 'nav-viewer',
+        'subcontracts-view': 'nav-subcontracts',
+        'subcontract-wizard-view': 'nav-subcontracts',
         'my-orders-view': 'nav-my-orders',
         'my-overview-view': 'nav-my-overview',
         'my-timesheet-view': 'nav-my-timesheet',
@@ -434,6 +436,7 @@ function showView(viewId) {
     if (viewId === 'jobs-view' && typeof loadJobs === 'function') loadJobs();
     if (viewId === 'customers-view' && typeof searchCustomers === 'function') searchCustomers();
     if (viewId === 'inquiry-view' && typeof loadInquiry === 'function') loadInquiry();
+    if (viewId === 'subcontracts-view' && typeof loadSubcontracts === 'function') loadSubcontracts();
     if (viewId === 'orders-view' && typeof loadOrders === 'function') loadOrders();
     if (viewId === 'items-view' && typeof loadItems === 'function') loadItems();
     if (viewId === 'workorders-view' && typeof loadWorkOrders === 'function') loadWorkOrders();

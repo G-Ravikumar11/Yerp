@@ -139,6 +139,7 @@
                             <a href="#" class="nav-item" id="nav-customers" onclick="event.preventDefault();showView('customers-view')">Customers</a>
                             <a href="#" class="nav-item" id="nav-inquiry" onclick="event.preventDefault();showView('inquiry-view')">Work Order Inquiry</a>
                             <a href="#" class="nav-item" id="nav-viewer" onclick="event.preventDefault();showView('viewer-view')">Open a file</a>
+                            <a href="#" class="nav-item" id="nav-subcontracts" onclick="event.preventDefault();showView('subcontracts-view')">Subcontract Orders</a>
                         </div>
                     </div>
 
@@ -2969,6 +2970,31 @@
                     </div>
                 </div>
 
+                <div id="subcontracts-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Subcontract Work Orders</h1><p class="subtitle">Work issued out to a subcontractor, priced, signed off and amended</p></div>
+                        <div class="invoices-actions">
+                            <button class="btn btn-primary" onclick="newSubcontract()">+ New work order</button>
+                        </div>
+                    </div>
+                    <div class="stats-grid" id="sc-stats"></div>
+                    <div class="widget" style="margin-top:20px;">
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>WO number</th><th>Contractor</th><th>Department</th><th class="text-right">Items</th><th class="text-right">Net value</th><th>Status</th><th></th></tr></thead>
+                                <tbody id="sc-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="subcontract-wizard-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Work order</h1><p class="subtitle">Saved at every step &mdash; a schedule of two hundred lines is not something to lose to a closed tab</p></div>
+                    </div>
+                    <div class="widget"><div class="widget-content" style="padding:20px;" id="sc-wizard"></div></div>
+                </div>
+
                 <div id="viewer-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div><h1>Open a file</h1><p class="subtitle">Look inside any workbook before deciding what it is</p></div>
@@ -3590,6 +3616,7 @@
     <script src="erp-preview.js?v=57"></script>
     <script src="contracts.js?v=57"></script>
     <script src="sheet-viewer.js?v=57"></script>
+    <script src="subcontracts.js?v=57"></script>
 
     <!-- AI Core Orb -->
     <div class="ai-core" onclick="toggleAIChat()" role="button" tabindex="0" aria-label="Open the assistant" title="Ask the assistant" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAIChat();}">

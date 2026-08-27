@@ -8935,6 +8935,8 @@ PORTAL_PERMISSIONS = [
      "label": "Maintain the item master of material and finished goods codes"},
     {"key": "workorders.manage", "group": "Contracts",
      "label": "Raise work orders and allocate their budgets"},
+    {"key": "subcontracts.approve", "group": "Contracts",
+     "label": "Approve subcontract work orders for execution"},
 ]
 PERMISSION_KEYS = {p["key"] for p in PORTAL_PERMISSIONS}
 
@@ -8965,7 +8967,8 @@ PERMISSION_ROLES = [
         "permissions": ["self.service", "bills.submit", "bills.approve",
                         "bills.view_all", "attendance.view_team",
                         "leave.approve", "reports.view",
-                        "items.manage", "workorders.manage"],
+                        "items.manage", "workorders.manage",
+                        "subcontracts.approve"],
     },
     {
         "code": "finance",
@@ -8974,7 +8977,8 @@ PERMISSION_ROLES = [
                        "invoices and quotes, sees the reports.",
         "permissions": ["self.service", "bills.submit", "bills.approve",
                         "bills.view_all", "bills.pay", "invoices.manage",
-                        "reports.view", "items.manage", "workorders.manage"],
+                        "reports.view", "items.manage", "workorders.manage",
+                        "subcontracts.approve"],
     },
     {
         "code": "hr_admin",
@@ -16932,15 +16936,906 @@ def ai_describe_item(request: Request, body: dict = None, db: Session = Depends(
     charge_after_success(db, client.id, "ai_describe_item", 1, rough[:40])
     return {"available": True, "description": answer.strip().strip('"')}
 
-# Serve frontend
-frontend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
-if os.path.exists(frontend_path):
-    app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
-else:
-    logger.warning(f"Frontend directory not found at {frontend_path}")
 
 if __name__ == "__main__":
     import uvicorn
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run(app, host=host, port=port, reload=False)
+
+
+# ============================================================================
+# SUBCONTRACT WORK ORDERS
+#
+# The order issued out to a subcontractor: a BOQ, the clauses the trade argues
+# over, statutory deductions, and a signature chain. Separate from the sales
+# side work order, which prices scope sold to a customer.
+# ============================================================================
+
+# The only moves anybody can make. Written as a map rather than scattered
+# through the endpoints, because "can this order be approved" is a question
+# asked in four places and must not have four answers.
+WO_TRANSITIONS = {
+    "DRAFT":       {"SUBMIT": "PROVISIONAL", "CANCEL": "CANCELLED"},
+    "PROVISIONAL": {"APPROVE": "APPROVED", "REJECT": "DRAFT", "CANCEL": "CANCELLED"},
+    "APPROVED":    {"EXECUTE": "EXECUTED", "AMEND": "AMENDED", "CANCEL": "CANCELLED"},
+    "EXECUTED":    {"AMEND": "AMENDED"},
+    "AMENDED":     {},
+    "CANCELLED":   {},
+}
+# Only a draft may be edited. Once submitted, the figures are what somebody is
+# being asked to sign off, and they must not move underneath them.
+WO_EDITABLE = ("DRAFT",)
+WO_DEPARTMENTS = ("Civil", "STP", "Electrical", "Mechanical", "Plumbing", "Finishing")
+
+
+def wo_actor(request, db, permission="workorders.manage"):
+    """The tenant, plus who is doing this, for the approval history."""
+    client = require_items_access(request, db, permission)
+    name, actor_id = "", None
+    try:
+        emp = get_employee_user(request, db)
+        if emp:
+            actor_id = emp.id
+            name = ("%s %s" % (emp.first_name or "", emp.last_name or "")).strip()
+    except Exception:
+        name = client.company_name or "Account holder"
+    return client, actor_id, (name or "Account holder")
+
+
+def financial_year_label(on_date=None):
+    """2026-27, the Indian year the order belongs to."""
+    d = datetime.now()
+    if on_date:
+        try:
+            d = datetime.strptime(str(on_date)[:10], "%Y-%m-%d")
+        except (ValueError, TypeError):
+            pass
+    start = d.year if d.month >= 4 else d.year - 1
+    return "%d-%02d" % (start, (start + 1) % 100)
+
+
+def next_wo_number(db, client_id, department, on_date=None):
+    """WO/2026-27/STP/001 - the serial runs per year and per department.
+
+    Restarting the count each year and each discipline is what the site office
+    already does on paper, and a number that does not match the file it is
+    filed in is worse than no number at all.
+    """
+    year = financial_year_label(on_date)
+    dept = re.sub(r"[^A-Z0-9]", "", (department or "GEN").upper())[:6] or "GEN"
+    stem = "WO/%s/%s/" % (year, dept)
+    highest = 0
+    for (num,) in db.query(models.DBSubcontractOrder.wo_number).filter(
+            models.DBSubcontractOrder.client_id == client_id,
+            models.DBSubcontractOrder.wo_number.like(stem + "%")).all():
+        match = re.search(r"(\d+)$", num or "")
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return "%s%03d" % (stem, highest + 1)
+
+
+def recost_order(db, order):
+    """Total the BOQ, then apply GST and TDS.
+
+    GST is charged on top of the gross and TDS is withheld out of it, so they
+    are not two halves of one number. Netting them against each other is the
+    mistake this exists to make impossible.
+    """
+    gross = money(sum(
+        (i.total_amount or 0) for i in db.query(models.DBSubcontractItem).filter(
+            models.DBSubcontractItem.order_id == order.id).all()))
+    order.gross_amount = gross
+    order.gst_amount = money(gross * (order.gst_rate or 0) / 100.0)
+    order.tds_amount = money(gross * (order.tds_rate or 0) / 100.0)
+    order.net_order_value = money(gross + order.gst_amount - order.tds_amount)
+    order.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return order
+
+
+def wo_or_404(db, client_id, order_id):
+    row = db.query(models.DBSubcontractOrder).filter(
+        models.DBSubcontractOrder.id == order_id,
+        models.DBSubcontractOrder.client_id == client_id).first()
+    if not row:
+        raise HTTPException(404, "Work order not found")
+    return row
+
+
+def record_wo_action(db, client, order, actor_id, actor_name, action, was, comments=""):
+    db.add(models.DBSubcontractApproval(
+        order_id=order.id, client_id=client.id, actor_id=actor_id,
+        actor_name=actor_name, action=action, from_status=was,
+        to_status=order.status, comments=(comments or "").strip()))
+
+
+def wo_item_dict(i):
+    return {"id": i.id, "activity_no": i.activity_no or "", "item_code": i.item_code or "",
+            "item_description": i.item_description or "", "uom": i.uom or "",
+            "quantity": money(i.quantity), "unit_rate": unit_rate(i.unit_rate),
+            "total_amount": money(i.total_amount), "cost_centre": i.cost_centre or "",
+            "display_order": i.display_order or 0}
+
+
+def wo_dict(db, order, detail=False):
+    bu = db.query(models.DBBusinessUnit).filter(
+        models.DBBusinessUnit.id == order.business_unit_id).first()
+    con = db.query(models.DBContractor).filter(
+        models.DBContractor.id == order.contractor_id).first()
+    job = db.query(models.DBJob).filter(models.DBJob.id == order.job_id).first()
+    row = {
+        "id": order.id, "wo_number": order.wo_number or "", "status": order.status,
+        "amendment_no": order.amendment_no or 0, "supersedes_id": order.supersedes_id,
+        "business_unit_id": order.business_unit_id, "business_unit": bu.name if bu else "",
+        "contractor_id": order.contractor_id, "contractor": con.company_name if con else "",
+        "job_id": order.job_id,
+        "project": ("%s %s" % (job.number, job.name)).strip() if job else "",
+        "work_type": order.work_type or "", "department": order.department or "",
+        "subject": order.subject or "", "scope_of_work": order.scope_of_work or "",
+        "commencement_date": order.commencement_date or "",
+        "completion_date": order.completion_date or "",
+        "duration_months": order.duration_months or 0,
+        "defect_liability_months": order.defect_liability_months or 0,
+        "bank_guarantee_applicable": bool(order.bank_guarantee_applicable),
+        "bank_guarantee_amount": money(order.bank_guarantee_amount),
+        "bank_guarantee_validity": order.bank_guarantee_validity or "",
+        "gross_amount": money(order.gross_amount), "gst_rate": order.gst_rate or 0,
+        "gst_amount": money(order.gst_amount), "tds_rate": order.tds_rate or 0,
+        "tds_amount": money(order.tds_amount),
+        "net_order_value": money(order.net_order_value),
+        "rejection_reason": order.rejection_reason or "",
+        "approved_at": order.approved_at or "", "executed_at": order.executed_at or "",
+        "created_at": order.created_at or "",
+        "editable": order.status in WO_EDITABLE,
+        "actions": sorted(WO_TRANSITIONS.get(order.status, {}).keys()),
+        "provisional": order.status == "PROVISIONAL",
+        "item_count": db.query(models.DBSubcontractItem).filter(
+            models.DBSubcontractItem.order_id == order.id).count(),
+    }
+    if detail:
+        row["items"] = [wo_item_dict(i) for i in db.query(models.DBSubcontractItem).filter(
+            models.DBSubcontractItem.order_id == order.id).order_by(
+                models.DBSubcontractItem.display_order,
+                models.DBSubcontractItem.id).all()]
+        row["terms"] = [{"id": t.id, "clause_category": t.clause_category or "",
+                         "clause_text": t.clause_text or "",
+                         "display_order": t.display_order or 0}
+                        for t in db.query(models.DBSubcontractTerm).filter(
+                            models.DBSubcontractTerm.order_id == order.id).order_by(
+                                models.DBSubcontractTerm.display_order,
+                                models.DBSubcontractTerm.id).all()]
+        row["history"] = [{"action": h.action, "actor": h.actor_name or "",
+                           "from_status": h.from_status, "to_status": h.to_status,
+                           "comments": h.comments or "", "at": h.created_at or ""}
+                          for h in db.query(models.DBSubcontractApproval).filter(
+                              models.DBSubcontractApproval.order_id == order.id).order_by(
+                                  models.DBSubcontractApproval.id).all()]
+        row["business_unit_detail"] = {
+            "name": bu.name if bu else "", "gstin": bu.gstin if bu else "",
+            "pan": bu.pan if bu else "", "address": bu.address if bu else ""}
+        row["contractor_detail"] = {
+            "company_name": con.company_name if con else "",
+            "vendor_code": con.vendor_code if con else "",
+            "gst_number": con.gst_number if con else "",
+            "pan": con.pan if con else "", "address": con.address if con else "",
+            "contact_person": con.contact_person if con else "",
+            "phone_number": con.phone_number if con else ""}
+    return row
+
+
+# The clause headings this trade argues over, in the order they are read.
+WO_CLAUSE_CATEGORIES = (
+    "Scope of Work", "Mode of Measurement", "Rates and Taxes",
+    "Payment Milestones", "Mobilization Advance", "Retention and Security",
+    "Electricity and Water Supply", "Labour Hutment and Welfare",
+    "Materials and Wastage", "Safety and Statutory Compliance",
+    "Programme and Liquidated Damages", "Defect Liability",
+    "Termination", "Arbitration and Jurisdiction",
+)
+
+# Sensible openings, not policy. Every one is edited on the order it goes out
+# on; what they save is somebody retyping the measurement mode from memory
+# and getting it subtly wrong on a document that is legally binding.
+WO_STANDARD_TERMS = [
+    {"clause_category": "Mode of Measurement",
+     "clause_text": "All work shall be measured in accordance with IS 1200 and the "
+                    "relevant clauses of the main contract. Only executed and "
+                    "jointly recorded quantities entered in the Measurement Book "
+                    "shall be certified for payment."},
+    {"clause_category": "Rates and Taxes",
+     "clause_text": "Rates are inclusive of all labour, supervision, tools, tackles, "
+                    "scaffolding, lifts, leads and wastage, and exclusive of GST. "
+                    "GST shall be charged at the prevailing rate. Statutory TDS and "
+                    "any labour cess shall be deducted at source."},
+    {"clause_category": "Payment Milestones",
+     "clause_text": "Running Account bills shall be submitted monthly against "
+                    "jointly measured quantities. Certified bills shall be paid "
+                    "within 30 days of certification, subject to deductions herein."},
+    {"clause_category": "Mobilization Advance",
+     "clause_text": "Any mobilization advance shall be interest bearing, secured by "
+                    "an equivalent bank guarantee, and recovered pro rata from each "
+                    "Running Account bill."},
+    {"clause_category": "Retention and Security",
+     "clause_text": "Retention shall be deducted at 5% of each certified bill, half "
+                    "released on virtual completion and the balance on expiry of the "
+                    "defect liability period."},
+    {"clause_category": "Electricity and Water Supply",
+     "clause_text": "Electricity and water at a single point shall be provided free "
+                    "of charge by the Owner. Onward distribution, and all cabling, "
+                    "storage and consumption beyond that point, is in the "
+                    "Contractor's scope."},
+    {"clause_category": "Labour Hutment and Welfare",
+     "clause_text": "Space for labour hutment shall be allotted by the Owner where "
+                    "available. Construction, maintenance, sanitation, and the "
+                    "welfare and statutory registration of all deployed labour "
+                    "remain the Contractor's responsibility."},
+    {"clause_category": "Safety and Statutory Compliance",
+     "clause_text": "The Contractor shall comply with all applicable safety, labour, "
+                    "EPF, ESI and environmental legislation, and shall indemnify the "
+                    "Owner against any claim arising from non-compliance."},
+    {"clause_category": "Programme and Liquidated Damages",
+     "clause_text": "Time is of the essence. Delay attributable to the Contractor "
+                    "shall attract liquidated damages at 0.5% of the order value per "
+                    "completed week, capped at 5% of the order value."},
+    {"clause_category": "Defect Liability",
+     "clause_text": "The Contractor shall make good, at their own cost, any defect "
+                    "notified during the defect liability period stated overleaf."},
+    {"clause_category": "Arbitration and Jurisdiction",
+     "clause_text": "Any dispute shall first be referred to the Project Head. Failing "
+                    "settlement, it shall be referred to arbitration under the "
+                    "Arbitration and Conciliation Act, 1996, subject to the "
+                    "jurisdiction of the courts at the Owner's registered office."},
+]
+
+
+def amount_in_words(value):
+    """Rupees in words, because a legal document states the figure twice.
+
+    Indian grouping - crore, lakh, thousand - since that is the reading the
+    signatories will check it against.
+    """
+    units = ("", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight",
+             "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen",
+             "Sixteen", "Seventeen", "Eighteen", "Nineteen")
+    tens = ("", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy",
+            "Eighty", "Ninety")
+
+    def under_hundred(n):
+        if n < 20:
+            return units[n]
+        return (tens[n // 10] + (" " + units[n % 10] if n % 10 else "")).strip()
+
+    def under_thousand(n):
+        if n < 100:
+            return under_hundred(n)
+        rest = n % 100
+        return (units[n // 100] + " Hundred" +
+                (" and " + under_hundred(rest) if rest else ""))
+
+    whole = int(money(value))
+    paise = int(round((money(value) - whole) * 100))
+    if whole == 0:
+        words = "Zero"
+    else:
+        parts = []
+        for divisor, label in ((10000000, "Crore"), (100000, "Lakh"), (1000, "Thousand")):
+            if whole >= divisor:
+                parts.append(under_thousand(whole // divisor) + " " + label)
+                whole %= divisor
+        if whole:
+            parts.append(under_thousand(whole))
+        words = " ".join(parts)
+    out = "Rupees " + words
+    if paise:
+        out += " and " + under_hundred(paise) + " Paise"
+    return out + " Only"
+
+
+@app.get("/api/wo/orders/{order_id}/document")
+def wo_document(order_id: int, request: Request, db: Session = Depends(get_db)):
+    """Everything the printable order needs, in the order it is printed.
+
+    The watermark is decided here rather than in the page, so a provisional
+    order cannot be printed as a clean one by loading the view differently.
+    """
+    client = require_erp_read(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    doc = wo_dict(db, order, detail=True)
+    doc["company"] = client.company_name or ""
+    doc["printed_at"] = datetime.now().strftime("%d/%m/%Y   %H:%M")
+    doc["financial_year"] = financial_year_label(order.commencement_date)
+    doc["amount_in_words"] = amount_in_words(order.net_order_value)
+    doc["watermark"] = ("PROVISIONAL - NOT VALID FOR EXECUTION"
+                        if order.status == "PROVISIONAL" else
+                        "CANCELLED" if order.status == "CANCELLED" else
+                        "SUPERSEDED" if order.status == "AMENDED" else "")
+    doc["signatures"] = [
+        {"role": "Prepared by", "name": "", "for": "Billing Engineer"},
+        {"role": "Approved by", "name": "", "for": "Project Head"},
+        {"role": "For and on behalf of", "name": doc["company"], "for": "The Owner"},
+        {"role": "Accepted by", "name": doc["contractor"], "for": "The Contractor"},
+    ]
+    return doc
+
+
+@app.get("/api/wo/orders/{order_id}/boq.xlsx")
+def wo_boq_xlsx(order_id: int, request: Request, db: Session = Depends(get_db)):
+    """The schedule as a workbook, which is where it gets checked."""
+    client = require_erp_read(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    doc = wo_dict(db, order, detail=True)
+    doc["company"] = client.company_name or ""
+
+    rows = [[i["activity_no"], i["item_code"], i["item_description"], i["uom"],
+             i["quantity"], i["unit_rate"], i["total_amount"]] for i in doc["items"]]
+    preamble = [
+        ["Work Order", "", "", "", "", "", doc["company"]],
+        ["No: " + doc["wo_number"] + ("  (" + doc["status"] + ")")],
+        ["Contractor: " + doc["contractor"]],
+        ["Project: " + doc["project"]],
+        ["Subject: " + doc["subject"]],
+        [],
+    ]
+    closing = [
+        [],
+        ["", "", "", "", "", "Gross", doc["gross_amount"]],
+        ["", "", "", "", "", "GST @ %s%%" % doc["gst_rate"], doc["gst_amount"]],
+        ["", "", "", "", "", "TDS @ %s%%" % doc["tds_rate"], -doc["tds_amount"]],
+        ["", "", "", "", "", "Net order value", doc["net_order_value"]],
+    ]
+    return sheet_response(
+        ["Activity", "Item Code", "Description", "UOM", "Quantity", "Rate", "Amount"],
+        rows, "work_order_%s.xlsx" % re.sub(r"[^A-Za-z0-9]+", "_", doc["wo_number"]),
+        preamble=preamble, closing=closing)
+
+
+# --- Masters: who issues the order, and to whom ----------------------------
+
+class BusinessUnitIn(BaseModel):
+    name: str
+    code: Optional[str] = ""
+    gstin: Optional[str] = ""
+    pan: Optional[str] = ""
+    address: Optional[str] = ""
+
+
+class ContractorIn(BaseModel):
+    company_name: str
+    vendor_code: Optional[str] = ""
+    contact_person: Optional[str] = ""
+    email: Optional[str] = ""
+    phone_number: Optional[str] = ""
+    pan: Optional[str] = ""
+    gst_number: Optional[str] = ""
+    bank_name: Optional[str] = ""
+    bank_account: Optional[str] = ""
+    bank_ifsc: Optional[str] = ""
+    address: Optional[str] = ""
+
+
+@app.get("/api/wo/business-units")
+def wo_list_business_units(request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    rows = db.query(models.DBBusinessUnit).filter(
+        models.DBBusinessUnit.client_id == client.id).order_by(
+            models.DBBusinessUnit.name).all()
+    return {"business_units": [
+        {"id": b.id, "name": b.name or "", "code": b.code or "",
+         "gstin": b.gstin or "", "pan": b.pan or "", "address": b.address or ""}
+        for b in rows]}
+
+
+@app.post("/api/wo/business-units")
+def wo_create_business_unit(body: BusinessUnitIn, request: Request,
+                            db: Session = Depends(get_db)):
+    client = require_items_access(request, db, "workorders.manage")
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "The business unit needs a name")
+    unit = models.DBBusinessUnit(
+        client_id=client.id, name=name, code=(body.code or "").strip().upper(),
+        gstin=(body.gstin or "").strip().upper(), pan=(body.pan or "").strip().upper(),
+        address=(body.address or "").strip())
+    db.add(unit)
+    db.commit()
+    db.refresh(unit)
+    return {"id": unit.id, "name": unit.name, "message": name + " added."}
+
+
+@app.get("/api/wo/contractors")
+def wo_list_contractors(request: Request, q: str = "", db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    query = db.query(models.DBContractor).filter(
+        models.DBContractor.client_id == client.id)
+    if q:
+        query = query.filter(or_(
+            models.DBContractor.company_name.ilike("%" + q + "%"),
+            models.DBContractor.vendor_code.ilike("%" + q + "%"),
+            models.DBContractor.gst_number.ilike("%" + q + "%")))
+    rows = query.order_by(models.DBContractor.company_name).limit(500).all()
+    return {"contractors": [
+        {"id": c.id, "company_name": c.company_name or "",
+         "vendor_code": c.vendor_code or "", "contact_person": c.contact_person or "",
+         "email": c.email or "", "phone_number": c.phone_number or "",
+         "pan": c.pan or "", "gst_number": c.gst_number or "",
+         "bank_name": c.bank_name or "", "bank_account": c.bank_account or "",
+         "bank_ifsc": c.bank_ifsc or "", "address": c.address or ""}
+        for c in rows]}
+
+
+@app.post("/api/wo/contractors")
+def wo_create_contractor(body: ContractorIn, request: Request,
+                         db: Session = Depends(get_db)):
+    client = require_items_access(request, db, "workorders.manage")
+    name = (body.company_name or "").strip()
+    if not name:
+        raise HTTPException(400, "The contractor needs a company name")
+    clash = db.query(models.DBContractor).filter(
+        models.DBContractor.client_id == client.id,
+        sqlfunc.lower(models.DBContractor.company_name) == name.lower()).first()
+    if clash:
+        raise HTTPException(409, "'" + name + "' is already on the contractor list")
+
+    code = (body.vendor_code or "").strip().upper()
+    if not code:
+        # Numbered in one series so a contractor can be referred to by code on
+        # a site instruction without anybody having to look the name up.
+        highest = 0
+        for (existing,) in db.query(models.DBContractor.vendor_code).filter(
+                models.DBContractor.client_id == client.id).all():
+            match = re.match(r"^SC-0*(\d+)$", (existing or "").upper())
+            if match:
+                highest = max(highest, int(match.group(1)))
+        code = "SC-%04d" % (highest + 1)
+
+    con = models.DBContractor(
+        client_id=client.id, company_name=name, vendor_code=code,
+        contact_person=(body.contact_person or "").strip(),
+        email=(body.email or "").strip(), phone_number=(body.phone_number or "").strip(),
+        pan=(body.pan or "").strip().upper(),
+        gst_number=(body.gst_number or "").strip().upper(),
+        bank_name=(body.bank_name or "").strip(),
+        bank_account=(body.bank_account or "").strip(),
+        bank_ifsc=(body.bank_ifsc or "").strip().upper(),
+        address=(body.address or "").strip())
+    db.add(con)
+    log_audit(db, client.id, "contractor_created", "contractor", None, name, "", request)
+    db.commit()
+    db.refresh(con)
+    return {"id": con.id, "vendor_code": con.vendor_code,
+            "company_name": con.company_name, "message": con.vendor_code + " added."}
+
+
+# --- The order -------------------------------------------------------------
+
+class WorkOrderHeadIn(BaseModel):
+    business_unit_id: Optional[int] = None
+    contractor_id: Optional[int] = None
+    job_id: Optional[int] = None
+    department: Optional[str] = ""
+    work_type: Optional[str] = ""
+    subject: Optional[str] = ""
+    scope_of_work: Optional[str] = ""
+    commencement_date: Optional[str] = ""
+    completion_date: Optional[str] = ""
+    duration_months: Optional[float] = 0
+    defect_liability_months: Optional[int] = 0
+    bank_guarantee_applicable: Optional[bool] = False
+    bank_guarantee_amount: Optional[float] = 0
+    bank_guarantee_validity: Optional[str] = ""
+    gst_rate: Optional[float] = 18.0
+    tds_rate: Optional[float] = 1.0
+
+
+class BoqLineIn(BaseModel):
+    activity_no: Optional[str] = ""
+    item_code: Optional[str] = ""
+    item_description: str
+    uom: Optional[str] = ""
+    quantity: float = 0
+    unit_rate: float = 0
+    cost_centre: Optional[str] = ""
+
+
+class BoqIn(BaseModel):
+    lines: List[BoqLineIn]
+
+
+class TermIn(BaseModel):
+    clause_category: str
+    clause_text: str
+
+
+class TermsIn(BaseModel):
+    terms: List[TermIn]
+
+
+class WoActionIn(BaseModel):
+    comments: Optional[str] = ""
+
+
+@app.get("/api/wo/vocabulary")
+def wo_vocabulary(request: Request, db: Session = Depends(get_db)):
+    """Everything the wizard needs to populate its pickers in one call."""
+    client = require_erp_read(request, db)
+    jobs = db.query(models.DBJob).filter(
+        models.DBJob.client_id == client.id).order_by(models.DBJob.id.desc()).all()
+    return {
+        "departments": list(WO_DEPARTMENTS),
+        "uoms": ["cum", "sqm", "rmt", "kg", "MT", "nos", "lot", "ltr", "day"],
+        "clause_categories": list(WO_CLAUSE_CATEGORIES),
+        "statuses": list(WO_TRANSITIONS.keys()),
+        "jobs": [{"id": j.id, "number": j.number, "name": j.name} for j in jobs],
+        "next_number_year": financial_year_label(),
+    }
+
+
+@app.get("/api/wo/orders")
+def wo_list_orders(request: Request, status: str = "", db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    query = db.query(models.DBSubcontractOrder).filter(
+        models.DBSubcontractOrder.client_id == client.id)
+    if status:
+        query = query.filter(models.DBSubcontractOrder.status == status.upper())
+    rows = query.order_by(models.DBSubcontractOrder.id.desc()).limit(300).all()
+    orders = [wo_dict(db, o) for o in rows]
+    return {
+        "orders": orders,
+        "summary": {
+            "total": len(orders),
+            "draft": len([o for o in orders if o["status"] == "DRAFT"]),
+            "awaiting": len([o for o in orders if o["status"] == "PROVISIONAL"]),
+            "approved": len([o for o in orders if o["status"] == "APPROVED"]),
+            "executed": len([o for o in orders if o["status"] == "EXECUTED"]),
+            "value": money(sum(o["net_order_value"] for o in orders
+                               if o["status"] not in ("CANCELLED", "AMENDED"))),
+        },
+    }
+
+
+@app.post("/api/wo/orders")
+def wo_create_order(body: WorkOrderHeadIn, request: Request,
+                    db: Session = Depends(get_db)):
+    """Opens a draft. The number is issued now so it can be quoted while the
+    BOQ is still being priced, which is how the site office refers to it."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    dept = (body.department or "").strip()
+    order = models.DBSubcontractOrder(
+        client_id=client.id, status="DRAFT",
+        wo_number=next_wo_number(db, client.id, dept, body.commencement_date),
+        business_unit_id=body.business_unit_id, contractor_id=body.contractor_id,
+        job_id=body.job_id, department=dept, work_type=(body.work_type or "").strip(),
+        subject=(body.subject or "").strip(),
+        scope_of_work=(body.scope_of_work or "").strip(),
+        commencement_date=(body.commencement_date or "").strip(),
+        completion_date=(body.completion_date or "").strip(),
+        duration_months=body.duration_months or 0,
+        defect_liability_months=body.defect_liability_months or 0,
+        bank_guarantee_applicable=bool(body.bank_guarantee_applicable),
+        bank_guarantee_amount=money(body.bank_guarantee_amount or 0),
+        bank_guarantee_validity=(body.bank_guarantee_validity or "").strip(),
+        gst_rate=body.gst_rate if body.gst_rate is not None else 18.0,
+        tds_rate=body.tds_rate if body.tds_rate is not None else 1.0,
+        submitted_by=actor_id)
+    db.add(order)
+    db.flush()
+    recost_order(db, order)
+    record_wo_action(db, client, order, actor_id, actor_name, "CREATE", "", "")
+    log_audit(db, client.id, "subcontract_created", "subcontract_order", order.id,
+              order.wo_number, "", request)
+    db.commit()
+    db.refresh(order)
+    return {"order": wo_dict(db, order, detail=True),
+            "message": order.wo_number + " opened as a draft."}
+
+
+@app.get("/api/wo/orders/{order_id}")
+def wo_get_order(order_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return {"order": wo_dict(db, wo_or_404(db, client.id, order_id), detail=True)}
+
+
+@app.put("/api/wo/orders/{order_id}")
+def wo_update_order(order_id: int, body: WorkOrderHeadIn, request: Request,
+                    db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    if order.status not in WO_EDITABLE:
+        raise HTTPException(
+            409, order.wo_number + " is " + order.status.lower() +
+                 " and cannot be edited. Amend it instead.")
+
+    for field in ("business_unit_id", "contractor_id", "job_id"):
+        setattr(order, field, getattr(body, field))
+    order.work_type = (body.work_type or "").strip()
+    order.subject = (body.subject or "").strip()
+    order.scope_of_work = (body.scope_of_work or "").strip()
+    order.commencement_date = (body.commencement_date or "").strip()
+    order.completion_date = (body.completion_date or "").strip()
+    order.duration_months = body.duration_months or 0
+    order.defect_liability_months = body.defect_liability_months or 0
+    order.bank_guarantee_applicable = bool(body.bank_guarantee_applicable)
+    order.bank_guarantee_amount = money(body.bank_guarantee_amount or 0)
+    order.bank_guarantee_validity = (body.bank_guarantee_validity or "").strip()
+    if body.gst_rate is not None:
+        order.gst_rate = body.gst_rate
+    if body.tds_rate is not None:
+        order.tds_rate = body.tds_rate
+
+    # The number carries the discipline, so changing the discipline on a draft
+    # has to reissue it - otherwise it is filed under the wrong one for ever.
+    dept = (body.department or "").strip()
+    if dept != (order.department or ""):
+        order.department = dept
+        order.wo_number = next_wo_number(db, client.id, dept, order.commencement_date)
+
+    recost_order(db, order)
+    db.commit()
+    db.refresh(order)
+    return {"order": wo_dict(db, order, detail=True), "message": "Saved."}
+
+
+@app.put("/api/wo/orders/{order_id}/boq")
+def wo_set_boq(order_id: int, body: BoqIn, request: Request,
+               db: Session = Depends(get_db)):
+    """Replaces the BOQ wholesale, because that is how it is edited: the
+    schedule is worked on in one place and saved as a whole."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    if order.status not in WO_EDITABLE:
+        raise HTTPException(409, "The schedule of a " + order.status.lower() +
+                                 " order cannot be changed.")
+
+    db.query(models.DBSubcontractItem).filter(
+        models.DBSubcontractItem.order_id == order.id).delete()
+    kept = 0
+    for index, line in enumerate(body.lines):
+        description = (line.item_description or "").strip()
+        if not description:
+            continue
+        qty, rate = money(line.quantity or 0), unit_rate(line.unit_rate or 0)
+        if qty < 0 or rate < 0:
+            raise HTTPException(400, "Line %d: quantity and rate cannot be negative"
+                                     % (index + 1))
+        db.add(models.DBSubcontractItem(
+            order_id=order.id, activity_no=(line.activity_no or "").strip(),
+            item_code=(line.item_code or "").strip(), item_description=description,
+            uom=(line.uom or "").strip(), quantity=qty, unit_rate=rate,
+            total_amount=money(qty * rate),
+            cost_centre=(line.cost_centre or "").strip(), display_order=index))
+        kept += 1
+
+    db.flush()
+    recost_order(db, order)
+    db.commit()
+    db.refresh(order)
+    return {"order": wo_dict(db, order, detail=True),
+            "message": "%d item(s) saved. Gross %s." % (kept, order.gross_amount)}
+
+
+@app.put("/api/wo/orders/{order_id}/terms")
+def wo_set_terms(order_id: int, body: TermsIn, request: Request,
+                 db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    if order.status not in WO_EDITABLE:
+        raise HTTPException(409, "The terms of a " + order.status.lower() +
+                                 " order cannot be changed.")
+    db.query(models.DBSubcontractTerm).filter(
+        models.DBSubcontractTerm.order_id == order.id).delete()
+    for index, term in enumerate(body.terms):
+        text = (term.clause_text or "").strip()
+        if not text:
+            continue
+        db.add(models.DBSubcontractTerm(
+            order_id=order.id, clause_category=(term.clause_category or "").strip(),
+            clause_text=text, display_order=index))
+    db.commit()
+    db.refresh(order)
+    return {"order": wo_dict(db, order, detail=True), "message": "Terms saved."}
+
+
+@app.get("/api/wo/terms/library")
+def wo_terms_library(request: Request, db: Session = Depends(get_db)):
+    """The clauses this trade puts on nearly every order.
+
+    Offered as a starting point rather than imposed: they are edited per order,
+    but nobody should be retyping the measurement mode from memory.
+    """
+    require_erp_read(request, db)
+    return {"library": WO_STANDARD_TERMS}
+
+
+# --- Moving the order along ------------------------------------------------
+
+def wo_ready_to_submit(db, order):
+    """What is still missing before anybody can be asked to sign this.
+
+    Checked on submission rather than on save, because a draft is allowed to
+    be half finished - that is what a draft is for. It is the asking somebody
+    to approve it that requires the document to be complete.
+    """
+    missing = []
+    if not order.contractor_id:
+        missing.append("the contractor it is issued to")
+    if not order.business_unit_id:
+        missing.append("the business unit issuing it")
+    if not (order.subject or "").strip():
+        missing.append("a subject")
+    if not db.query(models.DBSubcontractItem).filter(
+            models.DBSubcontractItem.order_id == order.id).count():
+        missing.append("at least one schedule item")
+    if money(order.gross_amount) <= 0:
+        missing.append("a value above zero")
+    if not (order.commencement_date or "").strip():
+        missing.append("a commencement date")
+    if not (order.completion_date or "").strip():
+        missing.append("a completion date")
+    return missing
+
+
+def wo_apply(db, client, order, action, actor_id, actor_name, comments=""):
+    """One door for every state change, so the rules cannot disagree."""
+    was = order.status
+    allowed = WO_TRANSITIONS.get(was, {})
+    if action not in allowed:
+        raise HTTPException(
+            409, "%s is %s; it cannot be %sed from there." %
+                 (order.wo_number, was.lower(), action.lower()))
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if action == "SUBMIT":
+        missing = wo_ready_to_submit(db, order)
+        if missing:
+            raise HTTPException(
+                400, "This order still needs " + ", ".join(missing) + ".")
+        order.submitted_by = actor_id
+    elif action == "REJECT":
+        if not (comments or "").strip():
+            raise HTTPException(
+                400, "Say why it is going back, so it can be corrected.")
+        order.rejection_reason = (comments or "").strip()
+    elif action == "APPROVE":
+        order.approved_by = actor_id
+        order.approved_at = now
+        order.rejection_reason = ""
+    elif action == "EXECUTE":
+        order.executed_at = now
+
+    order.status = allowed[action]
+    order.updated_at = now
+    record_wo_action(db, client, order, actor_id, actor_name, action, was, comments)
+    return order
+
+
+@app.post("/api/wo/orders/{order_id}/submit")
+def wo_submit(order_id: int, body: WoActionIn, request: Request,
+              db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    wo_apply(db, client, order, "SUBMIT", actor_id, actor_name, body.comments)
+    log_audit(db, client.id, "subcontract_submitted", "subcontract_order", order.id,
+              order.wo_number, "", request)
+    db.commit()
+    db.refresh(order)
+    return {"order": wo_dict(db, order, detail=True),
+            "message": order.wo_number + " submitted for approval."}
+
+
+@app.post("/api/wo/orders/{order_id}/approve")
+def wo_approve(order_id: int, body: WoActionIn, request: Request,
+               db: Session = Depends(get_db)):
+    """The project head's decision. A separate right from raising the order,
+    because the whole point of the provisional state is that the person who
+    priced it is not the person who commits the business to it."""
+    client, actor_id, actor_name = wo_actor(request, db, "subcontracts.approve")
+    order = wo_or_404(db, client.id, order_id)
+    wo_apply(db, client, order, "APPROVE", actor_id, actor_name, body.comments)
+    log_audit(db, client.id, "subcontract_approved", "subcontract_order", order.id,
+              order.wo_number, "", request)
+    db.commit()
+    db.refresh(order)
+    return {"order": wo_dict(db, order, detail=True),
+            "message": order.wo_number + " approved."}
+
+
+@app.post("/api/wo/orders/{order_id}/reject")
+def wo_reject(order_id: int, body: WoActionIn, request: Request,
+              db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db, "subcontracts.approve")
+    order = wo_or_404(db, client.id, order_id)
+    wo_apply(db, client, order, "REJECT", actor_id, actor_name, body.comments)
+    db.commit()
+    db.refresh(order)
+    return {"order": wo_dict(db, order, detail=True),
+            "message": order.wo_number + " sent back to draft."}
+
+
+@app.post("/api/wo/orders/{order_id}/execute")
+def wo_execute(order_id: int, body: WoActionIn, request: Request,
+               db: Session = Depends(get_db)):
+    """Counter-signed and returned. From here it can carry RA bills."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    wo_apply(db, client, order, "EXECUTE", actor_id, actor_name, body.comments)
+    db.commit()
+    db.refresh(order)
+    return {"order": wo_dict(db, order, detail=True),
+            "message": order.wo_number + " is executed and open for RA bills."}
+
+
+@app.post("/api/wo/orders/{order_id}/cancel")
+def wo_cancel(order_id: int, body: WoActionIn, request: Request,
+              db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db, "subcontracts.approve")
+    order = wo_or_404(db, client.id, order_id)
+    if not (body.comments or "").strip():
+        raise HTTPException(400, "Say why it is being cancelled.")
+    wo_apply(db, client, order, "CANCEL", actor_id, actor_name, body.comments)
+    db.commit()
+    db.refresh(order)
+    return {"order": wo_dict(db, order, detail=True),
+            "message": order.wo_number + " cancelled."}
+
+
+@app.post("/api/wo/orders/{order_id}/amend")
+def wo_amend(order_id: int, body: WoActionIn, request: Request,
+             db: Session = Depends(get_db)):
+    """Supersede an order with a revision.
+
+    The original is not edited and not deleted: it was signed, so it stays as
+    it was signed. The revision is a new draft carrying everything across, and
+    the two are linked so the history reads in one line.
+    """
+    client, actor_id, actor_name = wo_actor(request, db)
+    order = wo_or_404(db, client.id, order_id)
+
+    revision = models.DBSubcontractOrder(
+        client_id=client.id, status="DRAFT",
+        wo_number="%s-REV-%02d" % (
+            re.sub(r"-REV-\d+$", "", order.wo_number or ""), (order.amendment_no or 0) + 1),
+        amendment_no=(order.amendment_no or 0) + 1, supersedes_id=order.id,
+        business_unit_id=order.business_unit_id, contractor_id=order.contractor_id,
+        job_id=order.job_id, department=order.department, work_type=order.work_type,
+        subject=order.subject, scope_of_work=order.scope_of_work,
+        commencement_date=order.commencement_date, completion_date=order.completion_date,
+        duration_months=order.duration_months,
+        defect_liability_months=order.defect_liability_months,
+        bank_guarantee_applicable=order.bank_guarantee_applicable,
+        bank_guarantee_amount=order.bank_guarantee_amount,
+        bank_guarantee_validity=order.bank_guarantee_validity,
+        gst_rate=order.gst_rate, tds_rate=order.tds_rate, submitted_by=actor_id)
+    db.add(revision)
+    db.flush()
+
+    for i in db.query(models.DBSubcontractItem).filter(
+            models.DBSubcontractItem.order_id == order.id).all():
+        db.add(models.DBSubcontractItem(
+            order_id=revision.id, activity_no=i.activity_no, item_code=i.item_code,
+            item_description=i.item_description, uom=i.uom, quantity=i.quantity,
+            unit_rate=i.unit_rate, total_amount=i.total_amount,
+            cost_centre=i.cost_centre, display_order=i.display_order))
+    for t in db.query(models.DBSubcontractTerm).filter(
+            models.DBSubcontractTerm.order_id == order.id).all():
+        db.add(models.DBSubcontractTerm(
+            order_id=revision.id, clause_category=t.clause_category,
+            clause_text=t.clause_text, display_order=t.display_order))
+
+    db.flush()
+    recost_order(db, revision)
+    wo_apply(db, client, order, "AMEND", actor_id, actor_name,
+             "Superseded by " + revision.wo_number)
+    record_wo_action(db, client, revision, actor_id, actor_name, "CREATE", "",
+                     "Amends " + (order.wo_number or ""))
+    log_audit(db, client.id, "subcontract_amended", "subcontract_order", revision.id,
+              revision.wo_number, "amends " + (order.wo_number or ""), request)
+    db.commit()
+    db.refresh(revision)
+    return {"order": wo_dict(db, revision, detail=True),
+            "message": revision.wo_number + " opened, amending " + order.wo_number + "."}
+# Serve frontend
+frontend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
+if os.path.exists(frontend_path):
+    app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
+else:
+    logger.warning(f"Frontend directory not found at {frontend_path}")
