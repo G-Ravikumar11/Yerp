@@ -437,6 +437,9 @@ function showView(viewId) {
     if (viewId === 'customers-view' && typeof searchCustomers === 'function') searchCustomers();
     if (viewId === 'inquiry-view' && typeof loadInquiry === 'function') loadInquiry();
     if (viewId === 'subcontracts-view' && typeof loadSubcontracts === 'function') loadSubcontracts();
+    // The item grid is open by default now, so it is mounted on arrival
+    // rather than waiting for a button that no longer has to be pressed.
+    if (viewId === 'items-view' && typeof mountItemGrid === 'function') mountItemGrid();
     if (viewId === 'orders-view' && typeof loadOrders === 'function') loadOrders();
     if (viewId === 'items-view' && typeof loadItems === 'function') loadItems();
     if (viewId === 'workorders-view' && typeof loadWorkOrders === 'function') loadWorkOrders();

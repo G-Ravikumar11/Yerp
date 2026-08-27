@@ -2816,13 +2816,37 @@
                     </div>
                     <div class="stats-grid" id="items-stats"></div>
 
+                    <!-- Typing straight in stays available for a handful of codes,
+                         where opening a spreadsheet is more work than the job. -->
+                    <div class="bg-white border border-slate-200 rounded-xl mt-5 overflow-hidden">
+                        <div class="flex flex-wrap items-start justify-between gap-3 px-5 py-3.5 border-b border-slate-200">
+                            <div>
+                                <h3 class="font-semibold text-ink">Add codes</h3>
+                                <p class="text-xxs text-ink-soft mt-0.5">
+                                    Type them straight in. Tab or Enter to move; a block
+                                    pasted from Excel lands here too.
+                                </p>
+                            </div>
+                            <div class="flex flex-wrap gap-2 shrink-0">
+                                <button class="btn btn-outline btn-sm" onclick="toggleTypeIn(this)">Hide the grid</button>
+                            </div>
+                        </div>
+                        <div id="typein-panel" class="p-5">
+                            <div class="flex gap-2 mb-3">
+                                <button class="btn btn-primary btn-sm" onclick="saveGridItems()">Save rows</button>
+                                <button class="btn btn-outline btn-sm" onclick="gridReset()">Clear</button>
+                            </div>
+                            <div id="item-grid"></div>
+                            <div id="grid-result" class="mt-3"></div>
+                        </div>
+                    </div>
                     <!-- Excel first. This is the flow people already run: take the
                          template, fill it in, validate it, upload it. It was buried
                          behind a toggle for a while, which made the screen look as
                          though the feature had been removed. -->
                     <div class="bg-white border border-slate-200 rounded-xl mt-5 overflow-hidden">
                         <div class="px-5 py-3.5 border-b border-slate-200">
-                            <h3 class="font-semibold text-ink">Upload items from Excel</h3>
+                            <h3 class="font-semibold text-ink">Or bring a spreadsheet</h3>
                             <p class="text-xxs text-ink-soft mt-0.5">
                                 Take the template, fill it in, validate it, upload it.
                                 Raw material and finished goods can be in the same file.
@@ -2889,29 +2913,6 @@
                         </div>
                     </div>
 
-                    <!-- Typing straight in stays available for a handful of codes,
-                         where opening a spreadsheet is more work than the job. -->
-                    <div class="bg-white border border-slate-200 rounded-xl mt-5 overflow-hidden">
-                        <div class="flex flex-wrap items-start justify-between gap-3 px-5 py-3.5 border-b border-slate-200">
-                            <div>
-                                <h3 class="font-semibold text-ink">Or type them in</h3>
-                                <p class="text-xxs text-ink-soft mt-0.5">
-                                    For a few codes. Paste from Excel works here too.
-                                </p>
-                            </div>
-                            <div class="flex flex-wrap gap-2 shrink-0">
-                                <button class="btn btn-outline btn-sm" onclick="toggleTypeIn()">Show the grid</button>
-                            </div>
-                        </div>
-                        <div id="typein-panel" hidden class="p-5">
-                            <div class="flex gap-2 mb-3">
-                                <button class="btn btn-primary btn-sm" onclick="saveGridItems()">Save rows</button>
-                                <button class="btn btn-outline btn-sm" onclick="gridReset()">Clear</button>
-                            </div>
-                            <div id="item-grid"></div>
-                            <div id="grid-result" class="mt-3"></div>
-                        </div>
-                    </div>
                         <div class="table-responsive">
                             <table class="data-table">
                                 <thead><tr><th>Code</th><th>Name</th><th>Kind</th><th>Type</th><th>UOM</th><th>HSN</th><th>Tax</th></tr></thead>

@@ -557,11 +557,14 @@ window.saveGridItems = saveGridItems;
    already run: check the file first, commit it second. Validate writes
    nothing at all. */
 
-function toggleTypeIn() {
+function toggleTypeIn(btn) {
     var panel = document.getElementById('typein-panel');
     if (!panel) return;
     panel.hidden = !panel.hidden;
     if (!panel.hidden && typeof mountItemGrid === 'function') mountItemGrid();
+    // The button has to say what pressing it will do, not what it just did.
+    var control = btn || document.querySelector('[onclick^="toggleTypeIn"]');
+    if (control) control.textContent = panel.hidden ? 'Show the grid' : 'Hide the grid';
 }
 window.toggleTypeIn = toggleTypeIn;
 
