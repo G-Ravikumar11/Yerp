@@ -138,23 +138,128 @@ function options(list, value, valueKey, labelFn) {
 }
 
 
+/* --- Adding what the order needs, without leaving the order --------------
+   The first screen asks for a contractor, a business unit and a project. On a
+   new installation there are none of any of them, and every picker is empty -
+   so the first work order somebody tries to raise cannot be raised at all,
+   and nothing on the screen says where to go instead. These add one from
+   here and select it.
+   ------------------------------------------------------------------------ */
+
+var WO_QUICK = {
+    contractor: {
+        title: 'New contractor', url: '/api/wo/contractors', pick: 'wo-con',
+        fields: [['company_name', 'Company name *', 'text'],
+                 ['contact_person', 'Contact person', 'text'],
+                 ['phone_number', 'Phone', 'tel'],
+                 ['pan', 'PAN', 'text'],
+                 ['gst_number', 'GST number', 'text'],
+                 ['address', 'Address', 'text']],
+        required: 'company_name',
+    },
+    unit: {
+        title: 'New business unit', url: '/api/wo/business-units', pick: 'wo-bu',
+        fields: [['name', 'Unit name *', 'text'],
+                 ['code', 'Code', 'text'],
+                 ['gstin', 'GSTIN', 'text'],
+                 ['pan', 'PAN', 'text'],
+                 ['address', 'Address', 'text']],
+        required: 'name',
+    },
+    project: {
+        title: 'New project', url: '/api/jobs', pick: 'wo-job',
+        fields: [['name', 'Project name *', 'text'],
+                 ['customer_name', 'Client', 'text'],
+                 ['site_address', 'Site address', 'text']],
+        required: 'name',
+    },
+};
+
+function woQuickAdd(kind) {
+    var spec = WO_QUICK[kind];
+    if (!spec) return;
+    // Whatever is already typed into step one is kept, so adding a contractor
+    // does not throw away the subject somebody just wrote.
+    WO.order = Object.assign({}, WO.order || {}, detailsPayload());
+    document.getElementById('wo-quick-title').textContent = spec.title;
+    document.getElementById('wo-quick-kind').value = kind;
+    document.getElementById('wo-quick-body').innerHTML = spec.fields.map(function (f) {
+        return '<div class="form-group"><label>' + esc(f[1]) + '</label>' +
+            '<input type="' + f[2] + '" class="form-control" id="wq-' + f[0] + '"></div>';
+    }).join('');
+    document.getElementById('wo-quick-modal').style.display = 'flex';
+    var first = document.getElementById('wq-' + spec.fields[0][0]);
+    if (first) first.focus();
+}
+window.woQuickAdd = woQuickAdd;
+
+function closeWoQuick() {
+    document.getElementById('wo-quick-modal').style.display = 'none';
+}
+window.closeWoQuick = closeWoQuick;
+
+async function saveWoQuick() {
+    var kind = document.getElementById('wo-quick-kind').value;
+    var spec = WO_QUICK[kind];
+    var payload = {};
+    spec.fields.forEach(function (f) {
+        var el = document.getElementById('wq-' + f[0]);
+        payload[f[0]] = el ? el.value.trim() : '';
+    });
+    if (!payload[spec.required]) {
+        showToast('A name is required', 'error');
+        return;
+    }
+    var res = await fetch(spec.url, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    var out = await res.json();
+    if (!res.ok) { showToast(out.detail || 'Could not save', 'error'); return; }
+
+    closeWoQuick();
+    showToast(out.message || 'Added', 'success');
+    WO.vocab = null;                       // the pickers are now out of date
+    await woVocab();
+    // Select what was just added, which is what it was added for.
+    if (kind === 'contractor') WO.order.contractor_id = out.id;
+    if (kind === 'unit') WO.order.business_unit_id = out.id;
+    if (kind === 'project') WO.order.job_id = out.id;
+    renderWizard();
+}
+window.saveWoQuick = saveWoQuick;
+
+
 /* --- Step 1: who the order is with --------------------------------------- */
 
 function stepDetails() {
     var o = WO.order || {}, v = WO.vocab;
     var locked = o.id && !o.editable;
     var dis = locked ? ' disabled' : '';
+    // A picker plus a way to fill it. On a new installation all three are
+    // empty, and without this the first order cannot be raised at all.
+    var withAdd = function (selectHtml, kind, empty) {
+        return '<div style="display:flex;gap:6px;align-items:center;">' +
+            '<div style="flex:1;min-width:0;">' + selectHtml + '</div>' +
+            (locked ? '' : '<button type="button" class="btn btn-sm btn-outline" ' +
+                'style="white-space:nowrap;" onclick="woQuickAdd(\'' + kind + '\')">+ New</button>') +
+            '</div>' + (empty && !locked
+                ? '<p style="font-size:0.75rem;color:var(--warning-color);margin-top:4px;">' +
+                  'None on file yet &mdash; add the first one here.</p>' : '');
+    };
+
     return '<div class="grid-2-1" style="display:grid;grid-template-columns:1fr 1fr;gap:0 18px;">' +
-        field('Business unit *', '<select id="wo-bu" class="form-control"' + dis + '>' +
+        field('Business unit *', withAdd('<select id="wo-bu" class="form-control"' + dis + '>' +
             options(v.business_units, o.business_unit_id, 'id', function (b) { return b.name; }) +
-            '</select>', 'The entity issuing the order. Its GSTIN prints on it.') +
-        field('Contractor *', '<select id="wo-con" class="form-control"' + dis + '>' +
+            '</select>', 'unit', !v.business_units.length),
+            'The entity issuing the order. Its GSTIN prints on it.') +
+        field('Contractor *', withAdd('<select id="wo-con" class="form-control"' + dis + '>' +
             options(v.contractors, o.contractor_id, 'id',
                 function (c) { return c.company_name + (c.vendor_code ? ' (' + c.vendor_code + ')' : ''); }) +
-            '</select>') +
-        field('Project', '<select id="wo-job" class="form-control"' + dis + '>' +
+            '</select>', 'contractor', !v.contractors.length)) +
+        field('Project', withAdd('<select id="wo-job" class="form-control"' + dis + '>' +
             options(v.jobs, o.job_id, 'id', function (j) { return j.number + ' — ' + j.name; }) +
-            '</select>') +
+            '</select>', 'project', !v.jobs.length)) +
         field('Department *', '<select id="wo-dept" class="form-control"' + dis + '>' +
             options(v.departments, o.department) + '</select>',
             'Decides the series the number is filed under.') +
