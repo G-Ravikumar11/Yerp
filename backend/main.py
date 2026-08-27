@@ -36,6 +36,7 @@ from sqladmin.authentication import AuthenticationBackend
 
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+import database
 from database import engine, get_db, SessionLocal, ensure_columns, migrate_sqlite
 import httpx
 import models
@@ -103,6 +104,17 @@ def generate_secret_key() -> str:
 
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 if not SECRET_KEY or SECRET_KEY == "generate_a_random_secret_string":
+    if database.IS_DEPLOYED:
+        # On a container the generated key cannot be persisted, so it differs
+        # on every boot and signs the whole tenancy out each redeploy. That is
+        # a security setting quietly degrading rather than a missing one, so
+        # the deploy stops here.
+        raise RuntimeError(
+            "SECRET_KEY is not set. Sessions are signed with it, so a "
+            "generated one would change on every redeploy and sign every user "
+            "out. Generate one with "
+            "`python -c \"import secrets; print(secrets.token_hex(32))\"` and "
+            "set it in the service Variables tab.")
     SECRET_KEY = generate_secret_key()
     # Writing to .env only helps on a machine with a persistent disk. On a
     # container platform the file is discarded on redeploy, so a generated key

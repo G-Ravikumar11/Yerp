@@ -12,8 +12,26 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
+# Whether this is a real deployment rather than somebody's laptop. Railway
+# sets these itself; ENVIRONMENT is the manual override for anywhere else.
+IS_DEPLOYED = bool(
+    os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_SERVICE_NAME")
+    or os.getenv("ENVIRONMENT", "").lower() in ("production", "staging"))
+
 if not DATABASE_URL:
-    print("WARNING: No DATABASE_URL found in .env, falling back to SQLite")
+    if IS_DEPLOYED:
+        # Falling back here would put the database on the container's own disk,
+        # which is thrown away on every redeploy. The app would work perfectly
+        # and quietly lose everything each time it shipped, so it refuses to
+        # start instead - a deploy that fails loudly costs an afternoon, and
+        # one that fails this way costs the data.
+        raise RuntimeError(
+            "DATABASE_URL is not set. This looks like a deployment, and "
+            "falling back to a local SQLite file would put the database on "
+            "disposable container disk - every redeploy would wipe it. Set "
+            "DATABASE_URL to the Postgres connection string in the service "
+            "Variables tab and deploy again.")
+    print("No DATABASE_URL set - using a local SQLite file for development.")
     DATABASE_URL = "sqlite:///./invoicing.db"
 
 # Neon closes idle connections and sits behind a pooler, so a connection left

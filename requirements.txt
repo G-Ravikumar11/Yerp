@@ -1,0 +1,3 @@
+# Nixpacks detects a Python app by finding this file at the repository root,
+# and installs from it. The actual list lives beside the code it belongs to.
+-r backend/requirements.txt
