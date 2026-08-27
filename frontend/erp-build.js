@@ -191,11 +191,10 @@ window.saveNewItems = saveNewItems;
 
 async function startWorkOrderBuilder() {
     await Promise.all([vocabulary(), loadMasters()]);
-    if (!_fgMaster.length) {
-        showToast('Add some finished goods codes first', 'error');
-        showView('items-view');
-        return;
-    }
+    // No bounce to the Item Master any more. A new deliverable is exactly the
+    // thing somebody is pricing when they open this, and being sent to another
+    // screen to name it - then back here to find the job and reference gone -
+    // is how an order gets started three times. It is created from here.
     _woDraft = { job_id: null, lines: [] };
     var jobs = await jobOptions();
     var host = document.getElementById('wo-builder');
@@ -209,7 +208,8 @@ async function startWorkOrderBuilder() {
         '<label class="block"><span class="block text-xxs font-semibold text-ink-soft mb-1">Reference</span>' +
         '<input id="wob-ref" class="' + cellCls + '" placeholder="Customer PO number"></label></div>' +
         '<div id="wob-lines"></div>';
-    addWorkOrderLine();
+    if (_fgMaster.length) addWorkOrderLine();
+    else renderWorkOrderLines();
 }
 window.startWorkOrderBuilder = startWorkOrderBuilder;
 
@@ -218,11 +218,77 @@ function addWorkOrderLine() {
     // quantity that should have been added together.
     var used = _woDraft.lines.map(function (l) { return l.code; });
     var free = _fgMaster.filter(function (i) { return used.indexOf(i.item_code) < 0; });
-    if (!free.length) { showToast('Every finished goods code is already on this order', 'error'); return; }
+    if (!free.length) {
+        showToast(_fgMaster.length
+            ? 'Every finished goods code is already on this order'
+            : 'Name the first deliverable to price it', 'error');
+        return;
+    }
     _woDraft.lines.push({ code: free[0].item_code, qty: 1, rate: 0, description: '' });
     renderWorkOrderLines();
 }
 window.addWorkOrderLine = addWorkOrderLine;
+
+/* --- A deliverable that does not have a code yet -------------------------
+   An FG code identifies one thing being sold, so a new scope means a new
+   code. Making that a trip to another screen is what pushed people back to
+   the spreadsheet: there, a new line is just a new line.
+   ------------------------------------------------------------------------ */
+
+function newFgCode() {
+    var v = VOCAB || {};
+    document.getElementById('fg-quick-modal').style.display = 'flex';
+    document.getElementById('fg-quick-name').value = '';
+    var unit = document.getElementById('fg-quick-uom');
+    unit.innerHTML = (v.units || ['Nos']).map(function (u) {
+        return '<option' + (u === 'Nos' ? ' selected' : '') + '>' + esc(u) + '</option>';
+    }).join('');
+    var type = document.getElementById('fg-quick-type');
+    type.innerHTML = (v.item_types || ['Purchased', 'Service']).map(function (t) {
+        return '<option>' + esc(t) + '</option>';
+    }).join('');
+    var tax = document.getElementById('fg-quick-tax');
+    tax.innerHTML = (v.tax_rates || ['18%']).map(function (t) {
+        return '<option' + (t === '18%' ? ' selected' : '') + '>' + esc(t) + '</option>';
+    }).join('');
+    document.getElementById('fg-quick-name').focus();
+}
+window.newFgCode = newFgCode;
+
+function closeFgQuick() {
+    document.getElementById('fg-quick-modal').style.display = 'none';
+}
+window.closeFgQuick = closeFgQuick;
+
+async function saveFgQuick() {
+    var name = document.getElementById('fg-quick-name').value.trim();
+    if (!name) { showToast('Say what is being sold', 'error'); return; }
+    var res = await fetch('/api/erp/items', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            kind: 'FG', item_name: name, description: name,
+            item_type: document.getElementById('fg-quick-type').value,
+            units_of_measure: document.getElementById('fg-quick-uom').value,
+            item_tax_type: document.getElementById('fg-quick-tax').value,
+            hsn_code: document.getElementById('fg-quick-hsn').value.trim(),
+        }),
+    });
+    var out = await res.json();
+    if (!res.ok) { showToast(out.detail || 'Could not add the code', 'error'); return; }
+
+    closeFgQuick();
+    showToast(out.item_code + ' issued for ' + name, 'success');
+    await loadMasters();
+    // Put it on the order, which is what it was created for. An existing
+    // blank-ish line takes it rather than growing a second one.
+    var used = _woDraft.lines.map(function (l) { return l.code; });
+    if (used.indexOf(out.item_code) < 0) {
+        _woDraft.lines.push({ code: out.item_code, qty: 1, rate: 0, description: '' });
+    }
+    renderWorkOrderLines();
+}
+window.saveFgQuick = saveFgQuick;
 
 function editWoLine(i, field, value) {
     _woDraft.lines[i][field] = (field === 'qty' || field === 'rate')
@@ -272,15 +338,26 @@ function renderWorkOrderLines() {
         '<thead class="bg-slate-50"><tr>' +
         ['Item', 'Type', 'Qty', 'Unit', 'Rate', 'Amount', ''].map(function (h) {
             return '<th class="px-2 py-2 text-left font-semibold text-ink-soft">' + h + '</th>';
-        }).join('') + '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+        }).join('') + '</tr></thead><tbody>' + (rows ||
+            '<tr><td colspan="7" class="px-2 py-6 text-center text-[13px] text-ink-soft">' +
+            'Nothing priced yet. Name the first deliverable below.</td></tr>') +
+        '</tbody></table></div>' +
         // Offered only while there is something left to add. Every code being
         // on the order already is an ordinary end to the list, not a mistake,
         // and a live button that answers with an error each time it is pressed
         // is how three identical complaints end up stacked on the screen.
         '<div class="flex items-center justify-between mt-3 flex-wrap gap-3">' +
+        '<div class="flex gap-2 flex-wrap">' +
         (_woDraft.lines.length < _fgMaster.length
             ? '<button class="btn btn-outline btn-sm" onclick="addWorkOrderLine()">+ Add line</button>'
-            : '<span class="text-xxs text-ink-soft">Every finished goods code is on this order.</span>') +
+            : (_fgMaster.length
+                ? '<span class="text-xxs text-ink-soft self-center">Every finished goods code is on this order.</span>'
+                : '')) +
+        // Always available: what is being sold on this order may simply not
+        // have been named anywhere yet, and that is the ordinary case on a
+        // new job rather than a mistake.
+        '<button class="btn btn-outline btn-sm" onclick="newFgCode()">+ New deliverable</button>' +
+        '</div>' +
         '<div class="text-[15px]">Order value <strong class="ml-2">' + formatCurrency(total) + '</strong></div>' +
         '</div>' +
         '<div class="flex gap-2 mt-3">' +
