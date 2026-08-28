@@ -10,6 +10,16 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+
+# This writes a known owner account with a published password. It already
+# forces itself onto the local file below, so it cannot reach a Postgres URL
+# by accident - but somebody running it from a shell on the server would still
+# get a demo database sitting next to a real one, and a password in the repo
+# is not a thing to leave lying around a deployment.
+if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_SERVICE_NAME") or \
+        os.getenv("ENVIRONMENT", "").lower() in ("production", "staging"):
+    sys.exit("seed_demo.py is for a local machine. It will not run on a deployment.")
+
 os.environ["DATABASE_URL"] = "sqlite:///" + os.path.join(HERE, "demo_portal.db").replace("\\", "/")
 os.environ.setdefault("SECRET_KEY", "demo-secret-not-for-production")
 os.environ.setdefault("COOKIE_SECURE", "false")
