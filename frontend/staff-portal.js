@@ -585,6 +585,7 @@ window.loadMyDocuments = loadMyDocuments;
 /* --- HR: the access picker on the employee form ------------------------ */
 
 var _permissionRoles = [];
+var _permissions = [];
 
 async function loadPermissionRoles(current) {
     var select = document.getElementById('emp-permission-role');
@@ -594,13 +595,24 @@ async function loadPermissionRoles(current) {
            vocabulary has one definition and one cached fetch. */
         var data = await loadHrLevels();
         _permissionRoles = data.permission_roles || [];
+        _permissions = data.permissions || [];
         if (!_permissionRoles.length) return;
         select.innerHTML = _permissionRoles.map(function (r) {
             return '<option value="' + esc(r.code) + '">' + esc(r.label) + '</option>';
         }).join('');
         select.value = current || 'staff';
         describeAccessChoice();
-    } catch (e) { /* the default Staff option stands */ }
+    } catch (e) {
+        // Silently leaving one option in the list is worse than saying so: the
+        // form still looks usable, and whoever is filling it in has no way to
+        // give anybody anything but Staff, or to know why.
+        console.error('Could not load the access catalogue:', e);
+        if (typeof showToast === 'function') {
+            showToast('Could not load the access options. Close this and open it ' +
+                      'again - saving now would leave this person on Staff only.',
+                      'error');
+        }
+    }
 }
 window.loadPermissionRoles = loadPermissionRoles;
 
@@ -612,7 +624,55 @@ function describeAccessChoice() {
     if (!select || !help) return;
     var role = _permissionRoles.filter(function (r) { return r.code === select.value; })[0];
     help.textContent = role ? role.description : '';
+    renderPermissionBoxes(role ? role.permissions : []);
 }
+
+/* Every right the system has, grouped the way it is grouped in the catalogue,
+   with the chosen role's own rights ticked. Changing the role re-ticks them:
+   the role is the starting point, and picking a new one means starting from
+   that instead of keeping a set that was reasoned about for the old one. */
+function renderPermissionBoxes(granted, checkedOverride) {
+    var host = document.getElementById('emp-permission-boxes');
+    if (!host) return;
+    var all = _permissions || [];
+    if (!all.length) { host.innerHTML = ''; return; }
+    var on = checkedOverride || granted || [];
+
+    var groups = {};
+    all.forEach(function (p) {
+        (groups[p.group || 'Other'] = groups[p.group || 'Other'] || []).push(p);
+    });
+
+    host.innerHTML = Object.keys(groups).map(function (g) {
+        return '<div style="margin-bottom:10px;">' +
+            '<div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;' +
+            'letter-spacing:0.4px;color:var(--text-secondary);margin-bottom:4px;">' +
+            esc(g) + '</div>' +
+            groups[g].map(function (p) {
+                var checked = on.indexOf(p.key) >= 0 ? ' checked' : '';
+                var fromRole = (granted || []).indexOf(p.key) >= 0;
+                return '<label style="display:flex;gap:8px;align-items:flex-start;' +
+                    'font-size:0.8rem;padding:3px 0;">' +
+                    '<input type="checkbox" class="emp-perm" value="' + esc(p.key) + '"' +
+                    checked + ' style="margin-top:3px;">' +
+                    '<span>' + esc(p.label) +
+                    (fromRole ? '' : '<span style="color:var(--text-muted);"> · not in this role</span>') +
+                    '</span></label>';
+            }).join('') + '</div>';
+    }).join('');
+}
+window.renderPermissionBoxes = renderPermissionBoxes;
+
+/* What is ticked now, for saving. Returns null when the boxes were never
+   rendered, so a form that does not show them does not silently clear
+   somebody's access to nothing. */
+function chosenPermissions() {
+    var host = document.getElementById('emp-permission-boxes');
+    if (!host || !host.querySelector('.emp-perm')) return null;
+    return [].slice.call(host.querySelectorAll('.emp-perm:checked'))
+             .map(function (b) { return b.value; });
+}
+window.chosenPermissions = chosenPermissions;
 window.describeAccessChoice = describeAccessChoice;
 
 /* --- HR: organisation email addresses ---------------------------------- */

@@ -18,6 +18,10 @@ if BACKEND_DIR not in sys.path:
 _TMP_DB = os.path.join(tempfile.gettempdir(), f"invoicing_test_{uuid.uuid4().hex}.db")
 os.environ["DATABASE_URL"] = f"sqlite:///{_TMP_DB}"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-not-used-in-production")
+# A real install is one business and shuts registration once it exists. The
+# suite is the exception the flag is there for: every module builds its own
+# company, and several build a second one to prove they cannot see each other.
+os.environ["ALLOW_SELF_REGISTRATION"] = "1"
 os.environ.setdefault("COOKIE_SECURE", "false")
 os.environ.setdefault("SUPERADMIN_PASSWORD", "TestSuper123")
 # Tests drive run_due_jobs() directly; a loop ticking in the background would

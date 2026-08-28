@@ -102,6 +102,11 @@ def log_audit(db, client_id, action, entity_type="", entity_id=None, entity_name
 def generate_secret_key() -> str:
     return secrets.token_hex(32)
 
+# One business per install. Registration is how that business is created, so
+# it is open until it has been - and shut afterwards. Set to 1 only if this
+# install is genuinely meant to host more than one company.
+ALLOW_SELF_REGISTRATION = os.getenv("ALLOW_SELF_REGISTRATION", "0") == "1"
+
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 if not SECRET_KEY or SECRET_KEY == "generate_a_random_secret_string":
     if database.IS_DEPLOYED:
@@ -590,6 +595,18 @@ def client_register(body: ClientRegister, request: Request, db: Session = Depend
     ip = request.client.host if request.client else "unknown"
     if rate_limiter.is_rate_limited(f"register:{ip}", max_requests=5, window=300):
         raise HTTPException(status_code=429, detail="Too many registration attempts. Try again later.")
+
+    # This install belongs to one business. Registration exists to create that
+    # business once; left open afterwards, anybody who finds the address can
+    # sign themselves up on the same database and appear in the same admin
+    # panel. Staff are added by the owner, with a role, not by registering.
+    if not ALLOW_SELF_REGISTRATION and db.query(models.DBClient).count():
+        raise HTTPException(
+            status_code=403,
+            detail="This system is already set up. Ask the owner to add you as "
+                   "an employee - staff sign in with the account they are given, "
+                   "not by registering.")
+
     validate_password_strength(body.password)
     existing = db.query(models.DBClient).filter(models.DBClient.email == body.email).first()
     if existing:
@@ -9026,13 +9043,33 @@ def validate_permission_role(role):
     return role
 
 
+def permission_list(raw) -> set:
+    """A stored comma separated permission list, ignoring anything unknown.
+
+    Silently dropping a key that is not a real permission rather than trusting
+    it: the column is written by the owner through a form, and a typo must not
+    become a right nobody can see or audit.
+    """
+    return {p.strip() for p in (raw or "").split(",")
+            if p.strip() in PERMISSION_KEYS}
+
+
 def permissions_for(emp) -> set:
-    """The action keys an employee holds. An unrecognised or missing role falls
-    back to the least privileged one rather than to everything."""
+    """The action keys an employee holds.
+
+    The role is the starting point; what the owner has granted or withheld for
+    this person on top of it decides the rest. An unrecognised or missing role
+    falls back to the least privileged one rather than to everything, and a
+    denial always beats a grant - taking a right away has to be reliable in a
+    way that handing one out does not.
+    """
     if emp is None:
         return set()
     role = (getattr(emp, "permission_role", "") or DEFAULT_PERMISSION_ROLE).lower()
-    return ROLE_PERMISSIONS.get(role, ROLE_PERMISSIONS[DEFAULT_PERMISSION_ROLE])
+    held = set(ROLE_PERMISSIONS.get(role, ROLE_PERMISSIONS[DEFAULT_PERMISSION_ROLE]))
+    held |= permission_list(getattr(emp, "extra_permissions", ""))
+    held -= permission_list(getattr(emp, "denied_permissions", ""))
+    return held
 
 
 def employee_can(emp, permission: str) -> bool:
@@ -9591,6 +9628,12 @@ def get_employee(emp_id: int, request: Request, db: Session = Depends(get_db)):
         "job_title": emp.job_title, "role": emp.role, "level": emp.level or "",
         "permission_role": emp.permission_role or DEFAULT_PERMISSION_ROLE,
         "permissions": sorted(permissions_for(emp)),
+        # What the role gives, so a screen can show which boxes were ticked by
+        # the role and which by hand, rather than one undifferentiated list.
+        "role_permissions": sorted(ROLE_PERMISSIONS.get(
+            (emp.permission_role or DEFAULT_PERMISSION_ROLE).lower(), set())),
+        "extra_permissions": sorted(permission_list(emp.extra_permissions)),
+        "denied_permissions": sorted(permission_list(emp.denied_permissions)),
         "employment_type": emp.employment_type, "pay_frequency": emp.pay_frequency,
         "salary": emp.salary, "hourly_rate": emp.hourly_rate,
         "tax_rate": emp.tax_rate, "deductions": emp.deductions,
@@ -9883,15 +9926,37 @@ def set_employee_permissions(emp_id: int, request: Request, body: dict = None,
     body = body or {}
     new_role = validate_permission_role(body.get("permission_role"))
     old_role = emp.permission_role or DEFAULT_PERMISSION_ROLE
+    before = sorted(permissions_for(emp))
     emp.permission_role = new_role
+
+    # Anything named here is measured against the role rather than stored on
+    # top of it, so the record says what was actually decided: a right the
+    # role already carries is not written as a grant, and one it never had is
+    # not written as a denial. Otherwise the two lists fill up with entries
+    # that mean nothing and hide the one that does.
+    if "permissions" in body:
+        wanted = {p for p in (body.get("permissions") or []) if p in PERMISSION_KEYS}
+        from_role = set(ROLE_PERMISSIONS.get(new_role, set()))
+        emp.extra_permissions = ",".join(sorted(wanted - from_role))
+        emp.denied_permissions = ",".join(sorted(from_role - wanted))
+
+    after = sorted(permissions_for(emp))
+    detail = "Access changed from %s to %s" % (old_role, new_role)
+    if before != after:
+        gained = sorted(set(after) - set(before))
+        lost = sorted(set(before) - set(after))
+        if gained:
+            detail += "; gained " + ", ".join(gained)
+        if lost:
+            detail += "; lost " + ", ".join(lost)
     log_audit(db, client.id, "employee_permissions_changed", "employee", emp.id,
-              f"{emp.first_name} {emp.last_name}",
-              f"Access changed from {old_role} to {new_role}", request)
+              f"{emp.first_name} {emp.last_name}", detail, request)
     db.commit()
     return {
         "message": "Access updated",
         "permission_role": new_role,
-        "permissions": sorted(permissions_for(emp)),
+        "permissions": after,
+        "role_permissions": sorted(ROLE_PERMISSIONS.get(new_role, set())),
     }
 
 
@@ -18346,6 +18411,16 @@ def wo_notify(db, client, order, action, actor_id, actor_name, comments=""):
                          order.wo_number)
 
 
+# What each move reads as once it has happened. Spelled out rather than built
+# by adding "ed" to the verb, which produced "it cannot be approveed from
+# there" - on the message somebody gets when they are already confused about
+# why the button did not work.
+WO_ACTION_PAST = {
+    "SUBMIT": "submitted", "APPROVE": "approved", "REJECT": "sent back",
+    "EXECUTE": "executed", "CANCEL": "cancelled", "AMEND": "amended",
+}
+
+
 def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
              override=False):
     """One door for every state change, so the rules cannot disagree."""
@@ -18353,8 +18428,9 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
     allowed = WO_TRANSITIONS.get(was, {})
     if action not in allowed:
         raise HTTPException(
-            409, "%s is %s; it cannot be %sed from there." %
-                 (order.wo_number, was.lower(), action.lower()))
+            409, "%s is %s, so it cannot be %s from there." %
+                 (order.wo_number, was.lower(),
+                  WO_ACTION_PAST.get(action, action.lower())))
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     if action == "SUBMIT":

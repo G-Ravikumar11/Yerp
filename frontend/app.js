@@ -2901,6 +2901,19 @@ async function submitNewEmployee() {
         var data = await res.json();
         if (res.ok) {
             showToast(data.message || 'Employee created', 'success');
+            // Anything ticked or unticked away from the role is saved against
+            // the person. Sent after creation because it is the employee that
+            // carries it, and there is no employee to carry it until now.
+            var picked = typeof chosenPermissions === 'function' ? chosenPermissions() : null;
+            if (picked && data.id) {
+                try {
+                    await fetch('/api/employees/' + data.id + '/permissions', {
+                        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ permission_role: payload.permission_role,
+                                               permissions: picked })
+                    });
+                } catch (e) { console.error('Could not save the access choices:', e); }
+            }
             if (window._aiOnboardingItems && window._aiOnboardingItems.length && data.id) {
                 try {
                     await fetch('/api/employees/' + data.id + '/onboarding/bulk', {

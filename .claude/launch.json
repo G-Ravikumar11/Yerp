@@ -26,6 +26,15 @@
       "port": 8931
     },
     {
+      "name": "wo-preview",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-u",
+        "C:\\Users\\Uday\\AppData\\Local\\Temp\\claude\\C--Users-Uday-Desktop-Dad-Project\\e8181a27-bbb7-4006-bee9-d30d822c32e1\\scratchpad\\wo_demo.py"
+      ],
+      "port": 8945
+    },
+    {
       "name": "contracts-erp",
       "runtimeExecutable": "python",
       "runtimeArgs": [

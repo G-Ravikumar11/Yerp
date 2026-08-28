@@ -685,6 +685,13 @@ class DBEmployee(Base):
     # supervisor may need to raise costs without being anyone's manager, and a
     # department head may have no business touching payroll.
     permission_role = Column(String, default="staff", index=True)
+    # What the owner has granted or withheld for this person on top of their
+    # role. A role is a sensible starting point, not a straitjacket: one
+    # supervisor may also settle bills, one manager may be kept out of payroll,
+    # and neither should need a new role invented for them. Comma separated
+    # permission keys; a denial beats a grant.
+    extra_permissions = Column(Text, default="")
+    denied_permissions = Column(Text, default="")
     # Seniority band (L1..L8). Kept separate from `role`, which describes what
     # the person does in the reporting line, not how senior they are.
     level = Column(String, default="", index=True)
