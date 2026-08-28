@@ -972,10 +972,19 @@ textarea.table-input.item-desc {
     .views-container { max-width: 1560px; margin: 0 auto; width: 100%; }
 }
 
-/* The app renders its own dark surface whatever the OS is set to, so the form
-   controls are told the same thing unconditionally rather than only when the
-   OS happens to be light. */
-input, select, textarea { color-scheme: dark; }
+/* The app renders light surfaces - white panels, near-black text - whatever
+   the OS is set to, so the form controls are told that unconditionally.
+
+   This said `dark` until now, left over from a dark theme the app no longer
+   has. A declared scheme is what the browser uses to pick the defaults a
+   control does not set for itself, so every input without an explicit colour
+   was given the dark scheme's white text - on a white panel. Typing into the
+   item grid produced nothing you could see. */
+input, select, textarea { color-scheme: light; }
+
+/* Anything that does not set its own colour still gets the app's ink rather
+   than whatever the user agent would have chosen. */
+input, select, textarea, button { color: var(--text-primary); }
 
 /* An open <select> is drawn by the operating system, not by the page, so it
    ignores the colours set on the select itself. Left alone the list came out

@@ -122,7 +122,6 @@
                             <a href="#" class="nav-item" id="nav-orders" onclick="event.preventDefault();showView('orders-view')">Purchase Orders</a>
                             <a href="#" class="nav-item" id="nav-items" onclick="event.preventDefault();showView('items-view')">Item Master</a>
                             <a href="#" class="nav-item" id="nav-workorders" onclick="event.preventDefault();showView('workorders-view')">Work Orders</a>
-                            <a href="#" class="nav-item" id="nav-wallet" onclick="event.preventDefault();showView('wallet-view')">Wallet</a>
                         </div>
                     </div>
 
@@ -272,45 +271,6 @@
 
 
                 <!-- ========== WALLET ========== -->
-                <div id="wallet-view" class="view-section dashboard" style="display:none;">
-                    <div class="invoices-header-area">
-                        <div><h1>Wallet</h1><p class="subtitle">Credit for sending, payroll and AI features.</p></div>
-                        <div class="invoices-actions">
-                            <button class="btn btn-primary" onclick="openTopUpModal()">+ Top Up</button>
-                        </div>
-                    </div>
-                    <div class="grid-4 mb-24" id="wallet-stats"></div>
-                    <div id="wallet-low-banner" style="display:none;"></div>
-                    <div class="grid-2-1 gap-24">
-                        <div class="glass-widget">
-                            <div class="widget-header">
-                                <h3>Transactions</h3>
-                                <select id="wallet-tx-filter" class="form-control" style="width:auto;padding:6px 10px;font-size:0.82rem;margin-left:auto;" onchange="loadWalletTransactions()">
-                                    <option value="">All</option>
-                                    <option value="debit">Spending</option>
-                                    <option value="credit">Top-ups</option>
-                                </select>
-                            </div>
-                            <div class="widget-content" style="padding:0;">
-                                <div class="table-responsive"><table class="data-table">
-                                    <thead><tr><th>When</th><th>Detail</th><th class="text-right">Amount</th><th class="text-right">Balance</th></tr></thead>
-                                    <tbody id="wallet-tx-body"></tbody>
-                                </table></div>
-                            </div>
-                        </div>
-                        <div>
-                            <div class="glass-widget mb-24">
-                                <div class="widget-header"><h3>What things cost</h3></div>
-                                <div class="widget-content" id="wallet-pricing"></div>
-                            </div>
-                            <div class="glass-widget">
-                                <div class="widget-header"><h3>Top-up history</h3></div>
-                                <div class="widget-content" id="wallet-topups"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <!-- ========== INVOICES LIST ========== -->
                 <div id="invoices-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div>
@@ -2814,6 +2774,7 @@
                         <div><h1>Purchase Orders</h1><p class="subtitle">Spend agreed before it is committed</p></div>
                         <div class="invoices-actions">
                             <button class="btn btn-primary" onclick="showOrderModal()">+ New order</button>
+                            <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
                         </div>
                     </div>
                     <div class="widget">
@@ -2851,6 +2812,10 @@
                 <div id="items-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div><h1>Item Master</h1><p class="subtitle">The codes a work order and its budget are allowed to use</p></div>
+                        <div class="invoices-actions">
+                            <a class="btn btn-outline" href="/api/erp/items.xlsx">Download Excel</a>
+                            <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
+                        </div>
                     </div>
                     <div class="stats-grid" id="items-stats"></div>
 
@@ -2968,6 +2933,7 @@
                         <div class="invoices-actions">
                             <button class="btn btn-primary" onclick="openWorkOrderBuilder()">+ New work order</button>
                             <button class="btn btn-outline" onclick="showWorkOrderModal()">Import</button>
+                            <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
                         </div>
                     </div>
                     <div class="stats-grid" id="wo-stats"></div>
@@ -3033,6 +2999,7 @@
                         <div><h1>Subcontract Work Orders</h1><p class="subtitle">Work issued out to a subcontractor, priced, signed off and amended</p></div>
                         <div class="invoices-actions">
                             <button class="btn btn-primary" onclick="newSubcontract()">+ New work order</button>
+                            <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
                         </div>
                     </div>
                     <div class="stats-grid" id="sc-stats"></div>

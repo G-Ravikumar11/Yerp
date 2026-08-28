@@ -372,7 +372,6 @@ function showView(viewId) {
         'payroll-view': 'nav-payroll',
         'payslip-detail-view': 'nav-payroll',
         'orgchart-view': 'nav-org',
-        'wallet-view': 'nav-wallet',
         'approvals-view': 'nav-approvals',
         'jobs-view': 'nav-jobs',
         'job-detail-view': 'nav-jobs',
@@ -4434,7 +4433,6 @@ showView = function(viewId) {
         var jobsTab = document.querySelector('#rec-tabs .tab');
         switchRecTab('jobs', jobsTab);
     }
-    if (viewId === 'wallet-view') loadWallet();
     if (viewId === 'bills-view') loadBills();
     if (viewId === 'contacts-view') loadContacts();
 };

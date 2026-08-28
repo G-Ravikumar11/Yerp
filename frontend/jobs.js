@@ -291,7 +291,11 @@ async function loadOrders() {
                 : '—') + '</td>' +
             '<td>' + statusPill(o.status, orderTone(o)) + '</td>' +
             '<td class="text-right">' + (o.approval_status !== 'pending'
-                ? '<button class="btn btn-sm" onclick="editOrder(' + o.id + ')">Edit</button>' : '') + '</td>' +
+                ? '<button class="btn btn-sm" onclick="editOrder(' + o.id + ')">Edit</button> ' : '') +
+                // An order is a document that gets sent on, so it can be taken
+                // away whatever state it is in.
+                '<a class="btn btn-sm btn-outline" href="/api/purchase-orders/' + o.id +
+                '/export.xlsx" title="Download this order">Excel</a></td>' +
             '</tr>';
     }).join('');
 }

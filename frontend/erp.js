@@ -396,6 +396,8 @@ async function loadWorkOrders() {
             : (w.approval_status === 'none' || w.approval_status === 'rejected'
                 ? '<button class="btn btn-sm btn-primary" onclick="submitWorkOrder(' + w.id + ')">Send for approval</button>'
                 : '<button class="btn btn-sm" onclick="startBomBuilder(' + w.id + ')">Budget</button>');
+        action += ' <a class="btn btn-sm btn-outline" href="/api/erp/work-orders/' +
+            w.id + '/export.xlsx" title="Download this order">Excel</a>';
         return '<tr><td style="font-family:monospace;font-weight:600;">' + esc(w.number) + '</td>' +
             '<td>' + esc(w.job_name) +
                 '<div style="font-size:0.75rem;color:var(--text-secondary);">' + esc(w.customer_name) + '</div></td>' +

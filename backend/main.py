@@ -17845,6 +17845,102 @@ def wo_amend(order_id: int, body: WoActionIn, request: Request,
     db.refresh(revision)
     return {"order": wo_dict(db, revision, detail=True),
             "message": revision.wo_number + " opened, amending " + order.wo_number + "."}
+
+
+# ============================================================================
+# TAKING IT AWAY
+#
+# Every list somebody works from is one they will eventually be asked to send
+# on, print, or check against a figure from somewhere else. Without an export
+# that means re-keying it into a spreadsheet, which is the habit this system
+# is meant to be replacing rather than feeding.
+# ============================================================================
+
+@app.get("/api/erp/items.xlsx")
+def erp_items_xlsx(request: Request, kind: str = "", q: str = "",
+                   db: Session = Depends(get_db)):
+    """The item master, filtered the same way the screen filters it."""
+    client = require_erp_read(request, db)
+    query = db.query(models.DBItem).filter(models.DBItem.client_id == client.id)
+    if kind:
+        query = query.filter(models.DBItem.kind == kind.upper())
+    if q:
+        query = query.filter(or_(models.DBItem.item_code.ilike("%" + q + "%"),
+                                 models.DBItem.item_name.ilike("%" + q + "%")))
+    rows = query.order_by(models.DBItem.item_code).all()
+    return sheet_response(
+        ["Item Code", "Item Name", "Kind", "Description", "Type",
+         "Units Of Measure", "HSN Code", "Item Tax Type", "Make"],
+        [[i.item_code or "", i.item_name or "", i.kind or "", i.description or "",
+          i.item_type or "", i.units_of_measure or "", i.hsn_code or "",
+          i.item_tax_type or "", i.make or ""] for i in rows],
+        "item_master.xlsx",
+        preamble=[["Item Master", "", "", "", "", "", "", "", client.company_name or ""],
+                  ["%d code(s)" % len(rows) +
+                   (" - %s only" % kind.upper() if kind else "")],
+                  []])
+
+
+@app.get("/api/erp/work-orders/{wo_id}/export.xlsx")
+def erp_work_order_xlsx(wo_id: int, request: Request, db: Session = Depends(get_db)):
+    """One work order: what was sold, and the budget behind it if there is one."""
+    client = require_erp_read(request, db)
+    wo = work_order_or_404(db, client.id, wo_id)
+    detail = work_order_to_dict(db, wo, detail=True)
+
+    rows = [[l["fg_code"], l["item_name"], l["description"], l["uom"],
+             l["qty"], l["rate"], l["amount"]] for l in detail.get("lines", [])]
+    closing = [[], ["", "", "", "", "", "Order value", detail["total_value"]]]
+    if detail.get("budgeted"):
+        closing += [["", "", "", "", "", "Budgeted cost", detail["budget_cost"]],
+                    ["", "", "", "", "", "Margin", detail["margin"]]]
+        closing += [[], ["Budget - materials consumed"],
+                    ["FG Code", "RM Code", "Description", "UOM", "Qty", "Rate", "Amount"]]
+        closing += [[b["fg_code"], b["rm_code"], b["rm_name"], b["uom"],
+                     b["qty"], b["rate"], b["amount"]] for b in detail.get("bom", [])]
+
+    return sheet_response(
+        ["FG Code", "Item Name", "Description", "UOM", "Qty", "Rate", "Amount"],
+        rows, "work_order_%s.xlsx" % re.sub(r"[^A-Za-z0-9]+", "_", wo.number or ""),
+        preamble=[["Work Order", "", "", "", "", "", client.company_name or ""],
+                  ["No: " + (wo.number or "") + "   (" + (wo.status or "") + ")"],
+                  ["Job: " + detail.get("job_name", "")],
+                  ["Customer: " + detail.get("customer_name", "")],
+                  ["Reference: " + (wo.reference or "")],
+                  []],
+        closing=closing)
+
+
+@app.get("/api/purchase-orders/{po_id}/export.xlsx")
+def purchase_order_xlsx(po_id: int, request: Request, db: Session = Depends(get_db)):
+    """One purchase order, as sent to the supplier."""
+    client = get_client_user(request, db)
+    po = db.query(models.DBPurchaseOrder).filter(
+        models.DBPurchaseOrder.id == po_id,
+        models.DBPurchaseOrder.client_id == client.id).first()
+    if not po:
+        raise HTTPException(404, "Purchase order not found")
+
+    lines = db.query(models.DBPurchaseOrderLineItem).filter(
+        models.DBPurchaseOrderLineItem.order_id == po.id).all()
+    job = db.query(models.DBJob).filter(models.DBJob.id == po.job_id).first()
+
+    return sheet_response(
+        ["Description", "Qty", "Price", "Tax", "Amount"],
+        [[l.description or "", money(l.qty), money(l.price), l.tax_rate or "",
+          money((l.qty or 0) * (l.price or 0))] for l in lines],
+        "purchase_order_%s.xlsx" % re.sub(r"[^A-Za-z0-9]+", "_", po.number or ""),
+        preamble=[["Purchase Order", "", "", "", client.company_name or ""],
+                  ["No: " + (po.number or "") + "   (" + (po.status or "") + ")"],
+                  ["Supplier: " + (po.supplier_name or "")],
+                  ["Job: " + (("%s %s" % (job.number, job.name)).strip() if job else "")],
+                  ["Issued: " + (po.issue_date or "") +
+                   ("   Needed by: " + po.needed_by if po.needed_by else "")],
+                  []],
+        closing=[[], ["", "", "", "Subtotal", money(po.amount)],
+                 ["", "", "", "Tax", money(po.tax_amount)],
+                 ["", "", "", "Total", money(po.total)]])
+
 # Serve frontend
 frontend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
 if os.path.exists(frontend_path):
