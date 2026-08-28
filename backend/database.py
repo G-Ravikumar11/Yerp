@@ -1435,6 +1435,47 @@ def ensure_columns():
                 except Exception:
                     pass
 
+            # Which project allocation a subcontract BOQ line spends. Nullable:
+            # every order raised before budgets existed has none, and stays
+            # valid without one.
+            try:
+                conn.execute(text(
+                    "ALTER TABLE subcontract_items "
+                    "ADD COLUMN IF NOT EXISTS budget_id INTEGER"))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_subcontract_items_budget "
+                    "ON subcontract_items (budget_id)"))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step 43: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
+            # The commercial terms a subcontract order carries beyond its
+            # price, and the letterhead it prints on. All default to nothing,
+            # so an order raised before they existed reads exactly as it did.
+            try:
+                for table, column, typedef in (
+                    ("subcontract_orders", "retention_percent", "FLOAT DEFAULT 0"),
+                    ("subcontract_orders", "retention_amount", "FLOAT DEFAULT 0"),
+                    ("subcontract_orders", "mobilization_advance_percent", "FLOAT DEFAULT 0"),
+                    ("subcontract_orders", "mobilization_advance_amount", "FLOAT DEFAULT 0"),
+                    ("subcontract_orders", "advance_recovery_percent", "FLOAT DEFAULT 0"),
+                    ("subcontract_items", "technical_spec", "TEXT DEFAULT ''"),
+                    ("business_units", "logo_url", "TEXT DEFAULT ''"),
+                ):
+                    conn.execute(text(
+                        f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step 44: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
     except Exception as e:
         print(f"Column check skipped: {e}")
 
@@ -1481,6 +1522,17 @@ def migrate_sqlite():
                            "city", "state", "pincode", "notes", "created_at"):
                 add_col("contacts", column, "VARCHAR DEFAULT ''")
             add_col("contacts", "is_active", "BOOLEAN DEFAULT 1")
+
+            # Which project allocation a subcontract BOQ line spends.
+            add_col("subcontract_items", "budget_id", "INTEGER")
+
+            # What a subcontract order carries beyond its price.
+            for column in ("retention_percent", "retention_amount",
+                           "mobilization_advance_percent",
+                           "mobilization_advance_amount", "advance_recovery_percent"):
+                add_col("subcontract_orders", column, "FLOAT DEFAULT 0")
+            add_col("subcontract_items", "technical_spec", "TEXT DEFAULT ''")
+            add_col("business_units", "logo_url", "TEXT DEFAULT ''")
 
             # Create approval_chains table
             conn.execute(text("""

@@ -125,6 +125,80 @@ def main_seed():
                       {"fg_code": fg[1], "rm_code": codes[2], "qty": 600, "rate": 12},
                       {"fg_code": fg[2], "rm_code": codes[3], "qty": 400, "rate": 18}]})
 
+        # Work issued back out to a subcontractor, sitting where somebody has
+        # to decide on it. Deliberately overrunning one of the two cost
+        # centres: an order that fits its budget shows none of the checking
+        # that happens when one does not, which is the part worth looking at.
+        unit = c.post("/api/wo/business-units", json={
+            "name": "Y Projects Pvt. Ltd.", "code": "YPPL",
+            "gstin": "36AABCY1234H1ZX", "pan": "AABCY1234H",
+            "address": "Plot 14, Industrial Estate\nHyderabad 500032"}).json()
+        sub = c.post("/api/wo/contractors", json={
+            "company_name": "Sri Balaji Civil Works", "contact_person": "K. Ramesh",
+            "pan": "AAAPB1234C", "gst_number": "36AAAPB1234C1Z5",
+            "phone_number": "98490 11223",
+            "address": "12-4-88, Patamata\nVijayawada 520010"}).json()
+        substructure = c.post("/api/wo/projects/%d/budgets" % jobs[0]["id"], json={
+            "name": "Civil - substructure", "code": "CC-101",
+            "department": "Civil", "allocated_amount": 3000000}).json()
+        finishes = c.post("/api/wo/projects/%d/budgets" % jobs[0]["id"], json={
+            "name": "Civil - finishes", "code": "CC-102",
+            "department": "Civil", "allocated_amount": 400000}).json()
+
+        sub_wo = c.post("/api/wo/orders", json={
+            "business_unit_id": unit["id"], "contractor_id": sub["id"],
+            "job_id": jobs[0]["id"], "department": "Civil",
+            "work_type": "Civil - supply and commissioning",
+            "subject": "Work order for primary civil STP supply & commissioning "
+                       "for 295 KLD plant",
+            "scope_of_work":
+                "<p>Complete civil works for the 295 KLD sewage treatment plant, "
+                "comprising:</p><ul><li>Excavation, PCC and RCC raft</li>"
+                "<li>Walls, slabs and plastering</li>"
+                "<li>Integral crystalline waterproofing</li></ul>"
+                "<p>All materials except <b>cement and steel</b> are in the "
+                "Contractor's scope. Cement and steel shall be issued free of cost "
+                "and reconciled against theoretical consumption.</p>",
+            "commencement_date": "2026-09-01", "completion_date": "2027-02-28",
+            "duration_months": 6, "defect_liability_months": 24,
+            "bank_guarantee_applicable": True, "bank_guarantee_amount": 250000,
+            "bank_guarantee_validity": "2027-08-31",
+            "gst_rate": 18, "tds_rate": 1,
+            "retention_percent": 5, "mobilization_advance_percent": 10,
+            "advance_recovery_percent": 20}).json()["order"]
+
+        c.put("/api/wo/orders/%d/boq" % sub_wo["id"], json={"lines": [
+            {"activity_no": "1.0", "item_code": "CIV-EXC",
+             "item_description": "Earthwork excavation in all soils up to 3 m depth "
+                                 "including shoring, dewatering and disposal of "
+                                 "surplus spoil to a distance not exceeding 500 m",
+             "technical_spec": "Side slopes 1:1; dewatering by 5 HP pumps as required",
+             "uom": "cum", "quantity": 2450, "unit_rate": 312.5,
+             "budget_id": substructure["id"]},
+            {"activity_no": "2.0", "item_code": "CIV-RMC-25",
+             "item_description": "M25 grade RMC pouring for raft, cube strength "
+                                 "25 MPa at 28 days, 14-day curing, including "
+                                 "pumping, vibrating and finishing",
+             "technical_spec": "IS 456; slump 100-125 mm at pour; "
+                               "one cube set per 50 cum",
+             "uom": "cum", "quantity": 240, "unit_rate": 6420,
+             "budget_id": substructure["id"]},
+            {"activity_no": "3.0", "item_code": "CIV-WS",
+             "item_description": "Supply and laying of PVC water stop 230 mm at "
+                                 "all construction joints",
+             "uom": "rmt", "quantity": 1180, "unit_rate": 412.2222,
+             "budget_id": substructure["id"]},
+            {"activity_no": "4.0", "item_code": "CIV-PLA",
+             "item_description": "Cement plastering 12 mm thick in CM 1:4 to "
+                                 "internal faces including curing",
+             "uom": "sqm", "quantity": 1800, "unit_rate": 249,
+             "budget_id": finishes["id"]},
+        ]})
+        c.put("/api/wo/orders/%d/terms" % sub_wo["id"], json={
+            "terms": c.get("/api/wo/terms/library").json()["library"]})
+        c.post("/api/wo/orders/%d/submit" % sub_wo["id"], json={})
+        sub_wo = c.get("/api/wo/orders/%d" % sub_wo["id"]).json()["order"]
+
         # Money actually moving. Left as drafts these are correctly excluded
         # from "invoiced", and the dashboard then opens on a wall of zeros that
         # reads as a broken page rather than a quiet month.
@@ -174,6 +248,10 @@ def main_seed():
     print("  " + "-" * 58)
     print("  %d item codes issued: %s" % (len(codes), ", ".join(codes)))
     print("  %s on %s, value %s" % (wo["number"], wo["job_name"], wo["total_value"]))
+    print("  %s to %s, %s - %s, awaiting approval"
+          % (sub_wo["wo_number"], sub_wo["contractor"], sub_wo["net_order_value"],
+             sub_wo["budget_warnings"][0] if sub_wo["budget_warnings"]
+             else "within its allocation"))
     print("  %d jobs on the board, %d item codes on file"
           % (len(board["jobs"]), items["counts"]["RM"] + items["counts"]["FG"]))
     print()

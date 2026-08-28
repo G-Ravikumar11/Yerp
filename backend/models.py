@@ -1493,7 +1493,35 @@ class DBBusinessUnit(Base):
     gstin = Column(String, default="")
     pan = Column(String, default="")
     address = Column(Text, default="")
+    # Its own letterhead where the unit has one, falling back to the account's.
+    # A group issuing orders under three trading names needs three letterheads.
+    logo_url = Column(Text, default="")
     is_active = Column(Boolean, default=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBWorkType(Base):
+    """The kinds of work an order can be raised for.
+
+    A taxonomy rather than free text, so the same trade is not filed under
+    four spellings - but one an engineer cannot extend on their own, because a
+    list anybody may add to is free text with extra steps. What they can do is
+    ask for one, which lands as a request for whoever administers the system.
+    """
+    __tablename__ = "work_types"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    code = Column(String, default="", index=True)
+    department = Column(String, default="")
+    # active | requested | declined
+    status = Column(String, default="active", index=True)
+    requested_by = Column(Integer, nullable=True)
+    requested_by_name = Column(String, default="")
+    request_reason = Column(Text, default="")
+    decided_by_name = Column(String, default="")
+    decided_at = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
@@ -1558,6 +1586,17 @@ class DBSubcontractOrder(Base):
     tds_amount = Column(Float, default=0.0)
     net_order_value = Column(Float, default=0.0)
 
+    # Retention is withheld from each bill and given back later; the advance is
+    # paid up front and taken back out of the bills. Neither changes what the
+    # contract is worth, which is why they are held apart from the order value
+    # rather than netted into it - a contractor who reads 5% retention as a
+    # 5% cut in the price will price the next job accordingly.
+    retention_percent = Column(Float, default=0.0)
+    retention_amount = Column(Float, default=0.0)
+    mobilization_advance_percent = Column(Float, default=0.0)
+    mobilization_advance_amount = Column(Float, default=0.0)
+    advance_recovery_percent = Column(Float, default=0.0)
+
     submitted_by = Column(Integer, nullable=True)
     approved_by = Column(Integer, nullable=True)
     approved_at = Column(String, default="")
@@ -1566,6 +1605,34 @@ class DBSubcontractOrder(Base):
 
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     updated_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBProjectBudget(Base):
+    """What a project is allowed to spend, split by cost centre.
+
+    The allocation is held per project rather than per order, because that is
+    the question being asked: not "is this order large" but "is there anything
+    left to spend on this site". An order is checked against the balance when
+    somebody commits the business to it, which is at approval - a draft may be
+    priced at any figure, since pricing it is how you find out it is too big.
+
+    Consumption is not stored. It is summed from the orders themselves, so a
+    cancelled order gives its money back without anybody having to remember to
+    do anything, and a stored counter cannot drift away from the orders it is
+    supposed to be counting.
+    """
+    __tablename__ = "project_budgets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    code = Column(String, default="", index=True)
+    name = Column(String, default="")
+    department = Column(String, default="")
+    allocated_amount = Column(Float, default=0.0)
+    notes = Column(Text, default="")
+    is_active = Column(Boolean, default=True, index=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
 class DBSubcontractItem(Base):
@@ -1577,10 +1644,18 @@ class DBSubcontractItem(Base):
     activity_no = Column(String, default="")
     item_code = Column(String, default="")
     item_description = Column(Text, default="")
+    # Kept apart from the description because they are read by different
+    # people: the description is what the line is, the specification is what
+    # it has to satisfy before it can be measured and certified.
+    technical_spec = Column(Text, default="")
     uom = Column(String, default="")
     quantity = Column(Float, default=0.0)
     unit_rate = Column(Float, default=0.0)
     total_amount = Column(Float, default=0.0)
+    # Which allocation this line spends. The free-text name is kept beside it
+    # rather than replaced: orders raised before budgets existed carry one, and
+    # a line may legitimately name a cost centre that was never allocated.
+    budget_id = Column(Integer, ForeignKey("project_budgets.id"), nullable=True, index=True)
     cost_centre = Column(String, default="")
     display_order = Column(Integer, default=0)
 

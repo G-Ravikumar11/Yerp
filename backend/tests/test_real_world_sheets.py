@@ -284,3 +284,149 @@ def test_a_complaint_names_the_row_somebody_can_scroll_to(tenant):
     assert len(errors) == 1
     assert errors[0]["code"] == "FG99999"
     assert errors[0]["line"] == 5, "the row it is on in Excel"
+
+
+# --- A subcontractor's own BOQ ----------------------------------------------
+#
+# The schedule usually arrives as the contractor's quotation with the rates
+# already in it, headed however they head it. Retyping two hundred priced
+# lines to make them match our template is how a rate gets typed wrong.
+
+def wo_draft(tenant):
+    unit = tenant.post("/api/wo/business-units", json={"name": "Y Projects"}).json()
+    con = tenant.post("/api/wo/contractors",
+                      json={"company_name": "Sri Balaji Civil Works"}).json()
+    return tenant.post("/api/wo/orders", json={
+        "business_unit_id": unit["id"], "contractor_id": con["id"],
+        "job_id": project(tenant)["id"], "department": "Civil",
+        "subject": "Civil works"}).json()["order"]
+
+
+def import_boq(tenant, order, rows, **form):
+    return tenant.post("/api/wo/orders/%d/boq/import" % order["id"],
+                       files={"file": ("boq.xlsx", book(rows), XL)}, data=form)
+
+
+BOQ_HEADER = ["Sl No", "Item Code", "Description of Work", "Specification",
+              "Unit", "Quantity", "Rate"]
+
+
+def test_a_contractors_own_boq_reads_without_being_retyped(tenant):
+    order = wo_draft(tenant)
+    res = import_boq(tenant, order, [
+        BOQ_HEADER,
+        ["1.0", "CIV-EXC", "Earthwork excavation up to 3 m depth",
+         "Shoring and dewatering included", "cum", 2450, 312.5],
+        ["2.0", "CIV-RMC", "M25 grade RMC pouring for raft",
+         "Cube strength 25 MPa at 28 days", "cum", 840, 6420]])
+    assert res.status_code == 200, res.text
+    out = res.json()
+    assert len(out["lines"]) == 2
+    assert out["lines"][0]["item_description"].startswith("Earthwork")
+    assert out["lines"][0]["technical_spec"].startswith("Shoring")
+    assert out["lines"][1]["total_amount"] == 5392800.0
+    assert out["gross_amount"] == 6158425.0
+
+
+def test_the_import_does_not_save_anything_by_itself(tenant):
+    """The lines land in the grid to be read against the file they came from.
+    An import that read a column wrongly should be something somebody
+    notices, not something they discover on the order."""
+    order = wo_draft(tenant)
+    import_boq(tenant, order, [BOQ_HEADER,
+                               ["1.0", "CIV-EXC", "Excavation", "", "cum", 10, 100]])
+    after = tenant.get("/api/wo/orders/%d" % order["id"]).json()["order"]
+    assert after["items"] == []
+    assert after["gross_amount"] == 0
+
+
+def test_the_grand_total_at_the_foot_is_not_read_as_a_line(tenant):
+    order = wo_draft(tenant)
+    res = import_boq(tenant, order, [
+        BOQ_HEADER,
+        ["1.0", "CIV-EXC", "Excavation", "", "cum", 2450, 312.5],
+        ["", "", "", "", "", "", 765625]])
+    out = res.json()
+    assert len(out["lines"]) == 1
+    assert out["skipped_rows"] == 1
+    assert "left out" in out["message"]
+
+
+def test_a_rate_written_with_commas_is_still_a_rate(tenant):
+    """Read strictly, "12,34,567.50" is not a number at all - and on a rate
+    column that is a line silently priced at nought."""
+    order = wo_draft(tenant)
+    res = import_boq(tenant, order, [
+        BOQ_HEADER,
+        ["1.0", "CIV-RMC", "M25 RMC", "", "cum", "1,200", "6,420.00"]])
+    line = res.json()["lines"][0]
+    assert line["quantity"] == 1200
+    assert line["unit_rate"] == 6420.0
+    assert line["total_amount"] == 7704000.0
+
+
+def test_a_rate_past_the_paisa_keeps_its_places(tenant):
+    order = wo_draft(tenant)
+    res = import_boq(tenant, order, [
+        BOQ_HEADER, ["1.0", "CIV-WS", "PVC water stop", "", "rmt", 100, 12.222]])
+    assert res.json()["lines"][0]["unit_rate"] == 12.222
+
+
+def test_the_typists_guidance_row_is_not_a_boq_line(tenant):
+    order = wo_draft(tenant)
+    res = import_boq(tenant, order, [
+        BOQ_HEADER,
+        ["Without Spaces", "", "", "", "", "Without comma (,) only num", ""],
+        ["1.0", "CIV-EXC", "Excavation", "", "cum", 10, 100]])
+    lines = res.json()["lines"]
+    assert len(lines) == 1
+    assert lines[0]["item_description"] == "Excavation"
+
+
+def test_a_sheet_with_no_description_column_is_refused_by_name(tenant):
+    order = wo_draft(tenant)
+    res = import_boq(tenant, order, [["Code", "Unit", "Qty", "Rate"],
+                                     ["CIV-EXC", "cum", 10, 100]])
+    assert res.status_code == 400
+    assert "Description" in res.json()["detail"]
+
+
+def test_a_sheet_with_no_rate_column_is_refused(tenant):
+    order = wo_draft(tenant)
+    res = import_boq(tenant, order, [["Description of Work", "Unit", "Quantity"],
+                                     ["Excavation", "cum", 10]])
+    assert res.status_code == 400
+    assert "rate" in res.json()["detail"]
+
+
+def test_the_import_says_which_heading_it_read_as_what(tenant):
+    order = wo_draft(tenant)
+    res = import_boq(tenant, order, [
+        BOQ_HEADER, ["1.0", "CIV-EXC", "Excavation", "", "cum", 10, 100]])
+    read_as = res.json()["read_as"]
+    assert read_as["Description of Work"] == "item_description"
+    assert read_as["Rate"] == "unit_rate"
+
+
+def test_an_activity_number_is_supplied_where_the_sheet_has_none(tenant):
+    order = wo_draft(tenant)
+    res = import_boq(tenant, order, [
+        ["Description of Work", "Unit", "Quantity", "Rate"],
+        ["Excavation", "cum", 10, 100],
+        ["Raft and walls", "cum", 20, 200]])
+    assert [line["activity_no"] for line in res.json()["lines"]] == ["1.0", "2.0"]
+
+
+def test_a_submitted_order_will_not_take_an_import(tenant):
+    order = wo_draft(tenant)
+    tenant.put("/api/wo/orders/%d/boq" % order["id"], json={"lines": [
+        {"item_description": "Excavation", "quantity": 10, "unit_rate": 100}]})
+    tenant.put("/api/wo/orders/%d" % order["id"], json={
+        "commencement_date": "2026-05-01", "completion_date": "2026-11-30",
+        "department": "Civil", "subject": "Civil works",
+        "business_unit_id": order["business_unit_id"],
+        "contractor_id": order["contractor_id"], "job_id": order["job_id"]})
+    tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    res = import_boq(tenant, order, [
+        BOQ_HEADER, ["1.0", "CIV-EXC", "Excavation", "", "cum", 10, 100]])
+    assert res.status_code == 409

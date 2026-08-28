@@ -5,7 +5,7 @@ way the site office files it, it cannot be signed off by the person who priced
 it, and once it has been signed it stops being editable - it is amended
 instead, and the original stays as it was signed.
 """
-from conftest import make_employee
+from conftest import as_owner, make_employee
 
 import main
 
@@ -349,3 +349,498 @@ def test_the_schedule_downloads_with_its_totals(tenant):
     assert res.status_code == 200
     assert "work_order_" in res.headers.get("content-disposition", "")
     assert len(res.content) > 4000
+
+
+# --- The printed document ---------------------------------------------------
+
+def test_the_order_downloads_as_a_pdf(tenant):
+    """The signed copy. It is attached to bills and produced in disputes, so it
+    is rendered on the server rather than by whatever the browser happens to
+    do with the screen."""
+    order = priced(tenant)
+    res = tenant.get("/api/wo/orders/%d/document.pdf" % order["id"])
+    assert res.status_code == 200, res.text
+    assert res.headers["content-type"] == "application/pdf"
+    assert res.content.startswith(b"%PDF-")
+    assert len(res.content) > 3000
+
+
+def test_the_pdf_is_named_after_the_order(tenant):
+    order = priced(tenant)
+    res = tenant.get("/api/wo/orders/%d/document.pdf" % order["id"])
+    assert "WO_2026_27_STP_001" in res.headers.get("content-disposition", "")
+
+
+def test_the_pdf_runs_to_more_than_one_page(tenant):
+    """The letter, the schedule, the clauses and the signatures do not fit on
+    one sheet, and each of them starts on its own."""
+    import wo_pdf
+    order = priced(tenant)
+    tenant.put("/api/wo/orders/%d/terms" % order["id"], json={"terms": [
+        {"clause_category": "Mode of Measurement", "clause_text": "As per IS 1200."}]})
+    doc = tenant.get("/api/wo/orders/%d/document" % order["id"]).json()
+    pdf = wo_pdf.build_work_order_pdf(doc)
+    assert pdf.startswith(b"%PDF-")
+    assert pdf.count(b"/Page") >= 3
+
+
+def test_a_provisional_order_can_still_be_printed(tenant):
+    """The provisional copy is what goes round for approval, so it has to be
+    printable. It is the watermark that stops it being acted on."""
+    order = priced(tenant)
+    tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    res = tenant.get("/api/wo/orders/%d/document.pdf" % order["id"])
+    assert res.status_code == 200
+    assert res.content.startswith(b"%PDF-")
+
+
+def test_a_draft_is_watermarked_as_not_issued(tenant):
+    order = priced(tenant)
+    doc = tenant.get("/api/wo/orders/%d/document" % order["id"]).json()
+    assert doc["watermark"] == "DRAFT - NOT ISSUED"
+
+
+def test_the_document_names_who_approved_it(tenant, client):
+    """A signature block printed with the approver's name already on it is the
+    difference between recording who committed the business and leaving a
+    blank anybody could fill in."""
+    order = priced(tenant)
+    tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    head = staff(tenant, "manager")
+    sign_in(client, head)
+    assert client.post("/api/wo/orders/%d/approve" % order["id"],
+                       json={}).status_code == 200
+
+    doc = tenant.get("/api/wo/orders/%d/document" % order["id"]).json()
+    approved = [s for s in doc["signatures"] if s["role"] == "Approved by"][0]
+    assert head["first_name"] in approved["name"]
+
+
+def test_amounts_are_grouped_the_way_they_are_read():
+    """Lakhs and crores. Western grouping on the same number reads as a
+    different amount at a glance, on a document somebody signs."""
+    import wo_pdf
+    assert wo_pdf.inr(1234567.5) == "12,34,567.50"
+    assert wo_pdf.inr(100) == "100.00"
+    assert wo_pdf.inr(-45000) == "(45,000.00)"
+    assert wo_pdf.inr(12.2222, 4) == "12.2222"
+
+
+def test_dates_print_the_way_a_site_reads_them():
+    import wo_pdf
+    assert wo_pdf._date("2026-09-01") == "01/09/2026"
+    assert wo_pdf._date("") == ""
+
+
+# --- What the project is allowed to spend -----------------------------------
+
+def allocate(tenant, job_id, name="Civil - substructure", amount=1000000):
+    res = tenant.post("/api/wo/projects/%d/budgets" % job_id,
+                      json={"name": name, "allocated_amount": amount})
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def budgeted(tenant, allocation=5000000):
+    """A priced order whose whole schedule is against one cost centre."""
+    order = draft(tenant)
+    budget = allocate(tenant, order["job_id"], amount=allocation)
+    lines = [dict(line, budget_id=budget["id"]) for line in BOQ["lines"]]
+    res = tenant.put("/api/wo/orders/%d/boq" % order["id"], json={"lines": lines})
+    assert res.status_code == 200, res.text
+    return res.json()["order"], budget
+
+
+def test_an_allocation_starts_wholly_available(tenant):
+    order = draft(tenant)
+    allocate(tenant, order["job_id"], amount=1000000)
+    row = tenant.get("/api/wo/projects/%d/budgets"
+                     % order["job_id"]).json()["budgets"][0]
+    assert row["allocated"] == 1000000
+    assert row["committed"] == 0
+    assert row["available"] == 1000000
+
+
+def test_a_draft_has_not_committed_anything(tenant):
+    """Pricing something up is how you find out it is too big. A draft that
+    held budget would stop anybody finding out."""
+    order, _ = budgeted(tenant)
+    row = tenant.get("/api/wo/projects/%d/budgets"
+                     % order["job_id"]).json()["budgets"][0]
+    assert row["committed"] == 0
+
+
+def test_submitting_commits_the_money(tenant):
+    order, _ = budgeted(tenant)
+    tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    row = tenant.get("/api/wo/projects/%d/budgets"
+                     % order["job_id"]).json()["budgets"][0]
+    assert row["committed"] == 2958000.0
+    assert row["available"] == 5000000 - 2958000.0
+
+
+def test_the_order_reports_its_own_share_separately(tenant):
+    """So the wizard can say "this order takes the last of it" while it is
+    still being priced, rather than once it is too late to change."""
+    order, _ = budgeted(tenant)
+    row = tenant.get("/api/wo/orders/%d" % order["id"]).json()["order"]["budgets"][0]
+    assert row["this_order"] == 2958000.0
+    assert row["committed"] == 0
+
+
+def test_an_order_that_overruns_cannot_simply_be_approved(tenant):
+    order, _ = budgeted(tenant, allocation=1000000)
+    tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    res = tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
+    assert res.status_code == 409
+    assert "overruns" in res.json()["detail"]
+    assert tenant.get("/api/wo/orders/%d" % order["id"]).json()[
+        "order"]["status"] == "PROVISIONAL"
+
+
+def test_an_overrun_can_be_approved_deliberately_and_is_recorded(tenant):
+    order, _ = budgeted(tenant, allocation=1000000)
+    tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    res = tenant.post("/api/wo/orders/%d/approve" % order["id"],
+                      json={"override": True,
+                            "comments": "Scope grew after the soil report"})
+    assert res.status_code == 200, res.text
+    assert res.json()["order"]["status"] == "APPROVED"
+
+    history = tenant.get("/api/wo/orders/%d" % order["id"]).json()["order"]["history"]
+    approval = [h for h in history if h["action"] == "APPROVE"][0]
+    assert "Budget override" in approval["comments"]
+    assert "soil report" in approval["comments"]
+
+
+def test_an_overrun_has_to_be_explained(tenant):
+    order, _ = budgeted(tenant, allocation=1000000)
+    tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    res = tenant.post("/api/wo/orders/%d/approve" % order["id"],
+                      json={"override": True, "comments": "  "})
+    assert res.status_code == 400
+
+
+def test_the_overrun_is_stated_before_anybody_clicks_approve(tenant):
+    order, _ = budgeted(tenant, allocation=1000000)
+    detail = tenant.get("/api/wo/orders/%d" % order["id"]).json()["order"]
+    assert detail["budget_warnings"], "the review has to say so first"
+    assert "allocated" in detail["budget_warnings"][0]
+
+
+def test_an_unallocated_cost_centre_does_not_block_anything(tenant):
+    """Nought allocated means nobody has set it, not that it is fully spent."""
+    order, _ = budgeted(tenant, allocation=0)
+    tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    res = tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
+    assert res.status_code == 200, res.text
+
+
+def test_cancelling_gives_the_money_back(tenant):
+    order, _ = budgeted(tenant)
+    tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    tenant.post("/api/wo/orders/%d/cancel" % order["id"],
+                json={"comments": "Contractor withdrew"})
+    row = tenant.get("/api/wo/projects/%d/budgets"
+                     % order["job_id"]).json()["budgets"][0]
+    assert row["committed"] == 0
+    assert row["available"] == 5000000
+
+
+def test_an_allocation_cannot_be_cut_below_what_is_committed(tenant):
+    order, budget = budgeted(tenant)
+    tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    res = tenant.put("/api/wo/projects/budgets/%d" % budget["id"],
+                     json={"name": "Civil - substructure", "allocated_amount": 100000})
+    assert res.status_code == 409
+    assert "already committed" in res.json()["detail"]
+
+
+def test_a_line_cannot_spend_another_projects_allocation(tenant):
+    """Dropped rather than refused: the picker empties when the project
+    changes, and one stale line should not reject two hundred good ones."""
+    order, _ = budgeted(tenant)
+    other = draft(tenant)
+    stray = allocate(tenant, other["job_id"], name="Another project's money")
+    res = tenant.put("/api/wo/orders/%d/boq" % order["id"], json={
+        "lines": [dict(BOQ["lines"][0], budget_id=stray["id"])]})
+    assert res.status_code == 200, res.text
+    assert res.json()["order"]["items"][0]["budget_id"] is None
+
+
+def test_an_amendment_carries_the_cost_centres_across(tenant):
+    order, budget = budgeted(tenant)
+    tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
+    revision = tenant.post("/api/wo/orders/%d/amend" % order["id"],
+                           json={}).json()["order"]
+    assert all(i["budget_id"] == budget["id"] for i in revision["items"])
+
+
+def test_one_tenant_cannot_allocate_against_anothers_project(tenant, second_tenant):
+    order = draft(tenant)
+    res = second_tenant.post("/api/wo/projects/%d/budgets" % order["job_id"],
+                             json={"name": "Theirs", "allocated_amount": 100})
+    assert res.status_code == 404
+
+
+# --- Telling somebody it is their move --------------------------------------
+
+def test_submitting_tells_the_people_who_can_approve(tenant, client):
+    """An order that sits in a queue nobody is told about is an order that
+    sits in a queue."""
+    head = staff(tenant, "manager")
+    order = priced(tenant)
+    tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+
+    sign_in(client, head)
+    titles = [n["title"] for n in
+              client.get("/api/employee/notifications").json()["notifications"]]
+    assert any("awaiting approval" in t for t in titles), titles
+
+
+def test_the_engineer_hears_back_when_it_is_decided(tenant, client):
+    engineer = staff(tenant, "manager")
+    order = priced(tenant)
+    # Submitted by the engineer, so the decision comes back to them.
+    sign_in(client, engineer)
+    assert client.post("/api/wo/orders/%d/submit" % order["id"],
+                       json={}).status_code == 200
+
+    as_owner(tenant)
+    tenant.post("/api/wo/orders/%d/reject" % order["id"],
+                json={"comments": "Rate on line 2 is above the last order"})
+
+    sign_in(client, engineer)
+    rows = client.get("/api/employee/notifications").json()["notifications"]
+    assert any("sent back" in n["title"] for n in rows), rows
+
+
+def test_nobody_is_told_about_their_own_move(tenant, client):
+    """Being told about your own submission is the noise that gets
+    notifications turned off. A manager may approve as well as raise, so they
+    are in the list this would otherwise notify."""
+    engineer = staff(tenant, "manager")
+    order = priced(tenant)
+    sign_in(client, engineer)
+    client.post("/api/wo/orders/%d/submit" % order["id"], json={})
+
+    rows = client.get("/api/employee/notifications").json()["notifications"]
+    assert not any("awaiting approval" in n["title"] for n in rows), rows
+
+
+# --- Retention and the mobilization advance ---------------------------------
+
+def test_retention_and_advance_are_worked_out_from_the_gross(tenant):
+    order = draft(tenant, retention_percent=5, mobilization_advance_percent=10,
+                  advance_recovery_percent=20)
+    order = tenant.put("/api/wo/orders/%d/boq" % order["id"],
+                       json=BOQ).json()["order"]
+    assert order["gross_amount"] == 2958000.0
+    assert order["retention_amount"] == 147900.0
+    assert order["mobilization_advance_amount"] == 295800.0
+    assert order["advance_recovery_percent"] == 20
+
+
+def test_neither_is_taken_off_the_order_value(tenant):
+    """Retention is held back and given back; the advance is paid early and
+    taken back. Both are timing, not price - a contractor who reads 5%
+    retention as 5% off the price prices the next job for it."""
+    plain = priced(tenant)
+    withheld = draft(tenant, retention_percent=5, mobilization_advance_percent=10)
+    withheld = tenant.put("/api/wo/orders/%d/boq" % withheld["id"],
+                          json=BOQ).json()["order"]
+    assert withheld["net_order_value"] == plain["net_order_value"]
+
+
+def test_the_deductions_are_stated_on_the_document(tenant):
+    import wo_pdf
+    order = draft(tenant, retention_percent=5, mobilization_advance_percent=10,
+                  advance_recovery_percent=20)
+    tenant.put("/api/wo/orders/%d/boq" % order["id"], json=BOQ)
+    doc = tenant.get("/api/wo/orders/%d/document" % order["id"]).json()
+    assert doc["retention_percent"] == 5
+    assert wo_pdf.build_work_order_pdf(doc).startswith(b"%PDF-")
+
+
+def test_an_amendment_keeps_the_commercial_terms(tenant):
+    order = draft(tenant, retention_percent=5, mobilization_advance_percent=10,
+                  advance_recovery_percent=20)
+    tenant.put("/api/wo/orders/%d/boq" % order["id"], json=BOQ)
+    tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
+    revision = tenant.post("/api/wo/orders/%d/amend" % order["id"],
+                           json={}).json()["order"]
+    assert revision["retention_percent"] == 5
+    assert revision["mobilization_advance_percent"] == 10
+    assert revision["advance_recovery_percent"] == 20
+
+
+# --- The work types an order may be raised for ------------------------------
+
+def test_the_trade_s_own_work_types_are_there_to_start_with(tenant):
+    """An empty required dropdown on the first screen of the first order is a
+    dead end with nothing on the screen saying where to go instead."""
+    types = tenant.get("/api/wo/work-types").json()["work_types"]
+    assert types, "a new account should not open on an empty list"
+    assert any("Civil" in t["name"] for t in types)
+
+
+def test_an_administrator_adds_a_type_outright(tenant):
+    res = tenant.post("/api/wo/work-types", json={
+        "name": "Piling - bored cast in situ", "code": "CIV-PIL",
+        "department": "Civil"})
+    assert res.status_code == 200, res.text
+    assert res.json()["work_type"]["status"] == "active"
+
+
+def test_an_engineer_can_only_ask_for_one(tenant, client):
+    """A list anybody may add to is free text with extra steps, and the same
+    trade ends up filed under four spellings."""
+    engineer = staff(tenant, "manager")
+    sign_in(client, engineer)
+    res = client.post("/api/wo/work-types", json={
+        "name": "Shotcreting", "request_reason": "Tunnel lining on the bypass"})
+    assert res.status_code == 200, res.text
+    assert res.json()["work_type"]["status"] == "requested"
+    assert "approves" in res.json()["message"]
+
+    # and it is not offered for use until somebody decides on it
+    offered = client.get("/api/wo/work-types").json()
+    assert not any(t["name"] == "Shotcreting" for t in offered["work_types"])
+    assert any(t["name"] == "Shotcreting" for t in offered["requested"])
+
+
+def test_an_administrator_approves_the_request(tenant, client):
+    engineer = staff(tenant, "manager")
+    sign_in(client, engineer)
+    asked = client.post("/api/wo/work-types", json={
+        "name": "Shotcreting"}).json()["work_type"]
+
+    # Back to the account holder's own screens, as a second browser would be:
+    # signing in as staff ends the owner's session, which is the point.
+    as_owner(tenant)
+    res = tenant.post("/api/wo/work-types/%d/decide?approve=true" % asked["id"])
+    assert res.status_code == 200, res.text
+    assert res.json()["work_type"]["status"] == "active"
+    assert any(t["name"] == "Shotcreting"
+               for t in tenant.get("/api/wo/work-types").json()["work_types"])
+
+
+def test_a_request_can_be_declined(tenant, client):
+    engineer = staff(tenant, "manager")
+    sign_in(client, engineer)
+    asked = client.post("/api/wo/work-types", json={
+        "name": "Miscellaneous"}).json()["work_type"]
+    as_owner(tenant)
+    res = tenant.post("/api/wo/work-types/%d/decide?approve=false" % asked["id"])
+    assert res.json()["work_type"]["status"] == "declined"
+
+
+def test_an_engineer_cannot_decide_their_own_request(tenant, client):
+    engineer = staff(tenant, "manager")
+    sign_in(client, engineer)
+    asked = client.post("/api/wo/work-types", json={
+        "name": "Shotcreting"}).json()["work_type"]
+    assert client.post("/api/wo/work-types/%d/decide" % asked["id"]).status_code == 403
+
+
+def test_the_same_work_type_is_not_added_twice(tenant):
+    tenant.post("/api/wo/work-types", json={"name": "Shotcreting"})
+    again = tenant.post("/api/wo/work-types", json={"name": "SHOTCRETING"})
+    assert again.status_code == 409
+
+
+def test_a_decided_request_is_not_decided_again(tenant, client):
+    engineer = staff(tenant, "manager")
+    sign_in(client, engineer)
+    asked = client.post("/api/wo/work-types", json={
+        "name": "Shotcreting"}).json()["work_type"]
+    as_owner(tenant)
+    tenant.post("/api/wo/work-types/%d/decide" % asked["id"])
+    assert tenant.post("/api/wo/work-types/%d/decide"
+                       % asked["id"]).status_code == 409
+
+
+# --- A scope of work written in an editor -----------------------------------
+
+def test_the_formatting_survives_and_the_rest_does_not(tenant):
+    order = draft(tenant, scope_of_work=(
+        "<p>Complete <b>civil works</b> for the <i>295 KLD</i> plant.</p>"
+        "<script>alert(1)</script><div onclick='x'>Excavation</div>"))
+    scope = order["scope_of_work"]
+    assert "<b>civil works</b>" in scope
+    assert "<i>295 KLD</i>" in scope
+    assert "script" not in scope.lower()
+    assert "onclick" not in scope.lower()
+    assert "Excavation" in scope, "unknown tags lose their brackets, not their words"
+
+
+def test_a_dimension_written_with_an_angle_bracket_survives(tenant):
+    """Aggregate <20 mm is a specification, not a broken tag."""
+    order = draft(tenant, scope_of_work="Aggregate <20 mm, graded.")
+    assert "20 mm" in order["scope_of_work"]
+
+
+def test_a_formatted_scope_still_prints(tenant):
+    import wo_pdf
+    order = draft(tenant, scope_of_work=(
+        "<p>Steel &amp; cement issued free.</p><ul><li>Excavation</li>"
+        "<li>Raft and walls</li></ul>"))
+    tenant.put("/api/wo/orders/%d/boq" % order["id"], json=BOQ)
+    doc = tenant.get("/api/wo/orders/%d/document" % order["id"]).json()
+    assert wo_pdf.build_work_order_pdf(doc).startswith(b"%PDF-")
+
+
+def test_an_ampersand_does_not_break_the_page(tenant):
+    import wo_pdf
+    assert "&amp;" in wo_pdf._rich("steel & cement")
+    assert wo_pdf._rich("steel &amp; cement").count("amp") == 1
+
+
+def test_a_scope_beginning_with_b_or_r_keeps_its_letters(tenant):
+    """The leading break is stripped as a tag, not as characters."""
+    import wo_pdf
+    assert wo_pdf._rich("<p>brick work</p>").startswith("brick work")
+
+
+# --- The letterhead ---------------------------------------------------------
+
+def test_the_business_unit_prints_its_own_letterhead(tenant):
+    unit = tenant.post("/api/wo/business-units", json={
+        "name": "Y Projects South", "logo_url": "data:image/png;base64,AAAA"}).json()
+    order = draft(tenant, business_unit_id=unit["id"])
+    doc = tenant.get("/api/wo/orders/%d/document" % order["id"]).json()
+    assert doc["business_unit_detail"]["logo_url"].startswith("data:image/png")
+
+
+def test_a_logo_that_will_not_decode_does_not_stop_the_order_printing(tenant):
+    import wo_pdf
+    unit = tenant.post("/api/wo/business-units", json={
+        "name": "Y Projects North",
+        "logo_url": "data:image/png;base64,not-really-a-png"}).json()
+    order = draft(tenant, business_unit_id=unit["id"])
+    tenant.put("/api/wo/orders/%d/boq" % order["id"], json=BOQ)
+    doc = tenant.get("/api/wo/orders/%d/document" % order["id"]).json()
+    assert wo_pdf.build_work_order_pdf(doc).startswith(b"%PDF-")
+
+
+def test_a_document_with_nothing_on_it_still_renders(tenant):
+    """A Table built from no rows raises rather than drawing nothing, and took
+    the whole document down with it."""
+    import wo_pdf
+    bare = {"wo_number": "WO/2026-27/GEN/001", "status": "DRAFT",
+            "business_unit_detail": {}, "contractor_detail": {}, "contractor": "",
+            "items": [], "terms": [], "signatures": [], "gross_amount": 0,
+            "gst_rate": 18, "gst_amount": 0, "tds_rate": 1, "tds_amount": 0,
+            "net_order_value": 0, "amount_in_words": "Zero", "printed_at": "",
+            "watermark": ""}
+    assert wo_pdf.build_work_order_pdf(bare).startswith(b"%PDF-")
+
+
+def test_a_remote_logo_is_not_fetched_to_print_it(tenant):
+    """Printing must not turn into a request this server makes to a URL
+    somebody typed into a form."""
+    import wo_pdf
+    assert wo_pdf._logo("https://example.com/logo.png") is None
+    assert wo_pdf._logo("") is None

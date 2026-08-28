@@ -17033,6 +17033,13 @@ def recost_order(db, order):
     GST is charged on top of the gross and TDS is withheld out of it, so they
     are not two halves of one number. Netting them against each other is the
     mistake this exists to make impossible.
+
+    Retention and the mobilization advance are worked out here too, but they
+    stay out of the order value. Retention is held back from each bill and
+    handed over later; the advance is paid up front and taken back out of the
+    bills. Both are timing, not price - subtracting them would state a
+    contract value the contractor is not being offered, and it is the figure
+    they price the next job from.
     """
     gross = money(sum(
         (i.total_amount or 0) for i in db.query(models.DBSubcontractItem).filter(
@@ -17041,8 +17048,48 @@ def recost_order(db, order):
     order.gst_amount = money(gross * (order.gst_rate or 0) / 100.0)
     order.tds_amount = money(gross * (order.tds_rate or 0) / 100.0)
     order.net_order_value = money(gross + order.gst_amount - order.tds_amount)
+    order.retention_amount = money(gross * (order.retention_percent or 0) / 100.0)
+    order.mobilization_advance_amount = money(
+        gross * (order.mobilization_advance_percent or 0) / 100.0)
     order.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return order
+
+
+# The only markup a scope of work may carry. Bold, italic, breaks and bullets
+# are what somebody writing a scope actually reaches for; everything else is
+# either decoration or an attack. The list is deliberately also the set
+# ReportLab's Paragraph understands, so what is written on the screen is what
+# comes out of the printer rather than an error halfway through a page.
+WO_RICH_TAGS = ("b", "i", "u", "br", "ul", "ol", "li", "p")
+_WO_TAG = re.compile(r"</?\s*([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>")
+
+
+def clean_rich_text(value):
+    """Keep the formatting, drop everything else.
+
+    An allow-list rather than a block-list: the tags worth keeping are few and
+    known, and every list of dangerous tags anybody has ever written has been
+    incomplete. Unknown tags lose their brackets and keep their words, so text
+    pasted out of a browser arrives readable rather than gutted.
+    """
+    text = str(value or "")
+    if "<" not in text:
+        return text.strip()
+
+    def keep(match):
+        tag = match.group(1).lower()
+        if tag not in WO_RICH_TAGS:
+            return ""
+        closing = match.group(0).lstrip().startswith("</")
+        if tag == "br":
+            return "<br/>"
+        return "</%s>" % tag if closing else "<%s>" % tag
+
+    cleaned = _WO_TAG.sub(keep, text)
+    # Anything still angled after that was never a tag - a dimension written
+    # as <150 mm, most likely - and has to survive as the character it is.
+    cleaned = re.sub(r"<(?![/a-zA-Z])", "&lt;", cleaned)
+    return cleaned.strip()
 
 
 def wo_or_404(db, client_id, order_id):
@@ -17063,9 +17110,11 @@ def record_wo_action(db, client, order, actor_id, actor_name, action, was, comme
 
 def wo_item_dict(i):
     return {"id": i.id, "activity_no": i.activity_no or "", "item_code": i.item_code or "",
-            "item_description": i.item_description or "", "uom": i.uom or "",
+            "item_description": i.item_description or "",
+            "technical_spec": i.technical_spec or "", "uom": i.uom or "",
             "quantity": money(i.quantity), "unit_rate": unit_rate(i.unit_rate),
-            "total_amount": money(i.total_amount), "cost_centre": i.cost_centre or "",
+            "total_amount": money(i.total_amount), "budget_id": i.budget_id,
+            "cost_centre": i.cost_centre or "",
             "display_order": i.display_order or 0}
 
 
@@ -17095,6 +17144,11 @@ def wo_dict(db, order, detail=False):
         "gst_amount": money(order.gst_amount), "tds_rate": order.tds_rate or 0,
         "tds_amount": money(order.tds_amount),
         "net_order_value": money(order.net_order_value),
+        "retention_percent": order.retention_percent or 0,
+        "retention_amount": money(order.retention_amount),
+        "mobilization_advance_percent": order.mobilization_advance_percent or 0,
+        "mobilization_advance_amount": money(order.mobilization_advance_amount),
+        "advance_recovery_percent": order.advance_recovery_percent or 0,
         "rejection_reason": order.rejection_reason or "",
         "approved_at": order.approved_at or "", "executed_at": order.executed_at or "",
         "created_at": order.created_at or "",
@@ -17122,9 +17176,21 @@ def wo_dict(db, order, detail=False):
                           for h in db.query(models.DBSubcontractApproval).filter(
                               models.DBSubcontractApproval.order_id == order.id).order_by(
                                   models.DBSubcontractApproval.id).all()]
+        # What this order does to the project's allocations. Reported on the
+        # order rather than fetched separately, so the figure an approver is
+        # looking at is the one the approval will actually be checked against.
+        row["budgets"] = (wo_budget_rows(db, order.client_id, order.job_id, order)
+                          if order.job_id else [])
+        row["budget_warnings"] = [
+            "%s is allocated %s; this order takes it to %s."
+            % (b["name"] or b["code"] or "A cost centre",
+               format_money_plain(b["allocated"]),
+               format_money_plain(b["committed"] + b["this_order"]))
+            for b in row["budgets"] if b["over"] and b["this_order"] > 0]
         row["business_unit_detail"] = {
             "name": bu.name if bu else "", "gstin": bu.gstin if bu else "",
-            "pan": bu.pan if bu else "", "address": bu.address if bu else ""}
+            "pan": bu.pan if bu else "", "address": bu.address if bu else "",
+            "logo_url": (bu.logo_url if bu else "") or ""}
         row["contractor_detail"] = {
             "company_name": con.company_name if con else "",
             "vendor_code": con.vendor_code if con else "",
@@ -17243,31 +17309,82 @@ def amount_in_words(value):
     return out + " Only"
 
 
-@app.get("/api/wo/orders/{order_id}/document")
-def wo_document(order_id: int, request: Request, db: Session = Depends(get_db)):
+def wo_document_payload(db, client, order):
     """Everything the printable order needs, in the order it is printed.
 
     The watermark is decided here rather than in the page, so a provisional
     order cannot be printed as a clean one by loading the view differently.
+    Shared by the JSON view, the on-screen preview and the PDF, so all three
+    are the same document and cannot drift apart.
     """
-    client = require_erp_read(request, db)
-    order = wo_or_404(db, client.id, order_id)
     doc = wo_dict(db, order, detail=True)
     doc["company"] = client.company_name or ""
+    # The unit's own letterhead where it has one, the account's otherwise. A
+    # document that goes out without either is still a valid document, so the
+    # absence is not an error anywhere.
+    if not doc["business_unit_detail"].get("logo_url"):
+        doc["business_unit_detail"]["logo_url"] = client.logo_url or ""
     doc["printed_at"] = datetime.now().strftime("%d/%m/%Y   %H:%M")
     doc["financial_year"] = financial_year_label(order.commencement_date)
     doc["amount_in_words"] = amount_in_words(order.net_order_value)
     doc["watermark"] = ("PROVISIONAL - NOT VALID FOR EXECUTION"
                         if order.status == "PROVISIONAL" else
+                        "DRAFT - NOT ISSUED" if order.status == "DRAFT" else
                         "CANCELLED" if order.status == "CANCELLED" else
                         "SUPERSEDED" if order.status == "AMENDED" else "")
+
+    # Named where they are known. A signature block printed with the approver's
+    # name already on it is the difference between a document that records who
+    # committed the business and one that leaves a blank anybody can fill in.
+    prepared_by, approved_by = "", ""
+    for row in db.query(models.DBSubcontractApproval).filter(
+            models.DBSubcontractApproval.order_id == order.id).order_by(
+                models.DBSubcontractApproval.id).all():
+        if row.action in ("CREATE", "SUBMIT") and not prepared_by:
+            prepared_by = row.actor_name or ""
+        if row.action == "APPROVE":
+            approved_by = row.actor_name or ""
     doc["signatures"] = [
-        {"role": "Prepared by", "name": "", "for": "Billing Engineer"},
-        {"role": "Approved by", "name": "", "for": "Project Head"},
+        {"role": "Prepared by", "name": prepared_by, "for": "Billing Engineer"},
+        {"role": "Approved by", "name": approved_by, "for": "Project Head"},
         {"role": "For and on behalf of", "name": doc["company"], "for": "The Owner"},
         {"role": "Accepted by", "name": doc["contractor"], "for": "The Contractor"},
     ]
     return doc
+
+
+@app.get("/api/wo/orders/{order_id}/document")
+def wo_document(order_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return wo_document_payload(db, client, wo_or_404(db, client.id, order_id))
+
+
+@app.get("/api/wo/orders/{order_id}/document.pdf")
+def wo_document_pdf(order_id: int, request: Request, db: Session = Depends(get_db)):
+    """The order as the document that gets signed.
+
+    Rendered on the server rather than in the browser: this copy is attached
+    to bills and produced in disputes, so what it looks like must not depend
+    on which machine printed it or what was installed on it.
+    """
+    client = require_erp_read(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    doc = wo_document_payload(db, client, order)
+
+    import wo_pdf
+    if not wo_pdf.PDF_AVAILABLE:
+        raise HTTPException(
+            503, "The PDF library is not installed on this server, so the "
+                 "order cannot be produced as a PDF. The schedule is still "
+                 "available as a workbook.")
+    pdf = wo_pdf.build_work_order_pdf(doc)
+    name = re.sub(r"[^A-Za-z0-9]+", "_", doc["wo_number"] or "work_order")
+    # Streamed with its length declared, so a two-hundred-line schedule shows
+    # a real progress bar on a site connection instead of an empty tab.
+    return StreamingResponse(
+        io.BytesIO(pdf), media_type="application/pdf",
+        headers={"Content-Disposition": 'inline; filename="%s.pdf"' % name,
+                 "Content-Length": str(len(pdf))})
 
 
 @app.get("/api/wo/orders/{order_id}/boq.xlsx")
@@ -17309,6 +17426,7 @@ class BusinessUnitIn(BaseModel):
     gstin: Optional[str] = ""
     pan: Optional[str] = ""
     address: Optional[str] = ""
+    logo_url: Optional[str] = ""
 
 
 class ContractorIn(BaseModel):
@@ -17333,7 +17451,8 @@ def wo_list_business_units(request: Request, db: Session = Depends(get_db)):
             models.DBBusinessUnit.name).all()
     return {"business_units": [
         {"id": b.id, "name": b.name or "", "code": b.code or "",
-         "gstin": b.gstin or "", "pan": b.pan or "", "address": b.address or ""}
+         "gstin": b.gstin or "", "pan": b.pan or "", "address": b.address or "",
+         "logo_url": b.logo_url or ""}
         for b in rows]}
 
 
@@ -17347,7 +17466,8 @@ def wo_create_business_unit(body: BusinessUnitIn, request: Request,
     unit = models.DBBusinessUnit(
         client_id=client.id, name=name, code=(body.code or "").strip().upper(),
         gstin=(body.gstin or "").strip().upper(), pan=(body.pan or "").strip().upper(),
-        address=(body.address or "").strip())
+        address=(body.address or "").strip(),
+        logo_url=(body.logo_url or "").strip())
     db.add(unit)
     db.commit()
     db.refresh(unit)
@@ -17418,6 +17538,346 @@ def wo_create_contractor(body: ContractorIn, request: Request,
             "company_name": con.company_name, "message": con.vendor_code + " added."}
 
 
+# --- The kinds of work an order can be raised for --------------------------
+#
+# Administering the list is a different right from using it. Whoever
+# provisions users and their permissions owns the taxonomy; an engineer
+# raising orders can ask for a type but cannot mint one, because a list
+# anybody may add to is free text with extra steps and the same trade ends up
+# filed under four spellings.
+
+WO_DEFAULT_WORK_TYPES = (
+    ("CIV-SUP", "Civil - supply and commissioning", "Civil"),
+    ("CIV-LAB", "Civil - labour only", "Civil"),
+    ("CIV-CMP", "Civil - composite (material and labour)", "Civil"),
+    ("STP-MEC", "STP - mechanical erection", "STP"),
+    ("STP-CIV", "STP - civil works", "STP"),
+    ("ELE-INT", "Electrical - internal wiring", "Electrical"),
+    ("ELE-EXT", "Electrical - external and substation", "Electrical"),
+    ("MEC-HVA", "Mechanical - HVAC", "Mechanical"),
+    ("PLU-INT", "Plumbing - internal", "Plumbing"),
+    ("FIN-PNT", "Finishing - painting", "Finishing"),
+    ("FIN-FLR", "Finishing - flooring and tiling", "Finishing"),
+)
+
+
+class WorkTypeIn(BaseModel):
+    name: str
+    code: Optional[str] = ""
+    department: Optional[str] = ""
+    request_reason: Optional[str] = ""
+
+
+def may_administer(request, db, permission="people.manage"):
+    """Whether this caller holds a right, asked rather than demanded.
+
+    The same check as require_items_access, but answering the question instead
+    of refusing the request - the work type screen has to show an engineer the
+    list without showing them the buttons they cannot use.
+    """
+    try:
+        require_items_access(request, db, permission)
+        return True
+    except HTTPException:
+        return False
+
+
+def seed_work_types(db, client_id):
+    """The trades this business already works in, the first time it looks.
+
+    Seeded rather than left empty because an empty required dropdown on the
+    first screen of the first order is a dead end, and the eleven below are
+    the ones every order in this trade is raised against.
+    """
+    if db.query(models.DBWorkType).filter(
+            models.DBWorkType.client_id == client_id).count():
+        return
+    for code, name, department in WO_DEFAULT_WORK_TYPES:
+        db.add(models.DBWorkType(client_id=client_id, code=code, name=name,
+                                 department=department, status="active"))
+    db.commit()
+
+
+def work_type_dict(w):
+    return {"id": w.id, "name": w.name or "", "code": w.code or "",
+            "department": w.department or "", "status": w.status or "active",
+            "requested_by_name": w.requested_by_name or "",
+            "request_reason": w.request_reason or "",
+            "decided_by_name": w.decided_by_name or "",
+            "created_at": w.created_at or ""}
+
+
+@app.get("/api/wo/work-types")
+def wo_list_work_types(request: Request, department: str = "",
+                       db: Session = Depends(get_db)):
+    """The list to pick from, and separately what is waiting on an administrator."""
+    client = require_erp_read(request, db)
+    seed_work_types(db, client.id)
+    rows = db.query(models.DBWorkType).filter(
+        models.DBWorkType.client_id == client.id).order_by(
+            models.DBWorkType.department, models.DBWorkType.name).all()
+    active = [w for w in rows if (w.status or "active") == "active"]
+    if department:
+        # Narrowed to the discipline, but only when that leaves something to
+        # pick: a business whose types are not filed by department would see
+        # an empty list and no way to tell why.
+        narrowed = [w for w in active if (w.department or "") == department]
+        active = narrowed or active
+    return {
+        "work_types": [work_type_dict(w) for w in active],
+        "requested": [work_type_dict(w) for w in rows if w.status == "requested"],
+        "may_administer": may_administer(request, db),
+    }
+
+
+@app.post("/api/wo/work-types")
+def wo_create_work_type(body: WorkTypeIn, request: Request,
+                        db: Session = Depends(get_db)):
+    """Added outright by an administrator, or asked for by anybody else."""
+    client = require_items_access(request, db, "workorders.manage")
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "The work type needs a name")
+    clash = db.query(models.DBWorkType).filter(
+        models.DBWorkType.client_id == client.id,
+        sqlfunc.lower(models.DBWorkType.name) == name.lower()).first()
+    if clash:
+        raise HTTPException(
+            409, "'%s' is already on the list%s." %
+                 (name, " and waiting to be approved"
+                  if clash.status == "requested" else ""))
+
+    administers = may_administer(request, db)
+    _, actor_id, actor_name = wo_actor(request, db)
+    work_type = models.DBWorkType(
+        client_id=client.id, name=name, code=(body.code or "").strip().upper(),
+        department=(body.department or "").strip(),
+        status="active" if administers else "requested",
+        requested_by=actor_id, requested_by_name=actor_name,
+        request_reason=(body.request_reason or "").strip(),
+        decided_by_name=actor_name if administers else "",
+        decided_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S") if administers else "")
+    db.add(work_type)
+    db.commit()
+    db.refresh(work_type)
+    return {"work_type": work_type_dict(work_type),
+            "message": (name + " added to the work types.") if administers else
+                       ("Asked for '" + name + "'. It can be used once whoever "
+                        "administers the system approves it.")}
+
+
+@app.post("/api/wo/work-types/{type_id}/decide")
+def wo_decide_work_type(type_id: int, request: Request, approve: bool = True,
+                        db: Session = Depends(get_db)):
+    client = require_items_access(request, db, "people.manage")
+    _, actor_id, actor_name = wo_actor(request, db, "people.manage")
+    work_type = db.query(models.DBWorkType).filter(
+        models.DBWorkType.id == type_id,
+        models.DBWorkType.client_id == client.id).first()
+    if not work_type:
+        raise HTTPException(404, "Work type not found")
+    if work_type.status != "requested":
+        raise HTTPException(409, "That work type has already been decided.")
+    work_type.status = "active" if approve else "declined"
+    work_type.decided_by_name = actor_name
+    work_type.decided_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    db.commit()
+    return {"work_type": work_type_dict(work_type),
+            "message": "%s %s." % (work_type.name,
+                                   "is now available" if approve else "was declined")}
+
+
+# --- What the project is allowed to spend ----------------------------------
+#
+# An order in one of these states has committed the money. A draft has not -
+# pricing something up is how you find out it is too expensive, so a draft may
+# be any figure at all. Cancelled and superseded orders release what they
+# held, without anybody having to remember to release it.
+WO_COMMITTED_STATUSES = ("PROVISIONAL", "APPROVED", "EXECUTED")
+
+
+class ProjectBudgetIn(BaseModel):
+    code: Optional[str] = ""
+    name: str
+    department: Optional[str] = ""
+    allocated_amount: float = 0
+    notes: Optional[str] = ""
+
+
+def wo_committed_by_budget(db, client_id, exclude_order_id=None):
+    """Rupees already committed against each allocation, from the orders."""
+    query = (db.query(models.DBSubcontractItem.budget_id,
+                      sqlfunc.sum(models.DBSubcontractItem.total_amount))
+             .join(models.DBSubcontractOrder,
+                   models.DBSubcontractOrder.id == models.DBSubcontractItem.order_id)
+             .filter(models.DBSubcontractOrder.client_id == client_id,
+                     models.DBSubcontractOrder.status.in_(WO_COMMITTED_STATUSES),
+                     models.DBSubcontractItem.budget_id.isnot(None)))
+    if exclude_order_id:
+        query = query.filter(models.DBSubcontractOrder.id != exclude_order_id)
+    return {budget_id: money(total or 0)
+            for budget_id, total in query.group_by(
+                models.DBSubcontractItem.budget_id).all()}
+
+
+def wo_budget_rows(db, client_id, job_id, order=None):
+    """Every allocation on a project, with what is left of it.
+
+    When an order is passed, its own lines are reported separately from what
+    everything else has committed - so the wizard can say "this order takes
+    the last 40,000 of it" while it is still being priced, rather than only
+    once it is too late to change.
+    """
+    budgets = db.query(models.DBProjectBudget).filter(
+        models.DBProjectBudget.client_id == client_id,
+        models.DBProjectBudget.job_id == job_id,
+        models.DBProjectBudget.is_active == True).order_by(  # noqa: E712
+            models.DBProjectBudget.code, models.DBProjectBudget.id).all()
+
+    committed = wo_committed_by_budget(db, client_id,
+                                       exclude_order_id=order.id if order else None)
+    mine = {}
+    if order is not None:
+        for budget_id, total in db.query(
+                models.DBSubcontractItem.budget_id,
+                sqlfunc.sum(models.DBSubcontractItem.total_amount)).filter(
+                    models.DBSubcontractItem.order_id == order.id,
+                    models.DBSubcontractItem.budget_id.isnot(None)).group_by(
+                        models.DBSubcontractItem.budget_id).all():
+            mine[budget_id] = money(total or 0)
+
+    rows = []
+    for b in budgets:
+        allocated = money(b.allocated_amount)
+        elsewhere = committed.get(b.id, 0.0)
+        this_order = mine.get(b.id, 0.0)
+        rows.append({
+            "id": b.id, "code": b.code or "", "name": b.name or "",
+            "department": b.department or "", "notes": b.notes or "",
+            "allocated": allocated,
+            "committed": elsewhere,
+            "this_order": this_order,
+            "available": money(allocated - elsewhere - this_order),
+            # An allocation of zero is one nobody has set yet, not one that is
+            # fully spent, so it is never reported as over budget.
+            "over": bool(allocated > 0 and (elsewhere + this_order) > allocated),
+        })
+    return rows
+
+
+def wo_valid_budget_id(db, client_id, order, budget_id):
+    """A line may only spend an allocation belonging to its own project.
+
+    Silently dropped rather than refused: the cost centre picker empties when
+    the project on the order changes, and a schedule of two hundred lines
+    should not be rejected wholesale because one of them still points at the
+    allocation of a project it no longer belongs to.
+    """
+    if not budget_id:
+        return None
+    row = db.query(models.DBProjectBudget).filter(
+        models.DBProjectBudget.id == budget_id,
+        models.DBProjectBudget.client_id == client_id,
+        models.DBProjectBudget.job_id == order.job_id).first()
+    return row.id if row else None
+
+
+def wo_budget_breaches(db, client, order):
+    """Which allocations this order would overrun, in words an approver can act on."""
+    if not order.job_id:
+        return []
+    breaches = []
+    for row in wo_budget_rows(db, client.id, order.job_id, order):
+        if row["over"] and row["this_order"] > 0:
+            breaches.append(
+                "%s is allocated %s and this order would take it to %s"
+                % (row["name"] or row["code"] or "a cost centre",
+                   format_money_plain(row["allocated"]),
+                   format_money_plain(row["committed"] + row["this_order"])))
+    return breaches
+
+
+def format_money_plain(value):
+    """12,34,567.00 - Indian grouping, because that is how the figure is read."""
+    import wo_pdf
+    return "Rs. " + wo_pdf.inr(value)
+
+
+@app.get("/api/wo/projects/{job_id}/budgets")
+def wo_list_budgets(job_id: int, request: Request, order_id: int = 0,
+                    db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    job = db.query(models.DBJob).filter(
+        models.DBJob.id == job_id, models.DBJob.client_id == client.id).first()
+    if not job:
+        raise HTTPException(404, "Project not found")
+    order = None
+    if order_id:
+        order = wo_or_404(db, client.id, order_id)
+    rows = wo_budget_rows(db, client.id, job_id, order)
+    return {
+        "project": ("%s %s" % (job.number or "", job.name or "")).strip(),
+        "job_budget": money(job.budget),
+        "budgets": rows,
+        "totals": {
+            "allocated": money(sum(r["allocated"] for r in rows)),
+            "committed": money(sum(r["committed"] + r["this_order"] for r in rows)),
+            "available": money(sum(r["available"] for r in rows)),
+        },
+    }
+
+
+@app.post("/api/wo/projects/{job_id}/budgets")
+def wo_create_budget(job_id: int, body: ProjectBudgetIn, request: Request,
+                     db: Session = Depends(get_db)):
+    client = require_items_access(request, db, "workorders.manage")
+    job = db.query(models.DBJob).filter(
+        models.DBJob.id == job_id, models.DBJob.client_id == client.id).first()
+    if not job:
+        raise HTTPException(404, "Project not found")
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "The cost centre needs a name")
+    budget = models.DBProjectBudget(
+        client_id=client.id, job_id=job_id, name=name,
+        code=(body.code or "").strip().upper(),
+        department=(body.department or "").strip(),
+        allocated_amount=money(body.allocated_amount or 0),
+        notes=(body.notes or "").strip())
+    db.add(budget)
+    db.commit()
+    db.refresh(budget)
+    return {"id": budget.id, "message": name + " allocated " +
+            format_money_plain(budget.allocated_amount) + "."}
+
+
+@app.put("/api/wo/projects/budgets/{budget_id}")
+def wo_update_budget(budget_id: int, body: ProjectBudgetIn, request: Request,
+                     db: Session = Depends(get_db)):
+    """Re-allocating is allowed; allocating less than is already committed is
+    not, because the money has already been promised to somebody."""
+    client = require_items_access(request, db, "workorders.manage")
+    budget = db.query(models.DBProjectBudget).filter(
+        models.DBProjectBudget.id == budget_id,
+        models.DBProjectBudget.client_id == client.id).first()
+    if not budget:
+        raise HTTPException(404, "Cost centre not found")
+    wanted = money(body.allocated_amount or 0)
+    committed = wo_committed_by_budget(db, client.id).get(budget.id, 0.0)
+    if wanted > 0 and wanted < committed:
+        raise HTTPException(
+            409, "%s is already committed against this cost centre. Cancel or "
+                 "amend those orders before reducing the allocation below it."
+                 % format_money_plain(committed))
+    budget.name = (body.name or budget.name or "").strip()
+    budget.code = (body.code or "").strip().upper()
+    budget.department = (body.department or "").strip()
+    budget.allocated_amount = wanted
+    budget.notes = (body.notes or "").strip()
+    db.commit()
+    return {"id": budget.id, "message": budget.name + " updated."}
+
+
 # --- The order -------------------------------------------------------------
 
 class WorkOrderHeadIn(BaseModel):
@@ -17437,15 +17897,20 @@ class WorkOrderHeadIn(BaseModel):
     bank_guarantee_validity: Optional[str] = ""
     gst_rate: Optional[float] = 18.0
     tds_rate: Optional[float] = 1.0
+    retention_percent: Optional[float] = 0
+    mobilization_advance_percent: Optional[float] = 0
+    advance_recovery_percent: Optional[float] = 0
 
 
 class BoqLineIn(BaseModel):
     activity_no: Optional[str] = ""
     item_code: Optional[str] = ""
     item_description: str
+    technical_spec: Optional[str] = ""
     uom: Optional[str] = ""
     quantity: float = 0
     unit_rate: float = 0
+    budget_id: Optional[int] = None
     cost_centre: Optional[str] = ""
 
 
@@ -17464,6 +17929,10 @@ class TermsIn(BaseModel):
 
 class WoActionIn(BaseModel):
     comments: Optional[str] = ""
+    # Approve an order that overruns its project allocation anyway. Deliberate
+    # and recorded: the reason goes into the approval history beside the
+    # figures it overran.
+    override: Optional[bool] = False
 
 
 @app.get("/api/wo/vocabulary")
@@ -17472,12 +17941,28 @@ def wo_vocabulary(request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     jobs = db.query(models.DBJob).filter(
         models.DBJob.client_id == client.id).order_by(models.DBJob.id.desc()).all()
+    seed_work_types(db, client.id)
+    types = db.query(models.DBWorkType).filter(
+        models.DBWorkType.client_id == client.id,
+        models.DBWorkType.status == "active").order_by(
+            models.DBWorkType.department, models.DBWorkType.name).all()
     return {
         "departments": list(WO_DEPARTMENTS),
         "uoms": ["cum", "sqm", "rmt", "kg", "MT", "nos", "lot", "ltr", "day"],
         "clause_categories": list(WO_CLAUSE_CATEGORIES),
         "statuses": list(WO_TRANSITIONS.keys()),
         "jobs": [{"id": j.id, "number": j.number, "name": j.name} for j in jobs],
+        "work_types": [work_type_dict(w) for w in types],
+        # The statutory choices, named rather than typed. A GST rate that is
+        # not one of these is a typing mistake, and 194C is the section every
+        # one of these orders is deducted under.
+        "gst_rates": [0, 5, 12, 18, 28],
+        "tds_options": [
+            {"rate": 1, "label": "1% - Section 194C, individual or HUF"},
+            {"rate": 2, "label": "2% - Section 194C, company or firm"},
+            {"rate": 0, "label": "Nil - exempt or lower-deduction certificate held"},
+        ],
+        "may_administer": may_administer(request, db),
         "next_number_year": financial_year_label(),
     }
 
@@ -17518,7 +18003,7 @@ def wo_create_order(body: WorkOrderHeadIn, request: Request,
         business_unit_id=body.business_unit_id, contractor_id=body.contractor_id,
         job_id=body.job_id, department=dept, work_type=(body.work_type or "").strip(),
         subject=(body.subject or "").strip(),
-        scope_of_work=(body.scope_of_work or "").strip(),
+        scope_of_work=clean_rich_text(body.scope_of_work),
         commencement_date=(body.commencement_date or "").strip(),
         completion_date=(body.completion_date or "").strip(),
         duration_months=body.duration_months or 0,
@@ -17528,6 +18013,9 @@ def wo_create_order(body: WorkOrderHeadIn, request: Request,
         bank_guarantee_validity=(body.bank_guarantee_validity or "").strip(),
         gst_rate=body.gst_rate if body.gst_rate is not None else 18.0,
         tds_rate=body.tds_rate if body.tds_rate is not None else 1.0,
+        retention_percent=body.retention_percent or 0,
+        mobilization_advance_percent=body.mobilization_advance_percent or 0,
+        advance_recovery_percent=body.advance_recovery_percent or 0,
         submitted_by=actor_id)
     db.add(order)
     db.flush()
@@ -17561,7 +18049,7 @@ def wo_update_order(order_id: int, body: WorkOrderHeadIn, request: Request,
         setattr(order, field, getattr(body, field))
     order.work_type = (body.work_type or "").strip()
     order.subject = (body.subject or "").strip()
-    order.scope_of_work = (body.scope_of_work or "").strip()
+    order.scope_of_work = clean_rich_text(body.scope_of_work)
     order.commencement_date = (body.commencement_date or "").strip()
     order.completion_date = (body.completion_date or "").strip()
     order.duration_months = body.duration_months or 0
@@ -17573,6 +18061,9 @@ def wo_update_order(order_id: int, body: WorkOrderHeadIn, request: Request,
         order.gst_rate = body.gst_rate
     if body.tds_rate is not None:
         order.tds_rate = body.tds_rate
+    order.retention_percent = body.retention_percent or 0
+    order.mobilization_advance_percent = body.mobilization_advance_percent or 0
+    order.advance_recovery_percent = body.advance_recovery_percent or 0
 
     # The number carries the discipline, so changing the discipline on a draft
     # has to reissue it - otherwise it is filed under the wrong one for ever.
@@ -17585,6 +18076,129 @@ def wo_update_order(order_id: int, body: WorkOrderHeadIn, request: Request,
     db.commit()
     db.refresh(order)
     return {"order": wo_dict(db, order, detail=True), "message": "Saved."}
+
+
+def sheet_number(value):
+    """A number as a sheet writes one.
+
+    money() and unit_rate() take a bare numeral; a cell exported from Excel
+    or typed by a person carries the grouping, the currency and sometimes the
+    brackets that mean a negative. Read strictly, "12,34,567.50" is not a
+    number at all and comes back as nought - which on a rate column is a line
+    that silently prices at zero.
+    """
+    text = str(value if value is not None else "").strip()
+    if not text:
+        return 0.0
+    negative = text.startswith("(") and text.endswith(")")
+    text = re.sub(r"[^0-9.\-]", "", text)
+    if text in ("", "-", ".", "-."):
+        return 0.0
+    try:
+        number = float(text)
+    except ValueError:
+        return 0.0
+    return -number if negative and number > 0 else number
+
+
+# What a BOQ off somebody's desk calls its columns. Wider than our own
+# template on purpose: the schedule usually arrives as the contractor's own
+# quotation with the rates already in it, and retyping two hundred lines to
+# make them match a heading is how a rate gets typed wrong.
+BOQ_HEADER_ALIASES = {
+    "activity_no": ["activityno", "activity", "slno", "sl", "srno", "sr", "sno",
+                    "serialno", "itemno", "no"],
+    "item_code": ["itemcode", "code", "boqcode", "sku", "erpcode", "productcode"],
+    "item_description": ["description", "itemdescription", "productdiscription",
+                         "discription", "particulars", "workdescription",
+                         "descriptionofwork", "natureofwork", "scopeofwork"],
+    "technical_spec": ["specification", "technicalspecification", "technicalspec",
+                       "spec", "specs", "remarks", "notes"],
+    "uom": ["uom", "unit", "units", "measure", "unitofmeasure", "unitsofmeasure"],
+    "quantity": ["qty", "quantity", "volume", "boqqty"],
+    "unit_rate": ["rate", "unitrate", "price", "unitprice", "amountperunit"],
+}
+
+
+@app.get("/api/wo/boq/template")
+def wo_boq_template(request: Request, db: Session = Depends(get_db)):
+    """The shape we can read, as a workbook to fill in."""
+    require_erp_read(request, db)
+    return sheet_response(
+        ["Activity No", "Item Code", "Description of work", "Specification",
+         "UOM", "Quantity", "Rate"],
+        [["1.0", "CIV-RMC-25",
+          "M25 grade RMC pouring for raft, including pumping and vibrating",
+          "Cube strength 25 MPa at 28 days, 14-day curing", "cum", 840, 6420]],
+        "boq_template.xlsx")
+
+
+@app.post("/api/wo/orders/{order_id}/boq/import")
+async def wo_import_boq(order_id: int, request: Request, file: UploadFile = File(...),
+                        sheet: str = Form(""), db: Session = Depends(get_db)):
+    """Read a BOQ off a sheet and hand it back priced, without saving it.
+
+    Nothing is written here. The lines land in the grid where they can be
+    read against the file they came from and corrected, and it is the ordinary
+    save that commits them - so an import that read a column wrongly is a
+    thing somebody notices rather than a thing they discover on the order.
+    """
+    client, actor_id, actor_name = wo_actor(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    if order.status not in WO_EDITABLE:
+        raise HTTPException(409, "The schedule of a " + order.status.lower() +
+                                 " order cannot be changed.")
+
+    header, body = await read_sheet_rows(file, sheet)
+    mapping, unmapped = map_headers_with(header, BOQ_HEADER_ALIASES)
+    fields = set(mapping.values())
+    if "item_description" not in fields:
+        raise HTTPException(
+            400, "No description column found. Expected something headed "
+                 "'Description', 'Description of work' or 'Particulars'." + sheet_note())
+    if "quantity" not in fields or "unit_rate" not in fields:
+        raise HTTPException(
+            400, "A quantity and a rate column are both needed to price the "
+                 "schedule. Found: " + (", ".join(sorted(fields)) or "nothing")
+                 + "." + sheet_note())
+
+    lines, skipped = [], 0
+    for index, row in enumerate(rows_from(header, body, mapping), start=1):
+        description = (row.get("item_description") or "").strip()
+        quantity = money(sheet_number(row.get("quantity")))
+        rate = unit_rate(sheet_number(row.get("unit_rate")))
+        # A sheet off a real desk ends in its own grand total: a number with
+        # no description against it. Counted and reported rather than read as
+        # a line with no name, and rather than refused.
+        if not description:
+            skipped += 1
+            continue
+        lines.append({
+            "activity_no": (row.get("activity_no") or "").strip() or "%d.0" % index,
+            "item_code": (row.get("item_code") or "").strip(),
+            "item_description": description,
+            "technical_spec": (row.get("technical_spec") or "").strip(),
+            "uom": (row.get("uom") or "").strip(),
+            "quantity": quantity, "unit_rate": rate,
+            "total_amount": money(quantity * rate),
+            "budget_id": None, "cost_centre": "",
+        })
+
+    if not lines:
+        raise HTTPException(
+            400, "Nothing on that sheet read as a priced line." + sheet_note())
+
+    return {
+        "lines": lines,
+        "read_as": mapping_report(header, mapping),
+        "ignored_columns": unmapped,
+        "skipped_rows": skipped,
+        "gross_amount": money(sum(line["total_amount"] for line in lines)),
+        "message": "%d line(s) read%s. Check them against the sheet, then save."
+                   % (len(lines),
+                      ", %d row(s) with no description left out" % skipped
+                      if skipped else ""),
+    }
 
 
 @app.put("/api/wo/orders/{order_id}/boq")
@@ -17612,8 +18226,10 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
         db.add(models.DBSubcontractItem(
             order_id=order.id, activity_no=(line.activity_no or "").strip(),
             item_code=(line.item_code or "").strip(), item_description=description,
+            technical_spec=(line.technical_spec or "").strip(),
             uom=(line.uom or "").strip(), quantity=qty, unit_rate=rate,
             total_amount=money(qty * rate),
+            budget_id=wo_valid_budget_id(db, client.id, order, line.budget_id),
             cost_centre=(line.cost_centre or "").strip(), display_order=index))
         kept += 1
 
@@ -17686,7 +18302,52 @@ def wo_ready_to_submit(db, order):
     return missing
 
 
-def wo_apply(db, client, order, action, actor_id, actor_name, comments=""):
+def wo_notify(db, client, order, action, actor_id, actor_name, comments=""):
+    """Tell whoever the order is now waiting on.
+
+    Sent on the moves that hand the document to somebody else and on no
+    others: an order that sits in a queue nobody is told about is an order
+    that sits in a queue. Best effort throughout - a notice that could not be
+    written must never be the reason a submission or an approval fails.
+    """
+    try:
+        if action == "SUBMIT":
+            roles = [code for code, granted in ROLE_PERMISSIONS.items()
+                     if "subcontracts.approve" in granted]
+            approvers = db.query(models.DBEmployee).filter(
+                models.DBEmployee.client_id == client.id,
+                models.DBEmployee.permission_role.in_(roles),
+                models.DBEmployee.status == "active").all()
+            for emp in approvers:
+                # Not the person who just sent it. Being told about your own
+                # submission is the noise that gets notifications turned off.
+                if emp.id == actor_id:
+                    continue
+                notify_employee(
+                    db, client.id, emp.id, "Work order awaiting approval",
+                    "%s to %s, %s, raised by %s." % (
+                        order.wo_number,
+                        wo_dict(db, order).get("contractor") or "a contractor",
+                        format_money_plain(order.net_order_value), actor_name),
+                    link="/app.html#subcontracts")
+        elif action in ("APPROVE", "REJECT", "CANCEL") and order.submitted_by:
+            if order.submitted_by == actor_id:
+                return
+            wording = {"APPROVE": "approved", "REJECT": "sent back",
+                       "CANCEL": "cancelled"}[action]
+            notify_employee(
+                db, client.id, order.submitted_by,
+                "Work order " + wording,
+                "%s was %s by %s.%s" % (order.wo_number, wording, actor_name,
+                                        " " + comments.strip() if comments else ""),
+                link="/app.html#subcontracts")
+    except Exception:
+        logger.exception("Could not queue work order notifications for %s",
+                         order.wo_number)
+
+
+def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
+             override=False):
     """One door for every state change, so the rules cannot disagree."""
     was = order.status
     allowed = WO_TRANSITIONS.get(was, {})
@@ -17708,6 +18369,23 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments=""):
                 400, "Say why it is going back, so it can be corrected.")
         order.rejection_reason = (comments or "").strip()
     elif action == "APPROVE":
+        # The budget is checked here and nowhere earlier. A draft may be priced
+        # at any figure - finding out it is too big is what pricing it is for -
+        # but approving it is the moment the business is committed, so it is
+        # the moment somebody has to knowingly overrun the allocation.
+        breaches = wo_budget_breaches(db, client, order)
+        if breaches and not override:
+            raise HTTPException(
+                409, "This order overruns the project allocation: "
+                     + "; ".join(breaches) + ". Approve with an override, "
+                     "saying why, to commit it anyway.")
+        if breaches:
+            if not (comments or "").strip():
+                raise HTTPException(
+                    400, "An overrun has to be explained. Say why the "
+                         "allocation is being exceeded.")
+            comments = "Budget override - " + comments.strip() + \
+                       " (" + "; ".join(breaches) + ")"
         order.approved_by = actor_id
         order.approved_at = now
         order.rejection_reason = ""
@@ -17717,6 +18395,7 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments=""):
     order.status = allowed[action]
     order.updated_at = now
     record_wo_action(db, client, order, actor_id, actor_name, action, was, comments)
+    wo_notify(db, client, order, action, actor_id, actor_name, comments)
     return order
 
 
@@ -17742,7 +18421,8 @@ def wo_approve(order_id: int, body: WoActionIn, request: Request,
     priced it is not the person who commits the business to it."""
     client, actor_id, actor_name = wo_actor(request, db, "subcontracts.approve")
     order = wo_or_404(db, client.id, order_id)
-    wo_apply(db, client, order, "APPROVE", actor_id, actor_name, body.comments)
+    wo_apply(db, client, order, "APPROVE", actor_id, actor_name, body.comments,
+             override=bool(body.override))
     log_audit(db, client.id, "subcontract_approved", "subcontract_order", order.id,
               order.wo_number, "", request)
     db.commit()
@@ -17816,7 +18496,11 @@ def wo_amend(order_id: int, body: WoActionIn, request: Request,
         bank_guarantee_applicable=order.bank_guarantee_applicable,
         bank_guarantee_amount=order.bank_guarantee_amount,
         bank_guarantee_validity=order.bank_guarantee_validity,
-        gst_rate=order.gst_rate, tds_rate=order.tds_rate, submitted_by=actor_id)
+        gst_rate=order.gst_rate, tds_rate=order.tds_rate,
+        retention_percent=order.retention_percent,
+        mobilization_advance_percent=order.mobilization_advance_percent,
+        advance_recovery_percent=order.advance_recovery_percent,
+        submitted_by=actor_id)
     db.add(revision)
     db.flush()
 
@@ -17824,9 +18508,11 @@ def wo_amend(order_id: int, body: WoActionIn, request: Request,
             models.DBSubcontractItem.order_id == order.id).all():
         db.add(models.DBSubcontractItem(
             order_id=revision.id, activity_no=i.activity_no, item_code=i.item_code,
-            item_description=i.item_description, uom=i.uom, quantity=i.quantity,
+            item_description=i.item_description, technical_spec=i.technical_spec,
+            uom=i.uom, quantity=i.quantity,
             unit_rate=i.unit_rate, total_amount=i.total_amount,
-            cost_centre=i.cost_centre, display_order=i.display_order))
+            budget_id=i.budget_id, cost_centre=i.cost_centre,
+            display_order=i.display_order))
     for t in db.query(models.DBSubcontractTerm).filter(
             models.DBSubcontractTerm.order_id == order.id).all():
         db.add(models.DBSubcontractTerm(
