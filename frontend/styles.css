@@ -1611,3 +1611,123 @@ label { color: var(--text-secondary); font-size: 0.78rem; font-weight: 600; }
     }
     .report-table tr.report-group td { background: #eee !important; }
 }
+
+/* ===== THE PRINTED WORK ORDER =====
+   A sheet of paper on the screen. The portal is dark and the document is not:
+   what is being looked at here is the thing that will be printed, signed and
+   argued over, so it is shown in the ink it will be printed in rather than
+   restyled to match the app around it. */
+
+.wo-sheet {
+    position: relative;
+    max-width: 210mm;
+    margin: 0 auto;
+    padding: 16mm 15mm 18mm;
+    background: #ffffff;
+    color: #111827;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+    border-radius: 2px;
+    font-size: 0.82rem;
+    line-height: 1.5;
+}
+.wo-sheet h1, .wo-sheet h2, .wo-sheet h3, .wo-sheet p,
+.wo-sheet td, .wo-sheet th, .wo-sheet div, .wo-sheet span, .wo-sheet li {
+    color: #111827;
+}
+.wo-muted { color: #6b7280 !important; }
+.wo-label {
+    font-size: 0.66rem; letter-spacing: 0.6px; text-transform: uppercase;
+    color: #6b7280 !important; font-weight: 600;
+}
+
+/* Behind the text, never selectable, on every band of the document. */
+.wo-watermark {
+    position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; pointer-events: none; user-select: none;
+    overflow: hidden; z-index: 0;
+}
+.wo-watermark span {
+    transform: rotate(-38deg);
+    font-size: clamp(1.4rem, 4.4vw, 2.9rem);
+    font-weight: 800; letter-spacing: 2px; white-space: nowrap;
+    color: rgba(220, 38, 38, 0.11) !important;
+}
+.wo-sheet > *:not(.wo-watermark) { position: relative; z-index: 1; }
+
+.wo-head {
+    display: flex; justify-content: space-between; gap: 20px;
+    align-items: flex-start; padding-bottom: 10px;
+    border-bottom: 2px solid #111827;
+}
+.wo-head-name { font-size: 1.25rem; font-weight: 700; line-height: 1.25; }
+.wo-doctitle { font-size: 1.05rem; font-weight: 700; text-align: right; }
+.wo-number { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 600; }
+
+.wo-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.wo-facts { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; align-items: baseline; }
+
+.wo-band {
+    background: #f3f4f6; border: 1px solid #d1d5db;
+    padding: 8px 10px; border-radius: 3px;
+}
+
+.wo-section {
+    font-size: 0.86rem; font-weight: 700; margin: 16px 0 6px;
+    padding-bottom: 3px; border-bottom: 1px solid #e5e7eb;
+}
+
+.wo-table { width: 100%; border-collapse: collapse; font-size: 0.74rem; }
+.wo-table th {
+    background: #111827; color: #ffffff !important; text-align: left;
+    padding: 6px 7px; font-weight: 700; font-size: 0.68rem;
+    text-transform: uppercase; letter-spacing: 0.4px;
+}
+.wo-table td { border: 1px solid #d1d5db; padding: 5px 7px; vertical-align: top; }
+.wo-table tbody tr:nth-child(even) td { background: #fbfbfb; }
+.wo-table .num { text-align: right; white-space: nowrap; }
+.wo-table tfoot td {
+    background: #f3f4f6; font-weight: 700;
+    border-top: 2px solid #111827;
+}
+
+.wo-money { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.wo-money td { padding: 5px 8px; border-bottom: 1px solid #e5e7eb; }
+.wo-money tr:last-child td {
+    background: #f3f4f6; font-weight: 700;
+    border-top: 2px solid #111827; border-bottom: 2px solid #111827;
+}
+
+.wo-clause { margin-bottom: 9px; break-inside: avoid; page-break-inside: avoid; }
+.wo-clause-head { font-weight: 700; font-size: 0.78rem; }
+.wo-clause-text { font-size: 0.76rem; text-align: justify; }
+
+.wo-signs { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+.wo-sign {
+    border: 1px solid #d1d5db; padding: 10px 12px 8px; min-height: 78px;
+    display: flex; flex-direction: column; justify-content: space-between;
+}
+.wo-sign-name { font-weight: 700; font-size: 0.78rem; }
+
+/* The page rule between the covering letter and each annexure. On screen it
+   says where the paper ends; on paper it is where the paper ends. */
+.wo-break { border-top: 1px dashed #d1d5db; margin: 24px 0 18px; }
+
+@media print {
+    .wo-sheet {
+        box-shadow: none !important; max-width: none !important;
+        padding: 0 !important; margin: 0 !important; font-size: 10pt;
+    }
+    .wo-break { page-break-before: always; border: none; margin: 0; }
+    .wo-table thead { display: table-header-group; }
+    .wo-table tr { page-break-inside: avoid; }
+    .wo-signs { page-break-inside: avoid; }
+    .wo-watermark span { color: rgba(220, 38, 38, 0.16) !important; }
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+}
+
+/* The schedule and the panel beside it. On a narrow screen the panel goes
+   under the table rather than squeezing it: the rates are what is being typed,
+   and a 300px sidebar taking half a laptop screen from them helps nobody. */
+@media (max-width: 1100px) {
+    .wo-boq-layout { grid-template-columns: minmax(0, 1fr) !important; }
+}

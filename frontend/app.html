@@ -28,8 +28,8 @@
         }}
       };
     </script>
-    <link rel="stylesheet" href="styles.css?v=57">
-    <link rel="stylesheet" href="mobile.css?v=57">
+    <link rel="stylesheet" href="styles.css?v=59">
+    <link rel="stylesheet" href="mobile.css?v=59">
 </head>
 <body>
     <!-- Held back until the boot confirms who is signed in. See #boot-gate. -->
@@ -3020,6 +3020,18 @@
                     <div class="widget"><div class="widget-content" style="padding:20px;" id="sc-wizard"></div></div>
                 </div>
 
+                <div id="subcontract-document-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area no-print">
+                        <div><h1>The document</h1><p class="subtitle">What actually gets printed, signed and argued over</p></div>
+                        <div class="invoices-actions">
+                            <button class="btn btn-outline" onclick="showView('subcontract-wizard-view');renderWizard()">Back to the order</button>
+                            <a class="btn btn-outline" id="sc-doc-pdf" href="#" target="_blank" rel="noopener">Download PDF</a>
+                            <button class="btn btn-primary" onclick="window.print()">Print</button>
+                        </div>
+                    </div>
+                    <div id="sc-document"></div>
+                </div>
+
                 <div id="viewer-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div><h1>Open a file</h1><p class="subtitle">Look inside any workbook before deciding what it is</p></div>
@@ -3625,23 +3637,23 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=57"></script>
+    <script src="app.js?v=59"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
-    <script src="staff-portal.js?v=57"></script>
+    <script src="staff-portal.js?v=59"></script>
     <!-- Jobs, job costing and purchase orders. -->
-    <script src="jobs.js?v=57"></script>
+    <script src="jobs.js?v=59"></script>
     <!-- Item master, work orders and budget allocation. -->
-    <script src="erp.js?v=57"></script>
+    <script src="erp.js?v=59"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
-    <script src="erp-build.js?v=57"></script>
+    <script src="erp-build.js?v=59"></script>
     <!-- The spreadsheet grid the item master is entered through. -->
-    <script src="erp-grid.js?v=57"></script>
+    <script src="erp-grid.js?v=59"></script>
     <!-- Preview and correct a sheet that arrived from outside. -->
-    <script src="erp-preview.js?v=57"></script>
-    <script src="contracts.js?v=57"></script>
-    <script src="sheet-viewer.js?v=57"></script>
-    <script src="subcontracts.js?v=57"></script>
+    <script src="erp-preview.js?v=59"></script>
+    <script src="contracts.js?v=59"></script>
+    <script src="sheet-viewer.js?v=59"></script>
+    <script src="subcontracts.js?v=59"></script>
 
     <!-- AI Core Orb -->
     <div class="ai-core" onclick="toggleAIChat()" role="button" tabindex="0" aria-label="Open the assistant" title="Ask the assistant" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAIChat();}">
