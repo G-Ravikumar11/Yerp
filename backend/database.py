@@ -149,22 +149,46 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 1: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Make settings.key non-unique (now per-client)
             try:
-                result = conn.execute(text("SELECT indexname FROM pg_indexes WHERE tablename = :tname AND indexdef LIKE '%UNIQUE%' AND indexdef LIKE '%key%'"), {"tname": "settings"})
+                # indisprimary excludes settings_pkey. It is a unique index
+                # whose name contains "key", so a name match alone selected
+                # it - and Postgres refuses to drop the index behind a
+                # constraint, which aborted the whole migration transaction.
+                result = conn.execute(text("""
+                    SELECT i.indexname FROM pg_indexes i
+                    JOIN pg_class c ON c.relname = i.indexname
+                    JOIN pg_index x ON x.indexrelid = c.oid
+                    WHERE i.tablename = :tname
+                      AND i.indexdef LIKE '%UNIQUE%'
+                      AND i.indexdef LIKE '%(key)%'
+                      AND NOT x.indisprimary
+                """), {"tname": "settings"})
                 for row in result.fetchall():
                     conn.execute(text(f"DROP INDEX IF EXISTS {row[0]}"))
                     conn.commit()
                     print(f"Dropped unique index on settings.key: {row[0]}")
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 2: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
             try:
                 conn.execute(text("CREATE INDEX IF NOT EXISTS ix_settings_key ON settings (key)"))
                 conn.commit()
                 print("Created non-unique index ix_settings_key")
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 3: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Drop old global unique constraint on invoices.number (now per-client unique)
             try:
@@ -177,14 +201,30 @@ def ensure_columns():
                         print(f"Dropped old index: {idx_name}")
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 4: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
-            # Add composite unique constraint (client_id, number) if not exists
+            # Add composite unique constraint (client_id, number) if not exists.
+            # Checked first rather than caught afterwards: the constraint
+            # already being there is the migration having worked, not a
+            # problem, and reporting it as a warning on every boot teaches
+            # people to ignore the warnings that do matter.
             try:
-                conn.execute(text("ALTER TABLE invoices ADD CONSTRAINT uq_client_invoice_number UNIQUE (client_id, number)"))
-                conn.commit()
-                print("Added composite unique constraint (client_id, number)")
+                already = conn.execute(text(
+                    "SELECT 1 FROM pg_constraint WHERE conname = :c"),
+                    {"c": "uq_client_invoice_number"}).first()
+                if not already:
+                    conn.execute(text("ALTER TABLE invoices ADD CONSTRAINT uq_client_invoice_number UNIQUE (client_id, number)"))
+                    conn.commit()
+                    print("Added composite unique constraint (client_id, number)")
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 5: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Create performance indexes on foreign keys (safe to run multiple times)
             idx_statements = [
@@ -199,6 +239,10 @@ def ensure_columns():
                     conn.execute(text(stmt))
                 except Exception:
                     MIGRATION_ERRORS.append(f"migration step 6: {sys.exc_info()[1]}")
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
             conn.commit()
 
             # Create HR tables if they don't exist
@@ -328,6 +372,10 @@ def ensure_columns():
                     conn.execute(text(sql))
                 except Exception:
                     MIGRATION_ERRORS.append(f"migration step 7: {sys.exc_info()[1]}")
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
             conn.commit()
 
             # Create indexes for HR tables
@@ -353,6 +401,10 @@ def ensure_columns():
                     conn.execute(text(stmt))
                 except Exception:
                     MIGRATION_ERRORS.append(f"migration step 8: {sys.exc_info()[1]}")
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
             conn.commit()
 
             # Add new columns to existing tables
@@ -381,6 +433,10 @@ def ensure_columns():
                     conn.execute(text(stmt))
                 except Exception:
                     MIGRATION_ERRORS.append(f"migration step 9: {sys.exc_info()[1]}")
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
             conn.commit()
 
             # Create client_login_logs table
@@ -405,6 +461,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 10: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Create overtime_logs table
             try:
@@ -426,6 +486,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 11: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Recruitment tables
             try:
@@ -447,6 +511,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 12: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             try:
                 conn.execute(text("""
@@ -472,6 +540,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 13: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             try:
                 conn.execute(text("ALTER TABLE recruitment_forms ADD COLUMN IF NOT EXISTS pipeline_stages TEXT DEFAULT '[]'"))
@@ -480,6 +552,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 14: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Department color/icon
             try:
@@ -488,6 +564,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 15: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Onboarding item sort_order
             try:
@@ -495,6 +575,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 16: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Onboarding templates table
             try:
@@ -511,6 +595,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 17: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # employee_goals.department_id
             try:
@@ -519,6 +607,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 18: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Invoices bank_details
             try:
@@ -526,6 +618,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 19: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Bills tables
             try:
@@ -555,6 +651,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 20: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             try:
                 conn.execute(text("""
@@ -571,6 +671,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 21: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Department goals table
             try:
@@ -597,6 +701,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 22: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # clients.currency
             try:
@@ -604,6 +712,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 23: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Invoice payment ledger
             try:
@@ -625,6 +737,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 24: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Leave entitlement / balance tracking
             try:
@@ -634,6 +750,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 25: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Recruitment: job requisitions, interviews and offers
             try:
@@ -723,6 +843,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 26: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Recruitment: candidate documents, pipeline history, rating
             try:
@@ -760,6 +884,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 27: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Onboarding document requirements and per-employee requests
             try:
@@ -821,6 +949,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 28: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Wallet, metered billing and top-up orders
             try:
@@ -896,6 +1028,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 29: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Employee seniority level
             try:
@@ -904,6 +1040,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 30: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Payslip period guard + YTD support
             try:
@@ -912,6 +1052,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 31: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Audit logs table
             try:
@@ -935,6 +1079,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 32: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Quotes: priced proposals, numbered separately from invoices
             try:
@@ -982,6 +1130,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 33: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Tenant-defined tax rates
             try:
@@ -999,6 +1151,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 34: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Working days, and whether signing in starts a shift
             try:
@@ -1007,6 +1163,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 35: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Password reset links
             try:
@@ -1029,6 +1189,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 36: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Scheduled job claims
             try:
@@ -1048,6 +1212,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 37: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Recurring invoices and the reminder ladder
             try:
@@ -1105,6 +1273,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 38: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Team members, so a company is not one shared login
             try:
@@ -1129,6 +1301,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 39: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Interview reminders
             try:
@@ -1147,6 +1323,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 40: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Branding themes - how invoices and quotes are presented
             try:
@@ -1196,6 +1376,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 41: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Approval workflow. These columns were only ever added by
             # migrate_sqlite(), which returns early on Postgres, so production
@@ -1246,6 +1430,10 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 42: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
     except Exception as e:
         print(f"Column check skipped: {e}")
