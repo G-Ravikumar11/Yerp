@@ -15,6 +15,15 @@ then set these in the service's **Variables** tab.
 | `DATABASE_URL` | Railway's Postgres plugin exposes this. Reference it as `${{Postgres.DATABASE_URL}}` so it follows the database. |
 | `SECRET_KEY` | `python -c "import secrets; print(secrets.token_hex(32))"` |
 
+Both are set in the service's **Variables** tab, not in `.env` - `.env` is
+for a local machine and never reaches the container. A deploy that crashes
+on either of these is the guard working; set the variable and Railway
+redeploys on save.
+
+The service and the database should sit in the same region. Start-up runs
+the whole migration, which is a few dozen round trips: across an ocean that
+is slow enough to matter, and the healthcheck allows 300 seconds for it.
+
 Both refusals are deliberate. Without `DATABASE_URL` the app would fall back to
 a SQLite file on the container's own disk: it would work perfectly and lose
 every row on each redeploy. Without `SECRET_KEY` it would generate one per

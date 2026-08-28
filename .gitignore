@@ -25,3 +25,6 @@ Thumbs.db
 
 # Node, if it ever appears
 node_modules/
+
+# Editor and agent workspace, not part of the product.
+.claude/
