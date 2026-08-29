@@ -110,6 +110,7 @@
                             <a href="#" class="nav-item" id="nav-recurring" onclick="event.preventDefault();showView('recurring-view')">Recurring</a>
                             <a href="#" class="nav-item" id="nav-contacts" onclick="event.preventDefault();showView('contacts-view')">Contacts</a>
                             <a href="#" class="nav-item" id="nav-reports" data-perm="reports.view" onclick="event.preventDefault();showView('reports-view')">Reports</a>
+                            <a href="#" class="nav-item" id="nav-costs" data-perm="reports.view" onclick="event.preventDefault();showView('costs-view')">Cost by Project</a>
                         </div>
                     </div>
 
@@ -2994,6 +2995,29 @@
                     </div>
                 </div>
 
+                <div id="costs-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Cost by Project</h1><p class="subtitle">What each job sold for, what it has actually been committed to cost, and what is left</p></div>
+                        <div class="invoices-actions">
+                            <a class="btn btn-outline" href="/api/costs/by-project.xlsx">Download Excel</a>
+                            <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
+                        </div>
+                    </div>
+                    <div class="stats-grid" id="costs-stats"></div>
+                    <div class="widget" style="margin-top:20px;">
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Project</th><th>Customer</th><th class="text-right">Sold</th><th class="text-right">Committed cost</th><th class="text-right">Margin</th><th class="text-right">Billed</th><th class="text-right">Unpaid</th><th></th></tr></thead>
+                                <tbody id="costs-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="project-costs-view" class="view-section dashboard" style="display:none;">
+                    <div id="project-costs"></div>
+                </div>
+
                 <div id="subcontracts-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div><h1>Subcontract Work Orders</h1><p class="subtitle">Work issued out to a subcontractor, priced, signed off and amended</p></div>
@@ -3667,6 +3691,7 @@
     <script src="contracts.js?v=59"></script>
     <script src="sheet-viewer.js?v=59"></script>
     <script src="subcontracts.js?v=59"></script>
+    <script src="costs.js?v=59"></script>
 
     <!-- AI Core Orb -->
     <div class="ai-core" onclick="toggleAIChat()" role="button" tabindex="0" aria-label="Open the assistant" title="Ask the assistant" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAIChat();}">

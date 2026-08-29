@@ -12023,6 +12023,12 @@ def purchase_order_or_404(db, client_id, order_id):
     return order
 
 
+# What a purchase order may be. Set here rather than accepted from the form,
+# so a typo cannot invent a state nothing else in the system understands.
+PURCHASE_ORDER_STATUSES = ("Draft", "Awaiting Approval", "Approved",
+                           "Rejected", "Closed", "Cancelled")
+
+
 def apply_order_fields(db, client_id, order, body):
     supplier = (body.get("supplier_name") or "").strip()
     if not supplier:
@@ -12099,6 +12105,16 @@ def update_purchase_order(order_id: int, request: Request, body: dict = None,
         raise HTTPException(status_code=409,
                             detail="This order is with an approver and cannot be changed.")
     apply_order_fields(db, client.id, order, body or {})
+
+    # An order that was promised and then was not has to be able to say so.
+    # Without this there was no way to cancel one at all, and a withdrawn
+    # commitment went on counting against the project's cost for ever.
+    wanted = (body or {}).get("status")
+    if wanted in PURCHASE_ORDER_STATUSES and wanted != order.status:
+        was, order.status = order.status, wanted
+        log_audit(db, client.id, "purchase_order_status", "purchase_order", order.id,
+                  order.number or "", "%s -> %s" % (was, wanted), request)
+
     db.commit()
     return purchase_order_to_dict(db, order, include_chain=True)
 
@@ -18702,6 +18718,158 @@ def purchase_order_xlsx(po_id: int, request: Request, db: Session = Depends(get_
         closing=[[], ["", "", "", "Subtotal", money(po.amount)],
                  ["", "", "", "Tax", money(po.tax_amount)],
                  ["", "", "", "Total", money(po.total)]])
+
+
+
+# ============================================================================
+# WHERE THE MONEY IS, PER PROJECT
+#
+# Every figure in this system already exists somewhere - an order here, a bill
+# there, a budget on a third screen. What nobody could do was see them on one
+# line and answer the only question that matters on a running job: are we
+# still making money on it.
+# ============================================================================
+
+def job_money(db, client_id, job):
+    """One project's money, from every direction it moves in."""
+    wos = db.query(models.DBWorkOrder).filter(
+        models.DBWorkOrder.client_id == client_id,
+        models.DBWorkOrder.job_id == job.id).all()
+    wo_ids = [w.id for w in wos]
+
+    sold = money(sum(w.total_value or 0 for w in wos))
+    budgeted = money(sum(
+        b.amount or 0 for b in db.query(models.DBBomLine).filter(
+            models.DBBomLine.work_order_id.in_(wo_ids)).all())) if wo_ids else 0.0
+
+    # Committed to suppliers: a purchase order is money promised even before a
+    # bill for it exists, which is exactly what makes it worth counting here.
+    pos = db.query(models.DBPurchaseOrder).filter(
+        models.DBPurchaseOrder.client_id == client_id,
+        models.DBPurchaseOrder.job_id == job.id).all()
+    committed = money(sum(p.total or 0 for p in pos
+                          if (p.status or "") not in ("Cancelled", "Rejected")))
+
+    bills = db.query(models.DBBill).filter(
+        models.DBBill.client_id == client_id,
+        models.DBBill.job_id == job.id).all()
+    billed = money(sum(b.total or b.amount or 0 for b in bills))
+    paid = money(sum((b.total or b.amount or 0) for b in bills
+                     if (b.status or "").lower() == "paid"))
+    awaiting = len([b for b in bills if (b.approval_status or "") == "pending"])
+
+    # Subcontract orders are a commitment of the same kind, from the other
+    # module, and leaving them out would flatter every project that uses one.
+    subs = db.query(models.DBSubcontractOrder).filter(
+        models.DBSubcontractOrder.client_id == client_id,
+        models.DBSubcontractOrder.job_id == job.id).all()
+    subcontracted = money(sum(s.net_order_value or 0 for s in subs
+                              if (s.status or "") not in ("CANCELLED", "AMENDED")))
+
+    invoiced = money(sum(i.total or 0 for i in db.query(models.DBInvoice).filter(
+        models.DBInvoice.client_id == client_id,
+        models.DBInvoice.job_id == job.id).all()))
+
+    # Cost is what has actually been committed to somebody, not the plan for
+    # it. The budget is the estimate; these are the promises.
+    cost = money(committed + subcontracted)
+    return {
+        "job_id": job.id, "number": job.number or "", "name": job.name or "",
+        "customer_name": job.customer_name or "", "status": job.status or "",
+        "quoted_value": money(job.quoted_value), "budget": money(job.budget),
+        "sold": sold, "budgeted_cost": budgeted,
+        "committed": committed, "subcontracted": subcontracted,
+        "billed": billed, "paid": paid, "unpaid": money(billed - paid),
+        "bills_awaiting_approval": awaiting,
+        "invoiced": invoiced,
+        "cost": cost,
+        "margin": money(sold - cost),
+        "margin_percent": round((sold - cost) / sold * 100, 1) if sold else 0.0,
+        # The number that starts an argument: committed against what the
+        # budget said it would take.
+        "over_budget": money(cost - budgeted) if budgeted and cost > budgeted else 0.0,
+        "work_orders": len(wos), "purchase_orders": len(pos),
+        "bills": len(bills), "subcontracts": len(subs),
+    }
+
+
+@app.get("/api/costs/by-project")
+def costs_by_project(request: Request, db: Session = Depends(get_db)):
+    """Every project on one screen, with the money on each."""
+    client = require_items_access(request, db, "reports.view")
+    jobs = db.query(models.DBJob).filter(
+        models.DBJob.client_id == client.id).order_by(models.DBJob.id.desc()).all()
+    rows = [job_money(db, client.id, j) for j in jobs]
+    return {
+        "projects": rows,
+        "summary": {
+            "projects": len(rows),
+            "sold": money(sum(r["sold"] for r in rows)),
+            "cost": money(sum(r["cost"] for r in rows)),
+            "margin": money(sum(r["sold"] - r["cost"] for r in rows)),
+            "billed": money(sum(r["billed"] for r in rows)),
+            "unpaid": money(sum(r["unpaid"] for r in rows)),
+            "awaiting_approval": sum(r["bills_awaiting_approval"] for r in rows),
+            "over_budget": len([r for r in rows if r["over_budget"] > 0]),
+        },
+    }
+
+
+@app.get("/api/costs/by-project/{job_id}")
+def costs_for_project(job_id: int, request: Request, db: Session = Depends(get_db)):
+    """One project, with the documents behind each figure.
+
+    The totals are only worth anything if you can get from them to the papers
+    they came from, so every one of them lists what it is made of.
+    """
+    client = require_items_access(request, db, "reports.view")
+    job = job_or_404(db, client.id, job_id)
+    row = job_money(db, client.id, job)
+
+    row["work_order_list"] = [
+        {"id": w.id, "number": w.number, "status": w.status or "",
+         "value": money(w.total_value), "approval": w.approval_status or "none"}
+        for w in db.query(models.DBWorkOrder).filter(
+            models.DBWorkOrder.client_id == client.id,
+            models.DBWorkOrder.job_id == job.id).all()]
+    row["purchase_order_list"] = [
+        {"id": p.id, "number": p.number or "", "supplier": p.supplier_name or "",
+         "total": money(p.total), "status": p.status or ""}
+        for p in db.query(models.DBPurchaseOrder).filter(
+            models.DBPurchaseOrder.client_id == client.id,
+            models.DBPurchaseOrder.job_id == job.id).all()]
+    row["bill_list"] = [
+        {"id": b.id, "number": b.number or "", "supplier": b.vendor_name or "",
+         "total": money(b.total or b.amount), "status": b.status or "",
+         "approval": b.approval_status or "none"}
+        for b in db.query(models.DBBill).filter(
+            models.DBBill.client_id == client.id,
+            models.DBBill.job_id == job.id).all()]
+    row["subcontract_list"] = [
+        {"id": s.id, "number": s.wo_number or "", "status": s.status or "",
+         "net": money(s.net_order_value)}
+        for s in db.query(models.DBSubcontractOrder).filter(
+            models.DBSubcontractOrder.client_id == client.id,
+            models.DBSubcontractOrder.job_id == job.id).all()]
+    return row
+
+
+@app.get("/api/costs/by-project.xlsx")
+def costs_by_project_xlsx(request: Request, db: Session = Depends(get_db)):
+    client = require_items_access(request, db, "reports.view")
+    jobs = db.query(models.DBJob).filter(
+        models.DBJob.client_id == client.id).order_by(models.DBJob.id.desc()).all()
+    rows = [job_money(db, client.id, j) for j in jobs]
+    return sheet_response(
+        ["Project", "Name", "Customer", "Sold", "Budgeted cost", "Committed",
+         "Subcontracted", "Total cost", "Margin", "Margin %", "Billed", "Unpaid"],
+        [[r["number"], r["name"], r["customer_name"], r["sold"], r["budgeted_cost"],
+          r["committed"], r["subcontracted"], r["cost"], r["margin"],
+          r["margin_percent"], r["billed"], r["unpaid"]] for r in rows],
+        "cost_by_project.xlsx",
+        preamble=[["Cost by project", "", "", "", "", "", "", "", "", "", "",
+                   client.company_name or ""],
+                  ["As at " + datetime.now().strftime("%d/%m/%Y %H:%M")], []])
 
 # Serve frontend
 frontend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")

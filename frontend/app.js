@@ -383,6 +383,8 @@ function showView(viewId) {
         'budget-report-view': 'nav-inquiry',
         'viewer-view': 'nav-viewer',
         'subcontracts-view': 'nav-subcontracts',
+        'costs-view': 'nav-costs',
+        'project-costs-view': 'nav-costs',
         'subcontract-wizard-view': 'nav-subcontracts',
         'my-orders-view': 'nav-my-orders',
         'my-overview-view': 'nav-my-overview',
@@ -436,6 +438,7 @@ function showView(viewId) {
     if (viewId === 'customers-view' && typeof searchCustomers === 'function') searchCustomers();
     if (viewId === 'inquiry-view' && typeof loadInquiry === 'function') loadInquiry();
     if (viewId === 'subcontracts-view' && typeof loadSubcontracts === 'function') loadSubcontracts();
+    if (viewId === 'costs-view' && typeof loadCosts === 'function') loadCosts();
     // The item grid is open by default now, so it is mounted on arrival
     // rather than waiting for a button that no longer has to be pressed.
     if (viewId === 'items-view' && typeof mountItemGrid === 'function') mountItemGrid();
