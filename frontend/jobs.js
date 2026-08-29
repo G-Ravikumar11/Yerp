@@ -114,9 +114,9 @@ window.loadJobs = loadJobs;
 async function openJob(id) {
     try {
         var res = await fetch('/api/jobs/' + id);
-        if (!res.ok) { showToast('Could not open that job', 'error'); return; }
+        if (!res.ok) { showToast('Could not open that project', 'error'); return; }
         _currentJob = await res.json();
-    } catch (e) { showToast('Could not open that job', 'error'); return; }
+    } catch (e) { showToast('Could not open that project', 'error'); return; }
 
     var j = _currentJob, c = j.costing;
     showView('job-detail-view');
@@ -158,7 +158,7 @@ async function openJob(id) {
         return [esc(q.number), esc(q.issue_date), formatCurrency(q.total), esc(q.status)];
     }, ['Quote', 'Date', 'Total', 'Status']);
     document.getElementById('job-detail-documents').innerHTML =
-        html || '<p style="color:var(--text-secondary);">Nothing filed against this job yet.</p>';
+        html || '<p style="color:var(--text-secondary);">Nothing filed against this project yet.</p>';
 }
 window.openJob = openJob;
 
@@ -181,7 +181,7 @@ function showJobModal() {
     if (!modal) return;
     document.getElementById('job-form').reset();
     document.getElementById('job-id').value = '';
-    document.getElementById('job-modal-title').textContent = 'New job';
+    document.getElementById('job-modal-title').textContent = 'New project';
     document.getElementById('job-start').value = localDate(new Date());
     modal.style.display = 'flex';
 }
@@ -230,7 +230,7 @@ async function saveJob() {
         target_end_date: document.getElementById('job-end').value,
         description: document.getElementById('job-description').value.trim()
     };
-    if (!payload.name) { showToast('Give the job a name', 'error'); return; }
+    if (!payload.name) { showToast('Give the project a name', 'error'); return; }
 
     var btn = document.getElementById('job-save-btn');
     btn.disabled = true;
@@ -242,7 +242,7 @@ async function saveJob() {
         });
         var data = await res.json();
         if (!res.ok) { showToast(data.detail || 'Could not save', 'error'); return; }
-        showToast(id ? 'Job updated' : 'Job created', 'success');
+        showToast(id ? 'Project updated' : 'Project created', 'success');
         closeJobModal();
         _jobPickerCache = null;
         if (id && _currentJob && _currentJob.id === parseInt(id)) openJob(_currentJob.id);

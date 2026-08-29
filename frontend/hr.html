@@ -2211,7 +2211,7 @@
                             <p class="subtitle">Jobs, candidates, interviews and offers</p>
                         </div>
                         <div class="invoices-actions">
-                            <button class="btn btn-outline" onclick="openJobModal()">+ New Job</button>
+                            <button class="btn btn-outline" onclick="openVacancyModal()">+ New requisition</button>
                             <button class="btn btn-primary" onclick="showAddFormModal()">+ New Form</button>
                         </div>
                     </div>
@@ -2660,7 +2660,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=43"></script>
+    <script src="app.js?v=60"></script>
 
     <!-- AI Core Orb -->
     <div class="ai-core" onclick="toggleAIChat()" role="button" tabindex="0" aria-label="Open the assistant" title="Ask the assistant" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAIChat();}">
@@ -2693,32 +2693,32 @@
     <div class="powered-by">Powered by Aniprotech</div>
 
     <!-- Job requisition modal -->
-    <div id="job-modal" class="modal-overlay" style="display:none;">
+    <div id="vacancy-modal" class="modal-overlay" style="display:none;">
         <div class="modal" style="max-width:680px;">
-            <div class="modal-header"><h3 id="job-modal-title">New Job</h3><button class="btn-icon" onclick="closeJobModal()">&times;</button></div>
+            <div class="modal-header"><h3 id="vacancy-modal-title">New requisition</h3><button class="btn-icon" onclick="closeVacancyModal()">&times;</button></div>
             <div class="modal-body">
-                <input type="hidden" id="job-id">
+                <input type="hidden" id="vacancy-id">
                 <div class="grid-2 gap-16">
-                    <div class="form-group"><label>Job Title *</label><input type="text" id="job-title" class="form-control"></div>
-                    <div class="form-group"><label>Location</label><input type="text" id="job-location" class="form-control" placeholder="London / Remote"></div>
-                    <div class="form-group"><label>Department</label><select id="job-department" class="form-control"><option value="">None</option></select></div>
-                    <div class="form-group"><label>Hiring Manager</label><select id="job-manager" class="form-control"><option value="">None</option></select></div>
-                    <div class="form-group"><label>Work Mode</label><select id="job-mode" class="form-control"><option value="onsite">On-site</option><option value="hybrid">Hybrid</option><option value="remote">Remote</option></select></div>
-                    <div class="form-group"><label>Employment Type</label><select id="job-type" class="form-control"><option value="full_time">Full Time</option><option value="part_time">Part Time</option><option value="contract">Contract</option><option value="casual">Casual</option></select></div>
-                    <div class="form-group"><label>Level</label><select id="job-level" class="form-control"><option value="">Not set</option></select></div>
-                    <div class="form-group"><label>Openings</label><input type="number" id="job-openings" class="form-control" value="1" min="1"></div>
-                    <div class="form-group"><label>Salary From</label><input type="number" id="job-salary-min" class="form-control" value="0" step="100"></div>
-                    <div class="form-group"><label>Salary To</label><input type="number" id="job-salary-max" class="form-control" value="0" step="100"></div>
-                    <div class="form-group"><label>Closing Date</label><input type="date" id="job-closing" class="form-control"></div>
-                    <div class="form-group"><label>Status</label><select id="job-status" class="form-control"><option value="draft">Draft</option><option value="open">Open</option><option value="on_hold">On Hold</option><option value="closed">Closed</option><option value="filled">Filled</option></select></div>
+                    <div class="form-group"><label>Job Title *</label><input type="text" id="vacancy-title" class="form-control"></div>
+                    <div class="form-group"><label>Location</label><input type="text" id="vacancy-location" class="form-control" placeholder="London / Remote"></div>
+                    <div class="form-group"><label>Department</label><select id="vacancy-department" class="form-control"><option value="">None</option></select></div>
+                    <div class="form-group"><label>Hiring Manager</label><select id="vacancy-manager" class="form-control"><option value="">None</option></select></div>
+                    <div class="form-group"><label>Work Mode</label><select id="vacancy-mode" class="form-control"><option value="onsite">On-site</option><option value="hybrid">Hybrid</option><option value="remote">Remote</option></select></div>
+                    <div class="form-group"><label>Employment Type</label><select id="vacancy-type" class="form-control"><option value="full_time">Full Time</option><option value="part_time">Part Time</option><option value="contract">Contract</option><option value="casual">Casual</option></select></div>
+                    <div class="form-group"><label>Level</label><select id="vacancy-level" class="form-control"><option value="">Not set</option></select></div>
+                    <div class="form-group"><label>Openings</label><input type="number" id="vacancy-openings" class="form-control" value="1" min="1"></div>
+                    <div class="form-group"><label>Salary From</label><input type="number" id="vacancy-salary-min" class="form-control" value="0" step="100"></div>
+                    <div class="form-group"><label>Salary To</label><input type="number" id="vacancy-salary-max" class="form-control" value="0" step="100"></div>
+                    <div class="form-group"><label>Closing Date</label><input type="date" id="vacancy-closing" class="form-control"></div>
+                    <div class="form-group"><label>Status</label><select id="vacancy-status" class="form-control"><option value="draft">Draft</option><option value="open">Open</option><option value="on_hold">On Hold</option><option value="closed">Closed</option><option value="filled">Filled</option></select></div>
                 </div>
-                <div class="form-group"><label>Description</label><textarea id="job-description" class="form-control" rows="3"></textarea></div>
-                <div class="form-group"><label>Requirements</label><textarea id="job-requirements" class="form-control" rows="3"></textarea></div>
-                <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;"><input type="checkbox" id="job-show-salary" checked> Show salary on the public job board</label>
+                <div class="form-group"><label>Description</label><textarea id="vacancy-description" class="form-control" rows="3"></textarea></div>
+                <div class="form-group"><label>Requirements</label><textarea id="vacancy-requirements" class="form-control" rows="3"></textarea></div>
+                <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;"><input type="checkbox" id="vacancy-show-salary" checked> Show salary on the public job board</label>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-outline" onclick="closeJobModal()">Cancel</button>
-                <button class="btn btn-primary" onclick="saveJob()">Save Job</button>
+                <button class="btn btn-outline" onclick="closeVacancyModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveVacancy()">Save requisition</button>
             </div>
         </div>
     </div>

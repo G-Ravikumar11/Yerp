@@ -6727,7 +6727,7 @@ function saveLegalSettings() {
 // APPLICANT TRACKING — jobs, interviews, offers, candidate email, analytics
 // ==========================================================================
 
-var _recJobs = [];
+var _vacancies = [];
 var _recTab = 'jobs';
 var _recBoardClientId = null;
 
@@ -6748,7 +6748,7 @@ function switchRecTab(tab, btn) {
         var el = document.getElementById(id);
         if (el) el.style.display = 'none';
     });
-    if (tab === 'jobs') loadJobs();
+    if (tab === 'jobs') loadVacancies();
     if (tab === 'forms') loadRecruitmentForms();
     if (tab === 'pool') loadTalentPool();
     if (tab === 'interviews') loadUpcomingInterviews();
@@ -6790,13 +6790,13 @@ async function loadRecAnalytics() {
 window.loadRecAnalytics = loadRecAnalytics;
 
 // --- Jobs ------------------------------------------------------------------
-async function loadJobs() {
+async function loadVacancies() {
     var tbody = document.getElementById('rec-jobs-tbody');
     if (!tbody) return;
     try {
         var res = await fetch('/api/recruitment/jobs');
-        _recJobs = res.ok ? await res.json() : [];
-    } catch (e) { _recJobs = []; }
+        _vacancies = res.ok ? await res.json() : [];
+    } catch (e) { _vacancies = []; }
 
     // The public board is keyed by tenant id, which the session endpoint knows.
     var link = document.getElementById('rec-board-link');
@@ -6814,12 +6814,12 @@ async function loadJobs() {
         }
     }
 
-    if (!_recJobs.length) {
+    if (!_vacancies.length) {
         tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-secondary);">' +
                           'No jobs yet. Create one to start tracking a role.</td></tr>';
         return;
     }
-    tbody.innerHTML = _recJobs.map(function (j) {
+    tbody.innerHTML = _vacancies.map(function (j) {
         var pill = '<span class="status-pill status-' + esc(j.status) + '" style="text-transform:capitalize;">' +
                    esc(String(j.status).replace('_', ' ')) + '</span>';
         return '<tr>' +
@@ -6834,78 +6834,78 @@ async function loadJobs() {
                 '<span style="color:var(--text-secondary);font-size:0.75rem;"> / ' + (j.openings || 1) + ' open</span></td>' +
             '<td>' + pill + '</td>' +
             '<td class="text-right">' +
-                '<button class="btn btn-outline btn-sm" onclick="openJobModal(' + j.id + ')">Edit</button> ' +
-                '<button class="btn btn-outline btn-sm" onclick="deleteJob(' + j.id + ')" style="color:var(--danger-color);border-color:var(--danger-color);">Delete</button>' +
+                '<button class="btn btn-outline btn-sm" onclick="openVacancyModal(' + j.id + ')">Edit</button> ' +
+                '<button class="btn btn-outline btn-sm" onclick="deleteVacancy(' + j.id + ')" style="color:var(--danger-color);border-color:var(--danger-color);">Delete</button>' +
             '</td></tr>';
     }).join('');
 }
-window.loadJobs = loadJobs;
+window.loadVacancies = loadVacancies;
 
-async function openJobModal(jobId) {
-    var modal = document.getElementById('job-modal');
+async function openVacancyModal(jobId) {
+    var modal = document.getElementById('vacancy-modal');
     if (!modal) return;
-    document.getElementById('job-modal-title').textContent = jobId ? 'Edit Job' : 'New Job';
-    document.getElementById('job-id').value = jobId || '';
+    document.getElementById('vacancy-modal-title').textContent = jobId ? 'Edit requisition' : 'New requisition';
+    document.getElementById('vacancy-id').value = jobId || '';
 
     // Populate the pickers before filling values, or the selects have no options.
     try {
         var depts = await (await fetch('/api/departments')).json();
-        var deptSel = document.getElementById('job-department');
+        var deptSel = document.getElementById('vacancy-department');
         deptSel.innerHTML = '<option value="">None</option>';
         depts.forEach(function (d) { deptSel.insertAdjacentHTML('beforeend', '<option value="' + d.id + '">' + esc(d.name) + '</option>'); });
         var emps = await (await fetch('/api/employees')).json();
-        var mgrSel = document.getElementById('job-manager');
+        var mgrSel = document.getElementById('vacancy-manager');
         mgrSel.innerHTML = '<option value="">None</option>';
         emps.forEach(function (e) { mgrSel.insertAdjacentHTML('beforeend', '<option value="' + e.id + '">' + esc(e.first_name + ' ' + e.last_name) + '</option>'); });
     } catch (e) { /* pickers stay empty rather than blocking the modal */ }
-    await populateLevelRoleSelects('job-level', null);
+    await populateLevelRoleSelects('vacancy-level', null);
 
-    var job = jobId ? _recJobs.filter(function (j) { return j.id === jobId; })[0] : null;
+    var job = jobId ? _vacancies.filter(function (j) { return j.id === jobId; })[0] : null;
     function set(id, val) { var el = document.getElementById(id); if (el) el.value = val; }
-    set('job-title', job ? job.title : '');
-    set('job-location', job ? job.location : '');
-    set('job-department', job && job.department_id ? job.department_id : '');
-    set('job-manager', job && job.hiring_manager_id ? job.hiring_manager_id : '');
-    set('job-mode', job ? job.work_mode : 'onsite');
-    set('job-type', job ? job.employment_type : 'full_time');
-    set('job-level', job ? job.level : '');
-    set('job-openings', job ? job.openings : 1);
-    set('job-salary-min', job ? job.salary_min : 0);
-    set('job-salary-max', job ? job.salary_max : 0);
-    set('job-closing', job ? job.closing_date : '');
-    set('job-status', job ? job.status : 'draft');
-    set('job-description', job ? job.description : '');
-    set('job-requirements', job ? job.requirements : '');
-    document.getElementById('job-show-salary').checked = job ? !!job.show_salary : true;
+    set('vacancy-title', job ? job.title : '');
+    set('vacancy-location', job ? job.location : '');
+    set('vacancy-department', job && job.department_id ? job.department_id : '');
+    set('vacancy-manager', job && job.hiring_manager_id ? job.hiring_manager_id : '');
+    set('vacancy-mode', job ? job.work_mode : 'onsite');
+    set('vacancy-type', job ? job.employment_type : 'full_time');
+    set('vacancy-level', job ? job.level : '');
+    set('vacancy-openings', job ? job.openings : 1);
+    set('vacancy-salary-min', job ? job.salary_min : 0);
+    set('vacancy-salary-max', job ? job.salary_max : 0);
+    set('vacancy-closing', job ? job.closing_date : '');
+    set('vacancy-status', job ? job.status : 'draft');
+    set('vacancy-description', job ? job.description : '');
+    set('vacancy-requirements', job ? job.requirements : '');
+    document.getElementById('vacancy-show-salary').checked = job ? !!job.show_salary : true;
     modal.style.display = 'flex';
 }
-window.openJobModal = openJobModal;
+window.openVacancyModal = openVacancyModal;
 
-function closeJobModal() {
-    var m = document.getElementById('job-modal');
+function closeVacancyModal() {
+    var m = document.getElementById('vacancy-modal');
     if (m) m.style.display = 'none';
 }
-window.closeJobModal = closeJobModal;
+window.closeVacancyModal = closeVacancyModal;
 
-async function saveJob() {
+async function saveVacancy() {
     function val(id) { var el = document.getElementById(id); return el ? el.value : ''; }
-    var jobId = val('job-id');
+    var jobId = val('vacancy-id');
     var payload = {
-        title: val('job-title').trim(),
-        location: val('job-location'),
-        department_id: val('job-department') ? parseInt(val('job-department')) : null,
-        hiring_manager_id: val('job-manager') ? parseInt(val('job-manager')) : null,
-        work_mode: val('job-mode'),
-        employment_type: val('job-type'),
-        level: val('job-level'),
-        openings: parseInt(val('job-openings')) || 1,
-        salary_min: parseFloat(val('job-salary-min')) || 0,
-        salary_max: parseFloat(val('job-salary-max')) || 0,
-        closing_date: val('job-closing'),
-        status: val('job-status'),
-        description: val('job-description'),
-        requirements: val('job-requirements'),
-        show_salary: document.getElementById('job-show-salary').checked
+        title: val('vacancy-title').trim(),
+        location: val('vacancy-location'),
+        department_id: val('vacancy-department') ? parseInt(val('vacancy-department')) : null,
+        hiring_manager_id: val('vacancy-manager') ? parseInt(val('vacancy-manager')) : null,
+        work_mode: val('vacancy-mode'),
+        employment_type: val('vacancy-type'),
+        level: val('vacancy-level'),
+        openings: parseInt(val('vacancy-openings')) || 1,
+        salary_min: parseFloat(val('vacancy-salary-min')) || 0,
+        salary_max: parseFloat(val('vacancy-salary-max')) || 0,
+        closing_date: val('vacancy-closing'),
+        status: val('vacancy-status'),
+        description: val('vacancy-description'),
+        requirements: val('vacancy-requirements'),
+        show_salary: document.getElementById('vacancy-show-salary').checked
     };
     if (!payload.title) { showToast('A job title is required', 'error'); return; }
     try {
@@ -6916,26 +6916,26 @@ async function saveJob() {
         });
         var data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed');
-        showToast(jobId ? 'Job updated' : 'Job created: ' + data.reference, 'success');
-        closeJobModal();
-        loadJobs();
+        showToast(jobId ? 'Requisition updated' : 'Requisition created: ' + data.reference, 'success');
+        closeVacancyModal();
+        loadVacancies();
         loadRecAnalytics();
     } catch (e) { showToast('Failed: ' + e.message, 'error'); }
 }
-window.saveJob = saveJob;
+window.saveVacancy = saveVacancy;
 
-async function deleteJob(jobId) {
-    if (!confirm('Delete this job?')) return;
+async function deleteVacancy(jobId) {
+    if (!confirm('Delete this requisition?')) return;
     try {
         var res = await fetch('/api/recruitment/jobs/' + jobId, { method: 'DELETE' });
         var data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed');
         showToast('Job deleted', 'success');
-        loadJobs();
+        loadVacancies();
         loadRecAnalytics();
     } catch (e) { showToast(e.message, 'error'); }
 }
-window.deleteJob = deleteJob;
+window.deleteVacancy = deleteVacancy;
 
 // --- Talent pool -----------------------------------------------------------
 async function loadTalentPool() {
@@ -8245,7 +8245,7 @@ window.loadAIInsights = loadAIInsights;
 // Recruitment: draft a job advert from the requisition fields.
 async function aiWriteJobDescription() {
     function val(id) { var el = document.getElementById(id); return el ? el.value : ''; }
-    var title = val('job-title');
+    var title = val('vacancy-title');
     if (!title) { showToast('Enter a job title first', 'error'); return; }
     showToast('Drafting the advert...', 'info');
     try {
@@ -8253,7 +8253,7 @@ async function aiWriteJobDescription() {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 title: title,
-                department: (document.getElementById('job-department') || {}).selectedOptions
+                department: (document.getElementById('vacancy-department') || {}).selectedOptions
                     ? document.getElementById('job-department').selectedOptions[0].textContent : '',
                 level: val('job-level'), location: val('job-location'),
                 work_mode: val('job-work-mode'), employment_type: val('job-employment-type')
@@ -9462,7 +9462,7 @@ window.openCustomer = openCustomer;
 
 function renderCustomer(d) {
     var c = d.contact || {}, s = d.summary || {};
-    document.getElementById('cust-name').textContent = c.name || 'Customer';
+    document.getElementById('customer-detail-name').textContent = c.name || 'Customer';
 
     var sub = [c.email, c.phone_number].filter(Boolean).join(' · ');
     document.getElementById('cust-summary').innerHTML =
