@@ -1412,6 +1412,14 @@ def ensure_columns():
                     ("contacts", "notes", "TEXT DEFAULT ''"),
                     ("contacts", "is_active", "BOOLEAN DEFAULT TRUE"),
                     ("contacts", "created_at", "VARCHAR DEFAULT ''"),
+                    # What the owner has granted or withheld for one person on
+                    # top of their role. Added to the model without being added
+                    # here, which is invisible on SQLite - the table is built
+                    # fresh with them - and fatal on a Postgres where employees
+                    # already existed: every query naming the column failed, and
+                    # the aborted transaction took the rest of the request too.
+                    ("employees", "extra_permissions", "TEXT DEFAULT ''"),
+                    ("employees", "denied_permissions", "TEXT DEFAULT ''"),
                 ):
                     conn.execute(text(
                         f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
@@ -1521,6 +1529,8 @@ def migrate_sqlite():
             for column in ("code", "contact_person", "gstin", "address",
                            "city", "state", "pincode", "notes", "created_at"):
                 add_col("contacts", column, "VARCHAR DEFAULT ''")
+            for column in ("extra_permissions", "denied_permissions"):
+                add_col("employees", column, "TEXT DEFAULT ''")
             add_col("contacts", "is_active", "BOOLEAN DEFAULT 1")
 
             # Which project allocation a subcontract BOQ line spends.
