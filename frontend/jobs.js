@@ -183,6 +183,7 @@ function showJobModal() {
     document.getElementById('job-id').value = '';
     document.getElementById('job-modal-title').textContent = 'New project';
     document.getElementById('job-start').value = localDate(new Date());
+    document.getElementById('job-retention').value = 0;
     modal.style.display = 'flex';
 }
 window.showJobModal = showJobModal;
@@ -206,6 +207,7 @@ function editJob(id) {
     document.getElementById('job-site').value = job.site_address || '';
     document.getElementById('job-quoted').value = job.quoted_value || 0;
     document.getElementById('job-budget').value = job.budget || 0;
+    document.getElementById('job-retention').value = job.retention_percent || 0;
     document.getElementById('job-start').value = job.start_date || '';
     document.getElementById('job-end').value = job.target_end_date || '';
     document.getElementById('job-description').value = job.description || '';
@@ -226,6 +228,7 @@ async function saveJob() {
         site_address: document.getElementById('job-site').value.trim(),
         quoted_value: parseFloat(document.getElementById('job-quoted').value) || 0,
         budget: parseFloat(document.getElementById('job-budget').value) || 0,
+        retention_percent: parseFloat(document.getElementById('job-retention').value) || 0,
         start_date: document.getElementById('job-start').value,
         target_end_date: document.getElementById('job-end').value,
         description: document.getElementById('job-description').value.trim()

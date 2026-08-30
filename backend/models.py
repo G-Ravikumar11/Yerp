@@ -392,6 +392,11 @@ class DBJob(Base):
     budget = Column(Float, default=0.0)
     currency = Column(String, default="")
 
+    # The slice the customer keeps back until the job is signed off. A term of
+    # this contract rather than a company setting, because it is negotiated
+    # per job and forgetting it overstates what the job will actually collect.
+    retention_percent = Column(Float, default=0.0)
+
     manager_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
     reference = Column(String, default="")
 
@@ -1323,6 +1328,25 @@ class DBWallet(Base):
     lifetime_spent_minor = Column(Integer, default=0)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     updated_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBEmployeeSite(Base):
+    """Which sites a person works on.
+
+    A row per person per site rather than a column on the employee, because
+    crews move and most of them are on more than one job in a season. No rows
+    at all means no restriction - see employee_site_ids.
+    """
+    __tablename__ = "employee_sites"
+    __table_args__ = (
+        UniqueConstraint('employee_id', 'job_id', name='uq_employee_site'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
 class DBApprovalChain(Base):

@@ -1402,6 +1402,7 @@ def ensure_columns():
                     ("quotes", "job_id", "INTEGER"),
                     ("attendance", "job_id", "INTEGER"),
                     # A customer is more than a name once contracts are involved.
+                    ("jobs", "retention_percent", "DOUBLE PRECISION DEFAULT 0"),
                     ("contacts", "code", "VARCHAR DEFAULT ''"),
                     ("contacts", "contact_person", "VARCHAR DEFAULT ''"),
                     ("contacts", "gstin", "VARCHAR DEFAULT ''"),
@@ -1524,6 +1525,8 @@ def migrate_sqlite():
             add_col("bills", "purchase_order_id", "INTEGER")
             add_col("quotes", "job_id", "INTEGER")
             add_col("attendance", "job_id", "INTEGER")
+
+            add_col("jobs", "retention_percent", "FLOAT DEFAULT 0")
 
             # Customer detail, for the contracts side.
             for column in ("code", "contact_person", "gstin", "address",

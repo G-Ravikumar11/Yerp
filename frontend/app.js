@@ -2790,6 +2790,9 @@ async function showAddEmployeeModal() {
     var today = localDate(new Date());
     var startEl = document.getElementById('emp-start-date');
     if (startEl) startEl.value = today;
+    fillSitePicker([]);
+    var cred = document.getElementById('emp-credentials');
+    if (cred) { cred.style.display = 'none'; cred.innerHTML = ''; }
     // Load departments and employees for dropdowns
     try {
         var deptRes = await fetch('/api/departments');
@@ -2869,6 +2872,40 @@ function closeAddEmployeeModal() {
 }
 window.closeAddEmployeeModal = closeAddEmployeeModal;
 
+/* The sites ticked on the employee form. An empty list means every site,
+   which the form says in as many words. */
+function pickedSiteIds() {
+    var sel = document.getElementById('emp-sites');
+    if (!sel) return [];
+    return Array.prototype.slice.call(sel.selectedOptions || [])
+        .map(function (o) { return parseInt(o.value); })
+        .filter(function (n) { return !isNaN(n); });
+}
+window.pickedSiteIds = pickedSiteIds;
+
+/* Fill the sites picker from the live projects, marking the ones already
+   assigned. Called whenever the employee form is opened. */
+async function fillSitePicker(selected) {
+    var sel = document.getElementById('emp-sites');
+    if (!sel) return;
+    selected = selected || [];
+    try {
+        var res = await fetch('/api/jobs', { credentials: 'same-origin' });
+        var jobs = await res.json();
+        if (!Array.isArray(jobs)) jobs = jobs.jobs || [];
+        sel.innerHTML = jobs.map(function (j) {
+            var label = ((j.number ? j.number + ' ' : '') + (j.name || '')).trim();
+            return '<option value="' + j.id + '"' +
+                (selected.indexOf(j.id) >= 0 ? ' selected' : '') + '>' +
+                esc(label) + (j.customer_name ? ' - ' + esc(j.customer_name) : '') +
+                '</option>';
+        }).join('');
+    } catch (e) {
+        sel.innerHTML = '';
+    }
+}
+window.fillSitePicker = fillSitePicker;
+
 async function submitNewEmployee() {
     var firstName = document.getElementById('emp-first-name').value.trim();
     var lastName = document.getElementById('emp-last-name').value.trim();
@@ -2888,6 +2925,8 @@ async function submitNewEmployee() {
         level: (document.getElementById('emp-level') || {}).value || '',
         role: (document.getElementById('emp-role') || {}).value || 'employee',
         permission_role: (document.getElementById('emp-permission-role') || {}).value || 'staff',
+        site_ids: pickedSiteIds(),
+        employee_id: (document.getElementById('emp-employee-id') || {}).value || '',
         employment_type: document.getElementById('emp-type').value,
         pay_frequency: document.getElementById('emp-pay-freq').value,
         salary: parseFloat(document.getElementById('emp-salary').value) || 0,
@@ -2926,7 +2965,9 @@ async function submitNewEmployee() {
                 } catch(e) { console.error('Failed to save AI onboarding items:', e); }
                 window._aiOnboardingItems = null;
             }
-            closeAddEmployeeModal();
+            // Shown once, here, because this is the only moment the password
+            // is known: it is stored hashed and can never be read back.
+            showCredentials(data, email, password);
             hrDataChanged('employees');
         } else {
             showToast('Failed: ' + (data.detail || 'Error'), 'error');
@@ -2934,6 +2975,38 @@ async function submitNewEmployee() {
     } catch (e) { showToast('Failed: ' + e, 'error'); }
 }
 window.submitNewEmployee = submitNewEmployee;
+
+/* What to hand the new employee. The modal stays open on this rather than
+   closing, because closing it takes the password with it. */
+function showCredentials(data, email, password) {
+    var host = document.getElementById('emp-credentials');
+    if (!host) { closeAddEmployeeModal(); return; }
+    var sites = (data.site_names && data.site_names.length)
+        ? data.site_names.join(', ')
+        : 'Every site';
+    host.innerHTML =
+        '<h4 style="margin:0 0 10px;font-size:0.95rem;">Give these to ' +
+            esc(data.first_name || '') + '</h4>' +
+        '<table style="font-size:0.85rem;">' +
+        '<tr><td style="padding:3px 14px 3px 0;color:var(--text-secondary);">Employee ID</td>' +
+            '<td><strong>' + esc(data.employee_id || '') + '</strong></td></tr>' +
+        '<tr><td style="padding:3px 14px 3px 0;color:var(--text-secondary);">Sign in with</td>' +
+            '<td><strong>' + esc(email) + '</strong></td></tr>' +
+        '<tr><td style="padding:3px 14px 3px 0;color:var(--text-secondary);">Password</td>' +
+            '<td><strong>' + esc(password) + '</strong></td></tr>' +
+        '<tr><td style="padding:3px 14px 3px 0;color:var(--text-secondary);">Sites</td>' +
+            '<td>' + esc(sites) + '</td></tr>' +
+        '</table>' +
+        '<p style="font-size:0.75rem;color:var(--text-secondary);margin:10px 0 0;">' +
+            'The password is stored hashed and cannot be shown again. If it is ' +
+            'lost, reset it from their profile.</p>' +
+        '<div style="margin-top:12px;text-align:right;">' +
+            '<button class="btn btn-primary btn-sm" onclick="closeAddEmployeeModal()">Done</button>' +
+        '</div>';
+    host.style.display = 'block';
+    host.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+window.showCredentials = showCredentials;
 
 async function startOffboarding() {
     if (!currentEmployeeId) return;

@@ -28,8 +28,8 @@
         }}
       };
     </script>
-    <link rel="stylesheet" href="styles.css?v=61">
-    <link rel="stylesheet" href="mobile.css?v=61">
+    <link rel="stylesheet" href="styles.css?v=64">
+    <link rel="stylesheet" href="mobile.css?v=64">
 </head>
 <body>
     <!-- Held back until the boot confirms who is signed in. See #boot-gate. -->
@@ -940,7 +940,7 @@
                                 <div class="form-group"><label>Bill Number *</label><input type="text" id="bill-number" class="form-control" placeholder="BILL-0001"></div>
                                 <div class="form-group"><label>Vendor Name *</label><input type="text" id="bill-vendor" class="form-control" placeholder="Supplier name"></div>
                                 <div class="form-group"><label>Vendor Email</label><input type="email" id="bill-vendor-email" class="form-control" placeholder="billing@supplier.com"></div>
-                                <div class="form-group"><label>Category</label><select id="bill-category" class="form-control"><option value="general">General</option><option value="office">Office Supplies</option><option value="software">Software/SaaS</option><option value="utilities">Utilities</option><option value="rent">Rent</option><option value="marketing">Marketing</option><option value="travel">Travel</option><option value="professional">Professional Services</option></select></div>
+                                <div class="form-group"><label>Category</label><select id="bill-category" class="form-control"><option value="materials">Materials</option><option value="labour">Labour</option><option value="subcontract">Subcontract</option><option value="plant">Plant &amp; equipment</option><option value="other">Other</option><optgroup label="Overheads"><option value="office">Office supplies</option><option value="software">Software</option><option value="utilities">Utilities</option><option value="rent">Rent</option><option value="travel">Travel</option><option value="professional">Professional services</option><option value="general">General</option></optgroup></select></div>
                                 <div class="form-group"><label>Issue Date *</label><input type="date" id="bill-issue-date" class="form-control"></div>
                                 <div class="form-group"><label>Due Date *</label><input type="date" id="bill-due-date" class="form-control"></div>
                                 <div class="form-group"><label>Amount</label><input type="number" id="bill-amount" class="form-control" step="0.01" value="0" oninput="calcBillTotal()"></div>
@@ -1932,7 +1932,7 @@
                                     </tr>
                                 </thead>
                                 <tbody id="leave-view-table-body">
-                                    <tr><td colspan="8" class="loading">Loading leave requests...</td></tr>
+                                    <tr><td colspan="10" class="loading">Loading leave requests...</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -2514,7 +2514,7 @@
                                         <th>Hiring Manager</th><th class="text-right">Applicants</th>
                                         <th>Status</th><th class="text-right">Actions</th>
                                     </tr></thead>
-                                    <tbody id="rec-jobs-tbody"><tr><td colspan="8" class="loading">Loading jobs...</td></tr></tbody>
+                                    <tbody id="rec-jobs-tbody"><tr><td colspan="10" class="loading">Loading jobs...</td></tr></tbody>
                                 </table></div>
                             </div>
                         </div>
@@ -3016,9 +3016,13 @@
                     </div>
                     <div class="stats-grid" id="costs-stats"></div>
                     <div class="widget" style="margin-top:20px;">
+                        <div class="widget-header"><h3>Where the money went</h3></div>
+                        <div class="widget-content" id="costs-mix"></div>
+                    </div>
+                    <div class="widget" style="margin-top:20px;">
                         <div class="table-responsive">
                             <table class="data-table">
-                                <thead><tr><th>Project</th><th>Customer</th><th class="text-right">Sold</th><th class="text-right">Committed cost</th><th class="text-right">Margin</th><th class="text-right">Billed</th><th class="text-right">Unpaid</th><th></th></tr></thead>
+                                <thead><tr><th>Project</th><th>Customer</th><th class="text-right">Contract</th><th class="text-right">Progress</th><th class="text-right">Incurred</th><th class="text-right">Forecast cost</th><th class="text-right">Forecast margin</th><th class="text-right">Invoiced</th><th class="text-right">Unpaid bills</th><th></th></tr></thead>
                                 <tbody id="costs-body"></tbody>
                             </table>
                         </div>
@@ -3378,6 +3382,7 @@
                     <div class="grid-2 gap-16">
                         <div class="form-group"><label>Quoted value</label><input type="number" step="0.01" min="0" id="job-quoted" class="form-control" value="0"></div>
                         <div class="form-group"><label>Cost budget</label><input type="number" step="0.01" min="0" id="job-budget" class="form-control" value="0"></div>
+                        <div class="form-group"><label>Retention %</label><input type="number" step="0.5" min="0" max="100" id="job-retention" class="form-control" value="0" placeholder="5"></div>
                     </div>
                     <div class="grid-2 gap-16">
                         <div class="form-group"><label>Start</label><input type="date" id="job-start" class="form-control"></div>
@@ -3496,6 +3501,7 @@
                         <div class="form-group"><label>Last Name *</label><input type="text" id="emp-last-name" class="form-control" required></div>
                         <div class="form-group"><label>Email *</label><input type="email" id="emp-email" class="form-control" required></div>
                         <div class="form-group"><label>Password *</label><input type="password" id="emp-password" class="form-control" placeholder="Set login password" required></div>
+                        <div class="form-group"><label>Employee ID</label><input type="text" id="emp-employee-id" class="form-control" placeholder="Left blank, the next one is issued"></div>
                         <div class="form-group"><label>Phone</label><input type="tel" id="emp-phone" class="form-control"></div>
                         <div class="form-group"><label>Job Title</label><input type="text" id="emp-job-title" class="form-control"></div>
                         <div class="form-group">
@@ -3513,6 +3519,17 @@
                         <div class="form-group">
                             <label>Role</label>
                             <select id="emp-role" class="form-control"><option value="employee">Employee</option></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Sites <span style="font-weight:400;color:var(--text-secondary);">&mdash; where they work</span></label>
+                            <select id="emp-sites" class="form-control" multiple size="5"></select>
+                            <p style="font-size:0.78rem;color:var(--text-secondary);margin-top:6px;">
+                                Hold Ctrl to pick more than one. They can only book hours and
+                                costs to the sites listed here, and the other projects are not
+                                shown to them at all. Leave every one unpicked and they see
+                                every site &mdash; which is what you want for an office role,
+                                and what you do not want for a site hand.
+                            </p>
                         </div>
                         <div class="form-group">
                             <label>Access <span style="font-weight:400;color:var(--text-secondary);">&mdash; what they can do</span></label>
@@ -3534,6 +3551,11 @@
                                 <div id="emp-permission-boxes"></div>
                             </details>
                         </div>
+                        <!-- Filled in after saving: the only moment the password
+                             is known, because it is stored hashed from here on. -->
+                        <div id="emp-credentials" style="display:none;margin-top:16px;padding:14px;
+                             border:1px solid var(--border-color,#e2e8f0);border-radius:8px;
+                             background:var(--background-color,#f7f8fb);"></div>
                         <div class="form-group">
                             <label>Employment Type</label>
                             <select id="emp-type" class="form-control">
@@ -3686,24 +3708,24 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=61"></script>
+    <script src="app.js?v=64"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
-    <script src="staff-portal.js?v=61"></script>
+    <script src="staff-portal.js?v=64"></script>
     <!-- Jobs, job costing and purchase orders. -->
-    <script src="jobs.js?v=61"></script>
+    <script src="jobs.js?v=64"></script>
     <!-- Item master, work orders and budget allocation. -->
-    <script src="erp.js?v=61"></script>
+    <script src="erp.js?v=64"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
-    <script src="erp-build.js?v=61"></script>
+    <script src="erp-build.js?v=64"></script>
     <!-- The spreadsheet grid the item master is entered through. -->
-    <script src="erp-grid.js?v=61"></script>
+    <script src="erp-grid.js?v=64"></script>
     <!-- Preview and correct a sheet that arrived from outside. -->
-    <script src="erp-preview.js?v=61"></script>
-    <script src="contracts.js?v=61"></script>
-    <script src="sheet-viewer.js?v=61"></script>
-    <script src="subcontracts.js?v=61"></script>
-    <script src="costs.js?v=61"></script>
+    <script src="erp-preview.js?v=64"></script>
+    <script src="contracts.js?v=64"></script>
+    <script src="sheet-viewer.js?v=64"></script>
+    <script src="subcontracts.js?v=64"></script>
+    <script src="costs.js?v=64"></script>
 
     <!-- AI Core Orb -->
     <div class="ai-core" onclick="toggleAIChat()" role="button" tabindex="0" aria-label="Open the assistant" title="Ask the assistant" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAIChat();}">

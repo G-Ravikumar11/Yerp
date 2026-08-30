@@ -2313,6 +2313,7 @@ def job_to_dict(db, job, costing=False):
         "start_date": job.start_date or "", "target_end_date": job.target_end_date or "",
         "completed_at": job.completed_at or "",
         "quoted_value": job.quoted_value or 0.0, "budget": job.budget or 0.0,
+            "retention_percent": job.retention_percent or 0.0,
         "currency": job.currency or "", "reference": job.reference or "",
         "manager_id": job.manager_id,
         "created_at": job.created_at or "",
@@ -2339,9 +2340,19 @@ class JobIn(BaseModel):
     target_end_date: Optional[str] = ""
     quoted_value: Optional[float] = 0.0
     budget: Optional[float] = 0.0
+    retention_percent: Optional[float] = 0.0
     currency: Optional[str] = ""
     reference: Optional[str] = ""
     manager_id: Optional[int] = None
+
+
+def clamp_percent(value) -> float:
+    """A percentage that cannot be nonsense. Retention outside 0-100 is a typo,
+    and a negative one would quietly increase what the job appears to collect."""
+    try:
+        return round(min(100.0, max(0.0, float(value or 0))), 2)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def validate_job_money(name, value):
@@ -2457,6 +2468,7 @@ def create_job(body: JobIn, request: Request, db: Session = Depends(get_db)):
         target_end_date=body.target_end_date or "",
         quoted_value=validate_job_money("Quoted value", body.quoted_value),
         budget=validate_job_money("Budget", body.budget),
+        retention_percent=clamp_percent(body.retention_percent),
         currency=(body.currency or client.currency or "").upper(),
         reference=(body.reference or "").strip(),
         manager_id=body.manager_id,
@@ -2489,6 +2501,7 @@ def update_job(job_id: int, body: JobIn, request: Request, db: Session = Depends
     job.target_end_date = body.target_end_date or ""
     job.quoted_value = validate_job_money("Quoted value", body.quoted_value)
     job.budget = validate_job_money("Budget", body.budget)
+    job.retention_percent = clamp_percent(body.retention_percent)
     job.reference = (body.reference or "").strip()
     job.manager_id = body.manager_id
     if was_open and job.status == "complete" and not job.completed_at:
@@ -2615,6 +2628,7 @@ def cost_jobs(db, client_id, jobs):
             "start_date": job.start_date or "", "target_end_date": job.target_end_date or "",
             "completed_at": job.completed_at or "",
             "quoted_value": job.quoted_value or 0.0, "budget": job.budget or 0.0,
+            "retention_percent": job.retention_percent or 0.0,
             "currency": job.currency or "", "reference": job.reference or "",
             "manager_id": job.manager_id,
             "manager_name": managers.get(job.manager_id, ""),
@@ -8856,6 +8870,9 @@ class DepartmentCreate(BaseModel):
     icon: Optional[str] = "building"
 
 class EmployeeCreate(BaseModel):
+    # The sites this person works on. None means "leave as it is"; an empty
+    # list means "every site", which is what somebody unassigned already had.
+    site_ids: Optional[List[int]] = None
     first_name: str
     last_name: str
     email: str
@@ -9467,6 +9484,8 @@ def get_employees(request: Request, q: str = "", status: str = "", db: Session =
             mgr = db.query(models.DBEmployee).filter(models.DBEmployee.id == e.reports_to).first()
             manager_name = f"{mgr.first_name} {mgr.last_name}" if mgr else ""
         result.append({
+            "site_count": db.query(models.DBEmployeeSite).filter(
+                models.DBEmployeeSite.employee_id == e.id).count(),
             "id": e.id, "employee_id": e.employee_id,
             "first_name": e.first_name, "last_name": e.last_name,
             "full_name": f"{e.first_name} {e.last_name}",
@@ -9555,9 +9574,11 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
 
     db.commit()
     db.refresh(emp)
+    set_employee_sites(db, client.id, emp, body.site_ids)
     log_audit(db, client.id, "employee_created", "employee", emp.id, f"{emp.first_name} {emp.last_name}", f"Dept: {body.department_id or 'None'}", request)
     db.commit()
     return {
+        **employee_sites_payload(db, emp),
         "id": emp.id, "employee_id": emp.employee_id,
         "first_name": emp.first_name, "last_name": emp.last_name,
         "email": emp.email, "status": emp.status, "level": emp.level or "", "role": emp.role,
@@ -9628,6 +9649,7 @@ def get_employee(emp_id: int, request: Request, db: Session = Depends(get_db)):
     ).all()
 
     return {
+        **employee_sites_payload(db, emp),
         "id": emp.id, "employee_id": emp.employee_id,
         "first_name": emp.first_name, "last_name": emp.last_name,
         "full_name": f"{emp.first_name} {emp.last_name}",
@@ -9726,9 +9748,11 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
         body["permission_role"] = validate_permission_role(body["permission_role"])
     if "reports_to" in body:
         body["reports_to"] = validate_manager(db, client.id, emp.id, body["reports_to"])
+    site_ids = body.pop("site_ids", None)
     for key, val in body.items():
         if hasattr(emp, key) and key not in ("id", "client_id", "created_at", "password_hash", "employee_id"):
             setattr(emp, key, val)
+    set_employee_sites(db, client.id, emp, site_ids)
     new_dept = emp.department_id
     if new_dept and new_dept != old_dept:
         pending_goals = db.query(models.DBDepartmentGoal).filter(
@@ -11891,7 +11915,7 @@ def employee_create_bill(request: Request, body: dict = None,
         notes=(body.get("notes") or "").strip(),
         submitted_by=emp.id,
         approval_status="none",
-        job_id=resolve_job_id(db, emp.client_id, body.get("job_id")),
+        job_id=resolve_employee_job_id(db, emp, body.get("job_id")),
         purchase_order_id=resolve_order_id(db, emp.client_id, body.get("purchase_order_id")),
     )
     db.add(bill)
@@ -11949,7 +11973,7 @@ def employee_update_bill(bill_id: int, request: Request, body: dict = None,
         if field in body:
             setattr(bill, field, (body.get(field) or ""))
     if "job_id" in body:
-        bill.job_id = resolve_job_id(db, emp.client_id, body.get("job_id"))
+        bill.job_id = resolve_employee_job_id(db, emp, body.get("job_id"))
     if "purchase_order_id" in body:
         bill.purchase_order_id = resolve_order_id(db, emp.client_id, body.get("purchase_order_id"))
     db.commit()
@@ -12198,6 +12222,80 @@ def employee_resubmit_purchase_order(order_id: int, request: Request,
                           actor=employee_name(emp))
 
 
+# --- Which sites a person may see ------------------------------------------
+
+def employee_site_ids(db, emp):
+    """The job ids this employee is assigned to, or None for no restriction.
+
+    None rather than an empty set on purpose: "assigned to nothing" and
+    "allowed everything" are different answers, and returning an empty set for
+    both would lock every existing employee out of every job the moment this
+    shipped.
+    """
+    rows = db.query(models.DBEmployeeSite.job_id).filter(
+        models.DBEmployeeSite.employee_id == emp.id).all()
+    if not rows:
+        return None
+    return {r[0] for r in rows}
+
+
+def employee_may_use_job(db, emp, job_id) -> bool:
+    if job_id is None:
+        return True
+    allowed = employee_site_ids(db, emp)
+    return allowed is None or job_id in allowed
+
+
+def resolve_employee_job_id(db, emp, raw):
+    """A job id from a member of staff, checked against their sites.
+
+    Everything a person books - hours, a cost, an order - comes through here,
+    so a site they are not on cannot be reached by typing its id at the API
+    even though the picker would never have offered it.
+    """
+    job_id = resolve_job_id(db, emp.client_id, raw)
+    if job_id is not None and not employee_may_use_job(db, emp, job_id):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not assigned to that site. Ask HR to add you to it.")
+    return job_id
+
+
+def set_employee_sites(db, client_id, emp, job_ids):
+    """Replace this person's site list. None leaves it alone."""
+    if job_ids is None:
+        return
+    wanted = set()
+    for raw in job_ids:
+        try:
+            wanted.add(int(raw))
+        except (TypeError, ValueError):
+            continue
+    if wanted:
+        real = {j.id for j in db.query(models.DBJob.id).filter(
+            models.DBJob.client_id == client_id, models.DBJob.id.in_(wanted)).all()}
+        wanted = {j for j in wanted if j in real}
+    db.query(models.DBEmployeeSite).filter(
+        models.DBEmployeeSite.employee_id == emp.id).delete(synchronize_session=False)
+    for job_id in sorted(wanted):
+        db.add(models.DBEmployeeSite(
+            client_id=client_id, employee_id=emp.id, job_id=job_id))
+
+
+def employee_sites_payload(db, emp):
+    rows = db.query(models.DBEmployeeSite.job_id).filter(
+        models.DBEmployeeSite.employee_id == emp.id).all()
+    ids = [r[0] for r in rows]
+    if not ids:
+        return {"site_ids": [], "site_names": [], "all_sites": True}
+    jobs = db.query(models.DBJob).filter(models.DBJob.id.in_(ids)).all()
+    return {
+        "site_ids": ids,
+        "site_names": [((j.number + " ") if j.number else "") + (j.name or "") for j in jobs],
+        "all_sites": False,
+    }
+
+
 @app.get("/api/employee/jobs")
 def employee_list_jobs(request: Request, db: Session = Depends(get_db)):
     """The jobs somebody can book time or costs against.
@@ -12206,10 +12304,14 @@ def employee_list_jobs(request: Request, db: Session = Depends(get_db)):
     cost of it landing there is a job that reopens months after it was closed.
     """
     emp = get_employee_user(request, db)
-    jobs = db.query(models.DBJob).filter(
+    query = db.query(models.DBJob).filter(
         models.DBJob.client_id == emp.client_id,
         ~models.DBJob.status.in_(JOB_CLOSED_STATUSES),
-    ).order_by(models.DBJob.id.desc()).all()
+    )
+    allowed = employee_site_ids(db, emp)
+    if allowed is not None:
+        query = query.filter(models.DBJob.id.in_(allowed or {0}))
+    jobs = query.order_by(models.DBJob.id.desc()).all()
     return {"jobs": [{"id": j.id, "number": j.number, "name": j.name,
                       "customer_name": j.customer_name or "",
                       "site_address": j.site_address or ""} for j in jobs]}
@@ -12221,7 +12323,7 @@ def employee_set_attendance_job(request: Request, body: dict = None,
     """Book today's hours to a job."""
     emp = get_employee_user(request, db)
     body = body or {}
-    job_id = resolve_job_id(db, emp.client_id, body.get("job_id"))
+    job_id = resolve_employee_job_id(db, emp, body.get("job_id"))
     on_date = body.get("date") or datetime.now().strftime("%Y-%m-%d")
     row = db.query(models.DBAttendance).filter(
         models.DBAttendance.employee_id == emp.id,
@@ -18739,64 +18841,188 @@ def purchase_order_xlsx(po_id: int, request: Request, db: Session = Depends(get_
 # still making money on it.
 # ============================================================================
 
+# Contracting cost headings. A builder's costs do not sort into "office
+# supplies" and "software"; they sort into who or what the money went on, and
+# every cost report downstream is grouped by these.
+COST_CATEGORIES = [
+    ("labour", "Labour"),
+    ("materials", "Materials"),
+    ("subcontract", "Subcontract"),
+    ("plant", "Plant & equipment"),
+    ("other", "Other"),
+]
+COST_CATEGORY_KEYS = [c for c, _ in COST_CATEGORIES]
+
+# Older bills carry the generic headings the app shipped with. Mapping them
+# rather than migrating keeps history readable without rewriting anyone's data.
+COST_CATEGORY_ALIASES = {
+    "general": "other", "office": "other", "software": "other",
+    "utilities": "other", "rent": "plant", "marketing": "other",
+    "travel": "other", "professional": "subcontract",
+    "material": "materials", "labor": "labour", "equipment": "plant",
+    "hire": "plant", "sub": "subcontract",
+}
+
+
+def cost_category_of(raw) -> str:
+    key = (raw or "").strip().lower()
+    if key in COST_CATEGORY_KEYS:
+        return key
+    return COST_CATEGORY_ALIASES.get(key, "other")
+
+
 def job_money(db, client_id, job):
-    """One project's money, from every direction it moves in."""
+    """One project's money, from every direction it moves in.
+
+    Three quantities, kept apart on purpose because they answer different
+    questions and mixing them is how a job looks fine until it is finished:
+
+      incurred    - bills that have arrived, plus the hours worked on site
+      committed   - purchase and subcontract orders placed but not yet billed
+      forecast    - what the whole job is expected to cost by the end
+
+    A purchase order drops out of `committed` the moment a bill references it,
+    so the same spend is never counted in both.
+    """
     wos = db.query(models.DBWorkOrder).filter(
         models.DBWorkOrder.client_id == client_id,
         models.DBWorkOrder.job_id == job.id).all()
-    wo_ids = [w.id for w in wos]
+    live_wos = [w for w in wos if (w.approval_status or "none") != "rejected"]
+    wo_ids = [w.id for w in live_wos]
 
-    sold = money(sum(w.total_value or 0 for w in wos))
+    sold = money(sum(w.total_value or 0 for w in live_wos))
     budgeted = money(sum(
         b.amount or 0 for b in db.query(models.DBBomLine).filter(
             models.DBBomLine.work_order_id.in_(wo_ids)).all())) if wo_ids else 0.0
 
-    # Committed to suppliers: a purchase order is money promised even before a
-    # bill for it exists, which is exactly what makes it worth counting here.
-    pos = db.query(models.DBPurchaseOrder).filter(
-        models.DBPurchaseOrder.client_id == client_id,
-        models.DBPurchaseOrder.job_id == job.id).all()
-    committed = money(sum(p.total or 0 for p in pos
-                          if (p.status or "") not in ("Cancelled", "Rejected")))
-
+    # --- what has actually been incurred ---------------------------------
     bills = db.query(models.DBBill).filter(
         models.DBBill.client_id == client_id,
         models.DBBill.job_id == job.id).all()
-    billed = money(sum(b.total or b.amount or 0 for b in bills))
-    paid = money(sum((b.total or b.amount or 0) for b in bills
-                     if (b.status or "").lower() == "paid"))
+    real_bills = [b for b in bills
+                  if (b.approval_status or "none") != "rejected"
+                  and (b.status or "") != "Cancelled"]
+    billed = money(sum(b.total or b.amount or 0 for b in real_bills))
+    paid = money(sum(b.amount_paid or 0 for b in real_bills))
     awaiting = len([b for b in bills if (b.approval_status or "") == "pending"])
 
-    # Subcontract orders are a commitment of the same kind, from the other
-    # module, and leaving them out would flatter every project that uses one.
+    attendance = db.query(models.DBAttendance).filter(
+        models.DBAttendance.client_id == client_id,
+        models.DBAttendance.job_id == job.id).all()
+    rates = {}
+    if attendance:
+        rates = {e.id: (e.hourly_rate or 0.0) for e in db.query(models.DBEmployee).filter(
+            models.DBEmployee.client_id == client_id).all()}
+    labour_hours = round(sum(a.total_hours or 0.0 for a in attendance), 2)
+    labour = money(sum((a.total_hours or 0.0) * rates.get(a.employee_id, 0.0)
+                       for a in attendance))
+
+    incurred = money(billed + labour)
+
+    # --- what is promised on top of it -----------------------------------
+    pos = db.query(models.DBPurchaseOrder).filter(
+        models.DBPurchaseOrder.client_id == client_id,
+        models.DBPurchaseOrder.job_id == job.id).all()
+    # Once a bill names the order, the spend is in `incurred`. Leaving the
+    # order in as well counted it twice and made every project look worse the
+    # closer it got to finishing.
+    billed_po_ids = {b.purchase_order_id for b in real_bills if b.purchase_order_id}
+    open_pos = [p for p in pos
+                if (p.status or "") not in ("Cancelled", "Rejected", "Closed")
+                and p.id not in billed_po_ids]
+    committed = money(sum(p.total or 0 for p in open_pos))
+
     subs = db.query(models.DBSubcontractOrder).filter(
         models.DBSubcontractOrder.client_id == client_id,
         models.DBSubcontractOrder.job_id == job.id).all()
-    subcontracted = money(sum(s.net_order_value or 0 for s in subs
-                              if (s.status or "") not in ("CANCELLED", "AMENDED")))
+    live_subs = [x for x in subs if (x.status or "") not in ("CANCELLED", "AMENDED")]
+    subcontracted = money(sum(x.net_order_value or 0 for x in live_subs))
 
-    invoiced = money(sum(i.total or 0 for i in db.query(models.DBInvoice).filter(
+    commitment = money(committed + subcontracted)
+
+    # --- where it ends up -------------------------------------------------
+    # Estimate at completion. Work still to come has usually not been ordered
+    # yet, so where the budget is higher than everything known about, the
+    # budget is the better forecast; past that point the known cost is.
+    known = money(incurred + commitment)
+    budget = money(job.budget or 0)
+    # Two different budgets exist and they are not interchangeable. The BOM is
+    # the estimate built line by line from what the work actually takes, so
+    # where there is one it is the better answer; the figure typed on the
+    # project form is the fallback for a job that never had a BOM.
+    estimate = budgeted or budget
+    forecast_cost = money(max(known, estimate)) if estimate else known
+
+    # Percent complete measured by cost, which is what a contract with no
+    # milestone schedule can actually be measured by.
+    percent_complete = round(incurred / forecast_cost * 100, 1) if forecast_cost else 0.0
+    cost_to_complete = money(forecast_cost - incurred)
+
+    # --- the customer side ------------------------------------------------
+    invoices = [i for i in db.query(models.DBInvoice).filter(
         models.DBInvoice.client_id == client_id,
-        models.DBInvoice.job_id == job.id).all()))
+        models.DBInvoice.job_id == job.id).all() if (i.status or "") != "Void"]
+    invoiced = money(sum(invoice_total(i) for i in invoices))
+    received = money(sum(i.paid or 0 for i in invoices))
 
-    # Cost is what has actually been committed to somebody, not the plan for
-    # it. The budget is the estimate; these are the promises.
-    cost = money(committed + subcontracted)
+    contract_value = sold or money(job.quoted_value or 0)
+    # Revenue earned by the work done, against revenue actually invoiced. A
+    # job billed ahead of its progress is borrowing from its own future.
+    earned = money(contract_value * percent_complete / 100) if contract_value else 0.0
+    retention_percent = float(job.retention_percent or 0)
+    retention_held = money(invoiced * retention_percent / 100)
+
+    # --- cost by heading --------------------------------------------------
+    by_category = {key: 0.0 for key in COST_CATEGORY_KEYS}
+    by_category["labour"] = labour
+    for b in real_bills:
+        key = cost_category_of(b.category)
+        by_category[key] = money(by_category[key] + (b.total or b.amount or 0))
+    by_category["subcontract"] = money(by_category["subcontract"] + subcontracted)
+    for p in open_pos:
+        by_category["materials"] = money(by_category["materials"] + (p.total or 0))
+
     return {
         "job_id": job.id, "number": job.number or "", "name": job.name or "",
         "customer_name": job.customer_name or "", "status": job.status or "",
-        "quoted_value": money(job.quoted_value), "budget": money(job.budget),
-        "sold": sold, "budgeted_cost": budgeted,
+        "quoted_value": money(job.quoted_value), "budget": budget,
+        "sold": sold, "contract_value": contract_value, "budgeted_cost": budgeted,
+
         "committed": committed, "subcontracted": subcontracted,
+        "commitment": commitment,
+        "labour": labour, "labour_hours": labour_hours,
         "billed": billed, "paid": paid, "unpaid": money(billed - paid),
         "bills_awaiting_approval": awaiting,
-        "invoiced": invoiced,
-        "cost": cost,
-        "margin": money(sold - cost),
-        "margin_percent": round((sold - cost) / sold * 100, 1) if sold else 0.0,
-        # The number that starts an argument: committed against what the
-        # budget said it would take.
-        "over_budget": money(cost - budgeted) if budgeted and cost > budgeted else 0.0,
+
+        "incurred": incurred,
+        # Kept under its old name so nothing reading this breaks, but it is now
+        # everything the job has committed the business to, not just its orders.
+        "cost": money(incurred + commitment),
+        "forecast_cost": forecast_cost,
+        "cost_to_complete": cost_to_complete,
+        "percent_complete": percent_complete,
+
+        "invoiced": invoiced, "received": received,
+        "outstanding": money(invoiced - received),
+        "retention_percent": retention_percent,
+        "retention_held": retention_held,
+        "earned": earned,
+        # Positive means invoiced ahead of the work; negative means work done
+        # that nobody has been asked to pay for yet.
+        "over_billed": money(invoiced - earned),
+
+        "margin": money(contract_value - forecast_cost),
+        "margin_percent": (round((contract_value - forecast_cost) / contract_value * 100, 1)
+                           if contract_value else 0.0),
+        "estimate": estimate,
+        "budget_variance": money(estimate - forecast_cost) if estimate else 0.0,
+        "over_budget": (money(forecast_cost - estimate)
+                        if estimate and forecast_cost > estimate else 0.0),
+
+        "categories": [
+            {"key": key, "label": label, "amount": money(by_category[key])}
+            for key, label in COST_CATEGORIES
+        ],
         "work_orders": len(wos), "purchase_orders": len(pos),
         "bills": len(bills), "subcontracts": len(subs),
     }
@@ -18813,13 +19039,29 @@ def costs_by_project(request: Request, db: Session = Depends(get_db)):
         "projects": rows,
         "summary": {
             "projects": len(rows),
-            "sold": money(sum(r["sold"] for r in rows)),
+            "sold": money(sum(r["contract_value"] for r in rows)),
+            "incurred": money(sum(r["incurred"] for r in rows)),
+            "commitment": money(sum(r["commitment"] for r in rows)),
             "cost": money(sum(r["cost"] for r in rows)),
-            "margin": money(sum(r["sold"] - r["cost"] for r in rows)),
+            "forecast_cost": money(sum(r["forecast_cost"] for r in rows)),
+            "margin": money(sum(r["margin"] for r in rows)),
+            "labour": money(sum(r["labour"] for r in rows)),
+            "invoiced": money(sum(r["invoiced"] for r in rows)),
+            "received": money(sum(r["received"] for r in rows)),
+            "outstanding": money(sum(r["outstanding"] for r in rows)),
+            "retention_held": money(sum(r["retention_held"] for r in rows)),
+            "over_billed": money(sum(r["over_billed"] for r in rows)),
             "billed": money(sum(r["billed"] for r in rows)),
             "unpaid": money(sum(r["unpaid"] for r in rows)),
             "awaiting_approval": sum(r["bills_awaiting_approval"] for r in rows),
             "over_budget": len([r for r in rows if r["over_budget"] > 0]),
+            "categories": [
+                {"key": key, "label": label,
+                 "amount": money(sum(
+                     next((c["amount"] for c in r["categories"] if c["key"] == key), 0.0)
+                     for r in rows))}
+                for key, label in COST_CATEGORIES
+            ],
         },
     }
 
