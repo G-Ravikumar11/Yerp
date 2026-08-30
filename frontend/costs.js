@@ -159,6 +159,42 @@ async function openProjectCosts(jobId) {
 }
 window.openProjectCosts = openProjectCosts;
 
+/* A titled row of figures. The detail page has four of them, and spelling
+   each one out by hand is how two of them ended up with different padding. */
+function panel(title, figures) {
+    return '<div class="widget" style="margin-top:14px;">' +
+        '<div class="widget-header"><h3>' + esc(title) + '</h3></div>' +
+        '<div class="widget-content" style="display:flex;gap:20px;flex-wrap:wrap;padding:20px;">' +
+        figures + '</div></div>';
+}
+
+/* The same cost split the list screen shows, for one project. */
+function costMixPanel(categories) {
+    var total = categories.reduce(function (t, c) { return t + (c.amount || 0); }, 0);
+    if (!total) return '';
+    var live = categories.filter(function (c) { return c.amount > 0; });
+    var colours = { labour: '#4f46e5', materials: '#0ea5e9', subcontract: '#f59e0b',
+                    plant: '#8b5cf6', other: '#94a3b8' };
+    return '<div class="widget" style="margin-top:14px;">' +
+        '<div class="widget-header"><h3>Where the money went</h3></div>' +
+        '<div class="widget-content" style="padding:20px;">' +
+        '<div style="display:flex;height:12px;border-radius:6px;overflow:hidden;margin-bottom:12px;">' +
+        live.map(function (c) {
+            return '<div title="' + esc(c.label) + '" style="width:' +
+                (c.amount / total * 100) + '%;background:' +
+                (colours[c.key] || '#94a3b8') + ';"></div>';
+        }).join('') + '</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:16px;">' +
+        live.map(function (c) {
+            return '<div style="font-size:0.8rem;">' +
+                '<span style="display:inline-block;width:9px;height:9px;border-radius:2px;' +
+                'background:' + (colours[c.key] || '#94a3b8') + ';margin-right:6px;"></span>' +
+                esc(c.label) + ' <strong>' + formatCurrency(c.amount) + '</strong> ' +
+                '<span style="color:var(--text-secondary);">' +
+                Math.round(c.amount / total * 100) + '%</span></div>';
+        }).join('') + '</div></div></div>';
+}
+
 function figure(label, value, tone) {
     return '<div style="flex:1;min-width:150px;">' +
         '<div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;' +
@@ -191,36 +227,58 @@ function renderProjectCosts(r) {
         '<button class="btn btn-outline" onclick="showView(\'costs-view\');loadCosts()">Back</button>' +
         '</div>';
 
-    var money = '<div class="widget" style="margin-top:14px;"><div class="widget-content" ' +
-        'style="display:flex;gap:20px;flex-wrap:wrap;padding:20px;">' +
-        figure('Sold', formatCurrency(r.sold)) +
-        figure('Budgeted cost', formatCurrency(r.budgeted_cost)) +
-        figure('Committed to suppliers', formatCurrency(r.committed)) +
-        figure('Subcontracted', formatCurrency(r.subcontracted)) +
-        figure('Margin', formatCurrency(r.margin) + ' <span style="font-size:0.85rem;' +
-               'font-weight:400;color:var(--text-secondary);">' + r.margin_percent + '%</span>', tone) +
-        '</div></div>';
+    // Where the job ends up, if nothing else changes.
+    var money = panel('The contract',
+        figure('Contract value', formatCurrency(r.contract_value)) +
+        figure('Estimate', formatCurrency(r.estimate)) +
+        figure('Forecast cost', formatCurrency(r.forecast_cost),
+               r.over_budget > 0 ? 'var(--danger-color)' : null) +
+        figure('Forecast margin', formatCurrency(r.margin) + ' <span style="font-size:0.85rem;' +
+               'font-weight:400;color:var(--text-secondary);">' + r.margin_percent + '%</span>', tone));
 
-    var billing = '<div class="widget" style="margin-top:14px;"><div class="widget-content" ' +
-        'style="display:flex;gap:20px;flex-wrap:wrap;padding:20px;">' +
-        figure('Billed', formatCurrency(r.billed)) +
+    // Incurred and committed stay apart here too: one is owed, the other only
+    // promised, and the gap between them is what the job has still to spend.
+    var progress = panel('Where the cost has got to',
+        figure('Incurred', formatCurrency(r.incurred)) +
+        figure('Labour', formatCurrency(r.labour) + ' <span style="font-size:0.85rem;' +
+               'font-weight:400;color:var(--text-secondary);">' + r.labour_hours + ' hrs</span>') +
+        figure('Committed', formatCurrency(r.commitment)) +
+        figure('Cost to complete', formatCurrency(r.cost_to_complete)) +
+        figure('Complete', r.percent_complete + '%'));
+
+    var billing = panel('The customer side',
+        figure('Invoiced', formatCurrency(r.invoiced)) +
+        figure('Earned by the work', formatCurrency(r.earned)) +
+        figure(r.over_billed >= 0 ? 'Invoiced ahead by' : 'Work not yet billed',
+               formatCurrency(Math.abs(r.over_billed)),
+               Math.abs(r.over_billed) >= 1
+                   ? (r.over_billed > 0 ? 'var(--warning-color)' : 'var(--text-secondary)')
+                   : null) +
+        figure('Owed to us', formatCurrency(r.outstanding)) +
+        figure('Retention held', formatCurrency(r.retention_held) +
+               (r.retention_percent
+                   ? ' <span style="font-size:0.85rem;font-weight:400;color:var(--text-secondary);">'
+                     + r.retention_percent + '%</span>' : '')));
+
+    var supplier = panel('Owed to suppliers',
+        figure('Billed to us', formatCurrency(r.billed)) +
         figure('Paid', formatCurrency(r.paid)) +
         figure('Unpaid', formatCurrency(r.unpaid),
                r.unpaid ? 'var(--warning-color)' : null) +
-        figure('Invoiced out', formatCurrency(r.invoiced)) +
-        figure('Awaiting approval', String(r.bills_awaiting_approval)) +
-        '</div></div>';
+        figure('Awaiting approval', String(r.bills_awaiting_approval)));
+
+    var mix = costMixPanel(r.categories || []);
 
     var warn = r.over_budget > 0
         ? '<div class="widget" style="margin-top:14px;border-left:3px solid var(--danger-color);">' +
           '<div class="widget-content" style="padding:16px 20px;">' +
           '<strong style="color:var(--danger-color);">' + formatCurrency(r.over_budget) +
-          ' more committed than budgeted.</strong> <span style="color:var(--text-secondary);">' +
-          'What has been promised to suppliers and subcontractors is above what the ' +
-          'budget said this work would take.</span></div></div>'
+          ' over the estimate.</strong> <span style="color:var(--text-secondary);">' +
+          'What this job has already cost, plus what is still promised to suppliers ' +
+          'and subcontractors, is above what it was estimated to take.</span></div></div>'
         : '';
 
-    host.innerHTML = head + money + billing + warn +
+    host.innerHTML = head + money + warn + progress + mix + billing + supplier +
         docTable('Work orders  ·  what was sold',
             [['Number', 0], ['Status', 0], ['Approval', 0], ['Value', 1]],
             (r.work_order_list || []).map(function (w) {
