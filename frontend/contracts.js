@@ -114,6 +114,12 @@ window.saveCustomer = saveCustomer;
 
 var INQUIRY = { rows: [], filter: 'all' };
 
+/* Whether this person may sign a work order off. The owner always may; anyone
+   else needs the right granted to them by name. */
+function canApprove() {
+    return typeof can !== 'function' || can('workorders.approve');
+}
+
 async function loadInquiry() {
     var body = document.getElementById('inquiry-body');
     if (!body) return;
@@ -189,10 +195,16 @@ function renderInquiry() {
             actions = '<button class="btn btn-sm btn-primary" onclick="placeOrder(' +
                 r.id + ')">Place order</button>';
         } else if (r.can_approve) {
-            actions = '<button class="btn btn-sm btn-primary" onclick="mdDecide(' +
-                r.id + ',true)">Approve</button> ' +
-                '<button class="btn btn-sm btn-outline" onclick="mdDecide(' +
-                r.id + ',false)">Send back</button>';
+            // The sign-off is its own right, held by whoever the business
+            // treats as the MD. Somebody who can only raise work orders sees
+            // that this one is waiting rather than a button that would be
+            // refused - and, more to the point, cannot approve their own.
+            actions = canApprove()
+                ? '<button class="btn btn-sm btn-primary" onclick="mdDecide(' +
+                  r.id + ',true)">Approve</button> ' +
+                  '<button class="btn btn-sm btn-outline" onclick="mdDecide(' +
+                  r.id + ',false)">Send back</button>'
+                : '<span class="muted">With the MD</span>';
         } else if (!r.budgeted) {
             // Placed, but with no cost behind it, so that is what it is short
             // of and what the row offers.

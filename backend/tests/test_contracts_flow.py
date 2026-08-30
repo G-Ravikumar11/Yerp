@@ -230,3 +230,77 @@ def test_projects_counted_before_the_customer_existed_still_count(tenant):
     make_customer(tenant, name="Latecomer Ltd")
     rows = tenant.get("/api/customers?q=latecomer").json()["customers"]
     assert rows[0]["projects"] == 1
+
+
+# --- who may do what -------------------------------------------------------
+#
+# The contracts screens were reachable only by the account holder, and the
+# sign-off was gated on the same right that lets somebody build the order.
+# These pin both down.
+
+from conftest import make_employee
+
+
+def staff_session(tenant, portal, role):
+    """An employee of this tenancy, signed in on their own browser."""
+    import uuid
+    email = "crew-%s@example.com" % uuid.uuid4().hex[:8]
+    make_employee(tenant, email=email, password="Crew1234",
+                  permission_role=role, status="active")
+    res = portal.post("/api/employee/auth/login",
+                      json={"email": email, "password": "Crew1234"})
+    assert res.status_code == 200, res.text
+    return portal
+
+
+def test_a_manager_can_add_a_customer(tenant, portal):
+    crew = staff_session(tenant, portal, "manager")
+    res = crew.post("/api/customers", json={"name": "Bridgeworks Ltd"})
+    assert res.status_code == 200, res.text
+    assert res.json()["code"] == "CUST-0001"
+
+
+def test_staff_cannot_add_a_customer(tenant, portal):
+    crew = staff_session(tenant, portal, "staff")
+    assert crew.post("/api/customers", json={"name": "Sneaky Ltd"}).status_code == 403
+
+
+def test_anyone_signed_in_can_read_the_customer_list(tenant, portal):
+    """Picking the customer a project is for needs the list; hiding it would
+    only mean the name gets retyped, and retyped differently."""
+    make_customer(tenant)
+    crew = staff_session(tenant, portal, "staff")
+    res = crew.get("/api/customers")
+    assert res.status_code == 200
+    assert [c["name"] for c in res.json()["customers"]] == ["Fairview Homes"]
+
+
+def test_building_a_work_order_does_not_carry_the_right_to_approve_it(tenant, portal):
+    """The whole point of the step. A manager raises and budgets the order;
+    signing it off is somebody else's decision."""
+    wo = build_order(tenant)
+    crew = staff_session(tenant, portal, "manager")
+    res = crew.post("/api/erp/inquiry/%d/md-approval" % wo["id"], json={"approve": True})
+    assert res.status_code == 403
+    assert "MD sign-off" in res.json()["detail"]
+
+
+def test_the_right_can_be_granted_to_one_person(tenant, portal):
+    wo = build_order(tenant)
+    import uuid
+    email = "md-%s@example.com" % uuid.uuid4().hex[:8]
+    emp = make_employee(tenant, email=email, password="Crew1234",
+                        permission_role="manager", status="active")
+    tenant.put("/api/employees/%d" % emp["id"],
+               json={"extra_permissions": "workorders.approve"})
+    assert portal.post("/api/employee/auth/login",
+                       json={"email": email, "password": "Crew1234"}).status_code == 200
+    res = portal.post("/api/erp/inquiry/%d/md-approval" % wo["id"], json={"approve": True})
+    assert res.status_code == 200, res.text
+    assert res.json()["work_order"]["approval_status"] == "approved"
+
+
+def test_the_owner_needs_no_grant(tenant):
+    wo = build_order(tenant)
+    assert tenant.post("/api/erp/inquiry/%d/md-approval" % wo["id"],
+                       json={"approve": True}).status_code == 200

@@ -4699,10 +4699,18 @@ var portalUser = { type: '', name: '', email: '', permissions: [], employeeId: n
 
 // The owner is not an employee row and so has no permission role. They own the
 // tenancy, so they hold everything.
+/* Everything, because the account holder holds everything.
+   This list had drifted: the Contracts rights were added on the server and
+   never here, so can('items.manage') was false for the owner. That is why the
+   contracts screens carry no data-perm - gating them would have hidden them
+   from the one person guaranteed to be allowed in. Anything added to
+   PORTAL_PERMISSIONS belongs here too. */
 var OWNER_PERMISSIONS = [
     'self.service', 'bills.submit', 'bills.approve', 'bills.view_all', 'bills.pay',
     'invoices.manage', 'reports.view', 'attendance.view_team', 'leave.approve',
-    'people.manage', 'payroll.manage', 'recruitment.manage'
+    'people.manage', 'payroll.manage', 'recruitment.manage',
+    'items.manage', 'workorders.manage', 'workorders.approve',
+    'customers.manage', 'subcontracts.approve'
 ];
 
 function can(permission) {
@@ -6458,11 +6466,12 @@ window.deleteContact = deleteContact;
 // REPORTS MODULE
 // ============================================================
 function showReportsTab(tab) {
-    ['reports-content', 'reports-pl-content', 'reports-bs-content', 'reports-cash-content'].forEach(function(id) {
+    ['reports-content', 'reports-pl-content', 'reports-bs-content', 'reports-cash-content',
+     'reports-aged-content'].forEach(function(id) {
         var el = document.getElementById(id);
         if (el) el.style.display = 'none';
     });
-    ['rpt-pl-btn', 'rpt-bs-btn', 'rpt-cash-btn'].forEach(function(id) {
+    ['rpt-pl-btn', 'rpt-bs-btn', 'rpt-cash-btn', 'rpt-aged-btn'].forEach(function(id) {
         var el = document.getElementById(id);
         if (el) { el.style.fontWeight = 'normal'; el.classList.remove('btn-primary'); el.classList.add('btn-outline'); }
     });
@@ -6475,6 +6484,9 @@ function showReportsTab(tab) {
     } else if (tab === 'cash') {
         var el = document.getElementById('reports-cash-content'); if (el) el.style.display = 'block';
         var btn = document.getElementById('rpt-cash-btn'); if (btn) { btn.style.fontWeight = '700'; }
+    } else if (tab === 'aged') {
+        var el = document.getElementById('reports-aged-content'); if (el) el.style.display = 'block';
+        var btn = document.getElementById('rpt-aged-btn'); if (btn) { btn.style.fontWeight = '700'; }
     } else {
         var el = document.getElementById('reports-content'); if (el) el.style.display = 'block';
     }
@@ -6602,6 +6614,63 @@ async function loadCashSummary() {
     } catch(e) { if (body) body.innerHTML = '<div style="padding:16px;color:var(--danger-color);">Failed to load cash summary</div>'; }
 }
 window.loadCashSummary = loadCashSummary;
+
+
+var AGED_BUCKETS = [
+    ['current', 'Not yet due'], ['1_30', '1 - 30 days'], ['31_60', '31 - 60 days'],
+    ['61_90', '61 - 90 days'], ['over_90', 'Over 90 days']
+];
+
+async function loadAgedReceivables() {
+    showReportsTab('aged');
+    var body = document.getElementById('aged-report-body');
+    var rows = document.getElementById('aged-report-rows');
+    if (body) body.innerHTML = '<div style="padding:16px;color:var(--text-secondary);">Loading...</div>';
+    try {
+        var res = await fetch('/api/reports/aged-receivables', { credentials: 'same-origin' });
+        if (!res.ok) throw new Error('Failed');
+        var data = await res.json();
+    } catch (e) {
+        if (body) body.innerHTML = '<div style="padding:16px;color:var(--text-secondary);">Could not load the report.</div>';
+        return;
+    }
+
+    var buckets = data.buckets || {};
+    if (body) {
+        body.innerHTML = '<div class="grid-5" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;">' +
+            AGED_BUCKETS.map(function (b) {
+                // The oldest column is the one that matters, so it is the one
+                // that is coloured; the rest stay quiet.
+                var late = b[0] === 'over_90' && (buckets[b[0]] || 0) > 0;
+                return '<div style="text-align:center;padding:18px;">' +
+                    '<div style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:6px;">' + b[1] + '</div>' +
+                    '<div style="font-size:1.25rem;font-weight:700;' +
+                    (late ? 'color:var(--danger-color);' : '') + '">' +
+                    formatCurrency(buckets[b[0]] || 0) + '</div></div>';
+            }).join('') + '</div>' +
+            '<p style="text-align:center;margin-top:8px;font-size:0.85rem;color:var(--text-secondary);">' +
+            'Total outstanding <strong>' + formatCurrency(data.total_outstanding || 0) + '</strong></p>';
+    }
+
+    var list = data.invoices || [];
+    if (rows) {
+        rows.innerHTML = !list.length
+            ? '<div style="padding:16px;color:var(--text-secondary);">Nothing outstanding.</div>'
+            : '<div class="table-responsive"><table class="data-table"><thead><tr>' +
+              '<th>Invoice</th><th>Customer</th><th>Due</th>' +
+              '<th class="text-right">Days late</th><th class="text-right">Outstanding</th>' +
+              '</tr></thead><tbody>' +
+              list.map(function (r) {
+                  return '<tr><td><strong>' + esc(r.number) + '</strong></td>' +
+                      '<td>' + esc(r.contact || '') + '</td>' +
+                      '<td>' + esc(r.due_date || '') + '</td>' +
+                      '<td class="text-right"' + (r.days_overdue > 90 ? ' style="color:var(--danger-color);font-weight:600;"' : '') +
+                      '>' + (r.days_overdue || 0) + '</td>' +
+                      '<td class="text-right">' + formatCurrency(r.outstanding, r.currency) + '</td></tr>';
+              }).join('') + '</tbody></table></div>';
+    }
+}
+window.loadAgedReceivables = loadAgedReceivables;
 
 
 // --- FUTURISTIC CHARTS ---

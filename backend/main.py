@@ -5786,7 +5786,9 @@ def backfill_customer_codes(db, client_id) -> bool:
 
 @app.get("/api/customers")
 def list_customers(request: Request, q: str = "", db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    # Reading is open to the tenancy: anyone starting a project has to pick
+    # the customer it is for, and hiding the list would only mean retyping.
+    client = require_items_access(request, db, None)
     backfill_customer_codes(db, client.id)
     query = db.query(models.DBContact).filter(models.DBContact.client_id == client.id)
     if q:
@@ -5799,7 +5801,7 @@ def list_customers(request: Request, q: str = "", db: Session = Depends(get_db))
 
 @app.post("/api/customers")
 def create_customer(body: CustomerIn, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "customers.manage")
     name = (body.name or "").strip()
     if not name:
         raise HTTPException(400, "A customer name is required")
@@ -5829,7 +5831,7 @@ def create_customer(body: CustomerIn, request: Request, db: Session = Depends(ge
 @app.put("/api/customers/{customer_id}")
 def update_customer(customer_id: int, body: CustomerIn, request: Request,
                     db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "customers.manage")
     contact = db.query(models.DBContact).filter(
         models.DBContact.id == customer_id,
         models.DBContact.client_id == client.id).first()
@@ -5918,7 +5920,7 @@ def erp_md_approval(wo_id: int, body: MDDecision, request: Request,
     ladder - but it is written to the same approval history, so a work order
     has one story regardless of which route the signature came by.
     """
-    client = require_items_access(request, db, "workorders.manage")
+    client = require_items_access(request, db, "workorders.approve")
     wo = work_order_or_404(db, client.id, wo_id)
 
     if body.approve and not db.query(models.DBBomLine).filter(
@@ -8964,8 +8966,15 @@ PORTAL_PERMISSIONS = [
      "label": "Maintain the item master of material and finished goods codes"},
     {"key": "workorders.manage", "group": "Contracts",
      "label": "Raise work orders and allocate their budgets"},
+    {"key": "customers.manage", "group": "Contracts",
+     "label": "Add and edit customers"},
     {"key": "subcontracts.approve", "group": "Contracts",
      "label": "Approve subcontract work orders for execution"},
+    # Deliberately not part of any preset below except the owner's. Whoever
+    # holds it signs off work that somebody else priced, and a right that
+    # arrives with a job title is one nobody remembers deciding to give.
+    {"key": "workorders.approve", "group": "Contracts",
+     "label": "Give final approval on a work order (MD sign-off)"},
 ]
 PERMISSION_KEYS = {p["key"] for p in PORTAL_PERMISSIONS}
 
@@ -8997,7 +9006,7 @@ PERMISSION_ROLES = [
                         "bills.view_all", "attendance.view_team",
                         "leave.approve", "reports.view",
                         "items.manage", "workorders.manage",
-                        "subcontracts.approve"],
+                        "customers.manage", "subcontracts.approve"],
     },
     {
         "code": "finance",
@@ -9007,7 +9016,7 @@ PERMISSION_ROLES = [
         "permissions": ["self.service", "bills.submit", "bills.approve",
                         "bills.view_all", "bills.pay", "invoices.manage",
                         "reports.view", "items.manage", "workorders.manage",
-                        "subcontracts.approve"],
+                        "customers.manage", "subcontracts.approve"],
     },
     {
         "code": "hr_admin",

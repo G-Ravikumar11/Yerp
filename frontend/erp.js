@@ -313,6 +313,25 @@ async function validateItemSheet(kind) {
 }
 window.validateItemSheet = validateItemSheet;
 
+
+async function validateBomSheet() {
+    // Same shape as the item check: read the file, say what is wrong with it,
+    // and change nothing. The endpoint has been here since the budget upload
+    // was written; nothing had ever offered it.
+    var id = parseInt(document.getElementById('bom-wo-id').value);
+    var r = await postSheet('/api/erp/bom/validate', 'bom-file',
+                            { work_order_id: id, sheet: chosenSheet('bom-sheet') });
+    if (!r) return;
+    document.getElementById('bom-result').innerHTML = sheetIssues(r) +
+        '<p style="font-size:0.78rem;color:var(--text-secondary);">' +
+        r.total_rows + ' row(s) read' +
+        (r.total_cost ? ' · budgeted cost ' + formatCurrency(r.total_cost) : '') +
+        '</p>';
+    showToast(r.ok ? 'Validation passed' : (r.errors || []).length + ' error(s)',
+              r.ok ? 'success' : 'error');
+}
+window.validateBomSheet = validateBomSheet;
+
 async function uploadItemSheet(kind) {
     var r = await postSheet('/api/erp/items/upload', kind.toLowerCase() + '-file', { kind: kind });
     if (!r) return;

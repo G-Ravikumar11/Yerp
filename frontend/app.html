@@ -28,8 +28,8 @@
         }}
       };
     </script>
-    <link rel="stylesheet" href="styles.css?v=60">
-    <link rel="stylesheet" href="mobile.css?v=60">
+    <link rel="stylesheet" href="styles.css?v=61">
+    <link rel="stylesheet" href="mobile.css?v=61">
 </head>
 <body>
     <!-- Held back until the boot confirms who is signed in. See #boot-gate. -->
@@ -121,8 +121,8 @@
                         <div class="nav-group-items" id="nav-items-costs">
                             <a href="#" class="nav-item" id="nav-bills" onclick="event.preventDefault();showView('bills-view')">Bills</a>
                             <a href="#" class="nav-item" id="nav-orders" onclick="event.preventDefault();showView('orders-view')">Purchase Orders</a>
-                            <a href="#" class="nav-item" id="nav-items" onclick="event.preventDefault();showView('items-view')">Item Master</a>
-                            <a href="#" class="nav-item" id="nav-workorders" onclick="event.preventDefault();showView('workorders-view')">Work Orders</a>
+                            <a href="#" class="nav-item" id="nav-items" data-perm="items.manage" onclick="event.preventDefault();showView('items-view')">Item Master</a>
+                            <a href="#" class="nav-item" id="nav-workorders" data-perm="workorders.manage" onclick="event.preventDefault();showView('workorders-view')">Work Orders</a>
                         </div>
                     </div>
 
@@ -136,8 +136,8 @@
                             Contracts <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
                         <div class="nav-group-items" id="nav-items-contracts">
-                            <a href="#" class="nav-item" id="nav-customers" onclick="event.preventDefault();showView('customers-view')">Customers</a>
-                            <a href="#" class="nav-item" id="nav-inquiry" onclick="event.preventDefault();showView('inquiry-view')">Work Order Inquiry</a>
+                            <a href="#" class="nav-item" id="nav-customers" data-perm="customers.manage" onclick="event.preventDefault();showView('customers-view')">Customers</a>
+                            <a href="#" class="nav-item" id="nav-inquiry" data-perm="workorders.manage" onclick="event.preventDefault();showView('inquiry-view')">Work Order Inquiry</a>
                             <a href="#" class="nav-item" id="nav-viewer" onclick="event.preventDefault();showView('viewer-view')">Open a file</a>
                             <a href="#" class="nav-item" id="nav-subcontracts" onclick="event.preventDefault();showView('subcontracts-view')">Subcontract Orders</a>
                         </div>
@@ -968,6 +968,7 @@
                             <button class="btn btn-outline" id="rpt-pl-btn" onclick="loadProfitLoss()" style="font-weight:600;">Profit & Loss</button>
                             <button class="btn btn-outline" id="rpt-bs-btn" onclick="loadBalanceSheet()">Balance Sheet</button>
                             <button class="btn btn-outline" id="rpt-cash-btn" onclick="loadCashSummary()">Cash Summary</button>
+                            <button class="btn btn-outline" id="rpt-aged-btn" onclick="loadAgedReceivables()">Aged Receivables</button>
                         </div>
                     </div>
                     <div id="reports-content">
@@ -982,6 +983,16 @@
                                 <div class="widget-header"><h3>Invoice Status</h3></div>
                                 <div class="widget-content" id="reports-status-chart"></div>
                             </section>
+                        </div>
+                    </div>
+                    <div id="reports-aged-content" style="display:none;">
+                        <div class="glass-widget" style="margin-bottom:24px;">
+                            <div class="widget-header"><h3>Outstanding by age</h3></div>
+                            <div class="widget-content" id="aged-report-body"></div>
+                        </div>
+                        <div class="glass-widget">
+                            <div class="widget-header"><h3>Every unpaid invoice, oldest first</h3></div>
+                            <div class="widget-content" id="aged-report-rows"></div>
                         </div>
                     </div>
                     <div id="reports-pl-content" style="display:none;">
@@ -3330,6 +3341,7 @@
                 <div id="bom-result" style="margin:12px 0;"></div>
                 <div style="display:flex;gap:8px;justify-content:flex-end;">
                     <button class="btn" onclick="closeBomModal()">Cancel</button>
+                    <button class="btn" onclick="validateBomSheet()">Validate</button>
                     <button class="btn" onclick="previewBomSheet()">Preview</button>
                     <button class="btn btn-primary" onclick="commitBomPreview()">Save from preview</button>
                 </div>
@@ -3674,24 +3686,24 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=60"></script>
+    <script src="app.js?v=61"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
-    <script src="staff-portal.js?v=60"></script>
+    <script src="staff-portal.js?v=61"></script>
     <!-- Jobs, job costing and purchase orders. -->
-    <script src="jobs.js?v=60"></script>
+    <script src="jobs.js?v=61"></script>
     <!-- Item master, work orders and budget allocation. -->
-    <script src="erp.js?v=60"></script>
+    <script src="erp.js?v=61"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
-    <script src="erp-build.js?v=60"></script>
+    <script src="erp-build.js?v=61"></script>
     <!-- The spreadsheet grid the item master is entered through. -->
-    <script src="erp-grid.js?v=60"></script>
+    <script src="erp-grid.js?v=61"></script>
     <!-- Preview and correct a sheet that arrived from outside. -->
-    <script src="erp-preview.js?v=60"></script>
-    <script src="contracts.js?v=60"></script>
-    <script src="sheet-viewer.js?v=60"></script>
-    <script src="subcontracts.js?v=60"></script>
-    <script src="costs.js?v=60"></script>
+    <script src="erp-preview.js?v=61"></script>
+    <script src="contracts.js?v=61"></script>
+    <script src="sheet-viewer.js?v=61"></script>
+    <script src="subcontracts.js?v=61"></script>
+    <script src="costs.js?v=61"></script>
 
     <!-- AI Core Orb -->
     <div class="ai-core" onclick="toggleAIChat()" role="button" tabindex="0" aria-label="Open the assistant" title="Ask the assistant" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAIChat();}">
