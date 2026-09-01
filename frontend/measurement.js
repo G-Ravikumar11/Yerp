@@ -53,6 +53,7 @@ async function openMeasurementBook(woId) {
     MB = { wo: d.work_order, lines: d.lines, entries: d.entries, summary: d.summary };
     renderMeasurementBook();
     loadRaBills(woId);
+    loadStatement(woId);
     offerVariation(woId);
     loadVariations(woId);
 }
@@ -368,3 +369,79 @@ async function voAct(voId, action, needsReason) {
     if (MB.wo) openMeasurementBook(MB.wo.id);
 }
 window.voAct = voAct;
+
+/* --- The statement --------------------------------------------------------
+   One panel that answers "where are we on this order". Every figure here
+   already existed on a different screen; the point is having them in a column
+   so the subtraction between them is visible rather than done by hand.
+   -------------------------------------------------------------------------- */
+
+function stmtRow(label, value, opts) {
+    opts = opts || {};
+    return '<div style="display:flex;justify-content:space-between;gap:12px;' +
+        'padding:7px 0;' + (opts.rule ? 'border-top:1px solid var(--border-color);' : '') +
+        '"><span style="color:' + (opts.strong ? 'var(--text-primary)' : 'var(--text-secondary)') +
+        ';font-size:0.85rem;' + (opts.strong ? 'font-weight:600;' : '') + '">' +
+        esc(label) + '</span><span style="font-weight:' + (opts.strong ? '700' : '600') +
+        ';font-size:0.9rem;' + (opts.tone ? 'color:var(--' + opts.tone + '-color);' : '') +
+        '">' + value + '</span></div>';
+}
+
+async function loadStatement(woId) {
+    var box = document.getElementById('wo-statement');
+    if (!box) return;
+    var res = await fetch('/api/erp/work-orders/' + woId + '/statement',
+                          { credentials: 'include' });
+    if (!res.ok) { box.innerHTML = ''; return; }
+    var s = await res.json(), o = s.order, p = s.progress, m = s.money;
+
+    var pc = Math.max(0, Math.min(100, p.percent_complete));
+    box.innerHTML =
+        '<div class="widget"><div class="widget-header" style="display:flex;' +
+        'justify-content:space-between;align-items:center;"><h3>Where this order stands</h3>' +
+        '<a class="btn btn-sm btn-outline" href="/api/erp/work-orders/' + woId +
+        '/statement.xlsx">Download the statement</a></div>' +
+        '<div class="widget-content" style="display:grid;gap:24px;' +
+        'grid-template-columns:repeat(auto-fit,minmax(240px,1fr));padding:18px 20px;">' +
+
+        '<div>' +
+        stmtRow('Original order', formatCurrency(o.original_value)) +
+        stmtRow('Variations agreed', formatCurrency(o.variations_agreed)) +
+        stmtRow('Revised order', formatCurrency(o.revised_value), {strong: true, rule: true}) +
+        (o.variations_pending
+            ? stmtRow('Asked for, not agreed', formatCurrency(o.variations_pending),
+                      {tone: 'warning'}) : '') +
+        '</div>' +
+
+        '<div>' +
+        stmtRow('Measured to date', formatCurrency(p.measured_value)) +
+        '<div style="height:6px;background:var(--border-color);border-radius:3px;' +
+        'margin:4px 0 10px;overflow:hidden;"><div style="width:' + pc + '%;height:100%;' +
+        'background:var(--primary-color);"></div></div>' +
+        stmtRow('Left to build', formatCurrency(p.left_to_build)) +
+        (p.over_run_not_yet_varied
+            ? stmtRow('Built past the order', formatCurrency(p.over_run_not_yet_varied),
+                      {tone: 'warning'}) : '') +
+        stmtRow(pc + '% complete', '', {strong: true, rule: true}) +
+        '</div>' +
+
+        '<div>' +
+        stmtRow('Claimed on bills', formatCurrency(m.claimed)) +
+        stmtRow('Certified', formatCurrency(m.certified)) +
+        stmtRow('Paid', formatCurrency(m.paid), {strong: true}) +
+        stmtRow('Awaiting payment', formatCurrency(m.awaiting_payment),
+                {tone: m.awaiting_payment ? 'warning' : ''}) +
+        '</div>' +
+
+        '<div>' +
+        // Work already paid for in wages and material, with nothing asked for
+        // it yet. The one number on this panel worth chasing today.
+        stmtRow('Measured, not billed', formatCurrency(m.measured_not_billed),
+                {strong: true, tone: m.measured_not_billed ? 'warning' : ''}) +
+        stmtRow('Retention held', formatCurrency(m.retention_held), {rule: true}) +
+        stmtRow('TDS deducted', formatCurrency(m.tds_deducted)) +
+        '</div>' +
+
+        '</div></div>';
+}
+window.loadStatement = loadStatement;

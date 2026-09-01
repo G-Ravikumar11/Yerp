@@ -20648,6 +20648,164 @@ def delete_variation(vo_id: int, request: Request, db: Session = Depends(get_db)
     return {"ok": True, "message": "Draft removed."}
 
 
+
+
+# ============================================================================
+# THE WORK ORDER STATEMENT
+#
+# Everything this app knows about one order, reconciled down a single column:
+# what was ordered, what was agreed on top of it, what has been built, what
+# has been claimed, what has been certified, what has been paid, and what is
+# still being held back.
+#
+# Each of those numbers already existed, on a different screen. The question a
+# contractor actually asks - "where are we on this order" - could only be
+# answered by opening four of them and doing the subtraction by hand, which is
+# the same arithmetic error this app was built to stop.
+# ============================================================================
+
+def work_order_statement(db, client, wo):
+    lines = db.query(models.DBWorkOrderLine).filter(
+        models.DBWorkOrderLine.work_order_id == wo.id).order_by(
+            models.DBWorkOrderLine.id).all()
+    measured = measured_to_date(db, wo.id)
+    billed_qty = billed_qty_to_date(db, wo.id)
+
+    # Variations that were agreed are already inside the order's own value -
+    # approving one raises the lines - so the original is what is left when
+    # they are taken back off. Counting them again here would double them.
+    vos = db.query(models.DBVariationOrder).filter(
+        models.DBVariationOrder.work_order_id == wo.id).all()
+    agreed = money(sum(v.value or 0 for v in vos if (v.status or "") == "APPROVED"))
+    pending_vo = money(sum(v.value or 0 for v in vos
+                           if (v.status or "") in ("DRAFT", "SUBMITTED")))
+    revised = money(wo.total_value)
+    original = money(revised - agreed)
+
+    rows, measured_value, unbilled_value, over_run = [], 0.0, 0.0, 0.0
+    for l in lines:
+        rate = unit_rate(l.rate)
+        done = money(measured.get(l.id, 0.0))
+        claimed = money(billed_qty.get(l.id, 0.0))
+        ordered = money(l.qty)
+        measured_value += done * rate
+        unbilled_value += money(done - claimed) * rate
+        if done > ordered:
+            over_run += money(done - ordered) * rate
+        rows.append({
+            "fg_code": l.fg_code or "",
+            "description": (l.description or l.item_name or "").split("\n")[0],
+            "uom": l.uom or "", "ordered_qty": ordered, "rate": rate,
+            "ordered_value": money(ordered * rate),
+            "measured_qty": done, "measured_value": money(done * rate),
+            "billed_qty": claimed, "billed_value": money(claimed * rate),
+            "unbilled_qty": money(done - claimed),
+            "unbilled_value": money(money(done - claimed) * rate),
+            "percent_measured": round(done / ordered * 100, 1) if ordered else 0.0,
+        })
+
+    bills = db.query(models.DBRABill).filter(
+        models.DBRABill.work_order_id == wo.id,
+        models.DBRABill.status != "CANCELLED").all()
+    claimed_value = money(sum(b.this_bill or 0 for b in bills))
+    certified = money(sum(b.this_bill or 0 for b in bills
+                          if (b.status or "") in ("CERTIFIED", "PAID")))
+    paid = money(sum(b.net_payable or 0 for b in bills if (b.status or "") == "PAID"))
+    awaiting = money(sum(b.net_payable or 0 for b in bills
+                         if (b.status or "") == "CERTIFIED"))
+    retention = money(sum(b.retention_amount or 0 for b in bills
+                          if (b.status or "") in ("CERTIFIED", "PAID")))
+    tds = money(sum(b.tds_amount or 0 for b in bills if (b.status or "") == "PAID"))
+
+    return {
+        "work_order": work_order_to_dict(db, wo),
+        "lines": rows,
+        "order": {
+            "original_value": original,
+            "variations_agreed": agreed,
+            "variations_pending": pending_vo,
+            "revised_value": revised,
+        },
+        "progress": {
+            "measured_value": money(measured_value),
+            "percent_complete": round(measured_value / revised * 100, 1) if revised else 0.0,
+            "left_to_build": money(revised - measured_value),
+            "over_run_not_yet_varied": money(over_run),
+        },
+        "money": {
+            "claimed": claimed_value,
+            "certified": certified,
+            "paid": paid,
+            "awaiting_payment": awaiting,
+            "retention_held": retention,
+            "tds_deducted": tds,
+            # Built, but not yet on any bill. The number worth chasing, because
+            # it is work already paid for in wages and material.
+            "measured_not_billed": money(unbilled_value),
+        },
+        "bills": [{
+            "id": b.id, "number": b.number or "", "status": b.status or "",
+            "this_bill": money(b.this_bill), "net_payable": money(b.net_payable),
+        } for b in sorted(bills, key=lambda x: x.sequence or 0)],
+        "variations": [{
+            "id": v.id, "number": v.number or "", "status": v.status or "",
+            "value": money(v.value),
+        } for v in sorted(vos, key=lambda x: x.sequence or 0)],
+    }
+
+
+@app.get("/api/erp/work-orders/{wo_id}/statement")
+def erp_work_order_statement(wo_id: int, request: Request,
+                             db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return work_order_statement(db, client, work_order_or_404(db, client.id, wo_id))
+
+
+@app.get("/api/erp/work-orders/{wo_id}/statement.xlsx")
+def erp_work_order_statement_xlsx(wo_id: int, request: Request,
+                                  db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    wo = work_order_or_404(db, client.id, wo_id)
+    s = work_order_statement(db, client, wo)
+    o, p, m = s["order"], s["progress"], s["money"]
+
+    preamble = [
+        ("WORK ORDER STATEMENT", client.company_name or ""),
+        ("Order", wo.number or "", "Status", wo.status or ""),
+        ("Project", s["work_order"].get("job_name", "") or ""),
+        (),
+        ("Original order value", o["original_value"]),
+        ("Variations agreed", o["variations_agreed"]),
+        ("Revised order value", o["revised_value"]),
+        ("Variations asked for, not agreed", o["variations_pending"]),
+        (),
+        ("Measured to date", p["measured_value"], "Complete", "%s%%" % p["percent_complete"]),
+        ("Left to build", p["left_to_build"]),
+        ("Built past the order, not yet varied", p["over_run_not_yet_varied"]),
+        (),
+        ("Claimed on bills", m["claimed"]),
+        ("Certified", m["certified"]),
+        ("Paid", m["paid"]),
+        ("Certified, awaiting payment", m["awaiting_payment"]),
+        ("Measured but not billed", m["measured_not_billed"]),
+        ("Retention held", m["retention_held"]),
+        ("TDS deducted", m["tds_deducted"]),
+        (),
+    ]
+    headers = ("Item", "Description", "UOM", "Ordered", "Rate", "Ordered value",
+               "Measured", "Measured value", "Billed", "Billed value",
+               "Unbilled", "Unbilled value", "% measured")
+    rows = [(l["fg_code"], l["description"], l["uom"], l["ordered_qty"], l["rate"],
+             l["ordered_value"], l["measured_qty"], l["measured_value"],
+             l["billed_qty"], l["billed_value"], l["unbilled_qty"],
+             l["unbilled_value"], l["percent_measured"]) for l in s["lines"]]
+    closing = [(), ("Totals", "", "", "", "", o["revised_value"], "",
+                    p["measured_value"], "", m["claimed"], "", m["measured_not_billed"])]
+    return sheet_response(headers, rows,
+                          "statement_%s.xlsx" % (wo.number or "order").replace("/", "-"),
+                          preamble=preamble, closing=closing)
+
+
 # Serve frontend
 frontend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
 if os.path.exists(frontend_path):
