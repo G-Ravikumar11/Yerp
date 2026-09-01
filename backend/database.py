@@ -1431,6 +1431,10 @@ def ensure_columns():
                     # cannot be counted off a lorry.
                     ("purchase_order_line_items", "item_code", "TEXT DEFAULT ''"),
                     ("purchase_order_line_items", "uom", "TEXT DEFAULT ''"),
+                    # Added to an existing table, so it needs an entry here as
+                    # well as on the model - the omission that took production
+                    # down once already.
+                    ("erp_items", "reorder_level", "DOUBLE PRECISION DEFAULT 0"),
                 ):
                     conn.execute(text(
                         f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
@@ -1564,6 +1568,10 @@ def migrate_sqlite():
             add_col("bill_line_items", "po_line_id", "INTEGER")
             add_col("purchase_order_line_items", "item_code", "TEXT DEFAULT ''")
             add_col("purchase_order_line_items", "uom", "TEXT DEFAULT ''")
+            # Below this the store is running out. Named erp_items, not items -
+            # the Postgres entry said the latter and the whole stock screen
+            # 500ed on a database that already existed.
+            add_col("erp_items", "reorder_level", "FLOAT DEFAULT 0")
 
             # Create approval_chains table
             conn.execute(text("""

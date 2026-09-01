@@ -392,6 +392,8 @@ function showView(viewId) {
         'subcontracts-view': 'nav-subcontracts',
         'costs-view': 'nav-costs',
         'measurement-view': 'nav-measurement',
+        'stock-view': 'nav-stock',
+        'consume-view': 'nav-consume',
         'stores-view': 'nav-stores',
         'project-costs-view': 'nav-costs',
         'subcontract-wizard-view': 'nav-subcontracts',
@@ -449,6 +451,8 @@ function showView(viewId) {
     if (viewId === 'subcontracts-view' && typeof loadSubcontracts === 'function') loadSubcontracts();
     if (viewId === 'costs-view' && typeof loadCosts === 'function') loadCosts();
     if (viewId === 'measurement-view' && typeof loadMeasurement === 'function') loadMeasurement();
+    if (viewId === 'stock-view' && typeof loadStock === 'function') loadStock();
+    if (viewId === 'consume-view' && typeof loadConsumptionPicker === 'function') loadConsumptionPicker();
     if (viewId === 'stores-view' && typeof loadStores === 'function') loadStores();
     // The item grid is open by default now, so it is mounted on arrival
     // rather than waiting for a button that no longer has to be pressed.

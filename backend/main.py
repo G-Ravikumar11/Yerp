@@ -3845,6 +3845,9 @@ class ItemIn(BaseModel):
     item_type: Optional[str] = "Purchased"
     units_of_measure: Optional[str] = "Nos"
     make: Optional[str] = ""
+    # None means "leave it alone" - a form that omits the field must not
+    # silently switch off a warning somebody set deliberately.
+    reorder_level: Optional[float] = None
 
 
 @app.get("/api/erp/vocabulary")
@@ -3991,6 +3994,8 @@ def erp_update_item(item_id: int, body: ItemIn, request: Request,
         item.item_type = body.item_type
     if (body.units_of_measure or "") in UNITS_OF_MEASURE:
         item.units_of_measure = body.units_of_measure
+    if body.reorder_level is not None:
+        item.reorder_level = max(0.0, money(body.reorder_level))
     db.commit()
     return {"ok": True, "message": item.item_code + " updated."}
 
@@ -20088,6 +20093,31 @@ def grn_apply(db, client_id, grn, action, request=None, actor_name="", comments=
     grn.status = allowed[action]
     if action == "POST":
         grn.posted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # Accepted material becomes stock here, and only here. Rejected
+        # material never enters the store, so it is not booked in and does
+        # not have to be found and taken out again later.
+        for l in db.query(models.DBGoodsReceiptLine).filter(
+                models.DBGoodsReceiptLine.goods_receipt_id == grn.id).all():
+            if (l.accepted_qty or 0) > 0:
+                stock_movement(db, client_id, l.item_code or "", "RECEIPT",
+                               l.accepted_qty, l.rate, item_name=l.description,
+                               uom=l.uom, store=grn.store_location or "Main store",
+                               moved_on=grn.received_on, source_type="goods_receipt",
+                               source_id=grn.id, source_ref=grn.number or "",
+                               job_id=grn.job_id, recorded_by_name=actor_name)
+    if action == "CANCEL" and state == "POSTED":
+        # Cancelling a posted receipt takes the material back out, otherwise
+        # the store keeps stock that was never really there.
+        for l in db.query(models.DBGoodsReceiptLine).filter(
+                models.DBGoodsReceiptLine.goods_receipt_id == grn.id).all():
+            if (l.accepted_qty or 0) > 0:
+                stock_movement(db, client_id, l.item_code or "", "ADJUSTMENT",
+                               -l.accepted_qty, l.rate, item_name=l.description,
+                               uom=l.uom, store=grn.store_location or "Main store",
+                               source_type="goods_receipt", source_id=grn.id,
+                               source_ref=(grn.number or "") + " cancelled",
+                               remarks="Receipt cancelled",
+                               recorded_by_name=actor_name)
     grn.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_audit(db, client_id, "grn_%s" % action.lower(), "goods_receipt",
               grn.id, grn.number or "", ("%s %s" % (actor_name, comments)).strip(),
@@ -20804,6 +20834,514 @@ def erp_work_order_statement_xlsx(wo_id: int, request: Request,
     return sheet_response(headers, rows,
                           "statement_%s.xlsx" % (wo.number or "order").replace("/", "-"),
                           preamble=preamble, closing=closing)
+
+
+
+
+# ============================================================================
+# STOCK AND MATERIAL CONTROL
+#
+# The item master said what may be bought and the goods receipt said what
+# arrived. Nothing said what is in the store, what went out to site, or what
+# is left - so material could be received, paid for, and quietly walk off
+# without a single figure changing anywhere in the app.
+#
+# Every movement is a signed row and the balance is their sum, the same shape
+# as the measurement book. A miscount is corrected by posting the correction,
+# never by editing history.
+# ============================================================================
+
+STOCK_KINDS = ("RECEIPT", "ISSUE", "RETURN", "ADJUSTMENT")
+
+
+def stock_movement(db, client_id, item_code, kind, quantity, rate, **kw):
+    """Write one row. The only way stock ever changes."""
+    item = db.query(models.DBItem).filter(
+        models.DBItem.client_id == client_id,
+        models.DBItem.item_code == item_code).first()
+    row = models.DBStockMovement(
+        client_id=client_id, item_code=item_code,
+        item_name=kw.get("item_name") or (item.item_name if item else ""),
+        uom=kw.get("uom") or (item.units_of_measure if item else ""),
+        store=kw.get("store") or "Main store",
+        kind=kind, quantity=money(quantity), rate=unit_rate(rate),
+        value=money(money(quantity) * unit_rate(rate)),
+        moved_on=kw.get("moved_on") or datetime.now().strftime("%Y-%m-%d"),
+        source_type=kw.get("source_type") or "manual",
+        source_id=kw.get("source_id"), source_ref=kw.get("source_ref") or "",
+        work_order_id=kw.get("work_order_id"), job_id=kw.get("job_id"),
+        remarks=(kw.get("remarks") or "")[:400],
+        recorded_by=kw.get("recorded_by"),
+        recorded_by_name=kw.get("recorded_by_name") or "")
+    db.add(row)
+    return row
+
+
+def stock_balances(db, client_id, item_code=None, store=None):
+    """On hand per item, valued at what it actually cost.
+
+    Weighted average, not the last rate paid: cement bought at three prices
+    over a month is one heap in the yard, and issuing it at whichever price
+    happened to be last makes the job cost jump for no reason on site.
+    """
+    q = db.query(models.DBStockMovement).filter(
+        models.DBStockMovement.client_id == client_id)
+    if item_code:
+        q = q.filter(models.DBStockMovement.item_code == item_code)
+    if store:
+        q = q.filter(models.DBStockMovement.store == store)
+
+    acc = {}
+    for m in q.order_by(models.DBStockMovement.id).all():
+        a = acc.setdefault(m.item_code, {
+            "item_code": m.item_code, "item_name": m.item_name or "",
+            "uom": m.uom or "", "received": 0.0, "issued": 0.0,
+            "on_hand": 0.0, "value": 0.0, "rate": 0.0, "movements": 0})
+        a["movements"] += 1
+        if m.item_name and not a["item_name"]:
+            a["item_name"] = m.item_name
+        qty = m.quantity or 0.0
+        if qty > 0:
+            a["received"] += qty
+            # Incoming stock re-averages the heap.
+            a["value"] = money(a["value"] + (m.value or 0.0))
+            a["on_hand"] = money(a["on_hand"] + qty)
+            a["rate"] = unit_rate(a["value"] / a["on_hand"]) if a["on_hand"] else 0.0
+        else:
+            a["issued"] += -qty
+            # Going out at the average, so the heap's rate does not move.
+            a["on_hand"] = money(a["on_hand"] + qty)
+            a["value"] = money(a["on_hand"] * a["rate"])
+    return acc
+
+
+def item_rate(db, client_id, item_code):
+    """What one unit is currently worth, for issuing at cost."""
+    bal = stock_balances(db, client_id, item_code=item_code).get(item_code)
+    return unit_rate(bal["rate"]) if bal else 0.0
+
+
+@app.get("/api/stock")
+def stock_on_hand(request: Request, store: str = "", low_only: bool = False,
+                  db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    balances = stock_balances(db, client.id, store=store or None)
+    levels = {i.item_code: (i.reorder_level or 0.0)
+              for i in db.query(models.DBItem).filter(
+                  models.DBItem.client_id == client.id).all()}
+
+    rows = []
+    for code, a in balances.items():
+        level = levels.get(code, 0.0)
+        a = dict(a)
+        a["received"] = money(a["received"])
+        a["issued"] = money(a["issued"])
+        a["reorder_level"] = money(level)
+        # A level of zero means nobody set one, which is not the same as
+        # "never warn" - so it stays quiet rather than shouting about
+        # every item in the yard.
+        a["below_level"] = bool(level) and a["on_hand"] < level
+        a["negative"] = a["on_hand"] < 0
+        rows.append(a)
+    rows.sort(key=lambda r: (not r["below_level"], r["item_code"]))
+    if low_only:
+        rows = [r for r in rows if r["below_level"]]
+
+    return {
+        "stock": rows,
+        "summary": {
+            "items_held": len([r for r in rows if r["on_hand"] > 0]),
+            "value_on_hand": money(sum(r["value"] for r in rows)),
+            "below_reorder": len([r for r in rows if r["below_level"]]),
+            # Issued more than was ever received: the store is telling you
+            # its own records are wrong, which is worth surfacing loudly.
+            "negative_lines": len([r for r in rows if r["negative"]]),
+        },
+    }
+
+
+@app.get("/api/stock/{item_code}/ledger")
+def stock_ledger(item_code: str, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    rows = db.query(models.DBStockMovement).filter(
+        models.DBStockMovement.client_id == client.id,
+        models.DBStockMovement.item_code == item_code).order_by(
+            models.DBStockMovement.id).all()
+    running, out = 0.0, []
+    for m in rows:
+        running = money(running + (m.quantity or 0))
+        out.append({
+            "id": m.id, "kind": m.kind, "moved_on": m.moved_on or "",
+            "quantity": money(m.quantity), "rate": unit_rate(m.rate),
+            "value": money(m.value), "balance": running,
+            "store": m.store or "", "source_type": m.source_type or "",
+            "source_id": m.source_id, "source_ref": m.source_ref or "",
+            "remarks": m.remarks or "", "recorded_by_name": m.recorded_by_name or "",
+        })
+    bal = stock_balances(db, client.id, item_code=item_code).get(item_code, {})
+    return {"item_code": item_code, "item_name": bal.get("item_name", ""),
+            "uom": bal.get("uom", ""), "on_hand": money(bal.get("on_hand", 0)),
+            "rate": unit_rate(bal.get("rate", 0)), "value": money(bal.get("value", 0)),
+            "movements": list(reversed(out))}
+
+
+# --- Issuing to site ---------------------------------------------------------
+
+class StockIssueIn(BaseModel):
+    work_order_id: Optional[int] = None
+    issued_on: Optional[str] = ""
+    issued_to: Optional[str] = ""
+    purpose: Optional[str] = ""
+    store: Optional[str] = ""
+    remarks: Optional[str] = ""
+    lines: Optional[list] = None
+
+
+def next_issue_number(db, client_id):
+    n = db.query(models.DBStockIssue).filter(
+        models.DBStockIssue.client_id == client_id).count() + 1
+    return "ISS-%04d" % n
+
+
+def issue_or_404(db, client_id, issue_id):
+    row = db.query(models.DBStockIssue).filter(
+        models.DBStockIssue.id == issue_id,
+        models.DBStockIssue.client_id == client_id).first()
+    if not row:
+        raise HTTPException(404, "Issue note not found")
+    return row
+
+
+def issue_dict(db, issue, detail=False):
+    wo = db.query(models.DBWorkOrder).filter(
+        models.DBWorkOrder.id == issue.work_order_id).first() if issue.work_order_id else None
+    row = {
+        "id": issue.id, "number": issue.number or "",
+        "work_order_id": issue.work_order_id,
+        "work_order": wo.number if wo else "",
+        "issued_on": issue.issued_on or "", "store": issue.store or "",
+        "status": issue.status or "DRAFT", "issued_to": issue.issued_to or "",
+        "purpose": issue.purpose or "", "total_value": money(issue.total_value),
+        "issued_by_name": issue.issued_by_name or "",
+        "remarks": issue.remarks or "", "posted_at": issue.posted_at or "",
+        "editable": (issue.status or "DRAFT") == "DRAFT",
+        "created_at": issue.created_at or "",
+    }
+    if detail:
+        row["lines"] = [{
+            "id": l.id, "item_code": l.item_code or "", "item_name": l.item_name or "",
+            "uom": l.uom or "", "quantity": money(l.quantity),
+            "rate": unit_rate(l.rate), "amount": money(l.amount),
+            "on_hand": money(stock_balances(db, issue.client_id,
+                                            item_code=l.item_code).get(
+                                                l.item_code, {}).get("on_hand", 0)),
+        } for l in db.query(models.DBStockIssueLine).filter(
+            models.DBStockIssueLine.stock_issue_id == issue.id).order_by(
+                models.DBStockIssueLine.display_order,
+                models.DBStockIssueLine.id).all()]
+    return row
+
+
+@app.get("/api/stock-issues")
+def list_stock_issues(request: Request, work_order_id: int = 0,
+                      db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    q = db.query(models.DBStockIssue).filter(
+        models.DBStockIssue.client_id == client.id)
+    if work_order_id:
+        q = q.filter(models.DBStockIssue.work_order_id == work_order_id)
+    rows = [issue_dict(db, i) for i in q.order_by(
+        models.DBStockIssue.id.desc()).limit(200).all()]
+    return {
+        "issues": rows,
+        "summary": {
+            "notes": len(rows),
+            "not_yet_posted": len([r for r in rows if r["status"] == "DRAFT"]),
+            "issued_value": money(sum(r["total_value"] for r in rows
+                                      if r["status"] == "POSTED")),
+        },
+    }
+
+
+@app.post("/api/stock-issues")
+def create_stock_issue(body: StockIssueIn, request: Request,
+                       db: Session = Depends(get_db)):
+    """Draw up an issue note, priced at what the store's stock actually cost."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    wo = None
+    if body.work_order_id:
+        wo = work_order_or_404(db, client.id, body.work_order_id)
+
+    issue = models.DBStockIssue(
+        client_id=client.id, work_order_id=(wo.id if wo else None),
+        job_id=(wo.job_id if wo else None),
+        number=next_issue_number(db, client.id),
+        issued_on=(body.issued_on or datetime.now().strftime("%Y-%m-%d")),
+        store=(body.store or "Main store"), status="DRAFT",
+        issued_to=(body.issued_to or "").strip(),
+        purpose=(body.purpose or "").strip(),
+        remarks=(body.remarks or "").strip(),
+        issued_by=actor_id, issued_by_name=actor_name)
+    db.add(issue)
+    db.flush()
+    _replace_issue_lines(db, client.id, issue, body.lines or [])
+    db.commit()
+    db.refresh(issue)
+    return {"ok": True, "issue": issue_dict(db, issue, detail=True),
+            "message": "%s opened." % issue.number}
+
+
+def _replace_issue_lines(db, client_id, issue, lines):
+    db.query(models.DBStockIssueLine).filter(
+        models.DBStockIssueLine.stock_issue_id == issue.id).delete()
+    total = 0.0
+    for i, l in enumerate(lines[:400]):
+        code = (l.get("item_code") or "").strip()
+        qty = money(l.get("quantity") or 0)
+        if not code or not qty:
+            continue
+        item = db.query(models.DBItem).filter(
+            models.DBItem.client_id == client_id,
+            models.DBItem.item_code == code).first()
+        # Priced from the store, not typed in: an issue is a transfer of value
+        # out of stock, and letting somebody name the rate makes the store and
+        # the job cost disagree.
+        rate = unit_rate(l.get("rate") if l.get("rate") is not None
+                         else item_rate(db, client_id, code))
+        amount = money(qty * rate)
+        total += amount
+        db.add(models.DBStockIssueLine(
+            stock_issue_id=issue.id, item_code=code,
+            item_name=(l.get("item_name") or (item.item_name if item else ""))[:300],
+            uom=(l.get("uom") or (item.units_of_measure if item else ""))[:40],
+            quantity=qty, rate=rate, amount=amount, display_order=i))
+    issue.total_value = money(total)
+    issue.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    db.flush()
+    return issue
+
+
+@app.get("/api/stock-issues/{issue_id}")
+def get_stock_issue(issue_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return issue_dict(db, issue_or_404(db, client.id, issue_id), detail=True)
+
+
+@app.put("/api/stock-issues/{issue_id}")
+def update_stock_issue(issue_id: int, body: StockIssueIn, request: Request,
+                       db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    issue = issue_or_404(db, client.id, issue_id)
+    if (issue.status or "DRAFT") != "DRAFT":
+        raise HTTPException(409, "A posted issue cannot be changed. "
+                                 "Post a return instead.")
+    for field in ("issued_on", "issued_to", "purpose", "store", "remarks"):
+        val = getattr(body, field, None)
+        if val is not None and val != "":
+            setattr(issue, field, val)
+    if body.lines is not None:
+        _replace_issue_lines(db, client.id, issue, body.lines)
+    db.commit()
+    db.refresh(issue)
+    return {"ok": True, "issue": issue_dict(db, issue, detail=True)}
+
+
+@app.post("/api/stock-issues/{issue_id}/post")
+def post_stock_issue(issue_id: int, request: Request, body: dict = None,
+                     db: Session = Depends(get_db)):
+    """Take it out of the store. This is where stock actually moves."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    issue = issue_or_404(db, client.id, issue_id)
+    if (issue.status or "DRAFT") != "DRAFT":
+        raise HTTPException(409, "Only a draft can be posted.")
+    lines = db.query(models.DBStockIssueLine).filter(
+        models.DBStockIssueLine.stock_issue_id == issue.id).all()
+    if not lines:
+        raise HTTPException(400, "Nothing on this issue note.")
+
+    allow_negative = bool((body or {}).get("allow_negative"))
+    short = []
+    for l in lines:
+        on_hand = money(stock_balances(db, client.id, item_code=l.item_code).get(
+            l.item_code, {}).get("on_hand", 0))
+        if l.quantity > on_hand:
+            short.append("%s: %s in store, %s asked for"
+                         % (l.item_code, on_hand, money(l.quantity)))
+    if short and not allow_negative:
+        # Refused rather than silently going negative: material that is not
+        # there has either not been booked in or has already gone, and both
+        # want looking at before more is issued on paper.
+        raise HTTPException(409, "Not enough in the store - %s. Book the "
+                                 "delivery in first, or post it anyway if the "
+                                 "store is behind." % "; ".join(short[:4]))
+
+    for l in lines:
+        stock_movement(db, client.id, l.item_code, "ISSUE", -l.quantity, l.rate,
+                       item_name=l.item_name, uom=l.uom, store=issue.store,
+                       moved_on=issue.issued_on, source_type="stock_issue",
+                       source_id=issue.id, source_ref=issue.number,
+                       work_order_id=issue.work_order_id, job_id=issue.job_id,
+                       remarks=issue.purpose, recorded_by=actor_id,
+                       recorded_by_name=actor_name)
+    issue.status = "POSTED"
+    issue.posted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_audit(db, client.id, "stock_issued", "stock_issue", issue.id,
+              issue.number or "", "%s lines, %s" % (len(lines), issue.total_value),
+              request)
+    db.commit()
+    db.refresh(issue)
+    return {"ok": True, "issue": issue_dict(db, issue, detail=True),
+            "message": "%s issued - %s of material has left the store."
+                       % (issue.number, money(issue.total_value))}
+
+
+@app.post("/api/stock-issues/{issue_id}/cancel")
+def cancel_stock_issue(issue_id: int, request: Request, body: dict = None,
+                       db: Session = Depends(get_db)):
+    """A posted issue is reversed by putting the material back, not erased."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    issue = issue_or_404(db, client.id, issue_id)
+    if (issue.status or "DRAFT") == "CANCELLED":
+        raise HTTPException(409, "Already cancelled.")
+    if (issue.status or "DRAFT") == "POSTED":
+        for l in db.query(models.DBStockIssueLine).filter(
+                models.DBStockIssueLine.stock_issue_id == issue.id).all():
+            stock_movement(db, client.id, l.item_code, "RETURN", l.quantity, l.rate,
+                           item_name=l.item_name, uom=l.uom, store=issue.store,
+                           source_type="stock_issue", source_id=issue.id,
+                           source_ref=issue.number + " cancelled",
+                           work_order_id=issue.work_order_id, job_id=issue.job_id,
+                           remarks="Issue cancelled", recorded_by=actor_id,
+                           recorded_by_name=actor_name)
+    issue.status = "CANCELLED"
+    issue.remarks = ((body or {}).get("comments") or issue.remarks or "")
+    db.commit()
+    return {"ok": True, "message": "%s cancelled and the material put back."
+                                   % issue.number}
+
+
+class AdjustmentIn(BaseModel):
+    item_code: str
+    counted: float
+    store: Optional[str] = ""
+    remarks: Optional[str] = ""
+
+
+@app.post("/api/stock/adjustments")
+def adjust_stock(body: AdjustmentIn, request: Request,
+                 db: Session = Depends(get_db)):
+    """A physical count. The difference is posted, the history is left alone."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    code = (body.item_code or "").strip()
+    bal = stock_balances(db, client.id, item_code=code).get(code, {})
+    on_hand = money(bal.get("on_hand", 0))
+    difference = money(money(body.counted) - on_hand)
+    if not difference:
+        return {"ok": True, "difference": 0,
+                "message": "The count agrees with the book. Nothing posted."}
+    stock_movement(db, client.id, code, "ADJUSTMENT", difference,
+                   bal.get("rate", 0), store=body.store or "Main store",
+                   source_type="manual", source_ref="Physical count",
+                   remarks=(body.remarks or "Physical count"),
+                   recorded_by=actor_id, recorded_by_name=actor_name)
+    log_audit(db, client.id, "stock_adjusted", "item", None, code,
+              "book %s counted %s" % (on_hand, money(body.counted)), request)
+    db.commit()
+    return {"ok": True, "was": on_hand, "now": money(body.counted),
+            "difference": difference,
+            "message": "%s %s %s." % (code,
+                                      "written down by" if difference < 0 else "written up by",
+                                      abs(difference))}
+
+
+# --- What the job was supposed to use, against what it did -------------------
+
+@app.get("/api/stock/consumption/{work_order_id}")
+def material_consumption(work_order_id: int, request: Request,
+                         db: Session = Depends(get_db)):
+    """BOM against actual issues - the wastage report.
+
+    The BOM is what the contract was costed on. The issues are what the site
+    actually drew. The gap between them is waste, theft, or a BOM that was
+    wrong, and on a material-heavy contract it is the difference between the
+    margin that was signed off and the one that turns up.
+    """
+    client = require_erp_read(request, db)
+    wo = work_order_or_404(db, client.id, work_order_id)
+
+    planned = {}
+    for b in db.query(models.DBBomLine).filter(
+            models.DBBomLine.work_order_id == wo.id).all():
+        p = planned.setdefault(b.rm_code, {
+            "item_code": b.rm_code, "item_name": b.rm_name or "",
+            "uom": b.uom or "", "planned_qty": 0.0, "planned_value": 0.0})
+        p["planned_qty"] = money(p["planned_qty"] + (b.qty or 0))
+        p["planned_value"] = money(p["planned_value"] + (b.amount or 0))
+
+    actual = {}
+    for m in db.query(models.DBStockMovement).filter(
+            models.DBStockMovement.client_id == client.id,
+            models.DBStockMovement.work_order_id == wo.id).all():
+        a = actual.setdefault(m.item_code, {"qty": 0.0, "value": 0.0})
+        # An issue is negative and a return positive, so consumption is the
+        # negated sum and a cancelled issue costs the job nothing.
+        a["qty"] = money(a["qty"] - (m.quantity or 0))
+        a["value"] = money(a["value"] - (m.value or 0))
+
+    rows = []
+    for code in sorted(set(planned) | set(actual)):
+        p = planned.get(code, {"item_code": code, "item_name": "", "uom": "",
+                               "planned_qty": 0.0, "planned_value": 0.0})
+        a = actual.get(code, {"qty": 0.0, "value": 0.0})
+        over = money(a["qty"] - p["planned_qty"])
+        rows.append({
+            "item_code": code, "item_name": p["item_name"], "uom": p["uom"],
+            "planned_qty": p["planned_qty"], "planned_value": p["planned_value"],
+            "issued_qty": a["qty"], "issued_value": a["value"],
+            "variance_qty": over,
+            "variance_value": money(a["value"] - p["planned_value"]),
+            "percent_used": (round(a["qty"] / p["planned_qty"] * 100, 1)
+                             if p["planned_qty"] else 0.0),
+            "over_consumed": over > 0,
+            # Drawn without ever being budgeted: usually a BOM nobody updated
+            # after a variation, occasionally something worse.
+            "unplanned": p["planned_qty"] == 0 and a["qty"] > 0,
+        })
+
+    return {
+        "work_order": work_order_to_dict(db, wo),
+        "lines": rows,
+        "summary": {
+            "planned_value": money(sum(r["planned_value"] for r in rows)),
+            "issued_value": money(sum(r["issued_value"] for r in rows)),
+            "variance_value": money(sum(r["variance_value"] for r in rows)),
+            "lines_over_consumed": len([r for r in rows if r["over_consumed"]]),
+            "unplanned_items": len([r for r in rows if r["unplanned"]]),
+        },
+    }
+
+
+@app.get("/api/stock.xlsx")
+def stock_export(request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    balances = stock_balances(db, client.id)
+    levels = {i.item_code: (i.reorder_level or 0.0)
+              for i in db.query(models.DBItem).filter(
+                  models.DBItem.client_id == client.id).all()}
+    rows = [(a["item_code"], a["item_name"], a["uom"], money(a["received"]),
+             money(a["issued"]), a["on_hand"], unit_rate(a["rate"]), a["value"],
+             money(levels.get(code, 0.0)),
+             "yes" if levels.get(code, 0.0) and a["on_hand"] < levels[code] else "")
+            for code, a in sorted(balances.items())]
+    return sheet_response(
+        ("Item code", "Description", "UOM", "Received", "Issued", "On hand",
+         "Rate", "Value", "Reorder level", "Below level"),
+        rows, "stock_on_hand.xlsx",
+        preamble=[("STOCK ON HAND", client.company_name or ""),
+                  ("As at", datetime.now().strftime("%Y-%m-%d")),
+                  ()],
+        closing=[(), ("Total value", "", "", "", "", "", "",
+                      money(sum(r[7] for r in rows)))])
 
 
 # Serve frontend

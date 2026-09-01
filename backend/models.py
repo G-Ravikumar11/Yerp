@@ -502,6 +502,9 @@ class DBItem(Base):
     item_type = Column(String, default="Purchased")            # Purchased | Service
     units_of_measure = Column(String, default="Nos")
     make = Column(String, default="")
+    # Below this, the store is running out. Zero means nobody set one, which
+    # is not the same as "never reorder" - so it simply never warns.
+    reorder_level = Column(Float, default=0.0)
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
@@ -1979,6 +1982,101 @@ class DBVariationLine(Base):
     ordered_qty = Column(Float, default=0.0)     # what the order said before
     measured_qty = Column(Float, default=0.0)    # what the book actually holds
     extra_qty = Column(Float, default=0.0)       # what is being added
+    rate = Column(Float, default=0.0)
+    amount = Column(Float, default=0.0)
+    display_order = Column(Integer, default=0)
+
+
+# ===========================================================================
+# STOCK
+#
+# The item master said what may be bought and the goods receipt said what
+# arrived, but nothing said what is actually in the store, what went out to
+# site, or what is left. On a contract that is the difference between
+# material control and hoping.
+#
+# Every movement is a row with a signed quantity and the balance is their
+# sum - the same shape as the measurement book, and for the same reason: a
+# ledger that can be edited is not a ledger. A miscount is corrected by
+# posting the correction, so the store's history survives the fix.
+# ===========================================================================
+
+class DBStockMovement(Base):
+    __tablename__ = "stock_movements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    item_code = Column(String, nullable=False, index=True)
+    item_name = Column(String, default="")
+    uom = Column(String, default="")
+    store = Column(String, default="Main store", index=True)
+
+    # RECEIPT | ISSUE | RETURN | ADJUSTMENT
+    kind = Column(String, nullable=False, index=True)
+    # Signed: what this row does to the balance. An issue is negative, so the
+    # balance is a sum and never a subtraction somebody has to remember.
+    quantity = Column(Float, default=0.0)
+    rate = Column(Float, default=0.0)
+    value = Column(Float, default=0.0)
+
+    moved_on = Column(String, default="", index=True)
+    # Where it came from or went to, so a movement can always be traced back
+    # to the document that caused it.
+    source_type = Column(String, default="")      # goods_receipt | stock_issue | manual
+    source_id = Column(Integer, nullable=True, index=True)
+    source_ref = Column(String, default="")
+    work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+
+    remarks = Column(String, default="")
+    recorded_by = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    recorded_by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBStockIssue(Base):
+    """Material going out of the store to a site.
+
+    Issued against a work order, because material that cannot be attributed to
+    the work it was bought for is material nobody can cost.
+    """
+    __tablename__ = "stock_issues"
+    __table_args__ = (
+        UniqueConstraint('client_id', 'number', name='uq_client_issue_number'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+
+    number = Column(String, index=True)               # ISS-0001
+    issued_on = Column(String, default="")
+    store = Column(String, default="Main store")
+    # DRAFT | POSTED | CANCELLED
+    status = Column(String, default="DRAFT", index=True)
+
+    issued_to = Column(String, default="")            # the ganger who took it
+    purpose = Column(String, default="")
+    total_value = Column(Float, default=0.0)
+
+    issued_by = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    issued_by_name = Column(String, default="")
+    remarks = Column(Text, default="")
+    posted_at = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    updated_at = Column(String, default="")
+
+
+class DBStockIssueLine(Base):
+    __tablename__ = "stock_issue_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    stock_issue_id = Column(Integer, ForeignKey("stock_issues.id"), index=True)
+    item_code = Column(String, default="", index=True)
+    item_name = Column(String, default="")
+    uom = Column(String, default="")
+    quantity = Column(Float, default=0.0)
     rate = Column(Float, default=0.0)
     amount = Column(Float, default=0.0)
     display_order = Column(Integer, default=0)

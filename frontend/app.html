@@ -142,6 +142,8 @@
                             <a href="#" class="nav-item" id="nav-subcontracts" onclick="event.preventDefault();showView('subcontracts-view')">Subcontract Orders</a>
                             <a href="#" class="nav-item" id="nav-measurement" onclick="event.preventDefault();showView('measurement-view')">Measurement &amp; RA Bills</a>
                             <a href="#" class="nav-item" id="nav-stores" onclick="event.preventDefault();showView('stores-view')">Goods Receipt &amp; Match</a>
+                            <a href="#" class="nav-item" id="nav-stock" onclick="event.preventDefault();showView('stock-view')">Stock &amp; Issues</a>
+                            <a href="#" class="nav-item" id="nav-consume" onclick="event.preventDefault();showView('consume-view')">Material Used vs Costed</a>
                         </div>
                     </div>
 
@@ -1151,6 +1153,64 @@
                         <div class="modal-footer">
                             <button class="btn btn-outline" onclick="closeReceiveModal()">Cancel</button>
                             <button class="btn btn-primary" onclick="startReceipt()">Open the receipt</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="issue-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:720px;">
+                        <div class="modal-header">
+                            <h3>Issue material to site</h3>
+                            <button class="modal-close" onclick="closeIssueModal()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="form-row">
+                                <div class="form-group"><label>Against which order</label>
+                                    <select id="issue-order" class="form-control"></select></div>
+                                <div class="form-group"><label>Issued on</label>
+                                    <input type="date" id="issue-date" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Taken by</label>
+                                    <input type="text" id="issue-to" class="form-control" placeholder="The ganger who signed for it"></div>
+                                <div class="form-group"><label>What for</label>
+                                    <input type="text" id="issue-purpose" class="form-control" placeholder="Block A slab"></div>
+                            </div>
+                            <div class="table-responsive" style="max-height:260px;overflow-y:auto;">
+                                <table class="data-table">
+                                    <thead><tr><th>Item</th><th class="text-right">In store</th><th class="text-right">Rate</th><th style="width:110px;">Issue</th></tr></thead>
+                                    <tbody id="issue-lines"></tbody>
+                                </table>
+                            </div>
+                            <p id="issue-warn" style="color:var(--warning-color);font-size:0.8rem;margin-top:8px;"></p>
+                            <p style="font-size:0.9rem;margin-top:8px;">Value leaving the store: <strong id="issue-total">₹0.00</strong>
+                                <span style="color:var(--text-secondary);font-size:0.8rem;"> — priced at what the store paid, not typed in</span></p>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeIssueModal()">Cancel</button>
+                            <button class="btn btn-outline" onclick="saveIssue(false)">Save as draft</button>
+                            <button class="btn btn-primary" onclick="saveIssue(true)">Issue it now</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="ledger-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:820px;">
+                        <div class="modal-header">
+                            <h3 id="ledger-title">Stock ledger</h3>
+                            <button class="modal-close" onclick="closeLedger()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <p id="ledger-summary" style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:12px;"></p>
+                            <div class="table-responsive" style="max-height:420px;overflow-y:auto;">
+                                <table class="data-table">
+                                    <thead><tr><th>Date</th><th>Movement</th><th class="text-right">Quantity</th><th class="text-right">Rate</th><th class="text-right">Balance</th><th>Document</th><th>Remarks</th></tr></thead>
+                                    <tbody id="ledger-body"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeLedger()">Close</button>
                         </div>
                     </div>
                 </div>
@@ -3165,6 +3225,73 @@
                     </div>
                 </div>
 
+                <div id="stock-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Stock &amp; Issues</h1><p class="subtitle">What is in the store, what went to site, and what it cost</p></div>
+                        <div class="invoices-actions">
+                            <button class="btn btn-primary" onclick="showIssueModal()">Issue to site</button>
+                            <a class="btn btn-outline" href="/api/stock.xlsx">Excel</a>
+                            <button class="btn btn-outline" onclick="loadStock()">Refresh</button>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid" id="stock-stats"></div>
+
+                    <div class="widget" style="margin-top:18px;">
+                        <div class="widget-header" style="display:flex;justify-content:space-between;align-items:center;">
+                            <h3>In the store</h3>
+                            <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;font-weight:500;cursor:pointer;">
+                                <input type="checkbox" onchange="toggleLowStock(this)"> Only what is running low
+                            </label>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Item</th><th class="text-right">Received</th><th class="text-right">Issued</th><th class="text-right">On hand</th><th class="text-right">Rate</th><th class="text-right">Value</th><th></th></tr></thead>
+                                <tbody id="stock-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid" id="issue-stats" style="margin-top:24px;"></div>
+                    <div class="widget" style="margin-top:18px;">
+                        <div class="widget-header"><h3>Issue notes</h3></div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Note</th><th>Against</th><th>Taken by</th><th>Date</th><th class="text-right">Value</th><th>Status</th><th></th></tr></thead>
+                                <tbody id="issue-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="consume-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Material Used vs Costed</h1><p class="subtitle">What the contract was priced on, against what the site actually drew</p></div>
+                        <div class="invoices-actions">
+                            <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
+                        </div>
+                    </div>
+
+                    <div class="widget" style="margin-bottom:18px;">
+                        <div class="widget-content" style="padding:16px 20px;">
+                            <label style="display:block;font-size:0.85rem;font-weight:600;margin-bottom:6px;">Work order</label>
+                            <select id="consume-order" class="form-control" style="max-width:460px;" onchange="consumeChanged()"></select>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid" id="consume-stats"></div>
+
+                    <div class="widget" style="margin-top:18px;">
+                        <div class="widget-header"><h3>By material</h3></div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Item</th><th class="text-right">Costed on</th><th class="text-right">Drawn</th><th class="text-right">Difference</th><th class="text-right">Value</th><th></th></tr></thead>
+                                <tbody id="consume-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="measurement-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div><h1>Measurement &amp; RA Bills</h1><p class="subtitle">What has actually been done on site, and the running account bills that follow from it</p></div>
@@ -3921,7 +4048,8 @@
     <script src="sheet-viewer.js?v=65"></script>
     <script src="subcontracts.js?v=65"></script>
     <script src="costs.js?v=65"></script>
-    <script src="measurement.js?v=65"></script>
+    <script src="measurement.js?v=70"></script>
+    <script src="stock.js?v=70"></script>
     <script src="stores.js?v=65"></script>
 
     <!-- AI Core Orb -->
