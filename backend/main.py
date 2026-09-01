@@ -1999,6 +1999,25 @@ def list_bills(request: Request, db: Session = Depends(get_db)):
              "submitted_by_name": submitters.get(b.submitted_by, "")} for b in bills]
 
 
+def resolve_po_line_id(db, purchase_order_id, raw):
+    """The order line this bill line settles, only if it is on that order.
+
+    Accepting the number as given would let a bill claim against somebody
+    else's order, which is exactly the mismatch the match report exists to
+    catch.
+    """
+    if not raw or not purchase_order_id:
+        return None
+    try:
+        line_id = int(raw)
+    except (TypeError, ValueError):
+        return None
+    hit = db.query(models.DBPurchaseOrderLineItem).filter(
+        models.DBPurchaseOrderLineItem.id == line_id,
+        models.DBPurchaseOrderLineItem.order_id == purchase_order_id).first()
+    return hit.id if hit else None
+
+
 @app.post("/api/bills")
 def create_bill(request: Request, body: dict = None, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
@@ -2025,6 +2044,16 @@ def create_bill(request: Request, body: dict = None, db: Session = Depends(get_d
         purchase_order_id=resolve_order_id(db, client.id, body.get("purchase_order_id")),
     )
     db.add(bill)
+    db.flush()
+    for li in (body.get("line_items") or [])[:50]:
+        db.add(models.DBBillLineItem(
+            bill_id=bill.id,
+            description=(li.get("description") or "")[:500],
+            po_line_id=resolve_po_line_id(db, bill.purchase_order_id,
+                                          li.get("po_line_id")),
+            qty=float(li.get("qty") or 1),
+            price=float(li.get("price") or 0),
+            tax_rate=li.get("tax_rate") or "20%"))
     db.commit()
     db.refresh(bill)
     log_audit(db, client.id, "bill_created", "bill", bill.id, bill.number, f"Vendor: {bill.vendor_name}, Total: {bill.total}", request)
@@ -8992,6 +9021,11 @@ PORTAL_PERMISSIONS = [
     # arrives with a job title is one nobody remembers deciding to give.
     {"key": "workorders.approve", "group": "Contracts",
      "label": "Give final approval on a work order (MD sign-off)"},
+    # Receiving is its own job, done by whoever is at the gate when the lorry
+    # arrives - usually not the person who raised the order and never the one
+    # who pays the bill. Kept separate so those three signatures stay apart.
+    {"key": "stores.receive", "group": "Contracts",
+     "label": "Record goods received against a purchase order"},
 ]
 PERMISSION_KEYS = {p["key"] for p in PORTAL_PERMISSIONS}
 
@@ -9012,7 +9046,8 @@ PERMISSION_ROLES = [
         "description": "Runs a crew. Everything staff can do, plus signing off "
                        "their crew's costs, leave and attendance.",
         "permissions": ["self.service", "bills.submit", "bills.approve",
-                        "attendance.view_team", "leave.approve"],
+                        "attendance.view_team", "leave.approve",
+                        "stores.receive"],
     },
     {
         "code": "manager",
@@ -9023,7 +9058,8 @@ PERMISSION_ROLES = [
                         "bills.view_all", "attendance.view_team",
                         "leave.approve", "reports.view",
                         "items.manage", "workorders.manage",
-                        "customers.manage", "subcontracts.approve"],
+                        "customers.manage", "subcontracts.approve",
+                        "stores.receive"],
     },
     {
         "code": "finance",
@@ -11823,6 +11859,18 @@ def bill_to_employee_dict(db, b, include_chain=False):
     return row
 
 
+def order_is_committed(order):
+    """Has this order actually been agreed with anybody?
+
+    Two routes lead there: a member of staff raises one and it walks up the
+    approval chain, or the account holder raises it and marks it approved
+    themselves. Only the first was recognised, so the owner could not match a
+    bill to an order they had placed and approved on their own screen.
+    """
+    return ((order.approval_status or "none") == "approved"
+            or (order.status or "") in ("Approved", "Closed"))
+
+
 def resolve_order_id(db, client_id, order_id):
     """Check a purchase order reference before a bill is filed against it.
 
@@ -11841,7 +11889,7 @@ def resolve_order_id(db, client_id, order_id):
     ).first()
     if not order:
         raise HTTPException(status_code=404, detail="Purchase order not found")
-    if (order.approval_status or "none") != "approved":
+    if not order_is_committed(order):
         raise HTTPException(
             status_code=409,
             detail=f"{order.number} has not been approved yet, so a bill cannot be matched to it.")
@@ -11925,6 +11973,8 @@ def employee_create_bill(request: Request, body: dict = None,
         db.add(models.DBBillLineItem(
             bill_id=bill.id,
             description=(li.get("description") or "")[:500],
+            po_line_id=resolve_po_line_id(db, bill.purchase_order_id,
+                                          li.get("po_line_id")),
             qty=float(li.get("qty") or 1),
             price=float(li.get("price") or 0),
             tax_rate=li.get("tax_rate") or "20%",
@@ -12041,6 +12091,27 @@ def purchase_order_to_dict(db, o, include_chain=False):
         "created_at": o.created_at or "",
     }
     row["remaining"] = money((o.total or 0) - row["billed_total"])
+
+    # What has physically arrived, alongside what has been billed. An order
+    # showing a bill and no receipt is the one worth looking at before paying.
+    got = received_to_date(db, o.id)
+    row["received_total"] = money(sum(
+        got.get(l.id, 0.0) * (l.price or 0)
+        for l in db.query(models.DBPurchaseOrderLineItem).filter(
+            models.DBPurchaseOrderLineItem.order_id == o.id).all()))
+    row["receipt_count"] = db.query(models.DBGoodsReceipt).filter(
+        models.DBGoodsReceipt.purchase_order_id == o.id,
+        models.DBGoodsReceipt.status != "CANCELLED").count()
+    row["line_items"] = [{
+        "id": l.id, "description": l.description or "",
+        "item_code": getattr(l, "item_code", "") or "",
+        "uom": getattr(l, "uom", "") or "",
+        "qty": l.qty or 0.0, "price": l.price or 0.0,
+        "tax_rate": l.tax_rate or "",
+        "received_qty": money(got.get(l.id, 0.0)),
+    } for l in db.query(models.DBPurchaseOrderLineItem).filter(
+        models.DBPurchaseOrderLineItem.order_id == o.id).order_by(
+            models.DBPurchaseOrderLineItem.id).all()]
     if include_chain:
         row["chain"] = get_approval_chain_history("purchase_order", o.id, db)
     return row
@@ -12097,14 +12168,7 @@ def list_purchase_orders(request: Request, job_id: int = 0, status: str = "",
 def get_purchase_order(order_id: int, request: Request, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
     order = purchase_order_or_404(db, client.id, order_id)
-    row = purchase_order_to_dict(db, order, include_chain=True)
-    row["line_items"] = [
-        {"id": li.id, "description": li.description or "", "qty": li.qty or 1,
-         "price": li.price or 0, "tax_rate": li.tax_rate or "20%"}
-        for li in db.query(models.DBPurchaseOrderLineItem).filter(
-            models.DBPurchaseOrderLineItem.order_id == order.id).all()
-    ]
-    return row
+    return purchase_order_to_dict(db, order, include_chain=True)
 
 
 @app.post("/api/purchase-orders")
@@ -12120,6 +12184,8 @@ def create_purchase_order(request: Request, body: dict = None,
     for li in (body.get("line_items") or [])[:50]:
         db.add(models.DBPurchaseOrderLineItem(
             order_id=order.id, description=(li.get("description") or "")[:500],
+            item_code=(li.get("item_code") or "")[:60],
+            uom=(li.get("uom") or "")[:20],
             qty=float(li.get("qty") or 1), price=float(li.get("price") or 0),
             tax_rate=li.get("tax_rate") or "20%"))
     log_audit(db, client.id, "purchase_order_created", "purchase_order", order.id,
@@ -12187,6 +12253,8 @@ def employee_create_purchase_order(request: Request, body: dict = None,
     for li in (body.get("line_items") or [])[:50]:
         db.add(models.DBPurchaseOrderLineItem(
             order_id=order.id, description=(li.get("description") or "")[:500],
+            item_code=(li.get("item_code") or "")[:60],
+            uom=(li.get("uom") or "")[:20],
             qty=float(li.get("qty") or 1), price=float(li.get("price") or 0),
             tax_rate=li.get("tax_rate") or "20%"))
     log_audit(db, emp.client_id, "purchase_order_created", "purchase_order", order.id,
@@ -19121,6 +19189,1172 @@ def costs_by_project_xlsx(request: Request, db: Session = Depends(get_db)):
         preamble=[["Cost by project", "", "", "", "", "", "", "", "", "", "",
                    client.company_name or ""],
                   ["As at " + datetime.now().strftime("%d/%m/%Y %H:%M")], []])
+
+
+
+# ============================================================================
+# MEASUREMENT AND RUNNING ACCOUNT BILLS
+#
+# Work is measured on site, the measurements accumulate, and each bill claims
+# the difference between what has been measured to date and what has already
+# been claimed. That subtraction is the arithmetic a site office gets wrong by
+# hand every month, and it is the whole reason this exists.
+# ============================================================================
+
+RA_TRANSITIONS = {
+    "DRAFT":     {"SUBMIT": "SUBMITTED", "CANCEL": "CANCELLED"},
+    "SUBMITTED": {"CERTIFY": "CERTIFIED", "REJECT": "DRAFT", "CANCEL": "CANCELLED"},
+    "CERTIFIED": {"PAY": "PAID", "CANCEL": "CANCELLED"},
+    "PAID":      {},
+    "CANCELLED": {},
+}
+# Only a draft may be recomputed. Once it has been submitted the quantities are
+# what somebody is being asked to certify, and a bill that changes underneath
+# an approver is worse than no bill.
+RA_EDITABLE = ("DRAFT",)
+
+
+def measured_to_date(db, work_order_id):
+    """Quantity measured against each line, summed over the whole book."""
+    totals = {}
+    for m in db.query(models.DBMeasurement).filter(
+            models.DBMeasurement.work_order_id == work_order_id).all():
+        totals[m.line_id] = totals.get(m.line_id, 0.0) + (m.quantity or 0.0)
+    return totals
+
+
+def billed_qty_to_date(db, work_order_id, exclude_bill_id=None):
+    """Quantity already claimed on earlier bills.
+
+    A cancelled bill claimed nothing, so it must not hold quantity back from
+    the next one - that is how work gets measured, cancelled, and then never
+    paid for.
+    """
+    live = db.query(models.DBRABill).filter(
+        models.DBRABill.work_order_id == work_order_id,
+        models.DBRABill.status != "CANCELLED").all()
+    ids = [b.id for b in live if b.id != exclude_bill_id]
+    totals = {}
+    if not ids:
+        return totals
+    for l in db.query(models.DBRABillLine).filter(
+            models.DBRABillLine.ra_bill_id.in_(ids)).all():
+        totals[l.line_id] = totals.get(l.line_id, 0.0) + (l.this_bill_qty or 0.0)
+    return totals
+
+
+def claimable_lines(db, work_order, exclude_bill_id=None):
+    """Each ordered line with something measured that no live bill has claimed.
+
+    Returned as (position, line, measured, already billed, this claim) so the
+    caller can build rows from it without repeating the subtraction, which is
+    the one piece of arithmetic in this module that must not be written twice.
+    """
+    measured = measured_to_date(db, work_order.id)
+    billed = billed_qty_to_date(db, work_order.id, exclude_bill_id=exclude_bill_id)
+    out = []
+    for index, l in enumerate(db.query(models.DBWorkOrderLine).filter(
+            models.DBWorkOrderLine.work_order_id == work_order.id).all()):
+        done = money(measured.get(l.id, 0.0))
+        already = money(billed.get(l.id, 0.0))
+        this = money(done - already)
+        if this <= 0:                     # nothing new measured on this line
+            continue
+        out.append((index, l, done, already, this))
+    return out
+
+
+def write_ra_bill_lines(db, bill, claimable):
+    """Replace a bill's lines with what it may claim now."""
+    db.query(models.DBRABillLine).filter(
+        models.DBRABillLine.ra_bill_id == bill.id).delete()
+    for index, l, done, already, this in claimable:
+        db.add(models.DBRABillLine(
+            ra_bill_id=bill.id, line_id=l.id, fg_code=l.fg_code or "",
+            description=l.description or l.item_name or "", uom=l.uom or "",
+            ordered_qty=money(l.qty), measured_to_date=done,
+            previously_billed_qty=already, this_bill_qty=this,
+            rate=unit_rate(l.rate), amount=money(this * unit_rate(l.rate)),
+            display_order=index))
+    db.flush()
+    return recost_ra_bill(db, bill)
+
+
+def ra_bill_or_404(db, client_id, bill_id):
+    row = db.query(models.DBRABill).filter(
+        models.DBRABill.id == bill_id,
+        models.DBRABill.client_id == client_id).first()
+    if not row:
+        raise HTTPException(404, "Bill not found")
+    return row
+
+
+def recost_ra_bill(db, bill):
+    """Total the lines, then apply the deductions in the order they are made.
+
+    Retention comes off the work, tax goes on top of it, and TDS is withheld
+    from the lot. Getting that order wrong is worth real money on a large
+    bill, so it is written once, here.
+    """
+    lines = db.query(models.DBRABillLine).filter(
+        models.DBRABillLine.ra_bill_id == bill.id).all()
+    this_bill = money(sum(l.amount or 0 for l in lines))
+
+    bill.this_bill = this_bill
+    bill.gross_to_date = money(bill.previously_billed + this_bill)
+    bill.retention_amount = money(this_bill * (bill.retention_percent or 0) / 100.0)
+
+    after_retention = money(this_bill - bill.retention_amount -
+                            (bill.advance_recovery or 0) - (bill.other_deductions or 0))
+    bill.tax_amount = money(after_retention * (bill.tax_percent or 0) / 100.0)
+    bill.tds_amount = money(this_bill * (bill.tds_percent or 0) / 100.0)
+    bill.net_payable = money(after_retention + bill.tax_amount - bill.tds_amount)
+    bill.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return bill
+
+
+def ra_bill_dict(db, bill, detail=False):
+    wo = db.query(models.DBWorkOrder).filter(
+        models.DBWorkOrder.id == bill.work_order_id).first()
+    job = db.query(models.DBJob).filter(models.DBJob.id == bill.job_id).first()
+    row = {
+        "id": bill.id, "number": bill.number or "", "sequence": bill.sequence or 1,
+        "work_order_id": bill.work_order_id,
+        "work_order": wo.number if wo else "",
+        "job_id": bill.job_id, "project": ("%s %s" % (job.number, job.name)).strip() if job else "",
+        "status": bill.status or "DRAFT",
+        "period_from": bill.period_from or "", "period_to": bill.period_to or "",
+        "gross_to_date": money(bill.gross_to_date),
+        "previously_billed": money(bill.previously_billed),
+        "this_bill": money(bill.this_bill),
+        "retention_percent": bill.retention_percent or 0,
+        "retention_amount": money(bill.retention_amount),
+        "advance_recovery": money(bill.advance_recovery),
+        "other_deductions": money(bill.other_deductions),
+        "deduction_notes": bill.deduction_notes or "",
+        "tax_percent": bill.tax_percent or 0, "tax_amount": money(bill.tax_amount),
+        "tds_percent": bill.tds_percent or 0, "tds_amount": money(bill.tds_amount),
+        "net_payable": money(bill.net_payable),
+        "certified_by_name": bill.certified_by_name or "",
+        "certified_at": bill.certified_at or "", "paid_at": bill.paid_at or "",
+        "remarks": bill.remarks or "",
+        "editable": (bill.status or "DRAFT") in RA_EDITABLE,
+        "actions": sorted(RA_TRANSITIONS.get(bill.status or "DRAFT", {}).keys()),
+        "created_at": bill.created_at or "",
+    }
+    if detail:
+        row["lines"] = [{
+            "id": l.id, "line_id": l.line_id, "fg_code": l.fg_code or "",
+            "description": (l.description or "").split("\n")[0],
+            "uom": l.uom or "", "ordered_qty": money(l.ordered_qty),
+            "measured_to_date": money(l.measured_to_date),
+            "previously_billed_qty": money(l.previously_billed_qty),
+            "this_bill_qty": money(l.this_bill_qty),
+            "rate": unit_rate(l.rate), "amount": money(l.amount),
+        } for l in db.query(models.DBRABillLine).filter(
+            models.DBRABillLine.ra_bill_id == bill.id).order_by(
+                models.DBRABillLine.display_order, models.DBRABillLine.id).all()]
+    return row
+
+
+# --- The measurement book ---------------------------------------------------
+
+class MeasurementIn(BaseModel):
+    line_id: int
+    quantity: float
+    measured_on: Optional[str] = ""
+    mb_ref: Optional[str] = ""
+    remarks: Optional[str] = ""
+    witnessed_by: Optional[str] = ""
+
+
+@app.get("/api/mb/{work_order_id}")
+def measurement_book(work_order_id: int, request: Request,
+                     db: Session = Depends(get_db)):
+    """Every ordered line, with what has been measured and what is left.
+
+    The balance is the number somebody on site actually wants: how much of
+    this item is still to do.
+    """
+    client = require_erp_read(request, db)
+    wo = work_order_or_404(db, client.id, work_order_id)
+    measured = measured_to_date(db, wo.id)
+    billed = billed_qty_to_date(db, wo.id)
+
+    lines = []
+    for l in db.query(models.DBWorkOrderLine).filter(
+            models.DBWorkOrderLine.work_order_id == wo.id).all():
+        done = money(measured.get(l.id, 0.0))
+        claimed = money(billed.get(l.id, 0.0))
+        lines.append({
+            "line_id": l.id, "fg_code": l.fg_code or "",
+            "description": (l.description or l.item_name or "").split("\n")[0],
+            "uom": l.uom or "", "ordered_qty": money(l.qty),
+            "rate": unit_rate(l.rate),
+            "measured_to_date": done, "billed_to_date": claimed,
+            "unbilled": money(done - claimed),
+            "balance_to_measure": money(money(l.qty) - done),
+            "percent_measured": round(done / l.qty * 100, 1) if l.qty else 0.0,
+            "over_measured": money(done - money(l.qty)) if done > money(l.qty) else 0.0,
+        })
+
+    entries = [{
+        "id": m.id, "line_id": m.line_id, "fg_code": m.fg_code or "",
+        "measured_on": m.measured_on or "", "quantity": money(m.quantity),
+        "mb_ref": m.mb_ref or "", "remarks": m.remarks or "",
+        "recorded_by_name": m.recorded_by_name or "",
+        "witnessed_by": m.witnessed_by or "",
+        "billed": bool(m.ra_bill_id), "created_at": m.created_at or "",
+    } for m in db.query(models.DBMeasurement).filter(
+        models.DBMeasurement.work_order_id == wo.id).order_by(
+            models.DBMeasurement.id.desc()).limit(400).all()]
+
+    return {
+        "work_order": work_order_to_dict(db, wo),
+        "lines": lines, "entries": entries,
+        "summary": {
+            "ordered_value": money(wo.total_value),
+            "measured_value": money(sum(l["measured_to_date"] * l["rate"] for l in lines)),
+            "unbilled_value": money(sum(l["unbilled"] * l["rate"] for l in lines)),
+            "lines_over_measured": len([l for l in lines if l["over_measured"] > 0]),
+        },
+    }
+
+
+@app.post("/api/mb/{work_order_id}/entries")
+def record_measurement(work_order_id: int, body: MeasurementIn, request: Request,
+                       db: Session = Depends(get_db)):
+    """Write one entry into the book."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    wo = work_order_or_404(db, client.id, work_order_id)
+    if (wo.status or "") == "Draft":
+        raise HTTPException(
+            409, "Nothing is measured against an order that has not been placed.")
+
+    line = db.query(models.DBWorkOrderLine).filter(
+        models.DBWorkOrderLine.id == body.line_id,
+        models.DBWorkOrderLine.work_order_id == wo.id).first()
+    if not line:
+        raise HTTPException(404, "That line is not on this order")
+    if not body.quantity:
+        raise HTTPException(400, "A measurement of nothing is not a measurement")
+
+    entry = models.DBMeasurement(
+        client_id=client.id, work_order_id=wo.id, line_id=line.id,
+        fg_code=line.fg_code or "", quantity=money(body.quantity),
+        measured_on=(body.measured_on or datetime.now().strftime("%Y-%m-%d")),
+        mb_ref=(body.mb_ref or "").strip(), remarks=(body.remarks or "").strip(),
+        witnessed_by=(body.witnessed_by or "").strip(),
+        recorded_by=actor_id, recorded_by_name=actor_name)
+    db.add(entry)
+    log_audit(db, client.id, "measurement_recorded", "work_order", wo.id, wo.number,
+              "%s %s %s" % (line.fg_code, money(body.quantity), line.uom or ""), request)
+    db.commit()
+
+    measured = money(measured_to_date(db, wo.id).get(line.id, 0.0))
+    ordered = money(line.qty)
+    return {
+        "ok": True, "measured_to_date": measured,
+        "balance_to_measure": money(ordered - measured),
+        # Not refused: site conditions genuinely differ from the schedule, and
+        # a variation is agreed afterwards. Said plainly so nobody bills past
+        # the order without knowing they have.
+        "over_measured": money(measured - ordered) if measured > ordered else 0.0,
+        "message": ("Recorded. %s measured against %s of %s ordered."
+                    % (measured, line.fg_code, ordered)),
+    }
+
+
+@app.delete("/api/mb/entries/{entry_id}")
+def delete_measurement(entry_id: int, request: Request, db: Session = Depends(get_db)):
+    """Only while it is unbilled. Once claimed it is part of a bill's history."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    entry = db.query(models.DBMeasurement).filter(
+        models.DBMeasurement.id == entry_id,
+        models.DBMeasurement.client_id == client.id).first()
+    if not entry:
+        raise HTTPException(404, "Entry not found")
+    if entry.ra_bill_id:
+        raise HTTPException(
+            409, "This measurement has been billed. Record a correcting entry "
+                 "instead - a book that can be rubbed out is not a record.")
+    db.delete(entry)
+    db.commit()
+    return {"ok": True, "message": "Entry removed."}
+
+
+# --- Running account bills --------------------------------------------------
+
+class RABillIn(BaseModel):
+    work_order_id: int
+    period_from: Optional[str] = ""
+    period_to: Optional[str] = ""
+    retention_percent: Optional[float] = 5.0
+    advance_recovery: Optional[float] = 0.0
+    other_deductions: Optional[float] = 0.0
+    deduction_notes: Optional[str] = ""
+    tax_percent: Optional[float] = 18.0
+    tds_percent: Optional[float] = 1.0
+
+
+class RAActionIn(BaseModel):
+    comments: Optional[str] = ""
+
+
+@app.post("/api/ra-bills")
+def raise_ra_bill(body: RABillIn, request: Request, db: Session = Depends(get_db)):
+    """Draw up the next bill on an order.
+
+    Nothing is typed. The bill is what has been measured to date minus what
+    earlier bills already claimed, which is the one calculation nobody should
+    be doing on paper.
+    """
+    client, actor_id, actor_name = wo_actor(request, db)
+    wo = work_order_or_404(db, client.id, body.work_order_id)
+    if (wo.status or "") == "Draft":
+        raise HTTPException(409, "Place the order before billing against it.")
+
+    open_bill = db.query(models.DBRABill).filter(
+        models.DBRABill.work_order_id == wo.id,
+        models.DBRABill.status.in_(("DRAFT", "SUBMITTED"))).first()
+    if open_bill:
+        raise HTTPException(
+            409, "%s is still open on this order. Finish or cancel it before "
+                 "raising another - two live bills claiming the same "
+                 "measurements is how work gets paid for twice." % open_bill.number)
+
+    measured = measured_to_date(db, wo.id)
+    billed = billed_qty_to_date(db, wo.id)
+    lines = db.query(models.DBWorkOrderLine).filter(
+        models.DBWorkOrderLine.work_order_id == wo.id).all()
+
+    claimable = claimable_lines(db, wo)
+    if not claimable:
+        raise HTTPException(
+            409, "Nothing has been measured since the last bill. Record the "
+                 "work in the measurement book first.")
+
+    seq = db.query(models.DBRABill).filter(
+        models.DBRABill.work_order_id == wo.id).count() + 1
+    bill = models.DBRABill(
+        client_id=client.id, work_order_id=wo.id, job_id=wo.job_id,
+        number="%s/RA-%02d" % (wo.number or "WO", seq), sequence=seq,
+        period_from=(body.period_from or "").strip(),
+        period_to=(body.period_to or datetime.now().strftime("%Y-%m-%d")),
+        status="DRAFT",
+        previously_billed=money(sum(
+            money(billed.get(l.id, 0.0)) * unit_rate(l.rate) for l in lines)),
+        retention_percent=body.retention_percent if body.retention_percent is not None else 5.0,
+        advance_recovery=money(body.advance_recovery or 0),
+        other_deductions=money(body.other_deductions or 0),
+        deduction_notes=(body.deduction_notes or "").strip(),
+        tax_percent=body.tax_percent if body.tax_percent is not None else 18.0,
+        tds_percent=body.tds_percent if body.tds_percent is not None else 1.0)
+    db.add(bill)
+    db.flush()
+
+    write_ra_bill_lines(db, bill, claimable)
+    log_audit(db, client.id, "ra_bill_raised", "ra_bill", bill.id, bill.number,
+              "%s, %d line(s)" % (wo.number, len(claimable)), request)
+    db.commit()
+    db.refresh(bill)
+    return {"bill": ra_bill_dict(db, bill, detail=True),
+            "message": "%s drawn up for %s." % (bill.number, bill.this_bill)}
+
+
+@app.get("/api/ra-bills")
+def list_ra_bills(request: Request, work_order_id: int = 0, status: str = "",
+                  db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    q = db.query(models.DBRABill).filter(models.DBRABill.client_id == client.id)
+    if work_order_id:
+        q = q.filter(models.DBRABill.work_order_id == work_order_id)
+    if status:
+        q = q.filter(models.DBRABill.status == status.upper())
+    rows = [ra_bill_dict(db, b) for b in q.order_by(models.DBRABill.id.desc()).limit(300).all()]
+    live = [r for r in rows if r["status"] not in ("CANCELLED",)]
+    return {
+        "bills": rows,
+        "summary": {
+            "bills": len(rows),
+            "awaiting_certification": len([r for r in rows if r["status"] == "SUBMITTED"]),
+            "certified_unpaid": money(sum(r["net_payable"] for r in rows
+                                          if r["status"] == "CERTIFIED")),
+            "claimed": money(sum(r["this_bill"] for r in live)),
+            "retention_held": money(sum(r["retention_amount"] for r in live)),
+            "paid": money(sum(r["net_payable"] for r in rows if r["status"] == "PAID")),
+        },
+    }
+
+
+@app.get("/api/ra-bills/{bill_id}")
+def get_ra_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return {"bill": ra_bill_dict(db, ra_bill_or_404(db, client.id, bill_id), detail=True)}
+
+
+@app.put("/api/ra-bills/{bill_id}")
+def update_ra_bill(bill_id: int, body: RABillIn, request: Request,
+                   db: Session = Depends(get_db)):
+    """The deductions are a judgement; the quantities are not, so only the
+    deductions can be changed here."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    bill = ra_bill_or_404(db, client.id, bill_id)
+    if bill.status not in RA_EDITABLE:
+        raise HTTPException(
+            409, "%s is %s and cannot be changed." % (bill.number, bill.status.lower()))
+    if body.retention_percent is not None:
+        bill.retention_percent = body.retention_percent
+    if body.tax_percent is not None:
+        bill.tax_percent = body.tax_percent
+    if body.tds_percent is not None:
+        bill.tds_percent = body.tds_percent
+    bill.advance_recovery = money(body.advance_recovery or 0)
+    bill.other_deductions = money(body.other_deductions or 0)
+    bill.deduction_notes = (body.deduction_notes or "").strip()
+    bill.period_from = (body.period_from or bill.period_from or "").strip()
+    bill.period_to = (body.period_to or bill.period_to or "").strip()
+    recost_ra_bill(db, bill)
+    db.commit()
+    db.refresh(bill)
+    return {"bill": ra_bill_dict(db, bill, detail=True), "message": "Saved."}
+
+
+def ra_apply(db, client, bill, action, actor_id, actor_name, comments=""):
+    """One door for every state change on a bill."""
+    was = bill.status or "DRAFT"
+    allowed = RA_TRANSITIONS.get(was, {})
+    if action not in allowed:
+        raise HTTPException(
+            409, "%s is %s; it cannot be %s from there." %
+                 (bill.number, was.lower(),
+                  {"SUBMIT": "submitted", "CERTIFY": "certified", "REJECT": "sent back",
+                   "PAY": "paid", "CANCEL": "cancelled"}.get(action, action.lower())))
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if action == "SUBMIT":
+        # Redrawn from the book as it stands, because a draft can sit for days
+        # while the site corrects what it measured. Submitting the figures the
+        # draft was born with would send an approver a claim for work the book
+        # no longer says was done.
+        wo = db.query(models.DBWorkOrder).filter(
+            models.DBWorkOrder.id == bill.work_order_id).first()
+        if wo:
+            write_ra_bill_lines(db, bill, claimable_lines(
+                db, wo, exclude_bill_id=bill.id))
+        if money(bill.this_bill) <= 0:
+            raise HTTPException(
+                400, "There is nothing left to claim - the measurements behind "
+                     "this bill have been withdrawn since it was drawn up.")
+        # The measurements behind it are pinned to the bill, so a later entry
+        # cannot quietly join a claim that has already gone up for signature.
+        for line in db.query(models.DBRABillLine).filter(
+                models.DBRABillLine.ra_bill_id == bill.id).all():
+            db.query(models.DBMeasurement).filter(
+                models.DBMeasurement.work_order_id == bill.work_order_id,
+                models.DBMeasurement.line_id == line.line_id,
+                models.DBMeasurement.ra_bill_id.is_(None)).update(
+                    {"ra_bill_id": bill.id}, synchronize_session=False)
+    elif action == "REJECT":
+        if not (comments or "").strip():
+            raise HTTPException(400, "Say why it is going back, so it can be corrected.")
+        bill.remarks = (comments or "").strip()
+        db.query(models.DBMeasurement).filter(
+            models.DBMeasurement.ra_bill_id == bill.id).update(
+                {"ra_bill_id": None}, synchronize_session=False)
+    elif action == "CERTIFY":
+        bill.certified_by, bill.certified_by_name = actor_id, actor_name
+        bill.certified_at = now
+        bill.remarks = (comments or "").strip() or bill.remarks
+    elif action == "PAY":
+        bill.paid_at = now
+    elif action == "CANCEL":
+        if not (comments or "").strip():
+            raise HTTPException(400, "Say why it is being cancelled.")
+        bill.remarks = (comments or "").strip()
+        # The work was still done; it goes back to the pool for the next bill.
+        db.query(models.DBMeasurement).filter(
+            models.DBMeasurement.ra_bill_id == bill.id).update(
+                {"ra_bill_id": None}, synchronize_session=False)
+
+    bill.status = allowed[action]
+    bill.updated_at = now
+    return bill
+
+
+def _ra_action(bill_id, action, body, request, db, permission="workorders.manage"):
+    client, actor_id, actor_name = wo_actor(request, db, permission)
+    bill = ra_bill_or_404(db, client.id, bill_id)
+    ra_apply(db, client, bill, action, actor_id, actor_name, body.comments)
+    log_audit(db, client.id, "ra_bill_" + action.lower(), "ra_bill", bill.id,
+              bill.number, (body.comments or "").strip(), request)
+    db.commit()
+    db.refresh(bill)
+    return {"bill": ra_bill_dict(db, bill, detail=True),
+            "message": "%s %s." % (bill.number, bill.status.lower())}
+
+
+@app.post("/api/ra-bills/{bill_id}/submit")
+def submit_ra_bill(bill_id: int, body: RAActionIn, request: Request,
+                   db: Session = Depends(get_db)):
+    return _ra_action(bill_id, "SUBMIT", body, request, db)
+
+
+@app.post("/api/ra-bills/{bill_id}/certify")
+def certify_ra_bill(bill_id: int, body: RAActionIn, request: Request,
+                    db: Session = Depends(get_db)):
+    """Certification is a separate right: the person who measured the work
+    should not be the person who certifies payment for it."""
+    return _ra_action(bill_id, "CERTIFY", body, request, db, "subcontracts.approve")
+
+
+@app.post("/api/ra-bills/{bill_id}/reject")
+def reject_ra_bill(bill_id: int, body: RAActionIn, request: Request,
+                   db: Session = Depends(get_db)):
+    return _ra_action(bill_id, "REJECT", body, request, db, "subcontracts.approve")
+
+
+@app.post("/api/ra-bills/{bill_id}/pay")
+def pay_ra_bill(bill_id: int, body: RAActionIn, request: Request,
+                db: Session = Depends(get_db)):
+    return _ra_action(bill_id, "PAY", body, request, db, "bills.pay")
+
+
+@app.post("/api/ra-bills/{bill_id}/cancel")
+def cancel_ra_bill(bill_id: int, body: RAActionIn, request: Request,
+                   db: Session = Depends(get_db)):
+    return _ra_action(bill_id, "CANCEL", body, request, db)
+
+
+@app.get("/api/ra-bills/{bill_id}/export.xlsx")
+def ra_bill_xlsx(bill_id: int, request: Request, db: Session = Depends(get_db)):
+    """The bill as it is presented for certification."""
+    client = require_erp_read(request, db)
+    bill = ra_bill_or_404(db, client.id, bill_id)
+    d = ra_bill_dict(db, bill, detail=True)
+    rows = [[l["fg_code"], l["description"], l["uom"], l["ordered_qty"],
+             l["measured_to_date"], l["previously_billed_qty"], l["this_bill_qty"],
+             l["rate"], l["amount"]] for l in d["lines"]]
+    return sheet_response(
+        ["Item", "Description", "UOM", "Ordered", "Measured to date",
+         "Previously billed", "This bill", "Rate", "Amount"],
+        rows, "ra_bill_%s.xlsx" % re.sub(r"[^A-Za-z0-9]+", "_", d["number"]),
+        preamble=[["Running Account Bill", "", "", "", "", "", "", "", client.company_name or ""],
+                  ["No: " + d["number"] + "   (" + d["status"] + ")"],
+                  ["Work order: " + d["work_order"]],
+                  ["Project: " + d["project"]],
+                  ["Period to: " + d["period_to"]],
+                  []],
+        closing=[[], ["", "", "", "", "", "", "", "This bill", d["this_bill"]],
+                 ["", "", "", "", "", "", "", "Retention @ %s%%" % d["retention_percent"],
+                  -d["retention_amount"]],
+                 ["", "", "", "", "", "", "", "Advance recovery", -d["advance_recovery"]],
+                 ["", "", "", "", "", "", "", "Other deductions", -d["other_deductions"]],
+                 ["", "", "", "", "", "", "", "GST @ %s%%" % d["tax_percent"], d["tax_amount"]],
+                 ["", "", "", "", "", "", "", "TDS @ %s%%" % d["tds_percent"], -d["tds_amount"]],
+                 ["", "", "", "", "", "", "", "Net payable", d["net_payable"]]])
+
+
+
+# ============================================================================
+# GOODS RECEIPT AND THE THREE-WAY MATCH
+#
+# A purchase order says what was agreed. A bill says what is being charged.
+# Neither says what actually came off the lorry, and without that third number
+# nobody can tell the difference between a supplier who delivered and a
+# supplier who invoiced. The receipt note supplies it, and the match report
+# puts the three side by side.
+# ============================================================================
+
+GRN_TRANSITIONS = {
+    "DRAFT":     {"POST": "POSTED", "CANCEL": "CANCELLED"},
+    # A posted receipt is not editable. Somebody has asserted that this is what
+    # arrived, and a bill is about to be paid against it.
+    "POSTED":    {"CANCEL": "CANCELLED"},
+    "CANCELLED": {},
+}
+GRN_EDITABLE = ("DRAFT",)
+
+# A receipt may only be taken against an order that was actually placed -
+# see order_is_committed. Receiving against a draft would let material arrive
+# for something nobody ever committed to buy.
+
+
+def allocate_grn_number(db, client_id) -> str:
+    last = db.query(models.DBGoodsReceipt).filter(
+        models.DBGoodsReceipt.client_id == client_id).order_by(
+            models.DBGoodsReceipt.id.desc()).first()
+    if last and last.number:
+        try:
+            return "GRN-%04d" % (int(str(last.number).replace("GRN-", "")) + 1)
+        except (ValueError, TypeError):
+            pass
+    return "GRN-0001"
+
+
+def grn_or_404(db, client_id, grn_id):
+    row = db.query(models.DBGoodsReceipt).filter(
+        models.DBGoodsReceipt.id == grn_id,
+        models.DBGoodsReceipt.client_id == client_id).first()
+    if not row:
+        raise HTTPException(404, "Goods receipt not found")
+    return row
+
+
+def received_to_date(db, purchase_order_id, exclude_grn_id=None):
+    """Quantity accepted against each order line, over every live receipt.
+
+    Cancelled receipts are excluded: a delivery that was cancelled did not
+    arrive, and holding its quantity back would stop the replacement delivery
+    from ever being recorded.
+    """
+    live = db.query(models.DBGoodsReceipt).filter(
+        models.DBGoodsReceipt.purchase_order_id == purchase_order_id,
+        models.DBGoodsReceipt.status != "CANCELLED").all()
+    ids = [g.id for g in live if g.id != exclude_grn_id]
+    totals = {}
+    if not ids:
+        return totals
+    for l in db.query(models.DBGoodsReceiptLine).filter(
+            models.DBGoodsReceiptLine.goods_receipt_id.in_(ids)).all():
+        totals[l.po_line_id] = totals.get(l.po_line_id, 0.0) + (l.accepted_qty or 0.0)
+    return totals
+
+
+def recost_grn(db, grn):
+    lines = db.query(models.DBGoodsReceiptLine).filter(
+        models.DBGoodsReceiptLine.goods_receipt_id == grn.id).all()
+    grn.received_value = money(sum((l.received_qty or 0) * (l.rate or 0) for l in lines))
+    grn.accepted_value = money(sum((l.accepted_qty or 0) * (l.rate or 0) for l in lines))
+    grn.rejected_value = money(sum((l.rejected_qty or 0) * (l.rate or 0) for l in lines))
+    for l in lines:
+        l.amount = money((l.accepted_qty or 0) * (l.rate or 0))
+    grn.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return grn
+
+
+def grn_dict(db, grn, detail=False):
+    po = db.query(models.DBPurchaseOrder).filter(
+        models.DBPurchaseOrder.id == grn.purchase_order_id).first()
+    job = db.query(models.DBJob).filter(models.DBJob.id == grn.job_id).first()
+    row = {
+        "id": grn.id, "number": grn.number or "",
+        "purchase_order_id": grn.purchase_order_id,
+        "purchase_order": po.number if po else "",
+        "job_id": grn.job_id,
+        "project": ("%s %s" % (job.number, job.name)).strip() if job else "",
+        "supplier_name": grn.supplier_name or "",
+        "received_on": grn.received_on or "",
+        "challan_number": grn.challan_number or "",
+        "invoice_number": grn.invoice_number or "",
+        "vehicle_number": grn.vehicle_number or "",
+        "status": grn.status or "DRAFT",
+        "received_value": money(grn.received_value),
+        "accepted_value": money(grn.accepted_value),
+        "rejected_value": money(grn.rejected_value),
+        "received_by_name": grn.received_by_name or "",
+        "inspected_by": grn.inspected_by or "",
+        "store_location": grn.store_location or "",
+        "remarks": grn.remarks or "",
+        "posted_at": grn.posted_at or "",
+        "created_at": grn.created_at or "",
+        "editable": (grn.status or "DRAFT") in GRN_EDITABLE,
+        "actions": sorted(GRN_TRANSITIONS.get(grn.status or "DRAFT", {}).keys()),
+    }
+    if detail:
+        row["lines"] = [{
+            "id": l.id, "po_line_id": l.po_line_id,
+            "item_code": l.item_code or "", "description": l.description or "",
+            "uom": l.uom or "", "ordered_qty": money(l.ordered_qty),
+            "previously_received": money(l.previously_received),
+            "received_qty": money(l.received_qty),
+            "accepted_qty": money(l.accepted_qty),
+            "rejected_qty": money(l.rejected_qty),
+            "rejection_reason": l.rejection_reason or "",
+            "rate": unit_rate(l.rate), "amount": money(l.amount),
+        } for l in db.query(models.DBGoodsReceiptLine).filter(
+            models.DBGoodsReceiptLine.goods_receipt_id == grn.id).order_by(
+                models.DBGoodsReceiptLine.display_order,
+                models.DBGoodsReceiptLine.id).all()]
+    return row
+
+
+def grn_actor(request, db):
+    """The tenant plus who is at the gate, for the receipt's signature."""
+    return wo_actor(request, db, "stores.receive")
+
+
+@app.get("/api/grn/open-orders")
+def grn_open_orders(request: Request, db: Session = Depends(get_db)):
+    """Orders that still have material to come, so a storekeeper can pick one.
+
+    An order that is fully received is dropped from the list: offering it
+    invites somebody to receive the same delivery twice.
+    """
+    client = require_erp_read(request, db)
+    out = []
+    for po in db.query(models.DBPurchaseOrder).filter(
+            models.DBPurchaseOrder.client_id == client.id).order_by(
+                models.DBPurchaseOrder.id.desc()).limit(200).all():
+        if not order_is_committed(po):
+            continue
+        got = received_to_date(db, po.id)
+        lines = db.query(models.DBPurchaseOrderLineItem).filter(
+            models.DBPurchaseOrderLineItem.order_id == po.id).all()
+        pending = money(sum(max(0.0, (l.qty or 0) - got.get(l.id, 0.0)) * (l.price or 0)
+                            for l in lines))
+        if lines and pending <= 0:
+            continue
+        job = db.query(models.DBJob).filter(models.DBJob.id == po.job_id).first()
+        out.append({
+            "id": po.id, "number": po.number or "",
+            "supplier_name": po.supplier_name or "",
+            "project": ("%s %s" % (job.number, job.name)).strip() if job else "",
+            "ordered_value": money(po.total or po.amount),
+            "pending_value": pending, "line_count": len(lines),
+        })
+    return {"orders": out}
+
+
+@app.get("/api/grn")
+def list_goods_receipts(request: Request, db: Session = Depends(get_db),
+                        purchase_order_id: int = 0, status: str = ""):
+    client = require_erp_read(request, db)
+    q = db.query(models.DBGoodsReceipt).filter(
+        models.DBGoodsReceipt.client_id == client.id)
+    if purchase_order_id:
+        q = q.filter(models.DBGoodsReceipt.purchase_order_id == purchase_order_id)
+    if status:
+        q = q.filter(models.DBGoodsReceipt.status == status.upper())
+    rows = [grn_dict(db, g) for g in
+            q.order_by(models.DBGoodsReceipt.id.desc()).limit(500).all()]
+    live = [r for r in rows if r["status"] != "CANCELLED"]
+    return {
+        "goods_receipts": rows,
+        "summary": {
+            "count": len(rows),
+            "awaiting_posting": len([r for r in rows if r["status"] == "DRAFT"]),
+            "received_value": money(sum(r["received_value"] for r in live)),
+            "accepted_value": money(sum(r["accepted_value"] for r in live)),
+            "rejected_value": money(sum(r["rejected_value"] for r in live)),
+        },
+    }
+
+
+class GRNIn(BaseModel):
+    purchase_order_id: int
+    received_on: Optional[str] = ""
+    challan_number: Optional[str] = ""
+    invoice_number: Optional[str] = ""
+    vehicle_number: Optional[str] = ""
+    store_location: Optional[str] = ""
+    inspected_by: Optional[str] = ""
+    remarks: Optional[str] = ""
+
+
+@app.post("/api/grn")
+def create_goods_receipt(body: GRNIn, request: Request, db: Session = Depends(get_db)):
+    """Open a receipt against an order, pre-filled with what is still to come.
+
+    The quantities default to the outstanding balance because that is what a
+    full delivery looks like; the storekeeper's job is then to correct the
+    lines that came up short, not to type the whole order back in.
+    """
+    client, actor_id, actor_name = grn_actor(request, db)
+    po = db.query(models.DBPurchaseOrder).filter(
+        models.DBPurchaseOrder.id == body.purchase_order_id,
+        models.DBPurchaseOrder.client_id == client.id).first()
+    if not po:
+        raise HTTPException(404, "Purchase order not found")
+    if not order_is_committed(po):
+        raise HTTPException(
+            409, "Only an approved order can be received against. This one is %s."
+                 % (po.status or "Draft"))
+
+    grn = models.DBGoodsReceipt(
+        client_id=client.id, purchase_order_id=po.id, job_id=po.job_id,
+        number=allocate_grn_number(db, client.id),
+        supplier_name=po.supplier_name or "", status="DRAFT",
+        received_on=(body.received_on or datetime.now().strftime("%Y-%m-%d")),
+        challan_number=(body.challan_number or "").strip(),
+        invoice_number=(body.invoice_number or "").strip(),
+        vehicle_number=(body.vehicle_number or "").strip(),
+        store_location=(body.store_location or "").strip(),
+        inspected_by=(body.inspected_by or "").strip(),
+        remarks=(body.remarks or "").strip(),
+        received_by=actor_id, received_by_name=actor_name)
+    db.add(grn)
+    db.flush()
+
+    got = received_to_date(db, po.id)
+    order = 0
+    for l in db.query(models.DBPurchaseOrderLineItem).filter(
+            models.DBPurchaseOrderLineItem.order_id == po.id).order_by(
+                models.DBPurchaseOrderLineItem.id).all():
+        had = money(got.get(l.id, 0.0))
+        balance = money(max(0.0, (l.qty or 0) - had))
+        order += 1
+        db.add(models.DBGoodsReceiptLine(
+            goods_receipt_id=grn.id, po_line_id=l.id,
+            item_code=getattr(l, "item_code", "") or "",
+            description=(l.description or "")[:500],
+            uom=getattr(l, "uom", "") or "",
+            ordered_qty=money(l.qty), previously_received=had,
+            received_qty=balance, accepted_qty=balance, rejected_qty=0.0,
+            rate=unit_rate(l.price), amount=money(balance * (l.price or 0)),
+            display_order=order))
+    db.flush()
+    recost_grn(db, grn)
+    log_audit(db, client.id, "grn_created", "goods_receipt", grn.id, grn.number,
+              "against %s" % (po.number or ""), request)
+    db.commit()
+    db.refresh(grn)
+    return grn_dict(db, grn, detail=True)
+
+
+class GRNLineIn(BaseModel):
+    id: Optional[int] = None
+    received_qty: Optional[float] = 0.0
+    accepted_qty: Optional[float] = None
+    rejected_qty: Optional[float] = None
+    rejection_reason: Optional[str] = ""
+
+
+class GRNUpdateIn(BaseModel):
+    received_on: Optional[str] = None
+    challan_number: Optional[str] = None
+    invoice_number: Optional[str] = None
+    vehicle_number: Optional[str] = None
+    store_location: Optional[str] = None
+    inspected_by: Optional[str] = None
+    remarks: Optional[str] = None
+    lines: Optional[List[GRNLineIn]] = None
+
+
+@app.put("/api/grn/{grn_id}")
+def update_goods_receipt(grn_id: int, body: GRNUpdateIn, request: Request,
+                         db: Session = Depends(get_db)):
+    client, actor_id, actor_name = grn_actor(request, db)
+    grn = grn_or_404(db, client.id, grn_id)
+    if (grn.status or "DRAFT") not in GRN_EDITABLE:
+        raise HTTPException(
+            409, "A %s receipt cannot be changed. Cancel it and take a new one."
+                 % (grn.status or "").lower())
+
+    for field in ("received_on", "challan_number", "invoice_number",
+                  "vehicle_number", "store_location", "inspected_by", "remarks"):
+        val = getattr(body, field)
+        if val is not None:
+            setattr(grn, field, str(val).strip())
+
+    if body.lines is not None:
+        rows = {l.id: l for l in db.query(models.DBGoodsReceiptLine).filter(
+            models.DBGoodsReceiptLine.goods_receipt_id == grn.id).all()}
+        for inp in body.lines:
+            row = rows.get(inp.id)
+            if not row:
+                continue
+            received = money(max(0.0, inp.received_qty or 0.0))
+            rejected = money(max(0.0, inp.rejected_qty or 0.0))
+            # Accepted is derived when it is not given, because the two numbers
+            # have to add up to what arrived. A store that can record eight
+            # accepted and three rejected out of ten is a store whose figures
+            # nobody can use.
+            accepted = (money(inp.accepted_qty) if inp.accepted_qty is not None
+                        else money(received - rejected))
+            if accepted < 0:
+                raise HTTPException(400, "More rejected than arrived on %s"
+                                    % (row.description or row.item_code or "a line"))
+            if money(accepted + rejected) > received:
+                raise HTTPException(
+                    400, "Accepted and rejected come to more than arrived on %s"
+                         % (row.description or row.item_code or "a line"))
+            row.received_qty, row.accepted_qty, row.rejected_qty = (
+                received, accepted, rejected)
+            row.rejection_reason = (inp.rejection_reason or "")[:300]
+    recost_grn(db, grn)
+    db.commit()
+    db.refresh(grn)
+    return grn_dict(db, grn, detail=True)
+
+
+def grn_apply(db, client_id, grn, action, request=None, actor_name="", comments=""):
+    """The single door every status change goes through."""
+    state = grn.status or "DRAFT"
+    allowed = GRN_TRANSITIONS.get(state, {})
+    if action not in allowed:
+        raise HTTPException(
+            409, "A %s receipt cannot be %sed." % (state.lower(), action.lower()))
+    grn.status = allowed[action]
+    if action == "POST":
+        grn.posted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    grn.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_audit(db, client_id, "grn_%s" % action.lower(), "goods_receipt",
+              grn.id, grn.number or "", ("%s %s" % (actor_name, comments)).strip(),
+              request)
+    return grn
+
+
+@app.post("/api/grn/{grn_id}/post")
+def post_goods_receipt(grn_id: int, request: Request, db: Session = Depends(get_db)):
+    client, actor_id, actor_name = grn_actor(request, db)
+    grn = grn_or_404(db, client.id, grn_id)
+    lines = db.query(models.DBGoodsReceiptLine).filter(
+        models.DBGoodsReceiptLine.goods_receipt_id == grn.id).all()
+    if not any((l.received_qty or 0) for l in lines):
+        raise HTTPException(400, "Nothing arrived on this receipt.")
+    recost_grn(db, grn)
+    grn_apply(db, client.id, grn, "POST", request, actor_name)
+    db.commit()
+
+    # Said rather than refused: a lorry that brings more than the order is a
+    # real event, and the buyer needs to know before the bill turns up.
+    over = []
+    for l in lines:
+        total = money((l.previously_received or 0) + (l.accepted_qty or 0))
+        if total > money(l.ordered_qty or 0):
+            over.append("%s by %s" % (l.item_code or l.description or "line",
+                                      money(total - money(l.ordered_qty))))
+    msg = "%s posted. %s accepted." % (grn.number, money(grn.accepted_value))
+    if over:
+        msg += " Over the order: %s." % "; ".join(over[:4])
+    return {"ok": True, "over_received": over,
+            "goods_receipt": grn_dict(db, grn, detail=True), "message": msg}
+
+
+class GRNActionIn(BaseModel):
+    comments: Optional[str] = ""
+
+
+@app.post("/api/grn/{grn_id}/cancel")
+def cancel_goods_receipt(grn_id: int, request: Request, body: GRNActionIn = None,
+                         db: Session = Depends(get_db)):
+    """Cancelling returns the quantity, so the delivery can be recorded again."""
+    client, actor_id, actor_name = grn_actor(request, db)
+    grn = grn_or_404(db, client.id, grn_id)
+    body = body or GRNActionIn()
+    if not (body.comments or "").strip():
+        raise HTTPException(400, "Say why this receipt is being cancelled.")
+    grn_apply(db, client.id, grn, "CANCEL", request, actor_name, body.comments)
+    grn.remarks = ("%s\nCancelled: %s" % (grn.remarks or "", body.comments)).strip()
+    db.commit()
+    return {"ok": True, "message": "%s cancelled." % grn.number}
+
+
+@app.delete("/api/grn/{grn_id}")
+def delete_goods_receipt(grn_id: int, request: Request, db: Session = Depends(get_db)):
+    client, actor_id, actor_name = grn_actor(request, db)
+    grn = grn_or_404(db, client.id, grn_id)
+    if (grn.status or "DRAFT") != "DRAFT":
+        raise HTTPException(
+            409, "A posted receipt is a record of what arrived. Cancel it instead.")
+    db.query(models.DBGoodsReceiptLine).filter(
+        models.DBGoodsReceiptLine.goods_receipt_id == grn.id).delete()
+    number = grn.number
+    db.delete(grn)
+    log_audit(db, client.id, "grn_deleted", "goods_receipt", grn_id, number or "",
+              "draft discarded", request)
+    db.commit()
+    return {"ok": True, "message": "%s discarded." % number}
+
+
+@app.get("/api/grn/{grn_id}/export.xlsx")
+def export_goods_receipt(grn_id: int, request: Request, db: Session = Depends(get_db)):
+    """The receipt as a workbook, for the file the store keeps by the gate."""
+    client = require_erp_read(request, db)
+    grn = grn_or_404(db, client.id, grn_id)
+    d = grn_dict(db, grn, detail=True)
+    return sheet_response(
+        ["#", "Item code", "Description", "UOM", "Ordered", "Already received",
+         "Arrived", "Accepted", "Rejected", "Reason", "Rate", "Value"],
+        [[i, l["item_code"], l["description"], l["uom"], l["ordered_qty"],
+          l["previously_received"], l["received_qty"], l["accepted_qty"],
+          l["rejected_qty"], l["rejection_reason"], l["rate"], l["amount"]]
+         for i, l in enumerate(d["lines"], 1)],
+        "%s.xlsx" % d["number"],
+        preamble=[["GOODS RECEIPT NOTE"],
+                  ["GRN number", d["number"], "", "Purchase order", d["purchase_order"]],
+                  ["Supplier", d["supplier_name"], "", "Project", d["project"]],
+                  ["Received on", d["received_on"], "", "Challan", d["challan_number"]],
+                  ["Supplier invoice", d["invoice_number"], "",
+                   "Vehicle", d["vehicle_number"]],
+                  ["Store", d["store_location"], "", "Status", d["status"]],
+                  ["Received by", d["received_by_name"], "",
+                   "Inspected by", d["inspected_by"]],
+                  []],
+        closing=[[],
+                 ["", "", "", "", "", "", "", "", "", "", "Arrived", d["received_value"]],
+                 ["", "", "", "", "", "", "", "", "", "", "Accepted", d["accepted_value"]],
+                 ["", "", "", "", "", "", "", "", "", "", "Rejected", d["rejected_value"]]])
+
+
+@app.get("/api/grn/{grn_id}")
+def get_goods_receipt(grn_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return grn_dict(db, grn_or_404(db, client.id, grn_id), detail=True)
+
+
+# --- The three-way match ----------------------------------------------------
+
+def billed_against_po(db, purchase_order_id):
+    """Value and quantity billed against an order, ignoring rejected bills.
+
+    A bill that was thrown out is not a claim on anything, and counting it
+    would make an order look fully billed when nobody has been paid.
+    """
+    bills = db.query(models.DBBill).filter(
+        models.DBBill.purchase_order_id == purchase_order_id,
+        models.DBBill.status != "Rejected").all()
+    ids = [b.id for b in bills]
+    per_line = {}
+    if ids:
+        for l in db.query(models.DBBillLineItem).filter(
+                models.DBBillLineItem.bill_id.in_(ids)).all():
+            key = getattr(l, "po_line_id", None)
+            if key:
+                per_line[key] = per_line.get(key, 0.0) + (l.qty or 0.0)
+    return {
+        "bills": bills,
+        "value": money(sum(b.total or 0 for b in bills)),
+        "paid": money(sum(b.amount_paid or 0 for b in bills)),
+        "per_line": per_line,
+    }
+
+
+def match_verdict(ordered, received, billed):
+    """What the three numbers say, in the order a buyer would ask.
+
+    The two that cost money come first, most specific one leading: a bill with
+    nothing at all received is a different conversation from a bill that runs
+    ahead of a part delivery, and saying so is more use than a figure.
+    """
+    if received <= 0.01 and billed > 0.01:
+        return ("AWAITING_RECEIPT",
+                "Billed with nothing recorded as received. Check the gate before paying.")
+    if billed > received + 0.01:
+        return ("OVER_BILLED",
+                "Billed for more than was received. Do not pay until this is explained.")
+    if received > ordered + 0.01:
+        return ("OVER_RECEIVED",
+                "More arrived than was ordered. Agree a variation before billing it.")
+    if received <= 0.01 and billed <= 0.01:
+        return ("AWAITING_DELIVERY", "Ordered. Nothing has arrived yet.")
+    if billed <= 0.01:
+        return ("AWAITING_BILL", "Received and not yet billed. An accrual is owed.")
+    if billed < received - 0.01:
+        return ("PART_BILLED", "Part billed against what was received.")
+    return ("MATCHED", "Ordered, received and billed agree.")
+
+
+@app.get("/api/match/three-way")
+def three_way_match(request: Request, db: Session = Depends(get_db),
+                    job_id: int = 0, only_exceptions: bool = False):
+    """Every order with what was ordered, what arrived and what was billed.
+
+    This is the report that stops a business paying for material it never
+    received, which is the single most expensive thing a site office gets
+    wrong.
+    """
+    client = require_erp_read(request, db)
+    q = db.query(models.DBPurchaseOrder).filter(
+        models.DBPurchaseOrder.client_id == client.id,
+        models.DBPurchaseOrder.status != "Cancelled")
+    if job_id:
+        q = q.filter(models.DBPurchaseOrder.job_id == job_id)
+
+    rows = []
+    for po in q.order_by(models.DBPurchaseOrder.id.desc()).limit(500).all():
+        lines = db.query(models.DBPurchaseOrderLineItem).filter(
+            models.DBPurchaseOrderLineItem.order_id == po.id).all()
+        got = received_to_date(db, po.id)
+        billed = billed_against_po(db, po.id)
+        receipts = db.query(models.DBGoodsReceipt).filter(
+            models.DBGoodsReceipt.purchase_order_id == po.id,
+            models.DBGoodsReceipt.status != "CANCELLED").count()
+
+        ordered_value = money(sum((l.qty or 0) * (l.price or 0) for l in lines))
+        received_value = money(sum(got.get(l.id, 0.0) * (l.price or 0) for l in lines))
+        verdict, note = match_verdict(ordered_value, received_value, billed["value"])
+        job = db.query(models.DBJob).filter(models.DBJob.id == po.job_id).first()
+        rows.append({
+            "purchase_order_id": po.id, "number": po.number or "",
+            "supplier_name": po.supplier_name or "",
+            "status": po.status or "",
+            "project": ("%s %s" % (job.number, job.name)).strip() if job else "",
+            "ordered_value": ordered_value,
+            "received_value": received_value,
+            "billed_value": billed["value"], "paid_value": billed["paid"],
+            "bill_count": len(billed["bills"]), "receipt_count": receipts,
+            "unbilled_receipts": (money(received_value - billed["value"])
+                                  if received_value > billed["value"] else 0.0),
+            "verdict": verdict, "note": note,
+        })
+
+    exceptions = [r for r in rows if r["verdict"] in
+                  ("OVER_BILLED", "OVER_RECEIVED", "AWAITING_RECEIPT")]
+    return {
+        "orders": exceptions if only_exceptions else rows,
+        "summary": {
+            "orders": len(rows),
+            "matched": len([r for r in rows if r["verdict"] == "MATCHED"]),
+            "exceptions": len(exceptions),
+            "over_billed": money(sum(r["billed_value"] - r["received_value"]
+                                     for r in rows if r["verdict"] == "OVER_BILLED")),
+            # What has arrived and not been billed is a cost already incurred.
+            # Left off the books it makes a month look cheaper than it was.
+            "accrual_owed": money(sum(r["unbilled_receipts"] for r in rows)),
+            "ordered_value": money(sum(r["ordered_value"] for r in rows)),
+            "received_value": money(sum(r["received_value"] for r in rows)),
+            "billed_value": money(sum(r["billed_value"] for r in rows)),
+        },
+    }
+
+
+@app.get("/api/match/three-way/{po_id}")
+def three_way_match_detail(po_id: int, request: Request, db: Session = Depends(get_db)):
+    """The same comparison, line by line, for one order."""
+    client = require_erp_read(request, db)
+    po = db.query(models.DBPurchaseOrder).filter(
+        models.DBPurchaseOrder.id == po_id,
+        models.DBPurchaseOrder.client_id == client.id).first()
+    if not po:
+        raise HTTPException(404, "Purchase order not found")
+
+    got = received_to_date(db, po.id)
+    billed = billed_against_po(db, po.id)
+    lines = []
+    for l in db.query(models.DBPurchaseOrderLineItem).filter(
+            models.DBPurchaseOrderLineItem.order_id == po.id).order_by(
+                models.DBPurchaseOrderLineItem.id).all():
+        rec = money(got.get(l.id, 0.0))
+        bil = money(billed["per_line"].get(l.id, 0.0))
+        verdict, note = match_verdict(money(l.qty), rec, bil)
+        lines.append({
+            "po_line_id": l.id, "item_code": getattr(l, "item_code", "") or "",
+            "description": l.description or "", "uom": getattr(l, "uom", "") or "",
+            "ordered_qty": money(l.qty), "received_qty": rec, "billed_qty": bil,
+            "rate": unit_rate(l.price),
+            "ordered_value": money((l.qty or 0) * (l.price or 0)),
+            "received_value": money(rec * (l.price or 0)),
+            "billed_value": money(bil * (l.price or 0)),
+            "verdict": verdict, "note": note,
+        })
+
+    return {
+        "purchase_order": purchase_order_to_dict(db, po),
+        "lines": lines,
+        "goods_receipts": [grn_dict(db, g) for g in
+                           db.query(models.DBGoodsReceipt).filter(
+                               models.DBGoodsReceipt.purchase_order_id == po.id).order_by(
+                                   models.DBGoodsReceipt.id.desc()).all()],
+        "bills": [{"id": b.id, "number": b.number or "", "status": b.status or "",
+                   "total": money(b.total), "amount_paid": money(b.amount_paid),
+                   "issue_date": b.issue_date or ""} for b in billed["bills"]],
+        # Only meaningful when the bill lines name the order lines they settle.
+        # Without that the totals still compare; the per line figures do not.
+        "line_level_available": bool(billed["per_line"]),
+    }
+
 
 # Serve frontend
 frontend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")

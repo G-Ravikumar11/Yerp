@@ -456,6 +456,9 @@ class DBPurchaseOrderLineItem(Base):
     id = Column(Integer, primary_key=True, index=True)
     order_id = Column(Integer, ForeignKey("purchase_orders.id"), index=True)
     description = Column(String, default="")
+    # Named so the line can be received off a lorry and counted into stock.
+    item_code = Column(String, default="")
+    uom = Column(String, default="")
     qty = Column(Float, default=1.0)
     price = Column(Float, default=0.0)
     tax_rate = Column(String, default="20%")
@@ -1299,6 +1302,8 @@ class DBBillLineItem(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     bill_id = Column(Integer, ForeignKey("bills.id"), index=True)
+    po_line_id = Column(Integer, ForeignKey("purchase_order_line_items.id"),
+                        nullable=True, index=True)
     description = Column(String, default="")
     qty = Column(Float, default=1.0)
     price = Column(Float, default=0.0)
@@ -1716,3 +1721,199 @@ class DBSubcontractApproval(Base):
     to_status = Column(String, default="")
     comments = Column(Text, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+# ============================================================================
+# MEASUREMENT AND RUNNING ACCOUNT BILLS
+#
+# The stretch the contracts deck never covered, because it stops at approval -
+# and approval is where the money starts moving. Work is measured on site,
+# measurements accumulate, and each bill claims the difference between what
+# has been measured to date and what has already been billed.
+# ============================================================================
+
+class DBMeasurement(Base):
+    """One entry in the measurement book, against one ordered line.
+
+    Entries accumulate rather than replace: the book is a history of what was
+    found on site on a given day, and the quantity to date is their sum. A
+    correction is a negative entry, not an edit, for the same reason a ledger
+    is not rubbed out.
+    """
+    __tablename__ = "measurements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), index=True)
+    work_order_id = Column(Integer, ForeignKey("work_orders.id"), index=True)
+    line_id = Column(Integer, ForeignKey("work_order_lines.id"), index=True)
+    fg_code = Column(String, default="", index=True)
+
+    mb_ref = Column(String, default="")          # the page it is written on
+    measured_on = Column(String, default="")
+    quantity = Column(Float, default=0.0)        # may be negative, to correct
+    remarks = Column(Text, default="")
+
+    recorded_by = Column(Integer, nullable=True)
+    recorded_by_name = Column(String, default="")
+    # Joint measurement: the contractor's man signs too, or it is not a
+    # measurement, it is an opinion.
+    witnessed_by = Column(String, default="")
+
+    ra_bill_id = Column(Integer, ForeignKey("ra_bills.id"), nullable=True, index=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBRABill(Base):
+    """A running account bill: everything measured to date, less what has
+    already been claimed."""
+    __tablename__ = "ra_bills"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), index=True)
+    work_order_id = Column(Integer, ForeignKey("work_orders.id"), index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+
+    number = Column(String, default="", index=True)
+    sequence = Column(Integer, default=1)        # RA 1, RA 2, ... on this order
+    period_from = Column(String, default="")
+    period_to = Column(String, default="")
+
+    # DRAFT | SUBMITTED | CERTIFIED | PAID | CANCELLED
+    status = Column(String, default="DRAFT", index=True)
+
+    gross_to_date = Column(Float, default=0.0)   # everything measured, priced
+    previously_billed = Column(Float, default=0.0)
+    this_bill = Column(Float, default=0.0)       # the difference, and the claim
+
+    retention_percent = Column(Float, default=5.0)
+    retention_amount = Column(Float, default=0.0)
+    advance_recovery = Column(Float, default=0.0)
+    other_deductions = Column(Float, default=0.0)
+    deduction_notes = Column(Text, default="")
+
+    tax_percent = Column(Float, default=18.0)
+    tax_amount = Column(Float, default=0.0)
+    tds_percent = Column(Float, default=1.0)
+    tds_amount = Column(Float, default=0.0)
+    net_payable = Column(Float, default=0.0)
+
+    certified_by = Column(Integer, nullable=True)
+    certified_by_name = Column(String, default="")
+    certified_at = Column(String, default="")
+    paid_at = Column(String, default="")
+    remarks = Column(Text, default="")
+
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    updated_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBRABillLine(Base):
+    """One ordered line as it stands on one bill.
+
+    The three quantities are kept rather than recomputed, because a certified
+    bill must still read the same next year when the measurements behind it
+    have moved on.
+    """
+    __tablename__ = "ra_bill_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ra_bill_id = Column(Integer, ForeignKey("ra_bills.id"), index=True)
+    line_id = Column(Integer, ForeignKey("work_order_lines.id"), nullable=True)
+    fg_code = Column(String, default="")
+    description = Column(Text, default="")
+    uom = Column(String, default="")
+
+    ordered_qty = Column(Float, default=0.0)
+    measured_to_date = Column(Float, default=0.0)
+    previously_billed_qty = Column(Float, default=0.0)
+    this_bill_qty = Column(Float, default=0.0)
+
+    rate = Column(Float, default=0.0)
+    amount = Column(Float, default=0.0)
+    display_order = Column(Integer, default=0)
+
+
+# ===========================================================================
+# GOODS RECEIPT
+#
+# A purchase order says what was agreed. A bill says what is being charged.
+# Neither says what actually arrived at the gate, and without that third
+# number a site pays for forty tonnes of steel and receives thirty-eight.
+# The receipt note is the record that closes it.
+# ===========================================================================
+
+class DBGoodsReceipt(Base):
+    """One delivery, against one order.
+
+    A single order is delivered many times over weeks, so a receipt is never
+    the whole order; it is what came off one lorry on one day, with the
+    supplier's own challan number so the two paper trails can be lined up.
+    """
+    __tablename__ = "goods_receipts"
+    __table_args__ = (
+        UniqueConstraint('client_id', 'number', name='uq_client_grn_number'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    purchase_order_id = Column(Integer, ForeignKey("purchase_orders.id"),
+                               nullable=True, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+
+    number = Column(String, index=True)          # GRN-0001
+    supplier_name = Column(String, default="")
+    received_on = Column(String, default="")
+
+    # The supplier's own paperwork. When a bill is disputed three months later
+    # this is the number both sides can look up.
+    challan_number = Column(String, default="")
+    invoice_number = Column(String, default="")
+    vehicle_number = Column(String, default="")
+
+    # DRAFT | POSTED | CANCELLED
+    # A draft is somebody still counting. Posting is the assertion that this
+    # is what arrived, and it is what a bill is allowed to be matched against.
+    status = Column(String, default="DRAFT", index=True)
+
+    received_value = Column(Float, default=0.0)
+    accepted_value = Column(Float, default=0.0)
+    rejected_value = Column(Float, default=0.0)
+
+    received_by = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    received_by_name = Column(String, default="")
+    inspected_by = Column(String, default="")
+    store_location = Column(String, default="")
+    remarks = Column(Text, default="")
+
+    posted_at = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    updated_at = Column(String, default="")
+
+
+class DBGoodsReceiptLine(Base):
+    """What arrived on one line, and how much of it was fit to use.
+
+    Received and accepted are separate numbers on purpose. Material that turns
+    up broken has still arrived - it has to be recorded, returned and credited,
+    and a store that can only record good stock quietly loses the argument.
+    """
+    __tablename__ = "goods_receipt_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    goods_receipt_id = Column(Integer, ForeignKey("goods_receipts.id"), index=True)
+    po_line_id = Column(Integer, ForeignKey("purchase_order_line_items.id"),
+                        nullable=True, index=True)
+    item_code = Column(String, default="")
+    description = Column(String, default="")
+    uom = Column(String, default="")
+
+    ordered_qty = Column(Float, default=0.0)
+    previously_received = Column(Float, default=0.0)
+    received_qty = Column(Float, default=0.0)
+    accepted_qty = Column(Float, default=0.0)
+    rejected_qty = Column(Float, default=0.0)
+    rejection_reason = Column(String, default="")
+
+    rate = Column(Float, default=0.0)
+    amount = Column(Float, default=0.0)
+    display_order = Column(Integer, default=0)

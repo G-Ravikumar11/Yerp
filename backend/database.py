@@ -1421,6 +1421,16 @@ def ensure_columns():
                     # the aborted transaction took the rest of the request too.
                     ("employees", "extra_permissions", "TEXT DEFAULT ''"),
                     ("employees", "denied_permissions", "TEXT DEFAULT ''"),
+
+                    # Which order line a bill line settles, so the three-way
+                    # match compares numbers rather than guessing that two
+                    # descriptions mean the same material.
+                    ("bill_line_items", "po_line_id", "INTEGER"),
+                    # A purchase order line that names a stock code and a unit
+                    # can be received against; one that is only free text
+                    # cannot be counted off a lorry.
+                    ("purchase_order_line_items", "item_code", "TEXT DEFAULT ''"),
+                    ("purchase_order_line_items", "uom", "TEXT DEFAULT ''"),
                 ):
                     conn.execute(text(
                         f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
@@ -1546,6 +1556,14 @@ def migrate_sqlite():
                 add_col("subcontract_orders", column, "FLOAT DEFAULT 0")
             add_col("subcontract_items", "technical_spec", "TEXT DEFAULT ''")
             add_col("business_units", "logo_url", "TEXT DEFAULT ''")
+
+            # The goods receipt columns. Both migrations have to be fed, not
+            # one: the Postgres list alone left every existing SQLite database
+            # querying a column that was not there, and every screen touching
+            # a purchase order returned a 500.
+            add_col("bill_line_items", "po_line_id", "INTEGER")
+            add_col("purchase_order_line_items", "item_code", "TEXT DEFAULT ''")
+            add_col("purchase_order_line_items", "uom", "TEXT DEFAULT ''")
 
             # Create approval_chains table
             conn.execute(text("""

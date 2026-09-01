@@ -725,6 +725,22 @@ textarea.table-input.item-desc {
 .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
 .grid-5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+
+/* The row of figures at the top of a screen. Never actually defined, so every
+   screen that asked for one - jobs, the item master, work orders, costs, the
+   goods receipt - got a single column of cards a page long, and the figures
+   that were meant to be read together were three scrolls apart.
+
+   auto-fit rather than a fixed count because these rows hold anywhere from
+   three cards to five, and a row of three stretched across five columns
+   reads as three quarters of something missing. */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+.stats-grid:empty { display: none; margin-bottom: 0; }
 .grid-auto { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
 .gap-8 { gap: 8px; }
 .gap-12 { gap: 12px; }
@@ -1736,4 +1752,16 @@ label { color: var(--text-secondary); font-size: 0.78rem; font-weight: 600; }
    and a 300px sidebar taking half a laptop screen from them helps nobody. */
 @media (max-width: 1100px) {
     .wo-boq-layout { grid-template-columns: minmax(0, 1fr) !important; }
+}
+
+/* A number typed into a table cell. The full form control is sized for a
+   form; inside a row of quantities it pushes the columns apart until the
+   figures stop lining up, which is the one thing a table of figures is for. */
+.input-sm {
+    padding: 5px 8px;
+    font-size: 0.85rem;
+    height: auto;
+    min-height: 0;
+    width: 100%;
+    max-width: 100px;
 }

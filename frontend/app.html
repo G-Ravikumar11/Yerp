@@ -28,7 +28,7 @@
         }}
       };
     </script>
-    <link rel="stylesheet" href="styles.css?v=65">
+    <link rel="stylesheet" href="styles.css?v=66">
     <link rel="stylesheet" href="mobile.css?v=65">
 </head>
 <body>
@@ -140,6 +140,8 @@
                             <a href="#" class="nav-item" id="nav-inquiry" data-perm="workorders.manage" onclick="event.preventDefault();showView('inquiry-view')">Work Order Inquiry</a>
                             <a href="#" class="nav-item" id="nav-viewer" onclick="event.preventDefault();showView('viewer-view')">Open a file</a>
                             <a href="#" class="nav-item" id="nav-subcontracts" onclick="event.preventDefault();showView('subcontracts-view')">Subcontract Orders</a>
+                            <a href="#" class="nav-item" id="nav-measurement" onclick="event.preventDefault();showView('measurement-view')">Measurement &amp; RA Bills</a>
+                            <a href="#" class="nav-item" id="nav-stores" onclick="event.preventDefault();showView('stores-view')">Goods Receipt &amp; Match</a>
                         </div>
                     </div>
 
@@ -1110,6 +1112,80 @@
                         <div class="modal-footer">
                             <button class="btn btn-outline" onclick="closeFgQuick()">Cancel</button>
                             <button class="btn btn-primary" onclick="saveFgQuick()">Add and price it</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="grn-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:560px;">
+                        <div class="modal-header">
+                            <h3>Receive a delivery</h3>
+                            <button class="modal-close" onclick="closeReceiveModal()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="form-group"><label>Against which order *</label>
+                                <select id="grn-order" class="form-control"></select></div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Received on</label>
+                                    <input type="date" id="grn-date" class="form-control"></div>
+                                <div class="form-group"><label>Challan / DC number</label>
+                                    <input type="text" id="grn-challan" class="form-control" placeholder="The supplier&#39;s own number"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Supplier invoice number</label>
+                                    <input type="text" id="grn-invoice" class="form-control"></div>
+                                <div class="form-group"><label>Vehicle number</label>
+                                    <input type="text" id="grn-vehicle" class="form-control" placeholder="AP16 TG 4471"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Store / location</label>
+                                    <input type="text" id="grn-store" class="form-control"></div>
+                                <div class="form-group"><label>Inspected by</label>
+                                    <input type="text" id="grn-inspector" class="form-control"></div>
+                            </div>
+                            <p style="font-size:0.75rem;color:var(--text-secondary);">
+                                The lines start at the full outstanding quantity. Correct the
+                                ones that came up short or damaged, then post it.
+                            </p>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeReceiveModal()">Cancel</button>
+                            <button class="btn btn-primary" onclick="startReceipt()">Open the receipt</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="measure-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:520px;">
+                        <div class="modal-header">
+                            <h3 id="measure-title">Record a measurement</h3>
+                            <button class="modal-close" onclick="closeMeasureModal()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <input type="hidden" id="measure-line-id">
+                            <p id="measure-context" style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:14px;"></p>
+                            <div class="form-row">
+                                <div class="form-group"><label>Quantity measured *</label>
+                                    <input type="number" step="any" id="measure-qty" class="form-control" placeholder="e.g. 250"></div>
+                                <div class="form-group"><label>Measured on</label>
+                                    <input type="date" id="measure-date" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>MB page reference</label>
+                                    <input type="text" id="measure-ref" class="form-control" placeholder="MB-12 / p.44"></div>
+                                <div class="form-group"><label>Witnessed by</label>
+                                    <input type="text" id="measure-witness" class="form-control" placeholder="Whose man signed"></div>
+                            </div>
+                            <div class="form-group"><label>Remarks</label>
+                                <textarea id="measure-remarks" class="form-control" rows="2"></textarea></div>
+                            <p style="font-size:0.75rem;color:var(--text-secondary);">
+                                Entries add up. To correct one, record a negative
+                                quantity rather than changing what was written.
+                            </p>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeMeasureModal()">Cancel</button>
+                            <button class="btn btn-primary" onclick="saveMeasurement()">Record it</button>
                         </div>
                     </div>
                 </div>
@@ -3033,6 +3109,112 @@
                     <div id="project-costs"></div>
                 </div>
 
+                <div id="stores-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Goods Receipt &amp; Match</h1><p class="subtitle">What actually arrived at the gate, and whether the order, the delivery and the bill agree</p></div>
+                        <div class="invoices-actions">
+                            <button class="btn btn-primary" onclick="showReceiveModal()">Receive a delivery</button>
+                            <button class="btn btn-outline" onclick="loadStores()">Refresh</button>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid" id="grn-stats"></div>
+
+                    <div class="widget" id="grn-detail" style="margin-top:18px;display:none;">
+                        <div class="widget-header" style="flex-wrap:wrap;gap:10px;">
+                            <div>
+                                <h3 id="grn-detail-title"></h3>
+                                <div id="grn-detail-meta" style="margin-top:5px;"></div>
+                            </div>
+                            <div id="grn-detail-actions"></div>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Item</th><th class="text-right">Ordered</th><th class="text-right">Still due</th><th style="width:110px;">Arrived</th><th style="width:110px;">Rejected</th><th class="text-right">Accepted</th><th style="width:180px;">Reason</th><th class="text-right">Value</th></tr></thead>
+                                <tbody id="grn-lines"></tbody>
+                            </table>
+                        </div>
+                        <div id="grn-detail-totals" style="padding:12px 20px;border-top:1px solid var(--border-color);font-size:0.9rem;"></div>
+                    </div>
+
+                    <div class="widget" style="margin-top:18px;">
+                        <div class="widget-header"><h3>Receipts</h3></div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>GRN</th><th>Supplier</th><th>Received</th><th class="text-right">Accepted</th><th class="text-right">Rejected</th><th>Status</th><th></th></tr></thead>
+                                <tbody id="grn-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid" id="match-stats" style="margin-top:24px;"></div>
+                    <div class="widget" style="margin-top:18px;">
+                        <div class="widget-header" style="flex-wrap:wrap;gap:10px;">
+                            <div><h3>Three-way match</h3>
+                                <p style="font-size:0.8rem;color:var(--text-secondary);margin:4px 0 0;">Ordered, received and billed on one line. Anything that disagrees is money.</p></div>
+                            <label style="font-size:0.85rem;display:flex;align-items:center;gap:7px;">
+                                <input type="checkbox" id="match-exceptions" onchange="loadMatch()"> Only what needs a look
+                            </label>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Order</th><th>Project</th><th class="text-right">Ordered</th><th class="text-right">Received</th><th class="text-right">Billed</th><th>Verdict</th></tr></thead>
+                                <tbody id="match-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="measurement-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Measurement &amp; RA Bills</h1><p class="subtitle">What has actually been done on site, and the running account bills that follow from it</p></div>
+                        <div class="invoices-actions">
+                            <button class="btn btn-primary" onclick="newRaBill()">Draw up a bill</button>
+                            <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
+                        </div>
+                    </div>
+
+                    <div class="widget" style="margin-bottom:18px;">
+                        <div class="widget-content" style="padding:16px 20px;">
+                            <label style="display:block;font-size:0.85rem;font-weight:600;margin-bottom:6px;">Work order</label>
+                            <select id="mb-order" class="form-control" style="max-width:460px;" onchange="mbChanged()"></select>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid" id="mb-stats"></div>
+
+                    <div class="widget" style="margin-top:18px;">
+                        <div class="widget-header"><h3>The measurement book</h3></div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Item</th><th class="text-right">Ordered</th><th class="text-right">Measured</th><th class="text-right">Still to do</th><th class="text-right">Billed</th><th class="text-right">Unbilled</th><th class="text-right">Value</th><th></th></tr></thead>
+                                <tbody id="mb-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="widget" style="margin-top:18px;">
+                        <div class="widget-header"><h3>Entries</h3></div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Date</th><th>Item</th><th class="text-right">Quantity</th><th>MB ref</th><th>Recorded by</th><th>Remarks</th><th></th></tr></thead>
+                                <tbody id="mb-entries"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid" id="ra-stats" style="margin-top:24px;"></div>
+                    <div class="widget" style="margin-top:18px;">
+                        <div class="widget-header"><h3>Running account bills</h3></div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Bill</th><th>Order</th><th class="text-right">This bill</th><th class="text-right">Retention</th><th class="text-right">Net payable</th><th>Status</th><th></th></tr></thead>
+                                <tbody id="ra-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="subcontracts-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div><h1>Subcontract Work Orders</h1><p class="subtitle">Work issued out to a subcontractor, priced, signed off and amended</p></div>
@@ -3726,6 +3908,8 @@
     <script src="sheet-viewer.js?v=65"></script>
     <script src="subcontracts.js?v=65"></script>
     <script src="costs.js?v=65"></script>
+    <script src="measurement.js?v=65"></script>
+    <script src="stores.js?v=65"></script>
 
     <!-- AI Core Orb -->
     <div class="ai-core" onclick="toggleAIChat()" role="button" tabindex="0" aria-label="Open the assistant" title="Ask the assistant" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAIChat();}">
