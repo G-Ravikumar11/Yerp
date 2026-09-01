@@ -53,6 +53,8 @@ async function openMeasurementBook(woId) {
     MB = { wo: d.work_order, lines: d.lines, entries: d.entries, summary: d.summary };
     renderMeasurementBook();
     loadRaBills(woId);
+    offerVariation(woId);
+    loadVariations(woId);
 }
 window.openMeasurementBook = openMeasurementBook;
 
@@ -263,3 +265,106 @@ async function raAct(billId, action, needsReason) {
     if (MB.wo) openMeasurementBook(MB.wo.id); else loadRaBills();
 }
 window.raAct = raAct;
+
+/* --- Variations -----------------------------------------------------------
+   The book already knows which lines ran past the order. This turns that flag
+   into a priced, approved change without anybody retyping it.
+   -------------------------------------------------------------------------- */
+
+var VO_TONE = { DRAFT: 'calm', SUBMITTED: 'wait', APPROVED: 'good',
+                REJECTED: 'bad', CANCELLED: 'bad' };
+
+async function loadVariations(woId) {
+    var body = document.getElementById('vo-body');
+    if (!body) return;
+    var d = await (await fetch('/api/variations' + (woId ? '?work_order_id=' + woId : ''),
+                               { credentials: 'include' })).json();
+    var s = d.summary || {};
+    var stats = document.getElementById('vo-stats');
+    if (stats) stats.innerHTML =
+        statCard('Variations raised', String(s.raised || 0)) +
+        statCard('Awaiting approval', String(s.awaiting_approval || 0)) +
+        statCard('Agreed', formatCurrency(s.approved_value || 0)) +
+        statCard('Asked for, not agreed', formatCurrency(s.pending_value || 0));
+
+    body.innerHTML = (d.variations || []).length ? d.variations.map(function (v) {
+        // Only the move this variation can actually make next.
+        var act = '';
+        if (v.actions.indexOf('SUBMIT') >= 0)
+            act = '<button class="btn btn-sm btn-primary" onclick="voAct(' + v.id + ',\'submit\')">Submit</button>';
+        else if (v.actions.indexOf('APPROVE') >= 0)
+            act = '<button class="btn btn-sm btn-primary" onclick="voAct(' + v.id + ',\'approve\')">Approve</button> ' +
+                  '<button class="btn btn-sm btn-outline" onclick="voAct(' + v.id + ',\'reject\',true)">Send back</button>';
+        return '<tr>' +
+            '<td style="font-family:monospace;font-weight:600;">' + esc(v.number) +
+                (v.origin === 'measured'
+                    ? '<div style="font-size:0.7rem;color:var(--text-secondary);' +
+                      'font-family:inherit;font-weight:400;">from the book</div>' : '') + '</td>' +
+            '<td>' + esc(v.reason || '—') + '</td>' +
+            '<td class="text-right" style="font-weight:600;">' + formatCurrency(v.value) + '</td>' +
+            '<td class="text-right">' + formatCurrency(v.order_value_before) +
+                ' → ' + formatCurrency(v.order_value_after) + '</td>' +
+            '<td>' + statusPill(v.status, VO_TONE[v.status] || 'calm') +
+                (v.rejection_reason ? '<div style="font-size:0.72rem;color:var(--danger-color);">' +
+                 esc(v.rejection_reason) + '</div>' : '') + '</td>' +
+            '<td class="text-right">' + act + '</td></tr>';
+    }).join('') : '<tr><td colspan="6" style="text-align:center;padding:24px;' +
+        'color:var(--text-secondary);">No variations on this order.</td></tr>';
+}
+window.loadVariations = loadVariations;
+
+async function offerVariation(woId) {
+    // Only shown when there is genuinely an over-run, so a site that is on
+    // programme is never nagged about a change it does not need.
+    var box = document.getElementById('vo-offer');
+    if (!box) return;
+    var d = await (await fetch('/api/variations/suggest/' + woId,
+                               { credentials: 'include' })).json();
+    if (!d.count) { box.style.display = 'none'; return; }
+    box.style.display = 'block';
+    box.innerHTML =
+        '<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;' +
+        'padding:14px 18px;border-left:3px solid var(--warning-color);' +
+        'background:var(--warning-soft,#fff7ed);border-radius:var(--radius-md);">' +
+        '<div style="flex:1;min-width:240px;"><strong>' + d.count + ' line' +
+        (d.count > 1 ? 's have' : ' has') + ' been built past the order.</strong>' +
+        '<div style="font-size:0.85rem;color:var(--text-secondary);margin-top:2px;">' +
+        formatCurrency(d.value) + ' of work is done, measured, and not covered by ' +
+        'the order. Raise a variation and it becomes billable.</div></div>' +
+        '<button class="btn btn-primary" onclick="raiseVariation(' + woId + ')">' +
+        'Raise it from the book</button></div>';
+}
+window.offerVariation = offerVariation;
+
+async function raiseVariation(woId) {
+    var reason = prompt('Why did the work run over? (goes on the variation)') || '';
+    var res = await fetch('/api/variations', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ work_order_id: woId, reason: reason }),
+    });
+    var out = await res.json();
+    if (!res.ok) { showToast(out.detail || 'Could not raise it', 'error'); return; }
+    showToast(out.message, 'success');
+    openMeasurementBook(woId);
+}
+window.raiseVariation = raiseVariation;
+
+async function voAct(voId, action, needsReason) {
+    var comments = '';
+    if (needsReason) {
+        comments = prompt('Why is this going back?');
+        if (comments === null) return;
+        if (!comments.trim()) { showToast('A reason is required', 'error'); return; }
+    }
+    var res = await fetch('/api/variations/' + voId + '/' + action, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comments: comments }),
+    });
+    var out = await res.json();
+    if (!res.ok) { showToast(out.detail || 'Could not do that', 'error'); return; }
+    showToast(out.message, 'success');
+    if (MB.wo) openMeasurementBook(MB.wo.id);
+}
+window.voAct = voAct;

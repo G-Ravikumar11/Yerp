@@ -20356,6 +20356,298 @@ def three_way_match_detail(po_id: int, request: Request, db: Session = Depends(g
     }
 
 
+
+
+# ============================================================================
+# VARIATION ORDERS
+#
+# The measurement book already knows which lines ran past their ordered
+# quantity - it prints "5 over the order" against them. Until now that was
+# where it stopped, and extra work stayed done, measured and unpaid.
+#
+# A variation drafts itself from that flag: the app proposes the lines, the
+# quantities and the money without anybody retyping them, and approving it
+# raises the order so the over-run disappears and the work becomes billable.
+# ============================================================================
+
+VO_TRANSITIONS = {
+    "DRAFT":     {"SUBMIT": "SUBMITTED", "CANCEL": "CANCELLED"},
+    "SUBMITTED": {"APPROVE": "APPROVED", "REJECT": "DRAFT", "CANCEL": "CANCELLED"},
+    "APPROVED":  {},
+    "REJECTED":  {},
+    "CANCELLED": {},
+}
+
+
+def next_vo_number(db, work_order):
+    n = db.query(models.DBVariationOrder).filter(
+        models.DBVariationOrder.work_order_id == work_order.id).count() + 1
+    return "%s/VO-%02d" % (work_order.number or "WO", n), n
+
+
+def vo_or_404(db, client_id, vo_id):
+    row = db.query(models.DBVariationOrder).filter(
+        models.DBVariationOrder.id == vo_id,
+        models.DBVariationOrder.client_id == client_id).first()
+    if not row:
+        raise HTTPException(404, "Variation not found")
+    return row
+
+
+def over_measured_lines(db, work_order):
+    """Every line the site has built past its ordered quantity.
+
+    This is the whole input to a variation, and it is already sitting in the
+    measurement book. Nobody should have to read it off a screen and type it
+    back in.
+    """
+    measured = measured_to_date(db, work_order.id)
+    out = []
+    for l in db.query(models.DBWorkOrderLine).filter(
+            models.DBWorkOrderLine.work_order_id == work_order.id).order_by(
+                models.DBWorkOrderLine.id).all():
+        done, ordered = money(measured.get(l.id, 0.0)), money(l.qty)
+        if done > ordered:
+            extra = money(done - ordered)
+            out.append({
+                "line_id": l.id, "fg_code": l.fg_code or "",
+                "description": (l.description or l.item_name or "").split("\n")[0],
+                "uom": l.uom or "", "ordered_qty": ordered, "measured_qty": done,
+                "extra_qty": extra, "rate": unit_rate(l.rate),
+                "amount": money(extra * unit_rate(l.rate)),
+            })
+    return out
+
+
+def recost_variation(db, vo):
+    lines = db.query(models.DBVariationLine).filter(
+        models.DBVariationLine.variation_order_id == vo.id).all()
+    vo.value = money(sum(l.amount or 0 for l in lines))
+    wo = db.query(models.DBWorkOrder).filter(
+        models.DBWorkOrder.id == vo.work_order_id).first()
+    vo.order_value_before = money(wo.total_value if wo else 0)
+    vo.order_value_after = money(vo.order_value_before + vo.value)
+    vo.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return vo
+
+
+def vo_dict(db, vo, detail=False):
+    wo = db.query(models.DBWorkOrder).filter(
+        models.DBWorkOrder.id == vo.work_order_id).first()
+    row = {
+        "id": vo.id, "number": vo.number or "", "sequence": vo.sequence or 1,
+        "work_order_id": vo.work_order_id, "work_order": wo.number if wo else "",
+        "status": vo.status or "DRAFT", "origin": vo.origin or "manual",
+        "reason": vo.reason or "", "value": money(vo.value),
+        "order_value_before": money(vo.order_value_before),
+        "order_value_after": money(vo.order_value_after),
+        "raised_by_name": vo.raised_by_name or "",
+        "approved_by_name": vo.approved_by_name or "",
+        "approved_at": vo.approved_at or "",
+        "rejection_reason": vo.rejection_reason or "",
+        "actions": sorted(VO_TRANSITIONS.get(vo.status or "DRAFT", {}).keys()),
+        "editable": (vo.status or "DRAFT") == "DRAFT",
+        "created_at": vo.created_at or "",
+    }
+    if detail:
+        row["lines"] = [{
+            "id": l.id, "line_id": l.line_id, "fg_code": l.fg_code or "",
+            "description": l.description or "", "uom": l.uom or "",
+            "ordered_qty": money(l.ordered_qty), "measured_qty": money(l.measured_qty),
+            "extra_qty": money(l.extra_qty), "rate": unit_rate(l.rate),
+            "amount": money(l.amount),
+            "is_new_item": l.line_id is None,
+        } for l in db.query(models.DBVariationLine).filter(
+            models.DBVariationLine.variation_order_id == vo.id).order_by(
+                models.DBVariationLine.display_order, models.DBVariationLine.id).all()]
+    return row
+
+
+class VariationIn(BaseModel):
+    work_order_id: int
+    reason: Optional[str] = ""
+    lines: Optional[list] = None          # omit to let the book fill it in
+
+
+@app.get("/api/variations")
+def list_variations(request: Request, work_order_id: int = 0,
+                    db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    q = db.query(models.DBVariationOrder).filter(
+        models.DBVariationOrder.client_id == client.id)
+    if work_order_id:
+        q = q.filter(models.DBVariationOrder.work_order_id == work_order_id)
+    rows = [vo_dict(db, v) for v in q.order_by(
+        models.DBVariationOrder.id.desc()).limit(200).all()]
+    live = [r for r in rows if r["status"] not in ("CANCELLED", "REJECTED")]
+    return {
+        "variations": rows,
+        "summary": {
+            "raised": len(rows),
+            "awaiting_approval": len([r for r in rows if r["status"] == "SUBMITTED"]),
+            "approved_value": money(sum(r["value"] for r in rows
+                                        if r["status"] == "APPROVED")),
+            "pending_value": money(sum(r["value"] for r in live
+                                       if r["status"] != "APPROVED")),
+        },
+    }
+
+
+@app.get("/api/variations/suggest/{work_order_id}")
+def suggest_variation(work_order_id: int, request: Request,
+                      db: Session = Depends(get_db)):
+    """What the app would raise, without raising it.
+
+    The screen asks this to decide whether to offer the button at all, so a
+    site with nothing over-run is never nagged about a variation it does not
+    need.
+    """
+    client = require_erp_read(request, db)
+    wo = work_order_or_404(db, client.id, work_order_id)
+    lines = over_measured_lines(db, wo)
+    return {"lines": lines, "value": money(sum(l["amount"] for l in lines)),
+            "count": len(lines)}
+
+
+@app.post("/api/variations")
+def create_variation(body: VariationIn, request: Request,
+                     db: Session = Depends(get_db)):
+    """Draw one up - from the measurement book unless lines are supplied."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    wo = work_order_or_404(db, client.id, body.work_order_id)
+    if (wo.status or "") == "Draft":
+        raise HTTPException(409, "Vary the order after it has been placed, not before.")
+
+    supplied = body.lines
+    origin = "manual" if supplied else "measured"
+    rows = supplied if supplied else over_measured_lines(db, wo)
+    if not rows:
+        raise HTTPException(
+            409, "Nothing is over the ordered quantity, so there is nothing to vary. "
+                 "Measure the extra work first, or add the lines yourself.")
+
+    number, seq = next_vo_number(db, wo)
+    vo = models.DBVariationOrder(
+        client_id=client.id, work_order_id=wo.id, job_id=wo.job_id,
+        number=number, sequence=seq, status="DRAFT", origin=origin,
+        reason=(body.reason or "").strip(),
+        raised_by=actor_id, raised_by_name=actor_name)
+    db.add(vo)
+    db.flush()
+
+    for i, r in enumerate(rows):
+        extra = money(r.get("extra_qty") or 0)
+        rate = unit_rate(r.get("rate") or 0)
+        if not extra:
+            continue
+        db.add(models.DBVariationLine(
+            variation_order_id=vo.id, line_id=r.get("line_id"),
+            fg_code=(r.get("fg_code") or "")[:120],
+            description=(r.get("description") or "")[:500],
+            uom=(r.get("uom") or "")[:40],
+            ordered_qty=money(r.get("ordered_qty") or 0),
+            measured_qty=money(r.get("measured_qty") or 0),
+            extra_qty=extra, rate=rate, amount=money(extra * rate),
+            display_order=i))
+    db.flush()
+    recost_variation(db, vo)
+    log_audit(db, client.id, "variation_raised", "work_order", wo.id, wo.number or "",
+              "%s %s %s" % (number, origin, vo.value), request)
+    db.commit()
+    db.refresh(vo)
+    return {"ok": True, "variation": vo_dict(db, vo, detail=True),
+            "message": ("%s drawn up from the measurement book - %s of extra work."
+                        % (number, money(vo.value)) if origin == "measured"
+                        else "%s created." % number)}
+
+
+@app.get("/api/variations/{vo_id}")
+def get_variation(vo_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return vo_dict(db, vo_or_404(db, client.id, vo_id), detail=True)
+
+
+def apply_variation(db, vo):
+    """Raise the order to match what was agreed.
+
+    An existing line has its quantity lifted to the measured figure; a new item
+    becomes a real order line so the book can be kept against it from now on.
+    Done once, on approval, and never again - applied_at is the guard.
+    """
+    wo = db.query(models.DBWorkOrder).filter(
+        models.DBWorkOrder.id == vo.work_order_id).first()
+    for l in db.query(models.DBVariationLine).filter(
+            models.DBVariationLine.variation_order_id == vo.id).all():
+        if l.line_id:
+            line = db.query(models.DBWorkOrderLine).filter(
+                models.DBWorkOrderLine.id == l.line_id).first()
+            if not line:
+                continue
+            line.qty = money((line.qty or 0) + l.extra_qty)
+            line.amount = money(line.qty * (line.rate or 0))
+        else:
+            db.add(models.DBWorkOrderLine(
+                work_order_id=wo.id, fg_code=l.fg_code, item_name=l.description,
+                description=l.description, qty=l.extra_qty, uom=l.uom,
+                rate=l.rate, amount=l.amount))
+    db.flush()
+    total = sum(money(x.amount) for x in db.query(models.DBWorkOrderLine).filter(
+        models.DBWorkOrderLine.work_order_id == wo.id).all())
+    wo.total_value = money(total)
+    vo.applied_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return wo
+
+
+@app.post("/api/variations/{vo_id}/{action}")
+def act_on_variation(vo_id: int, action: str, request: Request, body: dict = None,
+                     db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db)
+    vo = vo_or_404(db, client.id, vo_id)
+    move = (action or "").upper()
+    allowed = VO_TRANSITIONS.get(vo.status or "DRAFT", {})
+    if move not in allowed:
+        raise HTTPException(
+            409, "A %s variation cannot be %sed." % ((vo.status or "draft").lower(),
+                                                     move.lower()))
+    body = body or {}
+    if move == "APPROVE":
+        # Approving raises the contract value, so it is the approver's right
+        # rather than the raiser's. Whoever may approve a subcontract may
+        # approve a change to one.
+        require_items_access(request, db, "subcontracts.approve")
+        vo.approved_by_name = actor_name
+        vo.approved_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if not vo.applied_at:
+            apply_variation(db, vo)
+    if move == "REJECT":
+        reason = (body.get("comments") or "").strip()
+        if not reason:
+            raise HTTPException(400, "Say why it is going back.")
+        vo.rejection_reason = reason
+
+    was, vo.status = vo.status, allowed[move]
+    vo.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_audit(db, client.id, "variation_%s" % move.lower(), "work_order",
+              vo.work_order_id, vo.number or "", "%s -> %s" % (was, vo.status), request)
+    db.commit()
+    db.refresh(vo)
+    return {"ok": True, "variation": vo_dict(db, vo, detail=True),
+            "message": "%s is now %s." % (vo.number, vo.status.lower())}
+
+
+@app.delete("/api/variations/{vo_id}")
+def delete_variation(vo_id: int, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    vo = vo_or_404(db, client.id, vo_id)
+    if (vo.status or "DRAFT") != "DRAFT":
+        raise HTTPException(409, "Only a draft can be deleted. Cancel it instead.")
+    db.query(models.DBVariationLine).filter(
+        models.DBVariationLine.variation_order_id == vo.id).delete()
+    db.delete(vo)
+    db.commit()
+    return {"ok": True, "message": "Draft removed."}
+
+
 # Serve frontend
 frontend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
 if os.path.exists(frontend_path):

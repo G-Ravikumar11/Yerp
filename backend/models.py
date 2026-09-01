@@ -1917,3 +1917,68 @@ class DBGoodsReceiptLine(Base):
     rate = Column(Float, default=0.0)
     amount = Column(Float, default=0.0)
     display_order = Column(Integer, default=0)
+
+
+class DBVariationOrder(Base):
+    """Work that was not in the order but was done anyway.
+
+    Site conditions differ from the schedule, so quantities run over and items
+    nobody priced get built. The measurement book already knows this - it marks
+    the lines that ran past their ordered quantity. What was missing was the
+    step that turns that flag into an agreed, priced, approved change, and
+    until it exists the extra work is done, measured, and never paid for.
+    """
+    __tablename__ = "variation_orders"
+    __table_args__ = (
+        UniqueConstraint('client_id', 'number', name='uq_client_vo_number'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+
+    number = Column(String, index=True)          # WO-0001/VO-01
+    sequence = Column(Integer, default=1)
+    # DRAFT | SUBMITTED | APPROVED | REJECTED | CANCELLED
+    status = Column(String, default="DRAFT", index=True)
+    # measured | manual - whether the app drew this up from the book itself.
+    origin = Column(String, default="manual")
+
+    reason = Column(Text, default="")
+    value = Column(Float, default=0.0)
+    order_value_before = Column(Float, default=0.0)
+    order_value_after = Column(Float, default=0.0)
+
+    raised_by = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    raised_by_name = Column(String, default="")
+    approved_by_name = Column(String, default="")
+    approved_at = Column(String, default="")
+    rejection_reason = Column(String, default="")
+    applied_at = Column(String, default="")
+
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    updated_at = Column(String, default="")
+
+
+class DBVariationLine(Base):
+    """One changed quantity, or one item the order never had.
+
+    line_id is null for genuinely new work; on approval a fresh order line is
+    created for it, so the measurement book can be kept against it afterwards.
+    """
+    __tablename__ = "variation_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    variation_order_id = Column(Integer, ForeignKey("variation_orders.id"), index=True)
+    line_id = Column(Integer, ForeignKey("work_order_lines.id"), nullable=True, index=True)
+    fg_code = Column(String, default="")
+    description = Column(String, default="")
+    uom = Column(String, default="")
+
+    ordered_qty = Column(Float, default=0.0)     # what the order said before
+    measured_qty = Column(Float, default=0.0)    # what the book actually holds
+    extra_qty = Column(Float, default=0.0)       # what is being added
+    rate = Column(Float, default=0.0)
+    amount = Column(Float, default=0.0)
+    display_order = Column(Integer, default=0)
