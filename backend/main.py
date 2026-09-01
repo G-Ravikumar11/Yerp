@@ -21344,6 +21344,596 @@ def stock_export(request: Request, db: Session = Depends(get_db)):
                       money(sum(r[7] for r in rows)))])
 
 
+
+
+# ============================================================================
+# THE SITE DIARY
+#
+# The daily record a site actually keeps. On a civil contract it is the
+# document that settles a delay claim two years later, and it is also the
+# only place the labour that went into the work is written down - so it is
+# what turns "the job cost this much in material" into a real cost.
+# ============================================================================
+
+WEATHER = ("Clear", "Cloudy", "Rain", "Heavy rain")
+TRADES = ("Mason", "Helper", "Carpenter", "Bar bender", "Fitter", "Electrician",
+          "Plumber", "Painter", "Operator", "Driver", "Surveyor", "Supervisor")
+
+
+def diary_or_404(db, client_id, diary_id):
+    row = db.query(models.DBSiteDiary).filter(
+        models.DBSiteDiary.id == diary_id,
+        models.DBSiteDiary.client_id == client_id).first()
+    if not row:
+        raise HTTPException(404, "Diary not found")
+    return row
+
+
+def recost_diary(db, diary):
+    """A manday is a head for the site's working day, not for a clock hour.
+
+    Half a day is half a manday, and overtime shows up as more than one -
+    which is what makes the labour histogram comparable across weeks where
+    the site worked different hours.
+    """
+    labour = db.query(models.DBDiaryLabour).filter(
+        models.DBDiaryLabour.site_diary_id == diary.id).all()
+    plant = db.query(models.DBDiaryPlant).filter(
+        models.DBDiaryPlant.site_diary_id == diary.id).all()
+    day = diary.working_hours or 8.0
+
+    mandays = 0.0
+    for l in labour:
+        heads = l.headcount or 0
+        share = (l.hours or day) / day if day else 1.0
+        mandays += heads * share
+        l.amount = money(heads * share * (l.rate or 0))
+    for p in plant:
+        # Idle time is charged too. Plant that stood all day still costs
+        # money, and hiding it is how a hire bill becomes a surprise.
+        p.amount = money(((p.worked_hours or 0) + (p.idle_hours or 0)) * (p.rate or 0))
+
+    diary.total_mandays = money(mandays)
+    diary.labour_cost = money(sum(l.amount or 0 for l in labour))
+    diary.plant_cost = money(sum(p.amount or 0 for p in plant))
+    diary.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return diary
+
+
+def diary_dict(db, d, detail=False):
+    job = db.query(models.DBJob).filter(models.DBJob.id == d.job_id).first()
+    wo = db.query(models.DBWorkOrder).filter(
+        models.DBWorkOrder.id == d.work_order_id).first() if d.work_order_id else None
+    row = {
+        "id": d.id, "job_id": d.job_id,
+        "project": ("%s %s" % (job.number or "", job.name or "")).strip() if job else "",
+        "work_order_id": d.work_order_id, "work_order": wo.number if wo else "",
+        "diary_date": d.diary_date or "", "weather": d.weather or "Clear",
+        "rain_hours": money(d.rain_hours), "working_hours": money(d.working_hours),
+        "work_done": d.work_done or "", "holdups": d.holdups or "",
+        "instructions": d.instructions or "", "visitors": d.visitors or "",
+        "safety_note": d.safety_note or "",
+        "labour_cost": money(d.labour_cost), "plant_cost": money(d.plant_cost),
+        "day_cost": money((d.labour_cost or 0) + (d.plant_cost or 0)),
+        "total_mandays": money(d.total_mandays),
+        "status": d.status or "DRAFT", "prepared_by_name": d.prepared_by_name or "",
+        "submitted_at": d.submitted_at or "",
+        "editable": (d.status or "DRAFT") == "DRAFT",
+        # A day the site was rained off is worth seeing at a glance.
+        "lost_to_weather": bool((d.rain_hours or 0) >= (d.working_hours or 8) / 2),
+        "created_at": d.created_at or "",
+    }
+    if detail:
+        row["labour"] = [{
+            "id": l.id, "trade": l.trade or "", "agency": l.agency or "Own",
+            "headcount": money(l.headcount), "hours": money(l.hours),
+            "rate": money(l.rate), "amount": money(l.amount),
+        } for l in db.query(models.DBDiaryLabour).filter(
+            models.DBDiaryLabour.site_diary_id == d.id).order_by(
+                models.DBDiaryLabour.display_order, models.DBDiaryLabour.id).all()]
+        row["plant"] = [{
+            "id": p.id, "plant": p.plant or "",
+            "worked_hours": money(p.worked_hours), "idle_hours": money(p.idle_hours),
+            "rate": money(p.rate), "amount": money(p.amount),
+            "remarks": p.remarks or "",
+        } for p in db.query(models.DBDiaryPlant).filter(
+            models.DBDiaryPlant.site_diary_id == d.id).order_by(
+                models.DBDiaryPlant.display_order, models.DBDiaryPlant.id).all()]
+    return row
+
+
+class DiaryIn(BaseModel):
+    job_id: Optional[int] = None
+    work_order_id: Optional[int] = None
+    diary_date: Optional[str] = ""
+    weather: Optional[str] = ""
+    rain_hours: Optional[float] = None
+    working_hours: Optional[float] = None
+    work_done: Optional[str] = None
+    holdups: Optional[str] = None
+    instructions: Optional[str] = None
+    visitors: Optional[str] = None
+    safety_note: Optional[str] = None
+    labour: Optional[list] = None
+    plant: Optional[list] = None
+
+
+def _replace_diary_lines(db, diary, labour, plant):
+    if labour is not None:
+        db.query(models.DBDiaryLabour).filter(
+            models.DBDiaryLabour.site_diary_id == diary.id).delete()
+        for i, l in enumerate((labour or [])[:60]):
+            heads = money(l.get("headcount") or 0)
+            if not heads:
+                continue
+            db.add(models.DBDiaryLabour(
+                site_diary_id=diary.id, trade=(l.get("trade") or "")[:80],
+                agency=(l.get("agency") or "Own")[:120], headcount=heads,
+                hours=money(l.get("hours") if l.get("hours") is not None
+                            else (diary.working_hours or 8)),
+                rate=money(l.get("rate") or 0), display_order=i))
+    if plant is not None:
+        db.query(models.DBDiaryPlant).filter(
+            models.DBDiaryPlant.site_diary_id == diary.id).delete()
+        for i, p in enumerate((plant or [])[:60]):
+            name = (p.get("plant") or "").strip()
+            if not name:
+                continue
+            db.add(models.DBDiaryPlant(
+                site_diary_id=diary.id, plant=name[:160],
+                worked_hours=money(p.get("worked_hours") or 0),
+                idle_hours=money(p.get("idle_hours") or 0),
+                rate=money(p.get("rate") or 0),
+                remarks=(p.get("remarks") or "")[:300], display_order=i))
+    db.flush()
+    recost_diary(db, diary)
+
+
+@app.get("/api/diary")
+def list_diaries(request: Request, job_id: int = 0, date_from: str = "",
+                 date_to: str = "", db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    q = db.query(models.DBSiteDiary).filter(
+        models.DBSiteDiary.client_id == client.id)
+    if job_id:
+        q = q.filter(models.DBSiteDiary.job_id == job_id)
+    if date_from:
+        q = q.filter(models.DBSiteDiary.diary_date >= date_from)
+    if date_to:
+        q = q.filter(models.DBSiteDiary.diary_date <= date_to)
+    rows = [diary_dict(db, d) for d in q.order_by(
+        models.DBSiteDiary.diary_date.desc(),
+        models.DBSiteDiary.id.desc()).limit(400).all()]
+    return {
+        "diaries": rows,
+        "summary": {
+            "days_recorded": len(rows),
+            "mandays": money(sum(r["total_mandays"] for r in rows)),
+            "labour_cost": money(sum(r["labour_cost"] for r in rows)),
+            "plant_cost": money(sum(r["plant_cost"] for r in rows)),
+            "days_lost_to_weather": len([r for r in rows if r["lost_to_weather"]]),
+            "not_yet_submitted": len([r for r in rows if r["status"] == "DRAFT"]),
+        },
+    }
+
+
+@app.post("/api/diary")
+def create_diary(body: DiaryIn, request: Request, db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db)
+    if not body.job_id:
+        raise HTTPException(400, "A diary belongs to a site.")
+    job = db.query(models.DBJob).filter(
+        models.DBJob.id == body.job_id,
+        models.DBJob.client_id == client.id).first()
+    if not job:
+        raise HTTPException(404, "Project not found")
+
+    on = (body.diary_date or datetime.now().strftime("%Y-%m-%d"))[:10]
+    # One diary per site per day. Two records for the same day is how a delay
+    # claim gets thrown out, so the second attempt reopens the first rather
+    # than quietly creating a rival.
+    existing = db.query(models.DBSiteDiary).filter(
+        models.DBSiteDiary.client_id == client.id,
+        models.DBSiteDiary.job_id == job.id,
+        models.DBSiteDiary.diary_date == on).first()
+    if existing:
+        raise HTTPException(
+            409, "There is already a diary for %s on %s. Open that one."
+                 % (job.name or "this site", on))
+
+    diary = models.DBSiteDiary(
+        client_id=client.id, job_id=job.id, work_order_id=body.work_order_id,
+        diary_date=on,
+        weather=(body.weather if body.weather in WEATHER else "Clear"),
+        rain_hours=money(body.rain_hours or 0),
+        working_hours=money(body.working_hours if body.working_hours else 8),
+        work_done=(body.work_done or "").strip(),
+        holdups=(body.holdups or "").strip(),
+        instructions=(body.instructions or "").strip(),
+        visitors=(body.visitors or "").strip(),
+        safety_note=(body.safety_note or "").strip(),
+        status="DRAFT", prepared_by=actor_id, prepared_by_name=actor_name)
+    db.add(diary)
+    db.flush()
+    _replace_diary_lines(db, diary, body.labour, body.plant)
+    db.commit()
+    db.refresh(diary)
+    return {"ok": True, "diary": diary_dict(db, diary, detail=True),
+            "message": "Diary opened for %s." % on}
+
+
+@app.get("/api/diary/{diary_id}")
+def get_diary(diary_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return diary_dict(db, diary_or_404(db, client.id, diary_id), detail=True)
+
+
+@app.put("/api/diary/{diary_id}")
+def update_diary(diary_id: int, body: DiaryIn, request: Request,
+                 db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    diary = diary_or_404(db, client.id, diary_id)
+    if (diary.status or "DRAFT") != "DRAFT":
+        raise HTTPException(
+            409, "This day has been signed off. A diary that can be rewritten "
+                 "afterwards is worth nothing in a claim.")
+    if body.weather in WEATHER:
+        diary.weather = body.weather
+    for field in ("rain_hours", "working_hours"):
+        val = getattr(body, field, None)
+        if val is not None:
+            setattr(diary, field, money(val))
+    for field in ("work_done", "holdups", "instructions", "visitors",
+                  "safety_note"):
+        val = getattr(body, field, None)
+        if val is not None:
+            setattr(diary, field, val.strip())
+    if body.work_order_id is not None:
+        diary.work_order_id = body.work_order_id or None
+    _replace_diary_lines(db, diary, body.labour, body.plant)
+    db.commit()
+    db.refresh(diary)
+    return {"ok": True, "diary": diary_dict(db, diary, detail=True)}
+
+
+@app.post("/api/diary/{diary_id}/submit")
+def submit_diary(diary_id: int, request: Request, db: Session = Depends(get_db)):
+    client, _, actor_name = wo_actor(request, db)
+    diary = diary_or_404(db, client.id, diary_id)
+    if (diary.status or "DRAFT") != "DRAFT":
+        raise HTTPException(409, "Already signed off.")
+    if not (diary.work_done or "").strip():
+        raise HTTPException(
+            400, "Say what was done. A day with no record of the work is not "
+                 "a diary entry.")
+    diary.status = "SUBMITTED"
+    diary.submitted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_audit(db, client.id, "diary_submitted", "site_diary", diary.id,
+              diary.diary_date or "", actor_name, request)
+    db.commit()
+    db.refresh(diary)
+    return {"ok": True, "diary": diary_dict(db, diary, detail=True),
+            "message": "%s signed off." % diary.diary_date}
+
+
+@app.delete("/api/diary/{diary_id}")
+def delete_diary(diary_id: int, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    diary = diary_or_404(db, client.id, diary_id)
+    if (diary.status or "DRAFT") != "DRAFT":
+        raise HTTPException(409, "A signed off day cannot be deleted.")
+    db.query(models.DBDiaryLabour).filter(
+        models.DBDiaryLabour.site_diary_id == diary.id).delete()
+    db.query(models.DBDiaryPlant).filter(
+        models.DBDiaryPlant.site_diary_id == diary.id).delete()
+    db.delete(diary)
+    db.commit()
+    return {"ok": True, "message": "Draft diary removed."}
+
+
+@app.get("/api/diary-labour/{job_id}")
+def labour_history(job_id: int, request: Request, db: Session = Depends(get_db)):
+    """Who has been on this site, by trade, over its whole life.
+
+    The question a project manager asks on a Monday - am I carrying more
+    masons than the work needs - and it cannot be answered from one day.
+    """
+    client = require_erp_read(request, db)
+    job = db.query(models.DBJob).filter(
+        models.DBJob.id == job_id, models.DBJob.client_id == client.id).first()
+    if not job:
+        raise HTTPException(404, "Project not found")
+
+    diaries = db.query(models.DBSiteDiary).filter(
+        models.DBSiteDiary.client_id == client.id,
+        models.DBSiteDiary.job_id == job.id).order_by(
+            models.DBSiteDiary.diary_date).all()
+    ids = [d.id for d in diaries]
+    trades, agencies = {}, {}
+    if ids:
+        day_of = {d.id: (d.working_hours or 8.0) for d in diaries}
+        for l in db.query(models.DBDiaryLabour).filter(
+                models.DBDiaryLabour.site_diary_id.in_(ids)).all():
+            day = day_of.get(l.site_diary_id, 8.0) or 8.0
+            md = (l.headcount or 0) * ((l.hours or day) / day)
+            t = trades.setdefault(l.trade or "Unstated",
+                                  {"trade": l.trade or "Unstated",
+                                   "mandays": 0.0, "cost": 0.0})
+            t["mandays"] = money(t["mandays"] + md)
+            t["cost"] = money(t["cost"] + (l.amount or 0))
+            a = agencies.setdefault(l.agency or "Own",
+                                    {"agency": l.agency or "Own",
+                                     "mandays": 0.0, "cost": 0.0})
+            a["mandays"] = money(a["mandays"] + md)
+            a["cost"] = money(a["cost"] + (l.amount or 0))
+
+    daily = [{"diary_date": d.diary_date or "", "mandays": money(d.total_mandays),
+              "labour_cost": money(d.labour_cost), "plant_cost": money(d.plant_cost),
+              "weather": d.weather or "", "rain_hours": money(d.rain_hours)}
+             for d in diaries]
+    worked = [d for d in daily if d["mandays"] > 0]
+    return {
+        "job": {"id": job.id, "number": job.number or "", "name": job.name or ""},
+        "by_trade": sorted(trades.values(), key=lambda r: -r["mandays"]),
+        "by_agency": sorted(agencies.values(), key=lambda r: -r["mandays"]),
+        "daily": daily,
+        "summary": {
+            "days_recorded": len(daily),
+            "days_worked": len(worked),
+            "mandays": money(sum(r["mandays"] for r in daily)),
+            "labour_cost": money(sum(r["labour_cost"] for r in daily)),
+            "plant_cost": money(sum(r["plant_cost"] for r in daily)),
+            "average_gang": (round(sum(r["mandays"] for r in worked) / len(worked), 1)
+                             if worked else 0.0),
+            "rain_hours": money(sum(r["rain_hours"] for r in daily)),
+        },
+    }
+
+
+@app.get("/api/diary/{diary_id}/export.xlsx")
+def diary_export(diary_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    d = diary_or_404(db, client.id, diary_id)
+    row = diary_dict(db, d, detail=True)
+    preamble = [
+        ("DAILY PROGRESS REPORT", client.company_name or ""),
+        ("Site", row["project"], "Date", row["diary_date"]),
+        ("Weather", "%s (%s h rain)" % (row["weather"], row["rain_hours"]),
+         "Working hours", row["working_hours"]),
+        ("Prepared by", row["prepared_by_name"], "Status", row["status"]),
+        (),
+        ("Work done", row["work_done"]),
+        ("Held up by", row["holdups"] or "-"),
+        ("Instructions", row["instructions"] or "-"),
+        ("Visitors", row["visitors"] or "-"),
+        ("Safety", row["safety_note"] or "-"),
+        (),
+        ("LABOUR",),
+    ]
+    headers = ("Trade", "Agency", "Number", "Hours", "Rate", "Amount")
+    rows = [(l["trade"], l["agency"], l["headcount"], l["hours"], l["rate"],
+             l["amount"]) for l in row["labour"]]
+    closing = [(), ("Mandays", row["total_mandays"], "", "", "Labour",
+                    row["labour_cost"])]
+    if row["plant"]:
+        closing += [(), ("PLANT",),
+                    ("Plant", "Worked", "Idle", "Rate", "Amount", "Remarks")]
+        closing += [(p["plant"], p["worked_hours"], p["idle_hours"], p["rate"],
+                     p["amount"], p["remarks"]) for p in row["plant"]]
+        closing += [("", "", "", "Plant", row["plant_cost"])]
+    closing += [(), ("Cost of the day", row["day_cost"])]
+    return sheet_response(headers, rows,
+                          "dpr_%s.xlsx" % (row["diary_date"] or "day"),
+                          preamble=preamble, closing=closing)
+
+
+# ============================================================================
+# PROJECT PROFIT AND LOSS
+#
+# What a project earned against what it truly cost. The cost side had a hole
+# in it until now: supplier bills were counted, but the material drawn out of
+# the store and the labour standing on site were not, so a job could look
+# profitable right up to the day the store was counted.
+#
+# Revenue is what has been certified, not what has been hoped for. A bill
+# nobody has agreed to is not income, and treating it as such is how a
+# contractor discovers a loss at the end instead of in the middle.
+# ============================================================================
+
+def project_pnl(db, client_id, job):
+    wos = db.query(models.DBWorkOrder).filter(
+        models.DBWorkOrder.client_id == client_id,
+        models.DBWorkOrder.job_id == job.id).all()
+    live = [w for w in wos if (w.approval_status or "none") != "rejected"]
+    wo_ids = [w.id for w in live]
+    order_value = money(sum(w.total_value or 0 for w in live))
+
+    # --- earned ----------------------------------------------------------
+    invoices = [i for i in db.query(models.DBInvoice).filter(
+        models.DBInvoice.client_id == client_id,
+        models.DBInvoice.job_id == job.id).all()
+        if (i.status or "") not in ("Draft", "Cancelled", "Void")]
+    invoiced = money(sum(invoice_total(i) for i in invoices))
+    collected = money(sum(i.paid or 0 for i in invoices))
+
+    bills = db.query(models.DBRABill).filter(
+        models.DBRABill.job_id == job.id,
+        models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all() if job.id else []
+    certified = money(sum(b.this_bill or 0 for b in bills))
+    retention = money(sum(b.retention_amount or 0 for b in bills))
+
+    # --- what it cost ----------------------------------------------------
+    supplier_bills = [b for b in db.query(models.DBBill).filter(
+        models.DBBill.client_id == client_id,
+        models.DBBill.job_id == job.id).all()
+        if (b.approval_status or "none") != "rejected"
+        and (b.status or "") != "Cancelled"]
+    bill_cost = money(sum(b.total or 0 for b in supplier_bills))
+
+    # Material actually drawn from the store for this job. Issues are negative
+    # and returns positive, so the negated sum is what the site consumed and a
+    # cancelled issue costs nothing.
+    material = money(-sum(m.value or 0 for m in db.query(
+        models.DBStockMovement).filter(
+            models.DBStockMovement.client_id == client_id,
+            models.DBStockMovement.job_id == job.id,
+            models.DBStockMovement.kind.in_(("ISSUE", "RETURN"))).all()))
+
+    diaries = db.query(models.DBSiteDiary).filter(
+        models.DBSiteDiary.client_id == client_id,
+        models.DBSiteDiary.job_id == job.id).all()
+    labour = money(sum(d.labour_cost or 0 for d in diaries))
+    plant = money(sum(d.plant_cost or 0 for d in diaries))
+    mandays = money(sum(d.total_mandays or 0 for d in diaries))
+
+    # A purchase order stops being a commitment the moment a bill references
+    # it, so the same spend is never counted twice.
+    billed_pos = {b.purchase_order_id for b in supplier_bills if b.purchase_order_id}
+    committed = money(sum(
+        p.total or 0 for p in db.query(models.DBPurchaseOrder).filter(
+            models.DBPurchaseOrder.client_id == client_id,
+            models.DBPurchaseOrder.job_id == job.id).all()
+        if p.id not in billed_pos
+        and (p.status or "") in ("Approved", "Awaiting Approval")))
+
+    incurred = money(bill_cost + material + labour + plant)
+    budgeted = money(sum(
+        b.amount or 0 for b in db.query(models.DBBomLine).filter(
+            models.DBBomLine.work_order_id.in_(wo_ids)).all())) if wo_ids else 0.0
+
+    revenue = money(max(invoiced, certified))
+    margin = money(revenue - incurred)
+
+    return {
+        "job": {"id": job.id, "number": job.number or "", "name": job.name or "",
+                "customer_name": job.customer_name or "", "status": job.status or "",
+                "site_address": job.site_address or ""},
+        "value": {
+            "order_value": order_value,
+            "quoted_value": money(job.quoted_value),
+            "budgeted_cost": budgeted,
+        },
+        "earned": {
+            "invoiced": invoiced, "collected": collected,
+            "outstanding": money(invoiced - collected),
+            "certified": certified, "retention_held": retention,
+            "revenue": revenue,
+        },
+        "cost": {
+            "supplier_bills": bill_cost,
+            "material_from_store": material,
+            "labour": labour,
+            "plant": plant,
+            "incurred": incurred,
+            "committed_not_yet_billed": committed,
+            "forecast": money(incurred + committed),
+        },
+        "result": {
+            "margin": margin,
+            "margin_percent": round(margin / revenue * 100, 1) if revenue else 0.0,
+            "cost_per_manday": money(incurred / mandays) if mandays else 0.0,
+            "mandays": mandays,
+            # Costing more than it was budgeted to is the earliest warning
+            # there is, and it arrives long before the revenue does.
+            "over_budget": bool(budgeted) and incurred > budgeted,
+            "budget_used_percent": (round(incurred / budgeted * 100, 1)
+                                    if budgeted else 0.0),
+        },
+    }
+
+
+@app.get("/api/jobs/{job_id}/pnl")
+def job_pnl(job_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    job = db.query(models.DBJob).filter(
+        models.DBJob.id == job_id, models.DBJob.client_id == client.id).first()
+    if not job:
+        raise HTTPException(404, "Project not found")
+    return project_pnl(db, client.id, job)
+
+
+@app.get("/api/jobs-pnl")
+def portfolio_pnl(request: Request, db: Session = Depends(get_db)):
+    """Every live project on one line, worst margin first.
+
+    An owner does not want to open eleven screens to find the one job that is
+    losing money, so the one that is losing money is at the top.
+    """
+    client = require_erp_read(request, db)
+    rows = []
+    for job in db.query(models.DBJob).filter(
+            models.DBJob.client_id == client.id).order_by(models.DBJob.id).all():
+        p = project_pnl(db, client.id, job)
+        rows.append({
+            "job_id": job.id, "number": job.number or "", "name": job.name or "",
+            "customer_name": job.customer_name or "", "status": job.status or "",
+            "order_value": p["value"]["order_value"],
+            "revenue": p["earned"]["revenue"],
+            "incurred": p["cost"]["incurred"],
+            "committed": p["cost"]["committed_not_yet_billed"],
+            "margin": p["result"]["margin"],
+            "margin_percent": p["result"]["margin_percent"],
+            "mandays": p["result"]["mandays"],
+            "over_budget": p["result"]["over_budget"],
+            "outstanding": p["earned"]["outstanding"],
+            "losing": p["result"]["margin"] < 0,
+        })
+    rows.sort(key=lambda r: r["margin"])
+    return {
+        "projects": rows,
+        "summary": {
+            "projects": len(rows),
+            "order_value": money(sum(r["order_value"] for r in rows)),
+            "revenue": money(sum(r["revenue"] for r in rows)),
+            "incurred": money(sum(r["incurred"] for r in rows)),
+            "margin": money(sum(r["margin"] for r in rows)),
+            "losing_money": len([r for r in rows if r["losing"]]),
+            "owed_to_us": money(sum(r["outstanding"] for r in rows)),
+        },
+    }
+
+
+@app.get("/api/jobs/{job_id}/pnl.xlsx")
+def job_pnl_export(job_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    job = db.query(models.DBJob).filter(
+        models.DBJob.id == job_id, models.DBJob.client_id == client.id).first()
+    if not job:
+        raise HTTPException(404, "Project not found")
+    p = project_pnl(db, client.id, job)
+    e, c, r = p["earned"], p["cost"], p["result"]
+    preamble = [
+        ("PROJECT PROFIT AND LOSS", client.company_name or ""),
+        ("Project", "%s %s" % (job.number or "", job.name or "")),
+        ("Client", job.customer_name or "", "Status", job.status or ""),
+        (),
+    ]
+    rows = [
+        ("Order value", p["value"]["order_value"]),
+        ("Invoiced", e["invoiced"]),
+        ("Collected", e["collected"]),
+        ("Certified on RA bills", e["certified"]),
+        ("Retention held", e["retention_held"]),
+        ("Revenue recognised", e["revenue"]),
+        ("", ""),
+        ("Supplier bills", c["supplier_bills"]),
+        ("Material from the store", c["material_from_store"]),
+        ("Labour", c["labour"]),
+        ("Plant", c["plant"]),
+        ("Incurred", c["incurred"]),
+        ("Committed, not yet billed", c["committed_not_yet_billed"]),
+        ("Forecast cost", c["forecast"]),
+        ("", ""),
+        ("Margin", r["margin"]),
+        ("Margin %", r["margin_percent"]),
+        ("Mandays", r["mandays"]),
+        ("Cost per manday", r["cost_per_manday"]),
+    ]
+    return sheet_response(("Item", "Amount"), rows,
+                          "pnl_%s.xlsx" % (job.number or "project"),
+                          preamble=preamble)
+
+
 # Serve frontend
 frontend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
 if os.path.exists(frontend_path):

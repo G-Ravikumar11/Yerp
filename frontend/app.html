@@ -144,6 +144,8 @@
                             <a href="#" class="nav-item" id="nav-stores" onclick="event.preventDefault();showView('stores-view')">Goods Receipt &amp; Match</a>
                             <a href="#" class="nav-item" id="nav-stock" onclick="event.preventDefault();showView('stock-view')">Stock &amp; Issues</a>
                             <a href="#" class="nav-item" id="nav-consume" onclick="event.preventDefault();showView('consume-view')">Material Used vs Costed</a>
+                            <a href="#" class="nav-item" id="nav-diary" onclick="event.preventDefault();showView('diary-view')">Site Diary</a>
+                            <a href="#" class="nav-item" id="nav-pnl" onclick="event.preventDefault();showView('pnl-view')">Project Profit</a>
                         </div>
                     </div>
 
@@ -1153,6 +1155,68 @@
                         <div class="modal-footer">
                             <button class="btn btn-outline" onclick="closeReceiveModal()">Cancel</button>
                             <button class="btn btn-primary" onclick="startReceipt()">Open the receipt</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="diary-form" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:860px;">
+                        <div class="modal-header">
+                            <h3 id="diary-form-title">Record a day</h3>
+                            <button class="modal-close" onclick="closeDiaryForm()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <p id="diary-locked" style="color:var(--warning-color);font-size:0.82rem;"></p>
+                            <div class="form-row">
+                                <div class="form-group"><label>Date</label>
+                                    <input type="date" id="diary-date" class="form-control"></div>
+                                <div class="form-group"><label>Weather</label>
+                                    <select id="diary-weather" class="form-control"></select></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Hours of rain</label>
+                                    <input type="number" step="any" min="0" id="diary-rain" class="form-control" placeholder="0"></div>
+                                <div class="form-group"><label>Working hours that day</label>
+                                    <input type="number" step="any" min="1" id="diary-hours" class="form-control" value="8" oninput="diaryTotals()"></div>
+                            </div>
+
+                            <h4 style="font-size:0.9rem;margin:14px 0 8px;">Labour on site</h4>
+                            <div class="table-responsive">
+                                <table class="data-table">
+                                    <thead><tr><th style="width:150px;">Trade</th><th>Whose</th><th style="width:90px;">Number</th><th style="width:90px;">Hours</th><th style="width:110px;">Rate/day</th></tr></thead>
+                                    <tbody id="diary-labour-rows"></tbody>
+                                </table>
+                            </div>
+
+                            <h4 style="font-size:0.9rem;margin:14px 0 8px;">Plant on site</h4>
+                            <div class="table-responsive">
+                                <table class="data-table">
+                                    <thead><tr><th>Plant</th><th style="width:100px;">Worked h</th><th style="width:100px;">Idle h</th><th style="width:110px;">Rate/hr</th></tr></thead>
+                                    <tbody id="diary-plant-rows"></tbody>
+                                </table>
+                            </div>
+                            <p style="font-size:0.75rem;color:var(--text-secondary);margin-top:4px;">Idle hours are charged too &mdash; plant that stood all day still costs money.</p>
+
+                            <div class="form-group" style="margin-top:12px;"><label>What was done *</label>
+                                <textarea id="diary-work" class="form-control" rows="2" placeholder="Slab to Block A, columns to first floor"></textarea></div>
+                            <div class="form-row">
+                                <div class="form-group"><label>What held it up</label>
+                                    <input type="text" id="diary-holdups" class="form-control" placeholder="No power from 11am"></div>
+                                <div class="form-group"><label>Instructions received</label>
+                                    <input type="text" id="diary-instructions" class="form-control" placeholder="RE asked for extra cover"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Visitors</label>
+                                    <input type="text" id="diary-visitors" class="form-control" placeholder="Client RE, safety officer"></div>
+                                <div class="form-group"><label>Safety</label>
+                                    <input type="text" id="diary-safety" class="form-control" placeholder="Nil incidents"></div>
+                            </div>
+                            <p id="diary-totals" style="font-size:0.88rem;margin-top:10px;"></p>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeDiaryForm()">Close</button>
+                            <button class="btn btn-outline" id="diary-save" onclick="saveDiary(false)">Save as draft</button>
+                            <button class="btn btn-primary" id="diary-submit" onclick="saveDiary(true)">Sign off the day</button>
                         </div>
                     </div>
                 </div>
@@ -3225,6 +3289,59 @@
                     </div>
                 </div>
 
+                <div id="diary-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Site Diary</h1><p class="subtitle">Who turned up, what the weather did, what got built and what stopped it</p></div>
+                        <div class="invoices-actions">
+                            <button class="btn btn-primary" onclick="newDiary()">Record a day</button>
+                            <button class="btn btn-outline" onclick="refreshDiary()">Refresh</button>
+                        </div>
+                    </div>
+
+                    <div class="widget" style="margin-bottom:18px;">
+                        <div class="widget-content" style="padding:16px 20px;">
+                            <label style="display:block;font-size:0.85rem;font-weight:600;margin-bottom:6px;">Site</label>
+                            <select id="diary-job" class="form-control" style="max-width:460px;" onchange="diaryJobChanged()"></select>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid" id="diary-stats"></div>
+
+                    <div class="widget" style="margin-top:18px;">
+                        <div class="widget-header"><h3>The days</h3></div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Date</th><th>Weather</th><th class="text-right">Mandays</th><th class="text-right">Labour</th><th class="text-right">Plant</th><th>Work done</th><th>Status</th><th></th></tr></thead>
+                                <tbody id="diary-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div id="labour-history" style="margin-top:18px;"></div>
+                </div>
+
+                <div id="pnl-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Project Profit</h1><p class="subtitle">What each project earned against what it truly cost &mdash; material, labour and plant included</p></div>
+                        <div class="invoices-actions">
+                            <button class="btn btn-outline" onclick="loadPortfolio()">Refresh</button>
+                            <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid" id="pnl-stats"></div>
+
+                    <div class="widget" style="margin-top:18px;">
+                        <div class="widget-header"><h3>Every project, worst margin first</h3></div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Project</th><th class="text-right">Order value</th><th class="text-right">Revenue</th><th class="text-right">Cost</th><th class="text-right">Margin</th><th class="text-right">Mandays</th><th>Status</th><th></th></tr></thead>
+                                <tbody id="pnl-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="stock-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div><h1>Stock &amp; Issues</h1><p class="subtitle">What is in the store, what went to site, and what it cost</p></div>
@@ -4050,6 +4167,7 @@
     <script src="costs.js?v=65"></script>
     <script src="measurement.js?v=70"></script>
     <script src="stock.js?v=70"></script>
+    <script src="diary.js?v=71"></script>
     <script src="stores.js?v=65"></script>
 
     <!-- AI Core Orb -->

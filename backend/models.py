@@ -2080,3 +2080,84 @@ class DBStockIssueLine(Base):
     rate = Column(Float, default=0.0)
     amount = Column(Float, default=0.0)
     display_order = Column(Integer, default=0)
+
+
+# ===========================================================================
+# THE SITE DIARY
+#
+# The daily record a site actually keeps: who turned up, what plant was
+# standing, what the weather did, what got built and what stopped it. On a
+# civil contract it is the document that settles a delay claim two years
+# later, and it was the one piece of paper this app had no home for.
+#
+# One diary per site per day, enforced in the database. Two diaries for the
+# same day is how a claim gets thrown out.
+# ===========================================================================
+
+class DBSiteDiary(Base):
+    __tablename__ = "site_diaries"
+    __table_args__ = (
+        UniqueConstraint('client_id', 'job_id', 'diary_date', name='uq_site_diary_day'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True, index=True)
+
+    diary_date = Column(String, nullable=False, index=True)
+    # Clear | Cloudy | Rain | Heavy rain. Rain hours are what a claim turns
+    # on, so they are a number rather than a note somebody has to read.
+    weather = Column(String, default="Clear")
+    rain_hours = Column(Float, default=0.0)
+    working_hours = Column(Float, default=8.0)
+
+    work_done = Column(Text, default="")
+    holdups = Column(Text, default="")
+    instructions = Column(Text, default="")
+    visitors = Column(String, default="")
+    safety_note = Column(String, default="")
+
+    labour_cost = Column(Float, default=0.0)
+    plant_cost = Column(Float, default=0.0)
+    total_mandays = Column(Float, default=0.0)
+
+    # DRAFT | SUBMITTED
+    status = Column(String, default="DRAFT", index=True)
+    prepared_by = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    prepared_by_name = Column(String, default="")
+    submitted_at = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    updated_at = Column(String, default="")
+
+
+class DBDiaryLabour(Base):
+    """Heads on site, by trade and by whose payroll they are on."""
+    __tablename__ = "diary_labour"
+
+    id = Column(Integer, primary_key=True, index=True)
+    site_diary_id = Column(Integer, ForeignKey("site_diaries.id"), index=True)
+    trade = Column(String, default="")           # Mason, Helper, Bar bender...
+    agency = Column(String, default="Own")       # Own, or the subcontractor
+    headcount = Column(Float, default=0.0)
+    hours = Column(Float, default=8.0)
+    rate = Column(Float, default=0.0)            # per manday
+    amount = Column(Float, default=0.0)
+    display_order = Column(Integer, default=0)
+
+
+class DBDiaryPlant(Base):
+    """Plant on site. Idle hours are recorded separately because plant that
+    stood all day still costs money and is the first thing an owner asks
+    about when the hire bill arrives."""
+    __tablename__ = "diary_plant"
+
+    id = Column(Integer, primary_key=True, index=True)
+    site_diary_id = Column(Integer, ForeignKey("site_diaries.id"), index=True)
+    plant = Column(String, default="")
+    worked_hours = Column(Float, default=0.0)
+    idle_hours = Column(Float, default=0.0)
+    rate = Column(Float, default=0.0)            # per hour
+    amount = Column(Float, default=0.0)
+    remarks = Column(String, default="")
+    display_order = Column(Integer, default=0)
