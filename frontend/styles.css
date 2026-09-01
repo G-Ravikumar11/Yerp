@@ -444,6 +444,17 @@ h1, h2, h3, h4, p, td, th, li, .stat-value { overflow-wrap: anywhere; }
 }
 
 /* ===== FORMS ===== */
+/* Two fields that belong side by side. The base rule was never written -
+   only the mobile overrides that collapse it, which assumed a grid that did
+   not exist - so all eleven of these stacked on desktop too and every form
+   ran twice as long as it was drawn to. auto-fit keeps a row of two honest
+   when the container is narrow, and the !important overrides below still win
+   on a phone. */
+.form-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 0 16px;
+}
 .form-group { display: flex; flex-direction: column; margin-bottom: 16px; }
 .form-group label { font-size: 0.85rem; font-weight: 500; margin-bottom: 6px; color: var(--text-primary); }
 .form-control {
