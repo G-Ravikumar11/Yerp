@@ -1435,6 +1435,7 @@ def ensure_columns():
                     # well as on the model - the omission that took production
                     # down once already.
                     ("erp_items", "reorder_level", "DOUBLE PRECISION DEFAULT 0"),
+                    ("erp_items", "last_rate", "DOUBLE PRECISION DEFAULT 0"),
                 ):
                     conn.execute(text(
                         f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
@@ -1572,6 +1573,7 @@ def migrate_sqlite():
             # the Postgres entry said the latter and the whole stock screen
             # 500ed on a database that already existed.
             add_col("erp_items", "reorder_level", "FLOAT DEFAULT 0")
+            add_col("erp_items", "last_rate", "FLOAT DEFAULT 0")
 
             # Create approval_chains table
             conn.execute(text("""

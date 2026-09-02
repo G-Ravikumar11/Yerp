@@ -28,7 +28,7 @@
         }}
       };
     </script>
-    <link rel="stylesheet" href="styles.css?v=67">
+    <link rel="stylesheet" href="styles.css?v=72">
     <link rel="stylesheet" href="mobile.css?v=65">
 </head>
 <body>
@@ -120,17 +120,20 @@
                         </button>
                         <div class="nav-group-items" id="nav-items-costs">
                             <a href="#" class="nav-item" id="nav-bills" onclick="event.preventDefault();showView('bills-view')">Bills</a>
-                            <a href="#" class="nav-item" id="nav-orders" onclick="event.preventDefault();showView('orders-view')">Purchase Orders</a>
-                            <a href="#" class="nav-item" id="nav-items" data-perm="items.manage" onclick="event.preventDefault();showView('items-view')">Item Master</a>
                             <a href="#" class="nav-item" id="nav-workorders" data-perm="workorders.manage" onclick="event.preventDefault();showView('workorders-view')">Work Orders</a>
                         </div>
                     </div>
 
-                    <!-- Contracts. The run the business already works to:
-                         a customer, a project against them, a priced order,
-                         the budget behind it, and the screen it is signed
-                         off on. Its own group because it is followed in
-                         order, start to finish, one project at a time. -->
+                    <!-- Three groups, following the order a site actually
+                         works in rather than one list of ten.
+
+                         Contracts  - what was sold and to whom
+                         Site       - what is being built, measured and billed
+                         Store      - what was bought, what arrived, what is left
+
+                         Ten entries under one heading is a list nobody reads;
+                         a foreman looking for the measurement book should not
+                         have to pass goods receipt to reach it. -->
                     <div class="nav-group" id="nav-group-contracts">
                         <button type="button" class="nav-item nav-group-toggle" aria-expanded="false" aria-controls="nav-items-contracts" onclick="toggleNavGroup(event,'contracts')">
                             Contracts <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
@@ -138,14 +141,32 @@
                         <div class="nav-group-items" id="nav-items-contracts">
                             <a href="#" class="nav-item" id="nav-customers" data-perm="customers.manage" onclick="event.preventDefault();showView('customers-view')">Customers</a>
                             <a href="#" class="nav-item" id="nav-inquiry" data-perm="workorders.manage" onclick="event.preventDefault();showView('inquiry-view')">Work Order Inquiry</a>
-                            <a href="#" class="nav-item" id="nav-viewer" onclick="event.preventDefault();showView('viewer-view')">Open a file</a>
                             <a href="#" class="nav-item" id="nav-subcontracts" onclick="event.preventDefault();showView('subcontracts-view')">Subcontract Orders</a>
+                            <a href="#" class="nav-item" id="nav-viewer" onclick="event.preventDefault();showView('viewer-view')">Open a file</a>
+                        </div>
+                    </div>
+
+                    <div class="nav-group" id="nav-group-site">
+                        <button type="button" class="nav-item nav-group-toggle" aria-expanded="false" aria-controls="nav-items-site" onclick="toggleNavGroup(event,'site')">
+                            Site <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
+                        </button>
+                        <div class="nav-group-items" id="nav-items-site">
                             <a href="#" class="nav-item" id="nav-measurement" onclick="event.preventDefault();showView('measurement-view')">Measurement &amp; RA Bills</a>
+                            <a href="#" class="nav-item" id="nav-diary" onclick="event.preventDefault();showView('diary-view')">Site Diary</a>
+                            <a href="#" class="nav-item" id="nav-consume" onclick="event.preventDefault();showView('consume-view')">Material Used vs Costed</a>
+                            <a href="#" class="nav-item" id="nav-pnl" onclick="event.preventDefault();showView('pnl-view')">Project Profit</a>
+                        </div>
+                    </div>
+
+                    <div class="nav-group" id="nav-group-store">
+                        <button type="button" class="nav-item nav-group-toggle" aria-expanded="false" aria-controls="nav-items-store" onclick="toggleNavGroup(event,'store')">
+                            Store <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
+                        </button>
+                        <div class="nav-group-items" id="nav-items-store">
                             <a href="#" class="nav-item" id="nav-stores" onclick="event.preventDefault();showView('stores-view')">Goods Receipt &amp; Match</a>
                             <a href="#" class="nav-item" id="nav-stock" onclick="event.preventDefault();showView('stock-view')">Stock &amp; Issues</a>
-                            <a href="#" class="nav-item" id="nav-consume" onclick="event.preventDefault();showView('consume-view')">Material Used vs Costed</a>
-                            <a href="#" class="nav-item" id="nav-diary" onclick="event.preventDefault();showView('diary-view')">Site Diary</a>
-                            <a href="#" class="nav-item" id="nav-pnl" onclick="event.preventDefault();showView('pnl-view')">Project Profit</a>
+                            <a href="#" class="nav-item" id="nav-orders" onclick="event.preventDefault();showView('orders-view')">Purchase Orders</a>
+                            <a href="#" class="nav-item" id="nav-items" data-perm="items.manage" onclick="event.preventDefault();showView('items-view')">Item Master</a>
                         </div>
                     </div>
 
@@ -4147,7 +4168,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=67"></script>
+    <script src="app.js?v=72"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=65"></script>
@@ -4156,7 +4177,7 @@
     <!-- Item master, work orders and budget allocation. -->
     <script src="erp.js?v=65"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
-    <script src="erp-build.js?v=65"></script>
+    <script src="erp-build.js?v=72"></script>
     <!-- The spreadsheet grid the item master is entered through. -->
     <script src="erp-grid.js?v=65"></script>
     <!-- Preview and correct a sheet that arrived from outside. -->

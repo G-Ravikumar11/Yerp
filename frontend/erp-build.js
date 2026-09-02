@@ -224,7 +224,8 @@ function addWorkOrderLine() {
             : 'Name the first deliverable to price it', 'error');
         return;
     }
-    _woDraft.lines.push({ code: free[0].item_code, qty: 1, rate: 0, description: '' });
+    _woDraft.lines.push({ code: free[0].item_code, qty: 1,
+                          rate: lastRate(free[0].item_code), description: '' });
     renderWorkOrderLines();
 }
 window.addWorkOrderLine = addWorkOrderLine;
@@ -237,7 +238,7 @@ window.addWorkOrderLine = addWorkOrderLine;
 
 function newFgCode() {
     var v = VOCAB || {};
-    document.getElementById('fg-quick-modal').style.display = 'flex';
+    openModal('fg-quick-modal');
     document.getElementById('fg-quick-name').value = '';
     var unit = document.getElementById('fg-quick-uom');
     unit.innerHTML = (v.units || ['Nos']).map(function (u) {
@@ -256,7 +257,7 @@ function newFgCode() {
 window.newFgCode = newFgCode;
 
 function closeFgQuick() {
-    document.getElementById('fg-quick-modal').style.display = 'none';
+    closeModal('fg-quick-modal');
 }
 window.closeFgQuick = closeFgQuick;
 
@@ -284,13 +285,27 @@ async function saveFgQuick() {
     // blank-ish line takes it rather than growing a second one.
     var used = _woDraft.lines.map(function (l) { return l.code; });
     if (used.indexOf(out.item_code) < 0) {
-        _woDraft.lines.push({ code: out.item_code, qty: 1, rate: 0, description: '' });
+        _woDraft.lines.push({ code: out.item_code, qty: 1,
+                              rate: lastRate(out.item_code), description: '' });
     }
     renderWorkOrderLines();
 }
 window.saveFgQuick = saveFgQuick;
 
+/* What this code was last sold at. An offer, not a rule - prices move on a
+   contract, so it is filled in and left editable rather than enforced. */
+function lastRate(code) {
+    var hit = _fgMaster.filter(function (i) { return i.item_code === code; })[0];
+    return hit ? (hit.last_rate || 0) : 0;
+}
+window.lastRate = lastRate;
+
 function editWoLine(i, field, value) {
+    // Swapping the item brings its own price with it, unless somebody has
+    // already typed one on this line.
+    if (field === 'code' && !_woDraft.lines[i].rate) {
+        _woDraft.lines[i].rate = lastRate(value);
+    }
     _woDraft.lines[i][field] = (field === 'qty' || field === 'rate')
         ? (parseFloat(value) || 0) : value;
     renderWorkOrderLines();
@@ -376,6 +391,14 @@ async function saveWorkOrder() {
     var jobId = parseInt((document.getElementById('wob-job') || {}).value);
     if (!jobId) { showToast('Choose a job', 'error'); return; }
     if (!_woDraft.lines.length) { showToast('Add at least one line', 'error'); return; }
+    var value = _woDraft.lines.reduce(function (t, l) {
+        return t + (l.qty || 0) * (l.rate || 0);
+    }, 0);
+    if (value <= 0) {
+        showToast('Every line is priced at zero. Put a rate against each line — ' +
+                  'an order worth nothing cannot be measured or billed.', 'error');
+        return;
+    }
     try {
         var res = await fetch('/api/erp/work-orders/build', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },

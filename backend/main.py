@@ -3927,7 +3927,9 @@ def item_row(item):
     return {"id": item.id, "kind": item.kind, "item_code": item.item_code,
             "item_name": item.item_name, "description": item.description,
             "item_type": item.item_type, "units_of_measure": item.units_of_measure,
-            "hsn_code": item.hsn_code, "item_tax_type": item.item_tax_type}
+            "hsn_code": item.hsn_code, "item_tax_type": item.item_tax_type,
+            "last_rate": unit_rate(item.last_rate),
+            "reorder_level": money(item.reorder_level)}
 
 
 @app.post("/api/erp/items")
@@ -4079,6 +4081,13 @@ def erp_build_work_order(body: WorkOrderIn, request: Request,
                       "rate": rate, "amount": money(qty * rate)})
 
     total = money(sum(l["amount"] for l in lines))
+    if total <= 0:
+        # Every line priced at nothing. The order would be created, sit in the
+        # list at zero, and measure and bill at zero for ever - so it is
+        # refused here rather than discovered three screens later.
+        raise HTTPException(
+            400, "Every line is priced at zero, so this order is worth nothing. "
+                 "Put a rate against each line before creating it.")
     wo = models.DBWorkOrder(
         client_id=client.id, job_id=job.id,
         number=next_sequence_number(db, models.DBWorkOrder, client.id, "WO-"),
@@ -4089,6 +4098,11 @@ def erp_build_work_order(body: WorkOrderIn, request: Request,
     db.flush()
     for l in lines:
         db.add(models.DBWorkOrderLine(work_order_id=wo.id, **l))
+        # Remember what this code was sold at, so the next order opens with a
+        # rate already in it. An offer, not a rule: prices move on a contract
+        # and whoever is pricing the next one can still change it.
+        if l["rate"]:
+            master[l["fg_code"]].last_rate = l["rate"]
     log_audit(db, client.id, "work_order_created", "work_order", wo.id, wo.number,
               "%s - %d line(s) - %s" % (job.number, len(lines), total), request)
     db.commit()
@@ -4168,7 +4182,9 @@ def erp_list_items(request: Request, kind: str = "", q: str = "",
                    "item_name": i.item_name, "description": i.description,
                    "category": i.category, "item_type": i.item_type,
                    "units_of_measure": i.units_of_measure, "hsn_code": i.hsn_code,
-                   "item_tax_type": i.item_tax_type} for i in items],
+                   "item_tax_type": i.item_tax_type,
+                   "last_rate": unit_rate(i.last_rate),
+                   "reorder_level": money(i.reorder_level)} for i in items],
         "counts": {
             k: db.query(models.DBItem).filter(
                 models.DBItem.client_id == client.id,

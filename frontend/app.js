@@ -277,6 +277,31 @@ function showToast(message, type) {
     setTimeout(function() { toast.classList.remove('toast-show'); setTimeout(function() { toast.remove(); }, 300); }, 5000);
 }
 
+/* A dialog opened from inside another dialog has to sit above it. Every
+   overlay shares one z-index, so which of two visible modals won was decided
+   by DOM order - which is why the work order builder could end up drawn over
+   the deliverable dialog that opened on top of it, leaving both half visible
+   and neither usable. Opening now stamps a level; closing gives it back. */
+var _modalDepth = 9999;
+
+function openModal(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    _modalDepth += 10;
+    el.style.zIndex = _modalDepth;
+    el.style.display = 'flex';
+}
+window.openModal = openModal;
+
+function closeModal(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.style.display = 'none';
+    el.style.zIndex = '';
+    _modalDepth = Math.max(9999, _modalDepth - 10);
+}
+window.closeModal = closeModal;
+
 // --- Mobile Menu ---
 function toggleMobileMenu() {
     var nav = document.getElementById('main-nav');

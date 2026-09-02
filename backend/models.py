@@ -505,6 +505,10 @@ class DBItem(Base):
     # Below this, the store is running out. Zero means nobody set one, which
     # is not the same as "never reorder" - so it simply never warns.
     reorder_level = Column(Float, default=0.0)
+    # What this code was last sold or bought at. Prices are not fixed on a
+    # contract, so this is an offer rather than a rule: the next order opens
+    # with it filled in and whoever is pricing can change it.
+    last_rate = Column(Float, default=0.0)
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
