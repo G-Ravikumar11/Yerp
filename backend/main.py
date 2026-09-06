@@ -2154,6 +2154,11 @@ def next_bill_number(request: Request, db: Session = Depends(get_db)):
 # ============================================================================
 
 JOB_STATUSES = ("quoting", "won", "in_progress", "on_hold", "complete", "cancelled")
+# The one status that means the work is done and the retention should be
+# coming back. Named rather than spelled out at each use, because guessing
+# at "completed" instead of "complete" silently reports nothing.
+JOB_FINISHED = "complete"
+assert JOB_FINISHED in JOB_STATUSES
 # Once a job is in one of these it is history: it stays in reports but is kept
 # out of the pickers, so nobody bills a site that finished last spring.
 JOB_CLOSED_STATUSES = ("complete", "cancelled")
@@ -21948,6 +21953,465 @@ def job_pnl_export(job_id: int, request: Request, db: Session = Depends(get_db))
     return sheet_response(("Item", "Amount"), rows,
                           "pnl_%s.xlsx" % (job.number or "project"),
                           preamble=preamble)
+
+
+
+
+# ============================================================================
+# MONEY OWED, BOTH WAYS - AND THE RETENTION NOBODY CHASES
+#
+# The app could say what a project earned and what it cost. It could not say
+# who owes what today, how long they have owed it, or how much of the money
+# already earned is being held back as retention.
+#
+# On a contract that last one is the quiet killer: five per cent of every
+# certified bill sits with the client, it is never invoiced, nobody diaries
+# it, and a contractor can finish a job several lakhs down without once
+# seeing the figure written anywhere.
+# ============================================================================
+
+AGEING_BUCKETS = ("Not due", "0-30", "31-60", "61-90", "90+")
+
+
+def ageing_bucket(due_on, today=None):
+    """Which column a debt belongs in.
+
+    Not due is kept apart from nought to thirty on purpose: money that is not
+    late yet is not a problem, and mixing the two makes a healthy ledger look
+    like a chase list.
+    """
+    today = today or date.today()
+    d = _parse_date(due_on)
+    if not d:
+        # No due date is not the same as not due - it cannot be chased on a
+        # date, so it sits in the oldest bucket where somebody will see it.
+        return "90+", None
+    days = (today - d).days
+    if days < 0:
+        return "Not due", days
+    if days <= 30:
+        return "0-30", days
+    if days <= 60:
+        return "31-60", days
+    if days <= 90:
+        return "61-90", days
+    return "90+", days
+
+
+def _empty_buckets():
+    return {b: 0.0 for b in AGEING_BUCKETS}
+
+
+@app.get("/api/money/receivables")
+def receivables(request: Request, db: Session = Depends(get_db)):
+    """What customers owe, and how long they have owed it."""
+    client = require_erp_read(request, db)
+    today = date.today()
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(
+        models.DBJob.client_id == client.id).all()}
+
+    rows, buckets = [], _empty_buckets()
+    for inv in db.query(models.DBInvoice).filter(
+            models.DBInvoice.client_id == client.id).all():
+        if (inv.status or "") in ("Draft", "Paid", "Cancelled", "Void"):
+            continue
+        outstanding = money(inv.due)
+        if outstanding <= 0:
+            continue
+        bucket, days = ageing_bucket(inv.due_date, today)
+        buckets[bucket] = money(buckets[bucket] + outstanding)
+        job = jobs.get(inv.job_id)
+        rows.append({
+            "id": inv.id, "number": inv.number or "",
+            "customer": inv.to_contact or "", "project": job.name if job else "",
+            "job_id": inv.job_id,
+            "issue_date": inv.issue_date or "", "due_date": inv.due_date or "",
+            "total": invoice_total(inv), "paid": money(inv.paid),
+            "outstanding": outstanding, "bucket": bucket,
+            "days_overdue": days if (days or 0) > 0 else 0,
+            "status": inv.status or "",
+        })
+    rows.sort(key=lambda r: -(r["days_overdue"] or 0))
+    overdue = money(sum(r["outstanding"] for r in rows if r["bucket"] != "Not due"))
+    return {
+        "invoices": rows, "buckets": buckets,
+        "summary": {
+            "owed": money(sum(r["outstanding"] for r in rows)),
+            "overdue": overdue,
+            "invoices": len(rows),
+            "worst_days": max([r["days_overdue"] for r in rows] or [0]),
+            "over_90": buckets["90+"],
+        },
+    }
+
+
+@app.get("/api/money/payables")
+def payables(request: Request, db: Session = Depends(get_db)):
+    """What the business owes: supplier bills, and bills it has certified.
+
+    A certified RA bill is a promise already made - the work was measured and
+    somebody signed for it - so it belongs here beside the supplier invoices
+    rather than out of sight on the subcontract screen.
+    """
+    client = require_erp_read(request, db)
+    today = date.today()
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(
+        models.DBJob.client_id == client.id).all()}
+
+    rows, buckets = [], _empty_buckets()
+    for b in db.query(models.DBBill).filter(
+            models.DBBill.client_id == client.id).all():
+        if (b.status or "") in ("Paid", "Cancelled", "Rejected"):
+            continue
+        if (b.approval_status or "none") == "rejected":
+            continue
+        outstanding = money((b.total or 0) - (b.amount_paid or 0))
+        if outstanding <= 0:
+            continue
+        bucket, days = ageing_bucket(b.due_date, today)
+        buckets[bucket] = money(buckets[bucket] + outstanding)
+        job = jobs.get(b.job_id)
+        rows.append({
+            "kind": "Supplier bill", "id": b.id, "number": b.number or "",
+            "party": b.vendor_name or "", "project": job.name if job else "",
+            "due_date": b.due_date or "", "outstanding": outstanding,
+            "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
+            "status": b.status or "",
+            "approved": (b.approval_status or "none") == "approved",
+        })
+
+    for r in db.query(models.DBRABill).filter(
+            models.DBRABill.client_id == client.id,
+            models.DBRABill.status == "CERTIFIED").all():
+        outstanding = money(r.net_payable)
+        if outstanding <= 0:
+            continue
+        # Certified but unpaid, aged from the day it was certified.
+        bucket, days = ageing_bucket(r.certified_at, today)
+        buckets[bucket] = money(buckets[bucket] + outstanding)
+        job = jobs.get(r.job_id)
+        rows.append({
+            "kind": "RA bill", "id": r.id, "number": r.number or "",
+            "party": r.certified_by_name or "", "project": job.name if job else "",
+            "due_date": (r.certified_at or "")[:10], "outstanding": outstanding,
+            "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
+            "status": r.status or "", "approved": True,
+        })
+
+    rows.sort(key=lambda r: -(r["days_overdue"] or 0))
+    return {
+        "bills": rows, "buckets": buckets,
+        "summary": {
+            "owed": money(sum(r["outstanding"] for r in rows)),
+            "overdue": money(sum(r["outstanding"] for r in rows
+                                 if r["bucket"] != "Not due")),
+            "bills": len(rows),
+            # Sitting unapproved is different from sitting unpaid, and only
+            # one of them is somebody's decision to make.
+            "awaiting_approval": money(sum(r["outstanding"] for r in rows
+                                           if not r["approved"])),
+            "over_90": buckets["90+"],
+        },
+    }
+
+
+@app.get("/api/money/retention")
+def retention_register(request: Request, db: Session = Depends(get_db)):
+    """Money already earned that is being held back.
+
+    Held on every certified bill, invoiced on none of them. Half is normally
+    released at practical completion and half at the end of the defects
+    period, so a job that finished a year ago may still be owed the second
+    half - and nothing in this app used to say so.
+    """
+    client = require_erp_read(request, db)
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(
+        models.DBJob.client_id == client.id).all()}
+
+    by_job = {}
+    for b in db.query(models.DBRABill).filter(
+            models.DBRABill.client_id == client.id,
+            models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all():
+        held = money(b.retention_amount)
+        if held <= 0:
+            continue
+        job = jobs.get(b.job_id)
+        row = by_job.setdefault(b.job_id or 0, {
+            "job_id": b.job_id, "number": job.number if job else "",
+            "project": job.name if job else "Unattached",
+            "customer": job.customer_name if job else "",
+            "job_status": job.status if job else "",
+            "held": 0.0, "bills": [], "claimed_value": 0.0,
+        })
+        row["held"] = money(row["held"] + held)
+        row["claimed_value"] = money(row["claimed_value"] + money(b.this_bill))
+        row["bills"].append({
+            "id": b.id, "number": b.number or "", "status": b.status or "",
+            "this_bill": money(b.this_bill), "retention": held,
+            "percent": b.retention_percent or 0,
+            "certified_at": (b.certified_at or "")[:10],
+        })
+
+    rows = sorted(by_job.values(), key=lambda r: -r["held"])
+    for r in rows:
+        # A finished job's retention is money that should be being chased;
+        # a running job's is money that is simply not due yet.
+        r["releasable"] = (r["job_status"] or "").lower() == JOB_FINISHED
+        r["effective_percent"] = (round(r["held"] / r["claimed_value"] * 100, 2)
+                                  if r["claimed_value"] else 0.0)
+    return {
+        "projects": rows,
+        "summary": {
+            "held": money(sum(r["held"] for r in rows)),
+            "projects": len(rows),
+            "on_finished_jobs": money(sum(r["held"] for r in rows
+                                          if r["releasable"])),
+            "bills": sum(len(r["bills"]) for r in rows),
+        },
+    }
+
+
+@app.get("/api/money/receivables.xlsx")
+def receivables_export(request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    data = receivables(request, db)
+    b = data["buckets"]
+    rows = [(r["number"], r["customer"], r["project"], r["issue_date"],
+             r["due_date"], r["total"], r["paid"], r["outstanding"],
+             r["bucket"], r["days_overdue"]) for r in data["invoices"]]
+    return sheet_response(
+        ("Invoice", "Customer", "Project", "Issued", "Due", "Total", "Paid",
+         "Outstanding", "Age", "Days overdue"),
+        rows, "receivables.xlsx",
+        preamble=[("WHAT WE ARE OWED", client.company_name or ""),
+                  ("As at", date.today().strftime("%Y-%m-%d")),
+                  (),
+                  ("Not due", b["Not due"], "0-30", b["0-30"], "31-60", b["31-60"]),
+                  ("61-90", b["61-90"], "90+", b["90+"]),
+                  ()],
+        closing=[(), ("Total owed", "", "", "", "", "", "",
+                      data["summary"]["owed"])])
+
+
+@app.get("/api/money/retention.xlsx")
+def retention_export(request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    data = retention_register(request, db)
+    rows = [(r["number"], r["project"], r["customer"], r["job_status"],
+             r["claimed_value"], r["held"], r["effective_percent"],
+             len(r["bills"]), "yes" if r["releasable"] else "")
+            for r in data["projects"]]
+    return sheet_response(
+        ("Project", "Name", "Customer", "Status", "Claimed", "Retention held",
+         "Effective %", "Bills", "Job finished"),
+        rows, "retention_register.xlsx",
+        preamble=[("RETENTION HELD", client.company_name or ""),
+                  ("As at", date.today().strftime("%Y-%m-%d")),
+                  ("Money already earned and not yet released",),
+                  ()],
+        closing=[(), ("Total held", "", "", "", "", data["summary"]["held"]),
+                 ("On finished jobs", "", "", "", "",
+                  data["summary"]["on_finished_jobs"])])
+
+
+# ============================================================================
+# WHAT NEEDS LOOKING AT TODAY
+#
+# Every figure below already exists on some screen. The point of gathering
+# them is that nobody opens eleven screens on a Monday morning, so the things
+# that quietly cost money - work built and never billed, a bill sitting
+# uncertified, a store that has gone negative, a site that has not filed a
+# diary - were only ever found by accident.
+#
+# Ordered by what it costs to ignore, not by which module it came from.
+# ============================================================================
+
+def attention_items(db, client_id):
+    items = []
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(
+        models.DBJob.client_id == client_id).all()}
+
+    # --- work built and not yet claimed ---------------------------------
+    unbilled_total, unbilled_orders = 0.0, 0
+    over_run_total, over_run_orders = 0.0, 0
+    for wo in db.query(models.DBWorkOrder).filter(
+            models.DBWorkOrder.client_id == client_id,
+            models.DBWorkOrder.status != "Draft").all():
+        measured = measured_to_date(db, wo.id)
+        billed = billed_qty_to_date(db, wo.id)
+        unbilled = over = 0.0
+        for l in db.query(models.DBWorkOrderLine).filter(
+                models.DBWorkOrderLine.work_order_id == wo.id).all():
+            rate = unit_rate(l.rate)
+            done = money(measured.get(l.id, 0.0))
+            unbilled += money(done - money(billed.get(l.id, 0.0))) * rate
+            if done > money(l.qty):
+                over += money(done - money(l.qty)) * rate
+        if unbilled > 0:
+            unbilled_total += unbilled
+            unbilled_orders += 1
+        if over > 0:
+            over_run_total += over
+            over_run_orders += 1
+
+    if unbilled_total > 0:
+        items.append({
+            "kind": "unbilled", "severity": "money", "value": money(unbilled_total),
+            "count": unbilled_orders, "view": "measurement-view",
+            "title": "Work measured but not billed",
+            "detail": "%s across %d order%s. It is already paid for in wages "
+                      "and material." % (money(unbilled_total), unbilled_orders,
+                                         "" if unbilled_orders == 1 else "s"),
+        })
+    if over_run_total > 0:
+        items.append({
+            "kind": "over_run", "severity": "money", "value": money(over_run_total),
+            "count": over_run_orders, "view": "measurement-view",
+            "title": "Built past the order",
+            "detail": "%s of work nothing covers. Raise a variation and it "
+                      "becomes billable." % money(over_run_total),
+        })
+
+    # --- bills waiting on somebody --------------------------------------
+    waiting = db.query(models.DBRABill).filter(
+        models.DBRABill.client_id == client_id,
+        models.DBRABill.status == "SUBMITTED").all()
+    if waiting:
+        items.append({
+            "kind": "certify", "severity": "action",
+            "value": money(sum(b.this_bill or 0 for b in waiting)),
+            "count": len(waiting), "view": "measurement-view",
+            "title": "RA bills awaiting certification",
+            "detail": "%d bill%s worth %s cannot be paid until somebody signs."
+                      % (len(waiting), "" if len(waiting) == 1 else "s",
+                         money(sum(b.this_bill or 0 for b in waiting))),
+        })
+
+    pending_vo = db.query(models.DBVariationOrder).filter(
+        models.DBVariationOrder.client_id == client_id,
+        models.DBVariationOrder.status == "SUBMITTED").all()
+    if pending_vo:
+        items.append({
+            "kind": "variations", "severity": "action",
+            "value": money(sum(v.value or 0 for v in pending_vo)),
+            "count": len(pending_vo), "view": "measurement-view",
+            "title": "Variations awaiting approval",
+            "detail": "%s of extra work still to be agreed."
+                      % money(sum(v.value or 0 for v in pending_vo)),
+        })
+
+    # --- the store -------------------------------------------------------
+    balances = stock_balances(db, client_id)
+    levels = {i.item_code: (i.reorder_level or 0.0)
+              for i in db.query(models.DBItem).filter(
+                  models.DBItem.client_id == client_id).all()}
+    negative = [a for a in balances.values() if a["on_hand"] < 0]
+    low = [a for code, a in balances.items()
+           if levels.get(code, 0) and 0 <= a["on_hand"] < levels[code]]
+    if negative:
+        items.append({
+            "kind": "negative_stock", "severity": "wrong",
+            "value": 0.0, "count": len(negative), "view": "stock-view",
+            "title": "The store has gone negative",
+            "detail": "%d item%s issued that was never booked in. Either a "
+                      "delivery is unrecorded or something has walked."
+                      % (len(negative), "" if len(negative) == 1 else "s"),
+        })
+    if low:
+        items.append({
+            "kind": "low_stock", "severity": "notice",
+            "value": 0.0, "count": len(low), "view": "stock-view",
+            "title": "Running low in the store",
+            "detail": "%d item%s below the level somebody set."
+                      % (len(low), "" if len(low) == 1 else "s"),
+        })
+
+    # --- the paperwork the site owes -------------------------------------
+    drafts = db.query(models.DBSiteDiary).filter(
+        models.DBSiteDiary.client_id == client_id,
+        models.DBSiteDiary.status == "DRAFT").all()
+    if drafts:
+        items.append({
+            "kind": "diaries", "severity": "notice", "value": 0.0,
+            "count": len(drafts), "view": "diary-view",
+            "title": "Site diaries not signed off",
+            "detail": "%d day%s still in draft. An unsigned day is worth "
+                      "nothing in a claim." % (len(drafts),
+                                               "" if len(drafts) == 1 else "s"),
+        })
+
+    grn_drafts = db.query(models.DBGoodsReceipt).filter(
+        models.DBGoodsReceipt.client_id == client_id,
+        models.DBGoodsReceipt.status == "DRAFT").count()
+    if grn_drafts:
+        items.append({
+            "kind": "receipts", "severity": "notice", "value": 0.0,
+            "count": grn_drafts, "view": "stores-view",
+            "title": "Deliveries not posted",
+            "detail": "%d receipt%s open. Material is not in the store until "
+                      "it is posted." % (grn_drafts,
+                                         "" if grn_drafts == 1 else "s"),
+        })
+
+    # --- money -----------------------------------------------------------
+    today = date.today()
+    overdue_in = 0.0
+    for inv in db.query(models.DBInvoice).filter(
+            models.DBInvoice.client_id == client_id).all():
+        if (inv.status or "") in ("Draft", "Paid", "Cancelled", "Void"):
+            continue
+        if money(inv.due) > 0 and ageing_bucket(inv.due_date, today)[0] != "Not due":
+            overdue_in += money(inv.due)
+    if overdue_in > 0:
+        items.append({
+            "kind": "receivables", "severity": "money", "value": money(overdue_in),
+            "count": 0, "view": "money-view",
+            "title": "Owed to us, past due",
+            "detail": "%s the customer should already have paid." % money(overdue_in),
+        })
+
+    held = money(sum(b.retention_amount or 0 for b in db.query(
+        models.DBRABill).filter(
+            models.DBRABill.client_id == client_id,
+            models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all()))
+    finished = {j.id for j in jobs.values()
+                if (j.status or "").lower() == JOB_FINISHED}
+    if held > 0 and finished:
+        on_finished = money(sum(b.retention_amount or 0 for b in db.query(
+            models.DBRABill).filter(
+                models.DBRABill.client_id == client_id,
+                models.DBRABill.job_id.in_(list(finished)),
+                models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all()))
+        if on_finished > 0:
+            items.append({
+                "kind": "retention", "severity": "money", "value": on_finished,
+                "count": len(finished), "view": "money-view",
+                "title": "Retention on finished jobs",
+                "detail": "%s earned and still held back on work that is done."
+                          % on_finished,
+            })
+
+    # Worth money first, then things that are simply wrong, then the rest.
+    rank = {"money": 0, "wrong": 1, "action": 2, "notice": 3}
+    items.sort(key=lambda i: (rank.get(i["severity"], 9), -i["value"]))
+    return items
+
+
+@app.get("/api/attention")
+def whats_worth_a_look(request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    items = attention_items(db, client.id)
+    return {
+        "items": items,
+        "summary": {
+            "items": len(items),
+            "money_at_stake": money(sum(i["value"] for i in items
+                                        if i["severity"] == "money")),
+            "needs_a_decision": len([i for i in items
+                                     if i["severity"] == "action"]),
+            "looks_wrong": len([i for i in items if i["severity"] == "wrong"]),
+        },
+    }
 
 
 # Serve frontend

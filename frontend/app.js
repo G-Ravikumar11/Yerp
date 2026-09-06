@@ -421,6 +421,7 @@ function showView(viewId) {
         'consume-view': 'nav-consume',
         'diary-view': 'nav-diary',
         'pnl-view': 'nav-pnl',
+        'money-view': 'nav-money',
         'stores-view': 'nav-stores',
         'project-costs-view': 'nav-costs',
         'subcontract-wizard-view': 'nav-subcontracts',
@@ -482,6 +483,8 @@ function showView(viewId) {
     if (viewId === 'consume-view' && typeof loadConsumptionPicker === 'function') loadConsumptionPicker();
     if (viewId === 'diary-view' && typeof loadDiary === 'function') loadDiary();
     if (viewId === 'pnl-view' && typeof loadPortfolio === 'function') loadPortfolio();
+    if (viewId === 'money-view' && typeof loadMoney === 'function') loadMoney();
+    if (viewId === 'dashboard-view' && typeof loadAttention === 'function') loadAttention();
     if (viewId === 'stores-view' && typeof loadStores === 'function') loadStores();
     // The item grid is open by default now, so it is mounted on arrival
     // rather than waiting for a button that no longer has to be pressed.
@@ -4941,6 +4944,15 @@ document.addEventListener('DOMContentLoaded', async function() {
         console.error('Boot: could not build the navigation', e);
     }
     openBootGate();
+
+    // The dashboard is the view that is already open, so showView never fires
+    // for it on a cold load and its panel would stay empty until somebody
+    // navigated away and back.
+    if (typeof loadAttention === 'function') {
+        loadAttention().catch(function (e) {
+            console.error('Boot: could not load what needs attention', e);
+        });
+    }
 
     if (isEmployee()) {
         // Staff boot: none of the owner's setup below applies to them, and

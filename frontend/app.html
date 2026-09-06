@@ -155,6 +155,7 @@
                             <a href="#" class="nav-item" id="nav-diary" onclick="event.preventDefault();showView('diary-view')">Site Diary</a>
                             <a href="#" class="nav-item" id="nav-consume" onclick="event.preventDefault();showView('consume-view')">Material Used vs Costed</a>
                             <a href="#" class="nav-item" id="nav-pnl" onclick="event.preventDefault();showView('pnl-view')">Project Profit</a>
+                            <a href="#" class="nav-item" id="nav-money" onclick="event.preventDefault();showView('money-view')">Money Owed &amp; Retention</a>
                         </div>
                     </div>
 
@@ -231,10 +232,16 @@
                 <div id="dashboard-view" class="view-section active dashboard">
                     <header class="dashboard-header">
                         <h1>Welcome back!</h1>
-                        <p class="subtitle">Here's what's happening with your invoicing today.</p>
+                        <p class="subtitle">What is worth a look on site today.</p>
                     </header>
 
-                    
+                    <!-- Every figure here already exists on some screen. The
+                         point of gathering them is that nobody opens eleven
+                         screens on a Monday morning, so the things that
+                         quietly cost money were only ever found by accident. -->
+                    <div class="stats-grid" id="attention-stats"></div>
+                    <div id="attention-list" style="margin:18px 0 24px;"></div>
+
                     
                     <!-- Futuristic Chart -->
                     <div class="widget" style="padding:20px; margin-bottom:24px;">
@@ -3310,6 +3317,53 @@
                     </div>
                 </div>
 
+                <div id="money-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Money Owed &amp; Retention</h1><p class="subtitle">Who owes what today, how long they have owed it, and the money already earned that is still being held back</p></div>
+                        <div class="invoices-actions">
+                            <a class="btn btn-outline" href="/api/money/receivables.xlsx">Owed to us</a>
+                            <a class="btn btn-outline" href="/api/money/retention.xlsx">Retention</a>
+                            <button class="btn btn-outline" onclick="loadMoney()">Refresh</button>
+                        </div>
+                    </div>
+
+                    <h3 style="font-size:1rem;margin:4px 0 12px;">Owed to us</h3>
+                    <div class="stats-grid" id="recv-stats"></div>
+                    <div id="recv-buckets" style="margin-top:14px;"></div>
+                    <div class="widget" style="margin-top:14px;">
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Invoice</th><th>Customer</th><th>Due</th><th class="text-right">Total</th><th class="text-right">Paid</th><th class="text-right">Outstanding</th><th>Age</th></tr></thead>
+                                <tbody id="recv-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <h3 style="font-size:1rem;margin:26px 0 12px;">What we owe</h3>
+                    <div class="stats-grid" id="pay-stats"></div>
+                    <div id="pay-buckets" style="margin-top:14px;"></div>
+                    <div class="widget" style="margin-top:14px;">
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Document</th><th>Who</th><th>Due</th><th class="text-right">Outstanding</th><th>Approval</th><th>Age</th></tr></thead>
+                                <tbody id="pay-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <h3 style="font-size:1rem;margin:26px 0 12px;">Retention held</h3>
+                    <p style="font-size:0.85rem;color:var(--text-secondary);margin:-6px 0 12px;">Money already earned that the client is holding. It is never invoiced, so it is never chased unless somebody writes it down.</p>
+                    <div class="stats-grid" id="ret-stats"></div>
+                    <div class="widget" style="margin-top:14px;">
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Project</th><th class="text-right">Claimed</th><th class="text-right">Held back</th><th class="text-right">Effective %</th><th class="text-right">Bills</th><th>Status</th></tr></thead>
+                                <tbody id="ret-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="diary-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div><h1>Site Diary</h1><p class="subtitle">Who turned up, what the weather did, what got built and what stopped it</p></div>
@@ -4168,7 +4222,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=72"></script>
+    <script src="app.js?v=73"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=65"></script>
@@ -4189,6 +4243,7 @@
     <script src="measurement.js?v=70"></script>
     <script src="stock.js?v=70"></script>
     <script src="diary.js?v=71"></script>
+    <script src="money.js?v=73"></script>
     <script src="stores.js?v=65"></script>
 
     <!-- AI Core Orb -->
