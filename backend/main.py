@@ -22414,6 +22414,241 @@ def whats_worth_a_look(request: Request, db: Session = Depends(get_db)):
     }
 
 
+
+
+# ============================================================================
+# THE HANDOFFS
+#
+# Every module in this app knew its own job and none of them handed over. The
+# BOM knew a work order needed nine hundred bags of cement; nothing turned
+# that into a purchase order. A posted receipt knew exactly what arrived and
+# at what rate; somebody still retyped it as a supplier bill, which is where
+# the figure quietly stops matching.
+#
+# Both of these are the same idea: the next document already exists inside
+# the last one, so the app should draw it up and let a person correct it.
+# ============================================================================
+
+def material_required(db, client_id, wo):
+    """What this order still needs bought, line by line.
+
+    Needed by the BOM, less what is already in the store, less what is already
+    on an open purchase order - so raising it twice is not the default
+    behaviour of anybody who clicks the button twice.
+    """
+    needed = {}
+    for b in db.query(models.DBBomLine).filter(
+            models.DBBomLine.work_order_id == wo.id).all():
+        row = needed.setdefault(b.rm_code, {
+            "item_code": b.rm_code, "item_name": b.rm_name or "",
+            "uom": b.uom or "", "needed": 0.0, "rate": unit_rate(b.rate)})
+        row["needed"] = money(row["needed"] + (b.qty or 0))
+        if b.rate:
+            row["rate"] = unit_rate(b.rate)
+    if not needed:
+        return []
+
+    balances = stock_balances(db, client_id)
+
+    # Quantity sitting on purchase orders that have not been fully received.
+    on_order = {}
+    live = db.query(models.DBPurchaseOrder).filter(
+        models.DBPurchaseOrder.client_id == client_id,
+        models.DBPurchaseOrder.status.in_(
+            ("Draft", "Awaiting Approval", "Approved"))).all()
+    if live:
+        ids = [p.id for p in live]
+        received = {}
+        for grn in db.query(models.DBGoodsReceipt).filter(
+                models.DBGoodsReceipt.client_id == client_id,
+                models.DBGoodsReceipt.purchase_order_id.in_(ids),
+                models.DBGoodsReceipt.status == "POSTED").all():
+            for l in db.query(models.DBGoodsReceiptLine).filter(
+                    models.DBGoodsReceiptLine.goods_receipt_id == grn.id).all():
+                received[l.item_code] = money(
+                    received.get(l.item_code, 0.0) + (l.accepted_qty or 0))
+        for l in db.query(models.DBPurchaseOrderLineItem).filter(
+                models.DBPurchaseOrderLineItem.order_id.in_(ids)).all():
+            code = (l.item_code or "").strip()
+            if code:
+                on_order[code] = money(on_order.get(code, 0.0) + (l.qty or 0))
+        for code, got in received.items():
+            if code in on_order:
+                on_order[code] = money(max(0.0, on_order[code] - got))
+
+    rows = []
+    for code, r in sorted(needed.items()):
+        in_store = money(balances.get(code, {}).get("on_hand", 0.0))
+        ordered = money(on_order.get(code, 0.0))
+        short = money(r["needed"] - in_store - ordered)
+        # A rate the store has actually paid beats one typed into a budget
+        # months ago; the budget rate is the fallback, not the truth.
+        paid = unit_rate(balances.get(code, {}).get("rate", 0.0))
+        rows.append({
+            "item_code": code, "item_name": r["item_name"], "uom": r["uom"],
+            "needed": r["needed"], "in_store": in_store, "on_order": ordered,
+            "to_buy": max(0.0, short),
+            "rate": paid or r["rate"], "budget_rate": r["rate"],
+            "amount": money(max(0.0, short) * (paid or r["rate"])),
+            "covered": short <= 0,
+        })
+    return rows
+
+
+@app.get("/api/erp/work-orders/{wo_id}/requisition")
+def material_requisition(wo_id: int, request: Request,
+                         db: Session = Depends(get_db)):
+    """What still has to be bought for this order. Asking does not buy it."""
+    client = require_erp_read(request, db)
+    wo = work_order_or_404(db, client.id, wo_id)
+    rows = material_required(db, client.id, wo)
+    short = [r for r in rows if not r["covered"]]
+    return {
+        "work_order": work_order_to_dict(db, wo),
+        "lines": rows,
+        "summary": {
+            "items": len(rows),
+            "to_buy": len(short),
+            "value": money(sum(r["amount"] for r in short)),
+            "already_covered": len(rows) - len(short),
+        },
+    }
+
+
+class RaisePoIn(BaseModel):
+    supplier_name: str
+    supplier_email: Optional[str] = ""
+    needed_by: Optional[str] = ""
+    item_codes: Optional[list] = None      # omit to take everything short
+
+
+@app.post("/api/erp/work-orders/{wo_id}/raise-po")
+def raise_po_from_bom(wo_id: int, body: RaisePoIn, request: Request,
+                      db: Session = Depends(get_db)):
+    """Draw up the purchase order the budget already implies.
+
+    It arrives as a draft, priced and quantified, for somebody to check and
+    approve - the point is not to spend money automatically, it is that
+    nobody should retype a schedule the app already holds.
+    """
+    client = require_workorder_access(request, db)
+    wo = work_order_or_404(db, client.id, wo_id)
+    if not (body.supplier_name or "").strip():
+        raise HTTPException(400, "Who is this order with?")
+
+    rows = [r for r in material_required(db, client.id, wo) if not r["covered"]]
+    if body.item_codes:
+        wanted = {str(c).strip().upper() for c in body.item_codes}
+        rows = [r for r in rows if r["item_code"].upper() in wanted]
+    if not rows:
+        raise HTTPException(
+            409, "Nothing on this order still needs buying. The budget is "
+                 "covered by what is in the store and what is already on order.")
+
+    amount = money(sum(r["amount"] for r in rows))
+    order = models.DBPurchaseOrder(
+        client_id=client.id, job_id=wo.job_id,
+        number=allocate_po_number(db, client.id),
+        supplier_name=body.supplier_name.strip(),
+        supplier_email=(body.supplier_email or "").strip(),
+        issue_date=datetime.now().strftime("%Y-%m-%d"),
+        needed_by=(body.needed_by or ""),
+        amount=amount, tax_amount=0.0, total=amount,
+        status="Draft", category="material",
+        reference=wo.number or "",
+        notes="Raised from the budget for %s" % (wo.number or "this order"))
+    db.add(order)
+    db.flush()
+    for r in rows:
+        db.add(models.DBPurchaseOrderLineItem(
+            order_id=order.id, description=r["item_name"] or r["item_code"],
+            item_code=r["item_code"], uom=r["uom"],
+            qty=r["to_buy"], price=r["rate"], tax_rate="18%"))
+    log_audit(db, client.id, "po_raised_from_bom", "purchase_order", order.id,
+              order.number or "", "%s - %d line(s) - %s"
+              % (wo.number, len(rows), amount), request)
+    db.commit()
+    db.refresh(order)
+    return {"ok": True, "order": purchase_order_to_dict(db, order),
+            "message": "%s drawn up for %s - %d item%s, %s. Check it before "
+                       "approving." % (order.number, body.supplier_name.strip(),
+                                       len(rows), "" if len(rows) == 1 else "s",
+                                       amount)}
+
+
+@app.post("/api/grn/{grn_id}/bill")
+def bill_from_receipt(grn_id: int, request: Request, body: dict = None,
+                      db: Session = Depends(get_db)):
+    """The supplier bill for what actually arrived.
+
+    Drawn from the accepted quantities, not the ordered ones, so the bill a
+    supplier is paid against is the delivery the store signed for. Retyping
+    it is where the three figures quietly stop matching, and the three-way
+    match then reports a difference nobody caused.
+    """
+    client, actor_id, actor_name = grn_actor(request, db)
+    grn = grn_or_404(db, client.id, grn_id)
+    if (grn.status or "") != "POSTED":
+        raise HTTPException(
+            409, "Post the receipt first. A bill drawn from a draft is a bill "
+                 "for material nobody has confirmed arrived.")
+
+    existing = db.query(models.DBBill).filter(
+        models.DBBill.client_id == client.id,
+        models.DBBill.reference == (grn.number or "")).first()
+    if existing and (grn.number or ""):
+        raise HTTPException(
+            409, "%s already has a bill (%s). Two bills against one delivery "
+                 "is how a supplier gets paid twice."
+                 % (grn.number, existing.number or "unnumbered"))
+
+    lines = [l for l in db.query(models.DBGoodsReceiptLine).filter(
+        models.DBGoodsReceiptLine.goods_receipt_id == grn.id).all()
+        if (l.accepted_qty or 0) > 0]
+    if not lines:
+        raise HTTPException(
+            400, "Nothing on this receipt was accepted, so there is nothing "
+                 "to pay for.")
+
+    amount = money(sum((l.accepted_qty or 0) * unit_rate(l.rate) for l in lines))
+    body = body or {}
+    bill = models.DBBill(
+        client_id=client.id, job_id=grn.job_id,
+        number=next_sequence_number(db, models.DBBill, client.id, "BILL-"),
+        vendor_name=grn.supplier_name or "",
+        issue_date=datetime.now().strftime("%Y-%m-%d"),
+        due_date=(body.get("due_date") or ""),
+        amount=amount, tax_amount=0.0, total=amount,
+        status="Draft", category="material",
+        reference=grn.number or "",
+        notes="Raised from %s%s" % (grn.number or "a receipt",
+                                    " - challan %s" % grn.challan_number
+                                    if grn.challan_number else ""),
+        purchase_order_id=grn.purchase_order_id)
+    db.add(bill)
+    db.flush()
+    for l in lines:
+        db.add(models.DBBillLineItem(
+            bill_id=bill.id, po_line_id=l.po_line_id,
+            description=l.description or l.item_code or "",
+            qty=money(l.accepted_qty), price=unit_rate(l.rate),
+            tax_rate="18%"))
+    log_audit(db, client.id, "bill_from_receipt", "bill", bill.id,
+              bill.number or "", "%s %s" % (grn.number, amount), request)
+    db.commit()
+    db.refresh(bill)
+    return {"ok": True, "bill": {"id": bill.id, "number": bill.number or "",
+                                 "vendor_name": bill.vendor_name or "",
+                                 "total": money(bill.total),
+                                 "status": bill.status or "",
+                                 "reference": bill.reference or "",
+                                 "purchase_order_id": bill.purchase_order_id},
+            "message": "%s drawn up for %s from what actually arrived - %s "
+                       "across %d line%s." % (bill.number, bill.vendor_name,
+                                              amount, len(lines),
+                                              "" if len(lines) == 1 else "s")}
+
+
 # Serve frontend
 frontend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
 if os.path.exists(frontend_path):

@@ -1187,6 +1187,35 @@
                     </div>
                 </div>
 
+                <div id="req-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:860px;">
+                        <div class="modal-header">
+                            <h3 id="req-title">Material</h3>
+                            <button class="modal-close" onclick="closeRequisition()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <p id="req-summary" style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:12px;"></p>
+                            <div class="table-responsive" style="max-height:320px;overflow-y:auto;">
+                                <table class="data-table">
+                                    <thead><tr><th style="width:34px;"></th><th>Item</th><th class="text-right">Needed</th><th class="text-right">In store</th><th class="text-right">On order</th><th class="text-right">To buy</th><th class="text-right">Rate</th><th class="text-right">Value</th></tr></thead>
+                                    <tbody id="req-body"></tbody>
+                                </table>
+                            </div>
+                            <div class="form-row" style="margin-top:14px;">
+                                <div class="form-group"><label>Supplier *</label>
+                                    <input type="text" id="req-supplier" class="form-control" placeholder="Tata Steel Ltd"></div>
+                                <div class="form-group"><label>Needed by</label>
+                                    <input type="date" id="req-by" class="form-control"></div>
+                            </div>
+                            <p style="font-size:0.75rem;color:var(--text-secondary);">The order arrives as a draft for somebody to check and approve. Spending is still a decision, not an automation.</p>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeRequisition()">Close</button>
+                            <button class="btn btn-primary" id="req-raise" onclick="raisePoFromBudget()">Raise the purchase order</button>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="diary-form" class="modal-overlay" style="display:none;">
                     <div class="modal" style="max-width:860px;">
                         <div class="modal-header">
@@ -4222,16 +4251,16 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=73"></script>
+    <script src="app.js?v=74"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=65"></script>
     <!-- Jobs, job costing and purchase orders. -->
     <script src="jobs.js?v=65"></script>
     <!-- Item master, work orders and budget allocation. -->
-    <script src="erp.js?v=65"></script>
+    <script src="erp.js?v=74"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
-    <script src="erp-build.js?v=72"></script>
+    <script src="erp-build.js?v=74"></script>
     <!-- The spreadsheet grid the item master is entered through. -->
     <script src="erp-grid.js?v=65"></script>
     <!-- Preview and correct a sheet that arrived from outside. -->
@@ -4244,7 +4273,7 @@
     <script src="stock.js?v=70"></script>
     <script src="diary.js?v=71"></script>
     <script src="money.js?v=73"></script>
-    <script src="stores.js?v=65"></script>
+    <script src="stores.js?v=74"></script>
 
     <!-- AI Core Orb -->
     <div class="ai-core" onclick="toggleAIChat()" role="button" tabindex="0" aria-label="Open the assistant" title="Ask the assistant" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAIChat();}">

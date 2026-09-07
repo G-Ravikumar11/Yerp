@@ -415,6 +415,11 @@ async function loadWorkOrders() {
             : (w.approval_status === 'none' || w.approval_status === 'rejected'
                 ? '<button class="btn btn-sm btn-primary" onclick="submitWorkOrder(' + w.id + ')">Send for approval</button>'
                 : '<button class="btn btn-sm" onclick="startBomBuilder(' + w.id + ')">Budget</button>');
+        // Once it has a budget, the budget already says what has to be bought.
+        if (w.budgeted) {
+            action += ' <button class="btn btn-sm btn-outline" onclick="showRequisition(' +
+                w.id + ')" title="What still has to be bought for this order">Material</button>';
+        }
         action += ' <a class="btn btn-sm btn-outline" href="/api/erp/work-orders/' +
             w.id + '/export.xlsx" title="Download this order">Excel</a>';
         return '<tr><td style="font-family:monospace;font-weight:600;">' + esc(w.number) + '</td>' +
@@ -529,3 +534,86 @@ async function uploadBomSheet() {
     if (r.created) { closeBomModal(); loadWorkOrders(); }
 }
 window.uploadBomSheet = uploadBomSheet;
+
+
+/* --- From the budget to the purchase order --------------------------------
+   The BOM already knows what a work order needs. What it does not know is
+   what is in the store or already on order, so the list offered here is the
+   shortfall - and raising the order twice has nothing left to ask for. */
+
+var REQ = { wo: null, lines: [] };
+
+async function showRequisition(woId) {
+    var res = await fetch('/api/erp/work-orders/' + woId + '/requisition',
+                          { credentials: 'include' });
+    if (!res.ok) { showToast('Could not read the budget', 'error'); return; }
+    var d = await res.json();
+    REQ = { wo: d.work_order, lines: d.lines };
+
+    document.getElementById('req-title').textContent =
+        'Material for ' + (d.work_order.number || '');
+    var short = d.lines.filter(function (l) { return !l.covered; });
+    document.getElementById('req-summary').textContent = short.length
+        ? short.length + ' item' + (short.length === 1 ? '' : 's') +
+          ' still to buy, ' + formatCurrency(d.summary.value) +
+          '. Priced at what the store last paid.'
+        : 'Nothing left to buy. The budget is covered by what is in the store ' +
+          'and what is already on order.';
+
+    document.getElementById('req-body').innerHTML = d.lines.length
+        ? d.lines.map(function (l, i) {
+            return '<tr' + (l.covered ? ' style="opacity:.55;"' : '') + '>' +
+                '<td>' + (l.covered ? ''
+                    : '<input type="checkbox" checked id="req-pick-' + i +
+                      '" data-code="' + esc(l.item_code) + '">') + '</td>' +
+                '<td style="font-family:monospace;">' + esc(l.item_code) +
+                    '<div style="font-size:0.72rem;font-family:inherit;' +
+                    'color:var(--text-secondary);">' + esc(l.item_name) + '</div></td>' +
+                '<td class="text-right">' + l.needed + ' ' + esc(l.uom) + '</td>' +
+                '<td class="text-right">' + l.in_store + '</td>' +
+                '<td class="text-right">' + l.on_order + '</td>' +
+                '<td class="text-right" style="font-weight:600;">' +
+                    (l.covered ? '<span style="color:var(--success-color);">covered</span>'
+                               : l.to_buy) + '</td>' +
+                '<td class="text-right">' + formatCurrency(l.rate) +
+                    (l.budget_rate && l.rate !== l.budget_rate
+                        ? '<div style="font-size:0.7rem;color:var(--text-secondary);">' +
+                          'budget ' + formatCurrency(l.budget_rate) + '</div>' : '') + '</td>' +
+                '<td class="text-right">' + formatCurrency(l.amount) + '</td></tr>';
+          }).join('')
+        : '<tr><td colspan="8" style="text-align:center;padding:22px;' +
+          'color:var(--text-secondary);">This order has no budget behind it, ' +
+          'so nothing is known about what it needs.</td></tr>';
+
+    document.getElementById('req-raise').style.display = short.length ? '' : 'none';
+    document.getElementById('req-supplier').value = '';
+    openModal('req-modal');
+}
+window.showRequisition = showRequisition;
+
+function closeRequisition() { closeModal('req-modal'); }
+window.closeRequisition = closeRequisition;
+
+async function raisePoFromBudget() {
+    var supplier = document.getElementById('req-supplier').value.trim();
+    if (!supplier) { showToast('Who is this order with?', 'error'); return; }
+    var codes = [];
+    REQ.lines.forEach(function (l, i) {
+        var box = document.getElementById('req-pick-' + i);
+        if (box && box.checked) codes.push(l.item_code);
+    });
+    if (!codes.length) { showToast('Nothing ticked to buy', 'error'); return; }
+
+    var res = await fetch('/api/erp/work-orders/' + REQ.wo.id + '/raise-po', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ supplier_name: supplier,
+                               needed_by: document.getElementById('req-by').value,
+                               item_codes: codes }),
+    });
+    var out = await res.json();
+    if (!res.ok) { showToast(out.detail || 'Could not raise it', 'error'); return; }
+    closeRequisition();
+    showToast(out.message, 'success');
+}
+window.raisePoFromBudget = raisePoFromBudget;

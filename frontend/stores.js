@@ -203,9 +203,12 @@ function renderGrnLines() {
         ? '<button class="btn btn-outline" onclick="saveGrn()">Save</button> ' +
           '<button class="btn btn-primary" onclick="saveGrn(true)">Save and post</button> ' +
           '<button class="btn btn-outline" onclick="discardGrn()">Discard</button>'
-        : (g.actions.indexOf('CANCEL') >= 0
+        : ((g.status === 'POSTED'
+              ? '<button class="btn btn-primary" onclick="billFromGrn()">' +
+                'Raise the supplier bill</button> ' : '') +
+           (g.actions.indexOf('CANCEL') >= 0
             ? '<button class="btn btn-outline" onclick="cancelGrn()">Cancel this receipt</button>'
-            : '');
+            : ''));
     document.getElementById('grn-detail-totals').innerHTML =
         'Arrived ' + formatCurrency(g.received_value) +
         ' · accepted <strong>' + formatCurrency(g.accepted_value) + '</strong>' +
@@ -341,3 +344,21 @@ async function loadMatch() {
         'color:var(--text-secondary);">Nothing to compare yet.</td></tr>';
 }
 window.loadMatch = loadMatch;
+
+
+/* The bill for what actually arrived. Drawn from the accepted quantities, so
+   the figure a supplier is paid against is the delivery the store signed for
+   - retyping it is where the three-way match starts reporting a difference
+   nobody caused. */
+async function billFromGrn() {
+    if (!GRN.current) return;
+    var res = await fetch('/api/grn/' + GRN.current.id + '/bill', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    var out = await res.json();
+    if (!res.ok) { showToast(out.detail || 'Could not raise it', 'error'); return; }
+    showToast(out.message, 'success');
+    loadStores();
+}
+window.billFromGrn = billFromGrn;
