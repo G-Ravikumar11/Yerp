@@ -241,6 +241,31 @@ def money(val) -> float:
     return float(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
+def inr(value) -> str:
+    """A rupee figure the way it is read aloud here: 12,34,567.00.
+
+    Indian grouping puts the first comma three from the right and every one
+    after it two apart. The web formatter does this already; the server did
+    not have one, so any figure the server wrote into a sentence came out as a
+    bare float - "400000.0 the customer should already have paid" - which is
+    the kind of thing that makes a screen look unfinished at a glance.
+    """
+    v = money(value)
+    neg = v < 0
+    whole, frac = divmod(abs(v), 1)
+    digits = str(int(whole))
+    if len(digits) > 3:
+        head, tail = digits[:-3], digits[-3:]
+        pairs = []
+        while len(head) > 2:
+            pairs.insert(0, head[-2:])
+            head = head[:-2]
+        if head:
+            pairs.insert(0, head)
+        digits = ",".join(pairs + [tail])
+    return "%s₹%s.%02d" % ("-" if neg else "", digits, int(round(frac * 100)))
+
+
 def unit_rate(val) -> float:
     """A rate per unit, kept to four places.
 
@@ -20603,12 +20628,12 @@ def create_variation(body: VariationIn, request: Request,
     db.flush()
     recost_variation(db, vo)
     log_audit(db, client.id, "variation_raised", "work_order", wo.id, wo.number or "",
-              "%s %s %s" % (number, origin, vo.value), request)
+              "%s %s %s" % (number, origin, inr(vo.value)), request)
     db.commit()
     db.refresh(vo)
     return {"ok": True, "variation": vo_dict(db, vo, detail=True),
             "message": ("%s drawn up from the measurement book - %s of extra work."
-                        % (number, money(vo.value)) if origin == "measured"
+                        % (number, inr(vo.value)) if origin == "measured"
                         else "%s created." % number)}
 
 
@@ -21207,13 +21232,13 @@ def post_stock_issue(issue_id: int, request: Request, body: dict = None,
     issue.status = "POSTED"
     issue.posted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_audit(db, client.id, "stock_issued", "stock_issue", issue.id,
-              issue.number or "", "%s lines, %s" % (len(lines), issue.total_value),
+              issue.number or "", "%s lines, %s" % (len(lines), inr(issue.total_value)),
               request)
     db.commit()
     db.refresh(issue)
     return {"ok": True, "issue": issue_dict(db, issue, detail=True),
             "message": "%s issued - %s of material has left the store."
-                       % (issue.number, money(issue.total_value))}
+                       % (issue.number, inr(issue.total_value))}
 
 
 @app.post("/api/stock-issues/{issue_id}/cancel")
@@ -22260,7 +22285,7 @@ def attention_items(db, client_id):
             "count": unbilled_orders, "view": "measurement-view",
             "title": "Work measured but not billed",
             "detail": "%s across %d order%s. It is already paid for in wages "
-                      "and material." % (money(unbilled_total), unbilled_orders,
+                      "and material." % (inr(unbilled_total), unbilled_orders,
                                          "" if unbilled_orders == 1 else "s"),
         })
     if over_run_total > 0:
@@ -22269,7 +22294,7 @@ def attention_items(db, client_id):
             "count": over_run_orders, "view": "measurement-view",
             "title": "Built past the order",
             "detail": "%s of work nothing covers. Raise a variation and it "
-                      "becomes billable." % money(over_run_total),
+                      "becomes billable." % inr(over_run_total),
         })
 
     # --- bills waiting on somebody --------------------------------------
@@ -22284,7 +22309,7 @@ def attention_items(db, client_id):
             "title": "RA bills awaiting certification",
             "detail": "%d bill%s worth %s cannot be paid until somebody signs."
                       % (len(waiting), "" if len(waiting) == 1 else "s",
-                         money(sum(b.this_bill or 0 for b in waiting))),
+                         inr(sum(b.this_bill or 0 for b in waiting))),
         })
 
     pending_vo = db.query(models.DBVariationOrder).filter(
@@ -22297,7 +22322,7 @@ def attention_items(db, client_id):
             "count": len(pending_vo), "view": "measurement-view",
             "title": "Variations awaiting approval",
             "detail": "%s of extra work still to be agreed."
-                      % money(sum(v.value or 0 for v in pending_vo)),
+                      % inr(sum(v.value or 0 for v in pending_vo)),
         })
 
     # --- the store -------------------------------------------------------
@@ -22367,7 +22392,7 @@ def attention_items(db, client_id):
             "kind": "receivables", "severity": "money", "value": money(overdue_in),
             "count": 0, "view": "money-view",
             "title": "Owed to us, past due",
-            "detail": "%s the customer should already have paid." % money(overdue_in),
+            "detail": "%s the customer should already have paid." % inr(overdue_in),
         })
 
     held = money(sum(b.retention_amount or 0 for b in db.query(
@@ -22388,7 +22413,7 @@ def attention_items(db, client_id):
                 "count": len(finished), "view": "money-view",
                 "title": "Retention on finished jobs",
                 "detail": "%s earned and still held back on work that is done."
-                          % on_finished,
+                          % inr(on_finished),
             })
 
     # Worth money first, then things that are simply wrong, then the rest.
@@ -22566,14 +22591,14 @@ def raise_po_from_bom(wo_id: int, body: RaisePoIn, request: Request,
             qty=r["to_buy"], price=r["rate"], tax_rate="18%"))
     log_audit(db, client.id, "po_raised_from_bom", "purchase_order", order.id,
               order.number or "", "%s - %d line(s) - %s"
-              % (wo.number, len(rows), amount), request)
+              % (wo.number, len(rows), inr(amount)), request)
     db.commit()
     db.refresh(order)
     return {"ok": True, "order": purchase_order_to_dict(db, order),
             "message": "%s drawn up for %s - %d item%s, %s. Check it before "
                        "approving." % (order.number, body.supplier_name.strip(),
                                        len(rows), "" if len(rows) == 1 else "s",
-                                       amount)}
+                                       inr(amount))}
 
 
 @app.post("/api/grn/{grn_id}/bill")
@@ -22634,7 +22659,7 @@ def bill_from_receipt(grn_id: int, request: Request, body: dict = None,
             qty=money(l.accepted_qty), price=unit_rate(l.rate),
             tax_rate="18%"))
     log_audit(db, client.id, "bill_from_receipt", "bill", bill.id,
-              bill.number or "", "%s %s" % (grn.number, amount), request)
+              bill.number or "", "%s %s" % (grn.number, inr(amount)), request)
     db.commit()
     db.refresh(bill)
     return {"ok": True, "bill": {"id": bill.id, "number": bill.number or "",
@@ -22645,7 +22670,7 @@ def bill_from_receipt(grn_id: int, request: Request, body: dict = None,
                                  "purchase_order_id": bill.purchase_order_id},
             "message": "%s drawn up for %s from what actually arrived - %s "
                        "across %d line%s." % (bill.number, bill.vendor_name,
-                                              amount, len(lines),
+                                              inr(amount), len(lines),
                                               "" if len(lines) == 1 else "s")}
 
 

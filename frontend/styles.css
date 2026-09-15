@@ -799,7 +799,7 @@ textarea.table-input.item-desc {
    ran straight under the user chip and out of the bar. Space is given up in
    the order it is least missed: the tagline first, then the person's name
    (their avatar still says who they are), then the padding around the links. */
-@media (max-width: 1250px) {
+@media (max-width: 1340px) {
     .topbar-left { gap: 14px; }
     .brand-sub { display: none; }
     .user-text { display: none; }
@@ -807,7 +807,7 @@ textarea.table-input.item-desc {
     .top-nav-menu { gap: 0; }
 }
 
-/* Below this even the tightened row cannot hold nine items, so the nav becomes
+/* Below this even the tightened row cannot hold eleven items, so the nav becomes
    the drawer it already is on a phone. It used to wait until 768px, which left
    a whole band of ordinary laptop widths where the links overlapped the user
    chip rather than moving out of its way.
@@ -816,7 +816,7 @@ textarea.table-input.item-desc {
    the row happens to need today: Approvals carries a count when something is
    waiting, and a row that only just fits while the badge is absent starts
    overlapping the moment somebody has work to approve. */
-@media (max-width: 1080px) {
+@media (max-width: 1160px) {
     .hamburger { display: flex; }
     .top-nav-menu {
         position: fixed; top: var(--topbar-height); left: 0; right: 0;
