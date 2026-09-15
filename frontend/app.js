@@ -470,8 +470,9 @@ function showView(viewId) {
     if (viewId === 'my-leave-view' && typeof loadMyLeave === 'function') loadMyLeave();
     if (viewId === 'my-payslips-view' && typeof loadMyPayslips === 'function') loadMyPayslips();
     if (viewId === 'my-documents-view' && typeof loadMyDocuments === 'function') loadMyDocuments();
-    if (viewId === 'approvals-view' && isEmployee() && typeof loadStaffApprovals === 'function') {
-        loadStaffApprovals();
+    if (viewId === 'approvals-view') {
+        if (isEmployee() && typeof loadStaffApprovals === 'function') loadStaffApprovals();
+        else if (typeof loadPendingApprovals === 'function') loadPendingApprovals();
     }
     if (viewId === 'jobs-view' && typeof loadJobs === 'function') loadJobs();
     if (viewId === 'customers-view' && typeof searchCustomers === 'function') searchCustomers();

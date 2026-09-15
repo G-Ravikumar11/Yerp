@@ -22422,12 +22422,70 @@ def attention_items(db, client_id):
     return items
 
 
+def setup_progress(db, client_id):
+    """How far a new business has got through setting itself up.
+
+    A brand new account used to open on "nothing needs chasing - everything
+    measured has been billed", which is true in the way that an empty ledger
+    balances. It read as reassurance when the person looking at it had no
+    idea where to start. These are the steps in the order a site actually
+    takes them, each one done or not, with where to go to do it.
+    """
+    n = lambda q: q.count()
+    jobs = n(db.query(models.DBJob).filter(models.DBJob.client_id == client_id))
+    items = n(db.query(models.DBItem).filter(models.DBItem.client_id == client_id))
+    wos = db.query(models.DBWorkOrder).filter(
+        models.DBWorkOrder.client_id == client_id).all()
+    placed = len([w for w in wos if (w.status or "") != "Draft"])
+    measured = n(db.query(models.DBMeasurement).filter(
+        models.DBMeasurement.client_id == client_id))
+    billed = n(db.query(models.DBRABill).filter(
+        models.DBRABill.client_id == client_id))
+    received = n(db.query(models.DBGoodsReceipt).filter(
+        models.DBGoodsReceipt.client_id == client_id,
+        models.DBGoodsReceipt.status == "POSTED"))
+    diaries = n(db.query(models.DBSiteDiary).filter(
+        models.DBSiteDiary.client_id == client_id))
+
+    steps = [
+        {"key": "project", "done": jobs > 0, "view": "jobs-view",
+         "title": "Set up a project",
+         "hint": "The site the work is on and the customer it is for. Everything else hangs off it."},
+        {"key": "items", "done": items > 0, "view": "workorders-view",
+         "title": "Name what you sell and what you buy",
+         "hint": "Deliverables get a code when you first price one on a work order. Materials can be added from a spreadsheet under Store."},
+        {"key": "order", "done": len(wos) > 0, "view": "workorders-view",
+         "title": "Build a work order",
+         "hint": "What was sold, line by line, with a rate against each."},
+        {"key": "placed", "done": placed > 0, "view": "workorders-view",
+         "title": "Place it",
+         "hint": "Placing commits the prices. Until then it cannot be measured or billed."},
+        {"key": "measured", "done": measured > 0, "view": "measurement-view",
+         "title": "Record what has been built",
+         "hint": "The measurement book. Bills are drawn from it, not typed."},
+        {"key": "billed", "done": billed > 0, "view": "measurement-view",
+         "title": "Draw up the first RA bill",
+         "hint": "It claims whatever has been measured and not yet claimed."},
+        {"key": "received", "done": received > 0, "view": "stores-view",
+         "title": "Book a delivery into the store",
+         "hint": "Raise a purchase order, then post the receipt when the lorry comes. Stock starts here."},
+        {"key": "diary", "done": diaries > 0, "view": "diary-view",
+         "title": "Keep the site diary",
+         "hint": "Who turned up, what got built, what stopped it. Labour cost comes from here."},
+    ]
+    done = len([s for s in steps if s["done"]])
+    return {"steps": steps, "done": done, "of": len(steps),
+            "complete": done == len(steps),
+            "next": next((s for s in steps if not s["done"]), None)}
+
+
 @app.get("/api/attention")
 def whats_worth_a_look(request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     items = attention_items(db, client.id)
     return {
         "items": items,
+        "setup": setup_progress(db, client.id),
         "summary": {
             "items": len(items),
             "money_at_stake": money(sum(i["value"] for i in items

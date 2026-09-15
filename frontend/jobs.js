@@ -304,6 +304,118 @@ async function loadOrders() {
 }
 window.loadOrders = loadOrders;
 
+var _poLines = [];
+var _rmMaster = [];
+
+/* Raw materials from the item master, with what the store last paid for
+   each. Fetched once per opening so the picker is never stale. */
+async function loadRmMaster() {
+    try {
+        var res = await fetch('/api/erp/items?kind=RM', { credentials: 'include' });
+        var d = await res.json();
+        _rmMaster = (d.items || []).filter(function (i) { return i.kind === 'RM'; });
+    } catch (e) { _rmMaster = []; }
+    try {
+        var s = await (await fetch('/api/stock', { credentials: 'include' })).json();
+        var rate = {};
+        (s.stock || []).forEach(function (r) { rate[r.item_code] = r.rate; });
+        _rmMaster.forEach(function (i) { i.store_rate = rate[i.item_code] || 0; });
+    } catch (e) { /* no stock yet is fine */ }
+}
+
+function rmByCode(code) {
+    return _rmMaster.filter(function (i) { return i.item_code === code; })[0];
+}
+
+function addOrderLine(freeText) {
+    if (!freeText && !_rmMaster.length) {
+        showToast('No materials in the item master yet. Add a line without a code, ' +
+                  'or set up the item master first.', 'warning');
+        freeText = true;
+    }
+    var first = _rmMaster[0];
+    _poLines.push(freeText
+        ? { item_code: '', description: '', uom: '', qty: 1, price: 0 }
+        : { item_code: first.item_code, description: first.item_name,
+            uom: first.units_of_measure || '',
+            qty: 1, price: first.store_rate || first.last_rate || 0 });
+    renderOrderLines();
+}
+window.addOrderLine = addOrderLine;
+
+function editOrderLine(i, field, value) {
+    var l = _poLines[i];
+    if (!l) return;
+    if (field === 'item_code') {
+        var it = rmByCode(value);
+        l.item_code = value;
+        if (it) {
+            l.description = it.item_name;
+            l.uom = it.units_of_measure || '';
+            // The store's own rate is the truest price there is; fall back to
+            // whatever it was last bought at, and leave anything already typed.
+            if (!l.price) l.price = it.store_rate || it.last_rate || 0;
+        }
+        renderOrderLines();
+        return;
+    }
+    l[field] = (field === 'qty' || field === 'price') ? (parseFloat(value) || 0) : value;
+    orderTotals();
+}
+window.editOrderLine = editOrderLine;
+
+function removeOrderLine(i) { _poLines.splice(i, 1); renderOrderLines(); }
+window.removeOrderLine = removeOrderLine;
+
+function renderOrderLines() {
+    var body = document.getElementById('order-lines');
+    if (!body) return;
+    body.innerHTML = _poLines.length ? _poLines.map(function (l, i) {
+        var picker = l.item_code || _rmMaster.length && l.description === ''
+            ? '<select class="form-control input-sm" onchange="editOrderLine(' + i + ',\'item_code\',this.value)">' +
+              '<option value="">— no code —</option>' +
+              _rmMaster.map(function (it) {
+                  return '<option value="' + esc(it.item_code) + '"' +
+                      (it.item_code === l.item_code ? ' selected' : '') + '>' +
+                      esc(it.item_code) + ' — ' + esc(it.item_name) + '</option>';
+              }).join('') + '</select>'
+            : '';
+        var desc = '<input class="form-control input-sm" value="' + esc(l.description) +
+            '" placeholder="' + (l.item_code ? '' : 'Crane hire, 2 days') +
+            '" oninput="editOrderLine(' + i + ',\'description\',this.value)"' +
+            (l.item_code ? ' style="margin-top:4px;font-size:0.78rem;"' : '') + '>';
+        return '<tr>' +
+            '<td>' + picker + desc + '</td>' +
+            '<td><input type="number" step="any" min="0" class="form-control input-sm" value="' + l.qty +
+                '" style="text-align:right;" oninput="editOrderLine(' + i + ',\'qty\',this.value)"></td>' +
+            '<td><input class="form-control input-sm" value="' + esc(l.uom) +
+                '" placeholder="Nos" oninput="editOrderLine(' + i + ',\'uom\',this.value)"></td>' +
+            '<td><input type="number" step="any" min="0" class="form-control input-sm" value="' + l.price +
+                '" style="text-align:right;" oninput="editOrderLine(' + i + ',\'price\',this.value)"></td>' +
+            '<td class="text-right" id="po-amt-' + i + '">' + formatCurrency(l.qty * l.price) + '</td>' +
+            '<td><button type="button" class="btn-icon" onclick="removeOrderLine(' + i + ')" title="Remove">&times;</button></td>' +
+            '</tr>';
+    }).join('') : '<tr><td colspan="6" style="text-align:center;padding:18px;' +
+        'color:var(--text-secondary);">Nothing on the order yet. Add the materials ' +
+        'being bought - each one can be received against when it arrives.</td></tr>';
+    orderTotals();
+}
+
+function orderTotals() {
+    var sub = 0;
+    _poLines.forEach(function (l, i) {
+        var a = (l.qty || 0) * (l.price || 0);
+        sub += a;
+        var cell = document.getElementById('po-amt-' + i);
+        if (cell) cell.textContent = formatCurrency(a);
+    });
+    var tax = parseFloat((document.getElementById('order-tax') || {}).value) || 0;
+    document.getElementById('order-amount').value = sub;
+    var t = document.getElementById('order-total');
+    if (t) t.textContent = formatCurrency(sub + tax);
+}
+window.orderTotals = orderTotals;
+
 async function showOrderModal() {
     var modal = document.getElementById('order-modal');
     if (!modal) return;
@@ -312,10 +424,13 @@ async function showOrderModal() {
     document.getElementById('order-modal-title').textContent = 'New purchase order';
     document.getElementById('order-date').value = localDate(new Date());
     document.getElementById('order-route').textContent =
-        'An order records what you have agreed to spend, before the bill arrives.';
+        'What is being bought, line by line. Each line can be received against ' +
+        'when the lorry arrives, and the bill matched to what actually came.';
     document.getElementById('order-save-btn').textContent = 'Save';
-    await fillJobPicker('order-job');
-    modal.style.display = 'flex';
+    await Promise.all([fillJobPicker('order-job'), loadRmMaster()]);
+    _poLines = [];
+    renderOrderLines();
+    openModal('order-modal');
 }
 window.showOrderModal = showOrderModal;
 
@@ -330,10 +445,7 @@ async function showRaiseOrderModal() {
 }
 window.showRaiseOrderModal = showRaiseOrderModal;
 
-function closeOrderModal() {
-    var modal = document.getElementById('order-modal');
-    if (modal) modal.style.display = 'none';
-}
+function closeOrderModal() { closeModal('order-modal'); }
 window.closeOrderModal = closeOrderModal;
 
 async function editOrder(id) {
@@ -343,29 +455,45 @@ async function editOrder(id) {
     document.getElementById('order-modal-title').textContent = 'Edit ' + order.number;
     document.getElementById('order-id').value = order.id;
     document.getElementById('order-supplier').value = order.supplier_name || '';
-    document.getElementById('order-amount').value = order.amount || '';
     document.getElementById('order-tax').value = order.tax_amount || 0;
     document.getElementById('order-date').value = order.issue_date || '';
     document.getElementById('order-needed').value = order.needed_by || '';
     document.getElementById('order-notes').value = order.notes || '';
     document.getElementById('order-job').value = order.job_id || '';
+    _poLines = (order.line_items || []).map(function (l) {
+        return { item_code: l.item_code || '', description: l.description || '',
+                 uom: l.uom || '', qty: l.qty || 0, price: l.price || 0 };
+    });
+    renderOrderLines();
 }
 window.editOrder = editOrder;
 
 async function saveOrder() {
     var id = document.getElementById('order-id').value;
     var jobVal = document.getElementById('order-job').value;
+    var lines = _poLines.filter(function (l) {
+        return (l.qty || 0) > 0 && (l.item_code || (l.description || '').trim());
+    });
+    var amount = lines.reduce(function (t, l) { return t + l.qty * l.price; }, 0);
+    var tax = parseFloat(document.getElementById('order-tax').value) || 0;
     var payload = {
         supplier_name: document.getElementById('order-supplier').value.trim(),
-        amount: parseFloat(document.getElementById('order-amount').value) || 0,
-        tax_amount: parseFloat(document.getElementById('order-tax').value) || 0,
+        amount: amount, tax_amount: tax, total: amount + tax,
         issue_date: document.getElementById('order-date').value,
         needed_by: document.getElementById('order-needed').value,
         notes: document.getElementById('order-notes').value.trim(),
-        job_id: jobVal ? parseInt(jobVal) : null
+        job_id: jobVal ? parseInt(jobVal) : null,
+        line_items: lines.map(function (l) {
+            return { item_code: l.item_code, description: l.description || l.item_code,
+                     uom: l.uom, qty: l.qty, price: l.price, tax_rate: '18%' };
+        }),
     };
     if (!payload.supplier_name) { showToast('Who is this order with?', 'error'); return; }
-    if (!(payload.amount > 0)) { showToast('Enter the amount', 'error'); return; }
+    if (!lines.length) { showToast('Put something on the order', 'error'); return; }
+    if (!(amount > 0)) {
+        showToast('Every line is priced at zero. Put a rate against each line.', 'error');
+        return;
+    }
 
     var btn = document.getElementById('order-save-btn');
     btn.disabled = true;

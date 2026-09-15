@@ -408,13 +408,29 @@ async function loadWorkOrders() {
         return;
     }
     body.innerHTML = _workOrders.length ? _workOrders.map(function (w) {
-        /* The action offered is whatever the order needs next: budget it,
-           then send it for approval. Nothing else is worth a button. */
-        var action = !w.budgeted
-            ? '<button class="btn btn-sm btn-primary" onclick="startBomBuilder(' + w.id + ')">Allocate budget</button>'
-            : (w.approval_status === 'none' || w.approval_status === 'rejected'
-                ? '<button class="btn btn-sm btn-primary" onclick="submitWorkOrder(' + w.id + ')">Send for approval</button>'
-                : '<button class="btn btn-sm" onclick="startBomBuilder(' + w.id + ')">Budget</button>');
+        /* The one thing this order needs next, and nothing else. The
+           button to place an order used to live on a different screen, and
+           the only clue here was a status that said "Draft" for ever - so
+           the order sat unplaced and the measurement book said there was
+           nothing to measure. Placing is the step that makes it real, and
+           it belongs where the order is. Budget and approval stay as the
+           governance path for anyone who wants it, not as a gate. */
+        var action;
+        if (w.status === 'Draft') {
+            action = '<button class="btn btn-sm btn-primary" onclick="placeWorkOrder(' + w.id +
+                ')" title="Commit these prices. The order can then be measured and billed.">Place order</button>';
+            action += ' <button class="btn btn-sm btn-outline" onclick="startBomBuilder(' + w.id + ')">' +
+                (w.budgeted ? 'Budget' : 'Allocate budget') + '</button>';
+        } else {
+            action = '<button class="btn btn-sm btn-primary" onclick="showView(&quot;measurement-view&quot;)" ' +
+                'title="Record what has been built against this order">Measure</button>';
+            action += ' <button class="btn btn-sm btn-outline" onclick="startBomBuilder(' + w.id + ')">' +
+                (w.budgeted ? 'Budget' : 'Allocate budget') + '</button>';
+        }
+        if (w.budgeted && (w.approval_status === 'none' || w.approval_status === 'rejected')) {
+            action += ' <button class="btn btn-sm btn-outline" onclick="submitWorkOrder(' + w.id +
+                ')" title="Send the priced order and its budget up for sign-off">Send for approval</button>';
+        }
         // Once it has a budget, the budget already says what has to be bought.
         if (w.budgeted) {
             action += ' <button class="btn btn-sm btn-outline" onclick="showRequisition(' +
@@ -617,3 +633,18 @@ async function raisePoFromBudget() {
     showToast(out.message, 'success');
 }
 window.raisePoFromBudget = raisePoFromBudget;
+
+
+/* Placing is the moment the prices are committed to a customer. It was only
+   reachable from the inquiry screen, which nobody who had just built an order
+   would think to open. */
+async function placeWorkOrder(id) {
+    var res = await fetch('/api/erp/work-orders/' + id + '/place-order', {
+        method: 'POST', credentials: 'include',
+    });
+    var out = await res.json();
+    if (!res.ok) { showToast(out.detail || 'Could not place it', 'error'); return; }
+    showToast(out.message + ' It can now be measured and billed.', 'success');
+    loadWorkOrders();
+}
+window.placeWorkOrder = placeWorkOrder;

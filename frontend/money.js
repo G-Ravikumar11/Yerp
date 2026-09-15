@@ -152,14 +152,50 @@ async function loadAttention() {
         statCard('Looks wrong', String(s.looks_wrong || 0)) +
         statCard('Things to look at', String(s.items || 0));
 
+    // A business that has not finished setting itself up gets the steps, in
+    // order, with the next one to take. "Nothing needs chasing" was true of an
+    // empty account in the way an empty ledger balances, and it left a new
+    // owner with no idea where to begin.
+    var setup = d.setup || {};
+    var setupHtml = '';
+    if (setup.steps && !setup.complete) {
+        setupHtml = '<div class="widget" style="margin-bottom:18px;">' +
+            '<div class="widget-header" style="display:flex;justify-content:space-between;align-items:center;">' +
+            '<h3>Getting set up</h3><span style="font-size:0.85rem;color:var(--text-secondary);">' +
+            setup.done + ' of ' + setup.of + ' done</span></div>' +
+            '<div class="widget-content" style="padding:6px 0;">' +
+            setup.steps.map(function (st) {
+                var isNext = setup.next && setup.next.key === st.key;
+                return '<div onclick="showView(&quot;' + st.view + '&quot;)" style="display:flex;gap:14px;' +
+                    'align-items:flex-start;padding:12px 20px;cursor:pointer;' +
+                    'border-bottom:1px solid var(--border-color);' +
+                    (isNext ? 'background:var(--primary-soft);' : '') +
+                    (st.done ? 'opacity:.6;' : '') + '">' +
+                    '<div style="width:22px;height:22px;border-radius:50%;flex-shrink:0;display:flex;' +
+                    'align-items:center;justify-content:center;font-size:0.75rem;font-weight:700;' +
+                    (st.done ? 'background:var(--success-color);color:#fff;' :
+                     isNext ? 'background:var(--primary-color);color:#fff;' :
+                     'border:2px solid var(--border-color);color:var(--text-secondary);') + '">' +
+                    (st.done ? '✓' : '') + '</div>' +
+                    '<div><div style="font-weight:600;font-size:0.9rem;">' + esc(st.title) +
+                    (isNext ? ' <span style="font-size:0.72rem;font-weight:500;color:var(--primary-color);">' +
+                     '← start here</span>' : '') + '</div>' +
+                    '<div style="font-size:0.8rem;color:var(--text-secondary);margin-top:2px;">' +
+                    esc(st.hint) + '</div></div></div>';
+            }).join('') + '</div></div>';
+    }
+
     if (!(d.items || []).length) {
-        box.innerHTML = '<div class="widget"><div class="widget-content" ' +
-            'style="padding:28px;text-align:center;color:var(--text-secondary);">' +
-            'Nothing needs chasing. Everything measured has been billed, every ' +
-            'bill has been signed, and the store agrees with itself.</div></div>';
+        box.innerHTML = setupHtml + (setup.complete
+            ? '<div class="widget"><div class="widget-content" ' +
+              'style="padding:28px;text-align:center;color:var(--text-secondary);">' +
+              'Nothing needs chasing. Everything measured has been billed, every ' +
+              'bill has been signed, and the store agrees with itself.</div></div>'
+            : '');
         return;
     }
-    box.innerHTML = '<div class="widget"><div class="widget-header">' +
+    box.innerHTML = setupHtml;
+    box.innerHTML += '<div class="widget"><div class="widget-header">' +
         '<h3>What is worth a look today</h3></div><div class="widget-content" ' +
         'style="padding:6px 0;">' +
         d.items.map(function (i) {

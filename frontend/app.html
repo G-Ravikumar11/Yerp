@@ -28,7 +28,7 @@
         }}
       };
     </script>
-    <link rel="stylesheet" href="styles.css?v=75">
+    <link rel="stylesheet" href="styles.css?v=76">
     <link rel="stylesheet" href="mobile.css?v=65">
 </head>
 <body>
@@ -3192,7 +3192,6 @@
                             </table>
                         </div>
                     </div>
-                </div>
 
                 <!-- ========== WORK ORDERS ========== -->
 
@@ -3942,8 +3941,13 @@
     </div>
 
     <!-- ========== PURCHASE ORDER MODAL ========== -->
+    <!-- A purchase order is lines, not a lump sum. The old form took a
+         supplier and an amount and a textarea, and an order made that way
+         had nothing on it a delivery could be received against - so the
+         goods receipt opened empty and the whole store side was dead for
+         anyone who had not raised the order from a budget. -->
     <div id="order-modal" class="modal-overlay" style="display:none;">
-        <div class="modal" style="max-width:560px;width:95%;max-height:90vh;overflow-y:auto;">
+        <div class="modal" style="max-width:860px;width:95%;max-height:92vh;overflow-y:auto;">
             <div style="display:flex;justify-content:space-between;align-items:center;padding:24px 24px 0;">
                 <h2 style="font-size:1.3rem;font-weight:700;" id="order-modal-title">New purchase order</h2>
                 <button class="btn-icon" onclick="closeOrderModal()" style="font-size:1.5rem;color:var(--text-secondary);">&times;</button>
@@ -3952,20 +3956,37 @@
                 <p id="order-route" style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:16px;"></p>
                 <form id="order-form" onsubmit="return false;">
                     <input type="hidden" id="order-id">
-                    <div class="form-group"><label>Supplier *</label><input type="text" id="order-supplier" class="form-control" required></div>
-                    <div class="grid-2 gap-16">
-                        <div class="form-group"><label>Amount *</label><input type="number" step="0.01" min="0" id="order-amount" class="form-control" required></div>
-                        <div class="form-group"><label>Tax</label><input type="number" step="0.01" min="0" id="order-tax" class="form-control" value="0"></div>
+                    <div class="form-row">
+                        <div class="form-group"><label>Supplier *</label><input type="text" id="order-supplier" class="form-control" placeholder="Ultratech Cement" required></div>
+                        <div class="form-group"><label>Project</label>
+                            <select id="order-job" class="form-control"><option value="">Not for a particular project</option></select></div>
                     </div>
-                    <div class="form-group">
-                        <label>Job</label>
-                        <select id="order-job" class="form-control"><option value="">Not job-specific</option></select>
-                    </div>
-                    <div class="grid-2 gap-16">
+                    <div class="form-row">
                         <div class="form-group"><label>Date</label><input type="date" id="order-date" class="form-control"></div>
                         <div class="form-group"><label>Needed by</label><input type="date" id="order-needed" class="form-control"></div>
                     </div>
-                    <div class="form-group"><label>What is being ordered?</label><textarea id="order-notes" class="form-control" rows="3"></textarea></div>
+
+                    <div class="table-responsive" style="margin-top:4px;">
+                        <table class="data-table">
+                            <thead><tr><th>Material</th><th style="width:100px;">Qty</th><th style="width:70px;">Unit</th><th style="width:120px;">Rate</th><th class="text-right" style="width:120px;">Amount</th><th style="width:36px;"></th></tr></thead>
+                            <tbody id="order-lines"></tbody>
+                        </table>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-top:10px;">
+                        <div>
+                            <button type="button" class="btn btn-sm btn-outline" onclick="addOrderLine()">+ Add a material</button>
+                            <button type="button" class="btn btn-sm btn-outline" onclick="addOrderLine(true)" title="Hire, transport, a service - anything without a stock code">+ Add a line without a code</button>
+                        </div>
+                        <div style="font-size:0.9rem;">
+                            <span style="color:var(--text-secondary);">Tax</span>
+                            <input type="number" step="0.01" min="0" id="order-tax" class="form-control input-sm" value="0" style="width:110px;display:inline-block;text-align:right;margin:0 14px 0 6px;" oninput="orderTotals()">
+                            <span style="color:var(--text-secondary);">Order value</span>
+                            <strong id="order-total" style="margin-left:6px;">₹0.00</strong>
+                        </div>
+                    </div>
+                    <input type="hidden" id="order-amount">
+
+                    <div class="form-group" style="margin-top:14px;"><label>Notes</label><textarea id="order-notes" class="form-control" rows="2" placeholder="Delivery to Vizag site store, gate 2"></textarea></div>
                     <div style="display:flex;gap:8px;justify-content:flex-end;">
                         <button type="button" class="btn" onclick="closeOrderModal()">Cancel</button>
                         <button type="button" class="btn btn-primary" id="order-save-btn" onclick="saveOrder()">Save</button>
@@ -4251,14 +4272,14 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=74"></script>
+    <script src="app.js?v=76"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=65"></script>
     <!-- Jobs, job costing and purchase orders. -->
-    <script src="jobs.js?v=65"></script>
+    <script src="jobs.js?v=76"></script>
     <!-- Item master, work orders and budget allocation. -->
-    <script src="erp.js?v=74"></script>
+    <script src="erp.js?v=76"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
     <script src="erp-build.js?v=74"></script>
     <!-- The spreadsheet grid the item master is entered through. -->
@@ -4272,8 +4293,8 @@
     <script src="measurement.js?v=70"></script>
     <script src="stock.js?v=70"></script>
     <script src="diary.js?v=71"></script>
-    <script src="money.js?v=73"></script>
-    <script src="stores.js?v=74"></script>
+    <script src="money.js?v=76"></script>
+    <script src="stores.js?v=76"></script>
 
     <!-- AI Core Orb -->
     <div class="ai-core" onclick="toggleAIChat()" role="button" tabindex="0" aria-label="Open the assistant" title="Ask the assistant" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAIChat();}">
