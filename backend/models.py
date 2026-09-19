@@ -2165,3 +2165,197 @@ class DBDiaryPlant(Base):
     amount = Column(Float, default=0.0)
     remarks = Column(String, default="")
     display_order = Column(Integer, default=0)
+
+
+# ===========================================================================
+# SUBCONTRACTOR BILLS
+#
+# The other side of the ledger. A work order is what the client buys from us
+# and an RA bill against it is money coming in. A subcontract order is what we
+# buy from a gang, and until now it could be signed but never measured or
+# billed - so the money going out to the people actually doing the work was
+# not in the app at all, and the P&L was flattered by exactly that amount.
+#
+# Same shape as the client side on purpose: measurements accumulate, a bill
+# claims the difference, retention is held and TDS deducted. The difference
+# is who holds the retention. Here it is us.
+# ===========================================================================
+
+class DBSubMeasurement(Base):
+    __tablename__ = "sub_measurements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    order_id = Column(Integer, ForeignKey("subcontract_orders.id"), nullable=False, index=True)
+    item_id = Column(Integer, ForeignKey("subcontract_items.id"), nullable=False, index=True)
+    activity_no = Column(String, default="")
+    mb_ref = Column(String, default="")
+    measured_on = Column(String, default="")
+    quantity = Column(Float, default=0.0)          # may be negative: a correction
+    remarks = Column(String, default="")
+    recorded_by = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    recorded_by_name = Column(String, default="")
+    sub_bill_id = Column(Integer, ForeignKey("sub_bills.id"), nullable=True, index=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBSubBill(Base):
+    __tablename__ = "sub_bills"
+    __table_args__ = (
+        UniqueConstraint('client_id', 'number', name='uq_client_sub_bill_number'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    order_id = Column(Integer, ForeignKey("subcontract_orders.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    contractor_id = Column(Integer, ForeignKey("contractors.id"), nullable=True, index=True)
+
+    number = Column(String, index=True)              # WO/2026-27/STP/001/RA-01
+    sequence = Column(Integer, default=1)
+    period_from = Column(String, default="")
+    period_to = Column(String, default="")
+    # DRAFT | SUBMITTED | CERTIFIED | PAID | CANCELLED
+    status = Column(String, default="DRAFT", index=True)
+
+    gross_to_date = Column(Float, default=0.0)
+    previously_billed = Column(Float, default=0.0)
+    this_bill = Column(Float, default=0.0)
+
+    retention_percent = Column(Float, default=0.0)
+    retention_amount = Column(Float, default=0.0)     # held back by us
+    advance_recovery = Column(Float, default=0.0)     # mobilisation advance clawed back
+    other_deductions = Column(Float, default=0.0)
+    deduction_notes = Column(String, default="")
+    gst_percent = Column(Float, default=0.0)
+    gst_amount = Column(Float, default=0.0)           # the gang charges us
+    tds_percent = Column(Float, default=0.0)
+    tds_amount = Column(Float, default=0.0)           # we withhold and remit
+    net_payable = Column(Float, default=0.0)          # what actually leaves the bank
+
+    certified_by = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    certified_by_name = Column(String, default="")
+    certified_at = Column(String, default="")
+    paid_at = Column(String, default="")
+    paid_reference = Column(String, default="")
+    remarks = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    updated_at = Column(String, default="")
+
+
+class DBSubBillLine(Base):
+    __tablename__ = "sub_bill_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sub_bill_id = Column(Integer, ForeignKey("sub_bills.id"), index=True)
+    item_id = Column(Integer, ForeignKey("subcontract_items.id"), index=True)
+    activity_no = Column(String, default="")
+    description = Column(String, default="")
+    uom = Column(String, default="")
+    ordered_qty = Column(Float, default=0.0)
+    measured_to_date = Column(Float, default=0.0)
+    previously_billed_qty = Column(Float, default=0.0)
+    this_bill_qty = Column(Float, default=0.0)
+    rate = Column(Float, default=0.0)
+    amount = Column(Float, default=0.0)
+    display_order = Column(Integer, default=0)
+
+
+# ===========================================================================
+# ESTIMATION
+#
+# The chain used to start at a signed work order. Half of a contracting
+# business happens before that: a tender arrives, somebody builds up a rate
+# for every item from material, labour, plant and overhead, adds a margin,
+# and submits a price. Win it and that priced schedule IS the work order.
+# Lose it and the rate build-ups are still worth keeping, because the next
+# tender has the same items in it.
+#
+# An estimate is a BOQ with a cost side. The rate analysis is the part that
+# makes it an estimate rather than a guess.
+# ===========================================================================
+
+class DBEstimate(Base):
+    __tablename__ = "estimates"
+    __table_args__ = (
+        UniqueConstraint('client_id', 'number', name='uq_client_estimate_number'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+
+    number = Column(String, index=True)               # EST-0001
+    title = Column(String, default="")
+    customer_name = Column(String, default="")
+    tender_reference = Column(String, default="")
+    due_on = Column(String, default="")
+
+    # DRAFT | SUBMITTED | WON | LOST | WITHDRAWN
+    status = Column(String, default="DRAFT", index=True)
+
+    # The margin the whole tender was priced on. Each item can override it.
+    overhead_percent = Column(Float, default=0.0)
+    profit_percent = Column(Float, default=0.0)
+
+    cost_total = Column(Float, default=0.0)          # what it will cost us
+    quoted_total = Column(Float, default=0.0)        # what we are asking for
+    margin_amount = Column(Float, default=0.0)
+
+    # Once won, the work order this became. Set once and never changed, so
+    # the estimate and the order can always be laid side by side later.
+    work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True, index=True)
+    decided_at = Column(String, default="")
+    lost_reason = Column(String, default="")
+    notes = Column(Text, default="")
+    prepared_by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    updated_at = Column(String, default="")
+
+
+class DBEstimateItem(Base):
+    """One BOQ item on the tender, with what it costs and what we ask."""
+    __tablename__ = "estimate_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    estimate_id = Column(Integer, ForeignKey("estimates.id"), index=True)
+    item_no = Column(String, default="")             # 1.1, 2.3 - the tender's numbering
+    fg_code = Column(String, default="")             # our code, once it has one
+    description = Column(Text, default="")
+    uom = Column(String, default="")
+    quantity = Column(Float, default=0.0)
+
+    # Built up from the analysis lines below, or typed if the estimator
+    # already knows the number.
+    cost_rate = Column(Float, default=0.0)
+    overhead_percent = Column(Float, nullable=True)   # None: use the estimate's
+    profit_percent = Column(Float, nullable=True)
+    quoted_rate = Column(Float, default=0.0)
+    cost_amount = Column(Float, default=0.0)
+    quoted_amount = Column(Float, default=0.0)
+    display_order = Column(Integer, default=0)
+
+
+class DBRateAnalysis(Base):
+    """What goes into one unit of one item.
+
+    A cubic metre of M25 concrete is so much cement, so much sand, so many
+    mason-hours and a share of a mixer. Written down per resource, so the
+    rate is defensible when the client asks and reusable when the next
+    tender has concrete in it.
+    """
+    __tablename__ = "rate_analyses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    estimate_item_id = Column(Integer, ForeignKey("estimate_items.id"), index=True)
+    # MATERIAL | LABOUR | PLANT | OTHER
+    kind = Column(String, default="MATERIAL", index=True)
+    item_code = Column(String, default="")           # RM code, when it is stock
+    description = Column(String, default="")
+    uom = Column(String, default="")
+    # Per unit of the BOQ item: 0.35 cum sand per cum of concrete.
+    quantity_per_unit = Column(Float, default=0.0)
+    rate = Column(Float, default=0.0)
+    wastage_percent = Column(Float, default=0.0)
+    amount_per_unit = Column(Float, default=0.0)
+    display_order = Column(Integer, default=0)

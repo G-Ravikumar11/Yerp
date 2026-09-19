@@ -97,65 +97,45 @@
                         </div>
                     </div>
 
-                    <a href="#" class="nav-item" id="nav-jobs" data-perm="reports.view" onclick="event.preventDefault();showView('jobs-view')">Project Entry</a>
-
-                    <div class="nav-group" data-perm="invoices.manage" id="nav-group-sales">
-                        <button type="button" class="nav-item nav-group-toggle" aria-expanded="false" aria-controls="nav-items-sales" onclick="toggleNavGroup(event,'sales')">
-                            Sales <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
+                    <!-- One product. This used to be an invoicing SaaS with a
+                         civil ERP bolted onto the side - a Sales pipeline next
+                         to a measurement book, recurring invoices next to a
+                         goods receipt - and it read as two apps in one menu.
+                         The groups now follow the way a contracting business
+                         runs: the projects, the contract with the client, the
+                         gangs, the store, the money, the people. -->
+                    <div class="nav-group" id="nav-group-projects">
+                        <button type="button" class="nav-item nav-group-toggle" aria-expanded="false" aria-controls="nav-items-projects" onclick="toggleNavGroup(event,'projects')">
+                            Projects <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
-                        <div class="nav-group-items" id="nav-items-sales">
-                            <a href="#" class="nav-item" id="nav-invoices" onclick="event.preventDefault();showView('invoices-view')">Invoices</a>
-                            <a href="#" class="nav-item" id="nav-quotes" onclick="event.preventDefault();showView('quotes-view')">Quotes</a>
-                            <a href="#" class="nav-item" id="nav-pipeline" onclick="event.preventDefault();showView('sales-pipeline-view')">Pipeline</a>
-                            <a href="#" class="nav-item" id="nav-recurring" onclick="event.preventDefault();showView('recurring-view')">Recurring</a>
-                            <a href="#" class="nav-item" id="nav-contacts" onclick="event.preventDefault();showView('contacts-view')">Contacts</a>
-                            <a href="#" class="nav-item" id="nav-reports" data-perm="reports.view" onclick="event.preventDefault();showView('reports-view')">Reports</a>
+                        <div class="nav-group-items" id="nav-items-projects">
+                            <a href="#" class="nav-item" id="nav-jobs" data-perm="reports.view" onclick="event.preventDefault();showView('jobs-view')">Projects</a>
+                            <a href="#" class="nav-item" id="nav-diary" onclick="event.preventDefault();showView('diary-view')">Site Diary</a>
+                            <a href="#" class="nav-item" id="nav-pnl" onclick="event.preventDefault();showView('pnl-view')">Project Profit</a>
                             <a href="#" class="nav-item" id="nav-costs" data-perm="reports.view" onclick="event.preventDefault();showView('costs-view')">Cost by Project</a>
                         </div>
                     </div>
 
-                    <div class="nav-group" id="nav-group-costs">
-                        <button type="button" class="nav-item nav-group-toggle" aria-expanded="false" aria-controls="nav-items-costs" onclick="toggleNavGroup(event,'costs')">
-                            Costs <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
-                        </button>
-                        <div class="nav-group-items" id="nav-items-costs">
-                            <a href="#" class="nav-item" id="nav-bills" onclick="event.preventDefault();showView('bills-view')">Bills</a>
-                            <a href="#" class="nav-item" id="nav-workorders" data-perm="workorders.manage" onclick="event.preventDefault();showView('workorders-view')">Work Orders</a>
-                        </div>
-                    </div>
-
-                    <!-- Three groups, following the order a site actually
-                         works in rather than one list of ten.
-
-                         Contracts  - what was sold and to whom
-                         Site       - what is being built, measured and billed
-                         Store      - what was bought, what arrived, what is left
-
-                         Ten entries under one heading is a list nobody reads;
-                         a foreman looking for the measurement book should not
-                         have to pass goods receipt to reach it. -->
                     <div class="nav-group" id="nav-group-contracts">
                         <button type="button" class="nav-item nav-group-toggle" aria-expanded="false" aria-controls="nav-items-contracts" onclick="toggleNavGroup(event,'contracts')">
-                            Contracts <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
+                            Contract <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
                         <div class="nav-group-items" id="nav-items-contracts">
+                            <a href="#" class="nav-item" id="nav-estimates" data-perm="workorders.manage" onclick="event.preventDefault();showView('estimates-view')">Tenders &amp; Estimates</a>
+                            <a href="#" class="nav-item" id="nav-workorders" data-perm="workorders.manage" onclick="event.preventDefault();showView('workorders-view')">Work Orders</a>
+                            <a href="#" class="nav-item" id="nav-measurement" onclick="event.preventDefault();showView('measurement-view')">Measurement &amp; RA Bills</a>
                             <a href="#" class="nav-item" id="nav-customers" data-perm="customers.manage" onclick="event.preventDefault();showView('customers-view')">Customers</a>
-                            <a href="#" class="nav-item" id="nav-inquiry" data-perm="workorders.manage" onclick="event.preventDefault();showView('inquiry-view')">Work Order Inquiry</a>
-                            <a href="#" class="nav-item" id="nav-subcontracts" onclick="event.preventDefault();showView('subcontracts-view')">Subcontract Orders</a>
-                            <a href="#" class="nav-item" id="nav-viewer" onclick="event.preventDefault();showView('viewer-view')">Open a file</a>
+                            <a href="#" class="nav-item" id="nav-viewer" onclick="event.preventDefault();showView('viewer-view')">Import a file</a>
                         </div>
                     </div>
 
-                    <div class="nav-group" id="nav-group-site">
-                        <button type="button" class="nav-item nav-group-toggle" aria-expanded="false" aria-controls="nav-items-site" onclick="toggleNavGroup(event,'site')">
-                            Site <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
+                    <div class="nav-group" id="nav-group-subcontracts">
+                        <button type="button" class="nav-item nav-group-toggle" aria-expanded="false" aria-controls="nav-items-subcontracts" onclick="toggleNavGroup(event,'subcontracts')">
+                            Subcontracts <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
-                        <div class="nav-group-items" id="nav-items-site">
-                            <a href="#" class="nav-item" id="nav-measurement" onclick="event.preventDefault();showView('measurement-view')">Measurement &amp; RA Bills</a>
-                            <a href="#" class="nav-item" id="nav-diary" onclick="event.preventDefault();showView('diary-view')">Site Diary</a>
-                            <a href="#" class="nav-item" id="nav-consume" onclick="event.preventDefault();showView('consume-view')">Material Used vs Costed</a>
-                            <a href="#" class="nav-item" id="nav-pnl" onclick="event.preventDefault();showView('pnl-view')">Project Profit</a>
-                            <a href="#" class="nav-item" id="nav-money" onclick="event.preventDefault();showView('money-view')">Money Owed &amp; Retention</a>
+                        <div class="nav-group-items" id="nav-items-subcontracts">
+                            <a href="#" class="nav-item" id="nav-subcontracts" onclick="event.preventDefault();showView('subcontracts-view')">Subcontract Orders</a>
+                            <a href="#" class="nav-item" id="nav-subbills" onclick="event.preventDefault();showView('subbills-view')">Subcontractor Bills</a>
                         </div>
                     </div>
 
@@ -164,10 +144,22 @@
                             Store <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
                         <div class="nav-group-items" id="nav-items-store">
+                            <a href="#" class="nav-item" id="nav-orders" onclick="event.preventDefault();showView('orders-view')">Purchase Orders</a>
                             <a href="#" class="nav-item" id="nav-stores" onclick="event.preventDefault();showView('stores-view')">Goods Receipt &amp; Match</a>
                             <a href="#" class="nav-item" id="nav-stock" onclick="event.preventDefault();showView('stock-view')">Stock &amp; Issues</a>
-                            <a href="#" class="nav-item" id="nav-orders" onclick="event.preventDefault();showView('orders-view')">Purchase Orders</a>
+                            <a href="#" class="nav-item" id="nav-consume" onclick="event.preventDefault();showView('consume-view')">Material Used vs Costed</a>
                             <a href="#" class="nav-item" id="nav-items" data-perm="items.manage" onclick="event.preventDefault();showView('items-view')">Item Master</a>
+                        </div>
+                    </div>
+
+                    <div class="nav-group" id="nav-group-money">
+                        <button type="button" class="nav-item nav-group-toggle" aria-expanded="false" aria-controls="nav-items-money" onclick="toggleNavGroup(event,'money')">
+                            Money <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
+                        </button>
+                        <div class="nav-group-items" id="nav-items-money">
+                            <a href="#" class="nav-item" id="nav-money" onclick="event.preventDefault();showView('money-view')">Owed &amp; Retention</a>
+                            <a href="#" class="nav-item" id="nav-bills" onclick="event.preventDefault();showView('bills-view')">Supplier Bills</a>
+                            <a href="#" class="nav-item" id="nav-invoices" data-perm="invoices.manage" onclick="event.preventDefault();showView('invoices-view')">Client Invoices</a>
                         </div>
                     </div>
 
@@ -177,12 +169,8 @@
                         </button>
                         <div class="nav-group-items" id="nav-items-people">
                             <a href="#" class="nav-item" id="nav-people" onclick="event.preventDefault();showView('employees-view')">Employees</a>
-                            <a href="#" class="nav-item" id="nav-org" onclick="event.preventDefault();showView('orgchart-view')">Org Chart</a>
                             <a href="#" class="nav-item" id="nav-leave" data-perm="leave.approve" onclick="event.preventDefault();showView('leave-view')">Leave</a>
-                            <a href="#" class="nav-item" id="nav-goals" onclick="event.preventDefault();showView('goals-view')">Goals</a>
-                            <a href="#" class="nav-item" id="nav-onboarding" onclick="event.preventDefault();showView('onboarding-hub-view')">Onboarding</a>
                             <a href="#" class="nav-item" id="nav-payroll" data-perm="payroll.manage" onclick="event.preventDefault();showView('payroll-view')">Payroll</a>
-                            <a href="#" class="nav-item" id="nav-recruitment" data-perm="recruitment.manage" onclick="event.preventDefault();showView('recruitment-view')">Recruitment</a>
                         </div>
                     </div>
 
@@ -192,9 +180,9 @@
                         </button>
                         <div class="nav-group-items" id="nav-items-more">
                             <a href="#" class="nav-item" id="nav-settings" onclick="event.preventDefault();showView('settings-view')">Settings</a>
-                            <a href="/meeting" target="_blank" class="nav-item">&#127909; Meet</a>
                         </div>
                     </div>
+
                 </nav>
             </div>
             <div class="topbar-right">
@@ -1332,6 +1320,57 @@
                         </div>
                         <div class="modal-footer">
                             <button class="btn btn-outline" onclick="closeLedger()">Close</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="ra-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:900px;">
+                        <div class="modal-header">
+                            <h3 id="ra-title">Rate build-up</h3>
+                            <button class="modal-close" onclick="closeAnalysis()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <p id="ra-context" style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:12px;"></p>
+                            <div class="table-responsive" style="max-height:380px;overflow-y:auto;">
+                                <table class="data-table">
+                                    <thead><tr><th style="width:120px;">Kind</th><th>Resource</th><th>Unit</th><th style="width:100px;">Qty per unit</th><th style="width:110px;">Rate</th><th style="width:80px;">Waste %</th><th class="text-right" style="width:110px;">Per unit</th></tr></thead>
+                                    <tbody id="ra-rows"></tbody>
+                                </table>
+                            </div>
+                            <p id="ra-total" style="font-size:0.9rem;margin-top:12px;"></p>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeAnalysis()">Cancel</button>
+                            <button class="btn btn-primary" onclick="saveAnalysis()">Save the rate</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="sub-measure-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:520px;">
+                        <div class="modal-header">
+                            <h3 id="sub-measure-title">Record a measurement</h3>
+                            <button class="modal-close" onclick="closeSubMeasure()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <input type="hidden" id="sub-measure-item">
+                            <p id="sub-measure-context" style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:14px;"></p>
+                            <div class="form-row">
+                                <div class="form-group"><label>Quantity measured *</label>
+                                    <input type="number" step="any" id="sub-measure-qty" class="form-control"></div>
+                                <div class="form-group"><label>Measured on</label>
+                                    <input type="date" id="sub-measure-date" class="form-control"></div>
+                            </div>
+                            <div class="form-group"><label>MB page reference</label>
+                                <input type="text" id="sub-measure-ref" class="form-control" placeholder="MB-4 / p.12"></div>
+                            <div class="form-group"><label>Remarks</label>
+                                <textarea id="sub-measure-remarks" class="form-control" rows="2"></textarea></div>
+                            <p style="font-size:0.75rem;color:var(--text-secondary);">Entries add up. To correct one, record a negative quantity.</p>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeSubMeasure()">Cancel</button>
+                            <button class="btn btn-primary" onclick="saveSubMeasure()">Record it</button>
                         </div>
                     </div>
                 </div>
@@ -3512,6 +3551,99 @@
                     </div>
                 </div>
 
+                <div id="estimates-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Tenders &amp; Estimates</h1><p class="subtitle">Price the job before the contract exists. Win it and the priced schedule becomes the work order.</p></div>
+                        <div class="invoices-actions">
+                            <button class="btn btn-primary" onclick="newEstimate()">New tender</button>
+                            <button class="btn btn-outline" onclick="loadEstimates()">Refresh</button>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid" id="est-stats"></div>
+
+                    <div class="widget" style="margin-top:18px;">
+                        <div class="widget-header"><h3>Tenders</h3></div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>No</th><th>Tender</th><th>Due</th><th class="text-right">Items</th><th class="text-right">Cost</th><th class="text-right">Quoted</th><th>Status</th><th></th></tr></thead>
+                                <tbody id="est-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div id="est-detail" class="widget" style="margin-top:18px;display:none;">
+                        <div class="widget-content" style="padding:18px 20px;" id="est-head"></div>
+                        <div class="stats-grid" id="est-totals" style="padding:0 20px 14px;"></div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Item</th><th>Description</th><th class="text-right">Qty</th><th class="text-right">Cost rate</th><th class="text-right">Quoted rate</th><th class="text-right">Amount</th><th></th></tr></thead>
+                                <tbody id="est-items"></tbody>
+                            </table>
+                        </div>
+                        <div id="est-add-item" style="padding:14px 20px;border-top:1px solid var(--border-color);">
+                            <div style="display:grid;gap:8px;grid-template-columns:70px 1fr 80px 100px 120px auto;align-items:end;">
+                                <div><label style="font-size:0.75rem;">Item no</label><input class="form-control input-sm" id="est-new-no" placeholder="1.1"></div>
+                                <div><label style="font-size:0.75rem;">Description</label><input class="form-control input-sm" id="est-new-desc" placeholder="M25 RCC in raft foundation"></div>
+                                <div><label style="font-size:0.75rem;">Unit</label><input class="form-control input-sm" id="est-new-uom" placeholder="cum"></div>
+                                <div><label style="font-size:0.75rem;">Qty</label><input type="number" step="any" class="form-control input-sm" id="est-new-qty" style="text-align:right;"></div>
+                                <div><label style="font-size:0.75rem;">Cost rate</label><input type="number" step="any" class="form-control input-sm" id="est-new-rate" style="text-align:right;" placeholder="or build it up"></div>
+                                <button class="btn btn-sm btn-primary" onclick="addEstItem()">Add item</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="subbills-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Subcontractor Bills</h1><p class="subtitle">What the gangs have built, and what we pay them for it</p></div>
+                        <div class="invoices-actions">
+                            <button class="btn btn-primary" onclick="newSubBill()">Draw up a bill</button>
+                            <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
+                        </div>
+                    </div>
+
+                    <div class="widget" style="margin-bottom:18px;">
+                        <div class="widget-content" style="padding:16px 20px;">
+                            <label style="display:block;font-size:0.85rem;font-weight:600;margin-bottom:6px;">Subcontract order</label>
+                            <select id="sub-order" class="form-control" style="max-width:520px;" onchange="subOrderChanged()"></select>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid" id="sub-stats"></div>
+
+                    <div class="widget" style="margin-top:18px;">
+                        <div class="widget-header"><h3>The gang's measurement book</h3></div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Activity</th><th class="text-right">Ordered</th><th class="text-right">Measured</th><th class="text-right">Still to do</th><th class="text-right">Billed</th><th class="text-right">Unbilled</th><th class="text-right">Value</th><th></th></tr></thead>
+                                <tbody id="sub-mb-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="widget" style="margin-top:18px;">
+                        <div class="widget-header"><h3>Entries</h3></div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Date</th><th>Activity</th><th class="text-right">Quantity</th><th>MB ref</th><th>Recorded by</th><th>Remarks</th><th></th></tr></thead>
+                                <tbody id="sub-entries"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid" id="sub-bill-stats" style="margin-top:24px;"></div>
+                    <div class="widget" style="margin-top:18px;">
+                        <div class="widget-header"><h3>Bills we pay</h3></div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Bill</th><th>Gang</th><th class="text-right">This bill</th><th class="text-right">Retention held</th><th class="text-right">TDS</th><th class="text-right">Net payable</th><th>Status</th><th></th></tr></thead>
+                                <tbody id="sub-bill-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="measurement-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div><h1>Measurement &amp; RA Bills</h1><p class="subtitle">What has actually been done on site, and the running account bills that follow from it</p></div>
@@ -4294,6 +4426,8 @@
     <script src="stock.js?v=70"></script>
     <script src="diary.js?v=71"></script>
     <script src="money.js?v=76"></script>
+    <script src="subbills.js?v=77"></script>
+    <script src="estimate.js?v=77"></script>
     <script src="stores.js?v=76"></script>
 
     <!-- AI Core Orb -->

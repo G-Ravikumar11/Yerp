@@ -88,20 +88,27 @@ def certified_bill(tenant, qty=400, rate=60):
     return wo, b
 
 
-def test_a_certified_bill_is_something_we_owe(tenant):
-    """The work was measured and somebody signed for it."""
-    certified_bill(tenant)
-    p = tenant.get("/api/money/payables").json()
-    ra = [r for r in p["bills"] if r["kind"] == "RA bill"]
+def test_a_certified_client_bill_is_money_owed_to_us(tenant):
+    """A work order is what the client buys from us; a certified RA bill
+    against it is money coming in. This test used to assert the opposite -
+    that it was something we owed - and the P&L counted it as revenue at the
+    same time. Both sides of a ledger cannot hold the same bill."""
+    wo, b = certified_bill(tenant)
+    r = tenant.get("/api/money/receivables").json()
+    ra = [x for x in r["invoices"] if x.get("kind") == "RA bill"]
     assert len(ra) == 1
-    assert ra[0]["outstanding"] > 0
-    assert p["summary"]["owed"] == ra[0]["outstanding"]
+    assert ra[0]["outstanding"] == b["net_payable"]
+    # And not on the other page.
+    p = tenant.get("/api/money/payables").json()
+    assert not [x for x in p["bills"] if x["kind"] == "RA bill"]
+    assert p["summary"]["owed"] == 0
 
 
-def test_a_paid_bill_stops_being_owed(tenant):
+def test_a_paid_client_bill_stops_being_owed_to_us(tenant):
     wo, b = certified_bill(tenant)
     tenant.post("/api/ra-bills/%d/pay" % b["id"], json={})
-    assert tenant.get("/api/money/payables").json()["summary"]["owed"] == 0
+    r = tenant.get("/api/money/receivables").json()
+    assert not [x for x in r["invoices"] if x.get("kind") == "RA bill"]
 
 
 def test_a_bill_still_awaiting_approval_is_counted_apart(tenant):

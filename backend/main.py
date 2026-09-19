@@ -21842,7 +21842,15 @@ def project_pnl(db, client_id, job):
         if p.id not in billed_pos
         and (p.status or "") in ("Approved", "Awaiting Approval")))
 
-    incurred = money(bill_cost + material + labour + plant)
+    # What the gangs have billed us for and we have agreed to pay. This was
+    # missing entirely, which flattered every project by the whole of its
+    # subcontract cost.
+    subcontract = money(sum(b.this_bill or 0 for b in db.query(models.DBSubBill).filter(
+        models.DBSubBill.client_id == client_id,
+        models.DBSubBill.job_id == job.id,
+        models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all()))
+
+    incurred = money(bill_cost + material + labour + plant + subcontract)
     budgeted = money(sum(
         b.amount or 0 for b in db.query(models.DBBomLine).filter(
             models.DBBomLine.work_order_id.in_(wo_ids)).all())) if wo_ids else 0.0
@@ -21867,6 +21875,7 @@ def project_pnl(db, client_id, job):
         },
         "cost": {
             "supplier_bills": bill_cost,
+            "subcontractors": subcontract,
             "material_from_store": material,
             "labour": labour,
             "plant": plant,
@@ -22056,6 +22065,29 @@ def receivables(request: Request, db: Session = Depends(get_db)):
             "days_overdue": days if (days or 0) > 0 else 0,
             "status": inv.status or "",
         })
+    # A client RA bill that has been certified and not paid is owed to us
+    # just as an invoice is. Aged from certification.
+    for r in db.query(models.DBRABill).filter(
+            models.DBRABill.client_id == client.id,
+            models.DBRABill.status == "CERTIFIED").all():
+        outstanding = money(r.net_payable)
+        if outstanding <= 0:
+            continue
+        bucket, days = ageing_bucket(r.certified_at, today)
+        buckets[bucket] = money(buckets[bucket] + outstanding)
+        job = jobs.get(r.job_id)
+        rows.append({
+            "id": r.id, "number": r.number or "", "kind": "RA bill",
+            "customer": job.customer_name if job else "",
+            "project": job.name if job else "", "job_id": r.job_id,
+            "issue_date": (r.certified_at or "")[:10], "due_date": (r.certified_at or "")[:10],
+            "total": money(r.net_payable), "paid": 0.0, "outstanding": outstanding,
+            "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
+            "status": r.status or "",
+        })
+    for r in rows:
+        r.setdefault("kind", "Invoice")
+
     rows.sort(key=lambda r: -(r["days_overdue"] or 0))
     overdue = money(sum(r["outstanding"] for r in rows if r["bucket"] != "Not due"))
     return {
@@ -22105,19 +22137,26 @@ def payables(request: Request, db: Session = Depends(get_db)):
             "approved": (b.approval_status or "none") == "approved",
         })
 
-    for r in db.query(models.DBRABill).filter(
-            models.DBRABill.client_id == client.id,
-            models.DBRABill.status == "CERTIFIED").all():
+    # A subcontractor's certified bill is money we owe the gang. Aged from
+    # the day it was certified, because that is the day the promise was made.
+    # (Client RA bills used to be listed here too, which was wrong - those are
+    # money coming in and belong on the other page. Counting them on both
+    # sides made the business look poorer than it was by exactly that sum.)
+    contractors = {c.id: c for c in db.query(models.DBContractor).filter(
+        models.DBContractor.client_id == client.id).all()}
+    for r in db.query(models.DBSubBill).filter(
+            models.DBSubBill.client_id == client.id,
+            models.DBSubBill.status == "CERTIFIED").all():
         outstanding = money(r.net_payable)
         if outstanding <= 0:
             continue
-        # Certified but unpaid, aged from the day it was certified.
         bucket, days = ageing_bucket(r.certified_at, today)
         buckets[bucket] = money(buckets[bucket] + outstanding)
         job = jobs.get(r.job_id)
+        con = contractors.get(r.contractor_id)
         rows.append({
-            "kind": "RA bill", "id": r.id, "number": r.number or "",
-            "party": r.certified_by_name or "", "project": job.name if job else "",
+            "kind": "Subcontractor bill", "id": r.id, "number": r.number or "",
+            "party": con.company_name if con else "", "project": job.name if job else "",
             "due_date": (r.certified_at or "")[:10], "outstanding": outstanding,
             "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
             "status": r.status or "", "approved": True,
@@ -22447,10 +22486,15 @@ def setup_progress(db, client_id):
     diaries = n(db.query(models.DBSiteDiary).filter(
         models.DBSiteDiary.client_id == client_id))
 
+    tenders = n(db.query(models.DBEstimate).filter(
+        models.DBEstimate.client_id == client_id))
     steps = [
+        {"key": "tender", "done": tenders > 0, "view": "estimates-view",
+         "title": "Price a tender",
+         "hint": "Build each rate up from material, labour and plant, add the margin, and submit. Winning it makes the work order."},
         {"key": "project", "done": jobs > 0, "view": "jobs-view",
          "title": "Set up a project",
-         "hint": "The site the work is on and the customer it is for. Everything else hangs off it."},
+         "hint": "The site the work is on and the customer it is for. A won tender opens one for you."},
         {"key": "items", "done": items > 0, "view": "workorders-view",
          "title": "Name what you sell and what you buy",
          "hint": "Deliverables get a code when you first price one on a work order. Materials can be added from a spreadsheet under Store."},
@@ -22730,6 +22774,904 @@ def bill_from_receipt(grn_id: int, request: Request, body: dict = None,
                        "across %d line%s." % (bill.number, bill.vendor_name,
                                               inr(amount), len(lines),
                                               "" if len(lines) == 1 else "s")}
+
+
+
+
+# ============================================================================
+# SUBCONTRACTOR MEASUREMENT AND BILLS - THE MONEY GOING OUT
+#
+# A work order is what the client buys from us; an RA bill against it is money
+# coming in. A subcontract order is what we buy from a gang, and until now it
+# could be signed but never measured or billed. The money going out to the
+# people actually doing the work was not in the app, and the P&L was
+# flattered by exactly that amount.
+#
+# Same shape as the client side on purpose. The difference is who holds the
+# retention: here it is us, and TDS is what we withhold and remit.
+# ============================================================================
+
+SUB_TRANSITIONS = {
+    "DRAFT":     {"SUBMIT": "SUBMITTED", "CANCEL": "CANCELLED"},
+    "SUBMITTED": {"CERTIFY": "CERTIFIED", "REJECT": "DRAFT", "CANCEL": "CANCELLED"},
+    "CERTIFIED": {"PAY": "PAID", "CANCEL": "CANCELLED"},
+    "PAID":      {},
+    "CANCELLED": {},
+}
+
+
+def sub_measured_to_date(db, order_id):
+    totals = {}
+    for m in db.query(models.DBSubMeasurement).filter(
+            models.DBSubMeasurement.order_id == order_id).all():
+        totals[m.item_id] = totals.get(m.item_id, 0.0) + (m.quantity or 0.0)
+    return totals
+
+
+def sub_billed_to_date(db, order_id, exclude_bill_id=None):
+    live = db.query(models.DBSubBill).filter(
+        models.DBSubBill.order_id == order_id,
+        models.DBSubBill.status != "CANCELLED").all()
+    ids = [b.id for b in live if b.id != exclude_bill_id]
+    totals = {}
+    if not ids:
+        return totals
+    for l in db.query(models.DBSubBillLine).filter(
+            models.DBSubBillLine.sub_bill_id.in_(ids)).all():
+        totals[l.item_id] = totals.get(l.item_id, 0.0) + (l.this_bill_qty or 0.0)
+    return totals
+
+
+def sub_bill_or_404(db, client_id, bill_id):
+    row = db.query(models.DBSubBill).filter(
+        models.DBSubBill.id == bill_id,
+        models.DBSubBill.client_id == client_id).first()
+    if not row:
+        raise HTTPException(404, "Bill not found")
+    return row
+
+
+def recost_sub_bill(db, bill):
+    """Retention off the work, GST on the remainder, TDS off the lot.
+
+    Same order as the client side and for the same reason - it is the order
+    the deductions are actually made in, and getting it wrong is real money
+    on a large bill.
+    """
+    lines = db.query(models.DBSubBillLine).filter(
+        models.DBSubBillLine.sub_bill_id == bill.id).all()
+    this_bill = money(sum(l.amount or 0 for l in lines))
+    bill.this_bill = this_bill
+    bill.gross_to_date = money((bill.previously_billed or 0) + this_bill)
+    bill.retention_amount = money(this_bill * (bill.retention_percent or 0) / 100.0)
+    after = money(this_bill - bill.retention_amount -
+                  (bill.advance_recovery or 0) - (bill.other_deductions or 0))
+    bill.gst_amount = money(after * (bill.gst_percent or 0) / 100.0)
+    bill.tds_amount = money(this_bill * (bill.tds_percent or 0) / 100.0)
+    bill.net_payable = money(after + bill.gst_amount - bill.tds_amount)
+    bill.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return bill
+
+
+def sub_bill_dict(db, bill, detail=False):
+    order = db.query(models.DBSubcontractOrder).filter(
+        models.DBSubcontractOrder.id == bill.order_id).first()
+    con = db.query(models.DBContractor).filter(
+        models.DBContractor.id == bill.contractor_id).first() if bill.contractor_id else None
+    job = db.query(models.DBJob).filter(models.DBJob.id == bill.job_id).first()
+    row = {
+        "id": bill.id, "number": bill.number or "", "sequence": bill.sequence or 1,
+        "order_id": bill.order_id, "order": order.wo_number if order else "",
+        "contractor": con.company_name if con else "",
+        "job_id": bill.job_id,
+        "project": ("%s %s" % (job.number, job.name)).strip() if job else "",
+        "status": bill.status or "DRAFT",
+        "period_from": bill.period_from or "", "period_to": bill.period_to or "",
+        "gross_to_date": money(bill.gross_to_date),
+        "previously_billed": money(bill.previously_billed),
+        "this_bill": money(bill.this_bill),
+        "retention_percent": bill.retention_percent or 0,
+        "retention_amount": money(bill.retention_amount),
+        "advance_recovery": money(bill.advance_recovery),
+        "other_deductions": money(bill.other_deductions),
+        "deduction_notes": bill.deduction_notes or "",
+        "gst_percent": bill.gst_percent or 0, "gst_amount": money(bill.gst_amount),
+        "tds_percent": bill.tds_percent or 0, "tds_amount": money(bill.tds_amount),
+        "net_payable": money(bill.net_payable),
+        "certified_by_name": bill.certified_by_name or "",
+        "certified_at": bill.certified_at or "", "paid_at": bill.paid_at or "",
+        "paid_reference": bill.paid_reference or "", "remarks": bill.remarks or "",
+        "editable": (bill.status or "DRAFT") == "DRAFT",
+        "actions": sorted(SUB_TRANSITIONS.get(bill.status or "DRAFT", {}).keys()),
+        "created_at": bill.created_at or "",
+    }
+    if detail:
+        row["lines"] = [{
+            "id": l.id, "item_id": l.item_id, "activity_no": l.activity_no or "",
+            "description": (l.description or "").split("\n")[0], "uom": l.uom or "",
+            "ordered_qty": money(l.ordered_qty), "measured_to_date": money(l.measured_to_date),
+            "previously_billed_qty": money(l.previously_billed_qty),
+            "this_bill_qty": money(l.this_bill_qty), "rate": unit_rate(l.rate),
+            "amount": money(l.amount),
+        } for l in db.query(models.DBSubBillLine).filter(
+            models.DBSubBillLine.sub_bill_id == bill.id).order_by(
+                models.DBSubBillLine.display_order, models.DBSubBillLine.id).all()]
+    return row
+
+
+# --- The subcontractor's measurement book -----------------------------------
+
+class SubMeasurementIn(BaseModel):
+    item_id: int
+    quantity: float
+    measured_on: Optional[str] = ""
+    mb_ref: Optional[str] = ""
+    remarks: Optional[str] = ""
+
+
+@app.get("/api/sub-mb/{order_id}")
+def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    measured = sub_measured_to_date(db, order.id)
+    billed = sub_billed_to_date(db, order.id)
+    lines = []
+    for it in db.query(models.DBSubcontractItem).filter(
+            models.DBSubcontractItem.order_id == order.id).order_by(
+                models.DBSubcontractItem.display_order, models.DBSubcontractItem.id).all():
+        done = money(measured.get(it.id, 0.0))
+        claimed = money(billed.get(it.id, 0.0))
+        ordered = money(it.quantity)
+        lines.append({
+            "item_id": it.id, "activity_no": it.activity_no or "",
+            "description": (it.item_description or "").split("\n")[0],
+            "uom": it.uom or "", "ordered_qty": ordered, "rate": unit_rate(it.unit_rate),
+            "measured_to_date": done, "billed_to_date": claimed,
+            "unbilled": money(done - claimed),
+            "balance_to_measure": money(ordered - done),
+            "percent_measured": round(done / ordered * 100, 1) if ordered else 0.0,
+            "over_measured": money(done - ordered) if done > ordered else 0.0,
+        })
+    entries = [{
+        "id": m.id, "item_id": m.item_id, "activity_no": m.activity_no or "",
+        "measured_on": m.measured_on or "", "quantity": money(m.quantity),
+        "mb_ref": m.mb_ref or "", "remarks": m.remarks or "",
+        "recorded_by_name": m.recorded_by_name or "", "billed": bool(m.sub_bill_id),
+    } for m in db.query(models.DBSubMeasurement).filter(
+        models.DBSubMeasurement.order_id == order.id).order_by(
+            models.DBSubMeasurement.id.desc()).limit(400).all()]
+    return {
+        "order": wo_dict(db, order), "lines": lines, "entries": entries,
+        "summary": {
+            "ordered_value": money(order.gross_amount),
+            "measured_value": money(sum(l["measured_to_date"] * l["rate"] for l in lines)),
+            "unbilled_value": money(sum(l["unbilled"] * l["rate"] for l in lines)),
+            "lines_over_measured": len([l for l in lines if l["over_measured"] > 0]),
+        },
+    }
+
+
+@app.post("/api/sub-mb/{order_id}/entries")
+def record_sub_measurement(order_id: int, body: SubMeasurementIn, request: Request,
+                           db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    if (order.status or "") not in ("APPROVED", "EXECUTED"):
+        raise HTTPException(
+            409, "Nothing is measured against an order that has not been approved.")
+    item = db.query(models.DBSubcontractItem).filter(
+        models.DBSubcontractItem.id == body.item_id,
+        models.DBSubcontractItem.order_id == order.id).first()
+    if not item:
+        raise HTTPException(404, "That item is not on this order")
+    if not body.quantity:
+        raise HTTPException(400, "A measurement of nothing is not a measurement")
+    db.add(models.DBSubMeasurement(
+        client_id=client.id, order_id=order.id, item_id=item.id,
+        activity_no=item.activity_no or "", quantity=money(body.quantity),
+        measured_on=(body.measured_on or datetime.now().strftime("%Y-%m-%d")),
+        mb_ref=(body.mb_ref or "").strip(), remarks=(body.remarks or "").strip(),
+        recorded_by=actor_id, recorded_by_name=actor_name))
+    log_audit(db, client.id, "sub_measurement_recorded", "subcontract_order", order.id,
+              order.wo_number or "", "%s %s %s" % (item.activity_no, money(body.quantity),
+                                                   item.uom or ""), request)
+    db.commit()
+    measured = money(sub_measured_to_date(db, order.id).get(item.id, 0.0))
+    ordered = money(item.quantity)
+    return {"ok": True, "measured_to_date": measured,
+            "balance_to_measure": money(ordered - measured),
+            "over_measured": money(measured - ordered) if measured > ordered else 0.0,
+            "message": "Recorded. %s measured against %s of %s ordered."
+                       % (measured, item.activity_no or "item", ordered)}
+
+
+@app.delete("/api/sub-mb/entries/{entry_id}")
+def delete_sub_measurement(entry_id: int, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    entry = db.query(models.DBSubMeasurement).filter(
+        models.DBSubMeasurement.id == entry_id,
+        models.DBSubMeasurement.client_id == client.id).first()
+    if not entry:
+        raise HTTPException(404, "Entry not found")
+    if entry.sub_bill_id:
+        raise HTTPException(409, "This measurement has been billed. Record a "
+                                 "correcting entry instead.")
+    db.delete(entry)
+    db.commit()
+    return {"ok": True, "message": "Entry removed."}
+
+
+# --- The bills ---------------------------------------------------------------
+
+class SubBillIn(BaseModel):
+    order_id: int
+    period_from: Optional[str] = ""
+    period_to: Optional[str] = ""
+    advance_recovery: Optional[float] = None
+    other_deductions: Optional[float] = None
+    deduction_notes: Optional[str] = ""
+
+
+def sub_claimable_lines(db, order, exclude_bill_id=None):
+    measured = sub_measured_to_date(db, order.id)
+    billed = sub_billed_to_date(db, order.id, exclude_bill_id)
+    out = []
+    for it in db.query(models.DBSubcontractItem).filter(
+            models.DBSubcontractItem.order_id == order.id).order_by(
+                models.DBSubcontractItem.display_order, models.DBSubcontractItem.id).all():
+        done = money(measured.get(it.id, 0.0))
+        prior = money(billed.get(it.id, 0.0))
+        this = money(done - prior)
+        if this <= 0:
+            continue
+        out.append((it, done, prior, this))
+    return out
+
+
+def draw_sub_bill_lines(db, bill, order):
+    db.query(models.DBSubBillLine).filter(
+        models.DBSubBillLine.sub_bill_id == bill.id).delete()
+    for i, (it, done, prior, this) in enumerate(
+            sub_claimable_lines(db, order, exclude_bill_id=bill.id)):
+        rate = unit_rate(it.unit_rate)
+        db.add(models.DBSubBillLine(
+            sub_bill_id=bill.id, item_id=it.id, activity_no=it.activity_no or "",
+            description=it.item_description or "", uom=it.uom or "",
+            ordered_qty=money(it.quantity), measured_to_date=done,
+            previously_billed_qty=prior, this_bill_qty=this, rate=rate,
+            amount=money(this * rate), display_order=i))
+    # Pin the measurements this bill claims.
+    db.query(models.DBSubMeasurement).filter(
+        models.DBSubMeasurement.order_id == order.id,
+        models.DBSubMeasurement.sub_bill_id.is_(None)).update(
+            {"sub_bill_id": bill.id}, synchronize_session=False)
+    db.flush()
+
+
+@app.get("/api/sub-bills")
+def list_sub_bills(request: Request, order_id: int = 0, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    q = db.query(models.DBSubBill).filter(models.DBSubBill.client_id == client.id)
+    if order_id:
+        q = q.filter(models.DBSubBill.order_id == order_id)
+    rows = [sub_bill_dict(db, b) for b in q.order_by(models.DBSubBill.id.desc()).limit(300).all()]
+    live = [r for r in rows if r["status"] != "CANCELLED"]
+    return {
+        "bills": rows,
+        "summary": {
+            "claimed": money(sum(r["this_bill"] for r in live)),
+            "awaiting_certification": len([r for r in rows if r["status"] == "SUBMITTED"]),
+            "certified_unpaid": money(sum(r["net_payable"] for r in rows
+                                          if r["status"] == "CERTIFIED")),
+            "retention_held": money(sum(r["retention_amount"] for r in rows
+                                        if r["status"] in ("CERTIFIED", "PAID"))),
+            "paid": money(sum(r["net_payable"] for r in rows if r["status"] == "PAID")),
+        },
+    }
+
+
+@app.post("/api/sub-bills")
+def create_sub_bill(body: SubBillIn, request: Request, db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db)
+    order = wo_or_404(db, client.id, body.order_id)
+    if (order.status or "") not in ("APPROVED", "EXECUTED"):
+        raise HTTPException(409, "Approve the order before billing against it.")
+    open_bill = db.query(models.DBSubBill).filter(
+        models.DBSubBill.order_id == order.id,
+        models.DBSubBill.status.in_(("DRAFT", "SUBMITTED"))).first()
+    if open_bill:
+        raise HTTPException(
+            409, "%s is still open on this order. Finish or cancel it before "
+                 "raising another." % open_bill.number)
+    if not sub_claimable_lines(db, order):
+        raise HTTPException(
+            409, "Nothing has been measured since the last bill. Record the work "
+                 "in the measurement book first.")
+
+    seq = db.query(models.DBSubBill).filter(models.DBSubBill.order_id == order.id).count() + 1
+    prior = money(sum(b.this_bill or 0 for b in db.query(models.DBSubBill).filter(
+        models.DBSubBill.order_id == order.id,
+        models.DBSubBill.status != "CANCELLED").all()))
+    # Mobilisation advance is recovered pro rata against each bill unless the
+    # person raising it says otherwise.
+    default_recovery = 0.0
+    if (order.mobilization_advance_amount or 0) and (order.advance_recovery_percent or 0):
+        default_recovery = money((order.mobilization_advance_amount or 0) *
+                                 (order.advance_recovery_percent or 0) / 100.0)
+    bill = models.DBSubBill(
+        client_id=client.id, order_id=order.id, job_id=order.job_id,
+        contractor_id=order.contractor_id,
+        number="%s/RA-%02d" % (order.wo_number or "SC", seq), sequence=seq,
+        period_from=(body.period_from or ""), period_to=(body.period_to or
+                                                          datetime.now().strftime("%Y-%m-%d")),
+        status="DRAFT", previously_billed=prior,
+        retention_percent=order.retention_percent or 0,
+        advance_recovery=money(body.advance_recovery if body.advance_recovery is not None
+                               else default_recovery),
+        other_deductions=money(body.other_deductions or 0),
+        deduction_notes=(body.deduction_notes or "").strip(),
+        gst_percent=order.gst_rate or 0, tds_percent=order.tds_rate or 0)
+    db.add(bill)
+    db.flush()
+    draw_sub_bill_lines(db, bill, order)
+    recost_sub_bill(db, bill)
+    log_audit(db, client.id, "sub_bill_raised", "subcontract_order", order.id,
+              order.wo_number or "", "%s %s" % (bill.number, inr(bill.this_bill)), request)
+    db.commit()
+    db.refresh(bill)
+    return {"ok": True, "bill": sub_bill_dict(db, bill, detail=True),
+            "message": "%s drawn up from the measurement book - %s of work."
+                       % (bill.number, inr(bill.this_bill))}
+
+
+@app.get("/api/sub-bills/{bill_id}")
+def get_sub_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return sub_bill_dict(db, sub_bill_or_404(db, client.id, bill_id), detail=True)
+
+
+@app.post("/api/sub-bills/{bill_id}/{action}")
+def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = None,
+                    db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db)
+    bill = sub_bill_or_404(db, client.id, bill_id)
+    move = (action or "").upper()
+    allowed = SUB_TRANSITIONS.get(bill.status or "DRAFT", {})
+    if move not in allowed:
+        raise HTTPException(409, "A %s bill cannot be %sed."
+                                 % ((bill.status or "draft").lower(), move.lower()))
+    body = body or {}
+    comments = (body.get("comments") or "").strip()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    order = wo_or_404(db, client.id, bill.order_id)
+
+    if move == "SUBMIT":
+        # Redrawn from the book on the way out, so anything measured since
+        # the draft was opened is on it.
+        draw_sub_bill_lines(db, bill, order)
+        recost_sub_bill(db, bill)
+        if not bill.this_bill:
+            raise HTTPException(409, "There is nothing on this bill to submit.")
+    elif move == "CERTIFY":
+        # Certifying a subcontractor's bill is agreeing to pay it.
+        require_items_access(request, db, "subcontracts.approve")
+        bill.certified_by, bill.certified_by_name, bill.certified_at = actor_id, actor_name, now
+    elif move == "REJECT":
+        if not comments:
+            raise HTTPException(400, "Say why it is going back.")
+        bill.remarks = comments
+        db.query(models.DBSubMeasurement).filter(
+            models.DBSubMeasurement.sub_bill_id == bill.id).update(
+                {"sub_bill_id": None}, synchronize_session=False)
+    elif move == "PAY":
+        bill.paid_at = now
+        bill.paid_reference = (body.get("reference") or "").strip()
+    elif move == "CANCEL":
+        if not comments:
+            raise HTTPException(400, "Say why it is being cancelled.")
+        bill.remarks = comments
+        db.query(models.DBSubMeasurement).filter(
+            models.DBSubMeasurement.sub_bill_id == bill.id).update(
+                {"sub_bill_id": None}, synchronize_session=False)
+
+    was, bill.status = bill.status, allowed[move]
+    bill.updated_at = now
+    log_audit(db, client.id, "sub_bill_%s" % move.lower(), "sub_bill", bill.id,
+              bill.number or "", "%s -> %s %s" % (was, bill.status, comments), request)
+    db.commit()
+    db.refresh(bill)
+    return {"ok": True, "bill": sub_bill_dict(db, bill, detail=True),
+            "message": "%s %s." % (bill.number, bill.status.lower())}
+
+
+@app.get("/api/sub-bills/{bill_id}/export.xlsx")
+def export_sub_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    b = sub_bill_dict(db, sub_bill_or_404(db, client.id, bill_id), detail=True)
+    preamble = [("Subcontractor RA Bill", client.company_name or ""),
+                ("No: %s   (%s)" % (b["number"], b["status"])),
+                ("Subcontractor: %s" % b["contractor"]),
+                ("Order: %s" % b["order"]), ("Project: %s" % b["project"]),
+                ("Period to: %s" % b["period_to"]), ()]
+    headers = ("Activity", "Description", "UOM", "Ordered", "Measured to date",
+               "Previously billed", "This bill", "Rate", "Amount")
+    rows = [(l["activity_no"], l["description"], l["uom"], l["ordered_qty"],
+             l["measured_to_date"], l["previously_billed_qty"], l["this_bill_qty"],
+             l["rate"], l["amount"]) for l in b["lines"]]
+    closing = [(), ("This bill", b["this_bill"]),
+               ("Retention held @ %s%%" % b["retention_percent"], -b["retention_amount"]),
+               ("Advance recovery", -b["advance_recovery"]),
+               ("Other deductions", -b["other_deductions"]),
+               ("GST @ %s%%" % b["gst_percent"], b["gst_amount"]),
+               ("TDS @ %s%%" % b["tds_percent"], -b["tds_amount"]),
+               ("Net payable", b["net_payable"])]
+    return sheet_response(headers, rows,
+                          "sub_bill_%s.xlsx" % b["number"].replace("/", "-"),
+                          preamble=preamble, closing=closing)
+
+
+
+
+# ============================================================================
+# ESTIMATION - THE FRONT OF THE CHAIN
+#
+# The chain used to start at a signed work order. Half of a contracting
+# business happens before that: a tender arrives, somebody builds a rate for
+# every item from material, labour, plant and overhead, adds a margin and
+# submits a price. Win it and that priced schedule IS the work order - so
+# winning creates one, line for line, with nothing retyped.
+# ============================================================================
+
+EST_TRANSITIONS = {
+    "DRAFT":     {"SUBMIT": "SUBMITTED", "WITHDRAW": "WITHDRAWN"},
+    "SUBMITTED": {"WIN": "WON", "LOSE": "LOST", "WITHDRAW": "WITHDRAWN", "REOPEN": "DRAFT"},
+    "WON":       {},
+    "LOST":      {"REOPEN": "DRAFT"},
+    "WITHDRAWN": {"REOPEN": "DRAFT"},
+}
+RATE_KINDS = ("MATERIAL", "LABOUR", "PLANT", "OTHER")
+
+
+def estimate_or_404(db, client_id, est_id):
+    row = db.query(models.DBEstimate).filter(
+        models.DBEstimate.id == est_id,
+        models.DBEstimate.client_id == client_id).first()
+    if not row:
+        raise HTTPException(404, "Estimate not found")
+    return row
+
+
+def recost_estimate_item(db, item, est):
+    """Cost from the analysis if there is one, then margin on top.
+
+    Overhead is applied to cost and profit to the result, in that order,
+    because overhead is a cost the business carries and profit is what is
+    left after every cost - pricing them the other way round quietly
+    understates the margin.
+    """
+    lines = db.query(models.DBRateAnalysis).filter(
+        models.DBRateAnalysis.estimate_item_id == item.id).all()
+    if lines:
+        total = 0.0
+        for l in lines:
+            base = (l.quantity_per_unit or 0) * (l.rate or 0)
+            l.amount_per_unit = money(base * (1 + (l.wastage_percent or 0) / 100.0))
+            total += l.amount_per_unit
+        item.cost_rate = unit_rate(total)
+    oh = item.overhead_percent if item.overhead_percent is not None else (est.overhead_percent or 0)
+    pf = item.profit_percent if item.profit_percent is not None else (est.profit_percent or 0)
+    with_oh = (item.cost_rate or 0) * (1 + oh / 100.0)
+    item.quoted_rate = unit_rate(with_oh * (1 + pf / 100.0))
+    item.cost_amount = money((item.quantity or 0) * (item.cost_rate or 0))
+    item.quoted_amount = money((item.quantity or 0) * item.quoted_rate)
+    return item
+
+
+def recost_estimate(db, est):
+    items = db.query(models.DBEstimateItem).filter(
+        models.DBEstimateItem.estimate_id == est.id).all()
+    for it in items:
+        recost_estimate_item(db, it, est)
+    est.cost_total = money(sum(i.cost_amount or 0 for i in items))
+    est.quoted_total = money(sum(i.quoted_amount or 0 for i in items))
+    est.margin_amount = money(est.quoted_total - est.cost_total)
+    est.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return est
+
+
+def estimate_dict(db, est, detail=False):
+    job = db.query(models.DBJob).filter(models.DBJob.id == est.job_id).first()
+    wo = db.query(models.DBWorkOrder).filter(
+        models.DBWorkOrder.id == est.work_order_id).first() if est.work_order_id else None
+    row = {
+        "id": est.id, "number": est.number or "", "title": est.title or "",
+        "customer_name": est.customer_name or "",
+        "tender_reference": est.tender_reference or "", "due_on": est.due_on or "",
+        "job_id": est.job_id, "project": job.name if job else "",
+        "status": est.status or "DRAFT",
+        "overhead_percent": est.overhead_percent or 0,
+        "profit_percent": est.profit_percent or 0,
+        "cost_total": money(est.cost_total), "quoted_total": money(est.quoted_total),
+        "margin_amount": money(est.margin_amount),
+        "margin_percent": (round(est.margin_amount / est.quoted_total * 100, 1)
+                           if est.quoted_total else 0.0),
+        "work_order_id": est.work_order_id, "work_order": wo.number if wo else "",
+        "decided_at": est.decided_at or "", "lost_reason": est.lost_reason or "",
+        "notes": est.notes or "", "prepared_by_name": est.prepared_by_name or "",
+        "editable": (est.status or "DRAFT") == "DRAFT",
+        "actions": sorted(EST_TRANSITIONS.get(est.status or "DRAFT", {}).keys()),
+        "item_count": db.query(models.DBEstimateItem).filter(
+            models.DBEstimateItem.estimate_id == est.id).count(),
+        "created_at": est.created_at or "",
+    }
+    if detail:
+        row["items"] = []
+        for it in db.query(models.DBEstimateItem).filter(
+                models.DBEstimateItem.estimate_id == est.id).order_by(
+                    models.DBEstimateItem.display_order, models.DBEstimateItem.id).all():
+            row["items"].append({
+                "id": it.id, "item_no": it.item_no or "", "fg_code": it.fg_code or "",
+                "description": it.description or "", "uom": it.uom or "",
+                "quantity": money(it.quantity), "cost_rate": unit_rate(it.cost_rate),
+                "overhead_percent": it.overhead_percent,
+                "profit_percent": it.profit_percent,
+                "quoted_rate": unit_rate(it.quoted_rate),
+                "cost_amount": money(it.cost_amount), "quoted_amount": money(it.quoted_amount),
+                "analysis": [{
+                    "id": a.id, "kind": a.kind or "MATERIAL", "item_code": a.item_code or "",
+                    "description": a.description or "", "uom": a.uom or "",
+                    "quantity_per_unit": a.quantity_per_unit or 0, "rate": unit_rate(a.rate),
+                    "wastage_percent": a.wastage_percent or 0,
+                    "amount_per_unit": unit_rate(a.amount_per_unit),
+                } for a in db.query(models.DBRateAnalysis).filter(
+                    models.DBRateAnalysis.estimate_item_id == it.id).order_by(
+                        models.DBRateAnalysis.display_order, models.DBRateAnalysis.id).all()],
+            })
+    return row
+
+
+class EstimateIn(BaseModel):
+    title: str
+    customer_name: Optional[str] = ""
+    tender_reference: Optional[str] = ""
+    due_on: Optional[str] = ""
+    job_id: Optional[int] = None
+    overhead_percent: Optional[float] = None
+    profit_percent: Optional[float] = None
+    notes: Optional[str] = ""
+
+
+class EstimateItemIn(BaseModel):
+    item_no: Optional[str] = ""
+    fg_code: Optional[str] = ""
+    description: str
+    uom: Optional[str] = ""
+    quantity: float = 0.0
+    cost_rate: Optional[float] = None
+    overhead_percent: Optional[float] = None
+    profit_percent: Optional[float] = None
+
+
+class RateLineIn(BaseModel):
+    kind: str = "MATERIAL"
+    item_code: Optional[str] = ""
+    description: str
+    uom: Optional[str] = ""
+    quantity_per_unit: float = 0.0
+    rate: float = 0.0
+    wastage_percent: Optional[float] = 0.0
+
+
+@app.get("/api/estimates")
+def list_estimates(request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    rows = [estimate_dict(db, e) for e in db.query(models.DBEstimate).filter(
+        models.DBEstimate.client_id == client.id).order_by(
+            models.DBEstimate.id.desc()).limit(300).all()]
+    decided = [r for r in rows if r["status"] in ("WON", "LOST")]
+    won = [r for r in rows if r["status"] == "WON"]
+    return {
+        "estimates": rows,
+        "summary": {
+            "open": len([r for r in rows if r["status"] in ("DRAFT", "SUBMITTED")]),
+            "out_for_decision": money(sum(r["quoted_total"] for r in rows
+                                          if r["status"] == "SUBMITTED")),
+            "won_value": money(sum(r["quoted_total"] for r in won)),
+            # Strike rate by count, which is what an estimator is judged on.
+            "strike_rate": (round(len(won) / len(decided) * 100, 1) if decided else 0.0),
+        },
+    }
+
+
+@app.post("/api/estimates")
+def create_estimate(body: EstimateIn, request: Request, db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db)
+    if not (body.title or "").strip():
+        raise HTTPException(400, "Give the tender a name.")
+    est = models.DBEstimate(
+        client_id=client.id, job_id=body.job_id,
+        number=next_sequence_number(db, models.DBEstimate, client.id, "EST-"),
+        title=body.title.strip(), customer_name=(body.customer_name or "").strip(),
+        tender_reference=(body.tender_reference or "").strip(), due_on=(body.due_on or ""),
+        status="DRAFT", overhead_percent=money(body.overhead_percent or 0),
+        profit_percent=money(body.profit_percent or 0),
+        notes=(body.notes or "").strip(), prepared_by_name=actor_name)
+    db.add(est)
+    db.commit()
+    db.refresh(est)
+    return {"ok": True, "estimate": estimate_dict(db, est, detail=True),
+            "message": "%s opened." % est.number}
+
+
+@app.get("/api/estimates/{est_id}")
+def get_estimate(est_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return estimate_dict(db, estimate_or_404(db, client.id, est_id), detail=True)
+
+
+@app.put("/api/estimates/{est_id}")
+def update_estimate(est_id: int, body: EstimateIn, request: Request,
+                    db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    est = estimate_or_404(db, client.id, est_id)
+    if (est.status or "DRAFT") != "DRAFT":
+        raise HTTPException(409, "A submitted tender is the price somebody was given. "
+                                 "Reopen it to change it.")
+    est.title = (body.title or est.title).strip()
+    est.customer_name = (body.customer_name or "").strip()
+    est.tender_reference = (body.tender_reference or "").strip()
+    est.due_on = body.due_on or ""
+    if body.job_id is not None:
+        est.job_id = body.job_id or None
+    if body.overhead_percent is not None:
+        est.overhead_percent = money(body.overhead_percent)
+    if body.profit_percent is not None:
+        est.profit_percent = money(body.profit_percent)
+    est.notes = (body.notes or "").strip()
+    recost_estimate(db, est)
+    db.commit()
+    db.refresh(est)
+    return {"ok": True, "estimate": estimate_dict(db, est, detail=True)}
+
+
+@app.post("/api/estimates/{est_id}/items")
+def add_estimate_item(est_id: int, body: EstimateItemIn, request: Request,
+                      db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    est = estimate_or_404(db, client.id, est_id)
+    if (est.status or "DRAFT") != "DRAFT":
+        raise HTTPException(409, "Reopen the tender to change its items.")
+    if not (body.description or "").strip():
+        raise HTTPException(400, "Describe the item.")
+    n = db.query(models.DBEstimateItem).filter(
+        models.DBEstimateItem.estimate_id == est.id).count()
+    item = models.DBEstimateItem(
+        estimate_id=est.id, item_no=(body.item_no or str(n + 1)).strip(),
+        fg_code=(body.fg_code or "").strip().upper(),
+        description=body.description.strip(), uom=(body.uom or "").strip(),
+        quantity=money(body.quantity), cost_rate=unit_rate(body.cost_rate or 0),
+        overhead_percent=body.overhead_percent, profit_percent=body.profit_percent,
+        display_order=n)
+    db.add(item)
+    db.flush()
+    recost_estimate(db, est)
+    db.commit()
+    return {"ok": True, "estimate": estimate_dict(db, est, detail=True)}
+
+
+@app.put("/api/estimates/{est_id}/items/{item_id}")
+def update_estimate_item(est_id: int, item_id: int, body: EstimateItemIn,
+                         request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    est = estimate_or_404(db, client.id, est_id)
+    if (est.status or "DRAFT") != "DRAFT":
+        raise HTTPException(409, "Reopen the tender to change its items.")
+    item = db.query(models.DBEstimateItem).filter(
+        models.DBEstimateItem.id == item_id,
+        models.DBEstimateItem.estimate_id == est.id).first()
+    if not item:
+        raise HTTPException(404, "Item not found")
+    item.item_no = (body.item_no or item.item_no or "").strip()
+    item.fg_code = (body.fg_code or "").strip().upper()
+    item.description = (body.description or item.description).strip()
+    item.uom = (body.uom or "").strip()
+    item.quantity = money(body.quantity)
+    # A typed cost rate only sticks if there is no analysis - the analysis
+    # is the truth when it exists.
+    has_analysis = db.query(models.DBRateAnalysis).filter(
+        models.DBRateAnalysis.estimate_item_id == item.id).count() > 0
+    if body.cost_rate is not None and not has_analysis:
+        item.cost_rate = unit_rate(body.cost_rate)
+    item.overhead_percent = body.overhead_percent
+    item.profit_percent = body.profit_percent
+    recost_estimate(db, est)
+    db.commit()
+    return {"ok": True, "estimate": estimate_dict(db, est, detail=True)}
+
+
+@app.delete("/api/estimates/{est_id}/items/{item_id}")
+def delete_estimate_item(est_id: int, item_id: int, request: Request,
+                         db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    est = estimate_or_404(db, client.id, est_id)
+    if (est.status or "DRAFT") != "DRAFT":
+        raise HTTPException(409, "Reopen the tender to change its items.")
+    db.query(models.DBRateAnalysis).filter(
+        models.DBRateAnalysis.estimate_item_id == item_id).delete()
+    db.query(models.DBEstimateItem).filter(
+        models.DBEstimateItem.id == item_id,
+        models.DBEstimateItem.estimate_id == est.id).delete()
+    recost_estimate(db, est)
+    db.commit()
+    return {"ok": True, "estimate": estimate_dict(db, est, detail=True)}
+
+
+@app.put("/api/estimates/{est_id}/items/{item_id}/analysis")
+def set_rate_analysis(est_id: int, item_id: int, body: dict, request: Request,
+                      db: Session = Depends(get_db)):
+    """Replace the build-up for one item. The whole list, every time - a
+    rate analysis is read as one thing and edited as one thing."""
+    client, _, _ = wo_actor(request, db)
+    est = estimate_or_404(db, client.id, est_id)
+    if (est.status or "DRAFT") != "DRAFT":
+        raise HTTPException(409, "Reopen the tender to change its rates.")
+    item = db.query(models.DBEstimateItem).filter(
+        models.DBEstimateItem.id == item_id,
+        models.DBEstimateItem.estimate_id == est.id).first()
+    if not item:
+        raise HTTPException(404, "Item not found")
+    db.query(models.DBRateAnalysis).filter(
+        models.DBRateAnalysis.estimate_item_id == item.id).delete()
+    for i, raw in enumerate((body.get("lines") or [])[:60]):
+        l = RateLineIn(**raw)
+        if not (l.description or "").strip() or not l.quantity_per_unit:
+            continue
+        db.add(models.DBRateAnalysis(
+            estimate_item_id=item.id,
+            kind=(l.kind or "MATERIAL").upper() if (l.kind or "").upper() in RATE_KINDS else "OTHER",
+            item_code=(l.item_code or "").strip().upper(),
+            description=l.description.strip(), uom=(l.uom or "").strip(),
+            quantity_per_unit=l.quantity_per_unit, rate=unit_rate(l.rate),
+            wastage_percent=money(l.wastage_percent or 0), display_order=i))
+    db.flush()
+    recost_estimate(db, est)
+    db.commit()
+    return {"ok": True, "estimate": estimate_dict(db, est, detail=True)}
+
+
+@app.post("/api/estimates/{est_id}/{action}")
+def act_on_estimate(est_id: int, action: str, request: Request, body: dict = None,
+                    db: Session = Depends(get_db)):
+    """Submit, win, lose, withdraw, reopen.
+
+    Winning is the handoff the whole module exists for: the priced schedule
+    becomes a work order, line for line, and the estimate remembers which
+    one so the two can be laid side by side when the job is over.
+    """
+    client, actor_id, actor_name = wo_actor(request, db)
+    est = estimate_or_404(db, client.id, est_id)
+    move = (action or "").upper()
+    allowed = EST_TRANSITIONS.get(est.status or "DRAFT", {})
+    if move not in allowed:
+        raise HTTPException(409, "A %s tender cannot be %s."
+                                 % ((est.status or "draft").lower(), move.lower()))
+    body = body or {}
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    made = None
+
+    if move == "SUBMIT":
+        recost_estimate(db, est)
+        if not est.quoted_total:
+            raise HTTPException(409, "There is nothing priced on this tender.")
+    elif move == "WIN":
+        if not est.job_id:
+            job = models.DBJob(
+                client_id=client.id,
+                number=next_sequence_number(db, models.DBJob, client.id, "JOB-"),
+                name=est.title or "Won tender", customer_name=est.customer_name or "",
+                status="won", quoted_value=est.quoted_total or 0,
+                budget=est.cost_total or 0, reference=est.tender_reference or "")
+            db.add(job)
+            db.flush()
+            est.job_id = job.id
+        made = work_order_from_estimate(db, client, est, request)
+        est.work_order_id = made.id
+        est.decided_at = now
+    elif move == "LOSE":
+        est.lost_reason = (body.get("reason") or "").strip()
+        est.decided_at = now
+    elif move == "REOPEN":
+        est.decided_at = ""
+        est.lost_reason = ""
+
+    was, est.status = est.status, allowed[move]
+    est.updated_at = now
+    log_audit(db, client.id, "estimate_%s" % move.lower(), "estimate", est.id,
+              est.number or "", "%s -> %s" % (was, est.status), request)
+    db.commit()
+    db.refresh(est)
+    out = {"ok": True, "estimate": estimate_dict(db, est, detail=True),
+           "message": "%s is now %s." % (est.number, est.status.lower())}
+    if made is not None:
+        out["work_order"] = work_order_to_dict(db, made)
+        out["message"] = ("%s won. %s drawn up from it, line for line - place it "
+                          "when the client's order arrives." % (est.number, made.number))
+    return out
+
+
+def work_order_from_estimate(db, client, est, request):
+    """The priced schedule becomes the order. Nothing is retyped.
+
+    Every item needs a code the order can carry; one that has none gets a
+    finished-goods code issued now, the same way the work order builder
+    would, so the measurement book can be kept against it later.
+    """
+    items = db.query(models.DBEstimateItem).filter(
+        models.DBEstimateItem.estimate_id == est.id).order_by(
+            models.DBEstimateItem.display_order, models.DBEstimateItem.id).all()
+    if not items:
+        raise HTTPException(409, "There is nothing on this tender to turn into an order.")
+    wo = models.DBWorkOrder(
+        client_id=client.id, job_id=est.job_id,
+        number=next_sequence_number(db, models.DBWorkOrder, client.id, "WO-"),
+        order_date=datetime.now().strftime("%Y-%m-%d"),
+        reference=est.tender_reference or est.number or "",
+        notes="From %s - %s" % (est.number, est.title or ""),
+        status="Draft", total_value=0.0)
+    db.add(wo)
+    db.flush()
+    total = 0.0
+    for it in items:
+        code = (it.fg_code or "").strip().upper()
+        existing = db.query(models.DBItem).filter(
+            models.DBItem.client_id == client.id,
+            models.DBItem.item_code == code).first() if code else None
+        if not existing:
+            existing = models.DBItem(
+                client_id=client.id, kind="FG",
+                item_code=next_item_code(db, client.id),
+                item_name=(it.description or "Tender item")[:200],
+                description=it.description or "", category="FINISHED GOOD",
+                sub_category="FG", units_of_measure=it.uom or "Nos",
+                item_type="Service", last_rate=it.quoted_rate or 0)
+            db.add(existing)
+            db.flush()
+            it.fg_code = existing.item_code
+        amount = money((it.quantity or 0) * (it.quoted_rate or 0))
+        total += amount
+        db.add(models.DBWorkOrderLine(
+            work_order_id=wo.id, fg_code=existing.item_code,
+            item_name=existing.item_name, description=it.description or "",
+            qty=money(it.quantity), uom=it.uom or existing.units_of_measure or "",
+            rate=unit_rate(it.quoted_rate), amount=amount))
+        existing.last_rate = unit_rate(it.quoted_rate)
+    wo.total_value = money(total)
+    log_audit(db, client.id, "work_order_from_estimate", "work_order", wo.id,
+              wo.number, "%s -> %d line(s) %s" % (est.number, len(items), inr(total)), request)
+    db.flush()
+    return wo
+
+
+@app.get("/api/estimates/{est_id}/export.xlsx")
+def export_estimate(est_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    e = estimate_dict(db, estimate_or_404(db, client.id, est_id), detail=True)
+    preamble = [("TENDER ESTIMATE", client.company_name or ""),
+                ("No", e["number"], "Status", e["status"]),
+                ("Title", e["title"]), ("Client", e["customer_name"]),
+                ("Reference", e["tender_reference"], "Due", e["due_on"]),
+                ("Overhead", "%s%%" % e["overhead_percent"], "Profit", "%s%%" % e["profit_percent"]),
+                ()]
+    headers = ("Item", "Description", "UOM", "Qty", "Cost rate", "Quoted rate",
+               "Cost", "Quoted")
+    rows = [(i["item_no"], i["description"], i["uom"], i["quantity"], i["cost_rate"],
+             i["quoted_rate"], i["cost_amount"], i["quoted_amount"]) for i in e["items"]]
+    closing = [(), ("Cost", "", "", "", "", "", e["cost_total"]),
+               ("Quoted", "", "", "", "", "", "", e["quoted_total"]),
+               ("Margin", "", "", "", "", "", "", e["margin_amount"],
+                "%s%%" % e["margin_percent"])]
+    return sheet_response(headers, rows, "estimate_%s.xlsx" % e["number"],
+                          preamble=preamble, closing=closing)
 
 
 # Serve frontend
