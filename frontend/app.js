@@ -424,6 +424,7 @@ function showView(viewId) {
         'money-view': 'nav-money',
         'subbills-view': 'nav-subbills',
         'estimates-view': 'nav-estimates',
+        'gst-view': 'nav-gst',
         'stores-view': 'nav-stores',
         'project-costs-view': 'nav-costs',
         'subcontract-wizard-view': 'nav-subcontracts',
@@ -489,6 +490,7 @@ function showView(viewId) {
     if (viewId === 'money-view' && typeof loadMoney === 'function') loadMoney();
     if (viewId === 'subbills-view' && typeof loadSubBills === 'function') loadSubBills();
     if (viewId === 'estimates-view' && typeof loadEstimates === 'function') loadEstimates();
+    if (viewId === 'gst-view' && typeof loadGst === 'function') loadGst();
     if (viewId === 'dashboard-view' && typeof loadAttention === 'function') loadAttention();
     if (viewId === 'stores-view' && typeof loadStores === 'function') loadStores();
     // The item grid is open by default now, so it is mounted on arrival

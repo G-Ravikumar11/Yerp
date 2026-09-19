@@ -2367,7 +2367,8 @@ def job_to_dict(db, job, costing=False):
     row = {
         "id": job.id, "number": job.number, "name": job.name,
         "customer_name": job.customer_name or "", "contact_id": job.contact_id,
-        "site_address": job.site_address or "", "description": job.description or "",
+        "site_address": job.site_address or "",
+        "state_code": job.state_code or "", "description": job.description or "",
         "status": job.status or "quoting",
         "start_date": job.start_date or "", "target_end_date": job.target_end_date or "",
         "completed_at": job.completed_at or "",
@@ -2556,6 +2557,8 @@ def update_job(job_id: int, body: JobIn, request: Request, db: Session = Depends
     job.site_address = (body.site_address or "").strip()
     job.description = (body.description or "").strip()
     job.status = validate_job_status(body.status)
+    if getattr(body, "state_code", None) is not None:
+        job.state_code = (body.state_code or "").strip()
     job.start_date = body.start_date or ""
     job.target_end_date = body.target_end_date or ""
     job.quoted_value = validate_job_money("Quoted value", body.quoted_value)
@@ -4226,10 +4229,42 @@ def erp_list_items(request: Request, kind: str = "", q: str = "",
 
 # --- Work orders -----------------------------------------------------------
 
-def work_order_to_dict(db, wo, detail=False):
-    job = db.query(models.DBJob).filter(models.DBJob.id == wo.job_id).first()
-    cost = money(sum(b.amount or 0 for b in db.query(models.DBBomLine).filter(
-        models.DBBomLine.work_order_id == wo.id).all()))
+def preload_work_orders(db, client_id, orders):
+    """Everything work_order_to_dict asks for, fetched once for a whole list.
+
+    A list of a hundred orders used to cost three hundred queries - the job,
+    the budget total and the line count for each row, one at a time. On a
+    database an ocean away that is half a minute for a screen that should
+    take a blink. Three GROUP BYs now cover the lot.
+    """
+    ids = [w.id for w in orders]
+    if not ids:
+        return {"jobs": {}, "cost": {}, "lines": {}}
+    from sqlalchemy import func
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(
+        models.DBJob.client_id == client_id).all()}
+    cost = dict(db.query(models.DBBomLine.work_order_id,
+                         func.coalesce(func.sum(models.DBBomLine.amount), 0.0)).filter(
+        models.DBBomLine.work_order_id.in_(ids)).group_by(
+            models.DBBomLine.work_order_id).all())
+    lines = dict(db.query(models.DBWorkOrderLine.work_order_id,
+                          func.count(models.DBWorkOrderLine.id)).filter(
+        models.DBWorkOrderLine.work_order_id.in_(ids)).group_by(
+            models.DBWorkOrderLine.work_order_id).all())
+    return {"jobs": jobs, "cost": cost, "lines": lines}
+
+
+def work_order_to_dict(db, wo, detail=False, pre=None):
+    if pre is not None:
+        job = pre["jobs"].get(wo.job_id)
+        cost = money(pre["cost"].get(wo.id, 0.0))
+        line_count = int(pre["lines"].get(wo.id, 0))
+    else:
+        job = db.query(models.DBJob).filter(models.DBJob.id == wo.job_id).first()
+        cost = money(sum(b.amount or 0 for b in db.query(models.DBBomLine).filter(
+            models.DBBomLine.work_order_id == wo.id).all()))
+        line_count = db.query(models.DBWorkOrderLine).filter(
+            models.DBWorkOrderLine.work_order_id == wo.id).count()
     value = money(wo.total_value or 0)
     row = {
         "id": wo.id, "number": wo.number, "job_id": wo.job_id,
@@ -4244,8 +4279,7 @@ def work_order_to_dict(db, wo, detail=False):
         "approval_status": wo.approval_status or "none",
         "current_step": wo.current_approval_step or 0,
         "rejection_reason": wo.rejection_reason or "",
-        "line_count": db.query(models.DBWorkOrderLine).filter(
-            models.DBWorkOrderLine.work_order_id == wo.id).count(),
+        "line_count": line_count,
     }
     if detail:
         row["lines"] = [{"fg_code": l.fg_code, "item_name": l.item_name,
@@ -4601,7 +4635,8 @@ def erp_list_work_orders(request: Request, job_id: int = 0,
     if job_id:
         query = query.filter(models.DBWorkOrder.job_id == job_id)
     orders = query.order_by(models.DBWorkOrder.id.desc()).limit(300).all()
-    rows = [work_order_to_dict(db, w) for w in orders]
+    pre = preload_work_orders(db, client.id, orders)
+    rows = [work_order_to_dict(db, w, pre=pre) for w in orders]
     return {"work_orders": rows, "summary": {
         "count": len(rows),
         "awaiting_approval": len([r for r in rows if r["approval_status"] == "pending"]),
@@ -19252,6 +19287,263 @@ def costs_by_project_xlsx(request: Request, db: Session = Depends(get_db)):
 # hand every month, and it is the whole reason this exists.
 # ============================================================================
 
+# ============================================================================
+# GST, DONE THE WAY THE RETURN NEEDS IT
+#
+# The bills carried a flat tax percentage. A return does not: it wants to
+# know whether the supply was inside our state - CGST and SGST, half each -
+# or across a border - all of it IGST - and it wants that per rate, per
+# month, with the HSN or SAC against every line. For a works contract the
+# place of supply is where the property is, not where the client's head
+# office sits, so the site's state is what the split is decided on.
+# ============================================================================
+
+# GST state codes: the first two digits of every GSTIN.
+GST_STATES = {
+    "01": "Jammu & Kashmir", "02": "Himachal Pradesh", "03": "Punjab",
+    "04": "Chandigarh", "05": "Uttarakhand", "06": "Haryana", "07": "Delhi",
+    "08": "Rajasthan", "09": "Uttar Pradesh", "10": "Bihar", "11": "Sikkim",
+    "12": "Arunachal Pradesh", "13": "Nagaland", "14": "Manipur", "15": "Mizoram",
+    "16": "Tripura", "17": "Meghalaya", "18": "Assam", "19": "West Bengal",
+    "20": "Jharkhand", "21": "Odisha", "22": "Chhattisgarh", "23": "Madhya Pradesh",
+    "24": "Gujarat", "26": "Dadra & Nagar Haveli and Daman & Diu", "27": "Maharashtra",
+    "29": "Karnataka", "30": "Goa", "31": "Lakshadweep", "32": "Kerala",
+    "33": "Tamil Nadu", "34": "Puducherry", "35": "Andaman & Nicobar",
+    "36": "Telangana", "37": "Andhra Pradesh", "38": "Ladakh",
+}
+# Works contract services under GST.
+WORKS_CONTRACT_SAC = "9954"
+
+
+def state_from_gstin(gstin):
+    g = (gstin or "").strip().upper()
+    return g[:2] if len(g) >= 2 and g[:2].isdigit() and g[:2] in GST_STATES else ""
+
+
+def split_gst(taxable, rate_percent, our_state, supply_state):
+    """The one place the CGST/SGST-or-IGST decision is made.
+
+    Same state: half and half. Different states, or either unknown: IGST -
+    because a wrong IGST is a reconciliation, and a wrong CGST/SGST across a
+    border is a penalty.
+    """
+    total = money((taxable or 0) * (rate_percent or 0) / 100.0)
+    if our_state and supply_state and our_state == supply_state:
+        half = money(total / 2.0)
+        return {"cgst": half, "sgst": money(total - half), "igst": 0.0,
+                "total": total, "intra_state": True}
+    return {"cgst": 0.0, "sgst": 0.0, "igst": total, "total": total,
+            "intra_state": False}
+
+
+def our_state(db, client_id):
+    c = db.query(models.DBClient).filter(models.DBClient.id == client_id).first()
+    if not c:
+        return ""
+    return (c.state_code or "").strip() or state_from_gstin(c.gstin)
+
+
+def supply_state_for_job(db, job_id):
+    if not job_id:
+        return ""
+    j = db.query(models.DBJob).filter(models.DBJob.id == job_id).first()
+    return (j.state_code or "").strip() if j else ""
+
+
+class CompanyGstIn(BaseModel):
+    gstin: Optional[str] = ""
+    state_code: Optional[str] = ""
+
+
+@app.get("/api/gst/settings")
+def gst_settings(request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    code = our_state(db, client.id)
+    return {"gstin": client.gstin or "", "state_code": code,
+            "state": GST_STATES.get(code, ""), "states": GST_STATES,
+            "works_contract_sac": WORKS_CONTRACT_SAC}
+
+
+@app.put("/api/gst/settings")
+def set_gst_settings(body: CompanyGstIn, request: Request, db: Session = Depends(get_db)):
+    """Our GSTIN. The state falls out of it, so it cannot disagree with it."""
+    client = get_client_user(request, db)
+    g = (body.gstin or "").strip().upper()
+    if g and (len(g) != 15 or not g[:2].isdigit() or g[:2] not in GST_STATES):
+        raise HTTPException(400, "A GSTIN is fifteen characters and starts with a "
+                                 "state code - %s is not one." % (g[:2] or "that"))
+    client.gstin = g
+    client.state_code = state_from_gstin(g) or (body.state_code or "").strip()
+    if client.state_code and client.state_code not in GST_STATES:
+        raise HTTPException(400, "Not a GST state code: %s" % client.state_code)
+    db.commit()
+    return {"ok": True, "gstin": client.gstin, "state_code": client.state_code,
+            "state": GST_STATES.get(client.state_code, "")}
+
+
+class JobStateIn(BaseModel):
+    state_code: str
+
+
+@app.put("/api/jobs/{job_id}/place-of-supply")
+def set_job_state(job_id: int, body: JobStateIn, request: Request,
+                  db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    job = job_or_404(db, client.id, job_id)
+    code = (body.state_code or "").strip()
+    if code and code not in GST_STATES:
+        raise HTTPException(400, "Not a GST state code: %s" % code)
+    job.state_code = code
+    db.commit()
+    return {"ok": True, "state_code": code, "state": GST_STATES.get(code, "")}
+
+
+# --- The summaries a return is filed from ------------------------------------
+
+def _month_key(d):
+    return (d or "")[:7]
+
+
+@app.get("/api/gst/outward")
+def gst_outward(request: Request, date_from: str = "", date_to: str = "",
+                db: Session = Depends(get_db)):
+    """What we charged, by month and rate, split the way GSTR-1 wants it.
+
+    Outward supplies are the client's certified RA bills and the invoices.
+    Grouped by month because that is how the return is filed, and by rate
+    because that is how the return's tables are laid out.
+    """
+    client = require_erp_read(request, db)
+    rows = []
+    for b in db.query(models.DBRABill).filter(
+            models.DBRABill.client_id == client.id,
+            models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all():
+        on = (b.certified_at or b.created_at or "")[:10]
+        if date_from and on < date_from:
+            continue
+        if date_to and on > date_to:
+            continue
+        job = db.query(models.DBJob).filter(models.DBJob.id == b.job_id).first()
+        taxable = money(b.this_bill - (b.retention_amount or 0) -
+                        (b.advance_recovery or 0) - (b.other_deductions or 0))
+        rows.append({
+            "kind": "RA bill", "number": b.number or "", "date": on,
+            "party": job.customer_name if job else "", "project": job.name if job else "",
+            "place_of_supply": b.place_of_supply or "",
+            "sac": WORKS_CONTRACT_SAC, "rate": b.tax_percent or 0,
+            "taxable": taxable, "cgst": money(b.cgst_amount), "sgst": money(b.sgst_amount),
+            "igst": money(b.igst_amount), "tax": money(b.tax_amount),
+            "total": money(taxable + (b.tax_amount or 0)),
+        })
+    by_month, by_rate = {}, {}
+    for r in rows:
+        m = by_month.setdefault(_month_key(r["date"]), {
+            "month": _month_key(r["date"]), "taxable": 0.0, "cgst": 0.0, "sgst": 0.0,
+            "igst": 0.0, "tax": 0.0, "bills": 0})
+        for k in ("taxable", "cgst", "sgst", "igst", "tax"):
+            m[k] = money(m[k] + r[k])
+        m["bills"] += 1
+        rt = by_rate.setdefault(r["rate"], {"rate": r["rate"], "taxable": 0.0, "tax": 0.0})
+        rt["taxable"] = money(rt["taxable"] + r["taxable"])
+        rt["tax"] = money(rt["tax"] + r["tax"])
+    rows.sort(key=lambda r: r["date"], reverse=True)
+    return {
+        "supplies": rows,
+        "by_month": sorted(by_month.values(), key=lambda m: m["month"], reverse=True),
+        "by_rate": sorted(by_rate.values(), key=lambda r: r["rate"]),
+        "summary": {
+            "taxable": money(sum(r["taxable"] for r in rows)),
+            "cgst": money(sum(r["cgst"] for r in rows)),
+            "sgst": money(sum(r["sgst"] for r in rows)),
+            "igst": money(sum(r["igst"] for r in rows)),
+            "tax": money(sum(r["tax"] for r in rows)),
+            "bills": len(rows),
+            "missing_place_of_supply": len([r for r in rows if not r["place_of_supply"]]),
+        },
+    }
+
+
+@app.get("/api/gst/inward")
+def gst_inward(request: Request, date_from: str = "", date_to: str = "",
+               db: Session = Depends(get_db)):
+    """What we were charged - the input credit side. Subcontractor bills and
+    supplier bills."""
+    client = require_erp_read(request, db)
+    rows = []
+    contractors = {c.id: c for c in db.query(models.DBContractor).filter(
+        models.DBContractor.client_id == client.id).all()}
+    for b in db.query(models.DBSubBill).filter(
+            models.DBSubBill.client_id == client.id,
+            models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all():
+        on = (b.certified_at or b.created_at or "")[:10]
+        if date_from and on < date_from:
+            continue
+        if date_to and on > date_to:
+            continue
+        con = contractors.get(b.contractor_id)
+        taxable = money(b.this_bill - (b.retention_amount or 0) -
+                        (b.advance_recovery or 0) - (b.other_deductions or 0))
+        rows.append({
+            "kind": "Subcontractor bill", "number": b.number or "", "date": on,
+            "party": con.company_name if con else "",
+            "party_gstin": (con.gst_number or "") if con else "",
+            "sac": WORKS_CONTRACT_SAC, "rate": b.gst_percent or 0,
+            "taxable": taxable, "cgst": money(b.cgst_amount), "sgst": money(b.sgst_amount),
+            "igst": money(b.igst_amount), "tax": money(b.gst_amount),
+        })
+    for b in db.query(models.DBBill).filter(
+            models.DBBill.client_id == client.id).all():
+        if (b.status or "") in ("Cancelled", "Rejected", "Draft"):
+            continue
+        on = (b.issue_date or b.created_at or "")[:10]
+        if date_from and on < date_from:
+            continue
+        if date_to and on > date_to:
+            continue
+        rows.append({
+            "kind": "Supplier bill", "number": b.number or "", "date": on,
+            "party": b.vendor_name or "", "party_gstin": "",
+            "sac": "", "rate": 0,
+            "taxable": money(b.amount), "cgst": 0.0, "sgst": 0.0, "igst": 0.0,
+            "tax": money(b.tax_amount),
+        })
+    rows.sort(key=lambda r: r["date"], reverse=True)
+    return {
+        "supplies": rows,
+        "summary": {
+            "taxable": money(sum(r["taxable"] for r in rows)),
+            "tax": money(sum(r["tax"] for r in rows)),
+            "cgst": money(sum(r["cgst"] for r in rows)),
+            "sgst": money(sum(r["sgst"] for r in rows)),
+            "igst": money(sum(r["igst"] for r in rows)),
+            "bills": len(rows),
+            # Input credit needs the supplier's GSTIN on the bill. Without it
+            # the credit is at risk, so say how many are missing.
+            "missing_party_gstin": len([r for r in rows if not r["party_gstin"]]),
+        },
+    }
+
+
+@app.get("/api/gst/outward.xlsx")
+def gst_outward_export(request: Request, date_from: str = "", date_to: str = "",
+                       db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    d = gst_outward(request, date_from, date_to, db)
+    rows = [(r["date"], r["number"], r["party"], r["project"], r["place_of_supply"],
+             r["sac"], r["rate"], r["taxable"], r["cgst"], r["sgst"], r["igst"],
+             r["tax"], r["total"]) for r in d["supplies"]]
+    s = d["summary"]
+    return sheet_response(
+        ("Date", "Bill", "Client", "Project", "Place of supply", "SAC", "Rate %",
+         "Taxable", "CGST", "SGST", "IGST", "Tax", "Total"),
+        rows, "gst_outward.xlsx",
+        preamble=[("OUTWARD SUPPLIES", client.company_name or ""),
+                  ("GSTIN", client.gstin or "", "Period",
+                   "%s to %s" % (date_from or "start", date_to or "today")), ()],
+        closing=[(), ("Total", "", "", "", "", "", "", s["taxable"], s["cgst"],
+                      s["sgst"], s["igst"], s["tax"])])
+
+
 RA_TRANSITIONS = {
     "DRAFT":     {"SUBMIT": "SUBMITTED", "CANCEL": "CANCELLED"},
     "SUBMITTED": {"CERTIFY": "CERTIFIED", "REJECT": "DRAFT", "CANCEL": "CANCELLED"},
@@ -19272,6 +19564,33 @@ def measured_to_date(db, work_order_id):
             models.DBMeasurement.work_order_id == work_order_id).all():
         totals[m.line_id] = totals.get(m.line_id, 0.0) + (m.quantity or 0.0)
     return totals
+
+
+def measured_and_billed_for_all(db, client_id):
+    """Measured and billed quantity per line, across every order at once.
+
+    The dashboard used to ask this two queries at a time per order. For a
+    hundred orders that was two hundred queries before it had drawn a single
+    number; now it is two.
+    """
+    from sqlalchemy import func
+    measured = {}
+    for line_id, qty in db.query(models.DBMeasurement.line_id,
+                                 func.sum(models.DBMeasurement.quantity)).filter(
+            models.DBMeasurement.client_id == client_id).group_by(
+                models.DBMeasurement.line_id).all():
+        measured[line_id] = float(qty or 0.0)
+    billed = {}
+    live_ids = [b.id for b in db.query(models.DBRABill.id).filter(
+        models.DBRABill.client_id == client_id,
+        models.DBRABill.status != "CANCELLED").all()]
+    if live_ids:
+        for line_id, qty in db.query(models.DBRABillLine.line_id,
+                                     func.sum(models.DBRABillLine.this_bill_qty)).filter(
+                models.DBRABillLine.ra_bill_id.in_(live_ids)).group_by(
+                    models.DBRABillLine.line_id).all():
+            billed[line_id] = float(qty or 0.0)
+    return measured, billed
 
 
 def billed_qty_to_date(db, work_order_id, exclude_bill_id=None):
@@ -19357,7 +19676,14 @@ def recost_ra_bill(db, bill):
 
     after_retention = money(this_bill - bill.retention_amount -
                             (bill.advance_recovery or 0) - (bill.other_deductions or 0))
-    bill.tax_amount = money(after_retention * (bill.tax_percent or 0) / 100.0)
+    # Split the way the return needs it. Place of supply for a works contract
+    # is the site, so the job's state is what our state is compared with.
+    supply = supply_state_for_job(db, bill.job_id)
+    gst = split_gst(after_retention, bill.tax_percent or 0,
+                    our_state(db, bill.client_id), supply)
+    bill.tax_amount = gst["total"]
+    bill.cgst_amount, bill.sgst_amount, bill.igst_amount = gst["cgst"], gst["sgst"], gst["igst"]
+    bill.place_of_supply = supply
     bill.tds_amount = money(this_bill * (bill.tds_percent or 0) / 100.0)
     bill.net_payable = money(after_retention + bill.tax_amount - bill.tds_amount)
     bill.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -19384,6 +19710,8 @@ def ra_bill_dict(db, bill, detail=False):
         "other_deductions": money(bill.other_deductions),
         "deduction_notes": bill.deduction_notes or "",
         "tax_percent": bill.tax_percent or 0, "tax_amount": money(bill.tax_amount),
+        "cgst_amount": money(bill.cgst_amount), "sgst_amount": money(bill.sgst_amount),
+        "igst_amount": money(bill.igst_amount), "place_of_supply": bill.place_of_supply or "",
         "tds_percent": bill.tds_percent or 0, "tds_amount": money(bill.tds_amount),
         "net_payable": money(bill.net_payable),
         "certified_by_name": bill.certified_by_name or "",
@@ -20920,11 +21248,97 @@ def stock_movement(db, client_id, item_code, kind, quantity, rate, **kw):
         recorded_by=kw.get("recorded_by"),
         recorded_by_name=kw.get("recorded_by_name") or "")
     db.add(row)
+    apply_to_balance(db, client_id, row)
     return row
 
 
-def stock_balances(db, client_id, item_code=None, store=None):
-    """On hand per item, valued at what it actually cost.
+def apply_to_balance(db, client_id, m):
+    """Fold one movement into the item's running balance."""
+    bal = db.query(models.DBStockBalance).filter(
+        models.DBStockBalance.client_id == client_id,
+        models.DBStockBalance.item_code == m.item_code).first()
+    if bal is None:
+        bal = models.DBStockBalance(client_id=client_id, item_code=m.item_code,
+                                    item_name=m.item_name or "", uom=m.uom or "")
+        db.add(bal)
+    if m.item_name and not bal.item_name:
+        bal.item_name = m.item_name
+    if m.uom and not bal.uom:
+        bal.uom = m.uom
+    qty = m.quantity or 0.0
+    bal.movements = (bal.movements or 0) + 1
+    if qty > 0:
+        bal.received = money((bal.received or 0) + qty)
+        bal.value = money((bal.value or 0) + (m.value or 0))
+        bal.on_hand = money((bal.on_hand or 0) + qty)
+        bal.rate = unit_rate(bal.value / bal.on_hand) if bal.on_hand else 0.0
+    else:
+        bal.issued = money((bal.issued or 0) - qty)
+        bal.on_hand = money((bal.on_hand or 0) + qty)
+        bal.value = money(bal.on_hand * (bal.rate or 0))
+    bal.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return bal
+
+
+def rebuild_stock_balances(db, client_id):
+    """Replay the ledger from the start and overwrite every balance.
+
+    The one door for doubt: if a balance is ever questioned, this makes it
+    agree with the ledger again, because the ledger is the truth.
+    """
+    replayed = replay_stock_ledger(db, client_id)
+    db.query(models.DBStockBalance).filter(
+        models.DBStockBalance.client_id == client_id).delete()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for code, a in replayed.items():
+        db.add(models.DBStockBalance(
+            client_id=client_id, item_code=code, item_name=a["item_name"],
+            uom=a["uom"], on_hand=money(a["on_hand"]), rate=unit_rate(a["rate"]),
+            value=money(a["value"]), received=money(a["received"]),
+            issued=money(a["issued"]), movements=a["movements"], updated_at=now))
+    db.flush()
+    return len(replayed)
+
+
+def stock_balances(db, client_id, item_code=None, store=None, item_codes=None):
+    """On hand per item, from the running balance.
+
+    Falls back to replaying the ledger only when asked for one store, which
+    the balance does not split by, or when the balance table is empty and the
+    ledger is not - which is the first request after this table was added.
+    """
+    if store:
+        return replay_stock_ledger(db, client_id, item_code=item_code,
+                                   store=store, item_codes=item_codes)
+    q = db.query(models.DBStockBalance).filter(
+        models.DBStockBalance.client_id == client_id)
+    if item_code:
+        q = q.filter(models.DBStockBalance.item_code == item_code)
+    elif item_codes is not None:
+        if not item_codes:
+            return {}
+        q = q.filter(models.DBStockBalance.item_code.in_(list(item_codes)))
+    rows = q.all()
+    if not rows and item_code is None and item_codes is None:
+        # Nothing summarised yet. If there is a ledger, this is the migration
+        # moment: build the balances once, then serve from them for ever.
+        if db.query(models.DBStockMovement.id).filter(
+                models.DBStockMovement.client_id == client_id).first():
+            rebuild_stock_balances(db, client_id)
+            db.commit()
+            rows = q.all()
+    return {b.item_code: {
+        "item_code": b.item_code, "item_name": b.item_name or "", "uom": b.uom or "",
+        "received": money(b.received), "issued": money(b.issued),
+        "on_hand": money(b.on_hand), "value": money(b.value),
+        "rate": unit_rate(b.rate), "movements": b.movements or 0,
+    } for b in rows}
+
+
+def replay_stock_ledger(db, client_id, item_code=None, store=None, item_codes=None):
+    """On hand per item, replayed from every movement in order.
+
+    The slow path, and the authoritative one. Valued at what it actually cost:
 
     Weighted average, not the last rate paid: cement bought at three prices
     over a month is one heap in the yard, and issuing it at whichever price
@@ -20934,6 +21348,12 @@ def stock_balances(db, client_id, item_code=None, store=None):
         models.DBStockMovement.client_id == client_id)
     if item_code:
         q = q.filter(models.DBStockMovement.item_code == item_code)
+    elif item_codes is not None:
+        # Only the heaps that were asked about. A five-line issue note used to
+        # walk the whole year's ledger to price its five items.
+        if not item_codes:
+            return {}
+        q = q.filter(models.DBStockMovement.item_code.in_(list(item_codes)))
     if store:
         q = q.filter(models.DBStockMovement.store == store)
 
@@ -21006,6 +21426,31 @@ def stock_on_hand(request: Request, store: str = "", low_only: bool = False,
     }
 
 
+@app.post("/api/stock/rebuild")
+def rebuild_balances(request: Request, db: Session = Depends(get_db)):
+    """Replay the ledger and overwrite the running balances.
+
+    Reports what changed, because a balance that had drifted from its ledger
+    is worth knowing about - it means something wrote stock without going
+    through the one door that should.
+    """
+    client, _, actor_name = wo_actor(request, db)
+    before = {b.item_code: money(b.on_hand) for b in db.query(models.DBStockBalance).filter(
+        models.DBStockBalance.client_id == client.id).all()}
+    n = rebuild_stock_balances(db, client.id)
+    after = {b.item_code: money(b.on_hand) for b in db.query(models.DBStockBalance).filter(
+        models.DBStockBalance.client_id == client.id).all()}
+    drift = [{"item_code": k, "was": before.get(k, 0.0), "now": v}
+             for k, v in after.items() if money(before.get(k, 0.0)) != v]
+    log_audit(db, client.id, "stock_rebuilt", "item", None, "",
+              "%d items, %d drifted" % (n, len(drift)), request)
+    db.commit()
+    return {"ok": True, "items": n, "drift": drift,
+            "message": ("Rebuilt %d balances from the ledger. " % n) +
+                       ("All agreed." if not drift else
+                        "%d had drifted and are corrected." % len(drift))}
+
+
 @app.get("/api/stock/{item_code}/ledger")
 def stock_ledger(item_code: str, request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
@@ -21058,13 +21503,18 @@ def issue_or_404(db, client_id, issue_id):
     return row
 
 
-def issue_dict(db, issue, detail=False):
-    wo = db.query(models.DBWorkOrder).filter(
-        models.DBWorkOrder.id == issue.work_order_id).first() if issue.work_order_id else None
+def issue_dict(db, issue, detail=False, wo_names=None):
+    if wo_names is not None:
+        wo = None
+        wo_number = wo_names.get(issue.work_order_id, "")
+    else:
+        wo = db.query(models.DBWorkOrder).filter(
+            models.DBWorkOrder.id == issue.work_order_id).first() if issue.work_order_id else None
+        wo_number = wo.number if wo else ""
     row = {
         "id": issue.id, "number": issue.number or "",
         "work_order_id": issue.work_order_id,
-        "work_order": wo.number if wo else "",
+        "work_order": wo_number,
         "issued_on": issue.issued_on or "", "store": issue.store or "",
         "status": issue.status or "DRAFT", "issued_to": issue.issued_to or "",
         "purpose": issue.purpose or "", "total_value": money(issue.total_value),
@@ -21074,17 +21524,20 @@ def issue_dict(db, issue, detail=False):
         "created_at": issue.created_at or "",
     }
     if detail:
+        lines = db.query(models.DBStockIssueLine).filter(
+            models.DBStockIssueLine.stock_issue_id == issue.id).order_by(
+                models.DBStockIssueLine.display_order,
+                models.DBStockIssueLine.id).all()
+        # One pass over the ledger for the items on the note - not one per line,
+        # and not the whole year's movements for everything in the store.
+        balances = stock_balances(db, issue.client_id,
+                                  item_codes={l.item_code for l in lines}) if lines else {}
         row["lines"] = [{
             "id": l.id, "item_code": l.item_code or "", "item_name": l.item_name or "",
             "uom": l.uom or "", "quantity": money(l.quantity),
             "rate": unit_rate(l.rate), "amount": money(l.amount),
-            "on_hand": money(stock_balances(db, issue.client_id,
-                                            item_code=l.item_code).get(
-                                                l.item_code, {}).get("on_hand", 0)),
-        } for l in db.query(models.DBStockIssueLine).filter(
-            models.DBStockIssueLine.stock_issue_id == issue.id).order_by(
-                models.DBStockIssueLine.display_order,
-                models.DBStockIssueLine.id).all()]
+            "on_hand": money(balances.get(l.item_code, {}).get("on_hand", 0)),
+        } for l in lines]
     return row
 
 
@@ -21096,8 +21549,11 @@ def list_stock_issues(request: Request, work_order_id: int = 0,
         models.DBStockIssue.client_id == client.id)
     if work_order_id:
         q = q.filter(models.DBStockIssue.work_order_id == work_order_id)
-    rows = [issue_dict(db, i) for i in q.order_by(
-        models.DBStockIssue.id.desc()).limit(200).all()]
+    issues = q.order_by(models.DBStockIssue.id.desc()).limit(200).all()
+    wo_names = {w.id: (w.number or "") for w in db.query(
+        models.DBWorkOrder.id, models.DBWorkOrder.number).filter(
+            models.DBWorkOrder.client_id == client.id).all()}
+    rows = [issue_dict(db, i, wo_names=wo_names) for i in issues]
     return {
         "issues": rows,
         "summary": {
@@ -21786,48 +22242,123 @@ def diary_export(diary_id: int, request: Request, db: Session = Depends(get_db))
 # contractor discovers a loss at the end instead of in the middle.
 # ============================================================================
 
-def project_pnl(db, client_id, job):
+def preload_pnl_for_job(db, client_id, job_id):
+    from collections import defaultdict
+    def one(rows):
+        return {job_id: rows}
     wos = db.query(models.DBWorkOrder).filter(
         models.DBWorkOrder.client_id == client_id,
-        models.DBWorkOrder.job_id == job.id).all()
+        models.DBWorkOrder.job_id == job_id).all()
+    bom = defaultdict(float)
+    ids = [w.id for w in wos]
+    if ids:
+        from sqlalchemy import func
+        for wo_id, amt in db.query(models.DBBomLine.work_order_id,
+                                   func.coalesce(func.sum(models.DBBomLine.amount), 0.0)).filter(
+                models.DBBomLine.work_order_id.in_(ids)).group_by(
+                    models.DBBomLine.work_order_id).all():
+            bom[wo_id] = float(amt or 0)
+    return {
+        "wos": one(wos), "bom": bom,
+        "invoices": one(db.query(models.DBInvoice).filter(
+            models.DBInvoice.client_id == client_id, models.DBInvoice.job_id == job_id).all()),
+        "ra": one(db.query(models.DBRABill).filter(
+            models.DBRABill.job_id == job_id,
+            models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all()),
+        "bills": one(db.query(models.DBBill).filter(
+            models.DBBill.client_id == client_id, models.DBBill.job_id == job_id).all()),
+        "moves": one(db.query(models.DBStockMovement).filter(
+            models.DBStockMovement.client_id == client_id,
+            models.DBStockMovement.job_id == job_id,
+            models.DBStockMovement.kind.in_(("ISSUE", "RETURN"))).all()),
+        "diaries": one(db.query(models.DBSiteDiary).filter(
+            models.DBSiteDiary.client_id == client_id, models.DBSiteDiary.job_id == job_id).all()),
+        "pos": one(db.query(models.DBPurchaseOrder).filter(
+            models.DBPurchaseOrder.client_id == client_id,
+            models.DBPurchaseOrder.job_id == job_id).all()),
+        "sub": one(db.query(models.DBSubBill).filter(
+            models.DBSubBill.client_id == client_id, models.DBSubBill.job_id == job_id,
+            models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all()),
+    }
+
+
+def preload_pnl(db, client_id):
+    """Every table the P&L reads, loaded once and grouped by project.
+
+    The portfolio used to ask nine questions per project, one project at a
+    time; twenty projects was a hundred and eighty queries. Now it is nine,
+    and the per-project figures come out of these dicts.
+    """
+    from collections import defaultdict
+    def by_job(rows, key="job_id"):
+        out = defaultdict(list)
+        for r in rows:
+            out[getattr(r, key)].append(r)
+        return out
+    wos = by_job(db.query(models.DBWorkOrder).filter(
+        models.DBWorkOrder.client_id == client_id).all())
+    wo_ids = [w.id for lst in wos.values() for w in lst]
+    bom = defaultdict(float)
+    if wo_ids:
+        from sqlalchemy import func
+        for wo_id, amt in db.query(models.DBBomLine.work_order_id,
+                                   func.coalesce(func.sum(models.DBBomLine.amount), 0.0)).filter(
+                models.DBBomLine.work_order_id.in_(wo_ids)).group_by(
+                    models.DBBomLine.work_order_id).all():
+            bom[wo_id] = float(amt or 0)
+    return {
+        "wos": wos, "bom": bom,
+        "invoices": by_job(db.query(models.DBInvoice).filter(
+            models.DBInvoice.client_id == client_id).all()),
+        "ra": by_job(db.query(models.DBRABill).filter(
+            models.DBRABill.client_id == client_id,
+            models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all()),
+        "bills": by_job(db.query(models.DBBill).filter(
+            models.DBBill.client_id == client_id).all()),
+        "moves": by_job(db.query(models.DBStockMovement).filter(
+            models.DBStockMovement.client_id == client_id,
+            models.DBStockMovement.kind.in_(("ISSUE", "RETURN"))).all()),
+        "diaries": by_job(db.query(models.DBSiteDiary).filter(
+            models.DBSiteDiary.client_id == client_id).all()),
+        "pos": by_job(db.query(models.DBPurchaseOrder).filter(
+            models.DBPurchaseOrder.client_id == client_id).all()),
+        "sub": by_job(db.query(models.DBSubBill).filter(
+            models.DBSubBill.client_id == client_id,
+            models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all()),
+    }
+
+
+def project_pnl(db, client_id, job, pre=None):
+    if pre is None:
+        # A single project: the same nine questions, asked for one job only.
+        pre = preload_pnl_for_job(db, client_id, job.id)
+    wos = pre["wos"].get(job.id, [])
     live = [w for w in wos if (w.approval_status or "none") != "rejected"]
     wo_ids = [w.id for w in live]
     order_value = money(sum(w.total_value or 0 for w in live))
 
     # --- earned ----------------------------------------------------------
-    invoices = [i for i in db.query(models.DBInvoice).filter(
-        models.DBInvoice.client_id == client_id,
-        models.DBInvoice.job_id == job.id).all()
-        if (i.status or "") not in ("Draft", "Cancelled", "Void")]
+    invoices = [i for i in pre["invoices"].get(job.id, [])
+                if (i.status or "") not in ("Draft", "Cancelled", "Void")]
     invoiced = money(sum(invoice_total(i) for i in invoices))
     collected = money(sum(i.paid or 0 for i in invoices))
 
-    bills = db.query(models.DBRABill).filter(
-        models.DBRABill.job_id == job.id,
-        models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all() if job.id else []
+    bills = pre["ra"].get(job.id, [])
     certified = money(sum(b.this_bill or 0 for b in bills))
     retention = money(sum(b.retention_amount or 0 for b in bills))
 
     # --- what it cost ----------------------------------------------------
-    supplier_bills = [b for b in db.query(models.DBBill).filter(
-        models.DBBill.client_id == client_id,
-        models.DBBill.job_id == job.id).all()
-        if (b.approval_status or "none") != "rejected"
-        and (b.status or "") != "Cancelled"]
+    supplier_bills = [b for b in pre["bills"].get(job.id, [])
+                      if (b.approval_status or "none") != "rejected"
+                      and (b.status or "") != "Cancelled"]
     bill_cost = money(sum(b.total or 0 for b in supplier_bills))
 
     # Material actually drawn from the store for this job. Issues are negative
     # and returns positive, so the negated sum is what the site consumed and a
     # cancelled issue costs nothing.
-    material = money(-sum(m.value or 0 for m in db.query(
-        models.DBStockMovement).filter(
-            models.DBStockMovement.client_id == client_id,
-            models.DBStockMovement.job_id == job.id,
-            models.DBStockMovement.kind.in_(("ISSUE", "RETURN"))).all()))
+    material = money(-sum(m.value or 0 for m in pre["moves"].get(job.id, [])))
 
-    diaries = db.query(models.DBSiteDiary).filter(
-        models.DBSiteDiary.client_id == client_id,
-        models.DBSiteDiary.job_id == job.id).all()
+    diaries = pre["diaries"].get(job.id, [])
     labour = money(sum(d.labour_cost or 0 for d in diaries))
     plant = money(sum(d.plant_cost or 0 for d in diaries))
     mandays = money(sum(d.total_mandays or 0 for d in diaries))
@@ -21836,24 +22367,17 @@ def project_pnl(db, client_id, job):
     # it, so the same spend is never counted twice.
     billed_pos = {b.purchase_order_id for b in supplier_bills if b.purchase_order_id}
     committed = money(sum(
-        p.total or 0 for p in db.query(models.DBPurchaseOrder).filter(
-            models.DBPurchaseOrder.client_id == client_id,
-            models.DBPurchaseOrder.job_id == job.id).all()
+        p.total or 0 for p in pre["pos"].get(job.id, [])
         if p.id not in billed_pos
         and (p.status or "") in ("Approved", "Awaiting Approval")))
 
     # What the gangs have billed us for and we have agreed to pay. This was
     # missing entirely, which flattered every project by the whole of its
     # subcontract cost.
-    subcontract = money(sum(b.this_bill or 0 for b in db.query(models.DBSubBill).filter(
-        models.DBSubBill.client_id == client_id,
-        models.DBSubBill.job_id == job.id,
-        models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all()))
+    subcontract = money(sum(b.this_bill or 0 for b in pre["sub"].get(job.id, [])))
 
     incurred = money(bill_cost + material + labour + plant + subcontract)
-    budgeted = money(sum(
-        b.amount or 0 for b in db.query(models.DBBomLine).filter(
-            models.DBBomLine.work_order_id.in_(wo_ids)).all())) if wo_ids else 0.0
+    budgeted = money(sum(pre["bom"].get(i, 0.0) for i in wo_ids)) if wo_ids else 0.0
 
     revenue = money(max(invoiced, certified))
     margin = money(revenue - incurred)
@@ -21916,9 +22440,10 @@ def portfolio_pnl(request: Request, db: Session = Depends(get_db)):
     """
     client = require_erp_read(request, db)
     rows = []
+    pre = preload_pnl(db, client.id)
     for job in db.query(models.DBJob).filter(
             models.DBJob.client_id == client.id).order_by(models.DBJob.id).all():
-        p = project_pnl(db, client.id, job)
+        p = project_pnl(db, client.id, job, pre=pre)
         rows.append({
             "job_id": job.id, "number": job.number or "", "name": job.name or "",
             "customer_name": job.customer_name or "", "status": job.status or "",
@@ -22298,25 +22823,27 @@ def attention_items(db, client_id):
     # --- work built and not yet claimed ---------------------------------
     unbilled_total, unbilled_orders = 0.0, 0
     over_run_total, over_run_orders = 0.0, 0
-    for wo in db.query(models.DBWorkOrder).filter(
-            models.DBWorkOrder.client_id == client_id,
-            models.DBWorkOrder.status != "Draft").all():
-        measured = measured_to_date(db, wo.id)
-        billed = billed_qty_to_date(db, wo.id)
-        unbilled = over = 0.0
+    placed = {w.id for w in db.query(models.DBWorkOrder.id).filter(
+        models.DBWorkOrder.client_id == client_id,
+        models.DBWorkOrder.status != "Draft").all()}
+    if placed:
+        measured, billed = measured_and_billed_for_all(db, client_id)
+        per_order = {}
         for l in db.query(models.DBWorkOrderLine).filter(
-                models.DBWorkOrderLine.work_order_id == wo.id).all():
+                models.DBWorkOrderLine.work_order_id.in_(list(placed))).all():
             rate = unit_rate(l.rate)
             done = money(measured.get(l.id, 0.0))
-            unbilled += money(done - money(billed.get(l.id, 0.0))) * rate
+            acc = per_order.setdefault(l.work_order_id, [0.0, 0.0])
+            acc[0] += money(done - money(billed.get(l.id, 0.0))) * rate
             if done > money(l.qty):
-                over += money(done - money(l.qty)) * rate
-        if unbilled > 0:
-            unbilled_total += unbilled
-            unbilled_orders += 1
-        if over > 0:
-            over_run_total += over
-            over_run_orders += 1
+                acc[1] += money(done - money(l.qty)) * rate
+        for unbilled, over in per_order.values():
+            if unbilled > 0:
+                unbilled_total += unbilled
+                unbilled_orders += 1
+            if over > 0:
+                over_run_total += over
+                over_run_orders += 1
 
     if unbilled_total > 0:
         items.append({
@@ -22575,7 +23102,7 @@ def material_required(db, client_id, wo):
     if not needed:
         return []
 
-    balances = stock_balances(db, client_id)
+    balances = stock_balances(db, client_id, item_codes=set(needed))
 
     # Quantity sitting on purchase orders that have not been fully received.
     on_order = {}
@@ -22846,7 +23373,11 @@ def recost_sub_bill(db, bill):
     bill.retention_amount = money(this_bill * (bill.retention_percent or 0) / 100.0)
     after = money(this_bill - bill.retention_amount -
                   (bill.advance_recovery or 0) - (bill.other_deductions or 0))
-    bill.gst_amount = money(after * (bill.gst_percent or 0) / 100.0)
+    supply = supply_state_for_job(db, bill.job_id)
+    gst = split_gst(after, bill.gst_percent or 0, our_state(db, bill.client_id), supply)
+    bill.gst_amount = gst["total"]
+    bill.cgst_amount, bill.sgst_amount, bill.igst_amount = gst["cgst"], gst["sgst"], gst["igst"]
+    bill.place_of_supply = supply
     bill.tds_amount = money(this_bill * (bill.tds_percent or 0) / 100.0)
     bill.net_payable = money(after + bill.gst_amount - bill.tds_amount)
     bill.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -22876,6 +23407,8 @@ def sub_bill_dict(db, bill, detail=False):
         "other_deductions": money(bill.other_deductions),
         "deduction_notes": bill.deduction_notes or "",
         "gst_percent": bill.gst_percent or 0, "gst_amount": money(bill.gst_amount),
+        "cgst_amount": money(bill.cgst_amount), "sgst_amount": money(bill.sgst_amount),
+        "igst_amount": money(bill.igst_amount), "place_of_supply": bill.place_of_supply or "",
         "tds_percent": bill.tds_percent or 0, "tds_amount": money(bill.tds_amount),
         "net_payable": money(bill.net_payable),
         "certified_by_name": bill.certified_by_name or "",

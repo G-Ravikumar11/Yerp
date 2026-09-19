@@ -1436,6 +1436,19 @@ def ensure_columns():
                     # down once already.
                     ("erp_items", "reorder_level", "DOUBLE PRECISION DEFAULT 0"),
                     ("erp_items", "last_rate", "DOUBLE PRECISION DEFAULT 0"),
+                    # GST done properly: who we are, where the site is, and
+                    # the split every bill carries.
+                    ("clients", "gstin", "TEXT DEFAULT ''"),
+                    ("clients", "state_code", "TEXT DEFAULT ''"),
+                    ("jobs", "state_code", "TEXT DEFAULT ''"),
+                    ("ra_bills", "cgst_amount", "DOUBLE PRECISION DEFAULT 0"),
+                    ("ra_bills", "sgst_amount", "DOUBLE PRECISION DEFAULT 0"),
+                    ("ra_bills", "igst_amount", "DOUBLE PRECISION DEFAULT 0"),
+                    ("ra_bills", "place_of_supply", "TEXT DEFAULT ''"),
+                    ("sub_bills", "cgst_amount", "DOUBLE PRECISION DEFAULT 0"),
+                    ("sub_bills", "sgst_amount", "DOUBLE PRECISION DEFAULT 0"),
+                    ("sub_bills", "igst_amount", "DOUBLE PRECISION DEFAULT 0"),
+                    ("sub_bills", "place_of_supply", "TEXT DEFAULT ''"),
                 ):
                     conn.execute(text(
                         f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
@@ -1574,6 +1587,14 @@ def migrate_sqlite():
             # 500ed on a database that already existed.
             add_col("erp_items", "reorder_level", "FLOAT DEFAULT 0")
             add_col("erp_items", "last_rate", "FLOAT DEFAULT 0")
+            add_col("clients", "gstin", "TEXT DEFAULT ''")
+            add_col("clients", "state_code", "TEXT DEFAULT ''")
+            add_col("jobs", "state_code", "TEXT DEFAULT ''")
+            for t in ("ra_bills", "sub_bills"):
+                add_col(t, "cgst_amount", "FLOAT DEFAULT 0")
+                add_col(t, "sgst_amount", "FLOAT DEFAULT 0")
+                add_col(t, "igst_amount", "FLOAT DEFAULT 0")
+                add_col(t, "place_of_supply", "TEXT DEFAULT ''")
 
             # Create approval_chains table
             conn.execute(text("""

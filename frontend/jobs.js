@@ -184,7 +184,8 @@ function showJobModal() {
     document.getElementById('job-modal-title').textContent = 'New project';
     document.getElementById('job-start').value = localDate(new Date());
     document.getElementById('job-retention').value = 0;
-    modal.style.display = 'flex';
+    fillJobStatePicker('');
+    openModal('job-modal');
 }
 window.showJobModal = showJobModal;
 
@@ -205,6 +206,7 @@ function editJob(id) {
     document.getElementById('job-customer').value = job.customer_name || '';
     document.getElementById('job-status').value = job.status || 'quoting';
     document.getElementById('job-site').value = job.site_address || '';
+    fillJobStatePicker(job.state_code || '');
     document.getElementById('job-quoted').value = job.quoted_value || 0;
     document.getElementById('job-budget').value = job.budget || 0;
     document.getElementById('job-retention').value = job.retention_percent || 0;
@@ -226,6 +228,7 @@ async function saveJob() {
         customer_name: document.getElementById('job-customer').value.trim(),
         status: document.getElementById('job-status').value,
         site_address: document.getElementById('job-site').value.trim(),
+        state_code: (document.getElementById('job-state') || {}).value || '',
         quoted_value: parseFloat(document.getElementById('job-quoted').value) || 0,
         budget: parseFloat(document.getElementById('job-budget').value) || 0,
         retention_percent: parseFloat(document.getElementById('job-retention').value) || 0,
@@ -643,3 +646,22 @@ async function saveOrgDomain() {
     } catch (e) { showToast('Could not save', 'error'); }
 }
 window.saveOrgDomain = saveOrgDomain;
+
+
+/* The GST state the site is in. Filled from the same table the server
+   splits tax with, so the two can never disagree about what "36" means. */
+var _gstStates = null;
+async function fillJobStatePicker(selected) {
+    var sel = document.getElementById('job-state');
+    if (!sel) return;
+    if (!_gstStates) {
+        try {
+            _gstStates = (await (await fetch('/api/gst/settings', { credentials: 'include' })).json()).states || {};
+        } catch (e) { _gstStates = {}; }
+    }
+    sel.innerHTML = '<option value="">Not set</option>' + Object.keys(_gstStates).sort().map(function (k) {
+        return '<option value="' + k + '"' + (k === selected ? ' selected' : '') + '>' +
+            k + ' — ' + esc(_gstStates[k]) + '</option>';
+    }).join('');
+}
+window.fillJobStatePicker = fillJobStatePicker;

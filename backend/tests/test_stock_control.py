@@ -284,3 +284,56 @@ def test_another_tenant_sees_none_of_this_stock(tenant, second_tenant):
     receive(tenant, code, 100, 50)
     assert second_tenant.get("/api/stock").json()["stock"] == []
     assert second_tenant.get("/api/stock/%s/ledger" % code).json()["movements"] == []
+
+
+# --- The running balance and the ledger must agree ----------------------------
+
+def test_the_running_balance_matches_a_full_replay(tenant):
+    """Two ways of arriving at the same number, and they had better match.
+
+    The balance is what the screen reads; the replay is the truth. Receipts
+    at different prices, issues, a cancellation and a count are all thrown in
+    so the weighted average has genuinely moved.
+    """
+    import random
+    random.seed(7)
+    codes = [rm_item(tenant) for _ in range(3)]
+    for code in codes:
+        receive(tenant, code, 100, random.randint(30, 60))
+        receive(tenant, code, 50, random.randint(30, 60))
+        issue = tenant.post("/api/stock-issues", json={
+            "lines": [{"item_code": code, "quantity": 40}]}).json()["issue"]
+        tenant.post("/api/stock-issues/%d/post" % issue["id"], json={})
+    # Cancel one issue and count one item short.
+    tenant.post("/api/stock-issues/1/cancel", json={})
+    tenant.post("/api/stock/adjustments", json={"item_code": codes[1], "counted": 100})
+
+    fast = {r["item_code"]: r for r in tenant.get("/api/stock").json()["stock"]}
+    out = tenant.post("/api/stock/rebuild").json()
+    assert out["drift"] == [], "the balance had drifted from its ledger: %s" % out["drift"]
+    slow = {r["item_code"]: r for r in tenant.get("/api/stock").json()["stock"]}
+    for code in codes:
+        assert fast[code]["on_hand"] == slow[code]["on_hand"]
+        assert fast[code]["rate"] == slow[code]["rate"]
+        assert fast[code]["value"] == slow[code]["value"]
+
+
+def test_rebuild_reports_drift_when_something_bypassed_the_door(tenant):
+    """A balance written to by anything other than a movement is a bug, and
+    the rebuild is how it is found."""
+    from main import models as _m
+    import database
+    code = rm_item(tenant)
+    receive(tenant, code, 100, 50)
+    db = database.SessionLocal()
+    try:
+        bal = db.query(_m.DBStockBalance).filter(_m.DBStockBalance.item_code == code).first()
+        bal.on_hand = 999          # somebody edited the table by hand
+        db.commit()
+    finally:
+        db.close()
+    assert tenant.get("/api/stock").json()["stock"][0]["on_hand"] == 999
+    out = tenant.post("/api/stock/rebuild").json()
+    assert len(out["drift"]) == 1
+    assert out["drift"][0]["was"] == 999 and out["drift"][0]["now"] == 100
+    assert tenant.get("/api/stock").json()["stock"][0]["on_hand"] == 100

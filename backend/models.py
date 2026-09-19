@@ -34,7 +34,12 @@ class DBClient(Base):
     logo_url = Column(String, default="")
     address = Column(String, default="")
     website = Column(String, default="")
-    abn = Column(String, default="")
+    abn = Column(String, default="")                      # template leftover; GSTIN is below
+    # The GSTIN says which state we are registered in - the first two digits
+    # are the state code - and that is what decides whether a bill carries
+    # CGST+SGST or IGST.
+    gstin = Column(String, default="")
+    state_code = Column(String, default="")
     industry = Column(String, default="")
     is_active = Column(Boolean, default=True)
     is_onboarded = Column(Boolean, default=False)
@@ -379,6 +384,9 @@ class DBJob(Base):
     customer_name = Column(String, default="")
 
     site_address = Column(String, default="")
+    # Place of supply. For a works contract that is where the property is,
+    # not where the client's head office is.
+    state_code = Column(String, default="")
     description = Column(Text, default="")
 
     # quoting | won | in_progress | on_hold | complete | cancelled
@@ -1800,6 +1808,12 @@ class DBRABill(Base):
 
     tax_percent = Column(Float, default=18.0)
     tax_amount = Column(Float, default=0.0)
+    # The split the return needs. Intra-state is half and half; inter-state
+    # is all IGST. Decided by our state against the site's.
+    cgst_amount = Column(Float, default=0.0)
+    sgst_amount = Column(Float, default=0.0)
+    igst_amount = Column(Float, default=0.0)
+    place_of_supply = Column(String, default="")
     tds_percent = Column(Float, default=1.0)
     tds_amount = Column(Float, default=0.0)
     net_payable = Column(Float, default=0.0)
@@ -2229,6 +2243,10 @@ class DBSubBill(Base):
     deduction_notes = Column(String, default="")
     gst_percent = Column(Float, default=0.0)
     gst_amount = Column(Float, default=0.0)           # the gang charges us
+    cgst_amount = Column(Float, default=0.0)
+    sgst_amount = Column(Float, default=0.0)
+    igst_amount = Column(Float, default=0.0)
+    place_of_supply = Column(String, default="")
     tds_percent = Column(Float, default=0.0)
     tds_amount = Column(Float, default=0.0)           # we withhold and remit
     net_payable = Column(Float, default=0.0)          # what actually leaves the bank
@@ -2359,3 +2377,33 @@ class DBRateAnalysis(Base):
     wastage_percent = Column(Float, default=0.0)
     amount_per_unit = Column(Float, default=0.0)
     display_order = Column(Integer, default=0)
+
+
+class DBStockBalance(Base):
+    """One row per item: what is in the store right now.
+
+    The ledger is the truth and this is its running total, kept up to date by
+    the one function that writes movements. Reading the stock screen used to
+    mean replaying the whole year's ledger in Python to arrive at today's
+    balance - fine at a hundred movements, a second at ten thousand, and
+    every dashboard load did it. A perpetual balance is what every stock
+    system keeps for exactly this reason. If it is ever doubted, it can be
+    rebuilt from the ledger in one call, and the two must agree.
+    """
+    __tablename__ = "stock_balances"
+    __table_args__ = (
+        UniqueConstraint('client_id', 'item_code', name='uq_stock_balance_item'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    item_code = Column(String, nullable=False, index=True)
+    item_name = Column(String, default="")
+    uom = Column(String, default="")
+    on_hand = Column(Float, default=0.0)
+    rate = Column(Float, default=0.0)            # weighted average of what is held
+    value = Column(Float, default=0.0)
+    received = Column(Float, default=0.0)        # lifetime in
+    issued = Column(Float, default=0.0)          # lifetime out
+    movements = Column(Integer, default=0)
+    updated_at = Column(String, default="")
