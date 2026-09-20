@@ -17393,7 +17393,11 @@ def recost_order(db, order):
     order.gross_amount = gross
     order.gst_amount = money(gross * (order.gst_rate or 0) / 100.0)
     order.tds_amount = money(gross * (order.tds_rate or 0) / 100.0)
-    order.net_order_value = money(gross + order.gst_amount - order.tds_amount)
+    # Labour cess comes off the same way TDS does: withheld from the bill and
+    # remitted on the contractor's behalf, never money they receive.
+    order.labour_cess_amount = money(gross * (order.labour_cess_percent or 0) / 100.0)
+    order.net_order_value = money(gross + order.gst_amount - order.tds_amount
+                                  - order.labour_cess_amount)
     order.retention_amount = money(gross * (order.retention_percent or 0) / 100.0)
     order.mobilization_advance_amount = money(
         gross * (order.mobilization_advance_percent or 0) / 100.0)
@@ -17461,7 +17465,81 @@ def wo_item_dict(i):
             "quantity": money(i.quantity), "unit_rate": unit_rate(i.unit_rate),
             "total_amount": money(i.total_amount), "budget_id": i.budget_id,
             "cost_centre": i.cost_centre or "",
-            "display_order": i.display_order or 0}
+            "display_order": i.display_order or 0,
+            "is_header": bool(i.is_header),
+            "tolerance_percent": i.tolerance_percent or 0,
+            "max_quantity": item_ceiling(i)}
+
+
+def item_ceiling(item):
+    """The most that may be measured against a line: the ordered quantity
+    plus its tolerance. Past this the order is amended, not the book."""
+    return money((item.quantity or 0) * (1.0 + (item.tolerance_percent or 0) / 100.0))
+
+
+def contractor_state(db, contractor_id):
+    """The state the gang is registered in, read off their GSTIN. It is their
+    supply, so it is their state against the site's that decides the split."""
+    con = db.query(models.DBContractor).filter(
+        models.DBContractor.id == contractor_id).first() if contractor_id else None
+    return state_from_gstin(con.gst_number) if con else ""
+
+
+def wo_billing_schedule(db, order):
+    """The order's money as the schedule of heads a bill will be built on.
+
+    One row per head, in the order they are applied, so what the contractor
+    is shown on the order is the same table that appears on every RA bill
+    against it. The GST split is decided here from the contractor's state and
+    the site's, and shown as the two halves or the one whole it will be.
+    """
+    gross = money(order.gross_amount)
+    supply = supply_state_for_job(db, order.job_id)
+    origin = contractor_state(db, order.contractor_id) or our_state(db, order.client_id)
+    gst = split_gst(gross, order.gst_rate or 0, origin, supply)
+    rows = [{"head": "Basic value of work", "rate": None, "amount": gross, "kind": "base"}]
+    if gst["intra_state"]:
+        half = money((order.gst_rate or 0) / 2.0)
+        rows.append({"head": "CGST", "rate": half, "amount": gst["cgst"], "kind": "add"})
+        rows.append({"head": "SGST", "rate": half, "amount": gst["sgst"], "kind": "add"})
+    else:
+        rows.append({"head": "IGST", "rate": order.gst_rate or 0, "amount": gst["igst"],
+                     "kind": "add"})
+    rows.append({"head": "Gross", "rate": None,
+                 "amount": money(gross + gst["total"]), "kind": "total"})
+    if order.mobilization_advance_percent:
+        rows.append({"head": "Mobilization advance", "rate": order.mobilization_advance_percent,
+                     "amount": money(order.mobilization_advance_amount), "kind": "info",
+                     "note": "paid up front, recovered at %s%% of each bill"
+                             % (order.advance_recovery_percent or 0)})
+    if order.retention_percent:
+        rows.append({"head": "Retention", "rate": order.retention_percent,
+                     "amount": money(order.retention_amount), "kind": "hold",
+                     "note": "withheld from each bill, released after the defect period"})
+    rows.append({"head": "TDS on contractors (194C)", "rate": order.tds_rate or 0,
+                 "amount": money(order.tds_amount), "kind": "less"})
+    if order.labour_cess_percent:
+        rows.append({"head": "Labour welfare cess (BOCW)", "rate": order.labour_cess_percent,
+                     "amount": money(order.labour_cess_amount), "kind": "less"})
+    rows.append({"head": "Net order value payable", "rate": None,
+                 "amount": money(order.net_order_value), "kind": "net"})
+    return {"rows": rows, "intra_state": gst["intra_state"],
+            "place_of_supply": supply, "contractor_state": origin}
+
+
+def wo_pending_with(db, client_id):
+    """Who an order awaiting approval is waiting on - named, so the person
+    who raised it knows whose desk to walk to."""
+    roles = [code for code, granted in ROLE_PERMISSIONS.items()
+             if "subcontracts.approve" in granted]
+    names = []
+    for emp in db.query(models.DBEmployee).filter(
+            models.DBEmployee.client_id == client_id,
+            models.DBEmployee.permission_role.in_(roles),
+            models.DBEmployee.status == "active").order_by(models.DBEmployee.id).all():
+        names.append(("%s %s" % (emp.first_name or "", emp.last_name or "")).strip()
+                     or emp.email or "")
+    return names
 
 
 def wo_dict(db, order, detail=False):
@@ -17495,6 +17573,11 @@ def wo_dict(db, order, detail=False):
         "mobilization_advance_percent": order.mobilization_advance_percent or 0,
         "mobilization_advance_amount": money(order.mobilization_advance_amount),
         "advance_recovery_percent": order.advance_recovery_percent or 0,
+        "labour_cess_percent": order.labour_cess_percent or 0,
+        "labour_cess_amount": money(order.labour_cess_amount),
+        "billing_cycle": order.billing_cycle or "",
+        "payment_days": order.payment_days or 0,
+        "copied_from_id": order.copied_from_id,
         "rejection_reason": order.rejection_reason or "",
         "approved_at": order.approved_at or "", "executed_at": order.executed_at or "",
         "created_at": order.created_at or "",
@@ -17525,6 +17608,13 @@ def wo_dict(db, order, detail=False):
         # What this order does to the project's allocations. Reported on the
         # order rather than fetched separately, so the figure an approver is
         # looking at is the one the approval will actually be checked against.
+        row["billing_schedule"] = wo_billing_schedule(db, order)
+        row["pending_with"] = (wo_pending_with(db, order.client_id)
+                               if order.status == "PROVISIONAL" else [])
+        if order.copied_from_id:
+            src = db.query(models.DBSubcontractOrder.wo_number).filter(
+                models.DBSubcontractOrder.id == order.copied_from_id).first()
+            row["copied_from"] = src[0] if src else ""
         row["budgets"] = (wo_budget_rows(db, order.client_id, order.job_id, order)
                           if order.job_id else [])
         row["budget_warnings"] = [
@@ -17655,6 +17745,21 @@ def amount_in_words(value):
     return out + " Only"
 
 
+def wo_payment_terms_text(order):
+    """The payment clause, written from the two fields rather than typed."""
+    parts = []
+    if order.billing_cycle:
+        parts.append("Running Account bills may be raised %s"
+                     % {"Monthly": "monthly", "Fortnightly": "fortnightly",
+                        "On milestone": "on completion of each milestone",
+                        "On completion": "on completion of the work"}.get(
+                            order.billing_cycle, order.billing_cycle.lower()))
+    if order.payment_days:
+        parts.append("payment shall be released within %d days of certification"
+                     % order.payment_days)
+    return (", and ".join(parts) + ".") if parts else ""
+
+
 def wo_document_payload(db, client, order):
     """Everything the printable order needs, in the order it is printed.
 
@@ -17673,6 +17778,7 @@ def wo_document_payload(db, client, order):
     doc["printed_at"] = datetime.now().strftime("%d/%m/%Y   %H:%M")
     doc["financial_year"] = financial_year_label(order.commencement_date)
     doc["amount_in_words"] = amount_in_words(order.net_order_value)
+    doc["payment_terms"] = wo_payment_terms_text(order)
     doc["watermark"] = ("PROVISIONAL - NOT VALID FOR EXECUTION"
                         if order.status == "PROVISIONAL" else
                         "DRAFT - NOT ISSUED" if order.status == "DRAFT" else
@@ -18246,6 +18352,12 @@ class WorkOrderHeadIn(BaseModel):
     retention_percent: Optional[float] = 0
     mobilization_advance_percent: Optional[float] = 0
     advance_recovery_percent: Optional[float] = 0
+    labour_cess_percent: Optional[float] = 0
+    billing_cycle: Optional[str] = ""
+    payment_days: Optional[int] = 0
+
+
+WO_BILLING_CYCLES = ("", "Monthly", "Fortnightly", "On milestone", "On completion")
 
 
 class BoqLineIn(BaseModel):
@@ -18258,6 +18370,8 @@ class BoqLineIn(BaseModel):
     unit_rate: float = 0
     budget_id: Optional[int] = None
     cost_centre: Optional[str] = ""
+    is_header: Optional[bool] = False
+    tolerance_percent: Optional[float] = 0
 
 
 class BoqIn(BaseModel):
@@ -18313,15 +18427,53 @@ def wo_vocabulary(request: Request, db: Session = Depends(get_db)):
     }
 
 
+def wo_copy_lines(db, source, target):
+    """Every schedule line and clause of one order onto another, as they are."""
+    for i in db.query(models.DBSubcontractItem).filter(
+            models.DBSubcontractItem.order_id == source.id).order_by(
+                models.DBSubcontractItem.display_order, models.DBSubcontractItem.id).all():
+        db.add(models.DBSubcontractItem(
+            order_id=target.id, activity_no=i.activity_no, item_code=i.item_code,
+            item_description=i.item_description, technical_spec=i.technical_spec,
+            uom=i.uom, quantity=i.quantity,
+            unit_rate=i.unit_rate, total_amount=i.total_amount,
+            budget_id=i.budget_id, cost_centre=i.cost_centre,
+            display_order=i.display_order, is_header=bool(i.is_header),
+            tolerance_percent=i.tolerance_percent or 0))
+    for t in db.query(models.DBSubcontractTerm).filter(
+            models.DBSubcontractTerm.order_id == source.id).all():
+        db.add(models.DBSubcontractTerm(
+            order_id=target.id, clause_category=t.clause_category,
+            clause_text=t.clause_text, display_order=t.display_order))
+
+
+def wo_matches(row, q):
+    """The register's search: number, contractor, project, subject, type."""
+    needle = (q or "").strip().lower()
+    if not needle:
+        return True
+    hay = " ".join([row["wo_number"], row["contractor"], row["project"], row["subject"],
+                    row["work_type"], row["department"], row["status"]]).lower()
+    return needle in hay
+
+
 @app.get("/api/wo/orders")
-def wo_list_orders(request: Request, status: str = "", db: Session = Depends(get_db)):
+def wo_list_orders(request: Request, status: str = "", q: str = "",
+                   contractor_id: int = 0, job_id: int = 0,
+                   db: Session = Depends(get_db)):
+    """The register. Filtered the way it is searched - by who, where and
+    what - because three hundred rows is not a list anybody reads."""
     client = require_erp_read(request, db)
     query = db.query(models.DBSubcontractOrder).filter(
         models.DBSubcontractOrder.client_id == client.id)
     if status:
         query = query.filter(models.DBSubcontractOrder.status == status.upper())
+    if contractor_id:
+        query = query.filter(models.DBSubcontractOrder.contractor_id == contractor_id)
+    if job_id:
+        query = query.filter(models.DBSubcontractOrder.job_id == job_id)
     rows = query.order_by(models.DBSubcontractOrder.id.desc()).limit(300).all()
-    orders = [wo_dict(db, o) for o in rows]
+    orders = [d for d in (wo_dict(db, o) for o in rows) if wo_matches(d, q)]
     return {
         "orders": orders,
         "summary": {
@@ -18362,6 +18514,9 @@ def wo_create_order(body: WorkOrderHeadIn, request: Request,
         retention_percent=body.retention_percent or 0,
         mobilization_advance_percent=body.mobilization_advance_percent or 0,
         advance_recovery_percent=body.advance_recovery_percent or 0,
+        labour_cess_percent=wo_percent(body.labour_cess_percent, "labour cess"),
+        billing_cycle=wo_billing_cycle(body.billing_cycle),
+        payment_days=max(0, int(body.payment_days or 0)),
         submitted_by=actor_id)
     db.add(order)
     db.flush()
@@ -18375,10 +18530,119 @@ def wo_create_order(body: WorkOrderHeadIn, request: Request,
             "message": order.wo_number + " opened as a draft."}
 
 
+@app.get("/api/wo/orders.xlsx")
+def wo_register_xlsx(request: Request, status: str = "", q: str = "",
+                     contractor_id: int = 0, job_id: int = 0,
+                     db: Session = Depends(get_db)):
+    """The register as the workbook it is reconciled in."""
+    client = require_erp_read(request, db)
+    data = wo_list_orders(request, status, q, contractor_id, job_id, db)
+    rows = [(o["wo_number"], o["status"], o["contractor"], o["project"],
+             o["department"], o["work_type"], o["subject"],
+             o["commencement_date"], o["completion_date"], o["item_count"],
+             o["gross_amount"], o["gst_amount"], o["tds_amount"],
+             o["labour_cess_amount"], o["net_order_value"],
+             o["retention_percent"], o["mobilization_advance_percent"],
+             o["approved_at"][:10]) for o in data["orders"]]
+    s = data["summary"]
+    return sheet_response(
+        ("WO number", "Status", "Contractor", "Project", "Department", "Work type",
+         "Subject", "Commencement", "Completion", "Items", "Gross", "GST", "TDS",
+         "Labour cess", "Net value", "Retention %", "Mob. advance %", "Approved on"),
+        rows, "work_order_register.xlsx",
+        preamble=[("WORK ORDER REGISTER", client.company_name or ""),
+                  ("Orders", s["total"], "Committed value", s["value"]), ()])
+
+
 @app.get("/api/wo/orders/{order_id}")
 def wo_get_order(order_id: int, request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     return {"order": wo_dict(db, wo_or_404(db, client.id, order_id), detail=True)}
+
+
+@app.post("/api/wo/orders/{order_id}/copy")
+def wo_copy_order(order_id: int, request: Request, db: Session = Depends(get_db)):
+    """A new draft that starts as this order did.
+
+    The same trade on the next site is the same schedule with different
+    quantities and mostly the same clauses. What is not copied is anything
+    that was decided about this order in particular: its number, its dates,
+    its approval and its history.
+    """
+    client, actor_id, actor_name = wo_actor(request, db)
+    source = wo_or_404(db, client.id, order_id)
+    order = models.DBSubcontractOrder(
+        client_id=client.id, status="DRAFT",
+        wo_number=next_wo_number(db, client.id, source.department),
+        business_unit_id=source.business_unit_id, contractor_id=source.contractor_id,
+        job_id=source.job_id, department=source.department, work_type=source.work_type,
+        subject=source.subject, scope_of_work=source.scope_of_work,
+        duration_months=source.duration_months,
+        defect_liability_months=source.defect_liability_months,
+        bank_guarantee_applicable=source.bank_guarantee_applicable,
+        bank_guarantee_amount=source.bank_guarantee_amount,
+        gst_rate=source.gst_rate, tds_rate=source.tds_rate,
+        retention_percent=source.retention_percent,
+        mobilization_advance_percent=source.mobilization_advance_percent,
+        advance_recovery_percent=source.advance_recovery_percent,
+        labour_cess_percent=source.labour_cess_percent,
+        billing_cycle=source.billing_cycle, payment_days=source.payment_days,
+        copied_from_id=source.id, submitted_by=actor_id)
+    db.add(order)
+    db.flush()
+    wo_copy_lines(db, source, order)
+    db.flush()
+    recost_order(db, order)
+    record_wo_action(db, client, order, actor_id, actor_name, "COPY", "",
+                     "Copied from " + (source.wo_number or ""))
+    log_audit(db, client.id, "subcontract_copied", "subcontract_order", order.id,
+              order.wo_number, "from " + (source.wo_number or ""), request)
+    db.commit()
+    db.refresh(order)
+    return {"order": wo_dict(db, order, detail=True),
+            "message": "%s opened as a copy of %s. Set its dates before it goes out."
+                       % (order.wo_number, source.wo_number)}
+
+
+@app.get("/api/wo/rates")
+def wo_last_rates(request: Request, item_code: str = "", description: str = "",
+                  db: Session = Depends(get_db)):
+    """What this line was last ordered at, and from whom.
+
+    Farvision's "copy rate": the rate on the previous order for the same
+    code is the one figure a billing engineer wants beside the cell while
+    pricing a new one. Drafts are left out - a rate nobody signed is not a
+    rate anybody paid.
+    """
+    client = require_erp_read(request, db)
+    code = (item_code or "").strip().lower()
+    words = (description or "").strip().lower()
+    if not code and not words:
+        return {"rates": []}
+    rows = db.query(models.DBSubcontractItem, models.DBSubcontractOrder).join(
+        models.DBSubcontractOrder,
+        models.DBSubcontractOrder.id == models.DBSubcontractItem.order_id).filter(
+            models.DBSubcontractOrder.client_id == client.id,
+            models.DBSubcontractOrder.status.in_(("APPROVED", "EXECUTED", "AMENDED")),
+            models.DBSubcontractItem.is_header.is_(False)).order_by(
+                models.DBSubcontractOrder.id.desc()).limit(2000).all()
+    out = []
+    for item, order in rows:
+        if code and (item.item_code or "").strip().lower() != code:
+            continue
+        if not code and words not in (item.item_description or "").lower():
+            continue
+        con = db.query(models.DBContractor).filter(
+            models.DBContractor.id == order.contractor_id).first()
+        out.append({"order_id": order.id, "wo_number": order.wo_number,
+                    "contractor": con.company_name if con else "",
+                    "on": (order.approved_at or order.created_at or "")[:10],
+                    "item_code": item.item_code or "", "uom": item.uom or "",
+                    "description": (item.item_description or "").split("\n")[0],
+                    "unit_rate": unit_rate(item.unit_rate)})
+        if len(out) >= 8:
+            break
+    return {"rates": out}
 
 
 @app.put("/api/wo/orders/{order_id}")
@@ -18390,6 +18654,7 @@ def wo_update_order(order_id: int, body: WorkOrderHeadIn, request: Request,
         raise HTTPException(
             409, order.wo_number + " is " + order.status.lower() +
                  " and cannot be edited. Amend it instead.")
+    before = wo_snapshot(order)
 
     for field in ("business_unit_id", "contractor_id", "job_id"):
         setattr(order, field, getattr(body, field))
@@ -18410,6 +18675,9 @@ def wo_update_order(order_id: int, body: WorkOrderHeadIn, request: Request,
     order.retention_percent = body.retention_percent or 0
     order.mobilization_advance_percent = body.mobilization_advance_percent or 0
     order.advance_recovery_percent = body.advance_recovery_percent or 0
+    order.labour_cess_percent = wo_percent(body.labour_cess_percent, "labour cess")
+    order.billing_cycle = wo_billing_cycle(body.billing_cycle)
+    order.payment_days = max(0, int(body.payment_days or 0))
 
     # The number carries the discipline, so changing the discipline on a draft
     # has to reissue it - otherwise it is filed under the wrong one for ever.
@@ -18419,9 +18687,74 @@ def wo_update_order(order_id: int, body: WorkOrderHeadIn, request: Request,
         order.wo_number = next_wo_number(db, client.id, dept, order.commencement_date)
 
     recost_order(db, order)
+    changes = wo_changes(before, order)
+    if changes:
+        record_wo_action(db, client, order, actor_id, actor_name, "EDIT",
+                         order.status, "; ".join(changes))
     db.commit()
     db.refresh(order)
     return {"order": wo_dict(db, order, detail=True), "message": "Saved."}
+
+
+def wo_percent(value, what):
+    try:
+        pct = float(value or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "The %s is a percentage." % what)
+    if pct < 0 or pct > 100:
+        raise HTTPException(400, "The %s is a percentage between 0 and 100." % what)
+    return pct
+
+
+def wo_billing_cycle(value):
+    cycle = (value or "").strip()
+    if cycle not in WO_BILLING_CYCLES:
+        raise HTTPException(400, "The billing cycle is one of: " +
+                            ", ".join(c for c in WO_BILLING_CYCLES if c) + ".")
+    return cycle
+
+
+# The head fields worth recording a change to. Named in the words the change
+# history shows, because "completion_date" on a history line reads as a
+# database and "Completion" reads as a decision.
+WO_TRACKED = (
+    ("contractor_id", "Contractor"), ("job_id", "Project"), ("work_type", "Work type"),
+    ("subject", "Subject"), ("commencement_date", "Commencement"),
+    ("completion_date", "Completion"), ("defect_liability_months", "Defect liability"),
+    ("gst_rate", "GST %"), ("tds_rate", "TDS %"), ("retention_percent", "Retention %"),
+    ("mobilization_advance_percent", "Mobilization advance %"),
+    ("advance_recovery_percent", "Advance recovery %"),
+    ("labour_cess_percent", "Labour cess %"), ("billing_cycle", "Billing cycle"),
+    ("payment_days", "Payment days"), ("bank_guarantee_applicable", "Bank guarantee"),
+    ("bank_guarantee_amount", "BG amount"), ("department", "Department"),
+)
+
+
+def wo_snapshot(order):
+    return {field: getattr(order, field) for field, _ in WO_TRACKED}
+
+
+def wo_shown(value):
+    if value is True:
+        return "yes"
+    if value is False:
+        return "no"
+    if isinstance(value, float):
+        return "%g" % value
+    return str(value) if value not in (None, "") else "(blank)"
+
+
+def wo_changes(before, order):
+    """What moved between two saves, in words. Recorded into the history so
+    the question "who changed the completion date, and when" has an answer."""
+    out = []
+    for field, label in WO_TRACKED:
+        was, now = before.get(field), getattr(order, field)
+        blank = (None, "", 0, 0.0, False)
+        if was == now or (was in blank and now in blank):
+            continue
+        out.append("%s: %s -> %s" % (label, wo_shown(was), wo_shown(now)))
+    return out
 
 
 def sheet_number(value):
@@ -18565,17 +18898,22 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
         description = (line.item_description or "").strip()
         if not description:
             continue
-        qty, rate = money(line.quantity or 0), unit_rate(line.unit_rate or 0)
+        header = bool(line.is_header)
+        # A heading is a heading: it prices nothing and is never measured.
+        qty = 0.0 if header else money(line.quantity or 0)
+        rate = 0.0 if header else unit_rate(line.unit_rate or 0)
         if qty < 0 or rate < 0:
             raise HTTPException(400, "Line %d: quantity and rate cannot be negative"
                                      % (index + 1))
+        tolerance = 0.0 if header else wo_percent(line.tolerance_percent,
+                                                  "tolerance on line %d" % (index + 1))
         db.add(models.DBSubcontractItem(
             order_id=order.id, activity_no=(line.activity_no or "").strip(),
             item_code=(line.item_code or "").strip(), item_description=description,
             technical_spec=(line.technical_spec or "").strip(),
-            uom=(line.uom or "").strip(), quantity=qty, unit_rate=rate,
-            total_amount=money(qty * rate),
-            budget_id=wo_valid_budget_id(db, client.id, order, line.budget_id),
+            uom="" if header else (line.uom or "").strip(), quantity=qty, unit_rate=rate,
+            total_amount=money(qty * rate), is_header=header, tolerance_percent=tolerance,
+            budget_id=None if header else wo_valid_budget_id(db, client.id, order, line.budget_id),
             cost_centre=(line.cost_centre or "").strip(), display_order=index))
         kept += 1
 
@@ -18857,25 +19195,12 @@ def wo_amend(order_id: int, body: WoActionIn, request: Request,
         retention_percent=order.retention_percent,
         mobilization_advance_percent=order.mobilization_advance_percent,
         advance_recovery_percent=order.advance_recovery_percent,
+        labour_cess_percent=order.labour_cess_percent,
+        billing_cycle=order.billing_cycle, payment_days=order.payment_days,
         submitted_by=actor_id)
     db.add(revision)
     db.flush()
-
-    for i in db.query(models.DBSubcontractItem).filter(
-            models.DBSubcontractItem.order_id == order.id).all():
-        db.add(models.DBSubcontractItem(
-            order_id=revision.id, activity_no=i.activity_no, item_code=i.item_code,
-            item_description=i.item_description, technical_spec=i.technical_spec,
-            uom=i.uom, quantity=i.quantity,
-            unit_rate=i.unit_rate, total_amount=i.total_amount,
-            budget_id=i.budget_id, cost_centre=i.cost_centre,
-            display_order=i.display_order))
-    for t in db.query(models.DBSubcontractTerm).filter(
-            models.DBSubcontractTerm.order_id == order.id).all():
-        db.add(models.DBSubcontractTerm(
-            order_id=revision.id, clause_category=t.clause_category,
-            clause_text=t.clause_text, display_order=t.display_order))
-
+    wo_copy_lines(db, order, revision)
     db.flush()
     recost_order(db, revision)
     wo_apply(db, client, order, "AMEND", actor_id, actor_name,
@@ -23374,12 +23699,17 @@ def recost_sub_bill(db, bill):
     after = money(this_bill - bill.retention_amount -
                   (bill.advance_recovery or 0) - (bill.other_deductions or 0))
     supply = supply_state_for_job(db, bill.job_id)
-    gst = split_gst(after, bill.gst_percent or 0, our_state(db, bill.client_id), supply)
+    # It is the gang's supply, so it is their registration against the site
+    # that decides the split - ours only when they have none on file.
+    origin = contractor_state(db, bill.contractor_id) or our_state(db, bill.client_id)
+    gst = split_gst(after, bill.gst_percent or 0, origin, supply)
     bill.gst_amount = gst["total"]
     bill.cgst_amount, bill.sgst_amount, bill.igst_amount = gst["cgst"], gst["sgst"], gst["igst"]
     bill.place_of_supply = supply
     bill.tds_amount = money(this_bill * (bill.tds_percent or 0) / 100.0)
-    bill.net_payable = money(after + bill.gst_amount - bill.tds_amount)
+    bill.labour_cess_amount = money(this_bill * (bill.labour_cess_percent or 0) / 100.0)
+    bill.net_payable = money(after + bill.gst_amount - bill.tds_amount
+                             - bill.labour_cess_amount)
     bill.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return bill
 
@@ -23410,6 +23740,8 @@ def sub_bill_dict(db, bill, detail=False):
         "cgst_amount": money(bill.cgst_amount), "sgst_amount": money(bill.sgst_amount),
         "igst_amount": money(bill.igst_amount), "place_of_supply": bill.place_of_supply or "",
         "tds_percent": bill.tds_percent or 0, "tds_amount": money(bill.tds_amount),
+        "labour_cess_percent": bill.labour_cess_percent or 0,
+        "labour_cess_amount": money(bill.labour_cess_amount),
         "net_payable": money(bill.net_payable),
         "certified_by_name": bill.certified_by_name or "",
         "certified_at": bill.certified_at or "", "paid_at": bill.paid_at or "",
@@ -23452,6 +23784,11 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
     for it in db.query(models.DBSubcontractItem).filter(
             models.DBSubcontractItem.order_id == order.id).order_by(
                 models.DBSubcontractItem.display_order, models.DBSubcontractItem.id).all():
+        if it.is_header:
+            lines.append({"item_id": it.id, "activity_no": it.activity_no or "",
+                          "description": (it.item_description or "").split("\n")[0],
+                          "is_header": True})
+            continue
         done = money(measured.get(it.id, 0.0))
         claimed = money(billed.get(it.id, 0.0))
         ordered = money(it.quantity)
@@ -23459,6 +23796,8 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
             "item_id": it.id, "activity_no": it.activity_no or "",
             "description": (it.item_description or "").split("\n")[0],
             "uom": it.uom or "", "ordered_qty": ordered, "rate": unit_rate(it.unit_rate),
+            "tolerance_percent": it.tolerance_percent or 0,
+            "max_quantity": item_ceiling(it),
             "measured_to_date": done, "billed_to_date": claimed,
             "unbilled": money(done - claimed),
             "balance_to_measure": money(ordered - done),
@@ -23477,9 +23816,12 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
         "order": wo_dict(db, order), "lines": lines, "entries": entries,
         "summary": {
             "ordered_value": money(order.gross_amount),
-            "measured_value": money(sum(l["measured_to_date"] * l["rate"] for l in lines)),
-            "unbilled_value": money(sum(l["unbilled"] * l["rate"] for l in lines)),
-            "lines_over_measured": len([l for l in lines if l["over_measured"] > 0]),
+            "measured_value": money(sum(l["measured_to_date"] * l["rate"]
+                                        for l in lines if not l.get("is_header"))),
+            "unbilled_value": money(sum(l["unbilled"] * l["rate"]
+                                        for l in lines if not l.get("is_header"))),
+            "lines_over_measured": len([l for l in lines
+                                        if not l.get("is_header") and l["over_measured"] > 0]),
         },
     }
 
@@ -23497,8 +23839,26 @@ def record_sub_measurement(order_id: int, body: SubMeasurementIn, request: Reque
         models.DBSubcontractItem.order_id == order.id).first()
     if not item:
         raise HTTPException(404, "That item is not on this order")
+    if item.is_header:
+        raise HTTPException(400, "%s is a heading, not a measurable item."
+                                 % (item.activity_no or "That line"))
     if not body.quantity:
         raise HTTPException(400, "A measurement of nothing is not a measurement")
+    # The order plus its tolerance is the ceiling. Past it the order is amended
+    # and the extra measured against the amendment - the book does not quietly
+    # commit the business to more than anybody signed for. A correction
+    # (a negative entry) always goes in.
+    if body.quantity > 0:
+        done = money(sub_measured_to_date(db, order.id).get(item.id, 0.0))
+        ceiling = item_ceiling(item)
+        if money(done + body.quantity) > ceiling + 0.0001:
+            raise HTTPException(
+                409, "%s: %s already measured; %s more would make %s against %s "
+                     "ordered%s. Amend the order to measure beyond it."
+                     % (item.activity_no or "Item", done, money(body.quantity),
+                        money(done + body.quantity), money(item.quantity),
+                        " (+%g%% tolerance = %s)" % (item.tolerance_percent, ceiling)
+                        if item.tolerance_percent else ""))
     db.add(models.DBSubMeasurement(
         client_id=client.id, order_id=order.id, item_id=item.id,
         activity_no=item.activity_no or "", quantity=money(body.quantity),
@@ -23552,6 +23912,8 @@ def sub_claimable_lines(db, order, exclude_bill_id=None):
     for it in db.query(models.DBSubcontractItem).filter(
             models.DBSubcontractItem.order_id == order.id).order_by(
                 models.DBSubcontractItem.display_order, models.DBSubcontractItem.id).all():
+        if it.is_header:
+            continue
         done = money(measured.get(it.id, 0.0))
         prior = money(billed.get(it.id, 0.0))
         this = money(done - prior)
@@ -23643,7 +24005,8 @@ def create_sub_bill(body: SubBillIn, request: Request, db: Session = Depends(get
                                else default_recovery),
         other_deductions=money(body.other_deductions or 0),
         deduction_notes=(body.deduction_notes or "").strip(),
-        gst_percent=order.gst_rate or 0, tds_percent=order.tds_rate or 0)
+        gst_percent=order.gst_rate or 0, tds_percent=order.tds_rate or 0,
+        labour_cess_percent=order.labour_cess_percent or 0)
     db.add(bill)
     db.flush()
     draw_sub_bill_lines(db, bill, order)

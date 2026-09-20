@@ -423,17 +423,37 @@ def _money_summary(doc, st, width=178 * mm):
     the withholding bracketed. Netting them into one 'tax' line is how an
     order goes out committing the business to a number nobody meant.
     """
-    rows = [
-        ["Gross order value", inr(doc.get("gross_amount"))],
-        ["Add: GST @ %s%%" % _trim(doc.get("gst_rate")), inr(doc.get("gst_amount"))],
-        ["Less: TDS @ %s%% (withheld at source)" % _trim(doc.get("tds_rate")),
-         "(" + inr(doc.get("tds_amount")) + ")"],
-        ["Net order value payable", inr(doc.get("net_order_value"))],
-    ]
+    rows, emphasis = [], []
+    schedule = (doc.get("billing_schedule") or {}).get("rows") or []
+    if schedule:
+        for r in schedule:
+            kind = r.get("kind")
+            if kind == "hold":
+                continue          # retention is stated under the value, not in it
+            if kind == "info":
+                continue          # so is the advance
+            label = r["head"]
+            if r.get("rate") is not None:
+                label += " @ %s%%" % _trim(r["rate"])
+            if kind == "less":
+                label += " (withheld at source)"
+            value = inr(r.get("amount"))
+            rows.append([label, "(" + value + ")" if kind == "less" else value])
+            if kind in ("total", "net"):
+                emphasis.append(len(rows) - 1)
+    else:
+        rows = [
+            ["Gross order value", inr(doc.get("gross_amount"))],
+            ["Add: GST @ %s%%" % _trim(doc.get("gst_rate")), inr(doc.get("gst_amount"))],
+            ["Less: TDS @ %s%% (withheld at source)" % _trim(doc.get("tds_rate")),
+             "(" + inr(doc.get("tds_amount")) + ")"],
+            ["Net order value payable", inr(doc.get("net_order_value"))],
+        ]
+        emphasis = [3]
     data = [[Paragraph(_text(label), st["cell"]),
              Paragraph(_text(value), st["cell_right"])] for label, value in rows]
     table = Table(data, colWidths=[width - 42 * mm, 42 * mm])
-    table.setStyle(TableStyle([
+    style = [
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
@@ -441,11 +461,15 @@ def _money_summary(doc, st, width=178 * mm):
         ("RIGHTPADDING", (0, 0), (-1, -1), 7),
         ("LINEABOVE", (0, 0), (-1, 0), 0.6, colors.HexColor(EDGE)),
         ("LINEBELOW", (0, 0), (-1, -2), 0.4, colors.HexColor(EDGE)),
-        ("BACKGROUND", (0, 3), (-1, 3), colors.HexColor(BAND)),
-        ("LINEABOVE", (0, 3), (-1, 3), 0.9, colors.HexColor(INK)),
-        ("LINEBELOW", (0, 3), (-1, 3), 0.9, colors.HexColor(INK)),
-        ("FONTNAME", (0, 3), (-1, 3), "Helvetica-Bold"),
-    ]))
+    ]
+    for row in emphasis:
+        style += [
+            ("BACKGROUND", (0, row), (-1, row), colors.HexColor(BAND)),
+            ("LINEABOVE", (0, row), (-1, row), 0.9, colors.HexColor(INK)),
+            ("LINEBELOW", (0, row), (-1, row), 0.9, colors.HexColor(INK)),
+            ("FONTNAME", (0, row), (-1, row), "Helvetica-Bold"),
+        ]
+    table.setStyle(TableStyle(style))
     # Retention and the advance are stated under the value, not inside it.
     # They change when the money moves, not what it comes to, and a contractor
     # who reads 5% retention as 5% off the price prices the next job for it.
@@ -464,6 +488,8 @@ def _money_summary(doc, st, width=178 * mm):
                "Rs. " + inr(doc.get("mobilization_advance_amount")),
                ", recovered at %s%% of each Running Account bill" % _trim(recovery)
                if recovery else ""))
+    if (doc.get("payment_terms") or "").strip():
+        payment_notes.append(doc["payment_terms"])
 
     words = Table([[Paragraph(
         "<b>In words:</b> " + _text(doc.get("amount_in_words", "")), st["words"])]],
@@ -501,7 +527,15 @@ def _schedule(doc, st):
             "Qty", "Rate", "Amount"]
     data = [[Paragraph(_text(h), st["cell_head"]) for h in head]]
 
+    headings = []
     for index, item in enumerate(doc.get("items") or [], start=1):
+        if item.get("is_header"):
+            headings.append(len(data))
+            data.append([
+                Paragraph(_text(item.get("activity_no") or ""), st["cell"]),
+                Paragraph("<b>" + _text(item.get("item_description")) + "</b>", st["cell"]),
+                "", "", "", "", ""])
+            continue
         # The specification sits under the description in the same cell rather
         # than in a column of its own. It is read once, when the line is being
         # agreed; a column wide enough for it would take the width off the
@@ -510,13 +544,16 @@ def _schedule(doc, st):
         if (item.get("technical_spec") or "").strip():
             described += ('<br/><font size="7" color="#6b7280">'
                           + _lines(item["technical_spec"]) + "</font>")
+        quantity = inr(item.get("quantity"), 3).rstrip("0").rstrip(".") or "0"
+        if item.get("tolerance_percent"):
+            quantity += ('<br/><font size="6.5" color="#6b7280">+%s%% tol.</font>'
+                         % _trim(item["tolerance_percent"]))
         data.append([
             Paragraph(_text(item.get("activity_no") or index), st["cell"]),
             Paragraph(_text(item.get("item_code")), st["cell"]),
             Paragraph(described, st["cell"]),
             Paragraph(_text(item.get("uom")), st["cell"]),
-            Paragraph(inr(item.get("quantity"), 3).rstrip("0").rstrip(".") or "0",
-                      st["cell_right"]),
+            Paragraph(quantity, st["cell_right"]),
             Paragraph(_rate(item.get("unit_rate")), st["cell_right"]),
             Paragraph(inr(item.get("total_amount")), st["cell_right"]),
         ])
@@ -549,7 +586,10 @@ def _schedule(doc, st):
         ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor(BAND)),
         ("LINEABOVE", (0, -1), (-1, -1), 0.9, colors.HexColor(INK)),
         ("SPAN", (0, -1), (2, -1)),
-    ]))
+    ] + [cmd for row in headings for cmd in (
+        ("SPAN", (1, row), (-1, row)),
+        ("BACKGROUND", (0, row), (-1, row), colors.HexColor(BAND)),
+    )]))
     return table
 
 

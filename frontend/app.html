@@ -3765,11 +3765,24 @@
                         <div><h1>Subcontract Work Orders</h1><p class="subtitle">Work issued out to a subcontractor, priced, signed off and amended</p></div>
                         <div class="invoices-actions">
                             <button class="btn btn-primary" onclick="newSubcontract()">+ New work order</button>
+                            <a class="btn btn-outline" id="sc-export" href="/api/wo/orders.xlsx">Register (Excel)</a>
                             <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
                         </div>
                     </div>
                     <div class="stats-grid" id="sc-stats"></div>
                     <div class="widget" style="margin-top:20px;">
+                        <div style="display:flex;gap:10px;padding:12px 16px 0;flex-wrap:wrap;align-items:center;">
+                            <input class="form-control" id="sc-q" style="max-width:340px;" placeholder="Search by number, contractor, project, subject" oninput="scSearch()">
+                            <select class="form-control" id="sc-status" style="max-width:200px;" onchange="loadSubcontracts()">
+                                <option value="">Every status</option>
+                                <option value="DRAFT">Draft</option>
+                                <option value="PROVISIONAL">Awaiting approval</option>
+                                <option value="APPROVED">Approved</option>
+                                <option value="EXECUTED">Executed</option>
+                                <option value="AMENDED">Superseded</option>
+                                <option value="CANCELLED">Cancelled</option>
+                            </select>
+                        </div>
                         <div class="table-responsive">
                             <table class="data-table">
                                 <thead><tr><th>WO number</th><th>Contractor</th><th>Department</th><th class="text-right">Items</th><th class="text-right">Net value</th><th>Status</th><th></th></tr></thead>
@@ -4475,7 +4488,7 @@
     <script src="erp-preview.js?v=65"></script>
     <script src="contracts.js?v=65"></script>
     <script src="sheet-viewer.js?v=65"></script>
-    <script src="subcontracts.js?v=65"></script>
+    <script src="subcontracts.js?v=80"></script>
     <script src="costs.js?v=65"></script>
     <script src="measurement.js?v=79"></script>
     <script src="stock.js?v=79"></script>

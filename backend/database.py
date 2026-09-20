@@ -1449,6 +1449,18 @@ def ensure_columns():
                     ("sub_bills", "sgst_amount", "DOUBLE PRECISION DEFAULT 0"),
                     ("sub_bills", "igst_amount", "DOUBLE PRECISION DEFAULT 0"),
                     ("sub_bills", "place_of_supply", "TEXT DEFAULT ''"),
+                    # What the Farvision walkthrough's work order carries that
+                    # ours did not: a tolerance and heading rows on the
+                    # schedule, labour cess and payment terms on the head.
+                    ("subcontract_items", "is_header", "BOOLEAN DEFAULT FALSE"),
+                    ("subcontract_items", "tolerance_percent", "DOUBLE PRECISION DEFAULT 0"),
+                    ("subcontract_orders", "labour_cess_percent", "DOUBLE PRECISION DEFAULT 0"),
+                    ("subcontract_orders", "labour_cess_amount", "DOUBLE PRECISION DEFAULT 0"),
+                    ("subcontract_orders", "billing_cycle", "TEXT DEFAULT ''"),
+                    ("subcontract_orders", "payment_days", "INTEGER DEFAULT 0"),
+                    ("subcontract_orders", "copied_from_id", "INTEGER"),
+                    ("sub_bills", "labour_cess_percent", "DOUBLE PRECISION DEFAULT 0"),
+                    ("sub_bills", "labour_cess_amount", "DOUBLE PRECISION DEFAULT 0"),
                 ):
                     conn.execute(text(
                         f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
@@ -1595,6 +1607,16 @@ def migrate_sqlite():
                 add_col(t, "sgst_amount", "FLOAT DEFAULT 0")
                 add_col(t, "igst_amount", "FLOAT DEFAULT 0")
                 add_col(t, "place_of_supply", "TEXT DEFAULT ''")
+            # The subcontract order as the Farvision walkthrough builds it.
+            add_col("subcontract_items", "is_header", "BOOLEAN DEFAULT 0")
+            add_col("subcontract_items", "tolerance_percent", "FLOAT DEFAULT 0")
+            add_col("subcontract_orders", "labour_cess_percent", "FLOAT DEFAULT 0")
+            add_col("subcontract_orders", "labour_cess_amount", "FLOAT DEFAULT 0")
+            add_col("subcontract_orders", "billing_cycle", "TEXT DEFAULT ''")
+            add_col("subcontract_orders", "payment_days", "INTEGER DEFAULT 0")
+            add_col("subcontract_orders", "copied_from_id", "INTEGER")
+            add_col("sub_bills", "labour_cess_percent", "FLOAT DEFAULT 0")
+            add_col("sub_bills", "labour_cess_amount", "FLOAT DEFAULT 0")
 
             # Create approval_chains table
             conn.execute(text("""

@@ -50,6 +50,16 @@ and what earlier bills already claimed. Retention off the work, tax on the
 remainder, TDS off the whole claim. Draft → submitted → certified → paid, and
 the person who measured cannot be the one who certifies.
 
+**Subcontract work orders** — work issued out to a gang, as the letter that
+gets signed. A schedule with heading rows and a tolerance on each item (the
+book cannot be measured past order-plus-tolerance without an amendment), the
+billing terms laid out head by head (CGST/SGST or IGST by the contractor's
+state against the site's, mobilisation advance, retention, TDS, labour welfare
+cess), payment terms written into a clause, a copy-as-new, the last rate paid
+for a code offered beside the cell, and every edit to the head written into the
+history. Their measurement book and RA bills follow the client-side shape,
+with the retention held by us.
+
 **Purchase orders and goods receipt** — what was ordered against what arrived.
 Received and accepted are separate numbers, so material that turns up broken is
 recorded, returned and credited rather than quietly absorbed.

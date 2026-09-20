@@ -23,13 +23,23 @@ var WO_STEPS = ['General info', 'Schedule of work', 'Billing terms', 'Submission
 
 /* --- The list ------------------------------------------------------------ */
 
+function scQuery() {
+    var val = function (id) { var e = document.getElementById(id); return e ? e.value : ''; };
+    var q = [];
+    if (val('sc-q')) q.push('q=' + encodeURIComponent(val('sc-q')));
+    if (val('sc-status')) q.push('status=' + encodeURIComponent(val('sc-status')));
+    return q.length ? '?' + q.join('&') : '';
+}
+
 async function loadSubcontracts() {
     var body = document.getElementById('sc-body');
     if (!body) return;
     body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text-secondary);">Loading work orders...</td></tr>';
+    var link = document.getElementById('sc-export');
+    if (link) link.href = '/api/wo/orders.xlsx' + scQuery();
     var data;
     try {
-        data = await (await fetch('/api/wo/orders', { credentials: 'include' })).json();
+        data = await (await fetch('/api/wo/orders' + scQuery(), { credentials: 'include' })).json();
     } catch (e) {
         body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text-secondary);">Could not load work orders.</td></tr>';
         return;
@@ -56,13 +66,35 @@ async function loadSubcontracts() {
             '<td class="text-right" style="white-space:nowrap;">' +
                 '<button class="btn btn-sm btn-outline" onclick="woPreview(' + o.id + ')" ' +
                     'title="The printed document">Document</button> ' +
+                '<button class="btn btn-sm btn-outline" onclick="woCopy(' + o.id + ')" ' +
+                    'title="A new draft that starts as this one did">Copy</button> ' +
                 '<button class="btn btn-sm btn-outline" onclick="openSubcontract(' + o.id + ')">' +
                 (o.editable ? 'Continue' : 'Open') + '</button></td>' +
             '</tr>';
     }).join('') : '<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text-secondary);">' +
-        'No work orders yet. Raise the first one to issue work to a subcontractor.</td></tr>';
+        (scQuery() ? 'Nothing matches. Clear the search to see every order.'
+                   : 'No work orders yet. Raise the first one to issue work to a subcontractor.') +
+        '</td></tr>';
 }
 window.loadSubcontracts = loadSubcontracts;
+
+var scSearchTimer = null;
+function scSearch() {
+    clearTimeout(scSearchTimer);
+    scSearchTimer = setTimeout(loadSubcontracts, 250);
+}
+window.scSearch = scSearch;
+
+async function woCopy(id) {
+    /* The same trade on the next site starts as a copy far more often than it
+       starts blank. The copy is a draft with a new number and no dates. */
+    var res = await fetch('/api/wo/orders/' + id + '/copy', { method: 'POST', credentials: 'include' });
+    var out = await res.json();
+    if (!res.ok) { showToast(out.detail || 'Could not copy it', 'error'); return; }
+    showToast(out.message, 'success');
+    openSubcontract(out.order.id);
+}
+window.woCopy = woCopy;
 
 
 /* --- Opening the wizard -------------------------------------------------- */
@@ -458,6 +490,19 @@ function stepDetails() {
         field('BG valid until', '<input type="date" id="wo-bgval" class="form-control" value="' +
             esc(o.bank_guarantee_validity || '') + '"' + dis + '>') +
         '</div>' +
+        // The two payment terms every contractor asks about before signing.
+        // Written into the letter as a clause, from these rather than typed.
+        '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0 14px;">' +
+        field('Bills raised', '<select id="wo-cycle" class="form-control"' + dis + '>' +
+            options(['Monthly', 'Fortnightly', 'On milestone', 'On completion'],
+                    o.billing_cycle || '') +
+            '</select>', 'How often a Running Account bill may be raised.') +
+        field('Paid within (days)', '<input type="number" min="0" id="wo-paydays" class="form-control" value="' +
+            (o.payment_days || '') + '"' + dis + ' placeholder="30">',
+            'Of certification. Prints as the payment clause.') +
+        (o.copied_from ? field('Copied from', '<div style="padding:8px 0;font-family:monospace;">' +
+            esc(o.copied_from) + '</div>', 'Dates were left blank on purpose.') : '') +
+        '</div>' +
 
         '<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border-color);">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;' +
@@ -515,6 +560,9 @@ function detailsPayload() {
         bank_guarantee_applicable: val('wo-bg') === 'yes',
         bank_guarantee_amount: parseFloat(val('wo-bgamt')) || 0,
         bank_guarantee_validity: val('wo-bgval'),
+        billing_cycle: document.getElementById('wo-cycle') ? val('wo-cycle') : kept('billing_cycle', ''),
+        payment_days: document.getElementById('wo-paydays')
+            ? (parseInt(val('wo-paydays')) || 0) : kept('payment_days', 0),
         // The commercial terms live on step three, but the whole head is saved
         // in one call - so they are carried through here rather than left out,
         // which would send the defaults and quietly undo what was set there.
@@ -523,6 +571,7 @@ function detailsPayload() {
         retention_percent: kept('retention_percent', 0),
         mobilization_advance_percent: kept('mobilization_advance_percent', 0),
         advance_recovery_percent: kept('advance_recovery_percent', 0),
+        labour_cess_percent: kept('labour_cess_percent', 0),
     };
 }
 
@@ -665,11 +714,32 @@ function stepBoq() {
     var budgets = ((WO.order || {}).budgets || []);
     var rows = WO.boq.map(function (l, i) {
         var dis = locked ? ' disabled' : '';
+        // A heading row: "ELECTRICAL WORK", "SUB STATION EQUIPMENT". It prices
+        // nothing and is never measured; it makes a long schedule read as the
+        // BOQ it was copied from rather than as a list.
+        if (l.is_header) {
+            return '<tr style="background:var(--bg-hover,rgba(0,0,0,0.04));">' +
+                '<td><input class="form-control" style="min-width:64px;font-weight:700;" value="' +
+                    esc(l.activity_no || '') + '" oninput="woBoqSet(' + i + ',\'activity_no\',this.value)"' + dis + '></td>' +
+                '<td colspan="7"><input class="form-control" style="font-weight:700;text-transform:uppercase;" ' +
+                    'placeholder="Section heading" value="' + esc(l.item_description || '') +
+                    '" oninput="woBoqSet(' + i + ',\'item_description\',this.value)"' + dis + '></td>' +
+                '<td class="text-right" style="white-space:nowrap;">' + (locked ? '' :
+                    '<button class="btn btn-sm btn-outline" title="Make it an item" ' +
+                        'onclick="woBoqToggleHeader(' + i + ')">Item</button> ' +
+                    '<button class="btn btn-sm btn-outline" onclick="woBoqRemove(' + i + ')">&times;</button>') + '</td>' +
+                '</tr>';
+        }
         return '<tr>' +
             '<td><input class="form-control" style="min-width:64px;" value="' + esc(l.activity_no || '') +
                 '" oninput="woBoqSet(' + i + ',\'activity_no\',this.value)"' + dis + '></td>' +
             '<td><input class="form-control" style="min-width:96px;" value="' + esc(l.item_code || '') +
-                '" oninput="woBoqSet(' + i + ',\'item_code\',this.value)"' + dis + '></td>' +
+                '" oninput="woBoqSet(' + i + ',\'item_code\',this.value)"' +
+                ' onchange="woLastRate(' + i + ')"' + dis + '>' +
+                // What this code was last ordered at, and from whom. Looked up
+                // when the code is typed; one click copies it into the rate.
+                '<div id="wo-rate-hint-' + i + '" style="font-size:0.7rem;color:var(--text-secondary);margin-top:3px;">' +
+                (l._hint || '') + '</div></td>' +
             '<td style="min-width:280px;">' +
                 '<textarea class="form-control" rows="2" ' +
                 'placeholder="What the line is" ' +
@@ -686,7 +756,14 @@ function stepBoq() {
                 'onchange="woBoqSet(' + i + ',\'uom\',this.value)"' + dis + '>' +
                 options(v.uoms, l.uom) + '</select></td>' +
             '<td><input type="number" step="any" class="form-control text-right" style="min-width:90px;" value="' +
-                (l.quantity || '') + '" oninput="woBoqSet(' + i + ',\'quantity\',this.value)"' + dis + '></td>' +
+                (l.quantity || '') + '" oninput="woBoqSet(' + i + ',\'quantity\',this.value)"' + dis + '>' +
+                // How far the book may run past the order before it is amended.
+                '<div style="display:flex;align-items:center;gap:4px;margin-top:3px;">' +
+                '<input type="number" step="0.5" min="0" max="100" class="form-control text-right" ' +
+                    'style="font-size:0.72rem;padding:2px 6px;height:auto;width:58px;" title="Tolerance %" ' +
+                    'placeholder="tol %" value="' + (l.tolerance_percent || '') +
+                    '" oninput="woBoqSet(' + i + ',\'tolerance_percent\',this.value)"' + dis + '>' +
+                '<span style="font-size:0.68rem;color:var(--text-secondary);">% tol</span></div></td>' +
             '<td><input type="number" step="any" class="form-control text-right" style="min-width:100px;" value="' +
                 (l.unit_rate || '') + '" oninput="woBoqSet(' + i + ',\'unit_rate\',this.value)"' + dis + '></td>' +
             '<td><select class="form-control" style="min-width:130px;" ' +
@@ -695,12 +772,14 @@ function stepBoq() {
                     return b.name || b.code || 'Cost centre'; }) + '</select></td>' +
             '<td class="text-right" style="font-weight:600;white-space:nowrap;">' +
                 formatCurrency(woLineAmount(l)) + '</td>' +
-            '<td class="text-right">' + (locked ? '' :
+            '<td class="text-right" style="white-space:nowrap;">' + (locked ? '' :
+                '<button class="btn btn-sm btn-outline" title="Make it a heading" ' +
+                    'onclick="woBoqToggleHeader(' + i + ')">Head</button> ' +
                 '<button class="btn btn-sm btn-outline" onclick="woBoqRemove(' + i + ')">&times;</button>') + '</td>' +
             '</tr>';
     }).join('');
 
-    var gross = WO.boq.reduce(function (t, l) { return t + woLineAmount(l); }, 0);
+    var gross = WO.boq.reduce(function (t, l) { return t + (l.is_header ? 0 : woLineAmount(l)); }, 0);
     var o = WO.order || {};
 
     return '<div style="display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;' +
@@ -718,6 +797,7 @@ function stepBoq() {
         (locked ? '' :
         '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">' +
         '<button class="btn btn-outline" onclick="woBoqAdd()">+ Add line</button>' +
+        '<button class="btn btn-outline" onclick="woBoqAdd(true)">+ Heading</button>' +
         '<button class="btn btn-primary" onclick="saveWoBoq()">Save schedule</button>' +
         '<button class="btn btn-outline" onclick="woGoStep(3)">Skip to billing terms</button>' +
         '</div>') +
@@ -806,14 +886,45 @@ function woBoqSet(i, key, value) {
 }
 window.woBoqSet = woBoqSet;
 
-function woBoqAdd() {
+function woBoqToggleHeader(i) {
+    var l = WO.boq[i];
+    l.is_header = !l.is_header;
+    if (l.is_header) { l.quantity = ''; l.unit_rate = ''; l.tolerance_percent = ''; }
+    renderWizard();
+}
+window.woBoqToggleHeader = woBoqToggleHeader;
+
+async function woLastRate(i) {
+    var l = WO.boq[i];
+    var host = document.getElementById('wo-rate-hint-' + i);
+    if (!host) return;
+    if (!(l.item_code || '').trim()) { host.innerHTML = ''; l._hint = ''; return; }
+    var out = await (await fetch('/api/wo/rates?item_code=' + encodeURIComponent(l.item_code),
+                                 { credentials: 'include' })).json();
+    var r = (out.rates || [])[0];
+    if (!r) { host.innerHTML = ''; l._hint = ''; return; }
+    l._hint = 'Last ' + formatCurrency(r.unit_rate) + '/' + esc(r.uom || '') + ' to ' +
+        esc(r.contractor) + ' on ' + esc(r.wo_number) +
+        ' <a href="#" onclick="event.preventDefault();woUseRate(' + i + ',' + r.unit_rate + ')">use it</a>';
+    host.innerHTML = l._hint;
+}
+window.woLastRate = woLastRate;
+
+function woUseRate(i, rate) {
+    WO.boq[i].unit_rate = rate;
+    renderWizard();
+}
+window.woUseRate = woUseRate;
+
+function woBoqAdd(header) {
     var last = WO.boq[WO.boq.length - 1];
     var next = last ? String(parseFloat(last.activity_no || 0) + 1) + '.0' : '1.0';
     // The cost centre carries down from the line above. A schedule is usually
     // one trade against one allocation, and re-picking it two hundred times is
     // how it ends up picked wrongly.
-    WO.boq.push({ activity_no: next, item_code: '', item_description: '',
+    WO.boq.push({ activity_no: header ? '' : next, item_code: '', item_description: '',
                   technical_spec: '', uom: 'cum', quantity: '', unit_rate: '',
+                  tolerance_percent: '', is_header: !!header,
                   budget_id: last ? (last.budget_id || null) : null });
     renderWizard();
 }
@@ -832,6 +943,8 @@ async function saveWoBoq() {
                      technical_spec: l.technical_spec || '', uom: l.uom,
                      quantity: parseFloat(l.quantity) || 0,
                      unit_rate: parseFloat(l.unit_rate) || 0,
+                     is_header: !!l.is_header,
+                     tolerance_percent: parseFloat(l.tolerance_percent) || 0,
                      budget_id: l.budget_id || null }; }) }),
     });
     var out = await res.json();
@@ -902,6 +1015,10 @@ function stepBilling() {
         field('Advance recovery %', num('wo-advrec', o.advance_recovery_percent, '1'),
               'Taken back from each RA bill.') +
         '</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0 16px;">' +
+        field('Labour welfare cess %', num('wo-cess', o.labour_cess_percent, '0.5'),
+              'BOCW cess, usually 1%. Withheld from each bill and remitted, like TDS.') +
+        '</div>' +
 
         (locked ? '' :
         '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">' +
@@ -909,17 +1026,51 @@ function stepBilling() {
         '<button class="btn btn-outline" onclick="woGoStep(2)">Back to the schedule</button>' +
         '</div>') +
 
-        '</div><div class="widget"><div class="widget-header"><h3>Net contract value</h3></div>' +
+        '</div><div>' +
+        '<div class="widget"><div class="widget-header"><h3>Net contract value</h3></div>' +
         '<div style="padding:12px 16px;" id="wo-billing-preview">' +
         woBillingLines(gross, o.gst_rate, o.tds_rate, o.retention_percent,
-                       o.mobilization_advance_percent) +
-        '</div></div></div>';
+                       o.mobilization_advance_percent, o.labour_cess_percent) +
+        '</div></div>' +
+        woScheduleTable(o) +
+        '</div></div>';
 }
 
-function woBillingLines(gross, gstRate, tdsRate, retentionPct, advancePct) {
+function woScheduleTable(o) {
+    /* Every head, in the order it is applied - the same table that will appear
+       on every bill against this order. Drawn from the saved order, so it is
+       what the server will print rather than what the screen is guessing. */
+    var sch = o.billing_schedule;
+    if (!sch || !(sch.rows || []).length) return '';
+    var tone = { total: 'font-weight:700;', net: 'font-weight:700;', hold: 'color:var(--text-secondary);',
+                 info: 'color:var(--text-secondary);' };
+    return '<div class="widget" style="margin-top:14px;"><div class="widget-header">' +
+        '<h3>Billing terms</h3></div>' +
+        '<div style="padding:0 16px;"><table style="width:100%;border-collapse:collapse;font-size:0.8rem;">' +
+        '<tbody>' + sch.rows.map(function (r) {
+            return '<tr style="' + (tone[r.kind] || '') + 'border-top:1px solid var(--border-color);">' +
+                '<td style="padding:6px 0;">' + esc(r.head) +
+                (r.rate === null || r.rate === undefined ? '' :
+                    ' <span style="font-size:0.7rem;color:var(--text-secondary);">@ ' + r.rate + '%</span>') +
+                (r.note ? '<div style="font-size:0.68rem;color:var(--text-secondary);">' + esc(r.note) + '</div>' : '') +
+                '</td><td style="padding:6px 0;text-align:right;white-space:nowrap;">' +
+                (r.kind === 'less' ? '(' + formatCurrency(r.amount) + ')' : formatCurrency(r.amount)) +
+                '</td></tr>';
+        }).join('') + '</tbody></table></div>' +
+        '<p style="font-size:0.72rem;color:var(--text-secondary);padding:8px 16px 12px;margin:0;">' +
+        (sch.intra_state
+            ? 'Same state as the site, so the tax is CGST + SGST.'
+            : (sch.place_of_supply
+                ? 'The site is in another state, so the tax is IGST.'
+                : 'No place of supply on the project yet, so the tax is shown as IGST. ' +
+                  'Set the state on the project to split it.')) + '</p></div>';
+}
+
+function woBillingLines(gross, gstRate, tdsRate, retentionPct, advancePct, cessPct) {
     var gst = gross * ((gstRate || 0) / 100);
     var tds = gross * ((tdsRate || 0) / 100);
-    var net = gross + gst - tds;
+    var cess = gross * ((cessPct || 0) / 100);
+    var net = gross + gst - tds - cess;
     var retention = gross * ((retentionPct || 0) / 100);
     var advance = gross * ((advancePct || 0) / 100);
 
@@ -933,6 +1084,7 @@ function woBillingLines(gross, gstRate, tdsRate, retentionPct, advancePct) {
     return line('Gross BOQ amount', formatCurrency(gross), true) +
         line('Add: GST @ ' + (gstRate || 0) + '%', formatCurrency(gst), true) +
         line('Less: TDS @ ' + (tdsRate || 0) + '%', '(' + formatCurrency(tds) + ')', true) +
+        (cess ? line('Less: labour cess @ ' + cessPct + '%', '(' + formatCurrency(cess) + ')', true) : '') +
         '<div style="display:flex;justify-content:space-between;font-weight:700;' +
             'padding-top:8px;margin-top:6px;border-top:1px solid var(--border-color);">' +
             '<span>Net contract value</span><span>' + formatCurrency(net) + '</span></div>' +
@@ -954,7 +1106,7 @@ function woBillingPreview() {
     var host = document.getElementById('wo-billing-preview');
     if (!host) return;
     host.innerHTML = woBillingLines((WO.order || {}).gross_amount || 0,
-        val('wo-gst'), val('wo-tds'), val('wo-ret'), val('wo-adv'));
+        val('wo-gst'), val('wo-tds'), val('wo-ret'), val('wo-adv'), val('wo-cess'));
 }
 window.woBillingPreview = woBillingPreview;
 
@@ -966,6 +1118,7 @@ async function saveWoBilling() {
         retention_percent: val('wo-ret'),
         mobilization_advance_percent: val('wo-adv'),
         advance_recovery_percent: val('wo-advrec'),
+        labour_cess_percent: val('wo-cess'),
     });
     if (await saveWoHead(payload, 4, 'Billing terms saved.')) renderWizard();
 }
@@ -1058,11 +1211,29 @@ function stepReview() {
     if (!o) return '<p>Nothing to review yet.</p>';
 
     var history = (o.history || []).map(function (h) {
-        return '<tr><td>' + esc(h.action) + '</td><td>' + esc(h.actor) + '</td>' +
-            '<td>' + esc(h.at) + '</td><td>' + esc(h.comments || '') + '</td></tr>';
+        var what = h.action === 'EDIT' ? 'Changed' : h.action === 'COPY' ? 'Copied' : esc(h.action);
+        // An edit lists what moved, one change per line, so "who changed the
+        // completion date and when" reads off the table.
+        var said = h.action === 'EDIT'
+            ? (h.comments || '').split('; ').map(esc).join('<br>')
+            : esc(h.comments || '');
+        return '<tr><td>' + what + '</td><td>' + esc(h.actor) + '</td>' +
+            '<td style="white-space:nowrap;">' + esc(h.at) + '</td><td>' + said + '</td></tr>';
     }).join('');
 
-    return woBudgetNotice(o) +
+    var pending = (o.pending_with || []).length
+        ? '<div style="margin-top:16px;padding:12px 14px;border-radius:8px;' +
+          'border:1px solid var(--border-color);font-size:0.84rem;">' +
+          '<strong>Awaiting approval</strong> &mdash; on the desk of ' +
+          o.pending_with.map(esc).join(', ') + '.</div>'
+        : (o.provisional
+            ? '<div style="margin-top:16px;padding:12px 14px;border-radius:8px;' +
+              'border:1px solid var(--warning-color);font-size:0.84rem;">' +
+              '<strong>Awaiting approval</strong>, but nobody active holds the right to ' +
+              'approve subcontracts. Give somebody the manager role under People.</div>'
+            : '');
+
+    return woBudgetNotice(o) + pending +
         (o.rejection_reason ?
             '<div style="margin-top:16px;padding:12px 14px;border-radius:8px;' +
             'border:1px solid var(--warning-color);">' +
@@ -1084,7 +1255,7 @@ function stepReview() {
                 : '<p style="text-align:center;padding:30px;color:var(--text-secondary);">' +
                   'Laying out the document...</p>') + '</div></div>' +
         (history ? '<div class="widget" style="margin-top:16px;">' +
-            '<div class="widget-header"><h3>History</h3></div>' +
+            '<div class="widget-header"><h3>Approval and change history</h3></div>' +
             '<div class="table-responsive"><table class="data-table">' +
             '<thead><tr><th>Action</th><th>By</th><th>When</th><th>Remarks</th></tr></thead>' +
             '<tbody>' + history + '</tbody></table></div></div>' : '');
@@ -1139,6 +1310,8 @@ function woActions(o) {
     if (o.editable)
         buttons.push('<button class="btn btn-outline" onclick="woGoStep(1)">Keep editing</button>');
     buttons.push('<button class="btn btn-outline" onclick="woPreview()">Print</button>');
+    buttons.push('<button class="btn btn-outline" onclick="woCopy(' + o.id + ')" ' +
+        'title="A new draft that starts as this one did">Copy as new</button>');
     buttons.push('<button class="btn btn-outline" onclick="showView(\'subcontracts-view\');loadSubcontracts()">Back to list</button>');
     return '<div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">' +
         buttons.join('') + '</div>' +
@@ -1213,6 +1386,10 @@ function woDocumentHtml(d) {
     var nl = function (s) { return esc(s || '').replace(/\n/g, '<br>'); };
 
     var items = (d.items || []).map(function (it, i) {
+        if (it.is_header) {
+            return '<tr style="background:#f3f4f6;"><td>' + esc(it.activity_no || '') + '</td>' +
+                '<td colspan="6" style="font-weight:700;">' + esc(it.item_description) + '</td></tr>';
+        }
         return '<tr><td>' + esc(it.activity_no || (i + 1)) + '</td>' +
             '<td>' + esc(it.item_code || '') + '</td>' +
             '<td>' + nl(it.item_description) +
@@ -1220,7 +1397,9 @@ function woDocumentHtml(d) {
                     ? '<div style="font-size:0.68rem;color:#6b7280;margin-top:2px;">' +
                       nl(it.technical_spec) + '</div>' : '') + '</td>' +
             '<td>' + esc(it.uom || '') + '</td>' +
-            '<td class="num">' + (it.quantity || 0).toLocaleString('en-IN') + '</td>' +
+            '<td class="num">' + (it.quantity || 0).toLocaleString('en-IN') +
+                (it.tolerance_percent ? '<div style="font-size:0.62rem;color:#6b7280;">+' +
+                    it.tolerance_percent + '% tol.</div>' : '') + '</td>' +
             '<td class="num">' + (it.unit_rate || 0).toLocaleString('en-IN',
                 { minimumFractionDigits: 2, maximumFractionDigits: 4 }) + '</td>' +
             '<td class="num">' + formatCurrency(it.total_amount) + '</td></tr>';
@@ -1310,14 +1489,24 @@ function woDocumentHtml(d) {
 
         '<div class="wo-section">Order value</div>' +
         '<table class="wo-money"><tbody>' +
-            '<tr><td>Gross order value</td><td class="num" style="text-align:right;">' +
+            (((d.billing_schedule || {}).rows || []).filter(function (r) {
+                return r.kind !== 'hold' && r.kind !== 'info'; }).map(function (r) {
+                var label = esc(r.head) + (r.rate === null || r.rate === undefined ? '' : ' @ ' + r.rate + '%') +
+                    (r.kind === 'less' ? ' (withheld at source)' : '');
+                var strong = r.kind === 'total' || r.kind === 'net';
+                return '<tr' + (strong ? ' style="font-weight:700;"' : '') + '><td>' + label + '</td>' +
+                    '<td style="text-align:right;">' +
+                    (r.kind === 'less' ? '(' + formatCurrency(r.amount) + ')' : formatCurrency(r.amount)) +
+                    '</td></tr>';
+            }).join('') ||
+            ('<tr><td>Gross order value</td><td class="num" style="text-align:right;">' +
                 formatCurrency(d.gross_amount) + '</td></tr>' +
             '<tr><td>Add: GST @ ' + d.gst_rate + '%</td><td style="text-align:right;">' +
                 formatCurrency(d.gst_amount) + '</td></tr>' +
             '<tr><td>Less: TDS @ ' + d.tds_rate + '% (withheld at source)</td>' +
                 '<td style="text-align:right;">(' + formatCurrency(d.tds_amount) + ')</td></tr>' +
             '<tr><td>Net order value payable</td><td style="text-align:right;">' +
-                formatCurrency(d.net_order_value) + '</td></tr>' +
+                formatCurrency(d.net_order_value) + '</td></tr>')) +
         '</tbody></table>' +
         '<div class="wo-band" style="margin-top:8px;font-size:0.78rem;">' +
             '<strong>In words:</strong> ' + esc(d.amount_in_words || '') + '</div>' +
@@ -1338,6 +1527,9 @@ function woDocumentHtml(d) {
             (d.advance_recovery_percent
                 ? ', recovered at ' + d.advance_recovery_percent +
                   '% of each Running Account bill' : '') + '.</p>' : '') +
+        (d.payment_terms
+            ? '<p class="wo-muted" style="font-size:0.72rem;margin-top:4px;">' +
+              esc(d.payment_terms) + '</p>' : '') +
 
         '<div class="wo-break"></div>' +
         '<div style="text-align:center;font-weight:700;font-size:0.95rem;">' +

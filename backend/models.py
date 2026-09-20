@@ -1647,6 +1647,21 @@ class DBSubcontractOrder(Base):
     mobilization_advance_percent = Column(Float, default=0.0)
     mobilization_advance_amount = Column(Float, default=0.0)
     advance_recovery_percent = Column(Float, default=0.0)
+    # Labour welfare cess - the BOCW levy on the value of construction work,
+    # deducted from each bill and remitted to the Welfare Board. Like TDS it
+    # is money the contractor never receives, so it comes off the net.
+    labour_cess_percent = Column(Float, default=0.0)
+    labour_cess_amount = Column(Float, default=0.0)
+
+    # When they may bill and how long we then have to pay: the two payment
+    # terms every contractor asks about before signing, printed as a clause.
+    billing_cycle = Column(String, default="")        # Monthly | Fortnightly | On milestone
+    payment_days = Column(Integer, default=0)         # after certification
+
+    # Where this order was copied from, when it was. A new order for the same
+    # trade on the next site starts as a copy of the last one far more often
+    # than it starts blank.
+    copied_from_id = Column(Integer, ForeignKey("subcontract_orders.id"), nullable=True)
 
     submitted_by = Column(Integer, nullable=True)
     approved_by = Column(Integer, nullable=True)
@@ -1709,6 +1724,14 @@ class DBSubcontractItem(Base):
     budget_id = Column(Integer, ForeignKey("project_budgets.id"), nullable=True, index=True)
     cost_centre = Column(String, default="")
     display_order = Column(Integer, default=0)
+    # A heading row - "ELECTRICAL WORK", "SUB STATION EQUIPMENT" - that the
+    # lines under it belong to. It carries no quantity or rate and is never
+    # measured; it exists so a two-hundred-line schedule reads as the BOQ it
+    # was copied from rather than as a list.
+    is_header = Column(Boolean, default=False)
+    # How far the measured quantity may run past the ordered one before the
+    # order has to be amended. Nought means exactly what was ordered.
+    tolerance_percent = Column(Float, default=0.0)
 
 
 class DBSubcontractTerm(Base):
@@ -2249,6 +2272,8 @@ class DBSubBill(Base):
     place_of_supply = Column(String, default="")
     tds_percent = Column(Float, default=0.0)
     tds_amount = Column(Float, default=0.0)           # we withhold and remit
+    labour_cess_percent = Column(Float, default=0.0)
+    labour_cess_amount = Column(Float, default=0.0)   # BOCW cess, withheld and remitted
     net_payable = Column(Float, default=0.0)          # what actually leaves the bank
 
     certified_by = Column(Integer, ForeignKey("employees.id"), nullable=True)
