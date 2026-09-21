@@ -40,7 +40,7 @@ async function loadEstimates() {
                  '→ ' + esc(e.work_order) + '</div>' : '') + '</td>' +
             '<td class="text-right"><button class="btn btn-sm btn-primary" onclick="openEstimate(' +
                 e.id + ')">Open</button> <a class="btn btn-sm btn-outline" href="/api/estimates/' +
-                e.id + '/export.xlsx">Excel</a></td></tr>';
+                e.id + '/export.xlsx" title="As a workbook">Download</a></td></tr>';
     }).join('') : '<tr><td colspan="8" style="text-align:center;padding:30px;' +
         'color:var(--text-secondary);">No tenders yet. Pricing the job is where the ' +
         'business starts.</td></tr>';

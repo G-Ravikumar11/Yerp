@@ -125,7 +125,6 @@
                             <a href="#" class="nav-item" id="nav-workorders" data-perm="workorders.manage" onclick="event.preventDefault();showView('workorders-view')">Work Orders</a>
                             <a href="#" class="nav-item" id="nav-measurement" onclick="event.preventDefault();showView('measurement-view')">Measurement &amp; RA Bills</a>
                             <a href="#" class="nav-item" id="nav-customers" data-perm="customers.manage" onclick="event.preventDefault();showView('customers-view')">Customers</a>
-                            <a href="#" class="nav-item" id="nav-viewer" onclick="event.preventDefault();showView('viewer-view')">Import a file</a>
                         </div>
                     </div>
 
@@ -181,6 +180,7 @@
                         </button>
                         <div class="nav-group-items" id="nav-items-more">
                             <a href="#" class="nav-item" id="nav-settings" onclick="event.preventDefault();showView('settings-view')">Settings</a>
+                            <a href="#" class="nav-item" id="nav-viewer" onclick="event.preventDefault();showView('viewer-view')">Old spreadsheets</a>
                         </div>
                     </div>
 
@@ -1349,7 +1349,7 @@
                 </div>
 
                 <div id="sub-measure-modal" class="modal-overlay" style="display:none;">
-                    <div class="modal" style="max-width:520px;">
+                    <div class="modal" style="max-width:760px;">
                         <div class="modal-header">
                             <h3 id="sub-measure-title">Record a measurement</h3>
                             <button class="modal-close" onclick="closeSubMeasure()">&times;</button>
@@ -1357,17 +1357,18 @@
                         <div class="modal-body">
                             <input type="hidden" id="sub-measure-item">
                             <p id="sub-measure-context" style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:14px;"></p>
+                            <div id="sub-measure-dims" style="margin-bottom:12px;"></div>
                             <div class="form-row">
-                                <div class="form-group"><label>Quantity measured *</label>
-                                    <input type="number" step="any" id="sub-measure-qty" class="form-control"></div>
+                                <div class="form-group"><label>Quantity <span style="font-weight:400;color:var(--text-secondary);">(from the lines above, or type a total)</span></label>
+                                    <input type="number" step="any" id="sub-measure-dims-total" class="form-control"></div>
                                 <div class="form-group"><label>Measured on</label>
                                     <input type="date" id="sub-measure-date" class="form-control"></div>
                             </div>
-                            <div class="form-group"><label>MB page reference</label>
-                                <input type="text" id="sub-measure-ref" class="form-control" placeholder="MB-4 / p.12"></div>
+                            <div class="form-group"><label>Reference <span style="font-weight:400;color:var(--text-secondary);">(drawing, RFI, sheet)</span></label>
+                                <input type="text" id="sub-measure-ref" class="form-control" placeholder="Dwg. STR-04 rev B"></div>
                             <div class="form-group"><label>Remarks</label>
                                 <textarea id="sub-measure-remarks" class="form-control" rows="2"></textarea></div>
-                            <p style="font-size:0.75rem;color:var(--text-secondary);">Entries add up. To correct one, record a negative quantity.</p>
+                            <p style="font-size:0.75rem;color:var(--text-secondary);">Entries add up. To correct one, record a deduction rather than changing what was written.</p>
                         </div>
                         <div class="modal-footer">
                             <button class="btn btn-outline" onclick="closeSubMeasure()">Cancel</button>
@@ -1377,7 +1378,7 @@
                 </div>
 
                 <div id="measure-modal" class="modal-overlay" style="display:none;">
-                    <div class="modal" style="max-width:520px;">
+                    <div class="modal" style="max-width:760px;">
                         <div class="modal-header">
                             <h3 id="measure-title">Record a measurement</h3>
                             <button class="modal-close" onclick="closeMeasureModal()">&times;</button>
@@ -1385,23 +1386,24 @@
                         <div class="modal-body">
                             <input type="hidden" id="measure-line-id">
                             <p id="measure-context" style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:14px;"></p>
+                            <div id="measure-dims" style="margin-bottom:12px;"></div>
                             <div class="form-row">
-                                <div class="form-group"><label>Quantity measured *</label>
-                                    <input type="number" step="any" id="measure-qty" class="form-control" placeholder="e.g. 250"></div>
+                                <div class="form-group"><label>Quantity <span style="font-weight:400;color:var(--text-secondary);">(from the lines above, or type a total)</span></label>
+                                    <input type="number" step="any" id="measure-dims-total" class="form-control" placeholder="e.g. 250"></div>
                                 <div class="form-group"><label>Measured on</label>
                                     <input type="date" id="measure-date" class="form-control"></div>
                             </div>
                             <div class="form-row">
-                                <div class="form-group"><label>MB page reference</label>
-                                    <input type="text" id="measure-ref" class="form-control" placeholder="MB-12 / p.44"></div>
+                                <div class="form-group"><label>Reference <span style="font-weight:400;color:var(--text-secondary);">(drawing, RFI, sheet)</span></label>
+                                    <input type="text" id="measure-ref" class="form-control" placeholder="Dwg. STR-04 rev B"></div>
                                 <div class="form-group"><label>Witnessed by</label>
                                     <input type="text" id="measure-witness" class="form-control" placeholder="Whose man signed"></div>
                             </div>
                             <div class="form-group"><label>Remarks</label>
                                 <textarea id="measure-remarks" class="form-control" rows="2"></textarea></div>
                             <p style="font-size:0.75rem;color:var(--text-secondary);">
-                                Entries add up. To correct one, record a negative
-                                quantity rather than changing what was written.
+                                Entries add up. To correct one, record a deduction
+                                rather than changing what was written.
                             </p>
                         </div>
                         <div class="modal-footer">
@@ -3122,7 +3124,7 @@
                     <div class="invoices-header-area">
                         <div><h1>Item Master</h1><p class="subtitle">The codes a work order and its budget are allowed to use</p></div>
                         <div class="invoices-actions">
-                            <a class="btn btn-outline" href="/api/erp/items.xlsx">Download Excel</a>
+                            <a class="btn btn-outline" href="/api/erp/items.xlsx" title="The item master as a workbook">Download</a>
                             <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
                         </div>
                     </div>
@@ -3152,18 +3154,15 @@
                             <div id="grid-result" class="mt-3"></div>
                         </div>
                     </div>
-                    <!-- Excel first. This is the flow people already run: take the
-                         template, fill it in, validate it, upload it. It was buried
-                         behind a toggle for a while, which made the screen look as
-                         though the feature had been removed. -->
-                    <div class="bg-white border border-slate-200 rounded-xl mt-5 overflow-hidden">
-                        <div class="px-5 py-3.5 border-b border-slate-200">
-                            <h3 class="font-semibold text-ink">Or bring a spreadsheet</h3>
+                    <!-- The way in for the sheets the business already has - once.
+                         Folded away, because the master is kept here, not there. -->
+                    <details class="bg-white border border-slate-200 rounded-xl mt-5 overflow-hidden">
+                        <summary class="px-5 py-3.5 border-b border-slate-200" style="cursor:pointer;list-style:none;">
+                            <h3 class="font-semibold text-ink" style="display:inline;">Already have an item list in a spreadsheet?</h3>
                             <p class="text-xxs text-ink-soft mt-0.5">
-                                Take the template, fill it in, validate it, upload it.
-                                Raw material and finished goods can be in the same file.
+                                Bring it in once. After that the master lives here.
                             </p>
-                        </div>
+                        </summary>
 
                         <div class="p-5">
                             <div class="grid gap-5 md:grid-cols-3">
@@ -3223,7 +3222,7 @@
 
                             <div id="item-analysis" class="mt-4"></div>
                         </div>
-                    </div>
+                    </details>
 
                         <div class="table-responsive">
                             <table class="data-table">
@@ -3240,7 +3239,7 @@
                         <div><h1>Work Orders</h1><p class="subtitle">Priced scope sold on a job, and what it is budgeted to cost</p></div>
                         <div class="invoices-actions">
                             <button class="btn btn-primary" onclick="openWorkOrderBuilder()">+ New work order</button>
-                            <button class="btn btn-outline" onclick="showWorkOrderModal()">Import</button>
+                            <button class="btn btn-outline" onclick="showWorkOrderModal()" title="Bring in an order that already exists as a sheet">From a file</button>
                             <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
                         </div>
                     </div>
@@ -3306,7 +3305,7 @@
                     <div class="invoices-header-area">
                         <div><h1>Cost by Project</h1><p class="subtitle">What each job sold for, what it has actually been committed to cost, and what is left</p></div>
                         <div class="invoices-actions">
-                            <a class="btn btn-outline" href="/api/costs/by-project.xlsx">Download Excel</a>
+                            <a class="btn btn-outline" href="/api/costs/by-project.xlsx" title="As a workbook">Download</a>
                             <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
                         </div>
                     </div>
@@ -3389,7 +3388,7 @@
                     <div class="invoices-header-area">
                         <div><h1>GST</h1><p class="subtitle">What we charged and what we were charged, split the way the return wants it</p></div>
                         <div class="invoices-actions">
-                            <a class="btn btn-outline" id="gst-export" href="/api/gst/outward.xlsx">Outward (Excel)</a>
+                            <a class="btn btn-outline" id="gst-export" href="/api/gst/outward.xlsx" title="Outward supplies as a workbook, for the return">Download outward</a>
                             <button class="btn btn-outline" onclick="loadGst()">Refresh</button>
                         </div>
                     </div>
@@ -3542,7 +3541,7 @@
                         <div><h1>Stock &amp; Issues</h1><p class="subtitle">What is in the store, what went to site, and what it cost</p></div>
                         <div class="invoices-actions">
                             <button class="btn btn-primary" onclick="showIssueModal()">Issue to site</button>
-                            <a class="btn btn-outline" href="/api/stock.xlsx">Excel</a>
+                            <a class="btn btn-outline" href="/api/stock.xlsx" title="As a workbook">Download</a>
                             <button class="btn btn-outline" onclick="loadStock()">Refresh</button>
                         </div>
                     </div>
@@ -3679,7 +3678,7 @@
                         <div class="widget-header"><h3>Entries</h3></div>
                         <div class="table-responsive">
                             <table class="data-table">
-                                <thead><tr><th>Date</th><th>Activity</th><th class="text-right">Quantity</th><th>MB ref</th><th>Recorded by</th><th>Remarks</th><th></th></tr></thead>
+                                <thead><tr><th>Date</th><th>Activity</th><th>Particulars &amp; dimensions</th><th class="text-right">Quantity</th><th>Ref</th><th>Recorded by</th><th>Remarks</th><th class="no-print"></th></tr></thead>
                                 <tbody id="sub-entries"></tbody>
                             </table>
                         </div>
@@ -3731,7 +3730,7 @@
                         <div class="widget-header"><h3>Entries</h3></div>
                         <div class="table-responsive">
                             <table class="data-table">
-                                <thead><tr><th>Date</th><th>Item</th><th class="text-right">Quantity</th><th>MB ref</th><th>Recorded by</th><th>Remarks</th><th></th></tr></thead>
+                                <thead><tr><th>Date</th><th>Item</th><th>Particulars &amp; dimensions</th><th class="text-right">Quantity</th><th>Ref</th><th>Recorded by</th><th>Remarks</th><th class="no-print"></th></tr></thead>
                                 <tbody id="mb-entries"></tbody>
                             </table>
                         </div>
@@ -3765,7 +3764,7 @@
                         <div><h1>Subcontract Work Orders</h1><p class="subtitle">Work issued out to a subcontractor, priced, signed off and amended</p></div>
                         <div class="invoices-actions">
                             <button class="btn btn-primary" onclick="newSubcontract()">+ New work order</button>
-                            <a class="btn btn-outline" id="sc-export" href="/api/wo/orders.xlsx">Register (Excel)</a>
+                            <a class="btn btn-outline" id="sc-export" href="/api/wo/orders.xlsx" title="The register as a workbook">Download register</a>
                             <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
                         </div>
                     </div>
@@ -3842,7 +3841,7 @@
                         <div><h1>Budget Entry Report</h1><p class="subtitle">The allocation, read back under the lines it was allocated against</p></div>
                         <div class="invoices-actions">
                             <button class="btn btn-outline" onclick="showView('inquiry-view')">Back</button>
-                            <button class="btn btn-outline" onclick="downloadBudgetReport()">Download Excel</button>
+                            <button class="btn btn-outline" onclick="downloadBudgetReport()" title="As a workbook">Download</button>
                             <button class="btn btn-primary" onclick="window.print()">Print</button>
                         </div>
                     </div>
@@ -4477,9 +4476,9 @@
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=65"></script>
     <!-- Jobs, job costing and purchase orders. -->
-    <script src="jobs.js?v=79"></script>
+    <script src="jobs.js?v=81"></script>
     <!-- Item master, work orders and budget allocation. -->
-    <script src="erp.js?v=79"></script>
+    <script src="erp.js?v=81"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
     <script src="erp-build.js?v=74"></script>
     <!-- The spreadsheet grid the item master is entered through. -->
@@ -4488,16 +4487,17 @@
     <script src="erp-preview.js?v=65"></script>
     <script src="contracts.js?v=65"></script>
     <script src="sheet-viewer.js?v=65"></script>
-    <script src="subcontracts.js?v=80"></script>
+    <script src="subcontracts.js?v=81"></script>
     <script src="costs.js?v=65"></script>
-    <script src="measurement.js?v=79"></script>
+    <script src="mbdims.js?v=81"></script>
+    <script src="measurement.js?v=81"></script>
     <script src="stock.js?v=79"></script>
-    <script src="diary.js?v=79"></script>
+    <script src="diary.js?v=81"></script>
     <script src="money.js?v=79"></script>
-    <script src="subbills.js?v=79"></script>
-    <script src="estimate.js?v=79"></script>
+    <script src="subbills.js?v=81"></script>
+    <script src="estimate.js?v=81"></script>
     <script src="gst.js?v=79"></script>
-    <script src="stores.js?v=79"></script>
+    <script src="stores.js?v=81"></script>
 
     <!-- AI Core Orb -->
     <div class="ai-core" onclick="toggleAIChat()" role="button" tabindex="0" aria-label="Open the assistant" title="Ask the assistant" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAIChat();}">

@@ -313,7 +313,7 @@ async function loadPortfolio() {
                      : p.over_budget ? statusPill('over budget', 'wait')
                                      : statusPill(p.status || 'live', 'good')) + '</td>' +
             '<td class="text-right"><a class="btn btn-sm btn-outline" href="/api/jobs/' +
-                p.job_id + '/pnl.xlsx">Excel</a></td>' +
+                p.job_id + '/pnl.xlsx" title="As a workbook">Download</a></td>' +
             '</tr>';
     }).join('') : '<tr><td colspan="8" style="text-align:center;padding:30px;' +
         'color:var(--text-secondary);">No projects yet.</td></tr>';

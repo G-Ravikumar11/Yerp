@@ -2236,6 +2236,32 @@ class DBSubMeasurement(Base):
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
+class DBMeasurementDimension(Base):
+    """One line of a measurement: what was measured and its dimensions.
+
+    A measurement book is a book of dimensions, not of totals. The total is
+    what the dimensions come to, and the dimensions are what get checked on
+    site - so the book has to hold them, or the real book stays in a
+    spreadsheet and the app only ever sees its answer. Held against either
+    book, the client's or the gang's. A deduction (an opening in a wall) is a
+    line that takes away.
+    """
+    __tablename__ = "measurement_dimensions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    measurement_id = Column(Integer, ForeignKey("measurements.id"), nullable=True, index=True)
+    sub_measurement_id = Column(Integer, ForeignKey("sub_measurements.id"), nullable=True, index=True)
+    particulars = Column(String, default="")       # "Footing F1, grid A-3"
+    nos = Column(Float, nullable=True)
+    length = Column(Float, nullable=True)
+    breadth = Column(Float, nullable=True)
+    depth = Column(Float, nullable=True)
+    deduct = Column(Boolean, default=False)
+    quantity = Column(Float, default=0.0)          # the product, signed
+    display_order = Column(Integer, default=0)
+
+
 class DBSubBill(Base):
     __tablename__ = "sub_bills"
     __table_args__ = (

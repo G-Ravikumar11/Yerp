@@ -105,22 +105,25 @@ function renderMeasurementBook() {
 
     var log = document.getElementById('mb-entries');
     if (!log) return;
-    log.innerHTML = MB.entries.length ? MB.entries.slice(0, 40).map(function (e) {
+    log.innerHTML = MB.entries.length ? MB.entries.slice(0, 60).map(function (e) {
         return '<tr>' +
-            '<td>' + esc(e.measured_on) + '</td>' +
+            '<td style="white-space:nowrap;">' + esc(e.measured_on) + '</td>' +
             '<td style="font-family:monospace;">' + esc(e.fg_code) + '</td>' +
-            '<td class="text-right"' + (e.quantity < 0 ? ' style="color:var(--warning-color);"' : '') +
+            '<td>' + (dimsSummary(e.dimensions) ||
+                '<span style="font-size:0.72rem;color:var(--text-secondary);">total only</span>') + '</td>' +
+            '<td class="text-right" style="font-weight:600;"' +
+                (e.quantity < 0 ? ' style="color:var(--warning-color);font-weight:600;"' : '') +
                 '>' + e.quantity + '</td>' +
             '<td>' + esc(e.mb_ref || '—') + '</td>' +
             '<td>' + esc(e.recorded_by_name || '') +
                 (e.witnessed_by ? '<div style="font-size:0.72rem;color:var(--text-secondary);">' +
                  'witnessed: ' + esc(e.witnessed_by) + '</div>' : '') + '</td>' +
             '<td>' + esc(e.remarks || '') + '</td>' +
-            '<td class="text-right">' + (e.billed
+            '<td class="text-right no-print">' + (e.billed
                 ? statusPill('billed', 'good')
                 : '<button class="btn btn-sm btn-outline" onclick="removeEntry(' + e.id + ')">Remove</button>') +
             '</td></tr>';
-    }).join('') : '<tr><td colspan="7" style="text-align:center;padding:24px;' +
+    }).join('') : '<tr><td colspan="8" style="text-align:center;padding:24px;' +
         'color:var(--text-secondary);">Nothing measured yet.</td></tr>';
 }
 
@@ -135,13 +138,15 @@ function showMeasureModal(lineId) {
         'Ordered ' + l.ordered_qty + ' ' + l.uom + ' · measured ' + l.measured_to_date +
         ' · ' + (l.balance_to_measure >= 0 ? l.balance_to_measure + ' still to do'
                                            : l.over_measured + ' already over the order');
-    ['measure-qty', 'measure-ref', 'measure-witness', 'measure-remarks'].forEach(function (id) {
+    ['measure-dims-total', 'measure-ref', 'measure-witness', 'measure-remarks'].forEach(function (id) {
         var e = document.getElementById(id); if (e) e.value = '';
     });
     var d = document.getElementById('measure-date');
     if (d) d.value = new Date().toISOString().slice(0, 10);
+    dimsInit('measure-dims', l.uom);
     document.getElementById('measure-modal').style.display = 'flex';
-    document.getElementById('measure-qty').focus();
+    var first = document.querySelector('#measure-dims .dimcell');
+    if (first) first.focus();
 }
 window.showMeasureModal = showMeasureModal;
 
@@ -151,14 +156,18 @@ function closeMeasureModal() {
 window.closeMeasureModal = closeMeasureModal;
 
 async function saveMeasurement() {
-    var qty = parseFloat(document.getElementById('measure-qty').value);
-    if (!qty) { showToast('A measurement of nothing is not a measurement', 'error'); return; }
+    // The dimensions are the measurement when any were written; the typed
+    // total is for the line that has none - a count of manholes.
+    var dims = dimsRows('measure-dims');
+    var qty = parseFloat(document.getElementById('measure-dims-total').value);
+    if (!dims.length && !qty) { showToast('A measurement of nothing is not a measurement', 'error'); return; }
     var res = await fetch('/api/mb/' + MB.wo.id + '/entries', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             line_id: parseInt(document.getElementById('measure-line-id').value),
-            quantity: qty,
+            quantity: dims.length ? 0 : qty,
+            dimensions: dims.length ? dims : null,
             measured_on: document.getElementById('measure-date').value,
             mb_ref: document.getElementById('measure-ref').value,
             witnessed_by: document.getElementById('measure-witness').value,
@@ -227,7 +236,7 @@ async function loadRaBills(woId) {
                  esc(b.certified_by_name) + '</div>' : '') + '</td>' +
             '<td class="text-right">' + act +
                 ' <a class="btn btn-sm btn-outline" href="/api/ra-bills/' + b.id +
-                '/export.xlsx">Excel</a></td>' +
+                '/export.xlsx" title="As a workbook">Download</a></td>' +
             '</tr>';
     }).join('') : '<tr><td colspan="7" style="text-align:center;padding:24px;' +
         'color:var(--text-secondary);">No bills yet. Measure the work, then draw one up.</td></tr>';

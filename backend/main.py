@@ -20063,13 +20063,94 @@ def ra_bill_dict(db, bill, detail=False):
 
 # --- The measurement book ---------------------------------------------------
 
+class DimensionIn(BaseModel):
+    """One line of the book: what, how many, how long, how wide, how deep."""
+    particulars: Optional[str] = ""
+    nos: Optional[float] = None
+    length: Optional[float] = None
+    breadth: Optional[float] = None
+    depth: Optional[float] = None
+    deduct: Optional[bool] = False
+
+
 class MeasurementIn(BaseModel):
     line_id: int
-    quantity: float
+    # The total, when it is typed as one. Ignored when dimensions are given,
+    # because then the total is what the dimensions come to.
+    quantity: Optional[float] = 0
+    dimensions: Optional[List[DimensionIn]] = None
     measured_on: Optional[str] = ""
     mb_ref: Optional[str] = ""
     remarks: Optional[str] = ""
     witnessed_by: Optional[str] = ""
+
+
+def dimension_quantity(d):
+    """No x L x B x D, using only the dimensions that were given.
+
+    A blank dimension is one that does not apply - an area has no depth, a
+    count has no length - not a zero. A zero that was typed is a zero: it is
+    a line that measures nothing, and it is refused below rather than
+    silently multiplied away.
+    """
+    given = [v for v in (d.length, d.breadth, d.depth) if v is not None]
+    qty = float(d.nos) if d.nos is not None else 1.0
+    for v in given:
+        qty *= float(v)
+    return round(qty, 3)
+
+
+def dimension_total(dims):
+    """What the dimension lines come to, signed, having checked each one.
+
+    A row with no figures on it is a row somebody meant to fill in, and a
+    negative figure is a deduction written the wrong way; both are refused
+    rather than quietly multiplied into the total.
+    """
+    total = 0.0
+    for index, d in enumerate(dims or []):
+        if all(v is None for v in (d.nos, d.length, d.breadth, d.depth)):
+            raise HTTPException(400, "Dimension line %d has no figures on it." % (index + 1))
+        for name, v in (("nos", d.nos), ("length", d.length),
+                        ("breadth", d.breadth), ("depth", d.depth)):
+            if v is not None and v < 0:
+                raise HTTPException(400, "Dimension line %d: %s cannot be negative. "
+                                         "Mark the line as a deduction instead."
+                                         % (index + 1, name))
+        qty = dimension_quantity(d)
+        if not qty:
+            raise HTTPException(400, "Dimension line %d comes to nothing." % (index + 1))
+        total += -qty if d.deduct else qty
+    return round(total, 3)
+
+
+def write_dimensions(db, client_id, dims, measurement_id=None, sub_measurement_id=None):
+    """The dimension lines, written against the entry they belong to."""
+    for index, d in enumerate(dims or []):
+        qty = dimension_quantity(d)
+        db.add(models.DBMeasurementDimension(
+            client_id=client_id, measurement_id=measurement_id,
+            sub_measurement_id=sub_measurement_id,
+            particulars=(d.particulars or "").strip(), nos=d.nos, length=d.length,
+            breadth=d.breadth, depth=d.depth, deduct=bool(d.deduct),
+            quantity=-qty if d.deduct else qty, display_order=index))
+
+
+def dimensions_for(db, entry_ids, column):
+    """The dimension lines of many entries in one query, keyed by entry."""
+    out = {}
+    if not entry_ids:
+        return out
+    for d in db.query(models.DBMeasurementDimension).filter(
+            column.in_(entry_ids)).order_by(
+                models.DBMeasurementDimension.display_order,
+                models.DBMeasurementDimension.id).all():
+        out.setdefault(getattr(d, column.key), []).append({
+            "particulars": d.particulars or "", "nos": d.nos, "length": d.length,
+            "breadth": d.breadth, "depth": d.depth, "deduct": bool(d.deduct),
+            "quantity": d.quantity or 0,
+        })
+    return out
 
 
 @app.get("/api/mb/{work_order_id}")
@@ -20102,6 +20183,11 @@ def measurement_book(work_order_id: int, request: Request,
             "over_measured": money(done - money(l.qty)) if done > money(l.qty) else 0.0,
         })
 
+    rows = db.query(models.DBMeasurement).filter(
+        models.DBMeasurement.work_order_id == wo.id).order_by(
+            models.DBMeasurement.id.desc()).limit(400).all()
+    dims = dimensions_for(db, [m.id for m in rows],
+                          models.DBMeasurementDimension.measurement_id)
     entries = [{
         "id": m.id, "line_id": m.line_id, "fg_code": m.fg_code or "",
         "measured_on": m.measured_on or "", "quantity": money(m.quantity),
@@ -20109,9 +20195,8 @@ def measurement_book(work_order_id: int, request: Request,
         "recorded_by_name": m.recorded_by_name or "",
         "witnessed_by": m.witnessed_by or "",
         "billed": bool(m.ra_bill_id), "created_at": m.created_at or "",
-    } for m in db.query(models.DBMeasurement).filter(
-        models.DBMeasurement.work_order_id == wo.id).order_by(
-            models.DBMeasurement.id.desc()).limit(400).all()]
+        "dimensions": dims.get(m.id, []),
+    } for m in rows]
 
     return {
         "work_order": work_order_to_dict(db, wo),
@@ -20140,19 +20225,26 @@ def record_measurement(work_order_id: int, body: MeasurementIn, request: Request
         models.DBWorkOrderLine.work_order_id == wo.id).first()
     if not line:
         raise HTTPException(404, "That line is not on this order")
-    if not body.quantity:
+    # Dimensions, where given, are the measurement; the total is their sum.
+    # A bare total is still accepted - a count of manholes has no dimensions.
+    quantity = money(body.quantity or 0)
+    if body.dimensions:
+        quantity = money(dimension_total(body.dimensions))
+    if not quantity:
         raise HTTPException(400, "A measurement of nothing is not a measurement")
 
     entry = models.DBMeasurement(
         client_id=client.id, work_order_id=wo.id, line_id=line.id,
-        fg_code=line.fg_code or "", quantity=money(body.quantity),
+        fg_code=line.fg_code or "", quantity=quantity,
         measured_on=(body.measured_on or datetime.now().strftime("%Y-%m-%d")),
         mb_ref=(body.mb_ref or "").strip(), remarks=(body.remarks or "").strip(),
         witnessed_by=(body.witnessed_by or "").strip(),
         recorded_by=actor_id, recorded_by_name=actor_name)
     db.add(entry)
+    db.flush()
+    write_dimensions(db, client.id, body.dimensions, measurement_id=entry.id)
     log_audit(db, client.id, "measurement_recorded", "work_order", wo.id, wo.number,
-              "%s %s %s" % (line.fg_code, money(body.quantity), line.uom or ""), request)
+              "%s %s %s" % (line.fg_code, quantity, line.uom or ""), request)
     db.commit()
 
     measured = money(measured_to_date(db, wo.id).get(line.id, 0.0))
@@ -20182,6 +20274,8 @@ def delete_measurement(entry_id: int, request: Request, db: Session = Depends(ge
         raise HTTPException(
             409, "This measurement has been billed. Record a correcting entry "
                  "instead - a book that can be rubbed out is not a record.")
+    db.query(models.DBMeasurementDimension).filter(
+        models.DBMeasurementDimension.measurement_id == entry.id).delete()
     db.delete(entry)
     db.commit()
     return {"ok": True, "message": "Entry removed."}
@@ -23768,7 +23862,8 @@ def sub_bill_dict(db, bill, detail=False):
 
 class SubMeasurementIn(BaseModel):
     item_id: int
-    quantity: float
+    quantity: Optional[float] = 0
+    dimensions: Optional[List[DimensionIn]] = None
     measured_on: Optional[str] = ""
     mb_ref: Optional[str] = ""
     remarks: Optional[str] = ""
@@ -23804,14 +23899,18 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
             "percent_measured": round(done / ordered * 100, 1) if ordered else 0.0,
             "over_measured": money(done - ordered) if done > ordered else 0.0,
         })
+    sub_rows = db.query(models.DBSubMeasurement).filter(
+        models.DBSubMeasurement.order_id == order.id).order_by(
+            models.DBSubMeasurement.id.desc()).limit(400).all()
+    sub_dims = dimensions_for(db, [m.id for m in sub_rows],
+                              models.DBMeasurementDimension.sub_measurement_id)
     entries = [{
         "id": m.id, "item_id": m.item_id, "activity_no": m.activity_no or "",
         "measured_on": m.measured_on or "", "quantity": money(m.quantity),
         "mb_ref": m.mb_ref or "", "remarks": m.remarks or "",
         "recorded_by_name": m.recorded_by_name or "", "billed": bool(m.sub_bill_id),
-    } for m in db.query(models.DBSubMeasurement).filter(
-        models.DBSubMeasurement.order_id == order.id).order_by(
-            models.DBSubMeasurement.id.desc()).limit(400).all()]
+        "dimensions": sub_dims.get(m.id, []),
+    } for m in sub_rows]
     return {
         "order": wo_dict(db, order), "lines": lines, "entries": entries,
         "summary": {
@@ -23842,31 +23941,37 @@ def record_sub_measurement(order_id: int, body: SubMeasurementIn, request: Reque
     if item.is_header:
         raise HTTPException(400, "%s is a heading, not a measurable item."
                                  % (item.activity_no or "That line"))
-    if not body.quantity:
+    quantity = money(body.quantity or 0)
+    if body.dimensions:
+        quantity = money(dimension_total(body.dimensions))
+    if not quantity:
         raise HTTPException(400, "A measurement of nothing is not a measurement")
     # The order plus its tolerance is the ceiling. Past it the order is amended
     # and the extra measured against the amendment - the book does not quietly
     # commit the business to more than anybody signed for. A correction
     # (a negative entry) always goes in.
-    if body.quantity > 0:
+    if quantity > 0:
         done = money(sub_measured_to_date(db, order.id).get(item.id, 0.0))
         ceiling = item_ceiling(item)
-        if money(done + body.quantity) > ceiling + 0.0001:
+        if money(done + quantity) > ceiling + 0.0001:
             raise HTTPException(
                 409, "%s: %s already measured; %s more would make %s against %s "
                      "ordered%s. Amend the order to measure beyond it."
-                     % (item.activity_no or "Item", done, money(body.quantity),
-                        money(done + body.quantity), money(item.quantity),
+                     % (item.activity_no or "Item", done, quantity,
+                        money(done + quantity), money(item.quantity),
                         " (+%g%% tolerance = %s)" % (item.tolerance_percent, ceiling)
                         if item.tolerance_percent else ""))
-    db.add(models.DBSubMeasurement(
+    entry = models.DBSubMeasurement(
         client_id=client.id, order_id=order.id, item_id=item.id,
-        activity_no=item.activity_no or "", quantity=money(body.quantity),
+        activity_no=item.activity_no or "", quantity=quantity,
         measured_on=(body.measured_on or datetime.now().strftime("%Y-%m-%d")),
         mb_ref=(body.mb_ref or "").strip(), remarks=(body.remarks or "").strip(),
-        recorded_by=actor_id, recorded_by_name=actor_name))
+        recorded_by=actor_id, recorded_by_name=actor_name)
+    db.add(entry)
+    db.flush()
+    write_dimensions(db, client.id, body.dimensions, sub_measurement_id=entry.id)
     log_audit(db, client.id, "sub_measurement_recorded", "subcontract_order", order.id,
-              order.wo_number or "", "%s %s %s" % (item.activity_no, money(body.quantity),
+              order.wo_number or "", "%s %s %s" % (item.activity_no, quantity,
                                                    item.uom or ""), request)
     db.commit()
     measured = money(sub_measured_to_date(db, order.id).get(item.id, 0.0))
@@ -23889,6 +23994,8 @@ def delete_sub_measurement(entry_id: int, request: Request, db: Session = Depend
     if entry.sub_bill_id:
         raise HTTPException(409, "This measurement has been billed. Record a "
                                  "correcting entry instead.")
+    db.query(models.DBMeasurementDimension).filter(
+        models.DBMeasurementDimension.sub_measurement_id == entry.id).delete()
     db.delete(entry)
     db.commit()
     return {"ok": True, "message": "Entry removed."}

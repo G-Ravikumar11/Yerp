@@ -437,7 +437,7 @@ async function loadWorkOrders() {
                 w.id + ')" title="What still has to be bought for this order">Material</button>';
         }
         action += ' <a class="btn btn-sm btn-outline" href="/api/erp/work-orders/' +
-            w.id + '/export.xlsx" title="Download this order">Excel</a>';
+            w.id + '/export.xlsx" title="This order as a workbook">Download</a>';
         return '<tr><td style="font-family:monospace;font-weight:600;">' + esc(w.number) + '</td>' +
             '<td>' + esc(w.job_name) +
                 '<div style="font-size:0.75rem;color:var(--text-secondary);">' + esc(w.customer_name) + '</div></td>' +

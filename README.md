@@ -37,9 +37,17 @@ error rather than a merge. Imports your existing spreadsheets.
 underneath it. Import from a spreadsheet or build it on screen. A statement
 page reconciles ordered → varied → measured → billed → certified → paid.
 
-**Measurement book** — what has actually been built. Entries accumulate; a
-correction is a negative entry, never an edit, because a book that can be
-rubbed out is not a record.
+**Measurement book** — what has actually been built, written the way a book
+is written: particulars, No × L × B × D, deductions for openings, the total
+being what the lines come to. Entries accumulate; a correction is a deduction,
+never an edit, because a book that can be rubbed out is not a record. The
+app is the book — there is no sheet beside it.
+
+**No spreadsheets.** That is the point of the app. Grids take a pasted block
+and walk with Enter, Tab and the arrows, so a two-hundred-line schedule is
+typed here. The import paths exist to bring in the sheets the business already
+had, once, and are folded away. Downloads are outputs, like the print button,
+and are labelled as such.
 
 **Variations** — when the site builds past the order, the book already knows.
 The variation drafts itself from that flag: lines, quantities, rates and money.

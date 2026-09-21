@@ -72,7 +72,7 @@ async function loadReceipts() {
             '<td class="text-right">' + act +
                 '<button class="btn btn-sm btn-outline" onclick="openGrn(' + g.id + ')">Open</button> ' +
                 '<a class="btn btn-sm btn-outline" href="/api/grn/' + g.id +
-                '/export.xlsx">Excel</a></td>' +
+                '/export.xlsx" title="As a workbook">Download</a></td>' +
             '</tr>';
     }).join('') : '<tr><td colspan="7" style="text-align:center;padding:26px;' +
         'color:var(--text-secondary);">Nothing received yet. Take a delivery ' +

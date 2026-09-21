@@ -12,7 +12,7 @@
    =========================================================================== */
 
 var WO = { id: null, step: 1, order: null, vocab: null, boq: [], terms: [],
-           imported: null, doc: null };
+           imported: null, doc: null, showImport: false };
 
 var WO_STATUS_TONE = {
     DRAFT: 'calm', PROVISIONAL: 'wait', APPROVED: 'good',
@@ -730,10 +730,11 @@ function stepBoq() {
                     '<button class="btn btn-sm btn-outline" onclick="woBoqRemove(' + i + ')">&times;</button>') + '</td>' +
                 '</tr>';
         }
+        var at = function (k) { return ' data-r="' + i + '" data-k="' + k + '"'; };
         return '<tr>' +
-            '<td><input class="form-control" style="min-width:64px;" value="' + esc(l.activity_no || '') +
+            '<td><input class="form-control wo-cell" style="min-width:64px;"' + at('activity_no') + ' value="' + esc(l.activity_no || '') +
                 '" oninput="woBoqSet(' + i + ',\'activity_no\',this.value)"' + dis + '></td>' +
-            '<td><input class="form-control" style="min-width:96px;" value="' + esc(l.item_code || '') +
+            '<td><input class="form-control wo-cell" style="min-width:96px;"' + at('item_code') + ' value="' + esc(l.item_code || '') +
                 '" oninput="woBoqSet(' + i + ',\'item_code\',this.value)"' +
                 ' onchange="woLastRate(' + i + ')"' + dis + '>' +
                 // What this code was last ordered at, and from whom. Looked up
@@ -741,7 +742,7 @@ function stepBoq() {
                 '<div id="wo-rate-hint-' + i + '" style="font-size:0.7rem;color:var(--text-secondary);margin-top:3px;">' +
                 (l._hint || '') + '</div></td>' +
             '<td style="min-width:280px;">' +
-                '<textarea class="form-control" rows="2" ' +
+                '<textarea class="form-control wo-cell" rows="2"' + at('item_description') + ' ' +
                 'placeholder="What the line is" ' +
                 'oninput="woBoqSet(' + i + ',\'item_description\',this.value)"' + dis + '>' +
                 esc(l.item_description || '') + '</textarea>' +
@@ -752,10 +753,10 @@ function stepBoq() {
                 'font-size:0.78rem;" placeholder="Technical specification (optional)" ' +
                 'oninput="woBoqSet(' + i + ',\'technical_spec\',this.value)"' + dis + '>' +
                 esc(l.technical_spec || '') + '</textarea></td>' +
-            '<td><select class="form-control" style="min-width:80px;" ' +
+            '<td><select class="form-control wo-cell" style="min-width:80px;"' + at('uom') + ' ' +
                 'onchange="woBoqSet(' + i + ',\'uom\',this.value)"' + dis + '>' +
                 options(v.uoms, l.uom) + '</select></td>' +
-            '<td><input type="number" step="any" class="form-control text-right" style="min-width:90px;" value="' +
+            '<td><input type="number" step="any" class="form-control text-right wo-cell" style="min-width:90px;"' + at('quantity') + ' value="' +
                 (l.quantity || '') + '" oninput="woBoqSet(' + i + ',\'quantity\',this.value)"' + dis + '>' +
                 // How far the book may run past the order before it is amended.
                 '<div style="display:flex;align-items:center;gap:4px;margin-top:3px;">' +
@@ -764,7 +765,7 @@ function stepBoq() {
                     'placeholder="tol %" value="' + (l.tolerance_percent || '') +
                     '" oninput="woBoqSet(' + i + ',\'tolerance_percent\',this.value)"' + dis + '>' +
                 '<span style="font-size:0.68rem;color:var(--text-secondary);">% tol</span></div></td>' +
-            '<td><input type="number" step="any" class="form-control text-right" style="min-width:100px;" value="' +
+            '<td><input type="number" step="any" class="form-control text-right wo-cell" style="min-width:100px;"' + at('unit_rate') + ' value="' +
                 (l.unit_rate || '') + '" oninput="woBoqSet(' + i + ',\'unit_rate\',this.value)"' + dis + '></td>' +
             '<td><select class="form-control" style="min-width:130px;" ' +
                 'onchange="woBoqSet(' + i + ',\'budget_id\',this.value)"' + dis + '>' +
@@ -792,8 +793,11 @@ function stepBoq() {
         '<tbody>' + (rows || '<tr><td colspan="9" style="text-align:center;padding:24px;' +
             'color:var(--text-secondary);">Nothing scheduled yet.</td></tr>') + '</tbody>' +
         '<tfoot><tr><td colspan="7" class="text-right"><strong>Gross</strong></td>' +
-        '<td class="text-right"><strong>' + formatCurrency(gross) + '</strong></td><td></td></tr></tfoot>' +
+        '<td class="text-right" style="white-space:nowrap;"><strong>' + formatCurrency(gross) + '</strong></td><td></td></tr></tfoot>' +
         '</table></div>' +
+        (locked ? '' : '<p style="font-size:0.74rem;color:var(--text-secondary);margin:8px 0 0;">' +
+            'Works like a sheet: Enter or the arrows move down a column, Tab moves across, ' +
+            'and a block copied from anywhere pastes straight in from the cell you are on.</p>') +
         (locked ? '' :
         '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">' +
         '<button class="btn btn-outline" onclick="woBoqAdd()">+ Add line</button>' +
@@ -827,17 +831,23 @@ function woImportPanel() {
        with the rates in it, and retyping two hundred priced lines to match a
        heading is how a rate gets typed wrong. */
     var read = WO.imported;
+    if (!WO.showImport && !read) {
+        return '<p style="font-size:0.76rem;color:var(--text-secondary);margin:0 0 10px;">' +
+            'Type the schedule below or paste it in from wherever it is. ' +
+            '<a href="#" onclick="event.preventDefault();WO.showImport=true;renderWizard()">' +
+            'Have it as a file already?</a></p>';
+    }
     return '<div style="border:1px dashed var(--border-color);border-radius:8px;' +
         'padding:12px 14px;margin-bottom:14px;">' +
         '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">' +
         '<div style="flex:1;min-width:200px;">' +
-        '<div style="font-weight:600;font-size:0.86rem;">Import a BOQ</div>' +
+        '<div style="font-weight:600;font-size:0.86rem;">Bring in a schedule that already exists</div>' +
         '<div style="font-size:0.76rem;color:var(--text-secondary);">' +
-            'An Excel or CSV schedule, headed however the contractor heads it. ' +
+            'A .xlsx or .csv headed however the contractor heads it. ' +
             'Nothing is saved until you have read it back.</div></div>' +
         '<input type="file" id="wo-boq-file" accept=".xlsx,.xls,.csv" ' +
             'class="form-control" style="max-width:230px;" onchange="woImportBoq(this)">' +
-        '<a class="btn btn-sm btn-outline" href="/api/wo/boq/template">Template</a>' +
+        '<a href="#" style="font-size:0.78rem;" onclick="event.preventDefault();WO.showImport=false;renderWizard()">Hide</a>' +
         '</div>' +
         (read ? '<div style="margin-top:10px;padding-top:10px;' +
             'border-top:1px solid var(--border-color);font-size:0.78rem;">' +
@@ -885,6 +895,89 @@ function woBoqSet(i, key, value) {
     if (key === 'quantity' || key === 'unit_rate' || key === 'budget_id') renderWizard();
 }
 window.woBoqSet = woBoqSet;
+
+/* --- The grid behaves like a sheet ------------------------------------------
+   Enter and the arrows walk a column, Tab walks a row, and a block of cells
+   copied out of a sheet or a document lands from the cell the cursor is on,
+   growing the schedule to fit. This is what stops a two-hundred-line BOQ
+   being typed somewhere else first.
+   ------------------------------------------------------------------------ */
+var WO_GRID_COLS = ['activity_no', 'item_code', 'item_description', 'uom', 'quantity', 'unit_rate'];
+
+function woCellAt(r, k) {
+    return document.querySelector('#sc-wizard .wo-cell[data-r="' + r + '"][data-k="' + k + '"]');
+}
+
+function woGridMove(r, k) {
+    while (r >= WO.boq.length) { WO.boq.push(woBlankLine()); }
+    if (r < 0) r = 0;
+    renderWizard();
+    var el = woCellAt(r, k);
+    if (el) { el.focus(); if (el.select && el.type !== 'select-one') el.select(); }
+}
+
+function woBlankLine() {
+    var last = WO.boq[WO.boq.length - 1];
+    return { activity_no: '', item_code: '', item_description: '', technical_spec: '',
+             uom: last ? (last.uom || 'cum') : 'cum', quantity: '', unit_rate: '',
+             tolerance_percent: '', is_header: false,
+             budget_id: last ? (last.budget_id || null) : null };
+}
+
+document.addEventListener('keydown', function (e) {
+    var cell = e.target.closest ? e.target.closest('#sc-wizard .wo-cell') : null;
+    if (!cell || cell.disabled) return;
+    var r = parseInt(cell.dataset.r), k = cell.dataset.k;
+    var textarea = cell.tagName === 'TEXTAREA';
+    var move = null;
+    if (e.key === 'Enter' && !(textarea && e.shiftKey)) {
+        move = [r + 1, k];
+    } else if (e.key === 'ArrowDown' && !(textarea && cell.selectionStart < cell.value.length)) {
+        move = [r + 1, k];
+    } else if (e.key === 'ArrowUp' && !(textarea && cell.selectionStart > 0)) {
+        move = [r - 1, k];
+    }
+    if (!move) return;
+    e.preventDefault();
+    woGridMove(move[0], move[1]);
+});
+
+document.addEventListener('paste', function (e) {
+    var cell = e.target.closest ? e.target.closest('#sc-wizard .wo-cell') : null;
+    if (!cell || cell.disabled) return;
+    var text = (e.clipboardData || window.clipboardData).getData('text/plain') || '';
+    if (text.indexOf('\t') < 0 && text.indexOf('\n') < 0) return;      // one value: let it be
+    e.preventDefault();
+    var startR = parseInt(cell.dataset.r);
+    var startC = WO_GRID_COLS.indexOf(cell.dataset.k);
+    if (startC < 0) startC = 0;
+    var lines = text.replace(/\r/g, '').split('\n').filter(function (l, i, all) {
+        return l.length || i < all.length - 1;
+    });
+    var landed = 0;
+    lines.forEach(function (line, dr) {
+        var r = startR + dr;
+        while (r >= WO.boq.length) WO.boq.push(woBlankLine());
+        line.split('\t').forEach(function (value, dc) {
+            var key = WO_GRID_COLS[startC + dc];
+            if (!key) return;
+            value = String(value).trim();
+            if (key === 'quantity' || key === 'unit_rate') {
+                value = value.replace(/[^0-9.\-]/g, '');                 // 12,34,567.50 -> 1234567.50
+            } else if (key === 'uom') {
+                var hit = (WO.vocab.uoms || []).filter(function (u) {
+                    return u.toLowerCase() === value.toLowerCase(); })[0];
+                value = hit || value;
+            }
+            WO.boq[r][key] = value;
+        });
+        landed++;
+    });
+    renderWizard();
+    var back = woCellAt(startR, cell.dataset.k);
+    if (back) back.focus();
+    showToast(landed + ' line' + (landed === 1 ? '' : 's') + ' pasted in', 'success');
+});
 
 function woBoqToggleHeader(i) {
     var l = WO.boq[i];
@@ -1247,7 +1340,7 @@ function stepReview() {
         '<a class="btn btn-sm btn-outline" href="/api/wo/orders/' + o.id +
             '/document.pdf" target="_blank" rel="noopener">Download PDF</a>' +
         '<a class="btn btn-sm btn-outline" href="/api/wo/orders/' + o.id +
-            '/boq.xlsx">Schedule (Excel)</a>' +
+            '/boq.xlsx" title="The schedule as a workbook">Download schedule</a>' +
         '<button class="btn btn-sm btn-outline" onclick="woPreview()">Full page</button>' +
         '</div></div>' +
         '<div style="padding:16px;background:rgba(0,0,0,0.18);" id="wo-inline-doc">' +

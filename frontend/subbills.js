@@ -86,18 +86,20 @@ function renderSubBook() {
     }).join('') : '<tr><td colspan="8" style="text-align:center;padding:24px;' +
         'color:var(--text-secondary);">This order has no items.</td></tr>';
 
-    document.getElementById('sub-entries').innerHTML = SUB.entries.length ? SUB.entries.slice(0, 40).map(function (e) {
-        return '<tr><td>' + esc(e.measured_on) + '</td>' +
+    document.getElementById('sub-entries').innerHTML = SUB.entries.length ? SUB.entries.slice(0, 60).map(function (e) {
+        return '<tr><td style="white-space:nowrap;">' + esc(e.measured_on) + '</td>' +
             '<td style="font-family:monospace;">' + esc(e.activity_no) + '</td>' +
-            '<td class="text-right"' + (e.quantity < 0 ? ' style="color:var(--warning-color);"' : '') +
-                '>' + e.quantity + '</td>' +
+            '<td>' + (dimsSummary(e.dimensions) ||
+                '<span style="font-size:0.72rem;color:var(--text-secondary);">total only</span>') + '</td>' +
+            '<td class="text-right" style="font-weight:600;' + (e.quantity < 0 ? 'color:var(--warning-color);' : '') +
+                '">' + e.quantity + '</td>' +
             '<td>' + esc(e.mb_ref || '—') + '</td>' +
             '<td>' + esc(e.recorded_by_name || '') + '</td>' +
             '<td>' + esc(e.remarks || '') + '</td>' +
-            '<td class="text-right">' + (e.billed ? statusPill('billed', 'good')
+            '<td class="text-right no-print">' + (e.billed ? statusPill('billed', 'good')
                 : '<button class="btn btn-sm btn-outline" onclick="removeSubEntry(' + e.id + ')">Remove</button>') +
             '</td></tr>';
-    }).join('') : '<tr><td colspan="7" style="text-align:center;padding:24px;' +
+    }).join('') : '<tr><td colspan="8" style="text-align:center;padding:24px;' +
         'color:var(--text-secondary);">Nothing measured yet.</td></tr>';
 }
 
@@ -110,12 +112,14 @@ function showSubMeasure(itemId) {
         'Ordered ' + l.ordered_qty + ' ' + l.uom + ' · measured ' + l.measured_to_date + ' · ' +
         (l.balance_to_measure >= 0 ? l.balance_to_measure + ' still to do'
                                    : l.over_measured + ' already over the order');
-    ['sub-measure-qty', 'sub-measure-ref', 'sub-measure-remarks'].forEach(function (id) {
+    ['sub-measure-dims-total', 'sub-measure-ref', 'sub-measure-remarks'].forEach(function (id) {
         document.getElementById(id).value = '';
     });
     document.getElementById('sub-measure-date').value = localDate(new Date());
+    dimsInit('sub-measure-dims', l.uom);
     openModal('sub-measure-modal');
-    document.getElementById('sub-measure-qty').focus();
+    var first = document.querySelector('#sub-measure-dims .dimcell');
+    if (first) first.focus();
 }
 window.showSubMeasure = showSubMeasure;
 
@@ -123,14 +127,16 @@ function closeSubMeasure() { closeModal('sub-measure-modal'); }
 window.closeSubMeasure = closeSubMeasure;
 
 async function saveSubMeasure() {
-    var qty = parseFloat(document.getElementById('sub-measure-qty').value);
-    if (!qty) { showToast('A measurement of nothing is not a measurement', 'error'); return; }
+    var dims = dimsRows('sub-measure-dims');
+    var qty = parseFloat(document.getElementById('sub-measure-dims-total').value);
+    if (!dims.length && !qty) { showToast('A measurement of nothing is not a measurement', 'error'); return; }
     var res = await fetch('/api/sub-mb/' + SUB.order.id + '/entries', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             item_id: parseInt(document.getElementById('sub-measure-item').value),
-            quantity: qty, measured_on: document.getElementById('sub-measure-date').value,
+            quantity: dims.length ? 0 : qty, dimensions: dims.length ? dims : null,
+            measured_on: document.getElementById('sub-measure-date').value,
             mb_ref: document.getElementById('sub-measure-ref').value,
             remarks: document.getElementById('sub-measure-remarks').value,
         }),
@@ -183,7 +189,7 @@ function renderSubBillList(bills, summary) {
                 (b.paid_reference ? '<div style="font-size:0.72rem;color:var(--text-secondary);">' +
                  esc(b.paid_reference) + '</div>' : '') + '</td>' +
             '<td class="text-right">' + act + ' <a class="btn btn-sm btn-outline" href="/api/sub-bills/' +
-                b.id + '/export.xlsx">Excel</a></td></tr>';
+                b.id + '/export.xlsx" title="As a workbook">Download</a></td></tr>';
     }).join('') : '<tr><td colspan="8" style="text-align:center;padding:24px;' +
         'color:var(--text-secondary);">No bills yet. Measure the gang\'s work, then draw one up.</td></tr>';
 }

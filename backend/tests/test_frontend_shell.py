@@ -78,3 +78,24 @@ def test_the_front_door_is_the_sign_in():
     for leftover in ("Pricing", "Testimonials", "Invoicing Made"):
         assert leftover not in h, "the old landing page is back: %s" % leftover
     assert "Super Admin" not in read("login.html")
+
+
+def test_no_button_sends_anybody_to_excel():
+    """The app exists to replace the spreadsheets. A button that says Excel
+    is the whole workflow's tell: it says the real work happens there.
+    Downloads are outputs, like the print button, and are labelled as such."""
+    for name in os.listdir(FRONTEND):
+        if not name.endswith((".html", ".js")) or name in ("index.html", "login.html"):
+            continue
+        text = read(name)
+        for label in re.findall(r">([^<>]{0,40}Excel[^<>]{0,40})<", text):
+            assert False, "%s labels a control with Excel: %r" % (name, label)
+        assert "(Excel)" not in text, name
+
+
+def test_the_measurement_modal_is_a_dimension_sheet():
+    """No x L x B x D, on the screen, not in a sheet beside it."""
+    h = read("app.html")
+    assert 'id="measure-dims"' in h and 'id="sub-measure-dims"' in h
+    assert "mbdims.js" in h
+    assert 'MB page reference' not in h, "the page reference implies the book lives elsewhere"
