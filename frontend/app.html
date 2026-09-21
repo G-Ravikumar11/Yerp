@@ -28,7 +28,7 @@
         }}
       };
     </script>
-    <link rel="stylesheet" href="styles.css?v=76">
+    <link rel="stylesheet" href="styles.css?v=82">
     <link rel="stylesheet" href="mobile.css?v=65">
 </head>
 <body>
@@ -160,6 +160,7 @@
                             <a href="#" class="nav-item" id="nav-bills" onclick="event.preventDefault();showView('bills-view')">Supplier Bills</a>
                             <a href="#" class="nav-item" id="nav-invoices" data-perm="invoices.manage" onclick="event.preventDefault();showView('invoices-view')">Client Invoices</a>
                             <a href="#" class="nav-item" id="nav-gst" onclick="event.preventDefault();showView('gst-view')">GST</a>
+                            <a href="#" class="nav-item" id="nav-registers" onclick="event.preventDefault();showView('registers-view')">TDS, Guarantees &amp; Advances</a>
                         </div>
                     </div>
 
@@ -3384,6 +3385,79 @@
                     </div>
                 </div>
 
+                <div id="registers-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Registers</h1><p class="subtitle">The three sheets the accountant kept by hand: TDS by quarter, guarantees and when they lapse, advances and what has come back</p></div>
+                        <div class="invoices-actions">
+                            <button class="btn btn-outline" onclick="loadRegisters()">Refresh</button>
+                            <button class="btn btn-outline" onclick="window.print()">Print</button>
+                        </div>
+                    </div>
+
+                    <h3 style="font-size:1rem;margin:4px 0 12px;">TDS under section 194C</h3>
+                    <div class="widget" style="margin-bottom:14px;">
+                        <div class="widget-content" style="padding:12px 20px;display:flex;gap:14px;align-items:end;flex-wrap:wrap;">
+                            <div class="form-group" style="margin:0;"><label>Financial year</label>
+                                <select id="reg-tds-year" class="form-control" onchange="loadTdsRegister()"><option value="">Every year</option></select></div>
+                            <div class="form-group" style="margin:0;"><label>Quarter</label>
+                                <select id="reg-tds-quarter" class="form-control" onchange="loadTdsRegister()">
+                                    <option value="">Every quarter</option>
+                                    <option value="Q1">Q1 &mdash; Apr to Jun</option>
+                                    <option value="Q2">Q2 &mdash; Jul to Sep</option>
+                                    <option value="Q3">Q3 &mdash; Oct to Dec</option>
+                                    <option value="Q4">Q4 &mdash; Jan to Mar</option>
+                                </select></div>
+                            <p style="font-size:0.78rem;color:var(--text-secondary);margin:0 0 6px;flex:1;min-width:240px;">
+                                What we withheld is deposited by the 7th of the next month and filed in the 26Q each quarter. What was withheld from us is matched to the 26AS before it is claimed.</p>
+                        </div>
+                    </div>
+                    <div class="stats-grid" id="reg-tds-stats"></div>
+                    <div class="widget" style="margin-top:14px;">
+                        <div class="widget-header"><h3>To deposit, by quarter</h3></div>
+                        <div class="table-responsive" id="reg-tds-quarters" style="padding:0 20px;"></div>
+                    </div>
+                    <div class="widget" style="margin-top:14px;">
+                        <div class="widget-header"><h3>Deducted by us &mdash; from the gangs&rsquo; bills</h3></div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Date</th><th>Quarter</th><th>Bill</th><th>Deductee</th><th>Section</th><th class="text-right">Amount credited ₹</th><th class="text-right">TDS ₹</th><th>Paid on</th></tr></thead>
+                                <tbody id="reg-tds-deducted"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="widget" style="margin-top:14px;">
+                        <div class="widget-header"><h3>Deducted from us &mdash; by our clients</h3></div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Date</th><th>Quarter</th><th>Bill</th><th>Deductor</th><th>Section</th><th class="text-right">Amount credited ₹</th><th class="text-right">TDS ₹</th></tr></thead>
+                                <tbody id="reg-tds-suffered"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <h3 style="font-size:1rem;margin:26px 0 12px;">Bank guarantees held</h3>
+                    <div class="stats-grid" id="reg-bg-stats"></div>
+                    <div class="widget" style="margin-top:14px;">
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Contractor</th><th>Order</th><th class="text-right">Amount ₹</th><th>Valid until</th><th class="text-right">Days left</th><th>Work completes</th><th>State</th></tr></thead>
+                                <tbody id="reg-bg-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <h3 style="font-size:1rem;margin:26px 0 12px;">Mobilisation advances</h3>
+                    <div class="stats-grid" id="reg-adv-stats"></div>
+                    <div class="widget" style="margin-top:14px;">
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Contractor</th><th>Order</th><th class="text-right">Advance ₹</th><th class="text-right">Recovery</th><th class="text-right">Recovered ₹</th><th class="text-right">Still out ₹</th><th>Security</th></tr></thead>
+                                <tbody id="reg-adv-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="gst-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div><h1>GST</h1><p class="subtitle">What we charged and what we were charged, split the way the return wants it</p></div>
@@ -3796,6 +3870,17 @@
                         <div><h1>Work order</h1><p class="subtitle">Saved at every step &mdash; a schedule of two hundred lines is not something to lose to a closed tab</p></div>
                     </div>
                     <div class="widget"><div class="widget-content" style="padding:20px;" id="sc-wizard"></div></div>
+                </div>
+
+                <div id="document-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area no-print">
+                        <div><h1 id="document-title">Document</h1><p class="subtitle">As it prints, as it is sent, as it is argued over</p></div>
+                        <div class="invoices-actions">
+                            <button class="btn btn-outline" onclick="docBack()">Back</button>
+                            <button class="btn btn-primary" onclick="window.print()">Print / Save as PDF</button>
+                        </div>
+                    </div>
+                    <div id="document-body" style="padding:16px 0;"></div>
                 </div>
 
                 <div id="subcontract-document-view" class="view-section dashboard" style="display:none;">
@@ -4471,12 +4556,12 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=79"></script>
+    <script src="app.js?v=82"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=65"></script>
     <!-- Jobs, job costing and purchase orders. -->
-    <script src="jobs.js?v=81"></script>
+    <script src="jobs.js?v=82"></script>
     <!-- Item master, work orders and budget allocation. -->
     <script src="erp.js?v=81"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
@@ -4489,15 +4574,18 @@
     <script src="sheet-viewer.js?v=65"></script>
     <script src="subcontracts.js?v=81"></script>
     <script src="costs.js?v=65"></script>
+    <script src="sheet.js?v=83"></script>
+    <script src="documents.js?v=84"></script>
     <script src="mbdims.js?v=81"></script>
-    <script src="measurement.js?v=81"></script>
+    <script src="measurement.js?v=82"></script>
     <script src="stock.js?v=79"></script>
     <script src="diary.js?v=81"></script>
     <script src="money.js?v=79"></script>
-    <script src="subbills.js?v=81"></script>
+    <script src="subbills.js?v=82"></script>
     <script src="estimate.js?v=81"></script>
     <script src="gst.js?v=79"></script>
-    <script src="stores.js?v=81"></script>
+    <script src="registers.js?v=84"></script>
+    <script src="stores.js?v=82"></script>
 
     <!-- AI Core Orb -->
     <div class="ai-core" onclick="toggleAIChat()" role="button" tabindex="0" aria-label="Open the assistant" title="Ask the assistant" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAIChat();}">

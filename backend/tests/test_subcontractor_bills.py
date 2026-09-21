@@ -254,3 +254,34 @@ def test_another_tenant_sees_none_of_it(tenant, second_tenant):
     assert second_tenant.get("/api/sub-bills/%d" % bill["id"]).status_code == 404
     assert second_tenant.get("/api/sub-mb/%d" % order["id"]).status_code == 404
     assert second_tenant.get("/api/money/payables").json()["summary"]["owed"] == 0
+
+
+def test_a_small_first_bill_does_not_go_negative(tenant):
+    """10% of a large advance against a small month's work: the recovery is
+    what the bill can bear, and the rest waits. A bill for less than nothing
+    was reaching the printer."""
+    order = live_order(tenant, mobilization_advance_percent=10,
+                       advance_recovery_percent=50, retention_percent=5)
+    assert order["mobilization_advance_amount"] > 0
+    item = book(tenant, order["id"])["lines"][0]["item_id"]
+    measure(tenant, order["id"], item, 1)                    # one cum of work
+    bill = raise_bill(tenant, order["id"]).json()["bill"]
+    assert bill["net_payable"] >= 0
+    assert bill["advance_recovery"] > 0
+    assert bill["advance_recovery"] < bill["this_bill"] - bill["retention_amount"]
+
+
+def test_the_advance_is_never_recovered_twice_over(tenant):
+    """Bill after bill, the recovery stops when the advance is paid back."""
+    order = live_order(tenant, mobilization_advance_percent=10,
+                       advance_recovery_percent=60)
+    advance = order["mobilization_advance_amount"]
+    item = book(tenant, order["id"])["lines"][0]["item_id"]
+    recovered = 0.0
+    for qty in (100, 100, 50):
+        measure(tenant, order["id"], item, qty)
+        bill = raise_bill(tenant, order["id"]).json()["bill"]
+        tenant.post("/api/sub-bills/%d/submit" % bill["id"], json={})
+        tenant.post("/api/sub-bills/%d/certify" % bill["id"], json={})
+        recovered += bill["advance_recovery"]
+    assert round(recovered, 2) == advance

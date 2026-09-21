@@ -361,7 +361,9 @@ function localDate(d) {
 window.localDate = localDate;
 
 // --- View Switcher ---
+var currentView = '';
 function showView(viewId) {
+    if (viewId !== 'document-view') currentView = viewId;    // a document is looked at, not gone to
     if (viewId !== 'view-invoice-view' && viewId !== 'view-quote-view') _viewCurrency = '';
     document.querySelectorAll('.view-section').forEach(function(el) {
         el.classList.remove('active');
@@ -425,6 +427,7 @@ function showView(viewId) {
         'subbills-view': 'nav-subbills',
         'estimates-view': 'nav-estimates',
         'gst-view': 'nav-gst',
+        'registers-view': 'nav-registers',
         'stores-view': 'nav-stores',
         'project-costs-view': 'nav-costs',
         'subcontract-wizard-view': 'nav-subcontracts',
@@ -491,6 +494,7 @@ function showView(viewId) {
     if (viewId === 'subbills-view' && typeof loadSubBills === 'function') loadSubBills();
     if (viewId === 'estimates-view' && typeof loadEstimates === 'function') loadEstimates();
     if (viewId === 'gst-view' && typeof loadGst === 'function') loadGst();
+    if (viewId === 'registers-view' && typeof loadRegisters === 'function') loadRegisters();
     if (viewId === 'dashboard-view' && typeof loadAttention === 'function') loadAttention();
     if (viewId === 'stores-view' && typeof loadStores === 'function') loadStores();
     // The item grid is open by default now, so it is mounted on arrival

@@ -71,6 +71,8 @@ async function loadReceipts() {
             '<td>' + statusPill(g.status, GRN_TONE[g.status] || 'calm') + '</td>' +
             '<td class="text-right">' + act +
                 '<button class="btn btn-sm btn-outline" onclick="openGrn(' + g.id + ')">Open</button> ' +
+                '<button class="btn btn-sm btn-outline" onclick="openDocument(\'grn\',' + g.id + ')" ' +
+                'title="The note as it prints">View</button> ' +
                 '<a class="btn btn-sm btn-outline" href="/api/grn/' + g.id +
                 '/export.xlsx" title="As a workbook">Download</a></td>' +
             '</tr>';

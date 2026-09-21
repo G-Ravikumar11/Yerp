@@ -188,7 +188,10 @@ function renderSubBillList(bills, summary) {
             '<td>' + statusPill(b.status, SUB_TONE[b.status] || 'calm') +
                 (b.paid_reference ? '<div style="font-size:0.72rem;color:var(--text-secondary);">' +
                  esc(b.paid_reference) + '</div>' : '') + '</td>' +
-            '<td class="text-right">' + act + ' <a class="btn btn-sm btn-outline" href="/api/sub-bills/' +
+            '<td class="text-right" style="white-space:nowrap;">' + act +
+                ' <button class="btn btn-sm btn-outline" onclick="openDocument(\'sub-bill\',' + b.id + ')" ' +
+                'title="The bill as it prints">View bill</button>' +
+                ' <a class="btn btn-sm btn-outline" href="/api/sub-bills/' +
                 b.id + '/export.xlsx" title="As a workbook">Download</a></td></tr>';
     }).join('') : '<tr><td colspan="8" style="text-align:center;padding:24px;' +
         'color:var(--text-secondary);">No bills yet. Measure the gang\'s work, then draw one up.</td></tr>';

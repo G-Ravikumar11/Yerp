@@ -43,6 +43,21 @@ being what the lines come to. Entries accumulate; a correction is a deduction,
 never an edit, because a book that can be rubbed out is not a record. The
 app is the book — there is no sheet beside it.
 
+**Every document has a page.** The client's RA bill (abstract of cost,
+deductions in the order they are made, the figure in words, the certification
+block), the subcontractor's bill, the purchase order and the goods receipt
+each open as the sheet of paper they become and print from the browser. The
+workbook download still exists for whoever asks for one; it is no longer the
+only way to see a bill.
+
+**Every table is a sheet.** Click a heading to sort, type to filter, tick
+Totals. The three things a list used to be downloaded for.
+
+**Registers** — TDS by quarter in both directions (what we withheld under
+194C and must deposit and file; what our clients withheld and we must match
+to the 26AS), bank guarantees and when each lapses, mobilisation advances and
+what has come back.
+
 **No spreadsheets.** That is the point of the app. Grids take a pasted block
 and walk with Enter, Tab and the arrows, so a two-hundred-line schedule is
 typed here. The import paths exist to bring in the sheets the business already

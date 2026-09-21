@@ -1776,3 +1776,24 @@ label { color: var(--text-secondary); font-size: 0.78rem; font-weight: 600; }
     width: 100%;
     max-width: 100px;
 }
+
+
+/* --- Every table is a sheet ------------------------------------------------ */
+.sheet-bar {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 16px 4px;
+}
+table.data-table thead th { cursor: pointer; user-select: none; }
+table.data-table thead th[data-sort] { color: var(--primary-color); }
+
+@media print {
+    .sheet-bar, .no-print { display: none !important; }
+    #document-view .invoices-header-area { display: none !important; }
+    #document-body { padding: 0 !important; }
+    .wo-sheet { box-shadow: none !important; max-width: none !important; padding: 0 !important; }
+    .wo-table thead { display: table-header-group; }
+    .wo-table tr { page-break-inside: avoid; }
+}
+
+.doc-abstract th { white-space: nowrap; font-size: 0.66rem; }
+.doc-abstract td { vertical-align: top; }

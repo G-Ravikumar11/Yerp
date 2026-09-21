@@ -300,6 +300,8 @@ async function loadOrders() {
                 ? '<button class="btn btn-sm" onclick="editOrder(' + o.id + ')">Edit</button> ' : '') +
                 // An order is a document that gets sent on, so it can be taken
                 // away whatever state it is in.
+                '<button class="btn btn-sm btn-outline" onclick="openDocument(\'po\',' + o.id + ')" ' +
+                'title="The order as it prints">View</button> ' +
                 '<a class="btn btn-sm btn-outline" href="/api/purchase-orders/' + o.id +
                 '/export.xlsx" title="This order as a workbook">Download</a></td>' +
             '</tr>';

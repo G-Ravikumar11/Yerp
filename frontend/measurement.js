@@ -234,7 +234,9 @@ async function loadRaBills(woId) {
             '<td>' + statusPill(b.status, RA_TONE[b.status] || 'calm') +
                 (b.certified_by_name ? '<div style="font-size:0.72rem;color:var(--text-secondary);">' +
                  esc(b.certified_by_name) + '</div>' : '') + '</td>' +
-            '<td class="text-right">' + act +
+            '<td class="text-right" style="white-space:nowrap;">' + act +
+                ' <button class="btn btn-sm btn-outline" onclick="openDocument(\'ra-bill\',' + b.id + ')" ' +
+                'title="The bill as it prints">View bill</button>' +
                 ' <a class="btn btn-sm btn-outline" href="/api/ra-bills/' + b.id +
                 '/export.xlsx" title="As a workbook">Download</a></td>' +
             '</tr>';

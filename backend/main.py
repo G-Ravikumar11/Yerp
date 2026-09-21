@@ -12254,7 +12254,12 @@ def list_purchase_orders(request: Request, job_id: int = 0, status: str = "",
 def get_purchase_order(order_id: int, request: Request, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
     order = purchase_order_or_404(db, client.id, order_id)
-    return purchase_order_to_dict(db, order, include_chain=True)
+    row = purchase_order_to_dict(db, order, include_chain=True)
+    row["our"] = our_party(db, client.id)
+    row["amount_in_words"] = amount_in_words(order.total or 0)
+    job = db.query(models.DBJob).filter(models.DBJob.id == order.job_id).first() if order.job_id else None
+    row["deliver_to"] = job.site_address if job else ""
+    return row
 
 
 @app.post("/api/purchase-orders")
@@ -17726,20 +17731,31 @@ def amount_in_words(value):
         return (units[n // 100] + " Hundred" +
                 (" and " + under_hundred(rest) if rest else ""))
 
-    whole = int(money(value))
-    paise = int(round((money(value) - whole) * 100))
-    if whole == 0:
-        words = "Zero"
-    else:
+    def natural(n):
+        """Indian grouping. The crore figure is itself grouped, so a hundred
+        crore reads as one and not as an index error."""
         parts = []
         for divisor, label in ((10000000, "Crore"), (100000, "Lakh"), (1000, "Thousand")):
-            if whole >= divisor:
-                parts.append(under_thousand(whole // divisor) + " " + label)
-                whole %= divisor
-        if whole:
-            parts.append(under_thousand(whole))
-        words = " ".join(parts)
-    out = "Rupees " + words
+            if n >= divisor:
+                count = n // divisor
+                parts.append((natural(count) if count >= 1000 else under_thousand(count))
+                             + " " + label)
+                n %= divisor
+        if n:
+            parts.append(under_thousand(n))
+        return " ".join(parts)
+
+    # A bill can come to less than nothing - an advance recovered against a
+    # small month's work - and the words have to say so rather than fail.
+    amount = money(value)
+    negative = amount < 0
+    amount = abs(amount)
+    whole = int(amount)
+    paise = int(round((amount - whole) * 100))
+    if paise == 100:
+        whole, paise = whole + 1, 0
+    words = natural(whole) if whole else "Zero"
+    out = ("Minus " if negative else "") + "Rupees " + words
     if paise:
         out += " and " + under_hundred(paise) + " Paise"
     return out + " Only"
@@ -20015,6 +20031,15 @@ def recost_ra_bill(db, bill):
     return bill
 
 
+def our_party(db, client_id):
+    c = db.query(models.DBClient).filter(models.DBClient.id == client_id).first()
+    if not c:
+        return {}
+    return {"name": c.company_name or "", "gstin": c.gstin or "",
+            "address": c.address or "", "phone": c.phone_number or "",
+            "email": c.email or "", "logo_url": c.logo_url or ""}
+
+
 def ra_bill_dict(db, bill, detail=False):
     wo = db.query(models.DBWorkOrder).filter(
         models.DBWorkOrder.id == bill.work_order_id).first()
@@ -20055,9 +20080,20 @@ def ra_bill_dict(db, bill, detail=False):
             "previously_billed_qty": money(l.previously_billed_qty),
             "this_bill_qty": money(l.this_bill_qty),
             "rate": unit_rate(l.rate), "amount": money(l.amount),
+            "upto_date_amount": money(money(l.measured_to_date) * unit_rate(l.rate)),
         } for l in db.query(models.DBRABillLine).filter(
             models.DBRABillLine.ra_bill_id == bill.id).order_by(
                 models.DBRABillLine.display_order, models.DBRABillLine.id).all()]
+        # What the printed bill needs beyond the figures: who it is from, who
+        # it is to, where the work is, and the amount stated twice.
+        row["our"] = our_party(db, bill.client_id)
+        row["client_party"] = {"name": job.customer_name if job else "",
+                               "site": job.site_address if job else ""}
+        row["place_of_supply_name"] = GST_STATES.get(bill.place_of_supply or "", "")
+        row["amount_in_words"] = amount_in_words(bill.net_payable)
+        row["work_order_detail"] = ({"number": wo.number, "date": wo.order_date or "",
+                                     "reference": wo.reference or "",
+                                     "value": money(wo.total_value)} if wo else {})
     return row
 
 
@@ -23852,9 +23888,22 @@ def sub_bill_dict(db, bill, detail=False):
             "previously_billed_qty": money(l.previously_billed_qty),
             "this_bill_qty": money(l.this_bill_qty), "rate": unit_rate(l.rate),
             "amount": money(l.amount),
+            "upto_date_amount": money(money(l.measured_to_date) * unit_rate(l.rate)),
         } for l in db.query(models.DBSubBillLine).filter(
             models.DBSubBillLine.sub_bill_id == bill.id).order_by(
                 models.DBSubBillLine.display_order, models.DBSubBillLine.id).all()]
+        row["our"] = our_party(db, bill.client_id)
+        row["contractor_detail"] = ({"name": con.company_name or "", "gstin": con.gst_number or "",
+                                     "pan": con.pan or "", "address": con.address or "",
+                                     "contact": con.contact_person or ""} if con else {})
+        row["site"] = job.site_address if job else ""
+        row["place_of_supply_name"] = GST_STATES.get(bill.place_of_supply or "", "")
+        row["amount_in_words"] = amount_in_words(bill.net_payable)
+        row["order_detail"] = ({"number": order.wo_number, "subject": order.subject or "",
+                                "value": money(order.net_order_value),
+                                "retention_percent": order.retention_percent or 0,
+                                "commencement_date": order.commencement_date or "",
+                                "completion_date": order.completion_date or ""} if order else {})
     return row
 
 
@@ -24094,12 +24143,6 @@ def create_sub_bill(body: SubBillIn, request: Request, db: Session = Depends(get
     prior = money(sum(b.this_bill or 0 for b in db.query(models.DBSubBill).filter(
         models.DBSubBill.order_id == order.id,
         models.DBSubBill.status != "CANCELLED").all()))
-    # Mobilisation advance is recovered pro rata against each bill unless the
-    # person raising it says otherwise.
-    default_recovery = 0.0
-    if (order.mobilization_advance_amount or 0) and (order.advance_recovery_percent or 0):
-        default_recovery = money((order.mobilization_advance_amount or 0) *
-                                 (order.advance_recovery_percent or 0) / 100.0)
     bill = models.DBSubBill(
         client_id=client.id, order_id=order.id, job_id=order.job_id,
         contractor_id=order.contractor_id,
@@ -24108,8 +24151,7 @@ def create_sub_bill(body: SubBillIn, request: Request, db: Session = Depends(get
                                                           datetime.now().strftime("%Y-%m-%d")),
         status="DRAFT", previously_billed=prior,
         retention_percent=order.retention_percent or 0,
-        advance_recovery=money(body.advance_recovery if body.advance_recovery is not None
-                               else default_recovery),
+        advance_recovery=0.0,
         other_deductions=money(body.other_deductions or 0),
         deduction_notes=(body.deduction_notes or "").strip(),
         gst_percent=order.gst_rate or 0, tds_percent=order.tds_rate or 0,
@@ -24118,6 +24160,8 @@ def create_sub_bill(body: SubBillIn, request: Request, db: Session = Depends(get
     db.flush()
     draw_sub_bill_lines(db, bill, order)
     recost_sub_bill(db, bill)
+    bill.advance_recovery = sub_advance_recovery(db, order, bill, body.advance_recovery)
+    recost_sub_bill(db, bill)
     log_audit(db, client.id, "sub_bill_raised", "subcontract_order", order.id,
               order.wo_number or "", "%s %s" % (bill.number, inr(bill.this_bill)), request)
     db.commit()
@@ -24125,6 +24169,37 @@ def create_sub_bill(body: SubBillIn, request: Request, db: Session = Depends(get
     return {"ok": True, "bill": sub_bill_dict(db, bill, detail=True),
             "message": "%s drawn up from the measurement book - %s of work."
                        % (bill.number, inr(bill.this_bill))}
+
+
+def sub_advance_recovery(db, order, bill, asked=None):
+    """How much of the mobilisation advance this bill takes back.
+
+    The instalment is the agreed share of the advance - unless the person
+    raising the bill says otherwise - but never more than is still owed, and
+    never more than the bill can bear after retention. A first bill for a
+    small month's work does not come out negative; the shortfall waits for
+    the next one.
+    """
+    advance = money(order.mobilization_advance_amount or 0)
+    if not advance:
+        return 0.0
+    recovered = money(sum((b.advance_recovery or 0) for b in db.query(models.DBSubBill).filter(
+        models.DBSubBill.order_id == order.id, models.DBSubBill.id != bill.id,
+        models.DBSubBill.status != "CANCELLED").all()))
+    balance = max(0.0, money(advance - recovered))
+    instalment = (money(asked) if asked is not None
+                  else money(advance * (order.advance_recovery_percent or 0) / 100.0))
+    # What the bill can bear: after retention and the other deductions, less
+    # what TDS and cess will take off the whole bill regardless - grossed
+    # down by the GST that is added on the remainder - so the net is never
+    # below nought.
+    withheld = ((bill.this_bill or 0) * ((bill.tds_percent or 0) + (bill.labour_cess_percent or 0))
+                / 100.0)
+    bearable = ((bill.this_bill or 0) - (bill.retention_amount or 0)
+                - (bill.other_deductions or 0)
+                - withheld / (1.0 + (bill.gst_percent or 0) / 100.0))
+    bearable = max(0.0, money(bearable - 0.005))
+    return money(max(0.0, min(instalment, balance, bearable)))
 
 
 @app.get("/api/sub-bills/{bill_id}")
@@ -24675,6 +24750,197 @@ def export_estimate(est_id: int, request: Request, db: Session = Depends(get_db)
                 "%s%%" % e["margin_percent"])]
     return sheet_response(headers, rows, "estimate_%s.xlsx" % e["number"],
                           preamble=preamble, closing=closing)
+
+
+
+
+# ============================================================================
+# THE REGISTERS THE ACCOUNTANT KEPT BY HAND
+#
+# Three sheets every contractor's office maintains beside whatever system it
+# has: the TDS deducted this quarter (for the 26Q), the bank guarantees and
+# when each one lapses, and the advances given out and how much has come
+# back. Every figure on them is already in the app; the sheets existed
+# because nothing here laid the figures out the way the return, the bank
+# and the site accountant want them.
+# ============================================================================
+
+def fy_quarter(on_date):
+    """The Indian financial quarter a date falls in: 2026-27 Q1 is Apr-Jun."""
+    try:
+        d = datetime.strptime(str(on_date or "")[:10], "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return "", ""
+    q = ((d.month - 4) % 12) // 3 + 1
+    return financial_year_label(on_date), "Q%d" % q
+
+
+@app.get("/api/registers/tds")
+def tds_register(request: Request, year: str = "", quarter: str = "",
+                 db: Session = Depends(get_db)):
+    """TDS both ways, by quarter.
+
+    Deducted: what we withheld from the gangs' bills under 194C, which has to
+    be deposited by the 7th and filed in the 26Q. Suffered: what our clients
+    withheld from our bills, which has to be matched against the 26AS before
+    it can be claimed. Two directions, one screen, because both are checked
+    against the same calendar.
+    """
+    client = require_erp_read(request, db)
+    contractors = {c.id: c for c in db.query(models.DBContractor).filter(
+        models.DBContractor.client_id == client.id).all()}
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(
+        models.DBJob.client_id == client.id).all()}
+
+    def wanted(fy, q):
+        return (not year or fy == year) and (not quarter or q == quarter)
+
+    deducted = []
+    for b in db.query(models.DBSubBill).filter(
+            models.DBSubBill.client_id == client.id,
+            models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all():
+        on = (b.certified_at or b.created_at or "")[:10]
+        fy, q = fy_quarter(on)
+        if not wanted(fy, q) or not (b.tds_amount or 0):
+            continue
+        con = contractors.get(b.contractor_id)
+        deducted.append({
+            "date": on, "year": fy, "quarter": q, "bill": b.number or "",
+            "deductee": con.company_name if con else "", "pan": (con.pan or "") if con else "",
+            "section": "194C", "rate": b.tds_percent or 0,
+            "amount_credited": money(b.this_bill), "tds": money(b.tds_amount),
+            "paid_on": (b.paid_at or "")[:10], "status": b.status,
+            "missing_pan": not (con and (con.pan or "").strip()),
+        })
+
+    suffered = []
+    for b in db.query(models.DBRABill).filter(
+            models.DBRABill.client_id == client.id,
+            models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all():
+        on = (b.certified_at or b.created_at or "")[:10]
+        fy, q = fy_quarter(on)
+        if not wanted(fy, q) or not (b.tds_amount or 0):
+            continue
+        job = jobs.get(b.job_id)
+        suffered.append({
+            "date": on, "year": fy, "quarter": q, "bill": b.number or "",
+            "deductor": job.customer_name if job else "", "project": job.name if job else "",
+            "section": "194C", "rate": b.tds_percent or 0,
+            "amount_credited": money(b.this_bill), "tds": money(b.tds_amount),
+            "status": b.status,
+        })
+
+    def by_quarter(rows):
+        out = {}
+        for r in rows:
+            k = "%s %s" % (r["year"], r["quarter"])
+            o = out.setdefault(k, {"period": k, "year": r["year"], "quarter": r["quarter"],
+                                   "bills": 0, "amount_credited": 0.0, "tds": 0.0})
+            o["bills"] += 1
+            o["amount_credited"] = money(o["amount_credited"] + r["amount_credited"])
+            o["tds"] = money(o["tds"] + r["tds"])
+        return sorted(out.values(), key=lambda o: o["period"], reverse=True)
+
+    deducted.sort(key=lambda r: r["date"], reverse=True)
+    suffered.sort(key=lambda r: r["date"], reverse=True)
+    years = sorted({r["year"] for r in deducted + suffered}, reverse=True)
+    return {
+        "deducted": deducted, "suffered": suffered,
+        "deducted_by_quarter": by_quarter(deducted), "suffered_by_quarter": by_quarter(suffered),
+        "years": years,
+        "summary": {
+            "deducted": money(sum(r["tds"] for r in deducted)),
+            "suffered": money(sum(r["tds"] for r in suffered)),
+            "deductees_without_pan": len({r["deductee"] for r in deducted if r["missing_pan"]}),
+        },
+    }
+
+
+@app.get("/api/registers/guarantees")
+def guarantee_register(request: Request, db: Session = Depends(get_db)):
+    """Every bank guarantee held against a subcontractor, and when it lapses.
+
+    A guarantee that expires while the defects period is still running is
+    worth nothing, and the bank does not write to say so.
+    """
+    client = require_erp_read(request, db)
+    today = datetime.now().strftime("%Y-%m-%d")
+    contractors = {c.id: c for c in db.query(models.DBContractor).filter(
+        models.DBContractor.client_id == client.id).all()}
+    rows = []
+    for o in db.query(models.DBSubcontractOrder).filter(
+            models.DBSubcontractOrder.client_id == client.id,
+            models.DBSubcontractOrder.bank_guarantee_applicable.is_(True),
+            models.DBSubcontractOrder.status.in_(("APPROVED", "EXECUTED"))).all():
+        con = contractors.get(o.contractor_id)
+        valid = (o.bank_guarantee_validity or "")[:10]
+        days = None
+        if valid:
+            try:
+                days = (datetime.strptime(valid, "%Y-%m-%d") - datetime.now()).days
+            except ValueError:
+                days = None
+        rows.append({
+            "order_id": o.id, "order": o.wo_number or "", "contractor": con.company_name if con else "",
+            "amount": money(o.bank_guarantee_amount), "valid_until": valid, "days_left": days,
+            "completion_date": o.completion_date or "",
+            "defect_liability_months": o.defect_liability_months or 0,
+            "state": ("no expiry recorded" if days is None else
+                      "lapsed" if days < 0 else "lapses within 30 days" if days <= 30 else "in force"),
+        })
+    rows.sort(key=lambda r: (r["days_left"] is None, r["days_left"] if r["days_left"] is not None else 0))
+    return {
+        "guarantees": rows,
+        "summary": {
+            "held": money(sum(r["amount"] for r in rows if r["state"] != "lapsed")),
+            "lapsed": len([r for r in rows if r["state"] == "lapsed"]),
+            "lapsing_soon": len([r for r in rows if r["state"] == "lapses within 30 days"]),
+            "no_expiry": len([r for r in rows if r["days_left"] is None]),
+        },
+    }
+
+
+@app.get("/api/registers/advances")
+def advance_register(request: Request, db: Session = Depends(get_db)):
+    """Mobilisation advances given to the gangs, and how much has come back.
+
+    Summed from the bills, not stored: a cancelled bill gives its recovery
+    back without anybody having to remember to.
+    """
+    client = require_erp_read(request, db)
+    contractors = {c.id: c for c in db.query(models.DBContractor).filter(
+        models.DBContractor.client_id == client.id).all()}
+    recovered = {}
+    for b in db.query(models.DBSubBill).filter(
+            models.DBSubBill.client_id == client.id,
+            models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all():
+        recovered[b.order_id] = money(recovered.get(b.order_id, 0.0) + (b.advance_recovery or 0))
+    rows = []
+    for o in db.query(models.DBSubcontractOrder).filter(
+            models.DBSubcontractOrder.client_id == client.id,
+            models.DBSubcontractOrder.status.in_(("APPROVED", "EXECUTED"))).all():
+        if not (o.mobilization_advance_amount or 0):
+            continue
+        con = contractors.get(o.contractor_id)
+        given = money(o.mobilization_advance_amount)
+        back = money(recovered.get(o.id, 0.0))
+        rows.append({
+            "order_id": o.id, "order": o.wo_number or "", "contractor": con.company_name if con else "",
+            "advance": given, "recovery_percent": o.advance_recovery_percent or 0,
+            "recovered": back, "outstanding": money(given - back),
+            "percent_recovered": round(back / given * 100, 1) if given else 0.0,
+            "secured_by_bg": bool(o.bank_guarantee_applicable),
+        })
+    rows.sort(key=lambda r: -r["outstanding"])
+    return {
+        "advances": rows,
+        "summary": {
+            "given": money(sum(r["advance"] for r in rows)),
+            "recovered": money(sum(r["recovered"] for r in rows)),
+            "outstanding": money(sum(r["outstanding"] for r in rows)),
+            "unsecured": money(sum(r["outstanding"] for r in rows if not r["secured_by_bg"])),
+        },
+    }
 
 
 # Serve frontend
