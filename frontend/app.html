@@ -1134,9 +1134,23 @@
                                 <div class="form-group"><label>HSN</label>
                                     <input type="text" id="fg-quick-hsn" class="form-control"></div>
                             </div>
-                            <p style="font-size:0.75rem;color:var(--text-secondary);">
-                                The code is issued when you save, and the new line is
-                                put straight on this order.
+                            <div style="margin-top:6px;padding-top:12px;border-top:1px solid var(--border-color);">
+                                <div class="form-row">
+                                    <div class="form-group"><label>Quantity on this order *</label>
+                                        <input type="number" min="0" step="any" id="fg-quick-qty" class="form-control" value="1"></div>
+                                    <div class="form-group"><label>Rate per unit (&#8377;) *</label>
+                                        <input type="number" min="0" step="any" id="fg-quick-rate" class="form-control"
+                                               placeholder="0.00" oninput="fgQuickTotal()"></div>
+                                </div>
+                                <div style="display:flex;justify-content:space-between;align-items:center;
+                                            background:var(--bg-hover,rgba(0,0,0,0.04));padding:8px 12px;border-radius:8px;">
+                                    <span style="font-size:0.8rem;color:var(--text-secondary);">Line value</span>
+                                    <strong id="fg-quick-amount" style="font-size:1rem;">&#8377;0.00</strong>
+                                </div>
+                            </div>
+                            <p style="font-size:0.75rem;color:var(--text-secondary);margin-top:10px;">
+                                The code is issued when you save, and the priced line is put
+                                straight on this order. Both figures stay editable on the order.
                             </p>
                         </div>
                         <div class="modal-footer">
@@ -4573,7 +4587,7 @@
     <!-- Item master, work orders and budget allocation. -->
     <script src="erp.js?v=81"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
-    <script src="erp-build.js?v=74"></script>
+    <script src="erp-build.js?v=86"></script>
     <!-- The spreadsheet grid the item master is entered through. -->
     <script src="erp-grid.js?v=65"></script>
     <!-- Preview and correct a sheet that arrived from outside. -->

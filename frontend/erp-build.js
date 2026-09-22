@@ -252,9 +252,20 @@ function newFgCode() {
     tax.innerHTML = (v.tax_rates || ['18%']).map(function (t) {
         return '<option' + (t === '18%' ? ' selected' : '') + '>' + esc(t) + '</option>';
     }).join('');
+    document.getElementById('fg-quick-qty').value = 1;
+    document.getElementById('fg-quick-rate').value = '';
+    document.getElementById('fg-quick-hsn').value = '';
+    fgQuickTotal();
     document.getElementById('fg-quick-name').focus();
 }
 window.newFgCode = newFgCode;
+
+function fgQuickTotal() {
+    var n = function (id) { return parseFloat(document.getElementById(id).value) || 0; };
+    var host = document.getElementById('fg-quick-amount');
+    if (host) host.textContent = formatCurrency(n('fg-quick-qty') * n('fg-quick-rate'));
+}
+window.fgQuickTotal = fgQuickTotal;
 
 function closeFgQuick() {
     closeModal('fg-quick-modal');
@@ -264,6 +275,15 @@ window.closeFgQuick = closeFgQuick;
 async function saveFgQuick() {
     var name = document.getElementById('fg-quick-name').value.trim();
     if (!name) { showToast('Say what is being sold', 'error'); return; }
+    var qty = parseFloat(document.getElementById('fg-quick-qty').value) || 0;
+    var rate = parseFloat(document.getElementById('fg-quick-rate').value) || 0;
+    // A line at no price cannot be measured or billed, and an order that
+    // adds up to nothing is refused when it is saved. Say so here, where it
+    // can still be typed, rather than at the end.
+    if (!rate) { showToast('What is the rate per unit?', 'error');
+                 document.getElementById('fg-quick-rate').focus(); return; }
+    if (!qty) { showToast('How much of it is on this order?', 'error');
+                document.getElementById('fg-quick-qty').focus(); return; }
     var res = await fetch('/api/erp/items', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -279,14 +299,13 @@ async function saveFgQuick() {
     if (!res.ok) { showToast(out.detail || 'Could not add the code', 'error'); return; }
 
     closeFgQuick();
-    showToast(out.item_code + ' issued for ' + name, 'success');
+    showToast(out.item_code + ' priced at ' + formatCurrency(qty * rate) + ' on this order', 'success');
     await loadMasters();
-    // Put it on the order, which is what it was created for. An existing
-    // blank-ish line takes it rather than growing a second one.
+    // Put it on the order, which is what it was created for, at the price
+    // that was just typed.
     var used = _woDraft.lines.map(function (l) { return l.code; });
     if (used.indexOf(out.item_code) < 0) {
-        _woDraft.lines.push({ code: out.item_code, qty: 1,
-                              rate: lastRate(out.item_code), description: '' });
+        _woDraft.lines.push({ code: out.item_code, qty: qty, rate: rate, description: '' });
     }
     renderWorkOrderLines();
 }
@@ -322,6 +341,7 @@ function renderWorkOrderLines() {
     var host = document.getElementById('wob-lines');
     if (!host) return;
     var total = 0;
+    var unpriced = _woDraft.lines.filter(function (l) { return !(l.rate > 0); }).length;
 
     var rows = _woDraft.lines.map(function (l, i) {
         var item = _fgMaster.filter(function (x) { return x.item_code === l.code; })[0] || {};
@@ -339,10 +359,17 @@ function renderWorkOrderLines() {
                 }).join('') + '</select></td>' +
             '<td class="px-2 py-1 text-xxs text-ink-soft">' + esc(item.item_type || '') + '</td>' +
             '<td class="px-1 py-1" style="width:100px;"><input type="number" min="0" step="any" class="' + cellCls + ' text-right" ' +
-                'value="' + (l.qty || 0) + '" oninput="editWoLine(' + i + ',\'qty\',this.value)"></td>' +
+                'value="' + (l.qty || '') + '" placeholder="0" oninput="editWoLine(' + i + ',\'qty\',this.value)"></td>' +
             '<td class="px-2 py-1 text-xxs text-ink-soft">' + esc(item.units_of_measure || '') + '</td>' +
-            '<td class="px-1 py-1" style="width:110px;"><input type="number" min="0" step="any" class="' + cellCls + ' text-right" ' +
-                'value="' + (l.rate || 0) + '" oninput="editWoLine(' + i + ',\'rate\',this.value)"></td>' +
+            '<td class="px-1 py-1" style="width:130px;">' +
+                '<div style="position:relative;">' +
+                '<span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);' +
+                    'font-size:12px;color:var(--text-secondary);pointer-events:none;">&#8377;</span>' +
+                '<input type="number" min="0" step="any" class="' + cellCls + ' text-right" style="padding-left:20px;' +
+                (l.rate ? '' : 'border-color:var(--warning-color);') + '" ' +
+                'placeholder="rate" value="' + (l.rate || '') + '" oninput="editWoLine(' + i + ',\'rate\',this.value)"></div>' +
+                (l.rate ? '' : '<div style="font-size:0.66rem;color:var(--warning-color);margin-top:2px;">' +
+                    'type the rate</div>') + '</td>' +
             '<td class="px-2 py-1 text-right font-medium">' + formatCurrency(amount) + '</td>' +
             '<td class="px-1 py-1 text-right"><button class="text-ink-faint hover:text-red-600 px-2" ' +
                 'onclick="removeWoLine(' + i + ')">&times;</button></td></tr>';
@@ -351,7 +378,7 @@ function renderWorkOrderLines() {
     host.innerHTML =
         '<div class="border border-slate-200 rounded-lg overflow-x-auto"><table class="min-w-full text-[13px]">' +
         '<thead class="bg-slate-50"><tr>' +
-        ['Item', 'Type', 'Qty', 'Unit', 'Rate', 'Amount', ''].map(function (h) {
+        ['Item', 'Type', 'Qty', 'Unit', 'Rate per unit', 'Amount', ''].map(function (h) {
             return '<th class="px-2 py-2 text-left font-semibold text-ink-soft">' + h + '</th>';
         }).join('') + '</tr></thead><tbody>' + (rows ||
             '<tr><td colspan="7" class="px-2 py-6 text-center text-[13px] text-ink-soft">' +
@@ -373,7 +400,9 @@ function renderWorkOrderLines() {
         // new job rather than a mistake.
         '<button class="btn btn-outline btn-sm" onclick="newFgCode()">+ New deliverable</button>' +
         '</div>' +
-        '<div class="text-[15px]">Order value <strong class="ml-2">' + formatCurrency(total) + '</strong></div>' +
+        '<div class="text-[15px]">Order value <strong class="ml-2">' + formatCurrency(total) + '</strong>' +
+        (unpriced ? '<div class="text-xxs" style="color:var(--warning-color);">' + unpriced +
+            ' line' + (unpriced === 1 ? '' : 's') + ' still to price</div>' : '') + '</div>' +
         '</div>' +
         '<div class="flex gap-2 mt-3">' +
         '<button class="btn btn-primary" onclick="saveWorkOrder()">Create work order</button>' +
