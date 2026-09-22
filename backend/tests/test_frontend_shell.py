@@ -99,3 +99,27 @@ def test_the_measurement_modal_is_a_dimension_sheet():
     assert 'id="measure-dims"' in h and 'id="sub-measure-dims"' in h
     assert "mbdims.js" in h
     assert 'MB page reference' not in h, "the page reference implies the book lives elsewhere"
+
+
+def test_the_suites_the_app_was_started_from_stay_hidden():
+    """Quotes, recurring invoices, recruitment, goals, an assistant orb and a
+    vendor badge: the invoicing and HR product this began as. A civil
+    contractor's ERP shows none of it, whatever a stray link calls."""
+    h = read("app.html")
+    for view in ("quotes-view", "recurring-view", "recruitment-view", "goals-view",
+                 "orgchart-view", "onboarding-hub-view", "sales-pipeline-view",
+                 "reports-view", "viewer-view"):
+        assert ('id="%s" data-legacy="1"' % view) in h, view + " is not marked legacy"
+    css = read("styles.css")
+    assert ".view-section[data-legacy]" in css and "display: none !important" in css
+    assert 'class="ai-core"' not in h
+    assert "Powered by Aniprotech" not in h
+    assert 'id="nav-viewer"' not in h
+    assert 'id="dash-erp"' in h
+
+
+def test_the_front_door_says_what_this_is():
+    h = read("login.html")
+    assert "Civil contracting ERP" in h
+    assert "Measurement book" in h and "RA bills" in h
+    assert "/api/public/brand" in h

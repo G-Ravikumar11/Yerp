@@ -24943,6 +24943,21 @@ def advance_register(request: Request, db: Session = Depends(get_db)):
     }
 
 
+@app.get("/api/public/brand")
+def public_brand(db: Session = Depends(get_db)):
+    """The name on the front door.
+
+    A single company's ERP: the sign-in page says whose it is. Only the name
+    and the logo - nothing that says anything about the business - and only
+    once the account has been set up, so a fresh installation says nothing.
+    """
+    c = db.query(models.DBClient).filter(
+        models.DBClient.is_onboarded.is_(True)).order_by(models.DBClient.id).first()
+    if not c:
+        return {"company_name": "", "logo_url": ""}
+    return {"company_name": c.company_name or "", "logo_url": c.logo_url or ""}
+
+
 # Serve frontend
 frontend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
 if os.path.exists(frontend_path):

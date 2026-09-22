@@ -496,6 +496,7 @@ function showView(viewId) {
     if (viewId === 'gst-view' && typeof loadGst === 'function') loadGst();
     if (viewId === 'registers-view' && typeof loadRegisters === 'function') loadRegisters();
     if (viewId === 'dashboard-view' && typeof loadAttention === 'function') loadAttention();
+    if (viewId === 'dashboard-view' && typeof dashErp === 'function') dashErp();
     if (viewId === 'stores-view' && typeof loadStores === 'function') loadStores();
     // The item grid is open by default now, so it is mounted on arrival
     // rather than waiting for a button that no longer has to be pressed.
@@ -4960,6 +4961,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     // for it on a cold load and its panel would stay empty until somebody
     // navigated away and back.
     if (typeof loadAttention === 'function') {
+        if (typeof dashErp === 'function') dashErp();
         loadAttention().catch(function (e) {
             console.error('Boot: could not load what needs attention', e);
         });

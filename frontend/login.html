@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Sign in · Y ERP</title>
+    <title>Y ERP · Civil contracting, end to end</title>
     <link rel="manifest" href="/manifest.webmanifest">
     <meta name="theme-color" content="#f8fafc">
     <link rel="apple-touch-icon" href="/icons/icon-192.png">
@@ -24,13 +24,30 @@
                 radial-gradient(ellipse 80% 50% at 50% -20%, rgba(120, 119, 198, 0.15), transparent),
                 radial-gradient(ellipse 60% 40% at 80% 60%, rgba(37, 99, 235, 0.05), transparent);
         }
-        .auth-container { width: 100%; max-width: 440px; padding: 24px; }
-        .auth-card {
-            background: #ffffff;
-            border: 1px solid rgba(0,0,0,0.08);
-            border-radius: 20px;
-            padding: 48px 40px;
-            box-shadow: 0 25px 60px rgba(0,0,0,0.1);
+        .auth-container { width: 100%; max-width: 980px; padding: 24px; }
+        .front { display: grid; grid-template-columns: 1.15fr 1fr; gap: 0;
+                 background: #fff; border: 1px solid rgba(0,0,0,0.08); border-radius: 22px;
+                 box-shadow: 0 25px 60px rgba(0,0,0,0.1); overflow: hidden; }
+        .pitch { padding: 48px 44px; background: linear-gradient(160deg, #0f172a, #1e293b 60%, #1e3a8a);
+                 color: #e2e8f0; display: flex; flex-direction: column; justify-content: space-between; }
+        .pitch .eyebrow { font-size: 0.72rem; letter-spacing: 1.6px; text-transform: uppercase; color: #93c5fd; font-weight: 700; }
+        .pitch h2 { font-size: 1.75rem; font-weight: 800; color: #fff; line-height: 1.2; margin: 12px 0 10px; }
+        .pitch .lede { font-size: 0.92rem; color: #cbd5e1; line-height: 1.55; max-width: 34ch; }
+        .chain { list-style: none; margin: 26px 0 0; display: grid; gap: 10px; }
+        .chain li { display: grid; grid-template-columns: 30px 1fr; gap: 10px; align-items: start; font-size: 0.86rem; color: #e2e8f0; }
+        .chain .n { width: 26px; height: 26px; border-radius: 8px; background: rgba(147,197,253,0.15);
+                    color: #bfdbfe; font-weight: 700; font-size: 0.78rem; display: grid; place-items: center; }
+        .chain b { color: #fff; }
+        .chain small { display: block; color: #94a3b8; font-size: 0.76rem; margin-top: 1px; }
+        .pitch .foot { margin-top: 28px; font-size: 0.76rem; color: #94a3b8; line-height: 1.5; }
+        .pitch .foot b { color: #e2e8f0; }
+        .pitch .for { font-size: 0.8rem; color: #bfdbfe; margin-top: 6px; min-height: 1.2em; }
+        .auth-card { background: #ffffff; padding: 48px 40px; }
+        @media (max-width: 820px) {
+            .front { grid-template-columns: 1fr; }
+            .pitch { padding: 32px 28px; }
+            .chain { display: none; }
+            .auth-card { padding: 32px 28px; }
         }
         .brand { text-align: center; margin-bottom: 36px; }
         .brand-icon {
@@ -107,6 +124,26 @@
 </head>
 <body>
     <div class="auth-container">
+      <div class="front">
+        <!-- What this is. A single company's ERP has no marketing page, but
+             the front door should still say what is behind it. -->
+        <section class="pitch" aria-label="About Y ERP">
+            <div>
+                <div class="eyebrow">Civil contracting ERP</div>
+                <h2>From the tender to the money, in one place.</h2>
+                <p class="lede">Every link of a contract, and each one feeds the next. Nothing is typed twice, and nothing lives in a spreadsheet beside it.</p>
+                <div class="for" id="brand-for"></div>
+                <ol class="chain">
+                    <li><span class="n">1</span><span><b>Tender &amp; estimate</b><small>Rates built up from material, labour and plant. Winning it opens the order.</small></span></li>
+                    <li><span class="n">2</span><span><b>Work orders</b><small>Received from the client, issued to the gangs. Numbered, approved, printed.</small></span></li>
+                    <li><span class="n">3</span><span><b>Measurement book</b><small>No &times; L &times; B &times; D, deductions for openings, both directions.</small></span></li>
+                    <li><span class="n">4</span><span><b>RA bills</b><small>Retention, advance, GST split by place of supply, TDS, labour cess &mdash; in the order they are made.</small></span></li>
+                    <li><span class="n">5</span><span><b>Store, site diary, profit</b><small>Goods in, three-way match, issues at cost, mandays and plant, margin per project.</small></span></li>
+                </ol>
+            </div>
+            <p class="foot"><b>No spreadsheets.</b> Grids paste and walk like a sheet, every table sorts and totals, every bill has a page that prints.</p>
+        </section>
+
         <div class="auth-card">
             <div class="brand">
                 <div class="brand-icon">Y</div>
@@ -156,6 +193,7 @@
                 <a href="/employee-login.html">Staff sign in</a>
             </div>
         </div>
+      </div>
     </div>
 
     <script>
@@ -177,6 +215,14 @@
         // The button only appears when the server can actually complete the
         // flow. One that cannot work is worse than none: people try it, it
         // fails, and they conclude the account is broken.
+        fetch('/api/public/brand').then(function (r) { return r.ok ? r.json() : {}; })
+            .then(function (b) {
+                if (b && b.company_name) {
+                    document.getElementById('brand-for').textContent = 'The system of record for ' + b.company_name + '.';
+                    document.title = b.company_name + ' · Y ERP';
+                }
+            }).catch(function () {});
+
         fetch('/api/auth/google/status').then(function (r) { return r.json(); })
             .then(function (d) {
                 if (d.configured) document.getElementById('google-block').style.display = 'block';

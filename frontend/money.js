@@ -214,3 +214,62 @@ async function loadAttention() {
         }).join('') + '</div></div>';
 }
 window.loadAttention = loadAttention;
+
+
+/* --- The dashboard's own figures ------------------------------------------
+   What the owner opens the app to see, once the attention panel has said
+   what needs a decision: the money both ways, the projects by margin, and
+   the store running low. Every number is a link to the screen it came from.
+   ------------------------------------------------------------------------ */
+
+async function dashErp() {
+    var host = document.getElementById('dash-erp');
+    if (!host) return;
+    var get = function (url) {
+        return fetch(url, { credentials: 'include' }).then(function (r) { return r.ok ? r.json() : {}; })
+            .catch(function () { return {}; });
+    };
+    var out = await Promise.all([get('/api/money/receivables'), get('/api/money/payables'),
+                                 get('/api/money/retention'), get('/api/jobs-pnl'),
+                                 get('/api/stock?low_only=true')]);
+    var rec = out[0].summary || {}, pay = out[1].summary || {}, ret = out[2].summary || {};
+    var pnl = out[3], stock = out[4].summary || {};
+
+    var tile = function (label, value, sub, view, tone) {
+        return '<button type="button" class="stat-card" style="text-align:left;cursor:pointer;" ' +
+            'onclick="showView(\'' + view + '\')">' +
+            '<span class="stat-label">' + esc(label) + '</span>' +
+            '<span class="stat-value"' + (tone ? ' style="color:var(--' + tone + '-color);"' : '') + '>' + value + '</span>' +
+            (sub ? '<span style="display:block;font-size:0.72rem;color:var(--text-secondary);margin-top:2px;">' + sub + '</span>' : '') +
+            '</button>';
+    };
+
+    var projects = (pnl.projects || []).slice(0, 6);
+    var rows = projects.map(function (p) {
+        var bad = (p.margin || 0) < 0;
+        return '<tr><td><a href="#" onclick="event.preventDefault();showView(\'pnl-view\')" style="font-weight:600;">' +
+            esc(p.number + ' ' + p.name) + '</a>' +
+            '<div style="font-size:0.72rem;color:var(--text-secondary);">' + esc(p.customer_name || '') + '</div></td>' +
+            '<td class="text-right">' + formatCurrency(p.revenue) + '</td>' +
+            '<td class="text-right">' + formatCurrency(p.incurred) + '</td>' +
+            '<td class="text-right" style="font-weight:700;' + (bad ? 'color:var(--danger-color);' : '') + '">' +
+                formatCurrency(p.margin) + '<div style="font-size:0.7rem;font-weight:400;">' + (p.margin_percent || 0) + '%</div></td></tr>';
+    }).join('');
+
+    host.innerHTML =
+        '<h3 style="font-size:0.95rem;margin:18px 0 10px;">Money, both ways</h3>' +
+        '<div class="grid-4 mb-24">' +
+        tile('Owed to us', formatCurrency(rec.owed || 0), (rec.overdue ? formatCurrency(rec.overdue) + ' overdue' : 'nothing overdue'), 'money-view', rec.overdue ? 'warning' : '') +
+        tile('We owe', formatCurrency(pay.owed || 0), (pay.overdue ? formatCurrency(pay.overdue) + ' overdue' : 'nothing overdue'), 'money-view', pay.overdue ? 'danger' : '') +
+        tile('Retention held on us', formatCurrency(ret.held || 0), (ret.on_finished_jobs ? formatCurrency(ret.on_finished_jobs) + ' on finished jobs' : ''), 'money-view') +
+        tile('Store below reorder', String(stock.below_reorder || 0) + ' item' + (stock.below_reorder === 1 ? '' : 's'),
+             (stock.value_on_hand ? formatCurrency(stock.value_on_hand) + ' on hand' : ''), 'stock-view', stock.below_reorder ? 'warning' : '') +
+        '</div>' +
+        '<div class="widget" style="margin-bottom:24px;"><div class="widget-header"><h3>Projects, worst margin first</h3>' +
+        '<button class="btn btn-sm btn-outline" onclick="showView(\'pnl-view\')">All projects</button></div>' +
+        '<div class="table-responsive"><table class="data-table">' +
+        '<thead><tr><th>Project</th><th class="text-right">Revenue</th><th class="text-right">Cost</th><th class="text-right">Margin</th></tr></thead>' +
+        '<tbody>' + (rows || '<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text-secondary);">No live projects yet.</td></tr>') +
+        '</tbody></table></div></div>';
+}
+window.dashErp = dashErp;

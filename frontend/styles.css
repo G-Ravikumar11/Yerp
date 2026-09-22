@@ -1797,3 +1797,6 @@ table.data-table thead th[data-sort] { color: var(--primary-color); }
 
 .doc-abstract th { white-space: nowrap; font-size: 0.66rem; }
 .doc-abstract td { vertical-align: top; }
+
+/* Screens from the suites the app was started from stay off, whatever calls them. */
+.view-section[data-legacy], .legacy-hidden { display: none !important; }
