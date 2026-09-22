@@ -1110,6 +1110,23 @@
                      leaving the work order that needs it. -->
                 <!-- Naming a deliverable from inside the order that sells it.
                      The code is issued on save; it is never typed. -->
+                <!-- Offered the moment an order is priced, because the margin
+                     is the figure an approver signs off and it cannot exist
+                     until somebody says what the work should cost. -->
+                <div id="budget-offer-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:460px;">
+                        <div class="modal-header">
+                            <h3>Now say what it should cost</h3>
+                            <button class="modal-close" onclick="closeBudgetOffer()">&times;</button>
+                        </div>
+                        <div class="modal-body" id="budget-offer-body"></div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeBudgetOffer()">Later</button>
+                            <button class="btn btn-primary" id="budget-offer-go">Budget it now</button>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="fg-quick-modal" class="modal-overlay" style="display:none;">
                     <div class="modal" style="max-width:480px;">
                         <div class="modal-header">
@@ -4587,7 +4604,7 @@
     <!-- Item master, work orders and budget allocation. -->
     <script src="erp.js?v=81"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
-    <script src="erp-build.js?v=86"></script>
+    <script src="erp-build.js?v=87"></script>
     <!-- The spreadsheet grid the item master is entered through. -->
     <script src="erp-grid.js?v=65"></script>
     <!-- Preview and correct a sheet that arrived from outside. -->
@@ -4597,7 +4614,7 @@
     <script src="subcontracts.js?v=81"></script>
     <script src="costs.js?v=65"></script>
     <script src="sheet.js?v=83"></script>
-    <script src="documents.js?v=84"></script>
+    <script src="documents.js?v=87"></script>
     <script src="mbdims.js?v=81"></script>
     <script src="measurement.js?v=82"></script>
     <script src="stock.js?v=79"></script>

@@ -20,7 +20,7 @@ from fastapi.responses import RedirectResponse, StreamingResponse, JSONResponse,
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, timedelta, date
 import os
@@ -4098,7 +4098,10 @@ class DocLineIn(BaseModel):
 
 class WorkOrderIn(BaseModel):
     job_id: int
-    reference: Optional[str] = ""
+    # The client's own order number. It is printed on every bill raised
+    # against this order, because that is what they file it under - so it is
+    # held to a length that fits on a line rather than whatever was pasted.
+    reference: Optional[str] = Field("", max_length=60)
     notes: Optional[str] = ""
     lines: List[DocLineIn]
 

@@ -163,6 +163,7 @@ function docRaBill(b) {
             ['Period', b.period_from ? docDate(b.period_from) + ' – ' + docDate(b.period_to) : 'Up to ' + docDate(b.period_to)],
             ['Project', esc(b.project)],
             ['Work order', esc(wo.number || b.work_order) + (wo.date ? ' of ' + docDate(wo.date) : '')],
+            ['Your reference', esc(wo.reference || '')],
             ['Order value', wo.value ? formatCurrency(wo.value) : ''],
             ['Status', esc(b.status)]]) + '</div></div>' +
 

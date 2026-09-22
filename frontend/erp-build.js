@@ -205,8 +205,12 @@ async function startWorkOrderBuilder() {
             (jobs.length ? jobs.map(function (j) {
                 return '<option value="' + j.id + '">' + esc(j.number + ' — ' + j.name) + '</option>';
             }).join('') : '<option value="">Create a job first</option>') + '</select></label>' +
-        '<label class="block"><span class="block text-xxs font-semibold text-ink-soft mb-1">Reference</span>' +
-        '<input id="wob-ref" class="' + cellCls + '" placeholder="Customer PO number"></label></div>' +
+        '<label class="block"><span class="block text-xxs font-semibold text-ink-soft mb-1">' +
+            'Client&rsquo;s order reference</span>' +
+        '<input id="wob-ref" class="' + cellCls + '" maxlength="60" ' +
+            'placeholder="Their PO or letter number"></label>' +
+        '<span class="block text-xxs text-ink-faint mt-1">Printed on every bill raised ' +
+            'against this order, because that is what the client files it under.</span></div>' +
         '<div id="wob-lines"></div>';
     if (_fgMaster.length) addWorkOrderLine();
     else renderWorkOrderLines();
@@ -219,9 +223,10 @@ function addWorkOrderLine() {
     var used = _woDraft.lines.map(function (l) { return l.code; });
     var free = _fgMaster.filter(function (i) { return used.indexOf(i.item_code) < 0; });
     if (!free.length) {
-        showToast(_fgMaster.length
-            ? 'Every finished goods code is already on this order'
-            : 'Name the first deliverable to price it', 'error');
+        // Nothing left to pick is not a refusal, it is the next step: what
+        // this order sells has not been named yet. Open the box that names
+        // it rather than answering with an error and stopping.
+        newFgCode();
         return;
     }
     _woDraft.lines.push({ code: free[0].item_code, qty: 1,
@@ -390,15 +395,14 @@ function renderWorkOrderLines() {
         // is how three identical complaints end up stacked on the screen.
         '<div class="flex items-center justify-between mt-3 flex-wrap gap-3">' +
         '<div class="flex gap-2 flex-wrap">' +
-        (_woDraft.lines.length < _fgMaster.length
-            ? '<button class="btn btn-outline btn-sm" onclick="addWorkOrderLine()">+ Add line</button>'
-            : (_fgMaster.length
-                ? '<span class="text-xxs text-ink-soft self-center">Every finished goods code is on this order.</span>'
-                : '')) +
+        '<button class="btn btn-outline btn-sm" onclick="addWorkOrderLine()">+ Add line</button>' +
         // Always available: what is being sold on this order may simply not
         // have been named anywhere yet, and that is the ordinary case on a
         // new job rather than a mistake.
         '<button class="btn btn-outline btn-sm" onclick="newFgCode()">+ New deliverable</button>' +
+        (_woDraft.lines.length >= _fgMaster.length && _fgMaster.length
+            ? '<span class="text-xxs text-ink-soft self-center">Every code you have named is on this order.</span>'
+            : '') +
         '</div>' +
         '<div class="text-[15px]">Order value <strong class="ml-2">' + formatCurrency(total) + '</strong>' +
         (unpriced ? '<div class="text-xxs" style="color:var(--warning-color);">' + unpriced +
@@ -438,11 +442,41 @@ async function saveWorkOrder() {
         var data = await res.json();
         if (!res.ok) { showToast(data.detail || 'Could not create it', 'error'); return; }
         showToast(data.message, 'success');
+        var newId = data.work_order_id || (data.work_order || {}).id || data.id;
         closeWorkOrderBuilder();
         loadWorkOrders();
+        // What it sells is only half of it. The margin is the figure an
+        // approver is being asked to sign off, and it cannot be seen until
+        // somebody says what the work should cost - so the budget is offered
+        // here, while the order is in front of you, rather than waiting to be
+        // found on a screen nobody goes back to.
+        if (newId && _rmMaster.length) offerBudget(newId, value);
     } catch (e) { showToast('Could not create it', 'error'); }
 }
 window.saveWorkOrder = saveWorkOrder;
+
+/* The step after pricing. Offered, not forced: an order may be placed before
+   anybody has worked out what it will take, and being made to invent a budget
+   to get past a dialog is how a made-up budget gets into the system. */
+function offerBudget(woId, value) {
+    var host = document.getElementById('budget-offer-body');
+    if (!host) { startBomBuilder(woId); return; }
+    host.innerHTML =
+        '<p style="margin-bottom:10px;">The order is created and worth ' +
+        '<strong>' + formatCurrency(value) + '</strong>.</p>' +
+        '<p style="font-size:0.86rem;color:var(--text-secondary);">Saying what the work ' +
+        'should cost is what turns that into a margin &mdash; the figure an approver is ' +
+        'actually being asked to sign off. It can be done now or later from the order.</p>';
+    document.getElementById('budget-offer-go').onclick = function () {
+        closeModal('budget-offer-modal');
+        startBomBuilder(woId);
+    };
+    openModal('budget-offer-modal');
+}
+window.offerBudget = offerBudget;
+
+function closeBudgetOffer() { closeModal('budget-offer-modal'); }
+window.closeBudgetOffer = closeBudgetOffer;
 
 /* =========================================================================
    BUDGET — allocate raw material against the lines actually sold
