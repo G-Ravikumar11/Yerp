@@ -394,17 +394,45 @@ def currency_symbol(code):
     code = (code or "").upper()
     return CURRENCY_SYMBOLS.get(code, code or "£")
 
+# Whether the database came up. Read by the health check, so an instance that
+# cannot reach its database is taken out of rotation rather than serving
+# half-working pages.
+DB_READY = {"ok": False, "error": ""}
+
+
+def _boot_step(label, fn):
+    """One step of start-up that must never take the process down.
+
+    A database that is unreachable at boot - a rotated password, a sleeping
+    instance, a network blip - used to leave start-up half-finished: the
+    server never began listening and every request answered 502, with
+    nothing on the page to say why. Now each step is survivable, the failure
+    is logged once in words, and the health check reports it.
+    """
+    try:
+        fn()
+        return True
+    except Exception as exc:
+        logger.error("Start-up step %s failed: %s", label, exc)
+        DB_READY["error"] = "%s: %s" % (label, exc)
+        return False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    try:
-        models.Base.metadata.create_all(bind=engine)
-        ensure_columns()
-        migrate_sqlite()
-        ensure_admin_user()
+    ok = True
+    for label, fn in (("create tables", lambda: models.Base.metadata.create_all(bind=engine)),
+                      ("add missing columns", ensure_columns),
+                      ("migrate sqlite", migrate_sqlite),
+                      ("admin user", ensure_admin_user),
+                      ("super admin", ensure_super_admin)):
+        ok = _boot_step(label, fn) and ok
+    DB_READY["ok"] = ok
+    if ok:
+        DB_READY["error"] = ""
         logger.info("Database initialized successfully")
-    except Exception as e:
-        logger.error(f"Database initialization failed: {e}")
-    ensure_super_admin()
+    else:
+        logger.error("Started WITHOUT a working database. %s", DB_READY["error"])
 
     task = None
     if os.getenv("SCHEDULER_ENABLED", "1") == "1":
@@ -6089,19 +6117,29 @@ def erp_md_approval(wo_id: int, body: MDDecision, request: Request,
 
 
 @app.get("/api/health")
-def health_check(db: Session = Depends(get_db)):
+def health_check():
     """Liveness + database readiness.
 
-    This is the path Railway restarts on, so it has to fail when the app cannot
-    actually serve traffic - a bare 'ok' kept a database-less instance in
-    rotation.
+    This is the path Railway restarts on, so it has to fail when the app
+    cannot actually serve traffic - a bare 'ok' kept a database-less instance
+    in rotation. It takes no database dependency of its own: a session that
+    cannot be opened would fail before the handler ran, and the one endpoint
+    whose job is to report that the database is down must not be the one
+    endpoint the database takes down with it.
     """
     from sqlalchemy import text as sql_text
     try:
-        db.execute(sql_text("SELECT 1"))
+        with engine.connect() as conn:
+            conn.execute(sql_text("SELECT 1"))
     except Exception as exc:
         logger.error("Health check failed: %s", exc)
-        return JSONResponse(status_code=503, content={"status": "degraded", "database": "unavailable"})
+        return JSONResponse(status_code=503, content={
+            "status": "degraded", "database": "unavailable",
+            "detail": DB_READY.get("error") or str(exc)[:200]})
+    if not DB_READY.get("ok"):
+        return JSONResponse(status_code=503, content={
+            "status": "degraded", "database": "reachable, but start-up did not finish",
+            "detail": DB_READY.get("error", "")[:200]})
 
     # Schema updates are applied non-fatally so a partial failure cannot stop
     # the app booting, but a migration that never ran must not look identical
