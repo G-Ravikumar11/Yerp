@@ -259,6 +259,15 @@ function docSubBill(b) {
 
 /* --- The purchase order --------------------------------------------------- */
 
+function poGstLabel(o) {
+    var rates = {};
+    (o.line_items || []).forEach(function (l) { if (l.tax_rate) rates[String(l.tax_rate)] = 1; });
+    var distinct = Object.keys(rates);
+    if (distinct.length === 1) return ' @ ' + esc(distinct[0].replace(/[^0-9.]/g, '')) + '%';
+    if (distinct.length > 1) return ' (rates as per each line)';
+    return o.amount ? ' @ ' + (Math.round(((o.tax_amount || 0) / o.amount) * 1000) / 10) + '%' : '';
+}
+
 function docPurchaseOrder(o) {
     var our = o.our || {};
     var lines = (o.line_items || []).map(function (l, i) {
@@ -280,14 +289,29 @@ function docPurchaseOrder(o) {
             ['Project', esc(o.job_name || '')], ['Reference', esc(o.reference || '')],
             ['Status', esc(o.status)]]) + '</div></div>' +
         '<div class="wo-section">Items ordered</div>' +
-        '<table class="wo-table" style="margin-top:8px;"><thead><tr><th>#</th><th>Code</th><th>Description</th><th>UOM</th>' +
-        '<th class="num">Qty</th><th class="num">Rate</th><th class="num">Tax</th><th class="num">Amount</th></tr></thead>' +
-        '<tbody>' + (lines || '<tr><td colspan="8" style="text-align:center;padding:12px;">No items.</td></tr>') + '</tbody></table>' +
+        // An order with a value but no schedule is a real thing - a committed
+        // cost nobody has itemised - but it must not print as an empty table
+        // above a total, which reads as a document that lost its contents.
+        // It is said plainly, along with what it costs you: nothing can be
+        // counted off a lorry against it.
+        (lines
+            ? '<table class="wo-table" style="margin-top:8px;"><thead><tr><th>#</th><th>Code</th><th>Description</th><th>UOM</th>' +
+              '<th class="num">Qty</th><th class="num">Rate</th><th class="num">Tax</th><th class="num">Amount</th></tr></thead>' +
+              '<tbody>' + lines + '</tbody></table>'
+            : '<div style="margin-top:8px;padding:12px 14px;border:1px dashed #d1d5db;border-radius:6px;' +
+              'background:#fafafa;font-size:0.8rem;">' +
+              '<strong>No itemised schedule on this order.</strong> It carries a value only, so nothing ' +
+              'can be received against it at the gate and no bill can be matched to it line by line. ' +
+              'Add the items to the order to receive against it.</div>') +
         '<div class="wo-cols" style="margin-top:14px;align-items:start;"><div>' +
             (o.notes ? '<span class="wo-label">Terms and notes</span><div class="wo-muted" style="font-size:0.76rem;">' + docNl(o.notes) + '</div>' : '') +
         '</div><div><table class="wo-money"><tbody>' +
             docMoneyRow('Value of goods', o.amount) +
-            docMoneyRow('Add: GST', o.tax_amount) +
+            // The rate is named only when every line carries the same one. A
+            // blended percentage across a mixed order matches no line on the
+            // schedule above it, and a figure that cannot be checked against
+            // anything is worse than no figure.
+            docMoneyRow('Add: GST' + poGstLabel(o), o.tax_amount) +
             docMoneyRow('Order total', o.total, { strong: true }) +
         '</tbody></table>' +
         '<div class="wo-band" style="margin-top:8px;font-size:0.76rem;"><strong>In words:</strong> ' + esc(o.amount_in_words || '') + '</div></div></div>' +

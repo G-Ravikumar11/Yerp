@@ -12260,11 +12260,52 @@ PURCHASE_ORDER_STATUSES = ("Draft", "Awaiting Approval", "Approved",
                            "Rejected", "Closed", "Cancelled")
 
 
+def lines_money(body):
+    """What the schedule on an order comes to, when it has one.
+
+    A purchase order may carry a total and no schedule - a committed cost
+    against a project that nobody has itemised - and that is allowed. What
+    is not allowed is a schedule that disagrees with the total printed above
+    it: the lines are what the storekeeper counts off the lorry and what the
+    bill is matched against, so where there are lines they are the order.
+    """
+    lines = body.get("line_items") or []
+    if not lines:
+        return None
+    amount, tax = 0.0, 0.0
+    for li in lines:
+        try:
+            qty = float(li.get("qty") or 0)
+            price = float(li.get("price") or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Every line needs a quantity and a price.")
+        if qty < 0 or price < 0:
+            raise HTTPException(400, "A quantity or a price cannot be negative.")
+        value = qty * price
+        amount += value
+        tax += value * tax_percent_of(li.get("tax_rate")) / 100.0
+    return money(amount), money(tax), money(amount + tax)
+
+
+def tax_percent_of(rate):
+    """"18%" -> 18.0. Anything unreadable is no tax rather than a guess."""
+    try:
+        return float(re.sub(r"[^0-9.]", "", str(rate or "")) or 0)
+    except ValueError:
+        return 0.0
+
+
 def apply_order_fields(db, client_id, order, body):
     supplier = (body.get("supplier_name") or "").strip()
     if not supplier:
         raise HTTPException(status_code=400, detail="Who is this order with?")
-    amount, tax, total = bill_money_from(body)
+    # Where there is a schedule, the schedule is the money. The header total
+    # is only believed on an order that has no lines at all.
+    from_lines = lines_money(body)
+    if from_lines and from_lines[0] > 0:
+        amount, tax, total = from_lines
+    else:
+        amount, tax, total = bill_money_from(body)
     order.supplier_name = supplier
     order.supplier_email = (body.get("supplier_email") or "").strip()
     order.amount, order.tax_amount, order.total = amount, tax, total
