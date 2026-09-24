@@ -84,8 +84,12 @@ var ITEM_FIELDS = [
     { key: 'item_name', label: 'Name', width: '220px' },
     { key: 'description', label: 'Description', width: '200px' },
     { key: 'item_type', label: 'Type', width: '110px', options: ['Purchased', 'Service'] },
+    // The units come from the server, which is the only place that decides
+    // what one is. A list written again here is a list that goes stale: it
+    // held six units from an invoicing product and not one of cum, sqm or MT,
+    // so nothing on a site could be named in the unit it is measured in.
     { key: 'units_of_measure', label: 'UOM', width: '100px',
-      options: ['Meters', 'Nos', 'Kgs', 'Litres', 'Sets', 'Lot'] },
+      options: (window.VOCAB && window.VOCAB.units) || ['Nos'] },
     { key: 'hsn_code', label: 'HSN', width: '90px' },
     { key: 'item_tax_type', label: 'Tax', width: '80px' }
 ];
@@ -192,6 +196,12 @@ function repairLog(repairs) {
    two keystrokes, not a round trip through Excel. */
 function analysisGrid() {
     var rows = _analysis.rows;
+    // Refreshed each draw: the vocabulary may have arrived after this file did.
+    ITEM_FIELDS.forEach(function (f) {
+        if (f.key === 'units_of_measure' && window.VOCAB && window.VOCAB.units) {
+            f.options = window.VOCAB.units;
+        }
+    });
     var head = '<th class="px-2 py-2 text-left font-semibold text-ink-soft">Line</th>' +
         '<th class="px-2 py-2 text-left font-semibold text-ink-soft">Kind</th>' +
         ITEM_FIELDS.map(function (f) {

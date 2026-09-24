@@ -23,10 +23,15 @@ async function vocabulary() {
     try {
         VOCAB = await (await fetch('/api/erp/vocabulary')).json();
     } catch (e) {
+        // Only reached when the server cannot be asked. The units a site
+        // actually measures in come first, because a fallback that offers
+        // none of them is the same as no fallback.
         VOCAB = { item_types: ['Purchased', 'Service'],
-                  units: ['Meters', 'Nos', 'Kgs', 'Litres', 'Sets', 'Lot'],
+                  units: ['cum', 'sqm', 'rmt', 'Nos', 'MT', 'Kgs', 'Bags',
+                          'Litres', 'Days', 'Lot'],
                   tax_rates: ['0%', '5%', '12%', '18%', '28%'] };
     }
+    window.VOCAB = VOCAB;
     return VOCAB;
 }
 

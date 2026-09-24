@@ -2792,9 +2792,70 @@ def jobs_summary(request: Request, db: Session = Depends(get_db)):
 ITEM_KINDS = ("RM", "FG")
 CATEGORY_BY_KIND = {"RM": "RAW MATERIAL", "FG": "FINISHED GOOD"}
 ITEM_TYPES = ("Purchased", "Service")
-# The permitted units. Same list drives the pickers and the validators,
-# so a value the form offers can never be one the server refuses.
-UNITS_OF_MEASURE = ("Meters", "Nos", "Kgs", "Litres", "Sets", "Lot")
+# The permitted units. Same list drives the pickers and the validators, so a
+# value the form offers can never be one the server refuses.
+#
+# The first six are all this app once had - the units an invoicing product
+# ships with. A civil contractor cannot name a single item with them: concrete
+# is measured in cubic metres, shuttering in square metres, reinforcement in
+# tonnes, cement in bags, and nothing could be created in any of those. That
+# one omission stopped the whole chain: no item, so no work order, so nothing
+# to measure or bill.
+UNITS_OF_MEASURE = (
+    # Volume, area and length - what site work is actually measured in
+    "cum", "sqm", "rmt", "cft", "sqft",
+    # Count and weight
+    "Nos", "Sets", "MT", "Quintal", "Kgs", "Bags", "Brass",
+    # Fluids
+    "Litres", "KL",
+    # Time, for labour and plant on hire
+    "Hours", "Days", "Months",
+    # Everything else
+    "Meters", "Lot", "Job",
+)
+
+# What the same unit gets called on somebody else's sheet. A schedule that
+# says "Cu.M" or "R.Mt" means cum and rmt, and refusing it - or worse, taking
+# it as a different unit - is how one item ends up measured two ways.
+UNIT_ALIASES = {
+    "cubicmeter": "cum", "cubicmetre": "cum", "cbm": "cum", "m3": "cum", "cmt": "cum",
+    "squaremeter": "sqm", "squaremetre": "sqm", "m2": "sqm", "smt": "sqm",
+    "runningmeter": "rmt", "runningmetre": "rmt", "rm": "rmt", "rft": "rmt",
+    "meter": "Meters", "metre": "Meters", "mtr": "Meters", "m": "Meters",
+    "no": "Nos", "each": "Nos", "ea": "Nos", "pcs": "Nos", "piece": "Nos",
+    "pieces": "Nos", "unit": "Nos", "number": "Nos",
+    "kg": "Kgs", "kilogram": "Kgs", "kgs": "Kgs",
+    "ton": "MT", "tonne": "MT", "tonnes": "MT", "mt": "MT", "metricton": "MT",
+    "bag": "Bags", "qtl": "Quintal", "quintals": "Quintal",
+    "ltr": "Litres", "litre": "Litres", "liter": "Litres", "l": "Litres",
+    "hour": "Hours", "hr": "Hours", "hrs": "Hours",
+    "day": "Days", "month": "Months", "set": "Sets",
+    "lumpsum": "Lot", "ls": "Lot", "ls.": "Lot",
+    "cubicfeet": "cft", "cuft": "cft", "squarefeet": "sqft", "sft": "sqft",
+    "kiloliter": "KL", "kilolitre": "KL",
+}
+
+
+def canonical_unit(value, default="Nos"):
+    """The unit as this app spells it, or nothing if it is not one.
+
+    Matched without regard to case, spacing or full stops, because a unit
+    typed as "Cu.M", "CUM" and "cum" is one unit, and holding three spellings
+    of it is how a stock balance splits in three.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return default
+    for unit in UNITS_OF_MEASURE:
+        if raw.lower() == unit.lower():
+            return unit
+    key = re.sub(r"[^a-z0-9]", "", raw.lower())
+    if key in UNIT_ALIASES:
+        return UNIT_ALIASES[key]
+    for unit in UNITS_OF_MEASURE:
+        if key == re.sub(r"[^a-z0-9]", "", unit.lower()):
+            return unit
+    return ""
 
 ITEM_COLUMNS = ["item_code", "item_name", "segment", "description", "category",
                 "sub_category", "hsn_code", "item_tax_type", "item_type",
@@ -2930,14 +2991,27 @@ HEADER_ALIASES = {
     "make": ["make", "brand", "manufacturer", "makelist"],
 }
 
-UOM_ALIASES = {
-    "Meters": ["m", "mt", "mtr", "mtrs", "meter", "metre", "metres", "meters", "rmt", "runningmeter"],
-    "Nos": ["no", "nos", "num", "number", "pcs", "pc", "piece", "pieces", "each", "ea", "unit"],
-    "Kgs": ["kg", "kgs", "kilo", "kilos", "kilogram", "kilograms"],
-    "Litres": ["l", "ltr", "ltrs", "litre", "litres", "liter", "liters"],
-    "Sets": ["set", "sets"],
-    "Lot": ["lot", "lots", "ls", "lumpsum"],
-}
+def _uom_alias_table():
+    """The import's alias table, built from the one unit vocabulary.
+
+    It used to be a third list, written separately: it had no cum and no sqm,
+    so every concrete and shuttering line on an imported BOQ was quietly read
+    as "Nos", and it mapped rmt onto Meters, turning a civil unit into the
+    invoicing one on the way in.
+    """
+    table = {unit: [unit.lower()] for unit in UNITS_OF_MEASURE}
+    for alias, unit in UNIT_ALIASES.items():
+        table.setdefault(unit, []).append(alias)
+    # Plurals people type that are not worth a line of their own.
+    for unit, extra in (("Nos", ["num", "pc"]), ("Kgs", ["kilo", "kilos", "kilograms"]),
+                        ("Litres", ["ltrs", "liters", "litres"]), ("Lot", ["lots"]),
+                        ("Meters", ["mtrs", "metres"]), ("Bags", ["bag"]),
+                        ("Days", ["dys"]), ("Sets", ["set"])):
+        table.setdefault(unit, []).extend(extra)
+    return {unit: sorted(set(aliases)) for unit, aliases in table.items()}
+
+
+UOM_ALIASES = _uom_alias_table()
 ITEM_TYPE_ALIASES = {
     "Purchased": ["purchased", "purchase", "buy", "bought", "supply", "material", "goods"],
     "Service": ["service", "services", "labour", "labor", "work", "installation"],
@@ -3296,7 +3370,7 @@ async def erp_items_upload(request: Request, file: UploadFile = File(...),
             hsn_code=row.get("hsn_code", "").strip(),
             item_tax_type=row.get("item_tax_type", "").strip(),
             item_type=row.get("item_type", "").strip() or "Purchased",
-            units_of_measure=row.get("units_of_measure", "").strip() or "Nos",
+            units_of_measure=canonical_unit(row.get("units_of_measure")) or "Nos",
             make=row.get("make", "").strip()))
         created += 1
 
@@ -3775,7 +3849,7 @@ def erp_items_commit(body: ItemCommitIn, request: Request, db: Session = Depends
             hsn_code=(row.get("hsn_code") or "").strip(),
             item_tax_type=(row.get("item_tax_type") or "").strip(),
             item_type=(row.get("item_type") or "Purchased").strip(),
-            units_of_measure=(row.get("units_of_measure") or "Nos").strip(),
+            units_of_measure=canonical_unit(row.get("units_of_measure")) or "Nos",
             make=(row.get("make") or "").strip()))
         taken_by_kind[kind].add(code)
         created += 1
@@ -3963,9 +4037,10 @@ def build_item(db, client_id, body, taken):
     else:
         code = issue_item_code(db, taken)
 
-    unit = (body.units_of_measure or "").strip() or "Nos"
-    if unit not in UNITS_OF_MEASURE:
-        raise HTTPException(400, "Unit must be one of: " + ", ".join(UNITS_OF_MEASURE))
+    unit = canonical_unit(body.units_of_measure)
+    if not unit:
+        raise HTTPException(400, "%s is not a unit this app knows. Use one of: %s"
+                                 % (body.units_of_measure, ", ".join(UNITS_OF_MEASURE)))
     itype = (body.item_type or "").strip() or "Purchased"
     if itype not in ITEM_TYPES:
         raise HTTPException(400, "Type must be one of: " + ", ".join(ITEM_TYPES))
@@ -4055,8 +4130,12 @@ def erp_update_item(item_id: int, body: ItemIn, request: Request,
     item.item_tax_type = (body.item_tax_type or "").strip()
     if (body.item_type or "") in ITEM_TYPES:
         item.item_type = body.item_type
-    if (body.units_of_measure or "") in UNITS_OF_MEASURE:
-        item.units_of_measure = body.units_of_measure
+    if (body.units_of_measure or "").strip():
+        unit = canonical_unit(body.units_of_measure)
+        if not unit:
+            raise HTTPException(400, "%s is not a unit this app knows. Use one of: %s"
+                                     % (body.units_of_measure, ", ".join(UNITS_OF_MEASURE)))
+        item.units_of_measure = unit
     if body.reorder_level is not None:
         item.reorder_level = max(0.0, money(body.reorder_level))
     db.commit()
@@ -18506,7 +18585,7 @@ def wo_vocabulary(request: Request, db: Session = Depends(get_db)):
             models.DBWorkType.department, models.DBWorkType.name).all()
     return {
         "departments": list(WO_DEPARTMENTS),
-        "uoms": ["cum", "sqm", "rmt", "kg", "MT", "nos", "lot", "ltr", "day"],
+        "uoms": list(UNITS_OF_MEASURE),
         "clause_categories": list(WO_CLAUSE_CATEGORIES),
         "statuses": list(WO_TRANSITIONS.keys()),
         "jobs": [{"id": j.id, "number": j.number, "name": j.name} for j in jobs],
@@ -22134,14 +22213,29 @@ def _replace_issue_lines(db, client_id, issue, lines):
     db.query(models.DBStockIssueLine).filter(
         models.DBStockIssueLine.stock_issue_id == issue.id).delete()
     total = 0.0
+    kept, refused = 0, []
     for i, l in enumerate(lines[:400]):
-        code = (l.get("item_code") or "").strip()
-        qty = money(l.get("quantity") or 0)
-        if not code or not qty:
+        code = (l.get("item_code") or l.get("code") or "").strip()
+        # Every other document in this app calls it qty. An issue note that
+        # accepted only "quantity" dropped the line, saved an empty note and
+        # still answered "opened" - the mistake is only found later, when the
+        # note refuses to be posted.
+        raw_qty = l.get("quantity")
+        if raw_qty is None:
+            raw_qty = l.get("qty")
+        qty = money(raw_qty or 0)
+        if not code:
+            refused.append("line %d has no item code" % (i + 1))
+            continue
+        if not qty:
+            refused.append("%s has no quantity" % code)
             continue
         item = db.query(models.DBItem).filter(
             models.DBItem.client_id == client_id,
             models.DBItem.item_code == code).first()
+        if not item:
+            refused.append("%s is not in the item master" % code)
+            continue
         # Priced from the store, not typed in: an issue is a transfer of value
         # out of stock, and letting somebody name the rate makes the store and
         # the job cost disagree.
@@ -22154,6 +22248,14 @@ def _replace_issue_lines(db, client_id, issue, lines):
             item_name=(l.get("item_name") or (item.item_name if item else ""))[:300],
             uom=(l.get("uom") or (item.units_of_measure if item else ""))[:40],
             quantity=qty, rate=rate, amount=amount, display_order=i))
+        kept += 1
+    # Lines that were sent and did not land must not disappear behind a
+    # cheerful message. An empty note that says it opened is found later, at
+    # the store, by somebody holding a lorry.
+    if lines and not kept:
+        raise HTTPException(400, "Nothing could be issued: " + "; ".join(refused[:5]) + ".")
+    if refused:
+        logger.warning("Issue note %s: %s", issue.number, "; ".join(refused[:10]))
     issue.total_value = money(total)
     issue.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     db.flush()

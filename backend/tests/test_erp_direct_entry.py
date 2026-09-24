@@ -139,7 +139,10 @@ def test_the_pickers_and_the_validator_share_one_list(tenant):
 
 def test_a_unit_that_is_not_a_unit_is_refused(tenant):
     res = add(tenant, units_of_measure="furlongs")
-    assert res.status_code == 400 and "Unit must be" in res.json()["detail"]
+    assert res.status_code == 400
+    # The message names what was typed, because "Unit must be one of" above a
+    # list of twenty does not tell anybody which cell to go back to.
+    assert "furlongs" in res.json()["detail"]
 
 
 def test_an_item_needs_a_name(tenant):
