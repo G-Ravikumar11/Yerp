@@ -238,7 +238,11 @@ async function loadRaBills(woId) {
                 ' <button class="btn btn-sm btn-outline" onclick="openDocument(\'ra-bill\',' + b.id + ')" ' +
                 'title="The bill as it prints">View bill</button>' +
                 ' <a class="btn btn-sm btn-outline" href="/api/ra-bills/' + b.id +
-                '/export.xlsx" title="As a workbook">Download</a></td>' +
+                '/export.xlsx" title="As a workbook">Download</a>' +
+                (b.status === 'CERTIFIED' || b.status === 'PAID'
+                    ? ' <button class="btn btn-sm btn-outline" onclick="raEinvoice(' + b.id + ')" ' +
+                      'title="The file for the GST Invoice Registration Portal">e-Invoice</button>' : '') +
+                '</td>' +
             '</tr>';
     }).join('') : '<tr><td colspan="7" style="text-align:center;padding:24px;' +
         'color:var(--text-secondary);">No bills yet. Measure the work, then draw one up.</td></tr>';
@@ -456,3 +460,42 @@ async function loadStatement(woId) {
         '</div></div>';
 }
 window.loadStatement = loadStatement;
+
+
+// The certified bill as the GST portal's e-invoice file. When something the
+// portal insists on is missing it says what and where, rather than handing
+// over a file the portal would bounce.
+async function raEinvoice(id) {
+    var d = await (await fetch('/api/ra-bills/' + id + '/einvoice', { credentials: 'include' })).json();
+    var box = document.getElementById('einv-modal');
+    if (!box) {
+        box = document.createElement('div');
+        box.id = 'einv-modal';
+        box.className = 'modal-overlay';
+        document.body.appendChild(box);
+    }
+    var inner;
+    if (d.ready) {
+        var v = d.payload.ValDtls;
+        inner = '<p>Ready for the Invoice Registration Portal.</p>' +
+            '<table class="data-table" style="margin:8px 0;"><tbody>' +
+            '<tr><td>Invoice no.</td><td class="text-right" style="font-family:monospace;">' + esc(d.payload.DocDtls.No) + '</td></tr>' +
+            '<tr><td>Buyer GSTIN</td><td class="text-right" style="font-family:monospace;">' + esc(d.payload.BuyerDtls.Gstin) + '</td></tr>' +
+            '<tr><td>Taxable value</td><td class="text-right">' + formatCurrency(v.AssVal) + '</td></tr>' +
+            '<tr><td>GST</td><td class="text-right">' + formatCurrency(v.CgstVal + v.SgstVal + v.IgstVal) + '</td></tr>' +
+            '<tr><td><strong>Invoice value</strong></td><td class="text-right"><strong>' + formatCurrency(v.TotInvVal) + '</strong></td></tr>' +
+            '</tbody></table>' +
+            '<p style="font-size:0.78rem;color:var(--text-secondary);">Upload the file at einvoice1.gst.gov.in (Bulk upload). The IRN and QR it returns go on the printed bill.</p>';
+    } else {
+        inner = '<p>The portal will not take this bill yet. Still needed:</p><ul style="margin:8px 0 0 18px;">' +
+            d.missing.map(function (m) { return '<li style="margin:4px 0;">' + esc(m) + '</li>'; }).join('') + '</ul>';
+    }
+    box.innerHTML = '<div class="modal" style="max-width:480px;"><div class="modal-header"><h3>e-Invoice</h3>' +
+        '<button class="modal-close" onclick="closeModal(\'einv-modal\')">&times;</button></div>' +
+        '<div class="modal-body">' + inner + '</div><div class="modal-footer">' +
+        '<button class="btn btn-outline" onclick="closeModal(\'einv-modal\')">Close</button>' +
+        (d.ready ? '<a class="btn btn-primary" href="/api/ra-bills/' + id + '/einvoice.json">Download the JSON</a>' : '') +
+        '</div></div>';
+    box.style.display = 'flex';
+}
+window.raEinvoice = raEinvoice;

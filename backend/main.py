@@ -1975,13 +1975,13 @@ def search_contacts(request: Request, q: str = "", db: Session = Depends(get_db)
             models.DBContact.email.ilike(f"%{q}%")
         ))
     contacts = query.limit(10).all()
-    return [{"id": c.id, "name": c.name, "email": c.email or "", "phone_number": c.phone_number or ""} for c in contacts]
+    return [contact_dict(c) for c in contacts]
 
 @app.get("/api/contacts")
 def list_contacts(request: Request, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
     contacts = db.query(models.DBContact).filter(models.DBContact.client_id == client.id).all()
-    return [{"id": c.id, "name": c.name, "email": c.email or "", "phone_number": c.phone_number or ""} for c in contacts]
+    return [contact_dict(c) for c in contacts]
 
 @app.post("/api/contacts")
 def create_contact(request: Request, body: dict = None, db: Session = Depends(get_db)):
@@ -1994,13 +1994,46 @@ def create_contact(request: Request, body: dict = None, db: Session = Depends(ge
             existing.email = body["email"]
         if body.get("phone_number") and not existing.phone_number:
             existing.phone_number = body["phone_number"]
+        _contact_tax_fields(existing, body, only_blank=True)
         db.commit()
-        return {"id": existing.id, "name": existing.name, "email": existing.email or "", "phone_number": existing.phone_number or ""}
+        return contact_dict(existing)
     contact = models.DBContact(name=body["name"], email=body.get("email", ""), phone_number=body.get("phone_number", ""), client_id=client.id)
+    _contact_tax_fields(contact, body)
     db.add(contact)
     db.commit()
     db.refresh(contact)
-    return {"id": contact.id, "name": contact.name, "email": contact.email or "", "phone_number": contact.phone_number or ""}
+    return contact_dict(contact)
+
+
+def contact_dict(c):
+    return {"id": c.id, "name": c.name, "email": c.email or "", "phone_number": c.phone_number or "",
+            "contact_person": c.contact_person or "", "gstin": c.gstin or "",
+            "address": c.address or "", "city": c.city or "", "state": c.state or "",
+            "pincode": c.pincode or ""}
+
+
+def _contact_tax_fields(c, body, only_blank=False, clear=False):
+    """What a customer is for tax: GSTIN, address, state, PIN. A client's
+    GSTIN could not be entered anywhere, so no bill could carry it and no
+    e-invoice could be made - the columns were there, the form was not."""
+    gstin = (body.get("gstin") or "").strip().upper()
+    if gstin and (len(gstin) != 15 or not state_from_gstin(gstin)):
+        raise HTTPException(400, "A GSTIN is fifteen characters and starts with a state code.")
+    pin = (body.get("pincode") or "").strip()
+    if pin and not re.match(r"^\d{6}$", pin):
+        raise HTTPException(400, "A PIN is six digits.")
+    for field, value in (("gstin", gstin), ("address", (body.get("address") or "").strip()),
+                         ("city", (body.get("city") or "").strip()),
+                         ("state", (body.get("state") or "").strip() or
+                          (GST_STATES.get(gstin[:2], "") if gstin else "")),
+                         ("pincode", pin), ("contact_person", (body.get("contact_person") or "").strip())):
+        if not value:
+            if clear and field in body:
+                setattr(c, field, "")       # an edit that empties a field empties it
+            continue
+        if only_blank and (getattr(c, field) or ""):
+            continue
+        setattr(c, field, value)
 
 
 @app.put("/api/contacts/{contact_id}")
@@ -2013,9 +2046,10 @@ def update_contact(contact_id: int, request: Request, body: dict = None, db: Ses
         if "name" in body: contact.name = body["name"]
         if "email" in body: contact.email = body["email"]
         if "phone_number" in body: contact.phone_number = body["phone_number"]
+        _contact_tax_fields(contact, body, clear=True)
         db.commit()
         db.refresh(contact)
-    return {"id": contact.id, "name": contact.name, "email": contact.email or "", "phone_number": contact.phone_number or ""}
+    return contact_dict(contact)
 
 
 @app.delete("/api/contacts/{contact_id}")
@@ -2581,7 +2615,23 @@ def update_job(job_id: int, body: JobIn, request: Request, db: Session = Depends
     was_open = job.status not in JOB_CLOSED_STATUSES
     job.name = name
     job.customer_name = (body.customer_name or "").strip()
-    job.contact_id = body.contact_id
+    # The jobs screen sends a name, never an id; taking the missing id as
+    # "no customer" cut every edited project off its client record - and
+    # with it the GSTIN the bill and the e-invoice need. The link follows
+    # the name unless an id is actually picked.
+    if body.contact_id:
+        picked = db.query(models.DBContact).filter(
+            models.DBContact.id == body.contact_id,
+            models.DBContact.client_id == client.id).first()
+        if not picked:
+            raise HTTPException(status_code=400, detail="Unknown customer")
+        job.contact_id = picked.id
+        job.customer_name = job.customer_name or picked.name
+    else:
+        known = db.query(models.DBContact).filter(
+            models.DBContact.client_id == client.id,
+            sqlfunc.lower(models.DBContact.name) == job.customer_name.lower()).first() if job.customer_name else None
+        job.contact_id = known.id if known else None
     job.site_address = (body.site_address or "").strip()
     job.description = (body.description or "").strip()
     job.status = validate_job_status(body.status)
@@ -4392,7 +4442,7 @@ def work_order_to_dict(db, wo, detail=False, pre=None):
         "line_count": line_count,
     }
     if detail:
-        row["lines"] = [{"fg_code": l.fg_code, "item_name": l.item_name,
+        row["lines"] = [{"id": l.id, "fg_code": l.fg_code, "item_name": l.item_name,
                          "description": l.description, "qty": l.qty, "uom": l.uom,
                          "rate": l.rate, "amount": l.amount}
                         for l in db.query(models.DBWorkOrderLine).filter(
@@ -6530,6 +6580,14 @@ def get_settings(request: Request, db: Session = Depends(get_db)):
     settings = db.query(models.DBSettings).filter(models.DBSettings.client_id == client.id).all()
     return {s.key: s.value for s in settings}
 
+# Settings keys that are the company itself. Saved here, they used to stay
+# here: every RA bill, purchase order, statement and e-invoice reads the
+# company record, so an address typed into Settings never reached a single
+# document. They are written through to it.
+SETTINGS_ON_THE_COMPANY = {"company_name": "company_name", "company_address": "address",
+                           "company_phone": "phone_number"}
+
+
 @app.post("/api/settings")
 def save_settings(request: Request, body: dict = None, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
@@ -6541,6 +6599,9 @@ def save_settings(request: Request, body: dict = None, db: Session = Depends(get
             else:
                 setting = models.DBSettings(key=key, value=str(val), client_id=client.id)
                 db.add(setting)
+            column = SETTINGS_ON_THE_COMPANY.get(key)
+            if column and str(val or "").strip():
+                setattr(client, column, str(val).strip())
     db.commit()
     return {"message": "Settings saved"}
 
@@ -20192,12 +20253,22 @@ def recost_ra_bill(db, bill):
     return bill
 
 
+def company_address(db, client):
+    """The company's address: the record, else what Settings holds (companies
+    that saved it there before Settings wrote through to the record)."""
+    if client and (client.address or "").strip():
+        return client.address
+    row = db.query(models.DBSettings).filter(models.DBSettings.client_id == client.id,
+                                             models.DBSettings.key == "company_address").first() if client else None
+    return (row.value if row else "") or ""
+
+
 def our_party(db, client_id):
     c = db.query(models.DBClient).filter(models.DBClient.id == client_id).first()
     if not c:
         return {}
     return {"name": c.company_name or "", "gstin": c.gstin or "",
-            "address": c.address or "", "phone": c.phone_number or "",
+            "address": company_address(db, c), "phone": c.phone_number or "",
             "email": c.email or "", "logo_url": c.logo_url or ""}
 
 
@@ -23666,6 +23737,8 @@ def attention_items(db, client_id):
                           % inr(on_finished),
             })
 
+    items.extend(attention_elsewhere(db, client_id, jobs, today))
+
     # Worth money first, then things that are simply wrong, then the rest.
     rank = {"money": 0, "wrong": 1, "action": 2, "notice": 3}
     items.sort(key=lambda i: (rank.get(i["severity"], 9), -i["value"]))
@@ -26935,6 +27008,1007 @@ def cancel_rfq(rfq_id: int, request: Request, body: dict = None, db: Session = D
     r.notes = ((r.notes or "") + "\nCancelled: " + ((body or {}).get("reason") or "")).strip()
     db.commit()
     return {"ok": True, "message": "%s cancelled." % r.number}
+
+
+
+
+# ============================================================================
+# SALES: THE TENDER PIPELINE AND THE EMD REGISTER
+#
+# A tender before it is an estimate: the notice, the site visit, the pre-bid
+# meeting, the bid date, and the earnest money sitting with the client. It
+# becomes an estimate with one click, and the estimate's win or loss comes
+# back to it - so the pipeline, the hit rate and the EMDs still out are all
+# read from the same place the pricing is done.
+# ============================================================================
+
+LEAD_STATUSES = ("NEW", "QUALIFIED", "ESTIMATING", "SUBMITTED", "WON", "LOST", "DROPPED")
+LEAD_OPEN = ("NEW", "QUALIFIED", "ESTIMATING", "SUBMITTED")
+LEAD_SOURCES = ("Tender portal", "Client enquiry", "Referral", "Repeat client", "Newspaper", "Other")
+EMD_MODES = ("DD", "BG", "Online", "FDR", "Cash", "Exempt")
+
+
+class LeadIn(BaseModel):
+    title: str
+    customer_name: Optional[str] = ""
+    contact_person: Optional[str] = ""
+    phone: Optional[str] = ""
+    email: Optional[str] = ""
+    location: Optional[str] = ""
+    source: Optional[str] = ""
+    tender_reference: Optional[str] = ""
+    estimated_value: Optional[float] = 0
+    site_visit_on: Optional[str] = ""
+    prebid_on: Optional[str] = ""
+    bid_due_on: Optional[str] = ""
+    emd_amount: Optional[float] = 0
+    emd_mode: Optional[str] = ""
+    emd_reference: Optional[str] = ""
+    emd_paid_on: Optional[str] = ""
+    owner_name: Optional[str] = ""
+    notes: Optional[str] = ""
+
+
+def lead_or_404(db, client_id, lead_id):
+    l = db.query(models.DBLead).filter(models.DBLead.id == lead_id,
+                                       models.DBLead.client_id == client_id).first()
+    if not l:
+        raise HTTPException(404, "Tender not found")
+    return l
+
+
+def sync_lead_from_estimate(db, lead):
+    """The estimate's outcome is the tender's outcome. Read on the way out,
+    so a win recorded on the estimate is never contradicted here."""
+    if not lead.estimate_id:
+        return
+    est = db.query(models.DBEstimate).filter(models.DBEstimate.id == lead.estimate_id).first()
+    if not est:
+        return
+    mapped = {"DRAFT": "ESTIMATING", "SUBMITTED": "SUBMITTED", "WON": "WON", "LOST": "LOST"}.get(est.status)
+    if mapped and lead.status not in ("DROPPED",) and lead.status != mapped:
+        lead.status = mapped
+    lead.our_price = money(est.quoted_total or lead.our_price or 0)
+    if est.status == "WON" and est.job_id and not lead.job_id:
+        lead.job_id = est.job_id
+
+
+def lead_dict(db, l):
+    sync_lead_from_estimate(db, l)
+    est = db.query(models.DBEstimate).filter(models.DBEstimate.id == l.estimate_id).first() if l.estimate_id else None
+    due = _days_until(l.bid_due_on)
+    emd_out = bool(l.emd_amount) and bool(l.emd_paid_on) and not l.emd_returned_on
+    return {"id": l.id, "number": l.number, "title": l.title or "", "customer_name": l.customer_name or "",
+            "contact_person": l.contact_person or "", "phone": l.phone or "", "email": l.email or "",
+            "location": l.location or "", "source": l.source or "",
+            "tender_reference": l.tender_reference or "", "estimated_value": money(l.estimated_value),
+            "site_visit_on": l.site_visit_on or "", "prebid_on": l.prebid_on or "",
+            "bid_due_on": l.bid_due_on or "", "days_to_bid": due,
+            "emd_amount": money(l.emd_amount), "emd_mode": l.emd_mode or "",
+            "emd_reference": l.emd_reference or "", "emd_paid_on": l.emd_paid_on or "",
+            "emd_returned_on": l.emd_returned_on or "", "emd_outstanding": emd_out,
+            "status": l.status, "lost_reason": l.lost_reason or "",
+            "winning_bidder": l.winning_bidder or "", "winning_price": money(l.winning_price),
+            "our_price": money(l.our_price), "estimate_id": l.estimate_id,
+            "estimate_number": est.number if est else "", "job_id": l.job_id,
+            "owner_name": l.owner_name or "", "notes": l.notes or "",
+            "created_at": l.created_at or ""}
+
+
+def _apply_lead(l, body):
+    title = (body.title or "").strip()
+    if not title:
+        raise HTTPException(400, "Name the tender - the work and where it is.")
+    for label, v in (("estimated value", body.estimated_value), ("EMD", body.emd_amount)):
+        if (v or 0) < 0:
+            raise HTTPException(400, "The %s cannot be negative." % label)
+    l.title = title
+    l.customer_name = (body.customer_name or "").strip()
+    l.contact_person = (body.contact_person or "").strip()
+    l.phone, l.email = (body.phone or "").strip(), (body.email or "").strip()
+    l.location = (body.location or "").strip()
+    l.source = body.source if body.source in LEAD_SOURCES else (body.source or "").strip()
+    l.tender_reference = (body.tender_reference or "").strip()
+    l.estimated_value = money(body.estimated_value or 0)
+    l.site_visit_on = (body.site_visit_on or "").strip()
+    l.prebid_on = (body.prebid_on or "").strip()
+    l.bid_due_on = (body.bid_due_on or "").strip()
+    l.emd_amount = money(body.emd_amount or 0)
+    l.emd_mode = body.emd_mode if body.emd_mode in EMD_MODES else ""
+    l.emd_reference = (body.emd_reference or "").strip()
+    l.emd_paid_on = (body.emd_paid_on or "").strip()
+    l.owner_name = (body.owner_name or "").strip()
+    l.notes = (body.notes or "").strip()
+    l.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _log_lead(db, client_id, lead, kind, note, by, next_action="", next_on=""):
+    db.add(models.DBLeadActivity(client_id=client_id, lead_id=lead.id, kind=kind, note=note,
+                                 next_action=next_action, next_on=next_on, by_name=by))
+
+
+@app.get("/api/leads")
+def list_leads(request: Request, status: str = "", db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    q = db.query(models.DBLead).filter(models.DBLead.client_id == client.id)
+    rows = [lead_dict(db, l) for l in q.order_by(models.DBLead.id.desc()).all()]
+    db.commit()           # outcomes synced from estimates are kept
+    if status:
+        rows = [r for r in rows if r["status"] == status.upper()]
+    decided = [r for r in rows if r["status"] in ("WON", "LOST")]
+    won = [r for r in decided if r["status"] == "WON"]
+    live = [r for r in rows if r["status"] in LEAD_OPEN]
+    return {"leads": rows, "statuses": list(LEAD_STATUSES), "sources": list(LEAD_SOURCES),
+            "emd_modes": list(EMD_MODES), "summary": {
+                "live": len(live),
+                "pipeline_value": money(sum(r["estimated_value"] for r in live)),
+                "due_this_week": len([r for r in live if r["days_to_bid"] is not None
+                                      and 0 <= r["days_to_bid"] <= 7]),
+                "hit_rate": round(len(won) / len(decided) * 100, 1) if decided else 0.0,
+                "won_value": money(sum(r["our_price"] or r["estimated_value"] for r in won)),
+                "emd_out": money(sum(r["emd_amount"] for r in rows if r["emd_outstanding"])),
+                "emd_out_count": len([r for r in rows if r["emd_outstanding"]])}}
+
+
+def next_lead_number(db, client_id):
+    n = db.query(models.DBLead).filter(models.DBLead.client_id == client_id).count()
+    return "TND-%04d" % (n + 1)
+
+
+@app.post("/api/leads")
+def create_lead(body: LeadIn, request: Request, db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db)
+    l = models.DBLead(client_id=client.id, number=next_lead_number(db, client.id), status="NEW")
+    _apply_lead(l, body)
+    if not l.owner_name:
+        l.owner_name = actor_name
+    db.add(l)
+    db.flush()
+    _log_lead(db, client.id, l, "Status", "Tender entered.", actor_name)
+    db.commit()
+    return {"ok": True, "lead": lead_dict(db, l), "message": "%s entered." % l.number}
+
+
+@app.put("/api/leads/{lead_id}")
+def update_lead(lead_id: int, body: LeadIn, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    l = lead_or_404(db, client.id, lead_id)
+    _apply_lead(l, body)
+    db.commit()
+    return {"ok": True, "lead": lead_dict(db, l)}
+
+
+@app.get("/api/leads/{lead_id}")
+def get_lead(lead_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    l = lead_or_404(db, client.id, lead_id)
+    d = lead_dict(db, l)
+    d["activities"] = [{"id": a.id, "kind": a.kind, "note": a.note or "", "next_action": a.next_action or "",
+                        "next_on": a.next_on or "", "by": a.by_name or "", "at": a.created_at}
+                       for a in db.query(models.DBLeadActivity).filter(
+                           models.DBLeadActivity.lead_id == l.id).order_by(
+                               models.DBLeadActivity.id.desc()).all()]
+    db.commit()
+    return d
+
+
+class LeadMoveIn(BaseModel):
+    status: str
+    note: Optional[str] = ""
+    lost_reason: Optional[str] = ""
+    winning_bidder: Optional[str] = ""
+    winning_price: Optional[float] = 0
+
+
+@app.post("/api/leads/{lead_id}/status")
+def move_lead(lead_id: int, body: LeadMoveIn, request: Request, db: Session = Depends(get_db)):
+    """Along the pipeline. A lost tender says who won it and at what, because
+    that is the only way next year's rates learn anything."""
+    client, _, actor_name = wo_actor(request, db)
+    l = lead_or_404(db, client.id, lead_id)
+    to = (body.status or "").upper()
+    if to not in LEAD_STATUSES:
+        raise HTTPException(400, "Status is one of: " + ", ".join(LEAD_STATUSES))
+    if l.estimate_id and to in ("WON", "LOST", "SUBMITTED"):
+        raise HTTPException(409, "This tender's outcome follows its estimate. Decide it on the estimate.")
+    if to == "LOST":
+        if not (body.lost_reason or "").strip():
+            raise HTTPException(400, "Why was it lost? Price, eligibility, time - the next bid needs to know.")
+        l.lost_reason = body.lost_reason.strip()
+        l.winning_bidder = (body.winning_bidder or "").strip()
+        l.winning_price = money(body.winning_price or 0)
+    if to == "DROPPED" and not (body.note or "").strip():
+        raise HTTPException(400, "Say why it was dropped.")
+    was, l.status = l.status, to
+    l.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _log_lead(db, client.id, l, "Status", "%s -> %s. %s" % (was, to, (body.note or body.lost_reason or "").strip()),
+              actor_name)
+    db.commit()
+    return {"ok": True, "lead": lead_dict(db, l), "message": "%s %s." % (l.number, to.lower())}
+
+
+class LeadActivityIn(BaseModel):
+    kind: Optional[str] = "Note"
+    note: str
+    next_action: Optional[str] = ""
+    next_on: Optional[str] = ""
+
+
+@app.post("/api/leads/{lead_id}/activities")
+def add_lead_activity(lead_id: int, body: LeadActivityIn, request: Request, db: Session = Depends(get_db)):
+    client, _, actor_name = wo_actor(request, db)
+    l = lead_or_404(db, client.id, lead_id)
+    if not (body.note or "").strip():
+        raise HTTPException(400, "What happened?")
+    kind = body.kind if body.kind in ("Call", "Visit", "Meeting", "Note", "Email") else "Note"
+    _log_lead(db, client.id, l, kind, body.note.strip(), actor_name,
+              (body.next_action or "").strip(), (body.next_on or "").strip())
+    db.commit()
+    return {"ok": True, "message": "Noted on %s." % l.number}
+
+
+@app.post("/api/leads/{lead_id}/estimate")
+def estimate_lead(lead_id: int, request: Request, db: Session = Depends(get_db)):
+    """Price it: an estimate opened from the tender, carrying its name, its
+    client, its reference and its bid date."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    l = lead_or_404(db, client.id, lead_id)
+    if l.estimate_id:
+        raise HTTPException(409, "%s already has an estimate." % l.number)
+    if l.status in ("WON", "LOST", "DROPPED"):
+        raise HTTPException(409, "%s is %s." % (l.number, l.status.lower()))
+    est = models.DBEstimate(
+        client_id=client.id, number=next_sequence_number(db, models.DBEstimate, client.id, "EST-"),
+        title=l.title, customer_name=l.customer_name or "", tender_reference=l.tender_reference or "",
+        due_on=l.bid_due_on or "", status="DRAFT", overhead_percent=0, profit_percent=0,
+        notes="From tender %s. %s" % (l.number, l.notes or ""), prepared_by_name=actor_name)
+    db.add(est)
+    db.flush()
+    l.estimate_id, l.status = est.id, "ESTIMATING"
+    _log_lead(db, client.id, l, "Status", "Estimate %s opened." % est.number, actor_name)
+    db.commit()
+    return {"ok": True, "estimate_id": est.id, "lead": lead_dict(db, l),
+            "message": "%s opened for %s. Build the rates there." % (est.number, l.number)}
+
+
+class EmdReturnIn(BaseModel):
+    returned_on: Optional[str] = ""
+    note: Optional[str] = ""
+
+
+@app.post("/api/leads/{lead_id}/emd-returned")
+def emd_returned(lead_id: int, body: EmdReturnIn, request: Request, db: Session = Depends(get_db)):
+    client, _, actor_name = wo_actor(request, db)
+    l = lead_or_404(db, client.id, lead_id)
+    if not l.emd_amount or not l.emd_paid_on:
+        raise HTTPException(409, "No EMD was paid on %s." % l.number)
+    if l.emd_returned_on:
+        raise HTTPException(409, "The EMD on %s came back on %s." % (l.number, l.emd_returned_on))
+    l.emd_returned_on = (body.returned_on or datetime.now().strftime("%Y-%m-%d"))[:10]
+    _log_lead(db, client.id, l, "Status", "EMD of %s returned. %s" % (inr(l.emd_amount), body.note or ""), actor_name)
+    db.commit()
+    return {"ok": True, "message": "EMD on %s marked returned." % l.number}
+
+
+@app.get("/api/leads-emd")
+def emd_register(request: Request, db: Session = Depends(get_db)):
+    """Every earnest money deposit paid and not yet back - the oldest first,
+    because an EMD on a tender lost a year ago is money forgotten."""
+    client = require_erp_read(request, db)
+    rows = []
+    for l in db.query(models.DBLead).filter(models.DBLead.client_id == client.id,
+                                            models.DBLead.emd_amount > 0).all():
+        d = lead_dict(db, l)
+        if not d["emd_paid_on"]:
+            continue
+        held = _days_until(d["emd_paid_on"])
+        d["days_held"] = -held if held is not None else None
+        rows.append(d)
+    db.commit()
+    out = [r for r in rows if r["emd_outstanding"]]
+    out.sort(key=lambda r: -(r["days_held"] or 0))
+    return {"emds": out, "returned": [r for r in rows if not r["emd_outstanding"]],
+            "summary": {"out": money(sum(r["emd_amount"] for r in out)), "count": len(out),
+                        "on_decided_tenders": money(sum(r["emd_amount"] for r in out
+                                                        if r["status"] in ("WON", "LOST", "DROPPED")))}}
+
+
+
+
+# ============================================================================
+# PROJECT SCHEDULE: PLANNED AGAINST ACTUAL
+#
+# Each activity has its planned dates and, where it is a work order line, its
+# progress read from the measurement book - on any date, because every entry
+# in the book is dated. Where it is not, progress is reported and dated too.
+# So the S-curve for any week in the past is what was true that week, and a
+# late activity pushes its successors out by exactly how late it is.
+# ============================================================================
+
+def _d(value):
+    try:
+        return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+
+
+def planned_percent(a, on):
+    """Linear across the planned span; a milestone is all or nothing."""
+    s, f = _d(a.planned_start), _d(a.planned_finish)
+    if not s or not f:
+        return 0.0
+    if on < s:
+        return 0.0
+    if on >= f:
+        return 100.0
+    if a.is_milestone:
+        return 0.0
+    span = (f - s).days or 1
+    return round((on - s).days / span * 100.0, 1)
+
+
+class ScheduleContext:
+    """Everything the progress of a job's activities is read from, loaded once."""
+
+    def __init__(self, db, client_id, job_id):
+        self.acts = db.query(models.DBScheduleActivity).filter(
+            models.DBScheduleActivity.client_id == client_id,
+            models.DBScheduleActivity.job_id == job_id).order_by(
+                models.DBScheduleActivity.display_order, models.DBScheduleActivity.id).all()
+        line_ids = [a.work_order_line_id for a in self.acts if a.work_order_line_id]
+        self.ordered, self.measures = {}, {}
+        if line_ids:
+            for l in db.query(models.DBWorkOrderLine).filter(
+                    models.DBWorkOrderLine.id.in_(line_ids)).all():
+                self.ordered[l.id] = l.qty or 0
+            for m in db.query(models.DBMeasurement).filter(
+                    models.DBMeasurement.line_id.in_(line_ids)).all():
+                self.measures.setdefault(m.line_id, []).append((m.measured_on or "", m.quantity or 0))
+        self.reports = {}
+        ids = [a.id for a in self.acts]
+        if ids:
+            for p in db.query(models.DBScheduleProgress).filter(
+                    models.DBScheduleProgress.activity_id.in_(ids)).order_by(
+                        models.DBScheduleProgress.reported_on, models.DBScheduleProgress.id).all():
+                self.reports.setdefault(p.activity_id, []).append((p.reported_on or "", p.percent or 0))
+
+    def actual(self, a, on):
+        """Done, as a percentage, on a given date."""
+        iso = on.isoformat()
+        if a.work_order_line_id and self.ordered.get(a.work_order_line_id):
+            done = sum(q for d, q in self.measures.get(a.work_order_line_id, []) if d <= iso)
+            pct = min(100.0, max(0.0, done / self.ordered[a.work_order_line_id] * 100.0))
+        else:
+            pct = 0.0
+            for d, p in self.reports.get(a.id, []):
+                if d <= iso:
+                    pct = p
+        if a.actual_finish and a.actual_finish <= iso:
+            pct = 100.0
+        return round(pct, 1)
+
+
+def schedule_view(db, client_id, job):
+    """The activities with their planned and actual progress, the forecast
+    that follows from both, and the curve."""
+    ctx = ScheduleContext(db, client_id, job.id)
+    today = date.today()
+    by_id = {a.id: a for a in ctx.acts}
+    rows, forecast_finish = [], {}
+
+    def forecast(a):
+        """When it will finish: late predecessors push it; progress so far
+        tells how fast it is going once it has started."""
+        if a.id in forecast_finish:
+            return forecast_finish[a.id]
+        s, f = _d(a.planned_start), _d(a.planned_finish)
+        if not s or not f:
+            forecast_finish[a.id] = None
+            return None
+        dur = (f - s).days
+        pred = by_id.get(a.depends_on_id)
+        start = s
+        if pred and pred.id != a.id:
+            pf = forecast(pred)
+            if pf and pf >= start:
+                start = pf + timedelta(days=1)
+        done = ctx.actual(a, today)
+        if done >= 100:
+            fin = _d(a.actual_finish) or min(today, f)
+        elif done > 0 and _d(a.actual_start):
+            elapsed = max(1, (today - _d(a.actual_start)).days)
+            fin = today + timedelta(days=round(elapsed * (100 - done) / done))
+            fin = max(fin, start + timedelta(days=dur)) if start > today else fin
+        else:
+            begin = max(start, today) if start <= today and done == 0 else start
+            fin = begin + timedelta(days=dur)
+        forecast_finish[a.id] = fin
+        return fin
+
+    total_weight = sum(a.weight or 0 for a in ctx.acts) or float(len(ctx.acts) or 1)
+    for a in ctx.acts:
+        w = (a.weight or 0) if any(x.weight for x in ctx.acts) else 1.0
+        plan = planned_percent(a, today)
+        done = ctx.actual(a, today)
+        fin = forecast(a)
+        pf = _d(a.planned_finish)
+        slip = (fin - pf).days if fin and pf else 0
+        state = ("done" if done >= 100 else
+                 "late" if pf and today > pf else
+                 "behind" if plan - done > 10 else
+                 "not started" if done == 0 and plan == 0 else "on track")
+        pred = by_id.get(a.depends_on_id)
+        rows.append({
+            "id": a.id, "code": a.code or "", "name": a.name or "",
+            "planned_start": a.planned_start or "", "planned_finish": a.planned_finish or "",
+            "actual_start": a.actual_start or "", "actual_finish": a.actual_finish or "",
+            "weight": money(a.weight), "share_percent": round(w / total_weight * 100, 1),
+            "depends_on_id": a.depends_on_id, "depends_on": pred.code or pred.name if pred else "",
+            "work_order_line_id": a.work_order_line_id, "is_milestone": bool(a.is_milestone),
+            "progress_from": "measurement book" if a.work_order_line_id else "reported",
+            "planned_percent": plan, "actual_percent": done,
+            "forecast_finish": fin.isoformat() if fin else "", "slip_days": slip, "state": state})
+
+    def overall(on):
+        if not ctx.acts:
+            return 0.0, 0.0
+        weights = [(a.weight or 0) if any(x.weight for x in ctx.acts) else 1.0 for a in ctx.acts]
+        tw = sum(weights) or 1.0
+        p = sum(w * planned_percent(a, on) for a, w in zip(ctx.acts, weights)) / tw
+        d_ = sum(w * ctx.actual(a, on) for a, w in zip(ctx.acts, weights)) / tw
+        return round(p, 1), round(d_, 1)
+
+    starts = [_d(a.planned_start) for a in ctx.acts if _d(a.planned_start)]
+    finishes = [_d(a.planned_finish) for a in ctx.acts if _d(a.planned_finish)]
+    curve = []
+    if starts and finishes:
+        cur, end = min(starts), max(max(finishes), today)
+        while cur <= end + timedelta(days=6):
+            p, d_ = overall(cur)
+            curve.append({"week": cur.isoformat(), "planned": p,
+                          "actual": d_ if cur <= today else None})
+            cur += timedelta(days=7)
+    plan_now, done_now = overall(today)
+    project_finish = max([f for f in forecast_finish.values() if f] or [None]) if forecast_finish else None
+    planned_end = max(finishes) if finishes else None
+    return {
+        "job": {"id": job.id, "number": job.number, "name": job.name},
+        "activities": rows, "curve": curve,
+        "summary": {
+            "activities": len(rows), "planned_percent": plan_now, "actual_percent": done_now,
+            "variance": round(done_now - plan_now, 1),
+            "late": len([r for r in rows if r["state"] == "late"]),
+            "behind": len([r for r in rows if r["state"] == "behind"]),
+            "done": len([r for r in rows if r["state"] == "done"]),
+            "planned_finish": planned_end.isoformat() if planned_end else "",
+            "forecast_finish": project_finish.isoformat() if project_finish else "",
+            "slip_days": (project_finish - planned_end).days if project_finish and planned_end else 0}}
+
+
+class ActivityIn(BaseModel):
+    name: str
+    code: Optional[str] = ""
+    planned_start: str
+    planned_finish: str
+    weight: Optional[float] = 0
+    depends_on_id: Optional[int] = None
+    work_order_line_id: Optional[int] = None
+    is_milestone: Optional[bool] = False
+    actual_start: Optional[str] = ""
+    actual_finish: Optional[str] = ""
+
+
+def _apply_activity(db, client_id, job, a, body):
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "What is the activity?")
+    s, f = _d(body.planned_start), _d(body.planned_finish)
+    if not s or not f:
+        raise HTTPException(400, "An activity needs its planned start and finish.")
+    if f < s:
+        raise HTTPException(400, "It cannot finish before it starts.")
+    if body.depends_on_id:
+        pred = db.query(models.DBScheduleActivity).filter(
+            models.DBScheduleActivity.id == body.depends_on_id,
+            models.DBScheduleActivity.job_id == job.id).first()
+        if not pred:
+            raise HTTPException(400, "It can only follow an activity on the same project.")
+        # Refuse a loop: A after B after A would never start.
+        seen, cur = {a.id}, pred
+        while cur is not None:
+            if cur.id in seen:
+                raise HTTPException(400, "That would make the activities wait on each other for ever.")
+            seen.add(cur.id)
+            cur = db.query(models.DBScheduleActivity).filter(
+                models.DBScheduleActivity.id == cur.depends_on_id).first() if cur.depends_on_id else None
+    if body.work_order_line_id:
+        line = db.query(models.DBWorkOrderLine).join(
+            models.DBWorkOrder, models.DBWorkOrder.id == models.DBWorkOrderLine.work_order_id).filter(
+            models.DBWorkOrderLine.id == body.work_order_line_id,
+            models.DBWorkOrder.client_id == client_id, models.DBWorkOrder.job_id == job.id).first()
+        if not line:
+            raise HTTPException(400, "That work order line is not on this project.")
+    a.name, a.code = name, (body.code or "").strip()
+    a.planned_start, a.planned_finish = s.isoformat(), f.isoformat()
+    a.weight = max(0.0, float(body.weight or 0))
+    a.depends_on_id = body.depends_on_id or None
+    a.work_order_line_id = body.work_order_line_id or None
+    a.is_milestone = bool(body.is_milestone)
+    a.actual_start = (body.actual_start or "").strip()
+    a.actual_finish = (body.actual_finish or "").strip()
+
+
+@app.get("/api/jobs/{job_id}/schedule")
+def job_schedule(job_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return schedule_view(db, client.id, job_or_404(db, client.id, job_id))
+
+
+@app.post("/api/jobs/{job_id}/schedule/activities")
+def add_activity(job_id: int, body: ActivityIn, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    job = job_or_404(db, client.id, job_id)
+    n = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.job_id == job.id).count()
+    a = models.DBScheduleActivity(client_id=client.id, job_id=job.id, display_order=n)
+    db.add(a)
+    db.flush()
+    _apply_activity(db, client.id, job, a, body)
+    if not a.code:
+        a.code = "A%d" % ((n + 1) * 10)
+    db.commit()
+    return {"ok": True, "schedule": schedule_view(db, client.id, job)}
+
+
+@app.put("/api/schedule/activities/{activity_id}")
+def edit_activity(activity_id: int, body: ActivityIn, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    a = db.query(models.DBScheduleActivity).filter(
+        models.DBScheduleActivity.id == activity_id,
+        models.DBScheduleActivity.client_id == client.id).first()
+    if not a:
+        raise HTTPException(404, "Activity not found")
+    job = job_or_404(db, client.id, a.job_id)
+    _apply_activity(db, client.id, job, a, body)
+    db.commit()
+    return {"ok": True, "schedule": schedule_view(db, client.id, job)}
+
+
+@app.delete("/api/schedule/activities/{activity_id}")
+def delete_activity(activity_id: int, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    a = db.query(models.DBScheduleActivity).filter(
+        models.DBScheduleActivity.id == activity_id,
+        models.DBScheduleActivity.client_id == client.id).first()
+    if not a:
+        raise HTTPException(404, "Activity not found")
+    db.query(models.DBScheduleActivity).filter(
+        models.DBScheduleActivity.depends_on_id == a.id).update(
+            {"depends_on_id": a.depends_on_id}, synchronize_session=False)
+    db.query(models.DBScheduleProgress).filter(
+        models.DBScheduleProgress.activity_id == a.id).delete()
+    job_id = a.job_id
+    db.delete(a)
+    db.commit()
+    return {"ok": True, "schedule": schedule_view(db, client.id, job_or_404(db, client.id, job_id))}
+
+
+class ProgressIn(BaseModel):
+    percent: float
+    reported_on: Optional[str] = ""
+    note: Optional[str] = ""
+
+
+@app.post("/api/schedule/activities/{activity_id}/progress")
+def report_progress(activity_id: int, body: ProgressIn, request: Request, db: Session = Depends(get_db)):
+    """For an activity the book does not measure. Dated, never overwritten."""
+    client, _, actor_name = wo_actor(request, db)
+    a = db.query(models.DBScheduleActivity).filter(
+        models.DBScheduleActivity.id == activity_id,
+        models.DBScheduleActivity.client_id == client.id).first()
+    if not a:
+        raise HTTPException(404, "Activity not found")
+    if a.work_order_line_id:
+        raise HTTPException(409, "%s takes its progress from the measurement book. "
+                                 "Measure the work instead." % (a.code or a.name))
+    pct = float(body.percent or 0)
+    if pct < 0 or pct > 100:
+        raise HTTPException(400, "Progress is a percentage between 0 and 100.")
+    on = (body.reported_on or datetime.now().strftime("%Y-%m-%d"))[:10]
+    db.add(models.DBScheduleProgress(client_id=client.id, activity_id=a.id, reported_on=on,
+                                     percent=pct, note=(body.note or "").strip(), by_name=actor_name))
+    if pct > 0 and not a.actual_start:
+        a.actual_start = on
+    if pct >= 100 and not a.actual_finish:
+        a.actual_finish = on
+    db.commit()
+    return {"ok": True, "schedule": schedule_view(db, client.id, job_or_404(db, client.id, a.job_id))}
+
+
+class FromWorkOrderIn(BaseModel):
+    start: str
+    finish: str
+
+
+@app.post("/api/jobs/{job_id}/schedule/from-work-order/{wo_id}")
+def schedule_from_work_order(job_id: int, wo_id: int, body: FromWorkOrderIn, request: Request,
+                             db: Session = Depends(get_db)):
+    """One activity per line of the order, weighted by what it is worth and
+    tied to the book, spread end to end across the span given. A first draft
+    to be moved about, not a programme - but its progress is real from the
+    first measurement."""
+    client, _, _ = wo_actor(request, db)
+    job = job_or_404(db, client.id, job_id)
+    wo = work_order_or_404(db, client.id, wo_id)
+    if wo.job_id != job.id:
+        raise HTTPException(400, "%s is not on this project." % wo.number)
+    s, f = _d(body.start), _d(body.finish)
+    if not s or not f or f <= s:
+        raise HTTPException(400, "Give the span the work runs across.")
+    lines = db.query(models.DBWorkOrderLine).filter(
+        models.DBWorkOrderLine.work_order_id == wo.id).order_by(models.DBWorkOrderLine.id).all()
+    have = {a.work_order_line_id for a in db.query(models.DBScheduleActivity).filter(
+        models.DBScheduleActivity.job_id == job.id).all()}
+    lines = [l for l in lines if l.id not in have]
+    if not lines:
+        raise HTTPException(409, "Every line of %s is already on the schedule." % wo.number)
+    total = sum(l.amount or 0 for l in lines) or 1.0
+    span = (f - s).days
+    cur, prev = s, None
+    n = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.job_id == job.id).count()
+    for i, l in enumerate(lines):
+        share = max(1, round(span * (l.amount or 0) / total))
+        fin = min(f, cur + timedelta(days=share - 1)) if i < len(lines) - 1 else f
+        a = models.DBScheduleActivity(
+            client_id=client.id, job_id=job.id, code="A%d" % ((n + i + 1) * 10),
+            name=(l.description or l.item_name or l.fg_code or "").split("\n")[0][:200],
+            planned_start=cur.isoformat(), planned_finish=fin.isoformat(),
+            weight=money(l.amount), work_order_line_id=l.id, depends_on_id=prev,
+            display_order=n + i)
+        db.add(a)
+        db.flush()
+        prev = a.id
+        cur = min(f, fin + timedelta(days=1))
+    db.commit()
+    return {"ok": True, "schedule": schedule_view(db, client.id, job),
+            "message": "%d activities drawn from %s." % (len(lines), wo.number)}
+
+
+@app.get("/api/schedule-overview")
+def schedule_overview(request: Request, db: Session = Depends(get_db)):
+    """Every live project's planned against actual, worst first."""
+    client = require_erp_read(request, db)
+    out = []
+    for job in db.query(models.DBJob).filter(models.DBJob.client_id == client.id).all():
+        if (job.status or "") in (JOB_FINISHED, "cancelled"):
+            continue
+        if not db.query(models.DBScheduleActivity.id).filter(
+                models.DBScheduleActivity.job_id == job.id).first():
+            continue
+        v = schedule_view(db, client.id, job)
+        out.append(dict(v["summary"], job_id=job.id, number=job.number, name=job.name))
+    out.sort(key=lambda r: r["variance"])
+    return {"projects": out}
+
+
+
+
+# ============================================================================
+# E-INVOICE: THE RA BILL IN THE GOVERNMENT'S SCHEMA
+#
+# A certified RA bill laid out as the e-invoice JSON (schema 1.1) that the
+# Invoice Registration Portal accepts - seller, buyer, one item per line of
+# the bill, the deductions as each line's discount so the taxable value is
+# the one the bill charged GST on, and the tax split the way the bill split
+# it. Uploaded to the portal it comes back with an IRN; asking the portal
+# directly needs the business's own API credentials from a GSP, which this
+# app does not hold. What it will not do is produce a file the portal would
+# reject: whatever is missing is named instead.
+# ============================================================================
+
+# Units of measure as the GST portal spells them (UQC).
+UQC = {"cum": "CBM", "sqm": "SQM", "rmt": "MTR", "Meters": "MTR", "Nos": "NOS", "Sets": "SET",
+       "MT": "MTS", "Quintal": "QTL", "Kgs": "KGS", "Bags": "BAG", "Litres": "LTR", "KL": "KLR",
+       "sqft": "SQF", "cft": "CCM", "Days": "OTH", "Hours": "OTH", "Months": "OTH",
+       "Lot": "OTH", "Job": "OTH", "Brass": "OTH"}
+
+
+def _pin_from(text):
+    m = re.search(r"\b(\d{6})\b", text or "")
+    return m.group(1) if m else ""
+
+
+def _addr_lines(text):
+    parts = [p.strip() for p in re.split(r"[\n,]", text or "") if p.strip()]
+    one = ", ".join(parts[:2])[:100]
+    two = ", ".join(parts[2:4])[:100]
+    return one, two, (parts[-1][:50] if parts else "")
+
+
+def einvoice_buyer(db, client_id, job):
+    """The contact the project points at, else a contact of the same name."""
+    c = None
+    if job and job.contact_id:
+        c = db.query(models.DBContact).filter(models.DBContact.id == job.contact_id,
+                                              models.DBContact.client_id == client_id).first()
+    if not c and job and job.customer_name:
+        c = next((x for x in db.query(models.DBContact).filter(
+            models.DBContact.client_id == client_id).all()
+            if norm_name(x.name) == norm_name(job.customer_name)), None)
+    return c
+
+
+def einvoice_payload(db, client, bill):
+    """(payload, problems). The payload is only worth sending when the list
+    of problems is empty."""
+    problems = []
+    if bill.status not in ("CERTIFIED", "PAID"):
+        problems.append("the bill is %s - only a certified bill is invoiced" % (bill.status or "").lower())
+    job = db.query(models.DBJob).filter(models.DBJob.id == bill.job_id).first()
+    buyer = einvoice_buyer(db, client.id, job)
+
+    seller_gstin = (client.gstin or "").strip().upper()
+    if not seller_gstin:
+        problems.append("our GSTIN (Money > GST)")
+    our_address = company_address(db, client)
+    seller_pin = _pin_from(our_address)
+    if not seller_pin:
+        problems.append("a six-digit PIN in our address (Settings > Company details)")
+    s1, s2, sloc = _addr_lines(our_address)
+
+    b_gstin = (buyer.gstin or "").strip().upper() if buyer else ""
+    if not buyer:
+        problems.append("the client as a contact on the project (so their GSTIN and address are on file)")
+    elif not b_gstin:
+        problems.append("the client's GSTIN on their contact")
+    b_addr = ""
+    if buyer:
+        b_addr = ", ".join(x for x in (buyer.address or "", getattr(buyer, "city", "") or "") if x)
+    b_pin = (getattr(buyer, "pincode", "") or "").strip() if buyer else ""
+    b_pin = b_pin if re.match(r"^\d{6}$", b_pin) else _pin_from(b_addr)
+    if buyer and not b_pin:
+        problems.append("a six-digit PIN on the client's contact")
+    if not bill.place_of_supply:
+        problems.append("the state the site is in (Projects > place of supply)")
+    number = re.sub(r"[^A-Za-z0-9/\-]", "", bill.number or "")
+    if len(number) > 16:
+        # The portal takes sixteen characters; RA numbers built from order
+        # numbers run longer, so the invoice carries a shortened form and
+        # the full number rides along as a reference.
+        number = number[-16:].lstrip("/-")
+
+    lines = db.query(models.DBRABillLine).filter(
+        models.DBRABillLine.ra_bill_id == bill.id).order_by(
+            models.DBRABillLine.display_order, models.DBRABillLine.id).all()
+    lines = [l for l in lines if (l.amount or 0) > 0]
+    if not lines:
+        problems.append("at least one line with work on it")
+
+    deductions = money((bill.retention_amount or 0) + (bill.advance_recovery or 0) + (bill.other_deductions or 0))
+    gross = money(sum(l.amount or 0 for l in lines)) or 1.0
+    rate = bill.tax_percent or 0
+    intra = bool(bill.cgst_amount or bill.sgst_amount) and not bill.igst_amount
+    items, used_disc, used = [], 0.0, {"ass": 0.0, "cgst": 0.0, "sgst": 0.0, "igst": 0.0}
+    for i, l in enumerate(lines, start=1):
+        last = i == len(lines)
+        tot = money(l.amount)
+        disc = money(deductions - used_disc) if last else money(deductions * tot / gross)
+        used_disc = money(used_disc + disc)
+        ass = money(tot - disc)
+        if last:
+            # The last line takes the rounding, so the totals are exactly the
+            # bill's - the figures the client's accounts will match against.
+            taxable = money(bill.this_bill - deductions)
+            ass = money(taxable - used["ass"])
+            cg = money((bill.cgst_amount or 0) - used["cgst"])
+            sg = money((bill.sgst_amount or 0) - used["sgst"])
+            ig = money((bill.igst_amount or 0) - used["igst"])
+        else:
+            tax = money(ass * rate / 100.0)
+            cg = money(tax / 2.0) if intra else 0.0
+            sg = money(tax - cg) if intra else 0.0
+            ig = 0.0 if intra else tax
+        for k, v in (("ass", ass), ("cgst", cg), ("sgst", sg), ("igst", ig)):
+            used[k] = money(used[k] + v)
+        items.append({
+            "SlNo": str(i), "PrdDesc": ((l.fg_code or "") + " " + (l.description or "").split("\n")[0]).strip()[:300],
+            "IsServc": "Y", "HsnCd": WORKS_CONTRACT_SAC,
+            "Qty": round(l.this_bill_qty or 0, 3), "Unit": UQC.get(canonical_unit(l.uom) or "", "OTH"),
+            "UnitPrice": round(l.rate or 0, 3), "TotAmt": tot, "Discount": disc,
+            "AssAmt": ass, "GstRt": rate, "IgstAmt": ig, "CgstAmt": cg, "SgstAmt": sg,
+            "TotItemVal": money(ass + cg + sg + ig)})
+
+    on = (bill.certified_at or bill.created_at or "")[:10]
+    try:
+        doc_date = datetime.strptime(on, "%Y-%m-%d").strftime("%d/%m/%Y")
+    except ValueError:
+        doc_date = datetime.now().strftime("%d/%m/%Y")
+    b1, b2, bloc = _addr_lines(b_addr)
+    total_tax = money(used["cgst"] + used["sgst"] + used["igst"])
+    payload = {
+        "Version": "1.1",
+        "TranDtls": {"TaxSch": "GST", "SupTyp": "B2B", "RegRev": "N", "IgstOnIntra": "N"},
+        "DocDtls": {"Typ": "INV", "No": number, "Dt": doc_date},
+        "SellerDtls": {"Gstin": seller_gstin, "LglNm": (client.company_name or "")[:100],
+                       "Addr1": s1 or (client.company_name or "")[:100], "Addr2": s2 or None,
+                       "Loc": sloc or "-", "Pin": int(seller_pin) if seller_pin else None,
+                       "Stcd": seller_gstin[:2] if seller_gstin else None},
+        "BuyerDtls": {"Gstin": b_gstin, "LglNm": ((buyer.name if buyer else job.customer_name if job else "") or "")[:100],
+                      "Pos": bill.place_of_supply or None, "Addr1": b1 or "-", "Addr2": b2 or None,
+                      "Loc": bloc or "-", "Pin": int(b_pin) if b_pin else None,
+                      "Stcd": b_gstin[:2] if b_gstin else None},
+        "ItemList": items,
+        "ValDtls": {"AssVal": used["ass"], "CgstVal": used["cgst"], "SgstVal": used["sgst"],
+                    "IgstVal": used["igst"], "TotInvVal": money(used["ass"] + total_tax)},
+        "RefDtls": {"InvRm": ("RA bill %s against %s" % (bill.number, job.name if job else ""))[:100]},
+    }
+    # Leave optional keys out rather than send nulls the portal rejects.
+    for block in ("SellerDtls", "BuyerDtls"):
+        payload[block] = {k: v for k, v in payload[block].items() if v is not None}
+    if money(payload["ValDtls"]["TotInvVal"]) != money(bill.this_bill - deductions + (bill.tax_amount or 0)):
+        problems.append("the tax on the bill does not add up - redraw the bill")
+    return payload, problems
+
+
+@app.get("/api/ra-bills/{bill_id}/einvoice")
+def einvoice_check(bill_id: int, request: Request, db: Session = Depends(get_db)):
+    """Whether this bill can be e-invoiced, and if not, what is missing."""
+    client = require_erp_read(request, db)
+    bill = ra_bill_or_404(db, client.id, bill_id)
+    payload, problems = einvoice_payload(db, client, bill)
+    return {"ready": not problems, "missing": problems, "payload": payload if not problems else None}
+
+
+@app.get("/api/ra-bills/{bill_id}/einvoice.json")
+def einvoice_download(bill_id: int, request: Request, db: Session = Depends(get_db)):
+    """The file to upload to the Invoice Registration Portal."""
+    client = require_erp_read(request, db)
+    bill = ra_bill_or_404(db, client.id, bill_id)
+    payload, problems = einvoice_payload(db, client, bill)
+    if problems:
+        raise HTTPException(409, "Not ready for the portal - still needed: " + "; ".join(problems) + ".")
+    name = re.sub(r"[^A-Za-z0-9]+", "_", bill.number or "ra_bill")
+    body = json.dumps([payload], indent=2, ensure_ascii=False).encode("utf-8")
+    return StreamingResponse(io.BytesIO(body), media_type="application/json",
+                             headers={"Content-Disposition": 'attachment; filename="einvoice_%s.json"' % name})
+
+
+# ============================================================================
+# WHAT NEEDS LOOKING AT: THE REST OF THE BUSINESS
+#
+# The Monday list was written before the ledger, the plant register, the
+# tender pipeline, the enquiries and the programme existed, so none of what
+# goes wrong in them reached it. A certified RA bill nobody has paid, a
+# roller past its service, an EMD on a tender lost months ago, a bid due on
+# Thursday, a slab that has pushed the handover - each was on its own
+# screen and nowhere else.
+# ============================================================================
+
+RA_CREDIT_DAYS = 30
+
+
+def attention_elsewhere(db, client_id, jobs, today):
+    items = []
+
+    # --- certified RA bills not yet paid in full ------------------------
+    settled = settled_amounts(db, client_id)
+    owed, bills, oldest = 0.0, 0, 0
+    for r in db.query(models.DBRABill).filter(
+            models.DBRABill.client_id == client_id,
+            models.DBRABill.status == "CERTIFIED").all():
+        left = money((r.net_payable or 0) - settled.get(("ra_bill", r.id), 0.0))
+        if left <= 0:
+            continue
+        # Client orders carry no payment term; thirty days from the signature
+        # is what the standard conditions allow, and a list that flags a bill
+        # certified this morning is a list nobody reads.
+        bucket, days = ageing_bucket(r.certified_at, today)
+        if days is not None and days <= RA_CREDIT_DAYS:
+            continue
+        owed = money(owed + left)
+        bills += 1
+        oldest = max(oldest, days or 0)
+    if owed > 0:
+        items.append({
+            "kind": "ra_receivable", "severity": "money", "value": owed,
+            "count": bills, "view": "ledger-view",
+            "title": "Certified and not paid",
+            "detail": "%s on %d RA bill%s certified more than %d days ago; the "
+                      "oldest has waited %d days." % (inr(owed), bills,
+                                                     "" if bills == 1 else "s",
+                                                     RA_CREDIT_DAYS, oldest),
+        })
+
+    # --- earnest money left with the client ------------------------------
+    stuck, stuck_n = 0.0, 0
+    bids_due = []
+    for l in db.query(models.DBLead).filter(models.DBLead.client_id == client_id).all():
+        sync_lead_from_estimate(db, l)
+        if (l.emd_amount or 0) > 0 and l.emd_paid_on and not l.emd_returned_on \
+                and l.status in ("WON", "LOST", "DROPPED"):
+            stuck = money(stuck + l.emd_amount)
+            stuck_n += 1
+        if l.status in ("NEW", "QUALIFIED", "ESTIMATING"):
+            left = _days_until(l.bid_due_on)
+            if left is not None and 0 <= left <= 7:
+                bids_due.append((left, l))
+    if stuck > 0:
+        items.append({
+            "kind": "emd", "severity": "money", "value": stuck, "count": stuck_n,
+            "view": "leads-view",
+            "title": "Earnest money not back",
+            "detail": "%s of EMD on %d tender%s already decided. Ask for it; "
+                      "nobody sends it unasked." % (inr(stuck), stuck_n,
+                                                   "" if stuck_n == 1 else "s"),
+        })
+    if bids_due:
+        bids_due.sort(key=lambda x: x[0])
+        first_left, first = bids_due[0]
+        items.append({
+            "kind": "bids_due", "severity": "action", "value": 0.0,
+            "count": len(bids_due), "view": "leads-view",
+            "title": "Bids due this week",
+            "detail": "%d tender%s to submit; %s is due %s." % (
+                len(bids_due), "" if len(bids_due) == 1 else "s",
+                first.title or first.number,
+                "today" if first_left == 0 else "in %d day%s" % (first_left, "" if first_left == 1 else "s")),
+        })
+
+    # --- the programme ---------------------------------------------------
+    late_acts, slipped = 0, []
+    with_plan = {j for (j,) in db.query(models.DBScheduleActivity.job_id).filter(
+        models.DBScheduleActivity.client_id == client_id).distinct().all()}
+    for job_id in with_plan:
+        job = jobs.get(job_id)
+        if not job or (job.status or "") in (JOB_FINISHED, "cancelled"):
+            continue
+        s = schedule_view(db, client_id, job)["summary"]
+        late_acts += s["late"]
+        if s["slip_days"] > 0:
+            slipped.append((s["slip_days"], job))
+    if late_acts or slipped:
+        slipped.sort(key=lambda x: -x[0])
+        worst = ("; %s finishes %d days after plan" % (slipped[0][1].name, slipped[0][0])
+                 if slipped else "")
+        items.append({
+            "kind": "programme", "severity": "wrong" if slipped else "action", "value": 0.0,
+            "count": late_acts, "view": "schedule-view",
+            "title": "The programme is slipping",
+            "detail": "%d activit%s past their planned finish%s." % (
+                late_acts, "y" if late_acts == 1 else "ies", worst),
+        })
+
+    # --- plant -----------------------------------------------------------
+    due = [a for a in db.query(models.DBAsset).filter(
+        models.DBAsset.client_id == client_id,
+        models.DBAsset.status != "Disposed").all() if asset_service_state(a)["due"]]
+    if due:
+        items.append({
+            "kind": "plant", "severity": "action", "value": 0.0, "count": len(due),
+            "view": "equipment-view",
+            "title": "Plant past its service or papers",
+            "detail": "%s%s. A machine that breaks on site stops the gang with it." % (
+                ", ".join(a.name or a.code for a in due[:3]),
+                " and %d more" % (len(due) - 3) if len(due) > 3 else ""),
+        })
+
+    # --- enquiries that will not make a comparison ------------------------
+    thin = []
+    for r in db.query(models.DBRfq).filter(models.DBRfq.client_id == client_id,
+                                           models.DBRfq.status == "OPEN").all():
+        quotes = db.query(models.DBRfqQuote).filter(models.DBRfqQuote.rfq_id == r.id).count()
+        left = _days_until(r.needed_by)
+        if quotes < 3 and (left is None or left <= 7):
+            thin.append(r)
+    if thin:
+        items.append({
+            "kind": "rfq", "severity": "notice", "value": 0.0, "count": len(thin),
+            "view": "rfq-view",
+            "title": "Enquiries short of three quotes",
+            "detail": "%d enquir%s with fewer than three prices in. One price "
+                      "is not a comparison." % (len(thin), "y" if len(thin) == 1 else "ies"),
+        })
+    return items
+
 
 
 # Serve frontend

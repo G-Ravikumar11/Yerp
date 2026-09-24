@@ -431,6 +431,8 @@ function showView(viewId) {
         'ledger-view': 'nav-ledger',
         'equipment-view': 'nav-equipment',
         'rfq-view': 'nav-rfqs',
+        'leads-view': 'nav-leads',
+        'schedule-view': 'nav-schedule',
         'stores-view': 'nav-stores',
         'project-costs-view': 'nav-costs',
         'subcontract-wizard-view': 'nav-subcontracts',
@@ -501,6 +503,8 @@ function showView(viewId) {
     if (viewId === 'ledger-view' && typeof loadLedger === 'function') loadLedger();
     if (viewId === 'equipment-view' && typeof loadEquipment === 'function') loadEquipment();
     if (viewId === 'rfq-view' && typeof loadRfqs === 'function') loadRfqs();
+    if (viewId === 'leads-view' && typeof loadLeads === 'function') loadLeads();
+    if (viewId === 'schedule-view' && typeof loadSchedule === 'function') loadSchedule();
     if (viewId === 'dashboard-view' && typeof loadAttention === 'function') loadAttention();
     if (viewId === 'dashboard-view' && typeof dashErp === 'function') dashErp();
     if (viewId === 'stores-view' && typeof loadStores === 'function') loadStores();
@@ -6528,7 +6532,7 @@ function renderContacts(contacts) {
     if (!tbody) return;
     tbody.innerHTML = '';
     if (contacts.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:40px;color:var(--text-secondary);">No contacts found.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:40px;color:var(--text-secondary);">No contacts found.</td></tr>';
         return;
     }
     contacts.forEach(function(c) {
@@ -6536,7 +6540,9 @@ function renderContacts(contacts) {
             // The name opens their history; the buttons still edit the record.
             '<tr>' +
             '<td style="cursor:pointer;" onclick="openCustomer(' + c.id + ')">' +
-                '<strong style="color:var(--primary-color);">' + esc(c.name || '-') + '</strong></td>' +
+                '<strong style="color:var(--primary-color);">' + esc(c.name || '-') + '</strong>' +
+                (c.city || c.state ? '<div style="font-size:0.74rem;color:var(--text-secondary);">' + esc([c.city, c.state].filter(Boolean).join(', ')) + '</div>' : '') + '</td>' +
+            '<td style="font-family:monospace;font-size:0.8rem;">' + esc(c.gstin || '-') + '</td>' +
             '<td>' + esc(c.email || '-') + '</td>' +
             '<td>' + esc(c.phone_number || c.phone || '-') + '</td>' +
             '<td class="text-right">' +
@@ -6550,7 +6556,7 @@ function renderContacts(contacts) {
 function searchContacts() {
     var q = (document.getElementById('contact-search').value || '').toLowerCase();
     var filtered = allContacts.filter(function(c) {
-        return (c.name || '').toLowerCase().indexOf(q) >= 0 || (c.email || '').toLowerCase().indexOf(q) >= 0 || ((c.phone_number || c.phone || '') || '').toLowerCase().indexOf(q) >= 0;
+        return (c.name || '').toLowerCase().indexOf(q) >= 0 || (c.email || '').toLowerCase().indexOf(q) >= 0 || (c.gstin || '').toLowerCase().indexOf(q) >= 0 || ((c.phone_number || c.phone || '') || '').toLowerCase().indexOf(q) >= 0;
     });
     renderContacts(filtered);
 }
@@ -6562,9 +6568,21 @@ function showAddContactModal() {
     document.getElementById('contact-name').value = '';
     document.getElementById('contact-email').value = '';
     document.getElementById('contact-phone').value = '';
+    CONTACT_TAX_FIELDS.forEach(function(f) { document.getElementById('contact-' + f).value = ''; });
     document.getElementById('add-contact-modal').style.display = 'flex';
 }
 window.showAddContactModal = showAddContactModal;
+
+// What a client or supplier is for tax - on the bill and on the e-invoice.
+var CONTACT_TAX_FIELDS = ['person', 'gstin', 'address', 'city', 'state', 'pincode'];
+function contactTaxBody() {
+    var out = {};
+    CONTACT_TAX_FIELDS.forEach(function(f) {
+        out[f === 'person' ? 'contact_person' : f] = document.getElementById('contact-' + f).value.trim();
+    });
+    out.gstin = out.gstin.toUpperCase();
+    return out;
+}
 
 function closeAddContactModal() {
     document.getElementById('add-contact-modal').style.display = 'none';
@@ -6577,16 +6595,16 @@ async function saveContact() {
     var email = document.getElementById('contact-email').value.trim();
     var phone = document.getElementById('contact-phone').value.trim();
     if (!name) { showToast('Contact name required', 'error'); return; }
+    var body = Object.assign({ name: name, email: email, phone_number: phone }, contactTaxBody());
     try {
-        if (editId) {
-            var res = await fetch('/api/contacts/' + editId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ name: name, email: email, phone_number: phone }) });
-            if (res.ok) { showToast('Contact updated', 'success'); }
-            else { showToast('Failed to update contact', 'error'); return; }
-        } else {
-            var res = await fetch('/api/contacts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ name: name, email: email, phone_number: phone }) });
-            if (res.ok) { showToast('Contact created', 'success'); }
-            else { showToast('Failed to create contact', 'error'); return; }
+        var res = await fetch(editId ? '/api/contacts/' + editId : '/api/contacts', {
+            method: editId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin', body: JSON.stringify(body) });
+        if (!res.ok) {
+            var err = await res.json().catch(function() { return {}; });
+            showToast(err.detail || 'Could not save the contact', 'error'); return;
         }
+        showToast(editId ? 'Contact updated' : 'Contact created', 'success');
         closeAddContactModal();
         loadContacts();
     } catch(e) { showToast('Failed to save contact', 'error'); }
@@ -6601,6 +6619,9 @@ async function editContact(id) {
     document.getElementById('contact-name').value = c.name || '';
     document.getElementById('contact-email').value = c.email || '';
     document.getElementById('contact-phone').value = c.phone_number || c.phone || '';
+    CONTACT_TAX_FIELDS.forEach(function(f) {
+        document.getElementById('contact-' + f).value = c[f === 'person' ? 'contact_person' : f] || '';
+    });
     document.getElementById('add-contact-modal').style.display = 'flex';
 }
 window.editContact = editContact;

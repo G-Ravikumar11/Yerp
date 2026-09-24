@@ -2737,3 +2737,108 @@ class DBRfqQuoteLine(Base):
     rate = Column(Float, default=0.0)
     tax_percent = Column(Float, default=18.0)
     remarks = Column(String, default="")
+
+
+# ============================================================================
+# SALES: THE TENDER PIPELINE
+#
+# Before there is an estimate there is a tender notice, a site visit, a
+# pre-bid meeting, a bid date and an earnest money deposit sitting with the
+# client. Which tenders are live, what is due this week, which EMDs have not
+# come back - that was a register in a notebook.
+# ============================================================================
+
+class DBLead(Base):
+    __tablename__ = "leads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    number = Column(String, default="", index=True)            # TND-0001
+    title = Column(String, default="")                         # "295 KLD STP, Vanya City"
+    customer_name = Column(String, default="", index=True)
+    contact_person = Column(String, default="")
+    phone = Column(String, default="")
+    email = Column(String, default="")
+    location = Column(String, default="")
+    source = Column(String, default="")                        # Tender portal | Client enquiry | Referral | Repeat client
+    tender_reference = Column(String, default="")
+    estimated_value = Column(Float, default=0.0)
+    site_visit_on = Column(String, default="")
+    prebid_on = Column(String, default="")
+    bid_due_on = Column(String, default="", index=True)
+    emd_amount = Column(Float, default=0.0)
+    emd_mode = Column(String, default="")                      # DD | BG | Online | FDR
+    emd_reference = Column(String, default="")
+    emd_paid_on = Column(String, default="")
+    emd_returned_on = Column(String, default="")
+    status = Column(String, default="NEW", index=True)          # NEW | QUALIFIED | ESTIMATING | SUBMITTED | WON | LOST | DROPPED
+    lost_reason = Column(String, default="")
+    winning_bidder = Column(String, default="")
+    winning_price = Column(Float, default=0.0)
+    our_price = Column(Float, default=0.0)
+    estimate_id = Column(Integer, ForeignKey("estimates.id"), nullable=True, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    owner_name = Column(String, default="")
+    notes = Column(Text, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    updated_at = Column(String, default="")
+
+
+class DBLeadActivity(Base):
+    """A call, a visit, a meeting, a follow-up - dated, so the pipeline has a
+    history and the next thing to do is written down."""
+    __tablename__ = "lead_activities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    lead_id = Column(Integer, ForeignKey("leads.id"), nullable=False, index=True)
+    kind = Column(String, default="Note")                      # Call | Visit | Meeting | Note | Status
+    note = Column(Text, default="")
+    next_action = Column(String, default="")
+    next_on = Column(String, default="", index=True)
+    by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+# ============================================================================
+# PROJECT SCHEDULE
+#
+# What is meant to happen when, what has happened, and what slips if the
+# thing before it slips. Progress on an activity tied to a work order line is
+# read from the measurement book, so nobody types a percentage that the book
+# already knows.
+# ============================================================================
+
+class DBScheduleActivity(Base):
+    __tablename__ = "schedule_activities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    code = Column(String, default="")                    # A10, A20...
+    name = Column(String, default="")
+    planned_start = Column(String, default="")
+    planned_finish = Column(String, default="")
+    weight = Column(Float, default=0.0)                  # its value, or any relative weight
+    depends_on_id = Column(Integer, nullable=True)       # finish-to-start
+    work_order_line_id = Column(Integer, ForeignKey("work_order_lines.id"), nullable=True, index=True)
+    is_milestone = Column(Boolean, default=False)
+    actual_start = Column(String, default="")
+    actual_finish = Column(String, default="")
+    display_order = Column(Integer, default=0)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBScheduleProgress(Base):
+    """Progress reported on an activity that is not measured in the book -
+    dated, so the S-curve can be drawn for any week in the past."""
+    __tablename__ = "schedule_progress"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    activity_id = Column(Integer, ForeignKey("schedule_activities.id"), nullable=False, index=True)
+    reported_on = Column(String, default="", index=True)
+    percent = Column(Float, default=0.0)
+    note = Column(String, default="")
+    by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))

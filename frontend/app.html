@@ -110,6 +110,7 @@
                         </button>
                         <div class="nav-group-items" id="nav-items-projects">
                             <a href="#" class="nav-item" id="nav-jobs" data-perm="reports.view" onclick="event.preventDefault();showView('jobs-view')">Projects</a>
+                            <a href="#" class="nav-item" id="nav-schedule" onclick="event.preventDefault();showView('schedule-view')">Programme &amp; Progress</a>
                             <a href="#" class="nav-item" id="nav-diary" onclick="event.preventDefault();showView('diary-view')">Site Diary</a>
                             <a href="#" class="nav-item" id="nav-equipment" onclick="event.preventDefault();showView('equipment-view')">Equipment &amp; Plant</a>
                             <a href="#" class="nav-item" id="nav-pnl" onclick="event.preventDefault();showView('pnl-view')">Project Profit</a>
@@ -122,6 +123,7 @@
                             Contract <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
                         <div class="nav-group-items" id="nav-items-contracts">
+                            <a href="#" class="nav-item" id="nav-leads" onclick="event.preventDefault();showView('leads-view')">Tender Pipeline</a>
                             <a href="#" class="nav-item" id="nav-estimates" data-perm="workorders.manage" onclick="event.preventDefault();showView('estimates-view')">Tenders &amp; Estimates</a>
                             <a href="#" class="nav-item" id="nav-workorders" data-perm="workorders.manage" onclick="event.preventDefault();showView('workorders-view')">Work Orders</a>
                             <a href="#" class="nav-item" id="nav-measurement" onclick="event.preventDefault();showView('measurement-view')">Measurement &amp; RA Bills</a>
@@ -1078,6 +1080,7 @@
                                 <thead>
                                     <tr>
                                         <th>Name</th>
+                                        <th>GSTIN</th>
                                         <th>Email</th>
                                         <th>Phone</th>
                                         <th class="text-right">Actions</th>
@@ -1091,7 +1094,7 @@
 
                 <!-- ========== ADD CONTACT MODAL ========== -->
                 <div id="add-contact-modal" class="modal-overlay" style="display:none;">
-                    <div class="modal" style="max-width:480px;">
+                    <div class="modal" style="max-width:560px;">
                         <div class="modal-header">
                             <h3 id="contact-modal-title">New Contact</h3>
                             <button class="modal-close" onclick="closeAddContactModal()">&times;</button>
@@ -1100,7 +1103,18 @@
                             <input type="hidden" id="contact-edit-id">
                             <div class="form-group"><label>Name *</label><input type="text" id="contact-name" class="form-control" placeholder="Contact name"></div>
                             <div class="form-group"><label>Email</label><input type="email" id="contact-email" class="form-control" placeholder="email@example.com"></div>
-                            <div class="form-group"><label>Phone</label><input type="tel" id="contact-phone" class="form-control" placeholder="+1 555 123 4567"></div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Phone</label><input type="tel" id="contact-phone" class="form-control" placeholder="98480 12345"></div>
+                                <div class="form-group"><label>Person to deal with</label><input type="text" id="contact-person" class="form-control" placeholder="Site / accounts in-charge"></div>
+                            </div>
+                            <p style="font-size:0.74rem;color:var(--text-secondary);margin:6px 0 8px;">For a client or supplier: what goes on the bill and on the e-invoice.</p>
+                            <div class="form-group"><label>GSTIN</label><input type="text" id="contact-gstin" class="form-control" maxlength="15" placeholder="36AAACL1234H1Z5" style="text-transform:uppercase;"></div>
+                            <div class="form-group"><label>Billing address</label><textarea id="contact-address" class="form-control" rows="2" placeholder="Building, street, area"></textarea></div>
+                            <div class="form-row">
+                                <div class="form-group"><label>City</label><input type="text" id="contact-city" class="form-control"></div>
+                                <div class="form-group"><label>State</label><input type="text" id="contact-state" class="form-control" placeholder="from the GSTIN if blank"></div>
+                                <div class="form-group"><label>PIN</label><input type="text" id="contact-pincode" class="form-control" maxlength="6" inputmode="numeric"></div>
+                            </div>
                         </div>
                         <div class="modal-footer">
                             <button class="btn btn-outline" onclick="closeAddContactModal()">Cancel</button>
@@ -1116,6 +1130,73 @@
                 <!-- Offered the moment an order is priced, because the margin
                      is the figure an approver signs off and it cannot exist
                      until somebody says what the work should cost. -->
+                <div id="sch-form-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:560px;">
+                        <div class="modal-header"><h3 id="sch-form-title">New activity</h3>
+                            <button class="modal-close" onclick="closeModal('sch-form-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-row">
+                                <div class="form-group" style="flex:3;"><label>Activity *</label><input id="sch-f-name" class="form-control" placeholder="Raft concreting, zone A"></div>
+                                <div class="form-group" style="flex:1;"><label>Code</label><input id="sch-f-code" class="form-control" placeholder="A10"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Planned start *</label><input type="date" id="sch-f-start" class="form-control"></div>
+                                <div class="form-group"><label>Planned finish *</label><input type="date" id="sch-f-finish" class="form-control"></div>
+                                <div class="form-group"><label>Weight / value</label><input type="number" id="sch-f-weight" class="form-control"></div>
+                            </div>
+                            <div class="form-group"><label>Starts after</label><select id="sch-f-after" class="form-control"></select></div>
+                            <div class="form-group"><label>Progress comes from</label><select id="sch-f-line" class="form-control"></select>
+                                <p style="font-size:0.74rem;color:var(--text-secondary);margin:4px 0 0;">Tie it to a work order line and it fills itself from the measurement book.</p></div>
+                            <label style="display:flex;gap:8px;align-items:center;font-size:0.85rem;"><input type="checkbox" id="sch-f-milestone"> A milestone (all or nothing on its date)</label>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" id="sch-delete" onclick="schDelete()" style="margin-right:auto;">Remove</button>
+                            <button class="btn btn-outline" onclick="closeModal('sch-form-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="schSave()">Save</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="lead-form-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:680px;">
+                        <div class="modal-header"><h3 id="lead-form-title">New tender</h3>
+                            <button class="modal-close" onclick="closeModal('lead-form-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-group"><label>Tender *</label><input id="lead-f-title" class="form-control" placeholder="295 KLD STP, Vanya City, Gurgaon"></div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Client</label><input id="lead-f-customer_name" class="form-control"></div>
+                                <div class="form-group"><label>Source</label><select id="lead-f-source" class="form-control"></select></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Contact</label><input id="lead-f-contact_person" class="form-control"></div>
+                                <div class="form-group"><label>Phone</label><input id="lead-f-phone" class="form-control"></div>
+                                <div class="form-group"><label>Email</label><input id="lead-f-email" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Location</label><input id="lead-f-location" class="form-control"></div>
+                                <div class="form-group"><label>Tender reference</label><input id="lead-f-tender_reference" class="form-control"></div>
+                                <div class="form-group"><label>Estimated value (&#8377;)</label><input type="number" id="lead-f-estimated_value" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Site visit</label><input type="date" id="lead-f-site_visit_on" class="form-control"></div>
+                                <div class="form-group"><label>Pre-bid meeting</label><input type="date" id="lead-f-prebid_on" class="form-control"></div>
+                                <div class="form-group"><label>Bid due</label><input type="date" id="lead-f-bid_due_on" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>EMD (&#8377;)</label><input type="number" id="lead-f-emd_amount" class="form-control"></div>
+                                <div class="form-group"><label>As</label><select id="lead-f-emd_mode" class="form-control"></select></div>
+                                <div class="form-group"><label>DD / BG no.</label><input id="lead-f-emd_reference" class="form-control"></div>
+                                <div class="form-group"><label>Paid on</label><input type="date" id="lead-f-emd_paid_on" class="form-control"></div>
+                            </div>
+                            <div class="form-group"><label>Notes</label><textarea id="lead-f-notes" class="form-control" rows="2"></textarea></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeModal('lead-form-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="leadSave()">Save</button>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="rfq-new-modal" class="modal-overlay" style="display:none;">
                     <div class="modal" style="max-width:720px;">
                         <div class="modal-header"><h3>New enquiry to suppliers</h3>
@@ -3776,6 +3857,38 @@
                     </div>
                 </div>
 
+                <div id="schedule-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Programme &amp; Progress</h1><p class="subtitle">What is meant to happen when, what has happened, and what slips if the thing before it slips</p></div>
+                        <div class="invoices-actions">
+                            <select id="sch-job" class="form-control" style="width:auto;min-width:220px;" onchange="loadSchedule()"></select>
+                            <button class="btn btn-primary" onclick="schEdit()">+ Activity</button>
+                            <button class="btn btn-outline" onclick="schFromWo()">Draw from a work order</button>
+                            <button class="btn btn-outline" onclick="window.print()">Print</button>
+                        </div>
+                    </div>
+                    <div class="stats-grid" id="sch-stats"></div>
+                    <div id="sch-body" style="margin-top:16px;"></div>
+                </div>
+
+                <div id="leads-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Tender Pipeline</h1><p class="subtitle">Every tender in play, the bid dates coming up, and the earnest money still with clients</p></div>
+                        <div class="invoices-actions">
+                            <button class="btn btn-primary" onclick="leadEdit()">+ Tender</button>
+                            <button class="btn btn-outline" onclick="loadLeads()">Refresh</button>
+                        </div>
+                    </div>
+                    <div class="stats-grid" id="leads-stats"></div>
+                    <div class="invoices-tabs" id="leads-tabs" style="margin:16px 0;">
+                        <button class="tab active" data-tab="board" onclick="leadsTab('board')">In play</button>
+                        <button class="tab" data-tab="closed" onclick="leadsTab('closed')">Won &amp; lost</button>
+                        <button class="tab" data-tab="emd" onclick="leadsTab('emd')">EMD register</button>
+                    </div>
+                    <div id="leads-body"></div>
+                    <div id="lead-detail"></div>
+                </div>
+
                 <div id="rfq-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div><h1>Enquiries &amp; Comparative Statements</h1><p class="subtitle">Three suppliers asked, their answers side by side, the lowest landed at site &mdash; and the purchase orders it makes</p></div>
@@ -3824,10 +3937,10 @@
                         </div>
                     </div>
                     <div class="invoices-tabs" id="ledger-tabs" style="margin-bottom:16px;">
-                        <button class="tab-btn active" data-tab="parties" onclick="ledgerTab('parties')">Party ledgers</button>
-                        <button class="tab-btn" data-tab="entries" onclick="ledgerTab('entries')">Money in &amp; out</button>
-                        <button class="tab-btn" data-tab="bank" onclick="ledgerTab('bank')">Bank &amp; cash book</button>
-                        <button class="tab-btn" data-tab="suppliers" onclick="ledgerTab('suppliers')">Suppliers</button>
+                        <button class="tab active" data-tab="parties" onclick="ledgerTab('parties')">Party ledgers</button>
+                        <button class="tab" data-tab="entries" onclick="ledgerTab('entries')">Money in &amp; out</button>
+                        <button class="tab" data-tab="bank" onclick="ledgerTab('bank')">Bank &amp; cash book</button>
+                        <button class="tab" data-tab="suppliers" onclick="ledgerTab('suppliers')">Suppliers</button>
                     </div>
                     <div id="ledger-body"></div>
                 </div>
@@ -5004,7 +5117,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=96"></script>
+    <script src="app.js?v=100"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=65"></script>
@@ -5025,7 +5138,7 @@
     <script src="sheet.js?v=83"></script>
     <script src="documents.js?v=89"></script>
     <script src="mbdims.js?v=81"></script>
-    <script src="measurement.js?v=91"></script>
+    <script src="measurement.js?v=100"></script>
     <script src="stock.js?v=95"></script>
     <script src="diary.js?v=81"></script>
     <script src="money.js?v=91"></script>
@@ -5036,6 +5149,8 @@
     <script src="ledger.js?v=92"></script>
     <script src="equipment.js?v=94"></script>
     <script src="rfq.js?v=96"></script>
+    <script src="leads.js?v=98"></script>
+    <script src="schedule.js?v=99"></script>
     <script src="stores.js?v=82"></script>
 
     <!-- The assistant orb, its chat window and the "powered by" badge that
