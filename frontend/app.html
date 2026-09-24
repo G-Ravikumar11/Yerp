@@ -111,6 +111,7 @@
                         <div class="nav-group-items" id="nav-items-projects">
                             <a href="#" class="nav-item" id="nav-jobs" data-perm="reports.view" onclick="event.preventDefault();showView('jobs-view')">Projects</a>
                             <a href="#" class="nav-item" id="nav-diary" onclick="event.preventDefault();showView('diary-view')">Site Diary</a>
+                            <a href="#" class="nav-item" id="nav-equipment" onclick="event.preventDefault();showView('equipment-view')">Equipment &amp; Plant</a>
                             <a href="#" class="nav-item" id="nav-pnl" onclick="event.preventDefault();showView('pnl-view')">Project Profit</a>
                             <a href="#" class="nav-item" id="nav-costs" data-perm="reports.view" onclick="event.preventDefault();showView('costs-view')">Cost by Project</a>
                         </div>
@@ -143,6 +144,7 @@
                             Store <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
                         <div class="nav-group-items" id="nav-items-store">
+                            <a href="#" class="nav-item" id="nav-rfqs" onclick="event.preventDefault();showView('rfq-view')">Enquiries &amp; Comparison</a>
                             <a href="#" class="nav-item" id="nav-orders" onclick="event.preventDefault();showView('orders-view')">Purchase Orders</a>
                             <a href="#" class="nav-item" id="nav-stores" onclick="event.preventDefault();showView('stores-view')">Goods Receipt &amp; Match</a>
                             <a href="#" class="nav-item" id="nav-stock" onclick="event.preventDefault();showView('stock-view')">Stock &amp; Issues</a>
@@ -156,6 +158,7 @@
                             Money <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
                         <div class="nav-group-items" id="nav-items-money">
+                            <a href="#" class="nav-item" id="nav-ledger" onclick="event.preventDefault();showView('ledger-view')">Payments &amp; Ledgers</a>
                             <a href="#" class="nav-item" id="nav-money" onclick="event.preventDefault();showView('money-view')">Owed &amp; Retention</a>
                             <a href="#" class="nav-item" id="nav-bills" onclick="event.preventDefault();showView('bills-view')">Supplier Bills</a>
                             <a href="#" class="nav-item" id="nav-invoices" data-perm="invoices.manage" onclick="event.preventDefault();showView('invoices-view')">Client Invoices</a>
@@ -1113,6 +1116,315 @@
                 <!-- Offered the moment an order is priced, because the margin
                      is the figure an approver signs off and it cannot exist
                      until somebody says what the work should cost. -->
+                <div id="rfq-new-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:720px;">
+                        <div class="modal-header"><h3>New enquiry to suppliers</h3>
+                            <button class="modal-close" onclick="closeModal('rfq-new-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-group"><label>From a work order&rsquo;s budget</label>
+                                <select id="rfqn-wo" class="form-control"></select>
+                                <p style="font-size:0.74rem;color:var(--text-secondary);margin:4px 0 0;">Asks for exactly what the order still needs: its budget, less what is in the store and already on order. Or write the lines below.</p></div>
+                            <div class="form-row">
+                                <div class="form-group"><label>For</label><input id="rfqn-title" class="form-control" placeholder="Cement and steel for Block A raft"></div>
+                                <div class="form-group"><label>Project</label><select id="rfqn-job" class="form-control"></select></div>
+                                <div class="form-group"><label>Needed by</label><input type="date" id="rfqn-needed" class="form-control"></div>
+                            </div>
+                            <div class="table-responsive"><table class="data-table">
+                                <thead><tr><th>Code</th><th>Item</th><th>Unit</th><th class="text-right">Qty</th><th></th></tr></thead>
+                                <tbody id="rfqn-lines"></tbody></table></div>
+                            <button class="btn btn-sm btn-outline" style="margin-top:8px;" onclick="RFQ.newLines.push({item_code:'',description:'',uom:'Bags',qty:''});rfqNewLines()">+ Line</button>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeModal('rfq-new-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="saveNewRfq()">Open the enquiry</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="rfq-quote-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:640px;">
+                        <div class="modal-header"><h3>Quote on <span id="rfqq-title"></span></h3>
+                            <button class="modal-close" onclick="closeModal('rfq-quote-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-row">
+                                <div class="form-group"><label>Supplier *</label>
+                                    <input id="rfqq-supplier" class="form-control" list="rfqq-suppliers"><datalist id="rfqq-suppliers"></datalist></div>
+                                <div class="form-group"><label>Their ref.</label><input id="rfqq-ref" class="form-control"></div>
+                                <div class="form-group"><label>Dated</label><input type="date" id="rfqq-date" class="form-control"></div>
+                            </div>
+                            <div class="table-responsive"><table class="data-table">
+                                <thead><tr><th>Item</th><th class="text-right">Rate (&#8377;)</th><th class="text-right">GST %</th></tr></thead>
+                                <tbody id="rfqq-lines"></tbody></table></div>
+                            <div class="form-row" style="margin-top:10px;">
+                                <div class="form-group"><label>Freight to site (&#8377;)</label><input type="number" step="0.01" id="rfqq-freight" class="form-control"></div>
+                                <div class="form-group"><label>Delivery (days)</label><input type="number" id="rfqq-days" class="form-control"></div>
+                                <div class="form-group"><label>Payment terms</label><input id="rfqq-terms" class="form-control" placeholder="30 days from delivery"></div>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeModal('rfq-quote-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="saveRfqQuote()">Record the quote</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="rfq-award-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:520px;">
+                        <div class="modal-header"><h3>Award the enquiry</h3>
+                            <button class="modal-close" onclick="closeModal('rfq-award-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-group"><label>How</label>
+                                <select id="rfqa-mode" class="form-control" onchange="rfqAwardMode()">
+                                    <option value="lowest_per_line">Each line to whoever quoted it lowest</option>
+                                    <option value="one_supplier">The whole enquiry to one supplier</option></select></div>
+                            <div class="form-group" id="rfqa-one"><label>Supplier</label><select id="rfqa-supplier" class="form-control"></select></div>
+                            <div class="form-group"><label>Why, if not the lowest</label>
+                                <textarea id="rfqa-reason" class="form-control" rows="2" placeholder="Needed only when the choice is not L1 - and then it is required"></textarea></div>
+                            <p style="font-size:0.74rem;color:var(--text-secondary);">One purchase order per supplier, at the rates they quoted, freight included, as drafts for approval.</p>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeModal('rfq-award-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="saveRfqAward()">Award and raise the orders</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="eqp-form-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:640px;">
+                        <div class="modal-header"><h3 id="eqp-form-title">Add a machine</h3>
+                            <button class="modal-close" onclick="closeModal('eqp-form-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-row">
+                                <div class="form-group"><label>Machine *</label><input id="eqp-f-name" class="form-control" placeholder="JCB 3DX backhoe loader"></div>
+                                <div class="form-group"><label>Category</label><select id="eqp-f-category" class="form-control"></select></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Make</label><input id="eqp-f-make" class="form-control"></div>
+                                <div class="form-group"><label>Model</label><input id="eqp-f-model" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Registration no.</label><input id="eqp-f-reg_no" class="form-control" style="text-transform:uppercase;"></div>
+                                <div class="form-group"><label>Serial / chassis no.</label><input id="eqp-f-serial_no" class="form-control"></div>
+                            </div>
+                            <div class="form-group"><label>Ownership</label>
+                                <select id="eqp-f-ownership" class="form-control" onchange="eqpOwnership()"><option>Owned</option><option>Hired</option></select></div>
+                            <div id="eqp-hire-fields" class="form-row">
+                                <div class="form-group"><label>Hired from</label><input id="eqp-f-hired_from" class="form-control"></div>
+                                <div class="form-group"><label>Hire rate (&#8377;) *</label><input type="number" step="0.01" id="eqp-f-hire_rate" class="form-control"></div>
+                                <div class="form-group"><label>Per</label><select id="eqp-f-hire_basis" class="form-control"><option>Hour</option><option selected>Day</option><option>Month</option></select></div>
+                            </div>
+                            <div id="eqp-own-fields" class="form-row">
+                                <div class="form-group"><label>Bought on</label><input type="date" id="eqp-f-purchase_date" class="form-control"></div>
+                                <div class="form-group"><label>For (&#8377;)</label><input type="number" step="0.01" id="eqp-f-purchase_value" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Meter reads in</label><select id="eqp-f-meter_unit" class="form-control"><option>Hours</option><option>Km</option></select></div>
+                                <div class="form-group"><label>Meter now</label><input type="number" step="0.1" id="eqp-f-meter_reading" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Service every (meter)</label><input type="number" id="eqp-f-service_every" class="form-control" placeholder="250"></div>
+                                <div class="form-group"><label>or every (days)</label><input type="number" id="eqp-f-service_every_days" class="form-control" placeholder="90"></div>
+                                <div class="form-group"><label>Last serviced</label><input type="date" id="eqp-f-last_service_on" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Insurance until</label><input type="date" id="eqp-f-insurance_until" class="form-control"></div>
+                                <div class="form-group"><label>RTO fitness until</label><input type="date" id="eqp-f-fitness_until" class="form-control"></div>
+                            </div>
+                            <div class="form-group"><label>Notes</label><textarea id="eqp-f-notes" class="form-control" rows="2"></textarea></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeModal('eqp-form-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="eqpSave()">Save</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="eqp-move-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:460px;">
+                        <div class="modal-header"><h3 id="eqp-move-title">Move</h3>
+                            <button class="modal-close" onclick="closeModal('eqp-move-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-group"><label>To</label><select id="eqp-move-to" class="form-control"></select></div>
+                            <div class="form-group"><label>On</label><input type="date" id="eqp-move-date" class="form-control"></div>
+                            <div class="form-group"><label>Note</label><input id="eqp-move-note" class="form-control" placeholder="Lorry no., who took it"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeModal('eqp-move-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="eqpMoveSave()">Move it</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="eqp-log-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:520px;">
+                        <div class="modal-header"><h3 id="eqp-log-title">Log a day</h3>
+                            <button class="modal-close" onclick="closeModal('eqp-log-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-row">
+                                <div class="form-group"><label>Date</label><input type="date" id="eqp-log-date" class="form-control"></div>
+                                <div class="form-group"><label>Operator</label><input id="eqp-log-operator" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Hours worked</label><input type="number" step="0.5" id="eqp-log-hours" class="form-control"></div>
+                                <div class="form-group"><label>Hours idle</label><input type="number" step="0.5" id="eqp-log-idle" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Diesel (L)</label><input type="number" step="0.1" id="eqp-log-litres" class="form-control"></div>
+                                <div class="form-group"><label>Diesel rate (&#8377;/L)</label><input type="number" step="0.01" id="eqp-log-rate" class="form-control"></div>
+                                <div class="form-group"><label>Meter at close</label><input type="number" step="0.1" id="eqp-log-meter" class="form-control"></div>
+                            </div>
+                            <div class="form-group"><label>Work done</label><input id="eqp-log-work" class="form-control" placeholder="Excavation, zone B"></div>
+                            <p id="eqp-log-hint" style="font-size:0.75rem;color:var(--text-secondary);"></p>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeModal('eqp-log-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="eqpLogSave()">Log it</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="eqp-svc-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:520px;">
+                        <div class="modal-header"><h3>Service or repair &mdash; <span id="eqp-svc-title"></span></h3>
+                            <button class="modal-close" onclick="closeModal('eqp-svc-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-row">
+                                <div class="form-group"><label>Kind</label><select id="eqp-svc-kind" class="form-control"><option>Preventive</option><option>Breakdown</option><option>Repair</option></select></div>
+                                <div class="form-group"><label>On</label><input type="date" id="eqp-svc-date" class="form-control"></div>
+                            </div>
+                            <div class="form-group"><label>What was done</label><input id="eqp-svc-desc" class="form-control" placeholder="250-hour service, filters and oil"></div>
+                            <div class="form-row">
+                                <div class="form-group"><label>By</label><input id="eqp-svc-vendor" class="form-control"></div>
+                                <div class="form-group"><label>Meter</label><input type="number" step="0.1" id="eqp-svc-meter" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Parts (&#8377;)</label><input type="number" step="0.01" id="eqp-svc-parts" class="form-control"></div>
+                                <div class="form-group"><label>Labour (&#8377;)</label><input type="number" step="0.01" id="eqp-svc-labour" class="form-control"></div>
+                                <div class="form-group"><label>Hours down</label><input type="number" step="0.5" id="eqp-svc-down" class="form-control"></div>
+                            </div>
+                            <label style="display:flex;gap:8px;align-items:center;font-size:0.85rem;"><input type="checkbox" id="eqp-svc-off"> Off work until it is repaired</label>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeModal('eqp-svc-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="eqpServiceSave()">Record it</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- The one payment box, opened from every bill. -->
+                <div id="pay-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:520px;">
+                        <div class="modal-header">
+                            <h3 id="pay-title">Record a payment</h3>
+                            <button class="modal-close" onclick="closePayBox()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <div id="pay-context" style="font-size:0.84rem;color:var(--text-secondary);margin-bottom:14px;"></div>
+                            <div id="pay-onaccount" style="display:none;">
+                                <div class="form-row">
+                                    <div class="form-group"><label>Who *</label>
+                                        <input id="pay-party" class="form-control" placeholder="Party name"></div>
+                                    <div class="form-group"><label>They are a</label>
+                                        <select id="pay-party-type" class="form-control">
+                                            <option value="client">Client</option><option value="supplier">Supplier</option>
+                                            <option value="contractor">Subcontractor</option><option value="other">Other</option>
+                                        </select></div>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Amount (&#8377;) *</label>
+                                    <input type="number" step="0.01" min="0" id="pay-amount" class="form-control"></div>
+                                <div class="form-group"><label>On</label>
+                                    <input type="date" id="pay-date" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>How</label>
+                                    <select id="pay-mode" class="form-control">
+                                        <option>Bank transfer</option><option>Cheque</option><option>UPI</option>
+                                        <option>Cash</option><option>Adjustment</option></select></div>
+                                <div class="form-group"><label>UTR / cheque no.</label>
+                                    <input id="pay-ref" class="form-control" placeholder="Needed for a cheque"></div>
+                            </div>
+                            <div class="form-group"><label>Through account</label>
+                                <select id="pay-account" class="form-control"></select></div>
+                            <div class="form-group"><label>Note</label>
+                                <input id="pay-note" class="form-control"></div>
+                            <p style="font-size:0.74rem;color:var(--text-secondary);">Part of a bill may be settled; it moves to paid on the last rupee. A mistake is voided, never deleted.</p>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closePayBox()">Cancel</button>
+                            <button class="btn btn-primary" onclick="savePayment()">Record it</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="account-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:480px;">
+                        <div class="modal-header"><h3>Bank account or cash box</h3>
+                            <button class="modal-close" onclick="closeModal('account-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-row">
+                                <div class="form-group"><label>Name *</label>
+                                    <input id="acc-name" class="form-control" placeholder="SBI current / Site cash - Vizag"></div>
+                                <div class="form-group"><label>Kind</label>
+                                    <select id="acc-kind" class="form-control"><option>Bank</option><option>Cash</option></select></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Bank</label><input id="acc-bank" class="form-control"></div>
+                                <div class="form-group"><label>Account no.</label><input id="acc-no" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>IFSC</label><input id="acc-ifsc" class="form-control"></div>
+                                <div class="form-group"><label>Opening balance (&#8377;)</label>
+                                    <input type="number" step="0.01" id="acc-opening" class="form-control"></div>
+                            </div>
+                            <div class="form-group"><label>As on</label><input type="date" id="acc-date" class="form-control"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeModal('account-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="saveAccount()">Add it</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="supplier-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:600px;">
+                        <div class="modal-header"><h3 id="sup-title">New supplier</h3>
+                            <button class="modal-close" onclick="closeModal('supplier-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-row">
+                                <div class="form-group"><label>Name *</label><input id="sup-name" class="form-control"></div>
+                                <div class="form-group"><label>Supplies</label>
+                                    <input id="sup-supplies" class="form-control" placeholder="Cement, steel, aggregate"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Contact person</label><input id="sup-contact" class="form-control"></div>
+                                <div class="form-group"><label>Phone</label><input id="sup-phone" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>GSTIN</label>
+                                    <input id="sup-gstin" class="form-control" maxlength="15" style="text-transform:uppercase;font-family:monospace;"></div>
+                                <div class="form-group"><label>PAN <span style="font-weight:400;color:var(--text-secondary);">(taken from the GSTIN if blank)</span></label>
+                                    <input id="sup-pan" class="form-control" maxlength="10" style="text-transform:uppercase;font-family:monospace;"></div>
+                            </div>
+                            <div class="form-group"><label>Email</label><input id="sup-email" class="form-control"></div>
+                            <div class="form-group"><label>Address</label><textarea id="sup-address" class="form-control" rows="2"></textarea></div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Bank</label><input id="sup-bank" class="form-control"></div>
+                                <div class="form-group"><label>Account no.</label><input id="sup-account" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>IFSC</label><input id="sup-ifsc" class="form-control"></div>
+                                <div class="form-group"><label>Pays in (days)</label><input type="number" id="sup-days" class="form-control"></div>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeModal('supplier-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="saveSupplier()">Save</button>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="budget-offer-modal" class="modal-overlay" style="display:none;">
                     <div class="modal" style="max-width:460px;">
                         <div class="modal-header">
@@ -1307,6 +1619,34 @@
                     </div>
                 </div>
 
+                <div id="transfer-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:640px;">
+                        <div class="modal-header"><h3>Send material to another site</h3>
+                            <button class="modal-close" onclick="closeModal('transfer-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-row">
+                                <div class="form-group"><label>From</label>
+                                    <select id="trf-from" class="form-control" onchange="transferLines()"></select></div>
+                                <div class="form-group"><label>To</label>
+                                    <input id="trf-to" class="form-control" list="trf-stores" placeholder="Vizag site store">
+                                    <datalist id="trf-stores"></datalist></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>On</label><input type="date" id="trf-date" class="form-control"></div>
+                                <div class="form-group"><label>Note</label><input id="trf-note" class="form-control" placeholder="Lorry no., challan"></div>
+                            </div>
+                            <div class="table-responsive"><table class="data-table">
+                                <thead><tr><th>Item</th><th class="text-right">Held there</th><th class="text-right">Send</th></tr></thead>
+                                <tbody id="trf-lines"></tbody></table></div>
+                            <p style="font-size:0.74rem;color:var(--text-secondary);margin-top:8px;">A transfer moves stock at what it cost. It is not consumption &mdash; nothing is charged to a project until it is issued at the other end.</p>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeModal('transfer-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="saveTransfer()">Send it</button>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="issue-modal" class="modal-overlay" style="display:none;">
                     <div class="modal" style="max-width:720px;">
                         <div class="modal-header">
@@ -1325,6 +1665,18 @@
                                     <input type="text" id="issue-to" class="form-control" placeholder="The ganger who signed for it"></div>
                                 <div class="form-group"><label>What for</label>
                                     <input type="text" id="issue-purpose" class="form-control" placeholder="Block A slab"></div>
+                            </div>
+                            <div style="margin:4px 0 12px;padding:10px 12px;border:1px dashed var(--border-color);border-radius:8px;">
+                                <label style="display:flex;gap:8px;align-items:center;font-size:0.86rem;font-weight:600;">
+                                    <input type="checkbox" id="issue-charge" onchange="issueChargeToggle()">
+                                    Charge it to a gang &mdash; recover it from their next bill</label>
+                                <div id="issue-charge-fields" class="form-row" style="display:none;margin-top:8px;">
+                                    <div class="form-group"><label>Their work order</label>
+                                        <select id="issue-sub-order" class="form-control"></select></div>
+                                    <div class="form-group"><label>Markup on cost %</label>
+                                        <input type="number" step="0.5" min="0" id="issue-markup" class="form-control" value="0"></div>
+                                </div>
+                                <p style="font-size:0.74rem;color:var(--text-secondary);margin:6px 0 0;">For a gang whose rate includes the material. It comes off their bill on its own, as far as each bill can bear, and the project is credited so it is not counted twice.</p>
                             </div>
                             <div class="table-responsive" style="max-height:260px;overflow-y:auto;">
                                 <table class="data-table">
@@ -3424,6 +3776,62 @@
                     </div>
                 </div>
 
+                <div id="rfq-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Enquiries &amp; Comparative Statements</h1><p class="subtitle">Three suppliers asked, their answers side by side, the lowest landed at site &mdash; and the purchase orders it makes</p></div>
+                        <div class="invoices-actions">
+                            <button class="btn btn-primary" onclick="newRfq()">+ Enquiry</button>
+                            <button class="btn btn-outline" onclick="loadRfqs()">Refresh</button>
+                        </div>
+                    </div>
+                    <div class="stats-grid" id="rfq-stats"></div>
+                    <div class="widget" style="margin-top:18px;">
+                        <div class="table-responsive"><table class="data-table">
+                            <thead><tr><th>No.</th><th>For</th><th class="text-right">Lines</th><th class="text-right">Quotes</th><th>Needed by</th><th>Status</th><th></th></tr></thead>
+                            <tbody id="rfq-body"></tbody></table></div>
+                    </div>
+                    <div id="rfq-detail"></div>
+                </div>
+
+                <div id="equipment-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Equipment &amp; Plant</h1><p class="subtitle">Where each machine is, what it did, what it burned and when it is due &mdash; and what it cost the site it worked on</p></div>
+                        <div class="invoices-actions">
+                            <button class="btn btn-primary" onclick="eqpEdit()">+ Machine</button>
+                            <select id="eqp-status" class="form-control" style="width:auto;" onchange="loadEquipment()">
+                                <option value="">Every machine</option><option>Deployed</option><option>Available</option>
+                                <option>Under repair</option><option>Disposed</option></select>
+                        </div>
+                    </div>
+                    <div class="stats-grid" id="eqp-stats"></div>
+                    <div class="widget" style="margin-top:18px;">
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Code</th><th>Machine</th><th>Status</th><th>Where</th><th class="text-right">Meter</th><th class="text-right">Cost to date ₹</th><th></th></tr></thead>
+                                <tbody id="eqp-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div id="eqp-detail"></div>
+                </div>
+
+                <div id="ledger-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Payments &amp; Ledgers</h1><p class="subtitle">Every rupee in and out, what each party owes, and what is in the bank &mdash; the books, kept from the bills already here</p></div>
+                        <div class="invoices-actions">
+                            <button class="btn btn-outline" onclick="loadLedger()">Refresh</button>
+                            <button class="btn btn-outline" onclick="window.print()">Print</button>
+                        </div>
+                    </div>
+                    <div class="invoices-tabs" id="ledger-tabs" style="margin-bottom:16px;">
+                        <button class="tab-btn active" data-tab="parties" onclick="ledgerTab('parties')">Party ledgers</button>
+                        <button class="tab-btn" data-tab="entries" onclick="ledgerTab('entries')">Money in &amp; out</button>
+                        <button class="tab-btn" data-tab="bank" onclick="ledgerTab('bank')">Bank &amp; cash book</button>
+                        <button class="tab-btn" data-tab="suppliers" onclick="ledgerTab('suppliers')">Suppliers</button>
+                    </div>
+                    <div id="ledger-body"></div>
+                </div>
+
                 <div id="registers-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div><h1>Registers</h1><p class="subtitle">The three sheets the accountant kept by hand: TDS by quarter, guarantees and when they lapse, advances and what has come back</p></div>
@@ -3654,6 +4062,7 @@
                         <div><h1>Stock &amp; Issues</h1><p class="subtitle">What is in the store, what went to site, and what it cost</p></div>
                         <div class="invoices-actions">
                             <button class="btn btn-primary" onclick="showIssueModal()">Issue to site</button>
+                            <button class="btn btn-outline" onclick="showTransferModal()">Send to another site</button>
                             <a class="btn btn-outline" href="/api/stock.xlsx" title="As a workbook">Download</a>
                             <button class="btn btn-outline" onclick="loadStock()">Refresh</button>
                         </div>
@@ -4595,7 +5004,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=85"></script>
+    <script src="app.js?v=96"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=65"></script>
@@ -4616,14 +5025,17 @@
     <script src="sheet.js?v=83"></script>
     <script src="documents.js?v=89"></script>
     <script src="mbdims.js?v=81"></script>
-    <script src="measurement.js?v=82"></script>
-    <script src="stock.js?v=79"></script>
+    <script src="measurement.js?v=91"></script>
+    <script src="stock.js?v=95"></script>
     <script src="diary.js?v=81"></script>
-    <script src="money.js?v=85"></script>
-    <script src="subbills.js?v=82"></script>
+    <script src="money.js?v=91"></script>
+    <script src="subbills.js?v=91"></script>
     <script src="estimate.js?v=81"></script>
     <script src="gst.js?v=79"></script>
     <script src="registers.js?v=84"></script>
+    <script src="ledger.js?v=92"></script>
+    <script src="equipment.js?v=94"></script>
+    <script src="rfq.js?v=96"></script>
     <script src="stores.js?v=82"></script>
 
     <!-- The assistant orb, its chat window and the "powered by" badge that

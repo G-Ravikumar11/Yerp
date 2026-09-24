@@ -428,6 +428,9 @@ function showView(viewId) {
         'estimates-view': 'nav-estimates',
         'gst-view': 'nav-gst',
         'registers-view': 'nav-registers',
+        'ledger-view': 'nav-ledger',
+        'equipment-view': 'nav-equipment',
+        'rfq-view': 'nav-rfqs',
         'stores-view': 'nav-stores',
         'project-costs-view': 'nav-costs',
         'subcontract-wizard-view': 'nav-subcontracts',
@@ -495,6 +498,9 @@ function showView(viewId) {
     if (viewId === 'estimates-view' && typeof loadEstimates === 'function') loadEstimates();
     if (viewId === 'gst-view' && typeof loadGst === 'function') loadGst();
     if (viewId === 'registers-view' && typeof loadRegisters === 'function') loadRegisters();
+    if (viewId === 'ledger-view' && typeof loadLedger === 'function') loadLedger();
+    if (viewId === 'equipment-view' && typeof loadEquipment === 'function') loadEquipment();
+    if (viewId === 'rfq-view' && typeof loadRfqs === 'function') loadRfqs();
     if (viewId === 'dashboard-view' && typeof loadAttention === 'function') loadAttention();
     if (viewId === 'dashboard-view' && typeof dashErp === 'function') dashErp();
     if (viewId === 'stores-view' && typeof loadStores === 'function') loadStores();
@@ -6476,6 +6482,11 @@ async function editBill(id) {
 window.editBill = editBill;
 
 async function markBillPaid(id) {
+    // The one payment box: any part of the bill, through an account, with a
+    // reference - and it lands in the supplier's ledger and the bank book.
+    if (typeof openPayBox === 'function') {
+        return openPayBox('supplier_bill', id, function () { if (typeof loadBills === 'function') loadBills(); });
+    }
     if (!confirm('Mark this bill as paid?')) return;
     try {
         var res = await fetch('/api/bills/' + id + '/pay', { method: 'POST', credentials: 'same-origin' });

@@ -184,8 +184,25 @@ async function showIssueModal() {
           'color:var(--text-secondary);">The store is empty.</td></tr>';
     document.getElementById('issue-date').value = new Date().toISOString().slice(0, 10);
     document.getElementById('issue-total').textContent = formatCurrency(0);
+    document.getElementById('issue-charge').checked = false;
+    document.getElementById('issue-markup').value = 0;
+    issueChargeToggle();
+    // The gangs that can be charged: live orders only.
+    try {
+        var so = await (await fetch('/api/wo/orders', { credentials: 'include' })).json();
+        document.getElementById('issue-sub-order').innerHTML = (so.orders || []).filter(function (o) {
+            return o.status === 'APPROVED' || o.status === 'EXECUTED'; }).map(function (o) {
+            return '<option value="' + o.id + '">' + esc(o.wo_number + ' — ' + (o.contractor || '')) + '</option>';
+        }).join('') || '<option value="">No live gang orders</option>';
+    } catch (e) {}
     document.getElementById('issue-modal').style.display = 'flex';
 }
+
+function issueChargeToggle() {
+    document.getElementById('issue-charge-fields').style.display =
+        document.getElementById('issue-charge').checked ? '' : 'none';
+}
+window.issueChargeToggle = issueChargeToggle;
 window.showIssueModal = showIssueModal;
 
 function closeIssueModal() {
@@ -238,16 +255,23 @@ async function saveIssue(andPost) {
     });
     var out = await res.json();
     if (!res.ok) { showToast(out.detail || 'Could not open the note', 'error'); return; }
+    var charge = document.getElementById('issue-charge').checked
+        ? { recover_from_order_id: parseInt(document.getElementById('issue-sub-order').value) || null,
+            markup_percent: parseFloat(document.getElementById('issue-markup').value) || 0 }
+        : null;
+    if (charge && !charge.recover_from_order_id) {
+        showToast('Choose the gang\'s work order to recover it from', 'error'); return;
+    }
     closeIssueModal();
-    if (andPost) await postIssue(out.issue.id);
+    if (andPost || charge) await postIssue(out.issue.id, charge);
     else { showToast(out.message, 'success'); loadStock(); }
 }
 window.saveIssue = saveIssue;
 
-async function postIssue(id) {
+async function postIssue(id, charge) {
     var res = await fetch('/api/stock-issues/' + id + '/post', {
         method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' }, body: '{}',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(charge || {}),
     });
     var out = await res.json();
     if (!res.ok) {
@@ -256,7 +280,7 @@ async function postIssue(id) {
             var forced = await fetch('/api/stock-issues/' + id + '/post', {
                 method: 'POST', credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ allow_negative: true }),
+                body: JSON.stringify(Object.assign({ allow_negative: true }, charge || {})),
             });
             var f = await forced.json();
             showToast(forced.ok ? f.message : (f.detail || 'Could not post it'),
@@ -349,3 +373,62 @@ async function loadConsumptionPicker() {
     if (open.length) loadConsumption(open[0].id);
 }
 window.loadConsumptionPicker = loadConsumptionPicker;
+
+
+/* --- Site to site ---------------------------------------------------------------
+   Material left at one site sent to the next, at what it cost. Not consumption:
+   nothing is charged to a project until it is issued at the other end.
+   ------------------------------------------------------------------------------ */
+
+var TRF = { stores: [], held: {} };
+
+async function showTransferModal() {
+    var d = await (await fetch('/api/stock/stores', { credentials: 'include' })).json();
+    TRF.stores = (d.stores || []).map(function (s) { return s.store; });
+    if (!TRF.stores.length) TRF.stores = ['Main store'];
+    document.getElementById('trf-from').innerHTML = TRF.stores.map(function (s) {
+        return '<option>' + esc(s) + '</option>'; }).join('');
+    document.getElementById('trf-stores').innerHTML = TRF.stores.map(function (s) {
+        return '<option value="' + esc(s) + '">'; }).join('');
+    document.getElementById('trf-to').value = '';
+    document.getElementById('trf-note').value = '';
+    document.getElementById('trf-date').value = localDate(new Date());
+    await transferLines();
+    openModal('transfer-modal');
+}
+window.showTransferModal = showTransferModal;
+
+async function transferLines() {
+    var from = document.getElementById('trf-from').value;
+    var d = await (await fetch('/api/stock?store=' + encodeURIComponent(from), { credentials: 'include' })).json();
+    TRF.held = (d.stock || []).filter(function (r) { return r.on_hand > 0; });
+    document.getElementById('trf-lines').innerHTML = TRF.held.length ? TRF.held.map(function (r, i) {
+        return '<tr><td style="font-family:monospace;">' + esc(r.item_code) +
+            '<div style="font-size:0.72rem;font-family:inherit;color:var(--text-secondary);">' + esc(r.item_name) + '</div></td>' +
+            '<td class="text-right">' + r.on_hand + ' ' + esc(r.uom) + '</td>' +
+            '<td><input type="number" step="any" min="0" class="form-control input-sm" id="trf-qty-' + i +
+            '" style="text-align:right;"></td></tr>';
+    }).join('') : '<tr><td colspan="3" style="text-align:center;padding:18px;color:var(--text-secondary);">Nothing held in ' + esc(from) + '.</td></tr>';
+}
+window.transferLines = transferLines;
+
+async function saveTransfer() {
+    var lines = [];
+    TRF.held.forEach(function (r, i) {
+        var q = parseFloat((document.getElementById('trf-qty-' + i) || {}).value) || 0;
+        if (q > 0) lines.push({ item_code: r.item_code, qty: q });
+    });
+    if (!lines.length) { showToast('Nothing entered to send', 'error'); return; }
+    var res = await fetch('/api/stock/transfers', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from_store: document.getElementById('trf-from').value,
+            to_store: document.getElementById('trf-to').value,
+            moved_on: document.getElementById('trf-date').value,
+            note: document.getElementById('trf-note').value, lines: lines }) });
+    var out = await res.json();
+    if (!res.ok) { showToast(out.detail || 'Could not send it', 'error'); return; }
+    closeModal('transfer-modal');
+    showToast(out.message, 'success');
+    loadStock();
+}
+window.saveTransfer = saveTransfer;

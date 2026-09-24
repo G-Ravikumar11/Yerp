@@ -176,7 +176,7 @@ function renderSubBillList(bills, summary) {
             act = '<button class="btn btn-sm btn-primary" onclick="subBillAct(' + b.id + ',\'certify\')">Certify</button> ' +
                   '<button class="btn btn-sm btn-outline" onclick="subBillAct(' + b.id + ',\'reject\',true)">Send back</button>';
         else if (b.actions.indexOf('PAY') >= 0)
-            act = '<button class="btn btn-sm btn-primary" onclick="subBillAct(' + b.id + ',\'pay\')">Mark paid</button>';
+            act = '<button class="btn btn-sm btn-primary" onclick="openPayBox(\'sub_bill\',' + b.id + ',function(){if(typeof loadSubBills===\'function\')loadSubBills();})">Pay</button>';
         return '<tr>' +
             '<td style="font-family:monospace;font-weight:600;">' + esc(b.number) + '</td>' +
             '<td>' + esc(b.contractor) + '<div style="font-size:0.75rem;color:var(--text-secondary);">' +

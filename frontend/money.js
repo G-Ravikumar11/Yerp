@@ -64,7 +64,9 @@ async function loadReceivables() {
             '<td class="text-right">' + formatCurrency(r.paid) + '</td>' +
             '<td class="text-right" style="font-weight:700;">' +
                 formatCurrency(r.outstanding) + '</td>' +
-            '<td>' + agePill(r) + '</td></tr>';
+            '<td>' + agePill(r) +
+                (r.doc_type ? ' <button class="btn btn-sm btn-outline" onclick="openPayBox(\'' + r.doc_type +
+                    '\',' + r.id + ',loadMoney)">Receive</button>' : '') + '</td></tr>';
     }).join('') : '<tr><td colspan="7" style="text-align:center;padding:26px;' +
         'color:var(--text-secondary);">Nobody owes anything. Nothing to chase.</td></tr>';
 }
@@ -96,7 +98,9 @@ async function loadPayables() {
                 formatCurrency(r.outstanding) + '</td>' +
             '<td>' + (r.approved ? statusPill('approved', 'good')
                                  : statusPill('not approved', 'wait')) + '</td>' +
-            '<td>' + agePill(r) + '</td></tr>';
+            '<td>' + agePill(r) +
+                (r.doc_type && r.approved !== false ? ' <button class="btn btn-sm btn-outline" onclick="openPayBox(\'' + r.doc_type +
+                    '\',' + r.id + ',loadMoney)">Pay</button>' : '') + '</td></tr>';
     }).join('') : '<tr><td colspan="6" style="text-align:center;padding:26px;' +
         'color:var(--text-secondary);">Nothing outstanding.</td></tr>';
 }

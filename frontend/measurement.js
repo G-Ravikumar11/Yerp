@@ -222,7 +222,7 @@ async function loadRaBills(woId) {
             act = '<button class="btn btn-sm btn-primary" onclick="raAct(' + b.id + ',\'certify\')">Certify</button> ' +
                   '<button class="btn btn-sm btn-outline" onclick="raAct(' + b.id + ',\'reject\',true)">Send back</button>';
         else if (b.actions.indexOf('PAY') >= 0)
-            act = '<button class="btn btn-sm btn-primary" onclick="raAct(' + b.id + ',\'pay\')">Mark paid</button>';
+            act = '<button class="btn btn-sm btn-primary" onclick="openPayBox(\'ra_bill\',' + b.id + ',function(){loadRaBills(MB.wo && MB.wo.id)})">Receive</button>';
         return '<tr>' +
             '<td style="font-family:monospace;font-weight:600;">' + esc(b.number) + '</td>' +
             '<td>' + esc(b.work_order) +

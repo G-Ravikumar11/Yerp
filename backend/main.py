@@ -21841,7 +21841,7 @@ def erp_work_order_statement_xlsx(wo_id: int, request: Request,
 # never by editing history.
 # ============================================================================
 
-STOCK_KINDS = ("RECEIPT", "ISSUE", "RETURN", "ADJUSTMENT")
+STOCK_KINDS = ("RECEIPT", "ISSUE", "RETURN", "ADJUSTMENT", "TRANSFER_OUT", "TRANSFER_IN")
 
 
 def stock_movement(db, client_id, item_code, kind, quantity, rate, **kw):
@@ -21882,14 +21882,17 @@ def apply_to_balance(db, client_id, m):
     if m.uom and not bal.uom:
         bal.uom = m.uom
     qty = m.quantity or 0.0
+    moved = (m.kind or "").startswith("TRANSFER")
     bal.movements = (bal.movements or 0) + 1
     if qty > 0:
-        bal.received = money((bal.received or 0) + qty)
+        if not moved:
+            bal.received = money((bal.received or 0) + qty)
         bal.value = money((bal.value or 0) + (m.value or 0))
         bal.on_hand = money((bal.on_hand or 0) + qty)
         bal.rate = unit_rate(bal.value / bal.on_hand) if bal.on_hand else 0.0
     else:
-        bal.issued = money((bal.issued or 0) - qty)
+        if not moved:
+            bal.issued = money((bal.issued or 0) - qty)
         bal.on_hand = money((bal.on_hand or 0) + qty)
         bal.value = money(bal.on_hand * (bal.rate or 0))
     bal.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -21983,14 +21986,17 @@ def replay_stock_ledger(db, client_id, item_code=None, store=None, item_codes=No
         if m.item_name and not a["item_name"]:
             a["item_name"] = m.item_name
         qty = m.quantity or 0.0
+        moved = (m.kind or "").startswith("TRANSFER")
         if qty > 0:
-            a["received"] += qty
+            if not moved:
+                a["received"] += qty
             # Incoming stock re-averages the heap.
             a["value"] = money(a["value"] + (m.value or 0.0))
             a["on_hand"] = money(a["on_hand"] + qty)
             a["rate"] = unit_rate(a["value"] / a["on_hand"]) if a["on_hand"] else 0.0
         else:
-            a["issued"] += -qty
+            if not moved:
+                a["issued"] += -qty
             # Going out at the average, so the heap's rate does not move.
             a["on_hand"] = money(a["on_hand"] + qty)
             a["value"] = money(a["on_hand"] * a["rate"])
@@ -22316,6 +22322,20 @@ def post_stock_issue(issue_id: int, request: Request, body: dict = None,
                                  "delivery in first, or post it anyway if the "
                                  "store is behind." % "; ".join(short[:4]))
 
+    # Handed to a gang whose rate includes the material: the order says which
+    # project it was spent on, and it has to be known before the stock moves
+    # or the movements are written against no project at all.
+    recover_order = None
+    recover_from = (body or {}).get("recover_from_order_id")
+    if recover_from:
+        recover_order = wo_or_404(db, client.id, int(recover_from))
+        if (recover_order.status or "") not in ("APPROVED", "EXECUTED"):
+            raise HTTPException(409, "%s is %s; material is charged to a live order."
+                                     % (recover_order.wo_number,
+                                        (recover_order.status or "").lower()))
+        if not issue.job_id and recover_order.job_id:
+            issue.job_id = recover_order.job_id
+
     for l in lines:
         stock_movement(db, client.id, l.item_code, "ISSUE", -l.quantity, l.rate,
                        item_name=l.item_name, uom=l.uom, store=issue.store,
@@ -22326,6 +22346,12 @@ def post_stock_issue(issue_id: int, request: Request, body: dict = None,
                        recorded_by_name=actor_name)
     issue.status = "POSTED"
     issue.posted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # It is theirs to pay for, recovered from their next bill on its own.
+    charged = 0.0
+    if recover_order:
+        charged = charge_issue_to_gang(db, client.id, issue, recover_order,
+                                       float((body or {}).get("markup_percent") or 0))
+        issue.issued_to = issue.issued_to or ("Recover from " + (recover_order.wo_number or ""))
     log_audit(db, client.id, "stock_issued", "stock_issue", issue.id,
               issue.number or "", "%s lines, %s" % (len(lines), inr(issue.total_value)),
               request)
@@ -22918,6 +22944,8 @@ def preload_pnl_for_job(db, client_id, job_id):
         "sub": one(db.query(models.DBSubBill).filter(
             models.DBSubBill.client_id == client_id, models.DBSubBill.job_id == job_id,
             models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all()),
+        "equipment": {job_id: equipment_cost_by_job(db, client_id).get(job_id, 0.0)},
+        "recovered": material_recovered_by_job(db, client_id, job_id),
     }
 
 
@@ -22964,6 +22992,8 @@ def preload_pnl(db, client_id):
         "sub": by_job(db.query(models.DBSubBill).filter(
             models.DBSubBill.client_id == client_id,
             models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all()),
+        "equipment": equipment_cost_by_job(db, client_id),
+        "recovered": material_recovered_by_job(db, client_id),
     }
 
 
@@ -23015,7 +23045,15 @@ def project_pnl(db, client_id, job, pre=None):
     # subcontract cost.
     subcontract = money(sum(b.this_bill or 0 for b in pre["sub"].get(job.id, [])))
 
-    incurred = money(bill_cost + material + labour + plant + subcontract)
+    # Diesel, hire and repairs on the machines that worked this site - kept
+    # in the equipment register, so the diary lists only plant that is not.
+    equipment = money((pre.get("equipment") or {}).get(job.id, 0.0))
+
+    # Material issued to a gang and taken back out of their bill: its cost is
+    # inside what they billed, so it comes off here or it is counted twice.
+    recovered = money((pre.get("recovered") or {}).get(job.id, 0.0))
+
+    incurred = money(bill_cost + material + labour + plant + subcontract + equipment - recovered)
     budgeted = money(sum(pre["bom"].get(i, 0.0) for i in wo_ids)) if wo_ids else 0.0
 
     revenue = money(max(invoiced, certified))
@@ -23042,6 +23080,8 @@ def project_pnl(db, client_id, job, pre=None):
             "material_from_store": material,
             "labour": labour,
             "plant": plant,
+            "equipment": equipment,
+            "material_recovered_from_gangs": recovered,
             "incurred": incurred,
             "committed_not_yet_billed": committed,
             "forecast": money(incurred + committed),
@@ -23230,11 +23270,14 @@ def receivables(request: Request, db: Session = Depends(get_db)):
             "status": inv.status or "",
         })
     # A client RA bill that has been certified and not paid is owed to us
-    # just as an invoice is. Aged from certification.
+    # just as an invoice is. Aged from certification. What has already been
+    # received against it comes off - a part-paid bill owes what is left.
+    settled = settled_amounts(db, client.id)
     for r in db.query(models.DBRABill).filter(
             models.DBRABill.client_id == client.id,
             models.DBRABill.status == "CERTIFIED").all():
-        outstanding = money(r.net_payable)
+        received = settled.get(("ra_bill", r.id), 0.0)
+        outstanding = money((r.net_payable or 0) - received)
         if outstanding <= 0:
             continue
         bucket, days = ageing_bucket(r.certified_at, today)
@@ -23245,7 +23288,8 @@ def receivables(request: Request, db: Session = Depends(get_db)):
             "customer": job.customer_name if job else "",
             "project": job.name if job else "", "job_id": r.job_id,
             "issue_date": (r.certified_at or "")[:10], "due_date": (r.certified_at or "")[:10],
-            "total": money(r.net_payable), "paid": 0.0, "outstanding": outstanding,
+            "total": money(r.net_payable), "paid": money(received), "outstanding": outstanding,
+            "doc_type": "ra_bill",
             "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
             "status": r.status or "",
         })
@@ -23293,7 +23337,7 @@ def payables(request: Request, db: Session = Depends(get_db)):
         buckets[bucket] = money(buckets[bucket] + outstanding)
         job = jobs.get(b.job_id)
         rows.append({
-            "kind": "Supplier bill", "id": b.id, "number": b.number or "",
+            "kind": "Supplier bill", "doc_type": "supplier_bill", "id": b.id, "number": b.number or "",
             "party": b.vendor_name or "", "project": job.name if job else "",
             "due_date": b.due_date or "", "outstanding": outstanding,
             "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
@@ -23308,10 +23352,11 @@ def payables(request: Request, db: Session = Depends(get_db)):
     # sides made the business look poorer than it was by exactly that sum.)
     contractors = {c.id: c for c in db.query(models.DBContractor).filter(
         models.DBContractor.client_id == client.id).all()}
+    settled = settled_amounts(db, client.id)
     for r in db.query(models.DBSubBill).filter(
             models.DBSubBill.client_id == client.id,
             models.DBSubBill.status == "CERTIFIED").all():
-        outstanding = money(r.net_payable)
+        outstanding = money((r.net_payable or 0) - settled.get(("sub_bill", r.id), 0.0))
         if outstanding <= 0:
             continue
         bucket, days = ageing_bucket(r.certified_at, today)
@@ -23319,7 +23364,7 @@ def payables(request: Request, db: Session = Depends(get_db)):
         job = jobs.get(r.job_id)
         con = contractors.get(r.contractor_id)
         rows.append({
-            "kind": "Subcontractor bill", "id": r.id, "number": r.number or "",
+            "kind": "Subcontractor bill", "doc_type": "sub_bill", "id": r.id, "number": r.number or "",
             "party": con.company_name if con else "", "project": job.name if job else "",
             "due_date": (r.certified_at or "")[:10], "outstanding": outstanding,
             "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
@@ -24346,6 +24391,8 @@ def create_sub_bill(body: SubBillIn, request: Request, db: Session = Depends(get
     recost_sub_bill(db, bill)
     bill.advance_recovery = sub_advance_recovery(db, order, bill, body.advance_recovery)
     recost_sub_bill(db, bill)
+    if apply_material_recovery(db, client.id, order, bill):
+        recost_sub_bill(db, bill)
     log_audit(db, client.id, "sub_bill_raised", "subcontract_order", order.id,
               order.wo_number or "", "%s %s" % (bill.number, inr(bill.this_bill)), request)
     db.commit()
@@ -24435,6 +24482,8 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
         db.query(models.DBSubMeasurement).filter(
             models.DBSubMeasurement.sub_bill_id == bill.id).update(
                 {"sub_bill_id": None}, synchronize_session=False)
+        # Material it recovered goes back to waiting for the next bill.
+        release_material_recovery(db, client.id, bill.id)
 
     was, bill.status = bill.status, allowed[move]
     bill.updated_at = now
@@ -25140,6 +25189,1752 @@ def public_brand(db: Session = Depends(get_db)):
     if not c:
         return {"company_name": "", "logo_url": ""}
     return {"company_name": c.company_name or "", "logo_url": c.logo_url or ""}
+
+
+
+
+# ============================================================================
+# FINANCE: SUPPLIERS, RECEIPTS, PAYMENTS, LEDGERS, THE BANK BOOK
+#
+# A bill was paid or it was not. Part of a bill could not be paid, so a part-
+# payment lived in a notebook; nothing said what a party owed across all their
+# bills, so a statement of account lived in Tally; and nothing said what was
+# in the bank, so that lived there too. This is those three books, kept from
+# the documents that are already here, so none of them is typed twice.
+# ============================================================================
+
+MONEY_MODES = ("Bank transfer", "Cheque", "Cash", "UPI", "Adjustment")
+PARTY_TYPES = ("client", "supplier", "contractor", "other")
+
+
+def norm_name(value):
+    """The name as it is compared: case, spacing and full stops do not make
+    two suppliers."""
+    return re.sub(r"[^a-z0-9]", "", (value or "").lower())
+
+
+# --- Suppliers ------------------------------------------------------------------
+
+class SupplierIn(BaseModel):
+    name: str
+    contact_person: Optional[str] = ""
+    phone: Optional[str] = ""
+    email: Optional[str] = ""
+    gstin: Optional[str] = ""
+    pan: Optional[str] = ""
+    address: Optional[str] = ""
+    bank_name: Optional[str] = ""
+    bank_account: Optional[str] = ""
+    bank_ifsc: Optional[str] = ""
+    payment_days: Optional[int] = 30
+    supplies: Optional[str] = ""
+    is_active: Optional[bool] = True
+
+
+def supplier_dict(s):
+    return {"id": s.id, "code": s.code or "", "name": s.name or "",
+            "contact_person": s.contact_person or "", "phone": s.phone or "",
+            "email": s.email or "", "gstin": s.gstin or "", "pan": s.pan or "",
+            "state_code": s.state_code or "", "state": GST_STATES.get(s.state_code or "", ""),
+            "address": s.address or "", "bank_name": s.bank_name or "",
+            "bank_account": s.bank_account or "", "bank_ifsc": s.bank_ifsc or "",
+            "payment_days": s.payment_days or 0, "supplies": s.supplies or "",
+            "is_active": bool(s.is_active)}
+
+
+def _apply_supplier(db, client_id, s, body):
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "What is the supplier called?")
+    clash = [x for x in db.query(models.DBSupplier).filter(
+        models.DBSupplier.client_id == client_id).all()
+        if norm_name(x.name) == norm_name(name) and x.id != s.id]
+    if clash:
+        raise HTTPException(409, "%s is already on file as %s." % (name, clash[0].code))
+    gstin = (body.gstin or "").strip().upper()
+    if gstin and (len(gstin) != 15 or not state_from_gstin(gstin)):
+        raise HTTPException(400, "A GSTIN is fifteen characters and starts with a state code.")
+    pan = (body.pan or "").strip().upper()
+    if not pan and gstin:
+        pan = gstin[2:12]           # the PAN is inside the GSTIN
+    if pan and not re.match(r"^[A-Z]{5}[0-9]{4}[A-Z]$", pan):
+        raise HTTPException(400, "A PAN is five letters, four digits and a letter.")
+    s.name = name
+    s.contact_person = (body.contact_person or "").strip()
+    s.phone = (body.phone or "").strip()
+    s.email = (body.email or "").strip()
+    s.gstin, s.pan = gstin, pan
+    s.state_code = state_from_gstin(gstin)
+    s.address = (body.address or "").strip()
+    s.bank_name = (body.bank_name or "").strip()
+    s.bank_account = (body.bank_account or "").strip()
+    s.bank_ifsc = (body.bank_ifsc or "").strip().upper()
+    s.payment_days = max(0, int(body.payment_days or 0))
+    s.supplies = (body.supplies or "").strip()
+    s.is_active = bool(body.is_active) if body.is_active is not None else True
+
+
+def next_supplier_code(db, client_id):
+    n = db.query(models.DBSupplier).filter(models.DBSupplier.client_id == client_id).count()
+    return "SUP-%04d" % (n + 1)
+
+
+@app.get("/api/suppliers")
+def list_suppliers(request: Request, q: str = "", db: Session = Depends(get_db)):
+    """The supplier master - and the names already on orders and bills that
+    are not in it yet, so the history can be adopted in one click."""
+    client = require_erp_read(request, db)
+    rows = db.query(models.DBSupplier).filter(
+        models.DBSupplier.client_id == client.id).order_by(models.DBSupplier.name).all()
+    known = {norm_name(s.name) for s in rows}
+    seen = {}
+    for (name,) in db.query(models.DBPurchaseOrder.supplier_name).filter(
+            models.DBPurchaseOrder.client_id == client.id).all():
+        if name and norm_name(name) not in known:
+            seen.setdefault(norm_name(name), name.strip())
+    for (name,) in db.query(models.DBBill.vendor_name).filter(
+            models.DBBill.client_id == client.id).all():
+        if name and norm_name(name) not in known:
+            seen.setdefault(norm_name(name), name.strip())
+    needle = norm_name(q)
+    out = [supplier_dict(s) for s in rows if not needle or needle in norm_name(s.name)]
+    return {"suppliers": out, "unregistered": sorted(seen.values())}
+
+
+@app.post("/api/suppliers")
+def create_supplier(body: SupplierIn, request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    s = models.DBSupplier(client_id=client.id, code=next_supplier_code(db, client.id))
+    _apply_supplier(db, client.id, s, body)
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    return supplier_dict(s)
+
+
+@app.put("/api/suppliers/{supplier_id}")
+def update_supplier(supplier_id: int, body: SupplierIn, request: Request,
+                    db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    s = db.query(models.DBSupplier).filter(
+        models.DBSupplier.id == supplier_id, models.DBSupplier.client_id == client.id).first()
+    if not s:
+        raise HTTPException(404, "Supplier not found")
+    _apply_supplier(db, client.id, s, body)
+    db.commit()
+    return supplier_dict(s)
+
+
+@app.post("/api/suppliers/adopt")
+def adopt_suppliers(request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """Put the suppliers already named on orders and bills into the master.
+    Their history is theirs from that moment: the ledger matches by name."""
+    client = get_client_user(request, db)
+    names = (body or {}).get("names") or list_suppliers(request, "", db)["unregistered"]
+    made = []
+    for name in names[:200]:
+        name = (name or "").strip()
+        if not name:
+            continue
+        if any(norm_name(x.name) == norm_name(name) for x in db.query(models.DBSupplier).filter(
+                models.DBSupplier.client_id == client.id).all()):
+            continue
+        s = models.DBSupplier(client_id=client.id, code=next_supplier_code(db, client.id),
+                              name=name, payment_days=30, is_active=True)
+        db.add(s)
+        db.flush()
+        made.append(s.name)
+    db.commit()
+    return {"ok": True, "added": made,
+            "message": "%d supplier%s added from the orders and bills already here."
+                       % (len(made), "" if len(made) == 1 else "s")}
+
+
+# --- Bank and cash accounts ------------------------------------------------------
+
+class BankAccountIn(BaseModel):
+    name: str
+    kind: Optional[str] = "Bank"
+    bank_name: Optional[str] = ""
+    account_no: Optional[str] = ""
+    ifsc: Optional[str] = ""
+    opening_balance: Optional[float] = 0
+    opening_date: Optional[str] = ""
+
+
+def account_dict(a):
+    return {"id": a.id, "name": a.name or "", "kind": a.kind or "Bank",
+            "bank_name": a.bank_name or "", "account_no": a.account_no or "",
+            "ifsc": a.ifsc or "", "opening_balance": money(a.opening_balance),
+            "opening_date": a.opening_date or "", "is_active": bool(a.is_active)}
+
+
+@app.get("/api/bank-accounts")
+def list_bank_accounts(request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    rows = db.query(models.DBBankAccount).filter(
+        models.DBBankAccount.client_id == client.id).order_by(models.DBBankAccount.id).all()
+    out = []
+    for a in rows:
+        d = account_dict(a)
+        d["balance"] = account_balance(db, client.id, a)
+        out.append(d)
+    return {"accounts": out}
+
+
+@app.post("/api/bank-accounts")
+def create_bank_account(body: BankAccountIn, request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "Name the account - \"SBI current\", \"Site cash\".")
+    kind = body.kind if body.kind in ("Bank", "Cash") else "Bank"
+    a = models.DBBankAccount(
+        client_id=client.id, name=name, kind=kind, bank_name=(body.bank_name or "").strip(),
+        account_no=(body.account_no or "").strip(), ifsc=(body.ifsc or "").strip().upper(),
+        opening_balance=money(body.opening_balance or 0),
+        opening_date=(body.opening_date or datetime.now().strftime("%Y-%m-%d")))
+    db.add(a)
+    db.commit()
+    db.refresh(a)
+    return account_dict(a)
+
+
+def account_balance(db, client_id, account):
+    live = db.query(models.DBMoneyEntry).filter(
+        models.DBMoneyEntry.client_id == client_id,
+        models.DBMoneyEntry.account_id == account.id,
+        models.DBMoneyEntry.voided.is_(False)).all()
+    return money((account.opening_balance or 0)
+                 + sum(e.amount for e in live if e.direction == "IN")
+                 - sum(e.amount for e in live if e.direction == "OUT"))
+
+
+# --- What each bill has had settled against it ------------------------------------
+
+def settled_amounts(db, client_id):
+    """{(doc_type, doc_id): amount} over every live entry, in one query."""
+    out = {}
+    for doc_type, doc_id, amount in db.query(
+            models.DBMoneyEntry.doc_type, models.DBMoneyEntry.doc_id,
+            models.DBMoneyEntry.amount).filter(
+            models.DBMoneyEntry.client_id == client_id,
+            models.DBMoneyEntry.voided.is_(False),
+            models.DBMoneyEntry.doc_id.isnot(None)).all():
+        key = (doc_type, doc_id)
+        out[key] = money(out.get(key, 0.0) + (amount or 0))
+    return out
+
+
+def settled_on(db, client_id, doc_type, doc_id):
+    return money(sum(e.amount or 0 for e in db.query(models.DBMoneyEntry).filter(
+        models.DBMoneyEntry.client_id == client_id,
+        models.DBMoneyEntry.doc_type == doc_type,
+        models.DBMoneyEntry.doc_id == doc_id,
+        models.DBMoneyEntry.voided.is_(False)).all()))
+
+
+def _doc_for(db, client_id, doc_type, doc_id):
+    """The bill an entry settles, what it is worth, and who it is with."""
+    if doc_type == "ra_bill":
+        b = ra_bill_or_404(db, client_id, doc_id)
+        if b.status not in ("CERTIFIED", "PAID"):
+            raise HTTPException(409, "%s is %s. Money is received against a certified bill."
+                                     % (b.number, (b.status or "").lower()))
+        job = db.query(models.DBJob).filter(models.DBJob.id == b.job_id).first()
+        return b, money(b.net_payable), "IN", "client", (job.customer_name if job else ""), None, b.job_id
+    if doc_type == "sub_bill":
+        b = sub_bill_or_404(db, client_id, doc_id)
+        if b.status not in ("CERTIFIED", "PAID"):
+            raise HTTPException(409, "%s is %s. A gang is paid against a certified bill."
+                                     % (b.number, (b.status or "").lower()))
+        con = db.query(models.DBContractor).filter(
+            models.DBContractor.id == b.contractor_id).first() if b.contractor_id else None
+        return (b, money(b.net_payable), "OUT", "contractor",
+                (con.company_name if con else ""), b.contractor_id, b.job_id)
+    if doc_type == "supplier_bill":
+        b = db.query(models.DBBill).filter(
+            models.DBBill.id == doc_id, models.DBBill.client_id == client_id).first()
+        if not b:
+            raise HTTPException(404, "Bill not found")
+        if (b.approval_status or "none") not in ("none", "approved", ""):
+            raise HTTPException(409, "%s is %s approval, so it cannot be paid yet."
+                                     % (b.number, b.approval_status))
+        if (b.status or "") in ("Cancelled", "Rejected", "Draft"):
+            # A draft is a bill nobody has accepted yet; paying it would put
+            # money in the ledger against something the ledger does not hold.
+            raise HTTPException(409, "%s is %s. Accept the bill before paying it."
+                                     % (b.number, (b.status or "").lower()))
+        sup = next((s for s in db.query(models.DBSupplier).filter(
+            models.DBSupplier.client_id == client_id).all()
+            if norm_name(s.name) == norm_name(b.vendor_name)), None)
+        return (b, money(b.total or b.amount or 0), "OUT", "supplier", b.vendor_name or "",
+                (sup.id if sup else None), b.job_id)
+    raise HTTPException(400, "Unknown document type: %s" % doc_type)
+
+
+def _settle_doc(db, client_id, doc_type, doc, worth, on):
+    """Move the bill to paid when it is fully settled, back when it is not."""
+    got = settled_on(db, client_id, doc_type, doc.id)
+    full = got >= worth - 0.009
+    if doc_type in ("ra_bill", "sub_bill"):
+        if full and doc.status == "CERTIFIED":
+            doc.status, doc.paid_at = "PAID", on
+        elif not full and doc.status == "PAID":
+            doc.status, doc.paid_at = "CERTIFIED", ""
+    elif doc_type == "supplier_bill":
+        doc.amount_paid = got
+        doc.status = "Paid" if full else ("Partially Paid" if got > 0 else
+                                          ("Approved" if (doc.approval_status or "") == "approved"
+                                           else "Awaiting Payment"))
+    return got
+
+
+def next_money_number(db, client_id, direction):
+    stem = "RCT-" if direction == "IN" else "PMT-"
+    n = db.query(models.DBMoneyEntry).filter(
+        models.DBMoneyEntry.client_id == client_id,
+        models.DBMoneyEntry.direction == direction).count()
+    return "%s%04d" % (stem, n + 1)
+
+
+def money_entry_dict(e, accounts=None):
+    acc = (accounts or {}).get(e.account_id)
+    return {"id": e.id, "number": e.number or "", "direction": e.direction,
+            "party_type": e.party_type or "", "party_name": e.party_name or "",
+            "doc_type": e.doc_type or "", "doc_id": e.doc_id, "doc_number": e.doc_number or "",
+            "job_id": e.job_id, "account_id": e.account_id,
+            "account": acc.name if acc else "", "amount": money(e.amount),
+            "paid_on": e.paid_on or "", "mode": e.mode or "", "reference": e.reference or "",
+            "note": e.note or "", "voided": bool(e.voided), "void_reason": e.void_reason or "",
+            "recorded_by_name": e.recorded_by_name or "", "created_at": e.created_at or ""}
+
+
+class MoneyIn(BaseModel):
+    doc_type: Optional[str] = ""          # ra_bill | sub_bill | supplier_bill | on_account
+    doc_id: Optional[int] = None
+    amount: float
+    paid_on: Optional[str] = ""
+    mode: Optional[str] = "Bank transfer"
+    reference: Optional[str] = ""
+    account_id: Optional[int] = None
+    note: Optional[str] = ""
+    # On account only: who, and which way.
+    direction: Optional[str] = ""
+    party_type: Optional[str] = ""
+    party_name: Optional[str] = ""
+    job_id: Optional[int] = None
+
+
+@app.post("/api/money/entries")
+def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db)):
+    """A receipt or a payment, against a bill or on account.
+
+    Against a bill it may be any part of what is still owed on it, never more;
+    the bill moves to paid the moment the last rupee lands. On account it is
+    an advance with nobody's bill to settle yet - it still sits in the party's
+    ledger and the bank book, which is the point.
+    """
+    client, actor_id, actor_name = wo_actor(request, db, "bills.pay")
+    amount = money(body.amount or 0)
+    if amount <= 0:
+        raise HTTPException(400, "How much?")
+    mode = body.mode if body.mode in MONEY_MODES else "Bank transfer"
+    on = (body.paid_on or datetime.now().strftime("%Y-%m-%d"))[:10]
+    account = None
+    if body.account_id:
+        account = db.query(models.DBBankAccount).filter(
+            models.DBBankAccount.id == body.account_id,
+            models.DBBankAccount.client_id == client.id).first()
+        if not account:
+            raise HTTPException(404, "That bank account is not on file.")
+        if account.kind == "Cash" and mode not in ("Cash", "Adjustment"):
+            mode = "Cash"
+    if mode == "Cheque" and not (body.reference or "").strip():
+        raise HTTPException(400, "A cheque payment needs the cheque number.")
+
+    doc_type = (body.doc_type or "on_account").strip()
+    doc = None
+    if doc_type != "on_account":
+        if not body.doc_id:
+            raise HTTPException(400, "Which bill is this against?")
+        doc, worth, direction, party_type, party_name, party_id, job_id = _doc_for(
+            db, client.id, doc_type, body.doc_id)
+        owed = money(worth - settled_on(db, client.id, doc_type, doc.id))
+        if owed <= 0:
+            raise HTTPException(409, "%s is already fully settled." % doc.number)
+        if amount > owed + 0.009:
+            raise HTTPException(400, "%s has only %s left to settle; %s is more than that."
+                                     % (doc.number, inr(owed), inr(amount)))
+        doc_number = doc.number or ""
+    else:
+        direction = (body.direction or "").upper()
+        if direction not in ("IN", "OUT"):
+            raise HTTPException(400, "Is this money coming in or going out?")
+        party_type = body.party_type if body.party_type in PARTY_TYPES else "other"
+        party_name = (body.party_name or "").strip()
+        if not party_name:
+            raise HTTPException(400, "Who is this from or to?")
+        party_id, job_id, doc_number = None, body.job_id, ""
+
+    e = models.DBMoneyEntry(
+        client_id=client.id, number=next_money_number(db, client.id, direction),
+        direction=direction, party_type=party_type, party_name=party_name,
+        party_id=party_id, doc_type=doc_type, doc_id=(doc.id if doc else None),
+        doc_number=doc_number, job_id=job_id, account_id=(account.id if account else None),
+        amount=amount, paid_on=on, mode=mode, reference=(body.reference or "").strip()[:80],
+        note=(body.note or "").strip()[:300], recorded_by_name=actor_name)
+    db.add(e)
+    db.flush()
+    settled = _settle_doc(db, client.id, doc_type, doc, worth, on) if doc else None
+    log_audit(db, client.id, "money_" + direction.lower(), doc_type, e.doc_id or 0,
+              e.number, "%s %s %s" % (party_name, inr(amount), doc_number), request)
+    db.commit()
+    db.refresh(e)
+    left = money(worth - settled) if doc else None
+    return {"ok": True, "entry": money_entry_dict(e, {account.id: account} if account else {}),
+            "settled": settled, "left": left,
+            "message": ("%s %s %s %s." % (e.number, "received" if direction == "IN" else "paid",
+                                           inr(amount), ("against " + doc_number) if doc_number
+                                           else ("on account, " + party_name)))
+                       + ((" %s left on it." % inr(left)) if left else (" Settled in full." if doc else ""))}
+
+
+@app.post("/api/money/entries/{entry_id}/void")
+def void_money(entry_id: int, request: Request, body: dict = None,
+               db: Session = Depends(get_db)):
+    """A mistake is voided, never deleted; the bill goes back to owing."""
+    client, actor_id, actor_name = wo_actor(request, db, "bills.pay")
+    reason = ((body or {}).get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(400, "Say why it is being voided.")
+    e = db.query(models.DBMoneyEntry).filter(
+        models.DBMoneyEntry.id == entry_id, models.DBMoneyEntry.client_id == client.id).first()
+    if not e:
+        raise HTTPException(404, "Entry not found")
+    if e.voided:
+        raise HTTPException(409, "%s is already void." % e.number)
+    e.voided, e.void_reason = True, reason[:300]
+    db.flush()
+    if e.doc_id and e.doc_type != "on_account":
+        doc, worth, *_ = _doc_for_any(db, client.id, e.doc_type, e.doc_id)
+        _settle_doc(db, client.id, e.doc_type, doc, worth, "")
+    log_audit(db, client.id, "money_voided", e.doc_type, e.doc_id or 0, e.number, reason, request)
+    db.commit()
+    return {"ok": True, "message": "%s voided." % e.number}
+
+
+def _doc_for_any(db, client_id, doc_type, doc_id):
+    """As _doc_for, without refusing a bill for its status - voiding must
+    always be able to find what it settled."""
+    if doc_type == "ra_bill":
+        b = ra_bill_or_404(db, client_id, doc_id)
+        return b, money(b.net_payable)
+    if doc_type == "sub_bill":
+        b = sub_bill_or_404(db, client_id, doc_id)
+        return b, money(b.net_payable)
+    b = db.query(models.DBBill).filter(models.DBBill.id == doc_id,
+                                       models.DBBill.client_id == client_id).first()
+    return b, money(b.total or b.amount or 0)
+
+
+@app.get("/api/money/entries")
+def list_money(request: Request, direction: str = "", party: str = "", job_id: int = 0,
+               date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    q = db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.client_id == client.id)
+    if direction:
+        q = q.filter(models.DBMoneyEntry.direction == direction.upper())
+    if job_id:
+        q = q.filter(models.DBMoneyEntry.job_id == job_id)
+    accounts = {a.id: a for a in db.query(models.DBBankAccount).filter(
+        models.DBBankAccount.client_id == client.id).all()}
+    rows = []
+    for e in q.order_by(models.DBMoneyEntry.paid_on.desc(), models.DBMoneyEntry.id.desc()).limit(1000).all():
+        if party and norm_name(party) not in norm_name(e.party_name):
+            continue
+        if date_from and (e.paid_on or "") < date_from:
+            continue
+        if date_to and (e.paid_on or "") > date_to:
+            continue
+        rows.append(money_entry_dict(e, accounts))
+    live = [r for r in rows if not r["voided"]]
+    return {"entries": rows, "summary": {
+        "received": money(sum(r["amount"] for r in live if r["direction"] == "IN")),
+        "paid": money(sum(r["amount"] for r in live if r["direction"] == "OUT")),
+        "entries": len(live)}}
+
+
+# --- Ledgers ----------------------------------------------------------------------
+
+def _ledger_rows(db, client_id):
+    """Every bill and every movement of money, each tagged to a party.
+
+    Bills are what a party is owed or owes; entries are what has moved. A
+    bill marked paid before this ledger existed, with no entry behind it, is
+    counted as settled on the day it was marked - otherwise every old party
+    would show a balance nobody owes.
+    """
+    rows = []
+    settled = settled_amounts(db, client_id)
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client_id).all()}
+    contractors = {c.id: c for c in db.query(models.DBContractor).filter(
+        models.DBContractor.client_id == client_id).all()}
+
+    for b in db.query(models.DBRABill).filter(
+            models.DBRABill.client_id == client_id,
+            models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all():
+        job = jobs.get(b.job_id)
+        party = job.customer_name if job else ""
+        on = (b.certified_at or b.created_at or "")[:10]
+        rows.append({"party_type": "client", "party": party, "date": on, "kind": "RA bill",
+                     "number": b.number, "doc_type": "ra_bill", "doc_id": b.id,
+                     "billed": money(b.net_payable), "moved": 0.0, "job_id": b.job_id})
+        if b.status == "PAID" and not settled.get(("ra_bill", b.id)):
+            rows.append({"party_type": "client", "party": party, "date": (b.paid_at or on)[:10],
+                         "kind": "Received (marked paid)", "number": b.number, "doc_type": "ra_bill",
+                         "doc_id": b.id, "billed": 0.0, "moved": money(b.net_payable),
+                         "job_id": b.job_id})
+
+    for b in db.query(models.DBSubBill).filter(
+            models.DBSubBill.client_id == client_id,
+            models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all():
+        con = contractors.get(b.contractor_id)
+        party = con.company_name if con else ""
+        on = (b.certified_at or b.created_at or "")[:10]
+        rows.append({"party_type": "contractor", "party": party, "date": on, "kind": "Their RA bill",
+                     "number": b.number, "doc_type": "sub_bill", "doc_id": b.id,
+                     "billed": money(b.net_payable), "moved": 0.0, "job_id": b.job_id})
+        if b.status == "PAID" and not settled.get(("sub_bill", b.id)):
+            rows.append({"party_type": "contractor", "party": party, "date": (b.paid_at or on)[:10],
+                         "kind": "Paid (marked paid)", "number": b.number, "doc_type": "sub_bill",
+                         "doc_id": b.id, "billed": 0.0, "moved": money(b.net_payable),
+                         "job_id": b.job_id})
+
+    for b in db.query(models.DBBill).filter(models.DBBill.client_id == client_id).all():
+        if (b.status or "") in ("Draft", "Cancelled", "Rejected"):
+            continue
+        if (b.approval_status or "none") == "rejected":
+            continue
+        on = (b.issue_date or b.created_at or "")[:10]
+        rows.append({"party_type": "supplier", "party": b.vendor_name or "", "date": on,
+                     "kind": "Their bill", "number": b.number or "", "doc_type": "supplier_bill",
+                     "doc_id": b.id, "billed": money(b.total or b.amount or 0), "moved": 0.0,
+                     "job_id": b.job_id})
+        pre_ledger = money((b.amount_paid or 0) - settled.get(("supplier_bill", b.id), 0.0))
+        if pre_ledger > 0.009:
+            rows.append({"party_type": "supplier", "party": b.vendor_name or "", "date": on,
+                         "kind": "Paid (marked paid)", "number": b.number or "",
+                         "doc_type": "supplier_bill", "doc_id": b.id, "billed": 0.0,
+                         "moved": pre_ledger, "job_id": b.job_id})
+
+    for e in db.query(models.DBMoneyEntry).filter(
+            models.DBMoneyEntry.client_id == client_id,
+            models.DBMoneyEntry.voided.is_(False)).all():
+        rows.append({"party_type": e.party_type or "other", "party": e.party_name or "",
+                     "date": e.paid_on or "", "kind": ("Received" if e.direction == "IN" else "Paid")
+                     + ((" - " + e.mode) if e.mode else ""),
+                     "number": e.number, "doc_type": e.doc_type, "doc_id": e.doc_id,
+                     "against": e.doc_number or ("on account" if e.doc_type == "on_account" else ""),
+                     "billed": 0.0, "moved": money(e.amount), "job_id": e.job_id,
+                     "reference": e.reference or ""})
+    return rows
+
+
+@app.get("/api/ledger/parties")
+def ledger_parties(request: Request, party_type: str = "", db: Session = Depends(get_db)):
+    """Every party, what has been billed with them, what has moved, and the
+    balance - owed to us for a client, owed by us for everybody else."""
+    client = require_erp_read(request, db)
+    parties = {}
+    for r in _ledger_rows(db, client.id):
+        if party_type and r["party_type"] != party_type:
+            continue
+        if not r["party"]:
+            continue
+        key = (r["party_type"], norm_name(r["party"]))
+        p = parties.setdefault(key, {"party_type": r["party_type"], "party": r["party"],
+                                     "billed": 0.0, "moved": 0.0, "last": ""})
+        p["billed"] = money(p["billed"] + r["billed"])
+        p["moved"] = money(p["moved"] + r["moved"])
+        p["last"] = max(p["last"], r["date"] or "")
+    out = []
+    for p in parties.values():
+        p["balance"] = money(p["billed"] - p["moved"])
+        out.append(p)
+    out.sort(key=lambda p: -abs(p["balance"]))
+    return {"parties": out, "summary": {
+        "owed_to_us": money(sum(p["balance"] for p in out if p["party_type"] == "client" and p["balance"] > 0)),
+        "we_owe": money(sum(p["balance"] for p in out if p["party_type"] != "client" and p["balance"] > 0)),
+        "advances_out": money(-sum(p["balance"] for p in out if p["party_type"] != "client" and p["balance"] < 0)),
+        "advances_in": money(-sum(p["balance"] for p in out if p["party_type"] == "client" and p["balance"] < 0)),
+        "parties": len(out)}}
+
+
+@app.get("/api/ledger/statement")
+def ledger_statement(request: Request, party_type: str, party: str,
+                     date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+    """A statement of account for one party, oldest first, with the balance
+    after every line - the document that is sent to a supplier to agree what
+    is owed, and the one a client is sent before a payment is chased."""
+    client = require_erp_read(request, db)
+    key = norm_name(party)
+    rows = [r for r in _ledger_rows(db, client.id)
+            if r["party_type"] == party_type and norm_name(r["party"]) == key]
+    rows.sort(key=lambda r: (r["date"] or "", 0 if r["billed"] else 1, r["number"] or ""))
+    opening, balance, out = 0.0, 0.0, []
+    for r in rows:
+        change = money(r["billed"] - r["moved"])
+        if date_from and (r["date"] or "") < date_from:
+            opening = money(opening + change)
+            balance = opening
+            continue
+        if date_to and (r["date"] or "") > date_to:
+            continue
+        balance = money(balance + change)
+        r = dict(r, balance=balance)
+        out.append(r)
+    master = None
+    if party_type == "supplier":
+        master = next((supplier_dict(s) for s in db.query(models.DBSupplier).filter(
+            models.DBSupplier.client_id == client.id).all() if norm_name(s.name) == key), None)
+    elif party_type == "contractor":
+        con = next((c for c in db.query(models.DBContractor).filter(
+            models.DBContractor.client_id == client.id).all()
+            if norm_name(c.company_name) == key), None)
+        if con:
+            master = {"name": con.company_name, "gstin": con.gst_number or "", "pan": con.pan or "",
+                      "address": con.address or "", "phone": con.phone_number or ""}
+    return {"party": party, "party_type": party_type, "master": master,
+            "our": our_party(db, client.id), "opening": opening,
+            "rows": out, "closing": balance,
+            "billed": money(sum(r["billed"] for r in out)),
+            "moved": money(sum(r["moved"] for r in out)),
+            "closing_words": amount_in_words(abs(balance)),
+            "period": {"from": date_from, "to": date_to}}
+
+
+@app.get("/api/money/book")
+def money_book(request: Request, account_id: int = 0, date_from: str = "", date_to: str = "",
+               db: Session = Depends(get_db)):
+    """The bank book or the cash book: every movement through one account,
+    in date order, with the balance after each."""
+    client = require_erp_read(request, db)
+    account = None
+    if account_id:
+        account = db.query(models.DBBankAccount).filter(
+            models.DBBankAccount.id == account_id,
+            models.DBBankAccount.client_id == client.id).first()
+        if not account:
+            raise HTTPException(404, "Account not found")
+    q = db.query(models.DBMoneyEntry).filter(
+        models.DBMoneyEntry.client_id == client.id, models.DBMoneyEntry.voided.is_(False))
+    q = q.filter(models.DBMoneyEntry.account_id == account.id) if account else q
+    entries = q.order_by(models.DBMoneyEntry.paid_on, models.DBMoneyEntry.id).all()
+    balance = money(account.opening_balance) if account else 0.0
+    rows = []
+    for e in entries:
+        signed = e.amount if e.direction == "IN" else -e.amount
+        if date_from and (e.paid_on or "") < date_from:
+            balance = money(balance + signed)
+            continue
+        if date_to and (e.paid_on or "") > date_to:
+            continue
+        opening_row = balance if not rows else None
+        balance = money(balance + signed)
+        rows.append({"date": e.paid_on, "number": e.number, "party": e.party_name,
+                     "against": e.doc_number or "on account", "mode": e.mode,
+                     "reference": e.reference or "",
+                     "received": money(e.amount) if e.direction == "IN" else 0.0,
+                     "paid": money(e.amount) if e.direction == "OUT" else 0.0,
+                     "balance": balance})
+    first = rows[0] if rows else None
+    opening = money((first["balance"] - first["received"] + first["paid"]) if first else balance)
+    return {"account": account_dict(account) if account else {"name": "All accounts"},
+            "opening": opening, "rows": rows, "closing": balance,
+            "received": money(sum(r["received"] for r in rows)),
+            "paid": money(sum(r["paid"] for r in rows))}
+
+
+@app.get("/api/money/outstanding/{doc_type}/{doc_id}")
+def doc_outstanding(doc_type: str, doc_id: int, request: Request, db: Session = Depends(get_db)):
+    """What is still owed on one bill - for the payment box to open with."""
+    client = require_erp_read(request, db)
+    doc, worth = _doc_for_any(db, client.id, doc_type, doc_id)
+    got = settled_on(db, client.id, doc_type, doc_id)
+    if doc_type in ("ra_bill", "sub_bill") and doc.status == "PAID" and not got:
+        got = worth
+    if doc_type == "supplier_bill":
+        got = max(got, money(doc.amount_paid or 0))
+    return {"number": doc.number, "worth": worth, "settled": got,
+            "outstanding": money(max(0.0, worth - got)),
+            "entries": [money_entry_dict(e) for e in db.query(models.DBMoneyEntry).filter(
+                models.DBMoneyEntry.client_id == client.id,
+                models.DBMoneyEntry.doc_type == doc_type,
+                models.DBMoneyEntry.doc_id == doc_id).order_by(models.DBMoneyEntry.id).all()]}
+
+
+
+
+# ============================================================================
+# EQUIPMENT AND ASSETS
+#
+# What the business owns and what it hires in, where each machine is, what it
+# did and burned each day, and when it is next due - so a service is not found
+# to be overdue by a breakdown on the day of the pour. Every rupee a machine
+# costs - diesel, hire, repairs - lands on the project it was working for.
+# ============================================================================
+
+ASSET_CATEGORIES = ("Earthmoving", "Concrete", "Lifting", "Transport", "Compaction",
+                    "Power", "Pumping", "Shuttering", "Survey", "Tools", "Vehicle", "Other")
+ASSET_STATUSES = ("Available", "Deployed", "Under repair", "Disposed")
+HIRE_BASES = ("Hour", "Day", "Month")
+# The working days a monthly hire is spread across, the way sites cost it.
+DAYS_IN_A_HIRE_MONTH = 26
+
+
+class AssetIn(BaseModel):
+    name: str
+    category: Optional[str] = "Other"
+    ownership: Optional[str] = "Owned"
+    make: Optional[str] = ""
+    model: Optional[str] = ""
+    reg_no: Optional[str] = ""
+    serial_no: Optional[str] = ""
+    purchase_date: Optional[str] = ""
+    purchase_value: Optional[float] = 0
+    hired_from: Optional[str] = ""
+    hire_rate: Optional[float] = 0
+    hire_basis: Optional[str] = "Day"
+    meter_unit: Optional[str] = "Hours"
+    meter_reading: Optional[float] = 0
+    service_every: Optional[float] = 0
+    service_every_days: Optional[int] = 0
+    last_service_on: Optional[str] = ""
+    last_service_meter: Optional[float] = None
+    insurance_until: Optional[str] = ""
+    fitness_until: Optional[str] = ""
+    notes: Optional[str] = ""
+
+
+def _days_until(value):
+    try:
+        return (datetime.strptime(str(value)[:10], "%Y-%m-%d").date() - date.today()).days
+    except (ValueError, TypeError):
+        return None
+
+
+def asset_service_state(a):
+    """Whether a machine is due a service, by the meter or by the calendar -
+    whichever comes first, the way the manufacturer's schedule reads."""
+    due, soon, reasons = False, False, []
+    if a.service_every and a.service_every > 0:
+        run = (a.meter_reading or 0) - (a.last_service_meter or 0)
+        left = money(a.service_every - run)
+        if left <= 0:
+            due = True
+            reasons.append("%g %s past its service" % (abs(left), (a.meter_unit or "hours").lower()))
+        elif left <= a.service_every * 0.1:
+            soon = True
+            reasons.append("service in %g %s" % (left, (a.meter_unit or "hours").lower()))
+    if a.service_every_days and a.service_every_days > 0 and a.last_service_on:
+        try:
+            last = datetime.strptime(a.last_service_on[:10], "%Y-%m-%d").date()
+            left = a.service_every_days - (date.today() - last).days
+            if left <= 0:
+                due = True
+                reasons.append("%d days past its service" % abs(left))
+            elif left <= max(3, a.service_every_days * 0.1):
+                soon = True
+                reasons.append("service in %d days" % left)
+        except ValueError:
+            pass
+    for label, value in (("insurance", a.insurance_until), ("fitness", a.fitness_until)):
+        d = _days_until(value)
+        if d is not None and d < 0:
+            due = True
+            reasons.append("%s lapsed %d days ago" % (label, abs(d)))
+        elif d is not None and d <= 15:
+            soon = True
+            reasons.append("%s lapses in %d days" % (label, d))
+    return {"due": due, "soon": soon and not due, "reasons": reasons}
+
+
+def asset_dict(db, a, jobs=None, costs=None):
+    job = (jobs or {}).get(a.current_job_id) if jobs is not None else (
+        db.query(models.DBJob).filter(models.DBJob.id == a.current_job_id).first()
+        if a.current_job_id else None)
+    c = (costs or {}).get(a.id, {})
+    return {"id": a.id, "code": a.code or "", "name": a.name or "", "category": a.category or "",
+            "ownership": a.ownership or "Owned", "make": a.make or "", "model": a.model or "",
+            "reg_no": a.reg_no or "", "serial_no": a.serial_no or "",
+            "purchase_date": a.purchase_date or "", "purchase_value": money(a.purchase_value),
+            "hired_from": a.hired_from or "", "hire_rate": money(a.hire_rate),
+            "hire_basis": a.hire_basis or "Day", "meter_unit": a.meter_unit or "Hours",
+            "meter_reading": a.meter_reading or 0, "service_every": a.service_every or 0,
+            "service_every_days": a.service_every_days or 0,
+            "last_service_on": a.last_service_on or "", "last_service_meter": a.last_service_meter or 0,
+            "insurance_until": a.insurance_until or "", "fitness_until": a.fitness_until or "",
+            "current_job_id": a.current_job_id,
+            "current_job": ("%s %s" % (job.number, job.name)).strip() if job else "",
+            "status": a.status or "Available", "notes": a.notes or "",
+            "service": asset_service_state(a),
+            "cost_to_date": money(c.get("total", 0.0)),
+            "hours_to_date": money(c.get("hours", 0.0)),
+            "fuel_to_date": money(c.get("litres", 0.0))}
+
+
+def _apply_asset(a, body):
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "What is the machine?")
+    ownership = body.ownership if body.ownership in ("Owned", "Hired") else "Owned"
+    if ownership == "Hired" and not (body.hire_rate or 0) > 0:
+        raise HTTPException(400, "A hired machine needs its hire rate - it is what it costs the site.")
+    a.name = name
+    a.category = body.category if body.category in ASSET_CATEGORIES else "Other"
+    a.ownership = ownership
+    a.make, a.model = (body.make or "").strip(), (body.model or "").strip()
+    a.reg_no = (body.reg_no or "").strip().upper()
+    a.serial_no = (body.serial_no or "").strip()
+    a.purchase_date = (body.purchase_date or "").strip()
+    a.purchase_value = money(body.purchase_value or 0)
+    a.hired_from = (body.hired_from or "").strip()
+    a.hire_rate = money(body.hire_rate or 0)
+    a.hire_basis = body.hire_basis if body.hire_basis in HIRE_BASES else "Day"
+    a.meter_unit = body.meter_unit if body.meter_unit in ("Hours", "Km") else "Hours"
+    a.service_every = max(0.0, float(body.service_every or 0))
+    a.service_every_days = max(0, int(body.service_every_days or 0))
+    a.insurance_until = (body.insurance_until or "").strip()
+    a.fitness_until = (body.fitness_until or "").strip()
+    a.notes = (body.notes or "").strip()
+
+
+def asset_or_404(db, client_id, asset_id):
+    a = db.query(models.DBAsset).filter(models.DBAsset.id == asset_id,
+                                        models.DBAsset.client_id == client_id).first()
+    if not a:
+        raise HTTPException(404, "Machine not found")
+    return a
+
+
+def asset_costs(db, client_id, job_id=None):
+    """{asset_id: {fuel, hire, service, total, hours, litres}} in two queries."""
+    out = {}
+    q = db.query(models.DBAssetLog).filter(models.DBAssetLog.client_id == client_id)
+    if job_id:
+        q = q.filter(models.DBAssetLog.job_id == job_id)
+    for l in q.all():
+        c = out.setdefault(l.asset_id, {"fuel": 0.0, "hire": 0.0, "service": 0.0,
+                                         "total": 0.0, "hours": 0.0, "litres": 0.0, "idle": 0.0})
+        c["fuel"] += l.fuel_cost or 0
+        c["hire"] += l.hire_cost or 0
+        c["hours"] += l.hours_worked or 0
+        c["idle"] += l.idle_hours or 0
+        c["litres"] += l.fuel_litres or 0
+    q = db.query(models.DBAssetService).filter(models.DBAssetService.client_id == client_id)
+    if job_id:
+        q = q.filter(models.DBAssetService.job_id == job_id)
+    for s in q.all():
+        c = out.setdefault(s.asset_id, {"fuel": 0.0, "hire": 0.0, "service": 0.0,
+                                         "total": 0.0, "hours": 0.0, "litres": 0.0, "idle": 0.0})
+        c["service"] += s.total_cost or 0
+    for c in out.values():
+        c["total"] = money(c["fuel"] + c["hire"] + c["service"])
+    return out
+
+
+def equipment_cost_by_job(db, client_id):
+    """What the machines cost each project - read by the project P&L."""
+    out = {}
+    for l in db.query(models.DBAssetLog).filter(models.DBAssetLog.client_id == client_id).all():
+        if l.job_id:
+            out[l.job_id] = money(out.get(l.job_id, 0.0) + (l.fuel_cost or 0) + (l.hire_cost or 0))
+    for s in db.query(models.DBAssetService).filter(models.DBAssetService.client_id == client_id).all():
+        if s.job_id:
+            out[s.job_id] = money(out.get(s.job_id, 0.0) + (s.total_cost or 0))
+    return out
+
+
+def next_asset_code(db, client_id):
+    n = db.query(models.DBAsset).filter(models.DBAsset.client_id == client_id).count()
+    return "EQP-%04d" % (n + 1)
+
+
+@app.get("/api/assets")
+def list_assets(request: Request, status: str = "", job_id: int = 0, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    q = db.query(models.DBAsset).filter(models.DBAsset.client_id == client.id)
+    if status:
+        q = q.filter(models.DBAsset.status == status)
+    if job_id:
+        q = q.filter(models.DBAsset.current_job_id == job_id)
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client.id).all()}
+    costs = asset_costs(db, client.id)
+    rows = [asset_dict(db, a, jobs, costs) for a in q.order_by(models.DBAsset.code).all()]
+    live = [r for r in rows if r["status"] != "Disposed"]
+    return {"assets": rows, "categories": list(ASSET_CATEGORIES), "hire_bases": list(HIRE_BASES),
+            "summary": {
+                "machines": len(live),
+                "deployed": len([r for r in live if r["status"] == "Deployed"]),
+                "idle_in_yard": len([r for r in live if r["status"] == "Available"]),
+                "under_repair": len([r for r in live if r["status"] == "Under repair"]),
+                "service_due": len([r for r in live if r["service"]["due"]]),
+                "service_soon": len([r for r in live if r["service"]["soon"]]),
+                "hired": len([r for r in live if r["ownership"] == "Hired"]),
+                "cost_to_date": money(sum(r["cost_to_date"] for r in rows))}}
+
+
+@app.post("/api/assets")
+def create_asset(body: AssetIn, request: Request, db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db)
+    a = models.DBAsset(client_id=client.id, code=next_asset_code(db, client.id), status="Available")
+    _apply_asset(a, body)
+    a.meter_reading = max(0.0, float(body.meter_reading or 0))
+    a.last_service_on = (body.last_service_on or "").strip()
+    a.last_service_meter = (float(body.last_service_meter) if body.last_service_meter is not None
+                            else a.meter_reading)
+    db.add(a)
+    db.commit()
+    db.refresh(a)
+    return asset_dict(db, a)
+
+
+@app.put("/api/assets/{asset_id}")
+def update_asset(asset_id: int, body: AssetIn, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    a = asset_or_404(db, client.id, asset_id)
+    _apply_asset(a, body)
+    db.commit()
+    return asset_dict(db, a)
+
+
+@app.get("/api/assets/{asset_id}")
+def get_asset(asset_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    a = asset_or_404(db, client.id, asset_id)
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client.id).all()}
+    label = lambda jid: ("%s %s" % (jobs[jid].number, jobs[jid].name)) if jid in jobs else "Yard"
+    d = asset_dict(db, a, jobs, asset_costs(db, client.id))
+    d["moves"] = [{"moved_on": m.moved_on, "from": label(m.from_job_id) if m.from_job_id else "Yard",
+                   "to": label(m.to_job_id) if m.to_job_id else "Yard", "note": m.note or "",
+                   "by": m.by_name or ""}
+                  for m in db.query(models.DBAssetMove).filter(
+                      models.DBAssetMove.asset_id == a.id).order_by(models.DBAssetMove.id.desc()).all()]
+    d["logs"] = [{"id": l.id, "log_date": l.log_date, "job": label(l.job_id) if l.job_id else "",
+                  "hours_worked": l.hours_worked or 0, "idle_hours": l.idle_hours or 0,
+                  "fuel_litres": l.fuel_litres or 0, "fuel_cost": money(l.fuel_cost),
+                  "hire_cost": money(l.hire_cost), "meter_reading": l.meter_reading,
+                  "operator": l.operator or "", "work_done": l.work_done or ""}
+                 for l in db.query(models.DBAssetLog).filter(
+                     models.DBAssetLog.asset_id == a.id).order_by(
+                         models.DBAssetLog.log_date.desc()).limit(120).all()]
+    d["services"] = [{"id": s.id, "service_on": s.service_on, "kind": s.kind,
+                      "description": s.description or "", "vendor": s.vendor or "",
+                      "total_cost": money(s.total_cost), "downtime_hours": s.downtime_hours or 0,
+                      "meter_at_service": s.meter_at_service,
+                      "job": label(s.job_id) if s.job_id else ""}
+                     for s in db.query(models.DBAssetService).filter(
+                         models.DBAssetService.asset_id == a.id).order_by(
+                             models.DBAssetService.service_on.desc()).all()]
+    # How hard it worked: hours against the hours it stood on a site.
+    worked = sum(l["hours_worked"] for l in d["logs"])
+    idle = sum(l["idle_hours"] for l in d["logs"])
+    d["utilisation_percent"] = round(worked / (worked + idle) * 100, 1) if (worked + idle) else 0.0
+    d["litres_per_hour"] = round(sum(l["fuel_litres"] for l in d["logs"]) / worked, 2) if worked else 0.0
+    return d
+
+
+class AssetMoveIn(BaseModel):
+    to_job_id: Optional[int] = None       # none = back to the yard
+    moved_on: Optional[str] = ""
+    note: Optional[str] = ""
+
+
+@app.post("/api/assets/{asset_id}/move")
+def move_asset(asset_id: int, body: AssetMoveIn, request: Request, db: Session = Depends(get_db)):
+    """To a site, between sites, or back to the yard."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    a = asset_or_404(db, client.id, asset_id)
+    if a.status == "Disposed":
+        raise HTTPException(409, "%s has been disposed of." % a.code)
+    if a.status == "Under repair":
+        raise HTTPException(409, "%s is under repair. Put it back in service first." % a.code)
+    if body.to_job_id:
+        job = job_or_404(db, client.id, body.to_job_id)
+        if a.current_job_id == job.id:
+            raise HTTPException(409, "%s is already on %s." % (a.code, job.name))
+    elif not a.current_job_id:
+        raise HTTPException(409, "%s is already in the yard." % a.code)
+    on = (body.moved_on or datetime.now().strftime("%Y-%m-%d"))[:10]
+    db.add(models.DBAssetMove(client_id=client.id, asset_id=a.id, from_job_id=a.current_job_id,
+                              to_job_id=body.to_job_id, moved_on=on,
+                              note=(body.note or "").strip(), by_name=actor_name))
+    a.current_job_id = body.to_job_id or None
+    a.status = "Deployed" if body.to_job_id else "Available"
+    db.commit()
+    return {"ok": True, "asset": asset_dict(db, a),
+            "message": "%s %s." % (a.code, ("moved to " + asset_dict(db, a)["current_job"])
+                                   if body.to_job_id else "back in the yard")}
+
+
+class AssetLogIn(BaseModel):
+    log_date: Optional[str] = ""
+    hours_worked: Optional[float] = 0
+    idle_hours: Optional[float] = 0
+    fuel_litres: Optional[float] = 0
+    fuel_rate: Optional[float] = 0
+    meter_reading: Optional[float] = None
+    operator: Optional[str] = ""
+    work_done: Optional[str] = ""
+
+
+def hire_cost_for(a, hours_worked):
+    """What a hired machine costs for one logged day on its hire terms."""
+    if (a.ownership or "") != "Hired" or not a.hire_rate:
+        return 0.0
+    if a.hire_basis == "Hour":
+        return money(a.hire_rate * (hours_worked or 0))
+    if a.hire_basis == "Month":
+        return money(a.hire_rate / DAYS_IN_A_HIRE_MONTH)
+    return money(a.hire_rate)
+
+
+@app.post("/api/assets/{asset_id}/logs")
+def log_asset_day(asset_id: int, body: AssetLogIn, request: Request, db: Session = Depends(get_db)):
+    """One machine, one day - on the site it is deployed to."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    a = asset_or_404(db, client.id, asset_id)
+    if a.status != "Deployed" or not a.current_job_id:
+        raise HTTPException(409, "%s is not on a site. Deploy it before logging its day." % a.code)
+    on = (body.log_date or datetime.now().strftime("%Y-%m-%d"))[:10]
+    if db.query(models.DBAssetLog).filter(models.DBAssetLog.asset_id == a.id,
+                                          models.DBAssetLog.log_date == on).first():
+        raise HTTPException(409, "%s already has a log for %s." % (a.code, on))
+    worked, idle = float(body.hours_worked or 0), float(body.idle_hours or 0)
+    if worked < 0 or idle < 0 or worked + idle > 24:
+        raise HTTPException(400, "Hours worked and idle add up to more than a day.")
+    if body.meter_reading is not None:
+        if body.meter_reading < (a.meter_reading or 0):
+            raise HTTPException(400, "The meter reads %g now; %g would run it backwards."
+                                     % (a.meter_reading or 0, body.meter_reading))
+        a.meter_reading = float(body.meter_reading)
+    elif a.meter_unit == "Hours" and worked:
+        a.meter_reading = (a.meter_reading or 0) + worked
+    litres = max(0.0, float(body.fuel_litres or 0))
+    rate = max(0.0, float(body.fuel_rate or 0))
+    log = models.DBAssetLog(
+        client_id=client.id, asset_id=a.id, job_id=a.current_job_id, log_date=on,
+        hours_worked=worked, idle_hours=idle, fuel_litres=litres, fuel_rate=rate,
+        fuel_cost=money(litres * rate), hire_cost=hire_cost_for(a, worked),
+        meter_reading=a.meter_reading, operator=(body.operator or "").strip(),
+        work_done=(body.work_done or "").strip()[:300], recorded_by_name=actor_name)
+    db.add(log)
+    db.commit()
+    state = asset_service_state(a)
+    return {"ok": True, "cost": money(log.fuel_cost + log.hire_cost), "service": state,
+            "message": "%s logged for %s: %g h worked%s." % (
+                a.code, on, worked, (" - " + "; ".join(state["reasons"])) if state["reasons"] else "")}
+
+
+class AssetServiceIn(BaseModel):
+    service_on: Optional[str] = ""
+    kind: Optional[str] = "Preventive"
+    description: Optional[str] = ""
+    vendor: Optional[str] = ""
+    parts_cost: Optional[float] = 0
+    labour_cost: Optional[float] = 0
+    downtime_hours: Optional[float] = 0
+    meter_at_service: Optional[float] = None
+    out_of_service: Optional[bool] = False     # a breakdown that keeps it off work
+
+
+@app.post("/api/assets/{asset_id}/services")
+def service_asset(asset_id: int, body: AssetServiceIn, request: Request, db: Session = Depends(get_db)):
+    """A service resets the clock; a breakdown may take the machine off work
+    until it is put back."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    a = asset_or_404(db, client.id, asset_id)
+    kind = body.kind if body.kind in ("Preventive", "Breakdown", "Repair") else "Repair"
+    on = (body.service_on or datetime.now().strftime("%Y-%m-%d"))[:10]
+    meter = body.meter_at_service if body.meter_at_service is not None else a.meter_reading
+    if meter is not None and meter > (a.meter_reading or 0):
+        a.meter_reading = float(meter)
+    total = money((body.parts_cost or 0) + (body.labour_cost or 0))
+    if total < 0:
+        raise HTTPException(400, "A cost cannot be negative.")
+    db.add(models.DBAssetService(
+        client_id=client.id, asset_id=a.id, job_id=a.current_job_id, service_on=on, kind=kind,
+        description=(body.description or "").strip(), vendor=(body.vendor or "").strip(),
+        parts_cost=money(body.parts_cost or 0), labour_cost=money(body.labour_cost or 0),
+        total_cost=total, downtime_hours=max(0.0, float(body.downtime_hours or 0)),
+        meter_at_service=meter, recorded_by_name=actor_name))
+    if kind == "Preventive":
+        a.last_service_on, a.last_service_meter = on, float(meter or 0)
+    if kind == "Breakdown" and body.out_of_service:
+        a.status = "Under repair"
+    db.commit()
+    return {"ok": True, "asset": asset_dict(db, a),
+            "message": "%s %s recorded%s." % (a.code, kind.lower(),
+                                              ", off work until it is repaired" if a.status == "Under repair" else "")}
+
+
+@app.post("/api/assets/{asset_id}/back-in-service")
+def asset_back(asset_id: int, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    a = asset_or_404(db, client.id, asset_id)
+    if a.status != "Under repair":
+        raise HTTPException(409, "%s is not under repair." % a.code)
+    a.status = "Deployed" if a.current_job_id else "Available"
+    db.commit()
+    return {"ok": True, "asset": asset_dict(db, a), "message": "%s back at work." % a.code}
+
+
+@app.post("/api/assets/{asset_id}/dispose")
+def dispose_asset(asset_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    a = asset_or_404(db, client.id, asset_id)
+    if a.current_job_id:
+        raise HTTPException(409, "%s is still on a site. Bring it back to the yard first." % a.code)
+    reason = ((body or {}).get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(400, "Say why - sold, scrapped, returned to the hirer.")
+    a.status = "Disposed"
+    a.notes = ((a.notes or "") + "\nDisposed %s: %s" % (date.today().isoformat(), reason)).strip()
+    db.commit()
+    return {"ok": True, "message": "%s disposed of." % a.code}
+
+
+@app.get("/api/jobs/{job_id}/equipment")
+def job_equipment(job_id: int, request: Request, db: Session = Depends(get_db)):
+    """The machines on one site and what they have cost it."""
+    client = require_erp_read(request, db)
+    job_or_404(db, client.id, job_id)
+    costs = asset_costs(db, client.id, job_id)
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client.id).all()}
+    here = {a.id: a for a in db.query(models.DBAsset).filter(
+        models.DBAsset.client_id == client.id, models.DBAsset.current_job_id == job_id).all()}
+    for aid in costs:
+        if aid not in here:
+            a = db.query(models.DBAsset).filter(models.DBAsset.id == aid).first()
+            if a:
+                here[aid] = a
+    rows = []
+    for a in here.values():
+        c = costs.get(a.id, {})
+        d = asset_dict(db, a, jobs)
+        d.update({"on_site_now": a.current_job_id == job_id, "fuel": money(c.get("fuel", 0)),
+                  "hire": money(c.get("hire", 0)), "service_cost": money(c.get("service", 0)),
+                  "cost_here": money(c.get("total", 0)), "hours_here": money(c.get("hours", 0)),
+                  "idle_here": money(c.get("idle", 0))})
+        rows.append(d)
+    rows.sort(key=lambda r: -r["cost_here"])
+    return {"assets": rows, "total": money(sum(r["cost_here"] for r in rows))}
+
+
+
+
+# ============================================================================
+# STORES: SITE TO SITE, AND MATERIAL CHARGED TO A GANG
+#
+# Cement left over at one site is sent to the next; that is a transfer, not
+# consumption, and it moves at what the stock cost rather than at a new price.
+# Material handed to a gang whose rate includes it is theirs to pay for: it is
+# recovered from their next bill on its own, up to what that bill can bear,
+# and the project is credited back so the same cement is not counted twice.
+# ============================================================================
+
+TRANSFER_KINDS = ("TRANSFER_OUT", "TRANSFER_IN")
+
+
+class TransferLineIn(BaseModel):
+    item_code: str
+    qty: float
+
+
+class TransferIn(BaseModel):
+    from_store: str
+    to_store: str
+    moved_on: Optional[str] = ""
+    note: Optional[str] = ""
+    lines: List[TransferLineIn]
+
+
+def next_transfer_number(db, client_id):
+    refs = {r for (r,) in db.query(models.DBStockMovement.source_ref).filter(
+        models.DBStockMovement.client_id == client_id,
+        models.DBStockMovement.kind == "TRANSFER_OUT").all()}
+    return "TRF-%04d" % (len(refs) + 1)
+
+
+@app.get("/api/stock/stores")
+def list_stores(request: Request, db: Session = Depends(get_db)):
+    """Every store that has ever held anything, with what it holds now."""
+    client = require_erp_read(request, db)
+    names = sorted({s for (s,) in db.query(models.DBStockMovement.store).filter(
+        models.DBStockMovement.client_id == client.id).distinct().all() if s})
+    out = []
+    for name in names:
+        held = replay_stock_ledger(db, client.id, store=name)
+        live = [a for a in held.values() if abs(a["on_hand"]) > 0.0001]
+        out.append({"store": name, "items": len(live),
+                    "value": money(sum(a["value"] for a in live))})
+    return {"stores": out}
+
+
+@app.post("/api/stock/transfers")
+def transfer_stock(body: TransferIn, request: Request, db: Session = Depends(get_db)):
+    """Material from one store to another, at what it cost.
+
+    Refused when the store it is coming from does not hold it: a transfer on
+    paper of cement that is not in the shed is how two sites end up counting
+    the same bags.
+    """
+    client, actor_id, actor_name = wo_actor(request, db)
+    src, dst = (body.from_store or "").strip(), (body.to_store or "").strip()
+    if not src or not dst:
+        raise HTTPException(400, "Say where it is coming from and where it is going.")
+    if src.lower() == dst.lower():
+        raise HTTPException(400, "It is already in %s." % src)
+    lines = [l for l in body.lines if (l.item_code or "").strip() and (l.qty or 0) > 0]
+    if not lines:
+        raise HTTPException(400, "Nothing to transfer.")
+    held = replay_stock_ledger(db, client.id, store=src,
+                               item_codes=[l.item_code for l in lines])
+    short = []
+    for l in lines:
+        have = money(held.get(l.item_code, {}).get("on_hand", 0))
+        if l.qty > have + 0.0001:
+            short.append("%s: %s in %s, %s asked for" % (l.item_code, have, src, money(l.qty)))
+    if short:
+        raise HTTPException(409, "Not enough to send - " + "; ".join(short[:4]) + ".")
+    number = next_transfer_number(db, client.id)
+    on = (body.moved_on or datetime.now().strftime("%Y-%m-%d"))[:10]
+    value = 0.0
+    for l in lines:
+        rate = item_rate(db, client.id, l.item_code)
+        common = dict(moved_on=on, source_type="transfer", source_ref=number,
+                      remarks=("%s -> %s. %s" % (src, dst, body.note or "")).strip(),
+                      recorded_by=actor_id, recorded_by_name=actor_name)
+        stock_movement(db, client.id, l.item_code, "TRANSFER_OUT", -l.qty, rate, store=src, **common)
+        stock_movement(db, client.id, l.item_code, "TRANSFER_IN", l.qty, rate, store=dst, **common)
+        value += l.qty * rate
+    log_audit(db, client.id, "stock_transferred", "stock", 0, number,
+              "%s -> %s, %d lines, %s" % (src, dst, len(lines), inr(value)), request)
+    db.commit()
+    return {"ok": True, "number": number, "value": money(value),
+            "message": "%s: %d line%s, %s, sent from %s to %s." % (
+                number, len(lines), "" if len(lines) == 1 else "s", inr(value), src, dst)}
+
+
+@app.get("/api/stock/transfers")
+def list_transfers(request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    out = {}
+    for m in db.query(models.DBStockMovement).filter(
+            models.DBStockMovement.client_id == client.id,
+            models.DBStockMovement.kind == "TRANSFER_OUT").order_by(
+                models.DBStockMovement.id.desc()).limit(2000).all():
+        t = out.setdefault(m.source_ref, {"number": m.source_ref, "moved_on": m.moved_on,
+                                          "from_store": m.store, "to_store": "",
+                                          "lines": [], "value": 0.0,
+                                          "by": m.recorded_by_name or ""})
+        t["lines"].append({"item_code": m.item_code, "item_name": m.item_name,
+                           "uom": m.uom, "qty": money(-m.quantity), "rate": unit_rate(m.rate)})
+        t["value"] = money(t["value"] - (m.value or 0))
+        remarks = m.remarks or ""
+        if " -> " in remarks:
+            t["to_store"] = remarks.split(" -> ", 1)[1].split(".", 1)[0]
+    return {"transfers": list(out.values())}
+
+
+# --- Material charged to a gang ------------------------------------------------
+
+def material_recovery_dict(r):
+    return {"id": r.id, "order_id": r.order_id, "issue_number": r.issue_number,
+            "item_code": r.item_code, "item_name": r.item_name, "uom": r.uom,
+            "quantity": money(r.quantity), "rate": unit_rate(r.rate), "amount": money(r.amount),
+            "issued_on": r.issued_on, "sub_bill_id": r.sub_bill_id,
+            "state": "recovered" if r.sub_bill_id else "waiting"}
+
+
+def charge_issue_to_gang(db, client_id, issue, order, markup_percent=0.0):
+    """Every line on a posted issue, as material to be recovered from the gang."""
+    lines = db.query(models.DBStockIssueLine).filter(
+        models.DBStockIssueLine.stock_issue_id == issue.id).all()
+    factor = 1.0 + (markup_percent or 0.0) / 100.0
+    total = 0.0
+    for l in lines:
+        rate = unit_rate((l.rate or 0) * factor)
+        amount = money((l.quantity or 0) * rate)
+        total += amount
+        db.add(models.DBMaterialRecovery(
+            client_id=client_id, order_id=order.id, job_id=order.job_id,
+            stock_issue_id=issue.id, issue_number=issue.number or "",
+            item_code=l.item_code, item_name=l.item_name or "", uom=l.uom or "",
+            quantity=l.quantity or 0, rate=rate, amount=amount, issued_on=issue.issued_on or ""))
+    return money(total)
+
+
+def apply_material_recovery(db, client_id, order, bill):
+    """Take what the gang owes for material off this bill, as far as it can
+    bear - the rest waits for the next one, the way an advance does."""
+    waiting = db.query(models.DBMaterialRecovery).filter(
+        models.DBMaterialRecovery.client_id == client_id,
+        models.DBMaterialRecovery.order_id == order.id,
+        models.DBMaterialRecovery.sub_bill_id.is_(None)).order_by(
+            models.DBMaterialRecovery.id).all()
+    if not waiting:
+        return 0.0
+    withheld = ((bill.this_bill or 0) * ((bill.tds_percent or 0) + (bill.labour_cess_percent or 0))
+                / 100.0) / (1.0 + (bill.gst_percent or 0) / 100.0)
+    room = money((bill.this_bill or 0) - (bill.retention_amount or 0)
+                 - (bill.advance_recovery or 0) - (bill.other_deductions or 0) - withheld - 0.01)
+    taken, notes = 0.0, []
+    for r in waiting:
+        if room <= 0.009:
+            break
+        if r.amount > room + 0.009:
+            # Split: this bill takes what it can bear, the remainder waits.
+            share = room / r.amount
+            db.add(models.DBMaterialRecovery(
+                client_id=r.client_id, order_id=r.order_id, job_id=r.job_id,
+                stock_issue_id=r.stock_issue_id, issue_number=r.issue_number,
+                item_code=r.item_code, item_name=r.item_name, uom=r.uom,
+                quantity=money(r.quantity * (1 - share)), rate=r.rate,
+                amount=money(r.amount - room), issued_on=r.issued_on))
+            r.quantity = money(r.quantity * share)
+            r.amount = money(room)
+        r.sub_bill_id = bill.id
+        taken = money(taken + r.amount)
+        room = money(room - r.amount)
+        notes.append("%s %s %g %s" % (r.issue_number, r.item_name or r.item_code,
+                                     r.quantity, r.uom or ""))
+    if taken:
+        bill.other_deductions = money((bill.other_deductions or 0) + taken)
+        line = "Material issued and recovered: " + "; ".join(notes[:6]) + \
+               (" and %d more" % (len(notes) - 6) if len(notes) > 6 else "")
+        bill.deduction_notes = ((bill.deduction_notes or "") + ("; " if bill.deduction_notes else "") + line)[:500]
+    return taken
+
+
+def release_material_recovery(db, client_id, bill_id):
+    db.query(models.DBMaterialRecovery).filter(
+        models.DBMaterialRecovery.client_id == client_id,
+        models.DBMaterialRecovery.sub_bill_id == bill_id).update(
+            {"sub_bill_id": None}, synchronize_session=False)
+
+
+def material_recovered_by_job(db, client_id, job_id=None):
+    """Recovered on a certified or paid gang bill - credited back to the
+    project, because that material's cost is already in the gang's bill."""
+    q = db.query(models.DBMaterialRecovery.job_id, models.DBMaterialRecovery.amount).join(
+        models.DBSubBill, models.DBSubBill.id == models.DBMaterialRecovery.sub_bill_id).filter(
+        models.DBMaterialRecovery.client_id == client_id,
+        models.DBSubBill.status.in_(("CERTIFIED", "PAID")))
+    if job_id:
+        q = q.filter(models.DBMaterialRecovery.job_id == job_id)
+    out = {}
+    for jid, amount in q.all():
+        if jid:
+            out[jid] = money(out.get(jid, 0.0) + (amount or 0))
+    return out
+
+
+@app.get("/api/material-recoveries")
+def list_material_recoveries(request: Request, order_id: int = 0, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    q = db.query(models.DBMaterialRecovery).filter(
+        models.DBMaterialRecovery.client_id == client.id)
+    if order_id:
+        q = q.filter(models.DBMaterialRecovery.order_id == order_id)
+    rows = [material_recovery_dict(r) for r in q.order_by(models.DBMaterialRecovery.id.desc()).all()]
+    return {"recoveries": rows, "summary": {
+        "waiting": money(sum(r["amount"] for r in rows if r["state"] == "waiting")),
+        "recovered": money(sum(r["amount"] for r in rows if r["state"] == "recovered"))}}
+
+
+
+
+# ============================================================================
+# PURCHASE: ENQUIRY, QUOTES, THE COMPARATIVE STATEMENT, THE AWARD
+#
+# The question put to three or four suppliers, their answers, and the sheet
+# that lays them side by side - lowest per line and lowest landed overall -
+# then the award, which becomes the purchase orders without a figure being
+# typed twice. Choosing anybody but the lowest has to say why, because that
+# is the line an auditor reads first.
+# ============================================================================
+
+class RfqLineIn(BaseModel):
+    item_code: Optional[str] = ""
+    description: str
+    uom: Optional[str] = ""
+    qty: float
+
+
+class RfqIn(BaseModel):
+    title: str
+    job_id: Optional[int] = None
+    needed_by: Optional[str] = ""
+    notes: Optional[str] = ""
+    lines: List[RfqLineIn]
+
+
+class QuoteLineIn(BaseModel):
+    rfq_line_id: int
+    rate: float
+    tax_percent: Optional[float] = 18.0
+    remarks: Optional[str] = ""
+
+
+class QuoteIn(BaseModel):
+    supplier_name: str
+    quote_ref: Optional[str] = ""
+    quote_date: Optional[str] = ""
+    delivery_days: Optional[int] = 0
+    payment_terms: Optional[str] = ""
+    freight: Optional[float] = 0
+    valid_until: Optional[str] = ""
+    notes: Optional[str] = ""
+    lines: List[QuoteLineIn]
+
+
+class AwardIn(BaseModel):
+    mode: Optional[str] = "lowest_per_line"     # lowest_per_line | one_supplier | per_line
+    supplier_name: Optional[str] = ""
+    awards: Optional[List[dict]] = None          # per_line: [{rfq_line_id, supplier_name}]
+    reason: Optional[str] = ""
+    needed_by: Optional[str] = ""
+
+
+def rfq_or_404(db, client_id, rfq_id):
+    r = db.query(models.DBRfq).filter(models.DBRfq.id == rfq_id,
+                                      models.DBRfq.client_id == client_id).first()
+    if not r:
+        raise HTTPException(404, "Enquiry not found")
+    return r
+
+
+def next_rfq_number(db, client_id):
+    n = db.query(models.DBRfq).filter(models.DBRfq.client_id == client_id).count()
+    return "RFQ-%04d" % (n + 1)
+
+
+def _rfq_lines(db, rfq_id):
+    return db.query(models.DBRfqLine).filter(models.DBRfqLine.rfq_id == rfq_id).order_by(
+        models.DBRfqLine.display_order, models.DBRfqLine.id).all()
+
+
+def _rfq_quotes(db, rfq_id):
+    quotes = db.query(models.DBRfqQuote).filter(models.DBRfqQuote.rfq_id == rfq_id).order_by(
+        models.DBRfqQuote.id).all()
+    rates = {}
+    if quotes:
+        for ql in db.query(models.DBRfqQuoteLine).filter(
+                models.DBRfqQuoteLine.quote_id.in_([q.id for q in quotes])).all():
+            rates[(ql.quote_id, ql.rfq_line_id)] = ql
+    return quotes, rates
+
+
+def comparative_statement(db, rfq):
+    """Every line against every supplier, the lowest named, and each
+    supplier's total landed at site - basic, tax and freight together,
+    because a cheaper rate with a lorry charge on top is not cheaper."""
+    lines = _rfq_lines(db, rfq.id)
+    quotes, rates = _rfq_quotes(db, rfq.id)
+    suppliers = []
+    for q in quotes:
+        basic = tax = 0.0
+        quoted = 0
+        for l in lines:
+            ql = rates.get((q.id, l.id))
+            if ql and ql.rate > 0:
+                amt = (l.qty or 0) * ql.rate
+                basic += amt
+                tax += amt * (ql.tax_percent or 0) / 100.0
+                quoted += 1
+        suppliers.append({
+            "quote_id": q.id, "supplier_name": q.supplier_name, "quote_ref": q.quote_ref or "",
+            "quote_date": q.quote_date or "", "delivery_days": q.delivery_days or 0,
+            "payment_terms": q.payment_terms or "", "freight": money(q.freight),
+            "valid_until": q.valid_until or "", "notes": q.notes or "",
+            "lines_quoted": quoted, "complete": quoted == len(lines),
+            "basic": money(basic), "tax": money(tax),
+            "landed": money(basic + tax + (q.freight or 0))})
+    rows = []
+    for l in lines:
+        offers = []
+        for q in quotes:
+            ql = rates.get((q.id, l.id))
+            if ql and ql.rate > 0:
+                offers.append({"supplier_name": q.supplier_name, "rate": unit_rate(ql.rate),
+                               "tax_percent": ql.tax_percent or 0,
+                               "amount": money((l.qty or 0) * ql.rate),
+                               "remarks": ql.remarks or ""})
+        low = min(offers, key=lambda o: o["rate"]) if offers else None
+        high = max(offers, key=lambda o: o["rate"]) if offers else None
+        rows.append({
+            "rfq_line_id": l.id, "item_code": l.item_code or "", "description": l.description,
+            "uom": l.uom or "", "qty": money(l.qty), "offers": offers,
+            "lowest": low["supplier_name"] if low else "", "lowest_rate": low["rate"] if low else 0,
+            "spread_percent": (round((high["rate"] - low["rate"]) / low["rate"] * 100, 1)
+                               if low and low["rate"] else 0.0),
+            "awarded_supplier": l.awarded_supplier or "", "awarded_rate": unit_rate(l.awarded_rate),
+            "po_id": l.po_id})
+    complete = [s for s in suppliers if s["complete"]]
+    best = min(complete, key=lambda s: s["landed"]) if complete else None
+    per_line_total = money(sum(r["lowest_rate"] * r["qty"] for r in rows))
+    for s in suppliers:
+        s["is_l1"] = bool(best and s["quote_id"] == best["quote_id"])
+    ranked = sorted(complete, key=lambda s: s["landed"])
+    for i, s in enumerate(ranked):
+        s["rank"] = "L%d" % (i + 1)
+    return {"rfq": rfq_dict(db, rfq), "lines": rows, "suppliers": suppliers,
+            "l1": best["supplier_name"] if best else "",
+            "l1_landed": best["landed"] if best else 0.0,
+            "lowest_per_line_basic": per_line_total,
+            "saving_vs_l2": money(ranked[1]["landed"] - ranked[0]["landed"]) if len(ranked) > 1 else 0.0}
+
+
+def rfq_dict(db, r):
+    job = db.query(models.DBJob).filter(models.DBJob.id == r.job_id).first() if r.job_id else None
+    return {"id": r.id, "number": r.number, "title": r.title or "", "job_id": r.job_id,
+            "project": ("%s %s" % (job.number, job.name)).strip() if job else "",
+            "work_order_id": r.work_order_id, "needed_by": r.needed_by or "",
+            "status": r.status, "notes": r.notes or "", "award_reason": r.award_reason or "",
+            "created_by_name": r.created_by_name or "", "awarded_at": r.awarded_at or "",
+            "created_at": r.created_at or "",
+            "lines": db.query(models.DBRfqLine).filter(models.DBRfqLine.rfq_id == r.id).count(),
+            "quotes": db.query(models.DBRfqQuote).filter(models.DBRfqQuote.rfq_id == r.id).count()}
+
+
+@app.get("/api/rfqs")
+def list_rfqs(request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    rows = [rfq_dict(db, r) for r in db.query(models.DBRfq).filter(
+        models.DBRfq.client_id == client.id).order_by(models.DBRfq.id.desc()).limit(300).all()]
+    return {"rfqs": rows, "summary": {
+        "open": len([r for r in rows if r["status"] == "OPEN"]),
+        "awarded": len([r for r in rows if r["status"] == "AWARDED"]),
+        "waiting_for_quotes": len([r for r in rows if r["status"] == "OPEN" and r["quotes"] < 3])}}
+
+
+def _make_rfq(db, client, actor_name, title, job_id, needed_by, notes, lines, work_order_id=None):
+    lines = [l for l in lines if (l["description"] or "").strip() and (l["qty"] or 0) > 0]
+    if not lines:
+        raise HTTPException(400, "An enquiry needs at least one line with a quantity.")
+    if job_id:
+        job_or_404(db, client.id, job_id)
+    r = models.DBRfq(client_id=client.id, number=next_rfq_number(db, client.id),
+                     job_id=job_id, work_order_id=work_order_id, title=title.strip(),
+                     needed_by=(needed_by or "").strip(), notes=(notes or "").strip(),
+                     status="OPEN", created_by_name=actor_name)
+    db.add(r)
+    db.flush()
+    for i, l in enumerate(lines[:200]):
+        db.add(models.DBRfqLine(rfq_id=r.id, item_code=(l.get("item_code") or "").strip(),
+                                description=l["description"].strip(),
+                                uom=canonical_unit(l.get("uom")) or (l.get("uom") or ""),
+                                qty=money(l["qty"]), display_order=i))
+    return r
+
+
+@app.post("/api/rfqs")
+def create_rfq(body: RfqIn, request: Request, db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db)
+    if not (body.title or "").strip():
+        raise HTTPException(400, "Say what is being bought - \"Cement for Block A raft\".")
+    r = _make_rfq(db, client, actor_name, body.title, body.job_id, body.needed_by, body.notes,
+                  [l.dict() for l in body.lines])
+    db.commit()
+    return {"ok": True, "rfq": rfq_dict(db, r), "message": "%s opened." % r.number}
+
+
+@app.post("/api/rfqs/from-work-order/{wo_id}")
+def rfq_from_work_order(wo_id: int, request: Request, db: Session = Depends(get_db)):
+    """An enquiry for exactly what the order still needs: what its budget
+    calls for, less what is in the store and already on order."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    wo = work_order_or_404(db, client.id, wo_id)
+    rows = [r for r in material_required(db, client.id, wo) if not r["covered"]]
+    if not rows:
+        raise HTTPException(409, "%s needs nothing more - the store and the orders already "
+                                 "cover its budget." % wo.number)
+    r = _make_rfq(db, client, actor_name, "Material for %s" % wo.number, wo.job_id, "", "",
+                  [{"item_code": x["item_code"], "description": x["item_name"] or x["item_code"],
+                    "uom": x["uom"], "qty": x["to_buy"]} for x in rows], work_order_id=wo.id)
+    db.commit()
+    return {"ok": True, "rfq": rfq_dict(db, r),
+            "message": "%s opened for %d item%s %s still needs."
+                       % (r.number, len(rows), "" if len(rows) == 1 else "s", wo.number)}
+
+
+@app.get("/api/rfqs/{rfq_id}")
+def get_rfq(rfq_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return comparative_statement(db, rfq_or_404(db, client.id, rfq_id))
+
+
+@app.post("/api/rfqs/{rfq_id}/quotes")
+def record_quote(rfq_id: int, body: QuoteIn, request: Request, db: Session = Depends(get_db)):
+    """A supplier's answer. Sent again, it replaces their last one - a
+    revised quote is the same supplier changing their mind, not a new one."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    r = rfq_or_404(db, client.id, rfq_id)
+    if r.status != "OPEN":
+        raise HTTPException(409, "%s is %s; its quotes are closed." % (r.number, r.status.lower()))
+    name = (body.supplier_name or "").strip()
+    if not name:
+        raise HTTPException(400, "Whose quote is this?")
+    valid_ids = {l.id for l in _rfq_lines(db, r.id)}
+    lines = [l for l in body.lines if l.rfq_line_id in valid_ids and (l.rate or 0) > 0]
+    if not lines:
+        raise HTTPException(400, "The quote has no rates on it.")
+    if any(l.rate < 0 for l in body.lines) or (body.freight or 0) < 0:
+        raise HTTPException(400, "A rate or freight cannot be negative.")
+    existing = next((q for q in db.query(models.DBRfqQuote).filter(
+        models.DBRfqQuote.rfq_id == r.id).all() if norm_name(q.supplier_name) == norm_name(name)), None)
+    if existing:
+        db.query(models.DBRfqQuoteLine).filter(
+            models.DBRfqQuoteLine.quote_id == existing.id).delete()
+        q = existing
+    else:
+        q = models.DBRfqQuote(rfq_id=r.id)
+        db.add(q)
+    q.supplier_name = name
+    q.quote_ref = (body.quote_ref or "").strip()
+    q.quote_date = (body.quote_date or datetime.now().strftime("%Y-%m-%d"))[:10]
+    q.delivery_days = max(0, int(body.delivery_days or 0))
+    q.payment_terms = (body.payment_terms or "").strip()
+    q.freight = money(body.freight or 0)
+    q.valid_until = (body.valid_until or "").strip()
+    q.notes = (body.notes or "").strip()
+    db.flush()
+    for l in lines:
+        db.add(models.DBRfqQuoteLine(quote_id=q.id, rfq_line_id=l.rfq_line_id,
+                                     rate=unit_rate(l.rate), tax_percent=l.tax_percent or 0,
+                                     remarks=(l.remarks or "").strip()))
+    db.commit()
+    return {"ok": True, "comparison": comparative_statement(db, r),
+            "message": "%s's quote %s on %s." % (name, "revised" if existing else "recorded", r.number)}
+
+
+@app.post("/api/rfqs/{rfq_id}/award")
+def award_rfq(rfq_id: int, body: AwardIn, request: Request, db: Session = Depends(get_db)):
+    """The choice, and the purchase orders it makes - one per supplier, at
+    the rates they quoted. Anything but the lowest has to say why."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    r = rfq_or_404(db, client.id, rfq_id)
+    if r.status != "OPEN":
+        raise HTTPException(409, "%s is already %s." % (r.number, r.status.lower()))
+    cmp_ = comparative_statement(db, r)
+    if not cmp_["suppliers"]:
+        raise HTTPException(409, "No quotes yet. Record what the suppliers came back with first.")
+    mode = body.mode or "lowest_per_line"
+    choice = {}
+    if mode == "lowest_per_line":
+        for row in cmp_["lines"]:
+            if not row["lowest"]:
+                raise HTTPException(409, "%s has not been quoted by anybody." % row["description"])
+            choice[row["rfq_line_id"]] = row["lowest"]
+    elif mode == "one_supplier":
+        name = (body.supplier_name or "").strip()
+        sup = next((s for s in cmp_["suppliers"] if norm_name(s["supplier_name"]) == norm_name(name)), None)
+        if not sup:
+            raise HTTPException(400, "%s has not quoted on %s." % (name or "Nobody", r.number))
+        if not sup["complete"]:
+            raise HTTPException(409, "%s did not quote every line." % sup["supplier_name"])
+        for row in cmp_["lines"]:
+            choice[row["rfq_line_id"]] = sup["supplier_name"]
+    else:
+        for a in body.awards or []:
+            choice[int(a.get("rfq_line_id"))] = (a.get("supplier_name") or "").strip()
+        missing = [row["description"] for row in cmp_["lines"] if not choice.get(row["rfq_line_id"])]
+        if missing:
+            raise HTTPException(400, "Choose a supplier for: " + ", ".join(missing[:4]))
+
+    # Is anything going to somebody other than the lowest?
+    passed_over = []
+    for row in cmp_["lines"]:
+        pick = choice[row["rfq_line_id"]]
+        offer = next((o for o in row["offers"] if norm_name(o["supplier_name"]) == norm_name(pick)), None)
+        if not offer:
+            raise HTTPException(400, "%s did not quote for %s." % (pick, row["description"]))
+        if offer["rate"] > row["lowest_rate"] + 0.0001:
+            passed_over.append("%s (%s at %s over %s at %s)" % (
+                row["description"], pick, offer["rate"], row["lowest"], row["lowest_rate"]))
+    if mode == "one_supplier" and cmp_["l1"] and norm_name(body.supplier_name) != norm_name(cmp_["l1"]):
+        passed_over.append("the whole order to %s over L1 %s" % (body.supplier_name, cmp_["l1"]))
+    reason = (body.reason or "").strip()
+    if passed_over and not reason:
+        raise HTTPException(400, "Not the lowest: %s. Say why, so the file shows it."
+                                 % "; ".join(passed_over[:3]))
+
+    # One purchase order per supplier, at what they quoted.
+    quotes = {norm_name(s["supplier_name"]): s for s in cmp_["suppliers"]}
+    lines_by_id = {l.id: l for l in _rfq_lines(db, r.id)}
+    by_supplier = {}
+    for row in cmp_["lines"]:
+        pick = choice[row["rfq_line_id"]]
+        offer = next(o for o in row["offers"] if norm_name(o["supplier_name"]) == norm_name(pick))
+        by_supplier.setdefault(offer["supplier_name"], []).append((row, offer))
+    made = []
+    for supplier, picks in by_supplier.items():
+        q = quotes[norm_name(supplier)]
+        amount = sum(o["amount"] for _, o in picks)
+        tax = sum(o["amount"] * (o["tax_percent"] or 0) / 100.0 for _, o in picks)
+        # Freight goes with the order when the supplier gets everything they
+        # quoted for; split awards carry it pro rata to what they got.
+        freight = q["freight"] * (amount / q["basic"]) if q["basic"] else 0.0
+        po = models.DBPurchaseOrder(
+            client_id=client.id, number=allocate_po_number(db, client.id), status="Draft",
+            supplier_name=supplier, job_id=r.job_id,
+            issue_date=datetime.now().strftime("%Y-%m-%d"),
+            needed_by=(body.needed_by or r.needed_by or ""), category="materials",
+            reference="%s / their quote %s" % (r.number, q["quote_ref"] or q["quote_date"]),
+            notes=("Payment: %s. Delivery within %s days." % (q["payment_terms"] or "as agreed",
+                                                             q["delivery_days"] or "the agreed"))
+                  + (" Freight to site %s." % inr(freight) if freight else ""),
+            amount=money(amount + freight), tax_amount=money(tax),
+            total=money(amount + freight + tax))
+        db.add(po)
+        db.flush()
+        for row, offer in picks:
+            db.add(models.DBPurchaseOrderLineItem(
+                order_id=po.id, description=row["description"][:500], item_code=row["item_code"][:60],
+                uom=row["uom"][:20], qty=row["qty"], price=offer["rate"],
+                tax_rate="%g%%" % (offer["tax_percent"] or 0)))
+            l = lines_by_id[row["rfq_line_id"]]
+            l.awarded_supplier, l.awarded_rate, l.po_id = supplier, offer["rate"], po.id
+        if freight:
+            db.add(models.DBPurchaseOrderLineItem(
+                order_id=po.id, description="Freight to site", item_code="", uom="Lot",
+                qty=1, price=money(freight), tax_rate="0%"))
+        made.append({"id": po.id, "number": po.number, "supplier": supplier,
+                     "total": money(amount + freight + tax)})
+    r.status = "AWARDED"
+    r.awarded_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    r.award_reason = reason
+    log_audit(db, client.id, "rfq_awarded", "rfq", r.id, r.number,
+              "; ".join("%s %s" % (m["number"], m["supplier"]) for m in made)
+              + ((" - " + reason) if reason else ""), request)
+    db.commit()
+    return {"ok": True, "orders": made, "comparison": comparative_statement(db, r),
+            "message": "%s awarded: %s." % (r.number, ", ".join(
+                "%s to %s (%s)" % (m["number"], m["supplier"], inr(m["total"])) for m in made))}
+
+
+@app.post("/api/rfqs/{rfq_id}/cancel")
+def cancel_rfq(rfq_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    r = rfq_or_404(db, client.id, rfq_id)
+    if r.status != "OPEN":
+        raise HTTPException(409, "%s is %s." % (r.number, r.status.lower()))
+    r.status = "CANCELLED"
+    r.notes = ((r.notes or "") + "\nCancelled: " + ((body or {}).get("reason") or "")).strip()
+    db.commit()
+    return {"ok": True, "message": "%s cancelled." % r.number}
 
 
 # Serve frontend

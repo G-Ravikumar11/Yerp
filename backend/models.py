@@ -2458,3 +2458,282 @@ class DBStockBalance(Base):
     issued = Column(Float, default=0.0)          # lifetime out
     movements = Column(Integer, default=0)
     updated_at = Column(String, default="")
+
+
+# ============================================================================
+# FINANCE: PARTIES AND MONEY
+#
+# Every rupee that moves, in either direction, against whatever it settles.
+# Bills said "paid" or "not paid" and nothing in between, so a part-payment
+# lived in a notebook and a party's statement of account lived in Tally. This
+# is the ledger that makes both unnecessary.
+# ============================================================================
+
+class DBSupplier(Base):
+    """Somebody we buy material from. Kept apart from subcontractors: what is
+    bought from them is counted off a lorry, not measured in a book."""
+    __tablename__ = "suppliers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    code = Column(String, default="", index=True)
+    name = Column(String, default="", index=True)
+    contact_person = Column(String, default="")
+    phone = Column(String, default="")
+    email = Column(String, default="")
+    gstin = Column(String, default="")
+    pan = Column(String, default="")
+    state_code = Column(String, default="")
+    address = Column(Text, default="")
+    bank_name = Column(String, default="")
+    bank_account = Column(String, default="")
+    bank_ifsc = Column(String, default="")
+    payment_days = Column(Integer, default=30)
+    supplies = Column(String, default="")          # "Cement, steel" - what they are used for
+    is_active = Column(Boolean, default=True, index=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBBankAccount(Base):
+    """A bank account or a cash box - wherever money is kept."""
+    __tablename__ = "bank_accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    name = Column(String, default="")               # "SBI current", "Site cash - Vizag"
+    kind = Column(String, default="Bank")           # Bank | Cash
+    bank_name = Column(String, default="")
+    account_no = Column(String, default="")
+    ifsc = Column(String, default="")
+    opening_balance = Column(Float, default=0.0)
+    opening_date = Column(String, default="")
+    is_active = Column(Boolean, default=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBMoneyEntry(Base):
+    """One movement of money: a receipt from a client or a payment out.
+
+    Never edited and never deleted. A mistake is voided, with a reason, and
+    the bill it settled goes back to owing what it owed - because a ledger
+    that can be rubbed out is not a ledger.
+    """
+    __tablename__ = "money_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    number = Column(String, default="", index=True)     # RCT-0001 / PMT-0001
+    direction = Column(String, default="IN", index=True)  # IN | OUT
+    party_type = Column(String, default="", index=True)   # client | supplier | contractor | other
+    party_name = Column(String, default="", index=True)
+    party_id = Column(Integer, nullable=True, index=True)
+    doc_type = Column(String, default="", index=True)     # ra_bill | sub_bill | supplier_bill | on_account
+    doc_id = Column(Integer, nullable=True, index=True)
+    doc_number = Column(String, default="")
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    account_id = Column(Integer, ForeignKey("bank_accounts.id"), nullable=True, index=True)
+    amount = Column(Float, default=0.0)
+    paid_on = Column(String, default="", index=True)
+    mode = Column(String, default="Bank transfer")        # Bank transfer | Cheque | Cash | UPI | Adjustment
+    reference = Column(String, default="")               # UTR, cheque number
+    note = Column(String, default="")
+    voided = Column(Boolean, default=False, index=True)
+    void_reason = Column(String, default="")
+    recorded_by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+# ============================================================================
+# EQUIPMENT AND ASSETS
+#
+# The excavator, the transit mixer, the tower crane, the site generator. What
+# the business owns and what it hires in, where each one is today, what it did
+# yesterday and what it burned doing it, and when it is next due a service -
+# so a machine is not found to be overdue by breaking down on the pour.
+# ============================================================================
+
+class DBAsset(Base):
+    __tablename__ = "assets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    code = Column(String, default="", index=True)            # EQP-0001
+    name = Column(String, default="")                        # "JCB 3DX backhoe"
+    category = Column(String, default="")                    # Earthmoving | Concrete | Lifting | ...
+    ownership = Column(String, default="Owned")              # Owned | Hired
+    make = Column(String, default="")
+    model = Column(String, default="")
+    reg_no = Column(String, default="")
+    serial_no = Column(String, default="")
+    purchase_date = Column(String, default="")
+    purchase_value = Column(Float, default=0.0)
+    hired_from = Column(String, default="")
+    hire_rate = Column(Float, default=0.0)
+    hire_basis = Column(String, default="Day")               # Hour | Day | Month
+    meter_unit = Column(String, default="Hours")             # Hours | Km
+    meter_reading = Column(Float, default=0.0)
+    service_every = Column(Float, default=0.0)               # meter units between services
+    service_every_days = Column(Integer, default=0)
+    last_service_on = Column(String, default="")
+    last_service_meter = Column(Float, default=0.0)
+    insurance_until = Column(String, default="")
+    fitness_until = Column(String, default="")               # RTO fitness for vehicles
+    current_job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    status = Column(String, default="Available", index=True)  # Available | Deployed | Under repair | Disposed
+    notes = Column(Text, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBAssetMove(Base):
+    """Where a machine went and when: to a site, between sites, back to yard."""
+    __tablename__ = "asset_moves"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    asset_id = Column(Integer, ForeignKey("assets.id"), nullable=False, index=True)
+    from_job_id = Column(Integer, nullable=True)
+    to_job_id = Column(Integer, nullable=True)
+    moved_on = Column(String, default="")
+    note = Column(String, default="")
+    by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBAssetLog(Base):
+    """One machine, one day: hours worked and idle, diesel, the meter, and
+    what it cost the site."""
+    __tablename__ = "asset_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    asset_id = Column(Integer, ForeignKey("assets.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    log_date = Column(String, default="", index=True)
+    hours_worked = Column(Float, default=0.0)
+    idle_hours = Column(Float, default=0.0)
+    fuel_litres = Column(Float, default=0.0)
+    fuel_rate = Column(Float, default=0.0)
+    fuel_cost = Column(Float, default=0.0)
+    hire_cost = Column(Float, default=0.0)
+    meter_reading = Column(Float, nullable=True)
+    operator = Column(String, default="")
+    work_done = Column(String, default="")
+    recorded_by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBAssetService(Base):
+    """A service, a breakdown or a repair, and what it cost."""
+    __tablename__ = "asset_services"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    asset_id = Column(Integer, ForeignKey("assets.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    service_on = Column(String, default="", index=True)
+    kind = Column(String, default="Preventive")              # Preventive | Breakdown | Repair
+    description = Column(Text, default="")
+    vendor = Column(String, default="")
+    parts_cost = Column(Float, default=0.0)
+    labour_cost = Column(Float, default=0.0)
+    total_cost = Column(Float, default=0.0)
+    downtime_hours = Column(Float, default=0.0)
+    meter_at_service = Column(Float, nullable=True)
+    recorded_by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBMaterialRecovery(Base):
+    """Material issued to a gang that is to be taken back out of their bills.
+
+    One row per issue line; split when a bill can bear only part of it, so a
+    row is always either waiting or taken by exactly one bill - and a bill
+    that is cancelled gives its rows back to be recovered on the next.
+    """
+    __tablename__ = "material_recoveries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    order_id = Column(Integer, ForeignKey("subcontract_orders.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    stock_issue_id = Column(Integer, ForeignKey("stock_issues.id"), nullable=True, index=True)
+    issue_number = Column(String, default="")
+    item_code = Column(String, default="")
+    item_name = Column(String, default="")
+    uom = Column(String, default="")
+    quantity = Column(Float, default=0.0)
+    rate = Column(Float, default=0.0)
+    amount = Column(Float, default=0.0)
+    sub_bill_id = Column(Integer, ForeignKey("sub_bills.id"), nullable=True, index=True)
+    issued_on = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+# ============================================================================
+# PURCHASE: ENQUIRIES TO SUPPLIERS AND THE COMPARATIVE STATEMENT
+#
+# Before an order there is a question put to three or four suppliers, their
+# answers, and a sheet that lays them side by side so the cheapest is plain
+# and the choice of anybody else is explained. That sheet is what an auditor
+# asks for, and it was being kept in a spreadsheet.
+# ============================================================================
+
+class DBRfq(Base):
+    __tablename__ = "rfqs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    number = Column(String, default="", index=True)       # RFQ-0001
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True, index=True)
+    title = Column(String, default="")
+    needed_by = Column(String, default="")
+    status = Column(String, default="OPEN", index=True)    # OPEN | AWARDED | CANCELLED
+    notes = Column(Text, default="")
+    award_reason = Column(Text, default="")
+    created_by_name = Column(String, default="")
+    awarded_at = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBRfqLine(Base):
+    __tablename__ = "rfq_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    rfq_id = Column(Integer, ForeignKey("rfqs.id"), nullable=False, index=True)
+    item_code = Column(String, default="")
+    description = Column(String, default="")
+    uom = Column(String, default="")
+    qty = Column(Float, default=0.0)
+    awarded_supplier = Column(String, default="")
+    awarded_rate = Column(Float, default=0.0)
+    po_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=True)
+    display_order = Column(Integer, default=0)
+
+
+class DBRfqQuote(Base):
+    """One supplier's answer to one enquiry."""
+    __tablename__ = "rfq_quotes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    rfq_id = Column(Integer, ForeignKey("rfqs.id"), nullable=False, index=True)
+    supplier_name = Column(String, default="")
+    quote_ref = Column(String, default="")
+    quote_date = Column(String, default="")
+    delivery_days = Column(Integer, default=0)
+    payment_terms = Column(String, default="")
+    freight = Column(Float, default=0.0)                   # lump sum to site
+    valid_until = Column(String, default="")
+    notes = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBRfqQuoteLine(Base):
+    __tablename__ = "rfq_quote_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    quote_id = Column(Integer, ForeignKey("rfq_quotes.id"), nullable=False, index=True)
+    rfq_line_id = Column(Integer, ForeignKey("rfq_lines.id"), nullable=False, index=True)
+    rate = Column(Float, default=0.0)
+    tax_percent = Column(Float, default=18.0)
+    remarks = Column(String, default="")
