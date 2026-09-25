@@ -185,6 +185,7 @@ function showJobModal() {
     document.getElementById('job-start').value = localDate(new Date());
     document.getElementById('job-retention').value = 0;
     fillJobStatePicker('');
+    if (typeof fillCustomerNames === 'function') fillCustomerNames();
     openModal('job-modal');
 }
 window.showJobModal = showJobModal;

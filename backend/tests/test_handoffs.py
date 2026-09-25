@@ -229,3 +229,28 @@ def test_another_tenant_cannot_reach_either_handoff(tenant, second_tenant):
         "/api/erp/work-orders/%d/requisition" % wo["id"]).status_code == 404
     assert second_tenant.post(
         "/api/grn/%d/bill" % grn["id"], json={}).status_code == 404
+
+
+def test_the_bill_carries_the_gst_the_order_was_placed_at(tenant):
+    """Cement ordered at 28%: the supplier invoices the tax, so the bill has
+    to. It was booked at the goods value alone."""
+    code = rm_item(tenant)
+    po = order(tenant, lines=[{"description": "OPC 53", "item_code": code, "uom": "Bags",
+                               "qty": 500, "price": 390, "tax_rate": "28%"}])
+    grn = receipt(tenant, po)
+    set_lines(tenant, grn, [{"received_qty": 480, "rejected_qty": 5}])
+    post(tenant, grn)
+    bill = tenant.post("/api/grn/%d/bill" % grn["id"], json={}).json()["bill"]
+    assert bill["total"] == round(475 * 390 * 1.28, 2)
+    match = [r for r in tenant.get("/api/match/three-way").json()["orders"]
+             if r["purchase_order_id"] == po["id"]][0]
+    assert match["billed_value"] == 475 * 390, "goods against goods, before tax"
+    assert match["verdict"] != "OVER_BILLED"
+
+
+def test_an_order_line_with_no_rate_is_not_labelled_20_percent(tenant):
+    code = rm_item(tenant)
+    po = order(tenant, lines=[{"description": "sand", "item_code": code, "uom": "Nos",
+                               "qty": 10, "price": 100}])
+    assert po["line_items"][0]["tax_rate"] == "0%"
+    assert po["tax_amount"] == 0

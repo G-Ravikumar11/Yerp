@@ -179,3 +179,17 @@ def test_another_tenant_sees_none_of_it(tenant, second_tenant):
     certified_client_bill(tenant)
     assert second_tenant.get("/api/gst/outward").json()["summary"]["bills"] == 0
     assert second_tenant.get("/api/gst/settings").json()["gstin"] == ""
+
+
+def test_a_supplier_bill_carries_the_suppliers_gstin_and_split(tenant):
+    tenant.put("/api/gst/settings", json={"gstin": "36AABCY1234H1ZX"})
+    tenant.post("/api/suppliers", json={"name": "UltraTech Cement Ltd", "gstin": "36AAACU1234H1Z5"})
+    tenant.post("/api/suppliers", json={"name": "Jindal Steel", "gstin": "27AAACJ1234H1Z5"})
+    for vendor, number in (("Ultratech cement ltd.", "UT-1"), ("Jindal Steel", "JS-1")):
+        tenant.post("/api/bills", json={"number": number, "vendor_name": vendor, "amount": 1000,
+                                        "tax_amount": 180, "total": 1180, "status": "Awaiting Payment"})
+    rows = {r["number"]: r for r in tenant.get("/api/gst/inward").json()["supplies"]
+            if r["kind"] == "Supplier bill"}
+    assert rows["UT-1"]["party_gstin"] == "36AAACU1234H1Z5"
+    assert rows["UT-1"]["cgst"] == 90 and rows["UT-1"]["sgst"] == 90 and rows["UT-1"]["igst"] == 0
+    assert rows["JS-1"]["igst"] == 180 and rows["JS-1"]["rate"] == 18

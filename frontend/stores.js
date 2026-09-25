@@ -197,7 +197,7 @@ function renderGrnLines() {
                 ? '<input type="text" class="form-control input-sm" id="grnl-why-' + i +
                   '" value="' + esc(l.rejection_reason) + '" placeholder="If rejected, why">'
                 : esc(l.rejection_reason || '')) + '</td>' +
-            '<td class="text-right">' + formatCurrency(l.amount) + '</td>' +
+            '<td class="text-right" id="grnl-val-' + i + '">' + formatCurrency(l.amount) + '</td>' +
             '</tr>';
     }).join('');
 
@@ -227,6 +227,12 @@ function grnLineChanged(i) {
     var acc = rec - rej;
     cell.textContent = acc;
     cell.style.color = acc < 0 ? 'var(--danger-color)' : '';
+    // The value follows what is accepted, as it will once posted - it sat at
+    // the full order value while the quantities were being corrected.
+    var l = ((GRN.current || {}).lines || [])[i] || {};
+    var rate = l.rate || l.price || (l.accepted_qty ? (l.amount || 0) / l.accepted_qty : 0);
+    var val = document.getElementById('grnl-val-' + i);
+    if (val) val.textContent = formatCurrency(Math.max(0, acc) * rate);
 }
 window.grnLineChanged = grnLineChanged;
 

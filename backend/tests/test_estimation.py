@@ -229,3 +229,16 @@ def test_another_tenant_cannot_see_it(tenant, second_tenant):
     est = analysed(tenant)
     assert second_tenant.get("/api/estimates/%d" % est["id"]).status_code == 404
     assert second_tenant.get("/api/estimates").json()["estimates"] == []
+
+
+def test_a_unit_typed_loosely_is_kept_in_the_standard_spelling(tenant):
+    """"cu.m" on the tender, "cum" everywhere after - one unit, not two."""
+    est = tender(tenant)
+    est = add_item(tenant, est["id"], uom="cu.m", cost_rate=100)
+    assert est["items"][0]["uom"] == "cum"
+    est = add_item(tenant, est["id"], item_no="9", description="Earthing pits", uom="Pit", cost_rate=5)
+    assert est["items"][1]["uom"] == "Pit", "a unit the app does not know is kept as typed"
+    tenant.post("/api/estimates/%d/submit" % est["id"])
+    out = tenant.post("/api/estimates/%d/win" % est["id"]).json()
+    got = tenant.get("/api/erp/work-orders/%d" % out["work_order"]["id"]).json()
+    assert got["lines"][0]["uom"] == "cum"

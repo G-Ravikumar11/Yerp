@@ -117,3 +117,14 @@ def test_editing_a_project_keeps_it_on_its_client(tenant):
     body["description"] = "Two towers"
     after = tenant.put("/api/jobs/%d" % j["id"], json=body).json()
     assert after["contact_id"] == c["id"]
+
+
+def test_a_project_for_a_new_client_puts_them_on_the_customer_list(tenant):
+    """Otherwise there is nowhere to put the GSTIN their bills need."""
+    j = tenant.post("/api/jobs", json={"name": "Tellapur villas", "customer_name": "Aparna Constructions"}).json()
+    customers = tenant.get("/api/customers").json()["customers"]
+    mine = [c for c in customers if c["name"] == "Aparna Constructions"]
+    assert len(mine) == 1 and j["contact_id"] == mine[0]["id"]
+    tenant.post("/api/jobs", json={"name": "Tellapur phase 2", "customer_name": "aparna constructions"})
+    customers = tenant.get("/api/customers").json()["customers"]
+    assert len([c for c in customers if c["name"].lower() == "aparna constructions"]) == 1

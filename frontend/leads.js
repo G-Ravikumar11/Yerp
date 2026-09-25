@@ -200,6 +200,7 @@ function leadEdit(id) {
     var l = id ? LEADS.rows.filter(function (x) { return x.id === id; })[0] || {} : {};
     LEADS.editing = l.id || null;
     document.getElementById('lead-form-title').textContent = l.id ? 'Edit ' + l.number : 'New tender';
+    if (typeof fillCustomerNames === 'function') fillCustomerNames();
     var src = document.getElementById('lead-f-source');
     src.innerHTML = (LEADS.meta.sources || []).map(function (s) {
         return '<option' + (s === l.source ? ' selected' : '') + '>' + esc(s) + '</option>'; }).join('');

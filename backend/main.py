@@ -241,6 +241,25 @@ def money(val) -> float:
     return float(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
+def days_after(on, days):
+    """The date `days` after `on` (a date or a timestamp string), or "" when
+    `on` is not a date. When a bill falls due, from when it was signed."""
+    try:
+        d = datetime.strptime(str(on or "")[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return ""
+    return (d + timedelta(days=int(days or 0))).isoformat()
+
+
+def supplier_payment_days(db, client_id, name):
+    """What the supplier list says this supplier is paid in; 30 days when it
+    is not on the list or says nothing."""
+    for x in db.query(models.DBSupplier).filter(models.DBSupplier.client_id == client_id).all():
+        if norm_name(x.name) == norm_name(name):
+            return x.payment_days if x.payment_days is not None else 30
+    return 30
+
+
 def qty_text(value) -> str:
     """A quantity as it is written in a sentence: 100, 117.6, 0.125 - not the
     float repr, which put "100.0 ordered" in front of the site engineer."""
@@ -2125,7 +2144,11 @@ def create_bill(request: Request, body: dict = None, db: Session = Depends(get_d
         vendor_name=body.get("vendor_name", ""),
         vendor_email=body.get("vendor_email", ""),
         issue_date=body.get("issue_date", ""),
-        due_date=body.get("due_date", ""),
+        # No due date typed: the supplier's own terms, rather than filing the
+        # bill as the oldest debt on the books from the day it arrives.
+        due_date=body.get("due_date") or days_after(
+            body.get("issue_date") or datetime.now().strftime("%Y-%m-%d"),
+            supplier_payment_days(db, client.id, body.get("vendor_name") or "")),
         amount=body.get("amount", 0.0),
         tax_amount=body.get("tax_amount", 0.0),
         total=body.get("total", 0.0),
@@ -2146,7 +2169,7 @@ def create_bill(request: Request, body: dict = None, db: Session = Depends(get_d
                                           li.get("po_line_id")),
             qty=float(li.get("qty") or 1),
             price=float(li.get("price") or 0),
-            tax_rate=li.get("tax_rate") or "20%"))
+            tax_rate=li.get("tax_rate") or "0%"))
     db.commit()
     db.refresh(bill)
     log_audit(db, client.id, "bill_created", "bill", bill.id, bill.number, f"Vendor: {bill.vendor_name}, Total: {bill.total}", request)
@@ -2201,6 +2224,14 @@ def delete_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
     bill = db.query(models.DBBill).filter(models.DBBill.id == bill_id, models.DBBill.client_id == client.id).first()
     if not bill:
         raise HTTPException(status_code=404, detail="Bill not found")
+    # Money paid against it stays in the ledger and the bank book; deleting
+    # the bill left those payments pointing at nothing, and voiding one then
+    # failed because its bill could not be found.
+    paid = money(settled_on(db, client.id, "supplier_bill", bill.id))
+    if paid > 0:
+        raise HTTPException(409, "%s has %s paid against it. Void those payments under "
+                                 "Payments & Ledgers first, or keep the bill."
+                                 % (bill.number or "This bill", inr(paid)))
     db.query(models.DBBillLineItem).filter(models.DBBillLineItem.bill_id == bill.id).delete()
     log_audit(db, client.id, "bill_deleted", "bill", bill.id, bill.number, "", request)
     db.delete(bill)
@@ -2577,11 +2608,7 @@ def create_job(body: JobIn, request: Request, db: Session = Depends(get_db)):
         # without this a project raised there belongs to a customer the
         # customer record never hears about - and the same business ends up
         # on both sides of the system with nothing joining them.
-        known = db.query(models.DBContact).filter(
-            models.DBContact.client_id == client.id,
-            sqlfunc.lower(models.DBContact.name) == customer_name.lower()).first()
-        if known:
-            contact_id = known.id
+        contact_id = customer_for_name(db, client.id, customer_name).id
 
     job = models.DBJob(
         client_id=client.id,
@@ -2634,10 +2661,8 @@ def update_job(job_id: int, body: JobIn, request: Request, db: Session = Depends
         job.contact_id = picked.id
         job.customer_name = job.customer_name or picked.name
     else:
-        known = db.query(models.DBContact).filter(
-            models.DBContact.client_id == client.id,
-            sqlfunc.lower(models.DBContact.name) == job.customer_name.lower()).first() if job.customer_name else None
-        job.contact_id = known.id if known else None
+        job.contact_id = (customer_for_name(db, client.id, job.customer_name).id
+                          if job.customer_name else None)
     job.site_address = (body.site_address or "").strip()
     job.description = (body.description or "").strip()
     job.status = validate_job_status(body.status)
@@ -2912,6 +2937,14 @@ def canonical_unit(value, default="Nos"):
         if key == re.sub(r"[^a-z0-9]", "", unit.lower()):
             return unit
     return ""
+
+def standard_unit(value):
+    """The unit in the app's own spelling when it is one it knows ("cu.m" is
+    cum), else as typed - a lump sum or a unit peculiar to one tender is kept
+    rather than turned into something it is not."""
+    raw = (value or "").strip()
+    return canonical_unit(raw, default="") or raw
+
 
 ITEM_COLUMNS = ["item_code", "item_name", "segment", "description", "category",
                 "sub_category", "hsn_code", "item_tax_type", "item_type",
@@ -6058,6 +6091,26 @@ def customer_to_dict(db, contact, with_counts=False):
     return row
 
 
+def customer_for_name(db, client_id, name):
+    """The customer of that name, put on the customer list if it is not there.
+
+    A project raised against a client typed by name left the customer list
+    empty: nowhere to put the client's GSTIN and address, which every bill
+    and e-invoice for that project needs. Matched without regard to case, so
+    one business stays one customer."""
+    name = (name or "").strip()
+    known = db.query(models.DBContact).filter(
+        models.DBContact.client_id == client_id,
+        sqlfunc.lower(models.DBContact.name) == name.lower()).first()
+    if known:
+        return known
+    contact = models.DBContact(client_id=client_id, code=next_customer_code(db, client_id),
+                               name=name, is_active=True)
+    db.add(contact)
+    db.flush()
+    return contact
+
+
 def backfill_customer_codes(db, client_id) -> bool:
     """Give a code to customers who predate there being one.
 
@@ -6423,7 +6476,7 @@ def record_invoice_payment(number: str, body: PaymentCreate, request: Request, d
     if amount > outstanding + 0.005:
         raise HTTPException(
             status_code=400,
-            detail=f"Payment of {amount:.2f} exceeds the outstanding balance of {outstanding:.2f}",
+            detail="Payment of %s exceeds the %s still owed." % (inr(amount), inr(outstanding)),
         )
     payment = models.DBPayment(
         client_id=client.id, invoice_id=inv.id, amount=amount,
@@ -9177,7 +9230,7 @@ class EmployeeCreate(BaseModel):
     site_ids: Optional[List[int]] = None
     first_name: str
     last_name: str
-    email: str
+    email: Optional[str] = ""
     phone: Optional[str] = ""
     address: Optional[str] = ""
     department_id: Optional[int] = None
@@ -9605,10 +9658,15 @@ def suggest_org_email(db, client_id, first_name, last_name) -> str:
     return candidate
 
 
-def clean_employee_email(db, client_id, email, exclude_id=None):
+def clean_employee_email(db, client_id, email, exclude_id=None, required=True):
     email = (email or "").strip().lower()
     if not email:
-        raise HTTPException(status_code=400, detail="An email address is required")
+        # A mason, an operator or a storekeeper is on the payroll without
+        # ever signing in, and often has no email at all. Only somebody being
+        # given a login needs one - the login is by email.
+        if not required:
+            return ""
+        raise HTTPException(status_code=400, detail="An email address is required to sign in")
     if not validate_email_address(email):
         raise HTTPException(status_code=400, detail=f"'{email}' is not a valid email address")
     domain = org_domain_for(db, client_id)
@@ -9822,7 +9880,7 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     client = get_client_user(request, db)
     first_name = clean_person_name(body.first_name, "First name")
     last_name = clean_person_name(body.last_name, "Last name")
-    email = clean_employee_email(db, client.id, body.email)
+    email = clean_employee_email(db, client.id, body.email, required=bool(body.password))
     validate_employee_money(body.model_dump())
     employee_code = assert_employee_code_free(db, client.id, body.employee_id)
 
@@ -10045,7 +10103,8 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
     if "last_name" in body:
         body["last_name"] = clean_person_name(body["last_name"], "Last name")
     if "email" in body:
-        body["email"] = clean_employee_email(db, client.id, body["email"], exclude_id=emp.id)
+        body["email"] = clean_employee_email(db, client.id, body["email"], exclude_id=emp.id,
+                                             required=bool(emp.password_hash or body.get("password")))
     validate_employee_money(body)
     # Hierarchy fields go through the same checks as on create; a blind
     # setattr let callers set an unknown level or build a reporting loop.
@@ -12250,7 +12309,7 @@ def employee_create_bill(request: Request, body: dict = None,
                                           li.get("po_line_id")),
             qty=float(li.get("qty") or 1),
             price=float(li.get("price") or 0),
-            tax_rate=li.get("tax_rate") or "20%",
+            tax_rate=li.get("tax_rate") or "0%",
         ))
 
     log_audit(db, emp.client_id, "bill_created", "bill", bill.id, bill.number,
@@ -12506,7 +12565,7 @@ def create_purchase_order(request: Request, body: dict = None,
             item_code=(li.get("item_code") or "")[:60],
             uom=(li.get("uom") or "")[:20],
             qty=float(li.get("qty") or 1), price=float(li.get("price") or 0),
-            tax_rate=li.get("tax_rate") or "20%"))
+            tax_rate=li.get("tax_rate") or "0%"))
     log_audit(db, client.id, "purchase_order_created", "purchase_order", order.id,
               order.number, f"{order.supplier_name}, {order.total}", request)
     db.commit()
@@ -12545,6 +12604,14 @@ def delete_purchase_order(order_id: int, request: Request, db: Session = Depends
         raise HTTPException(
             status_code=409,
             detail="A bill has been matched to this order. Cancel it instead of deleting it.")
+    # Goods received against it are in the store; the receipt and the stock
+    # it put there would be left hanging off an order that no longer exists.
+    if db.query(models.DBGoodsReceipt).filter(
+            models.DBGoodsReceipt.purchase_order_id == order.id,
+            models.DBGoodsReceipt.status != "CANCELLED").count():
+        raise HTTPException(
+            status_code=409,
+            detail="Goods have been received against this order. Cancel it instead of deleting it.")
     db.query(models.DBPurchaseOrderLineItem).filter(
         models.DBPurchaseOrderLineItem.order_id == order.id).delete()
     db.query(models.DBApprovalChain).filter(
@@ -12575,7 +12642,7 @@ def employee_create_purchase_order(request: Request, body: dict = None,
             item_code=(li.get("item_code") or "")[:60],
             uom=(li.get("uom") or "")[:20],
             qty=float(li.get("qty") or 1), price=float(li.get("price") or 0),
-            tax_rate=li.get("tax_rate") or "20%"))
+            tax_rate=li.get("tax_rate") or "0%"))
     log_audit(db, emp.client_id, "purchase_order_created", "purchase_order", order.id,
               order.number, f"Raised by {employee_name(emp)}: {order.supplier_name}",
               request, user_type="employee", user_name=employee_name(emp))
@@ -20135,6 +20202,13 @@ def gst_inward(request: Request, date_from: str = "", date_to: str = "",
             "taxable": taxable, "cgst": money(b.cgst_amount), "sgst": money(b.sgst_amount),
             "igst": money(b.igst_amount), "tax": money(b.gst_amount),
         })
+    # The supplier's GSTIN is on the supplier list; the bill only has a name.
+    # Without it every supplier bill sat in the register with no GSTIN and
+    # its tax in one lump - nothing to reconcile the input credit against.
+    supplier_gstin = {norm_name(x.name): (x.gstin or "").strip().upper()
+                      for x in db.query(models.DBSupplier).filter(
+                          models.DBSupplier.client_id == client.id).all()}
+    home = our_state(db, client.id)
     for b in db.query(models.DBBill).filter(
             models.DBBill.client_id == client.id).all():
         if (b.status or "") in ("Cancelled", "Rejected", "Draft"):
@@ -20144,12 +20218,19 @@ def gst_inward(request: Request, date_from: str = "", date_to: str = "",
             continue
         if date_to and on > date_to:
             continue
+        gstin = supplier_gstin.get(norm_name(b.vendor_name), "")
+        tax = money(b.tax_amount)
+        taxable = money(b.amount)
+        # Same state as us: CGST and SGST. Another state, or a supplier whose
+        # state is not known: IGST, the side a mistake is cheaper on.
+        intra = bool(home and gstin and state_from_gstin(gstin) == home)
+        half = money(tax / 2.0) if intra else 0.0
         rows.append({
             "kind": "Supplier bill", "number": b.number or "", "date": on,
-            "party": b.vendor_name or "", "party_gstin": "",
-            "sac": "", "rate": 0,
-            "taxable": money(b.amount), "cgst": 0.0, "sgst": 0.0, "igst": 0.0,
-            "tax": money(b.tax_amount),
+            "party": b.vendor_name or "", "party_gstin": gstin,
+            "sac": "", "rate": round(tax / taxable * 100.0, 2) if taxable else 0,
+            "taxable": taxable, "cgst": half, "sgst": money(tax - half) if intra else 0.0,
+            "igst": 0.0 if intra else tax, "tax": tax,
         })
     rows.sort(key=lambda r: r["date"], reverse=True)
     return {
@@ -20829,9 +20910,22 @@ def ra_apply(db, client, bill, action, actor_id, actor_name, comments=""):
     return bill
 
 
+def refuse_cancel_with_money(db, client_id, doc_type, bill, verb):
+    """A bill with money against it is not cancelled out from under it: the
+    receipts would stay in the ledger and the bank book against a bill that
+    no longer counts, and the party's balance would be off by exactly them."""
+    got = money(settled_on(db, client_id, doc_type, bill.id))
+    if got > 0:
+        raise HTTPException(409, "%s has %s %s against it. Void those entries under "
+                                 "Payments & Ledgers before cancelling it."
+                                 % (bill.number, inr(got), verb))
+
+
 def _ra_action(bill_id, action, body, request, db, permission="workorders.manage"):
     client, actor_id, actor_name = wo_actor(request, db, permission)
     bill = ra_bill_or_404(db, client.id, bill_id)
+    if action == "CANCEL":
+        refuse_cancel_with_money(db, client.id, "ra_bill", bill, "received")
     ra_apply(db, client, bill, action, actor_id, actor_name, body.comments)
     log_audit(db, client.id, "ra_bill_" + action.lower(), "ra_bill", bill.id,
               bill.number, (body.comments or "").strip(), request)
@@ -21287,7 +21381,7 @@ def post_goods_receipt(grn_id: int, request: Request, db: Session = Depends(get_
         if total > money(l.ordered_qty or 0):
             over.append("%s by %s" % (l.item_code or l.description or "line",
                                       money(total - money(l.ordered_qty))))
-    msg = "%s posted. %s accepted." % (grn.number, money(grn.accepted_value))
+    msg = "%s posted. %s accepted into the store." % (grn.number, inr(grn.accepted_value))
     if over:
         msg += " Over the order: %s." % "; ".join(over[:4])
     return {"ok": True, "over_received": over,
@@ -21387,7 +21481,10 @@ def billed_against_po(db, purchase_order_id):
                 per_line[key] = per_line.get(key, 0.0) + (l.qty or 0.0)
     return {
         "bills": bills,
-        "value": money(sum(b.total or 0 for b in bills)),
+        # Before tax, as the ordered and received figures it is set against
+        # are. Counted with GST, every bill drawn from a receipt looked
+        # over-billed by exactly its tax.
+        "value": money(sum((b.amount if b.amount else b.total) or 0 for b in bills)),
         "paid": money(sum(b.amount_paid or 0 for b in bills)),
         "per_line": per_line,
     }
@@ -23059,6 +23156,34 @@ def diary_export(diary_id: int, request: Request, db: Session = Depends(get_db))
 # contractor discovers a loss at the end instead of in the middle.
 # ============================================================================
 
+def stocked_share_of_bills(db, client_id):
+    """{bill id: the share of the bill that paid for goods booked into the
+    store} - its lines tied to order lines that carry a stock code and were
+    received through a goods receipt. Bills typed in without lines are left
+    whole; there is nothing to say what they bought."""
+    bills = {b.id for b in db.query(models.DBBill.id).filter(
+        models.DBBill.client_id == client_id,
+        models.DBBill.purchase_order_id.isnot(None)).all()}
+    if not bills:
+        return {}
+    stock_lines = {pl.id for pl in db.query(models.DBPurchaseOrderLineItem.id).join(
+        models.DBPurchaseOrder, models.DBPurchaseOrder.id == models.DBPurchaseOrderLineItem.order_id).filter(
+        models.DBPurchaseOrder.client_id == client_id,
+        models.DBPurchaseOrderLineItem.item_code.isnot(None),
+        models.DBPurchaseOrderLineItem.item_code != "").all()}
+    received = {l.po_line_id for l in db.query(models.DBGoodsReceiptLine.po_line_id).join(
+        models.DBGoodsReceipt, models.DBGoodsReceipt.id == models.DBGoodsReceiptLine.goods_receipt_id).filter(
+        models.DBGoodsReceipt.client_id == client_id,
+        models.DBGoodsReceipt.status == "POSTED").all() if l.po_line_id}
+    whole, stock = {}, {}
+    for l in db.query(models.DBBillLineItem).filter(models.DBBillLineItem.bill_id.in_(list(bills))).all():
+        value = (l.qty or 0) * (l.price or 0)
+        whole[l.bill_id] = whole.get(l.bill_id, 0.0) + value
+        if l.po_line_id in stock_lines and l.po_line_id in received:
+            stock[l.bill_id] = stock.get(l.bill_id, 0.0) + value
+    return {b: min(1.0, stock[b] / whole[b]) for b in stock if whole.get(b)}
+
+
 def preload_pnl_for_job(db, client_id, job_id):
     from collections import defaultdict
     def one(rows):
@@ -23098,6 +23223,7 @@ def preload_pnl_for_job(db, client_id, job_id):
             models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all()),
         "equipment": {job_id: equipment_cost_by_job(db, client_id).get(job_id, 0.0)},
         "recovered": material_recovered_by_job(db, client_id, job_id),
+        "stocked": stocked_share_of_bills(db, client_id),
     }
 
 
@@ -23146,6 +23272,7 @@ def preload_pnl(db, client_id):
             models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all()),
         "equipment": equipment_cost_by_job(db, client_id),
         "recovered": material_recovered_by_job(db, client_id),
+        "stocked": stocked_share_of_bills(db, client_id),
     }
 
 
@@ -23172,7 +23299,13 @@ def project_pnl(db, client_id, job, pre=None):
     supplier_bills = [b for b in pre["bills"].get(job.id, [])
                       if (b.approval_status or "none") != "rejected"
                       and (b.status or "") != "Cancelled"]
-    bill_cost = money(sum(b.total or 0 for b in supplier_bills))
+    # Material that went into the store is stock until it is issued, and the
+    # issue is what charges it to the job. Counting the supplier's bill as
+    # well charged it twice: 100 bags bought for a job and 60 issued showed
+    # as 64,000 of cost for 24,000 of cement used. What a bill spent on
+    # stocked items comes off here; its hire, transport and services stay.
+    stocked = pre.get("stocked") or {}
+    bill_cost = money(sum((b.total or 0) * (1.0 - stocked.get(b.id, 0.0)) for b in supplier_bills))
 
     # Material actually drawn from the store for this job. Issues are negative
     # and returns positive, so the negated sum is what the site consumed and a
@@ -23432,14 +23565,17 @@ def receivables(request: Request, db: Session = Depends(get_db)):
         outstanding = money((r.net_payable or 0) - received)
         if outstanding <= 0:
             continue
-        bucket, days = ageing_bucket(r.certified_at, today)
+        # Due a month after the signature, as the dashboard already reads it -
+        # a bill certified this morning was being shown as overdue by noon.
+        due = days_after(r.certified_at, RA_CREDIT_DAYS)
+        bucket, days = ageing_bucket(due or r.certified_at, today)
         buckets[bucket] = money(buckets[bucket] + outstanding)
         job = jobs.get(r.job_id)
         rows.append({
             "id": r.id, "number": r.number or "", "kind": "RA bill",
             "customer": job.customer_name if job else "",
             "project": job.name if job else "", "job_id": r.job_id,
-            "issue_date": (r.certified_at or "")[:10], "due_date": (r.certified_at or "")[:10],
+            "issue_date": (r.certified_at or "")[:10], "due_date": due or (r.certified_at or "")[:10],
             "total": money(r.net_payable), "paid": money(received), "outstanding": outstanding,
             "doc_type": "ra_bill",
             "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
@@ -23511,14 +23647,18 @@ def payables(request: Request, db: Session = Depends(get_db)):
         outstanding = money((r.net_payable or 0) - settled.get(("sub_bill", r.id), 0.0))
         if outstanding <= 0:
             continue
-        bucket, days = ageing_bucket(r.certified_at, today)
+        # The order says how many days after certification the gang is paid.
+        terms = db.query(models.DBSubcontractOrder.payment_days).filter(
+            models.DBSubcontractOrder.id == r.order_id).scalar() or 0
+        due = days_after(r.certified_at, terms)
+        bucket, days = ageing_bucket(due or r.certified_at, today)
         buckets[bucket] = money(buckets[bucket] + outstanding)
         job = jobs.get(r.job_id)
         con = contractors.get(r.contractor_id)
         rows.append({
             "kind": "Subcontractor bill", "doc_type": "sub_bill", "id": r.id, "number": r.number or "",
             "party": con.company_name if con else "", "project": job.name if job else "",
-            "due_date": (r.certified_at or "")[:10], "outstanding": outstanding,
+            "due_date": due or (r.certified_at or "")[:10], "outstanding": outstanding,
             "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
             "status": r.status or "", "approved": True,
         })
@@ -24103,14 +24243,38 @@ def bill_from_receipt(grn_id: int, request: Request, body: dict = None,
                  "to pay for.")
 
     amount = money(sum((l.accepted_qty or 0) * unit_rate(l.rate) for l in lines))
+    # GST at the rate each line was ordered at. The bill used to carry none,
+    # so a supplier's invoice for 2.37 lakh was booked at the 1.85 lakh of
+    # goods alone: the payable, the ledger and the input credit all short.
+    po_lines = db.query(models.DBPurchaseOrderLineItem).filter(
+        models.DBPurchaseOrderLineItem.order_id == grn.purchase_order_id).all()
+    po_rates = {pl.id: (pl.tax_rate or "0%") for pl in po_lines}
+    po = db.query(models.DBPurchaseOrder).filter(
+        models.DBPurchaseOrder.id == grn.purchase_order_id).first()
+    # The lines' own rates, where they account for the tax the order was
+    # actually agreed at. Orders saved before a rate was asked for carry a
+    # label that does not; for those the order's own rate is the one used.
+    by_lines = money(sum((pl.qty or 0) * (pl.price or 0) * tax_percent_of(pl.tax_rate) / 100.0
+                         for pl in po_lines))
+    agreed_tax = money(po.tax_amount or 0) if po else 0.0
+    if po and abs(by_lines - agreed_tax) > 1.0:
+        flat = round(agreed_tax / po.amount * 100.0, 2) if po.amount else 0.0
+        po_rates = {k: "%g%%" % flat for k in po_rates}
+    rate_of = {l.id: po_rates.get(l.po_line_id, "0%") for l in lines}
+    tax = money(sum((l.accepted_qty or 0) * unit_rate(l.rate) * tax_percent_of(rate_of[l.id]) / 100.0
+                    for l in lines))
     body = body or {}
     bill = models.DBBill(
         client_id=client.id, job_id=grn.job_id,
         number=next_sequence_number(db, models.DBBill, client.id, "BILL-"),
         vendor_name=grn.supplier_name or "",
         issue_date=datetime.now().strftime("%Y-%m-%d"),
-        due_date=(body.get("due_date") or ""),
-        amount=amount, tax_amount=0.0, total=amount,
+        # Undated, a bill is filed as the oldest debt there is; the supplier's
+        # own terms say when it is really due.
+        due_date=(body.get("due_date") or days_after(
+            datetime.now().strftime("%Y-%m-%d"),
+            supplier_payment_days(db, client.id, grn.supplier_name))),
+        amount=amount, tax_amount=tax, total=money(amount + tax),
         status="Draft", category="material",
         reference=grn.number or "",
         notes="Raised from %s%s" % (grn.number or "a receipt",
@@ -24124,7 +24288,7 @@ def bill_from_receipt(grn_id: int, request: Request, body: dict = None,
             bill_id=bill.id, po_line_id=l.po_line_id,
             description=l.description or l.item_code or "",
             qty=money(l.accepted_qty), price=unit_rate(l.rate),
-            tax_rate="18%"))
+            tax_rate=rate_of[l.id] or "0%"))
     log_audit(db, client.id, "bill_from_receipt", "bill", bill.id,
               bill.number or "", "%s %s" % (grn.number, inr(amount)), request)
     db.commit()
@@ -24136,9 +24300,10 @@ def bill_from_receipt(grn_id: int, request: Request, body: dict = None,
                                  "reference": bill.reference or "",
                                  "purchase_order_id": bill.purchase_order_id},
             "message": "%s drawn up for %s from what actually arrived - %s "
-                       "across %d line%s." % (bill.number, bill.vendor_name,
-                                              inr(amount), len(lines),
-                                              "" if len(lines) == 1 else "s")}
+                       "across %d line%s%s." % (bill.number, bill.vendor_name,
+                                                inr(amount), len(lines),
+                                                "" if len(lines) == 1 else "s",
+                                                (", %s with GST" % inr(amount + tax)) if tax else "")}
 
 
 
@@ -24637,6 +24802,7 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
     elif move == "CANCEL":
         if not comments:
             raise HTTPException(400, "Say why it is being cancelled.")
+        refuse_cancel_with_money(db, client.id, "sub_bill", bill, "paid")
         bill.remarks = comments
         db.query(models.DBSubMeasurement).filter(
             models.DBSubMeasurement.sub_bill_id == bill.id).update(
@@ -24918,7 +25084,7 @@ def add_estimate_item(est_id: int, body: EstimateItemIn, request: Request,
     item = models.DBEstimateItem(
         estimate_id=est.id, item_no=(body.item_no or str(n + 1)).strip(),
         fg_code=(body.fg_code or "").strip().upper(),
-        description=body.description.strip(), uom=(body.uom or "").strip(),
+        description=body.description.strip(), uom=standard_unit(body.uom),
         quantity=money(body.quantity), cost_rate=unit_rate(body.cost_rate or 0),
         overhead_percent=body.overhead_percent, profit_percent=body.profit_percent,
         display_order=n)
@@ -24944,7 +25110,7 @@ def update_estimate_item(est_id: int, item_id: int, body: EstimateItemIn,
     item.item_no = (body.item_no or item.item_no or "").strip()
     item.fg_code = (body.fg_code or "").strip().upper()
     item.description = (body.description or item.description).strip()
-    item.uom = (body.uom or "").strip()
+    item.uom = standard_unit(body.uom)
     item.quantity = money(body.quantity)
     # A typed cost rate only sticks if there is no analysis - the analysis
     # is the truth when it exists.
@@ -25102,7 +25268,7 @@ def work_order_from_estimate(db, client, est, request):
                 item_code=next_item_code(db, client.id),
                 item_name=(it.description or "Tender item")[:200],
                 description=it.description or "", category="FINISHED GOOD",
-                sub_category="FG", units_of_measure=it.uom or "Nos",
+                sub_category="FG", units_of_measure=standard_unit(it.uom) or "Nos",
                 item_type="Service", last_rate=it.quoted_rate or 0)
             db.add(existing)
             db.flush()
@@ -25112,7 +25278,7 @@ def work_order_from_estimate(db, client, est, request):
         db.add(models.DBWorkOrderLine(
             work_order_id=wo.id, fg_code=existing.item_code,
             item_name=existing.item_name, description=it.description or "",
-            qty=money(it.quantity), uom=it.uom or existing.units_of_measure or "",
+            qty=money(it.quantity), uom=standard_unit(it.uom) or existing.units_of_measure or "",
             rate=unit_rate(it.quoted_rate), amount=amount))
         existing.last_rate = unit_rate(it.quoted_rate)
     wo.total_value = money(total)

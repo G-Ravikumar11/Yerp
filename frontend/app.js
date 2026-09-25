@@ -2979,9 +2979,10 @@ async function submitNewEmployee() {
     var firstName = document.getElementById('emp-first-name').value.trim();
     var lastName = document.getElementById('emp-last-name').value.trim();
     var email = document.getElementById('emp-email').value.trim();
-    if (!firstName || !lastName || !email) { showToast('First name, last name, and email are required', 'error'); return; }
+    if (!firstName || !lastName) { showToast('First and last name are required', 'error'); return; }
     var password = document.getElementById('emp-password').value.trim();
-    if (!password) { showToast('Password is required for employee login', 'error'); return; }
+    // Site staff are paid without ever signing in; a login needs both.
+    if (password && !email) { showToast('A login needs an email to sign in with', 'error'); return; }
     var deptVal = document.getElementById('emp-department').value;
     var mgrVal = document.getElementById('emp-reports-to').value;
     var payload = {
@@ -6330,7 +6331,13 @@ function renderBills(bills) {
             '<td><span class="status-pill status-' + statusClass + '">' + esc(b.status || 'Draft') + '</span></td>' +
             '<td class="text-right">' +
                 '<button class="btn btn-outline btn-sm" onclick="editBill(' + b.id + ')" style="margin-right:4px;">Edit</button>' +
-                (b.status !== 'Paid' ? '<button class="btn btn-outline btn-sm" onclick="markBillPaid(' + b.id + ')" style="color:var(--success-color);border-color:var(--success-color);margin-right:4px;">Pay</button>' : '') +
+                // A draft is accepted before it is paid - the payment box
+                // refuses a draft, and there was no way on the screen to
+                // accept one, so no bill typed in here could ever be paid.
+                ((b.status || 'Draft') === 'Draft'
+                    ? '<button class="btn btn-primary btn-sm" onclick="acceptBill(' + b.id + ')" style="margin-right:4px;" title="Checked and owed - it can then be paid">Accept</button>'
+                    : (b.status !== 'Paid' && b.status !== 'Cancelled' && b.status !== 'Rejected'
+                        ? '<button class="btn btn-outline btn-sm" onclick="markBillPaid(' + b.id + ')" style="color:var(--success-color);border-color:var(--success-color);margin-right:4px;">Pay</button>' : '')) +
                 '<button class="btn btn-outline btn-sm" onclick="deleteBill(' + b.id + ', \'' + esc(b.number) + '\')" style="color:var(--danger-color);border-color:var(--danger-color);">Del</button>' +
             '</td></tr>'
         );
@@ -6397,6 +6404,20 @@ async function fillSupplierNames() {
 }
 window.fillSupplierNames = fillSupplierNames;
 
+// The customer list behind every box that names a client - a project, a
+// tender. "L&T" on one and "L & T Construction" on the other were two
+// customers, and the GSTIN entered on one never reached the other's bills.
+async function fillCustomerNames() {
+    var box = document.getElementById('customer-names');
+    if (!box) return;
+    try {
+        var d = await (await fetch('/api/customers', { credentials: 'include' })).json();
+        box.innerHTML = (d.customers || []).map(function (c) {
+            return '<option value="' + esc(c.name) + '">'; }).join('');
+    } catch (e) { /* a typed name still works */ }
+}
+window.fillCustomerNames = fillCustomerNames;
+
 function closeAddBillModal() {
     document.getElementById('add-bill-modal').style.display = 'none';
 }
@@ -6459,9 +6480,11 @@ async function saveBill() {
         tax_amount: parseFloat(document.getElementById('bill-tax').value) || 0,
         total: parseFloat(document.getElementById('bill-total').value) || 0,
         reference: document.getElementById('bill-reference').value.trim(),
-        notes: document.getElementById('bill-notes').value.trim(),
-        status: 'Draft'
+        notes: document.getElementById('bill-notes').value.trim()
     };
+    // A new bill starts as a draft. Editing one leaves its status alone: it
+    // used to be forced back to Draft, un-accepting a bill already part-paid.
+    if (!editId) payload.status = 'Draft';
     if (!payload.number || !payload.vendor_name) { showToast('Bill number and vendor name required', 'error'); return; }
     try {
         var url = editId ? '/api/bills/' + editId : '/api/bills';
@@ -6500,6 +6523,23 @@ async function editBill(id) {
     } catch(e) { showToast('Failed to load bill', 'error'); }
 }
 window.editBill = editBill;
+
+async function acceptBill(id) {
+    var b = allBills.filter(function (x) { return x.id === id; })[0];
+    if (!b) return;
+    if (!confirm('Accept ' + (b.number || 'this bill') + ' from ' + (b.vendor_name || 'the supplier') +
+                 ' for ' + formatCurrency(b.total || b.amount || 0) + '? It then shows as owed and can be paid.')) return;
+    try {
+        var res = await fetch('/api/bills/' + id, { method: 'PUT', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'Awaiting Payment' }) });
+        var out = await res.json().catch(function () { return {}; });
+        if (!res.ok) { showToast(out.detail || 'Could not accept that bill', 'error'); return; }
+        showToast((b.number || 'Bill') + ' accepted. Pay it when it falls due.', 'success');
+        loadBills();
+    } catch (e) { showToast('Could not accept that bill', 'error'); }
+}
+window.acceptBill = acceptBill;
 
 async function markBillPaid(id) {
     // The one payment box: any part of the bill, through an account, with a

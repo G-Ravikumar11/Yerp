@@ -239,3 +239,50 @@ def test_a_draft_supplier_bill_cannot_be_paid(tenant):
                                           "amount": 100, "total": 100, "status": "Draft"})
     r = money_in(tenant, doc_type="supplier_bill", doc_id=res.json()["id"], amount=50)
     assert r.status_code == 409 and "Accept the bill" in r.json()["detail"]
+
+
+def test_a_bill_with_money_paid_against_it_cannot_be_deleted(tenant):
+    b = tenant.post("/api/bills", json={"number": "SB-DEL-1", "vendor_name": "Sand Co",
+                                        "amount": 1000, "total": 1000, "status": "Awaiting Payment"}).json()
+    paid = tenant.post("/api/money/entries", json={"doc_type": "supplier_bill", "doc_id": b["id"],
+                                                   "amount": 400, "mode": "Cash"})
+    assert paid.status_code == 200, paid.text
+    res = tenant.delete("/api/bills/%d" % b["id"])
+    assert res.status_code == 409 and "paid against it" in res.json()["detail"]
+
+
+def test_a_bill_with_money_received_cannot_be_cancelled(tenant):
+    from test_measurement_and_ra_bills import placed_order, book, measure
+    wo = placed_order(tenant, qty=1000, rate=100)
+    measure(tenant, wo["id"], book(tenant, wo["id"])["lines"][0]["line_id"], 100)
+    b = tenant.post("/api/ra-bills", json={"work_order_id": wo["id"]}).json()["bill"]
+    tenant.post("/api/ra-bills/%d/submit" % b["id"], json={})
+    tenant.post("/api/ra-bills/%d/certify" % b["id"], json={})
+    got = tenant.post("/api/money/entries", json={"doc_type": "ra_bill", "doc_id": b["id"],
+                                                  "amount": 1000, "mode": "Cash"})
+    assert got.status_code == 200, got.text
+    res = tenant.post("/api/ra-bills/%d/cancel" % b["id"], json={"comments": "raised twice"})
+    assert res.status_code == 409 and "received against it" in res.json()["detail"]
+
+
+def test_a_bill_certified_today_is_not_overdue(tenant):
+    from test_measurement_and_ra_bills import placed_order, book, measure
+    wo = placed_order(tenant, qty=1000, rate=100)
+    measure(tenant, wo["id"], book(tenant, wo["id"])["lines"][0]["line_id"], 100)
+    b = tenant.post("/api/ra-bills", json={"work_order_id": wo["id"]}).json()["bill"]
+    tenant.post("/api/ra-bills/%d/submit" % b["id"], json={})
+    tenant.post("/api/ra-bills/%d/certify" % b["id"], json={})
+    rec = tenant.get("/api/money/receivables").json()
+    row = [r for r in rec["invoices"] if r["number"] == b["number"]][0]
+    assert row["bucket"] == "Not due" and row["days_overdue"] == 0
+    assert rec["summary"]["overdue"] == 0
+
+
+def test_an_undated_supplier_bill_falls_due_on_the_suppliers_terms(tenant):
+    from datetime import date, timedelta
+    tenant.post("/api/suppliers", json={"name": "Sand Co", "payment_days": 45})
+    b = tenant.post("/api/bills", json={"number": "SC-1", "vendor_name": "Sand Co",
+                                        "issue_date": date.today().isoformat(),
+                                        "amount": 1000, "total": 1000}).json()
+    got = [x for x in tenant.get("/api/bills").json() if x["id"] == b["id"]][0]
+    assert got["due_date"] == (date.today() + timedelta(days=45)).isoformat()
