@@ -119,7 +119,9 @@ function renderMeasurementBook() {
                 (e.witnessed_by ? '<div style="font-size:0.72rem;color:var(--text-secondary);">' +
                  'witnessed: ' + esc(e.witnessed_by) + '</div>' : '') + '</td>' +
             '<td>' + esc(e.remarks || '') + '</td>' +
-            '<td class="text-right no-print">' + (e.billed
+            '<td class="text-right no-print" style="white-space:nowrap;">' +
+                '<button class="btn btn-sm btn-outline" onclick="openFiles(\'measurement\',' + e.id + ',\'measurement ' + esc(e.measured_on || '') + '\')" title="Photos of what was measured">Photos</button> ' +
+                (e.billed
                 ? statusPill('billed', 'good')
                 : '<button class="btn btn-sm btn-outline" onclick="removeEntry(' + e.id + ')">Remove</button>') +
             '</td></tr>';
@@ -323,7 +325,8 @@ async function loadVariations(woId) {
             '<td>' + statusPill(v.status, VO_TONE[v.status] || 'calm') +
                 (v.rejection_reason ? '<div style="font-size:0.72rem;color:var(--danger-color);">' +
                  esc(v.rejection_reason) + '</div>' : '') + '</td>' +
-            '<td class="text-right">' + act + '</td></tr>';
+            '<td class="text-right" style="white-space:nowrap;">' + act +
+                ' <button class="btn btn-sm btn-outline" onclick="openFiles(\'variation\',' + v.id + ',\'' + esc(v.number) + '\')">Photos</button></td></tr>';
     }).join('') : '<tr><td colspan="6" style="text-align:center;padding:24px;' +
         'color:var(--text-secondary);">No variations on this order.</td></tr>';
 }

@@ -28971,6 +28971,344 @@ def eway_cancel(eid: int, body: EwayCancelIn, request: Request, db: Session = De
     return {"eway_bill": eway_dict(db, e, detail=True)}
 
 
+# ============================================================================
+# PROJECT FILES: SITE PHOTOS AND THE DRAWINGS REGISTER
+#
+# A measurement is argued over with a photograph, a variation with the drawing
+# it came from, a rained-off day with a picture of the flooded trench. They
+# are kept against the record they prove - the diary day, the measurement,
+# the variation - and in the project's drawings register, where every
+# revision is kept and the one to build to is always plain.
+# ============================================================================
+
+FILE_MAX_BYTES = 15 * 1024 * 1024
+FILE_TYPES = ("image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf",
+              "image/vnd.dwg", "application/acad", "application/dxf", "image/vnd.dxf",
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              "application/octet-stream")
+FILE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf", ".dwg", ".dxf", ".xlsx", ".docx")
+DRAWING_STATUSES = ("For information", "For approval", "Approved", "Good for construction", "Superseded")
+DRAWING_DISCIPLINES = ("Architectural", "Structural", "Civil", "Electrical", "Plumbing", "Mechanical",
+                       "STP / process", "Landscape", "Other")
+
+
+def file_dict(f):
+    return {"id": f.id, "job_id": f.job_id, "kind": f.kind, "attached_type": f.attached_type,
+            "attached_id": f.attached_id, "name": f.name or "", "content_type": f.content_type or "",
+            "size": f.size or 0, "caption": f.caption or "", "taken_on": f.taken_on or "",
+            "uploaded_by_name": f.uploaded_by_name or "", "created_at": f.created_at or "",
+            "is_image": (f.content_type or "").startswith("image/"),
+            "url": "/api/files/%d" % f.id,
+            "thumb_url": "/api/files/%d/thumb" % f.id if f.thumb or (f.content_type or "").startswith("image/") else ""}
+
+
+def attachment_target(db, client_id, attached_type, attached_id):
+    """(job_id, locked) for what a file is being kept against - refused if
+    it is not this company's."""
+    t = attached_type or "job"
+    if t == "job":
+        job = job_or_404(db, client_id, attached_id)
+        return job.id, False
+    if t == "diary":
+        d = db.query(models.DBSiteDiary).filter(models.DBSiteDiary.id == attached_id,
+                                                models.DBSiteDiary.client_id == client_id).first()
+        if not d:
+            raise HTTPException(404, "Diary day not found")
+        return d.job_id, (d.status or "") != "DRAFT"
+    if t == "measurement":
+        m = db.query(models.DBMeasurement).filter(models.DBMeasurement.id == attached_id,
+                                                  models.DBMeasurement.client_id == client_id).first()
+        if not m:
+            raise HTTPException(404, "Measurement not found")
+        wo = db.query(models.DBWorkOrder).filter(models.DBWorkOrder.id == m.work_order_id).first()
+        return (wo.job_id if wo else None), False
+    if t == "variation":
+        v = db.query(models.DBVariationOrder).filter(models.DBVariationOrder.id == attached_id,
+                                                     models.DBVariationOrder.client_id == client_id).first()
+        if not v:
+            raise HTTPException(404, "Variation not found")
+        return v.job_id, False
+    if t == "drawing":
+        d = db.query(models.DBDrawing).filter(models.DBDrawing.id == attached_id,
+                                              models.DBDrawing.client_id == client_id).first()
+        if not d:
+            raise HTTPException(404, "Drawing not found")
+        return d.job_id, False
+    raise HTTPException(400, "Files are kept against a project, a diary day, a measurement, "
+                             "a variation or a drawing.")
+
+
+def store_file(db, client_id, upload, data, *, job_id, attached_type, attached_id, kind,
+               caption="", taken_on="", by="", thumb=None):
+    name = (upload.filename or "file").strip()[:200]
+    ctype = (upload.content_type or "application/octet-stream").lower()
+    ext = os.path.splitext(name.lower())[1]
+    if ctype not in FILE_TYPES and ext not in FILE_EXTENSIONS:
+        raise HTTPException(400, "A photo, a PDF, a drawing (DWG/DXF) or an Excel or Word file.")
+    if not data:
+        raise HTTPException(400, "The file is empty.")
+    if len(data) > FILE_MAX_BYTES:
+        raise HTTPException(413, "That file is over 15 MB. Save the drawing as a PDF, or send the "
+                                 "photo from the camera - it is made smaller on the way up.")
+    f = models.DBFile(client_id=client_id, job_id=job_id, kind=kind, attached_type=attached_type,
+                      attached_id=attached_id, name=name, content_type=ctype, size=len(data),
+                      sha256=hashlib.sha256(data).hexdigest(), data=data,
+                      thumb=(thumb if thumb and len(thumb) < 400 * 1024 else None),
+                      caption=(caption or "").strip()[:300], taken_on=(taken_on or "")[:10],
+                      uploaded_by_name=by)
+    db.add(f)
+    db.flush()
+    return f
+
+
+@app.post("/api/files")
+def upload_file(request: Request, file: UploadFile = File(...), thumb: Optional[UploadFile] = File(None),
+                attached_type: str = Form("job"), attached_id: int = Form(0),
+                kind: str = Form(""), caption: str = Form(""), taken_on: str = Form(""),
+                db: Session = Depends(get_db)):
+    """A photo or a document, kept against the record it proves."""
+    client, _, actor_name = wo_actor(request, db)
+    job_id, _locked = attachment_target(db, client.id, attached_type, attached_id)
+    data = file.file.read()
+    small = thumb.file.read() if thumb is not None else None
+    ctype = (file.content_type or "").lower()
+    kind = kind if kind in ("photo", "drawing", "document") else (
+        "photo" if ctype.startswith("image/") else "document")
+    f = store_file(db, client.id, file, data, job_id=job_id, attached_type=attached_type,
+                   attached_id=attached_id, kind=kind, caption=caption,
+                   taken_on=taken_on or date.today().isoformat(), by=actor_name, thumb=small)
+    log_audit(db, client.id, "file_added", attached_type, attached_id, f.name,
+              "%s, %d KB" % (f.kind, f.size // 1024), request)
+    db.commit()
+    return {"file": file_dict(f)}
+
+
+@app.get("/api/files")
+def list_files(request: Request, attached_type: str = "", attached_id: int = 0, job_id: int = 0,
+               kind: str = "", db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    q = db.query(models.DBFile.id, models.DBFile.job_id, models.DBFile.kind, models.DBFile.attached_type,
+                 models.DBFile.attached_id, models.DBFile.name, models.DBFile.content_type,
+                 models.DBFile.size, models.DBFile.caption, models.DBFile.taken_on,
+                 models.DBFile.uploaded_by_name, models.DBFile.created_at,
+                 (models.DBFile.thumb.isnot(None)).label("has_thumb")).filter(
+        models.DBFile.client_id == client.id)
+    if attached_type:
+        q = q.filter(models.DBFile.attached_type == attached_type)
+    if attached_id:
+        q = q.filter(models.DBFile.attached_id == attached_id)
+    if job_id:
+        q = q.filter(models.DBFile.job_id == job_id)
+    if kind:
+        q = q.filter(models.DBFile.kind == kind)
+    out = []
+    for r in q.order_by(models.DBFile.id.desc()).limit(1000).all():
+        is_image = (r.content_type or "").startswith("image/")
+        out.append({"id": r.id, "job_id": r.job_id, "kind": r.kind, "attached_type": r.attached_type,
+                    "attached_id": r.attached_id, "name": r.name or "", "content_type": r.content_type or "",
+                    "size": r.size or 0, "caption": r.caption or "", "taken_on": r.taken_on or "",
+                    "uploaded_by_name": r.uploaded_by_name or "", "created_at": r.created_at or "",
+                    "is_image": is_image, "url": "/api/files/%d" % r.id,
+                    "thumb_url": "/api/files/%d/thumb" % r.id if is_image else ""})
+    # Whether what they are kept against is closed - a signed-off day keeps
+    # its photographs, so the window does not offer to remove them.
+    locked = False
+    if attached_type and attached_id:
+        _, locked = attachment_target(db, client.id, attached_type, attached_id)
+    return {"files": out, "locked": locked}
+
+
+def _file_or_404(db, client_id, fid):
+    f = db.query(models.DBFile).filter(models.DBFile.id == fid, models.DBFile.client_id == client_id).first()
+    if not f:
+        raise HTTPException(404, "File not found")
+    return f
+
+
+@app.get("/api/files/{fid}")
+def get_file(fid: int, request: Request, download: int = 0, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    f = _file_or_404(db, client.id, fid)
+    inline = not download and ((f.content_type or "").startswith("image/") or f.content_type == "application/pdf")
+    disp = '%s; filename="%s"' % ("inline" if inline else "attachment",
+                                  re.sub(r'[^A-Za-z0-9._ -]', "_", f.name or "file"))
+    return StreamingResponse(io.BytesIO(f.data or b""), media_type=f.content_type or "application/octet-stream",
+                             headers={"Content-Disposition": disp, "Cache-Control": "private, max-age=86400"})
+
+
+@app.get("/api/files/{fid}/thumb")
+def get_file_thumb(fid: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    f = _file_or_404(db, client.id, fid)
+    body = f.thumb or (f.data if (f.content_type or "").startswith("image/") else b"")
+    return StreamingResponse(io.BytesIO(body or b""), media_type="image/jpeg" if f.thumb else (f.content_type or "image/jpeg"),
+                             headers={"Cache-Control": "private, max-age=86400"})
+
+
+@app.delete("/api/files/{fid}")
+def delete_file(fid: int, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    f = _file_or_404(db, client.id, fid)
+    if f.attached_id:
+        _, locked = attachment_target(db, client.id, f.attached_type, f.attached_id)
+        if locked:
+            raise HTTPException(409, "That photo is on a signed-off diary day. It is part of the "
+                                     "record now and stays.")
+    if db.query(models.DBDrawingRevision).filter(models.DBDrawingRevision.file_id == f.id).first():
+        raise HTTPException(409, "That file is a drawing revision on the register; it stays as issued.")
+    log_audit(db, client.id, "file_removed", f.attached_type, f.attached_id or 0, f.name, "", request)
+    db.delete(f)
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/jobs/{job_id}/photos")
+def job_photos(job_id: int, request: Request, db: Session = Depends(get_db)):
+    """Every photograph taken on a project, newest first, with what it was of."""
+    client = require_erp_read(request, db)
+    job = job_or_404(db, client.id, job_id)
+    files = list_files(request, job_id=job.id, kind="photo", db=db)["files"]
+    labels = {}
+    for d in db.query(models.DBSiteDiary).filter(models.DBSiteDiary.job_id == job.id).all():
+        labels[("diary", d.id)] = "Diary %s" % (d.diary_date or "")
+    for v in db.query(models.DBVariationOrder).filter(models.DBVariationOrder.job_id == job.id).all():
+        labels[("variation", v.id)] = "Variation %s" % (v.number or "")
+    for f in files:
+        f["of"] = labels.get((f["attached_type"], f["attached_id"]),
+                             "Measurement" if f["attached_type"] == "measurement" else "Project")
+    return {"photos": files, "job": {"id": job.id, "number": job.number, "name": job.name}}
+
+
+# --- The drawings register ---------------------------------------------------
+
+def drawing_dict(db, d, detail=False):
+    revs = db.query(models.DBDrawingRevision).filter(
+        models.DBDrawingRevision.drawing_id == d.id).order_by(models.DBDrawingRevision.id.desc()).all()
+    cur = revs[0] if revs else None
+    out = {"id": d.id, "job_id": d.job_id, "number": d.number or "", "title": d.title or "",
+           "discipline": d.discipline or "", "current_revision": d.current_revision or "",
+           "status": d.status or "", "revisions": len(revs),
+           "current_file_id": cur.file_id if cur else None,
+           "received_on": cur.received_on if cur else "",
+           "good_for_construction": (d.status or "") == "Good for construction"}
+    if detail:
+        names = {f.id: f.name for f in db.query(models.DBFile.id, models.DBFile.name).filter(
+            models.DBFile.id.in_([r.file_id for r in revs if r.file_id] or [0])).all()}
+        out["history"] = [{"id": r.id, "revision": r.revision, "status": r.status,
+                           "received_on": r.received_on or "", "received_from": r.received_from or "",
+                           "remarks": r.remarks or "", "file_id": r.file_id,
+                           "file_name": names.get(r.file_id, ""),
+                           "recorded_by_name": r.recorded_by_name or "",
+                           "current": cur is not None and r.id == cur.id} for r in revs]
+    return out
+
+
+class DrawingIn(BaseModel):
+    number: str
+    title: Optional[str] = ""
+    discipline: Optional[str] = "Structural"
+
+
+@app.get("/api/jobs/{job_id}/drawings")
+def list_drawings(job_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    job = job_or_404(db, client.id, job_id)
+    rows = [drawing_dict(db, d) for d in db.query(models.DBDrawing).filter(
+        models.DBDrawing.job_id == job.id).order_by(models.DBDrawing.discipline, models.DBDrawing.number).all()]
+    return {"drawings": rows, "statuses": list(DRAWING_STATUSES), "disciplines": list(DRAWING_DISCIPLINES),
+            "summary": {"drawings": len(rows),
+                        "gfc": len([r for r in rows if r["good_for_construction"]]),
+                        "awaiting": len([r for r in rows if r["status"] == "For approval"])}}
+
+
+@app.post("/api/jobs/{job_id}/drawings")
+def add_drawing(job_id: int, body: DrawingIn, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    job = job_or_404(db, client.id, job_id)
+    number = (body.number or "").strip().upper()
+    if not number:
+        raise HTTPException(400, "The drawing number, as it is printed on the sheet.")
+    if db.query(models.DBDrawing).filter(models.DBDrawing.job_id == job.id,
+                                         sqlfunc.upper(models.DBDrawing.number) == number).first():
+        raise HTTPException(409, "%s is already on this project's register - add a revision to it." % number)
+    d = models.DBDrawing(client_id=client.id, job_id=job.id, number=number,
+                         title=(body.title or "").strip(),
+                         discipline=body.discipline if body.discipline in DRAWING_DISCIPLINES else "Other")
+    db.add(d)
+    db.commit()
+    return {"drawing": drawing_dict(db, d, detail=True)}
+
+
+@app.get("/api/drawings/{did}")
+def get_drawing(did: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    d = db.query(models.DBDrawing).filter(models.DBDrawing.id == did,
+                                          models.DBDrawing.client_id == client.id).first()
+    if not d:
+        raise HTTPException(404, "Drawing not found")
+    return {"drawing": drawing_dict(db, d, detail=True)}
+
+
+@app.post("/api/drawings/{did}/revisions")
+def add_revision(did: int, request: Request, file: UploadFile = File(...),
+                 revision: str = Form(...), status: str = Form("For information"),
+                 received_on: str = Form(""), received_from: str = Form(""), remarks: str = Form(""),
+                 db: Session = Depends(get_db)):
+    """A new revision of the sheet. The one before it is superseded - kept,
+    but never again the one anybody builds to."""
+    client, _, actor_name = wo_actor(request, db)
+    d = db.query(models.DBDrawing).filter(models.DBDrawing.id == did,
+                                          models.DBDrawing.client_id == client.id).first()
+    if not d:
+        raise HTTPException(404, "Drawing not found")
+    rev = (revision or "").strip().upper()
+    if not rev:
+        raise HTTPException(400, "Which revision is it? R0, R1, A, B...")
+    if db.query(models.DBDrawingRevision).filter(models.DBDrawingRevision.drawing_id == d.id,
+                                                 sqlfunc.upper(models.DBDrawingRevision.revision) == rev).first():
+        raise HTTPException(409, "%s revision %s is already on the register." % (d.number, rev))
+    status = status if status in DRAWING_STATUSES and status != "Superseded" else "For information"
+    data = file.file.read()
+    f = store_file(db, client.id, file, data, job_id=d.job_id, attached_type="drawing",
+                   attached_id=d.id, kind="drawing", caption="%s rev %s" % (d.number, rev),
+                   taken_on=received_on or date.today().isoformat(), by=actor_name)
+    for old in db.query(models.DBDrawingRevision).filter(models.DBDrawingRevision.drawing_id == d.id).all():
+        old.status = "Superseded"
+    db.add(models.DBDrawingRevision(drawing_id=d.id, revision=rev, file_id=f.id, status=status,
+                                    received_on=(received_on or date.today().isoformat())[:10],
+                                    received_from=(received_from or "").strip(),
+                                    remarks=(remarks or "").strip(), recorded_by_name=actor_name))
+    d.current_revision, d.status = rev, status
+    log_audit(db, client.id, "drawing_revised", "drawing", d.id, d.number, rev, request)
+    db.commit()
+    return {"drawing": drawing_dict(db, d, detail=True),
+            "message": "%s now at revision %s - %s." % (d.number, rev, status.lower())}
+
+
+class DrawingStatusIn(BaseModel):
+    status: str
+
+
+@app.post("/api/drawings/{did}/status")
+def drawing_status(did: int, body: DrawingStatusIn, request: Request, db: Session = Depends(get_db)):
+    """Approved, or released good for construction - on the current revision."""
+    client, _, _ = wo_actor(request, db)
+    d = db.query(models.DBDrawing).filter(models.DBDrawing.id == did,
+                                          models.DBDrawing.client_id == client.id).first()
+    if not d:
+        raise HTTPException(404, "Drawing not found")
+    if body.status not in DRAWING_STATUSES or body.status == "Superseded":
+        raise HTTPException(400, "One of: " + ", ".join(s for s in DRAWING_STATUSES if s != "Superseded"))
+    cur = db.query(models.DBDrawingRevision).filter(models.DBDrawingRevision.drawing_id == d.id).order_by(
+        models.DBDrawingRevision.id.desc()).first()
+    if not cur:
+        raise HTTPException(409, "Add the first revision of the sheet before giving it a status.")
+    cur.status = d.status = body.status
+    db.commit()
+    return {"drawing": drawing_dict(db, d, detail=True)}
+
+
 # Serve frontend
 frontend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
 if os.path.exists(frontend_path):

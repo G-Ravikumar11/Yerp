@@ -111,6 +111,7 @@
                         <div class="nav-group-items" id="nav-items-projects">
                             <a href="#" class="nav-item" id="nav-jobs" data-perm="reports.view" onclick="event.preventDefault();showView('jobs-view')">Projects</a>
                             <a href="#" class="nav-item" id="nav-schedule" onclick="event.preventDefault();showView('schedule-view')">Programme &amp; Progress</a>
+                            <a href="#" class="nav-item" id="nav-drawings" onclick="event.preventDefault();showView('drawings-view')">Drawings &amp; Photos</a>
                             <a href="#" class="nav-item" id="nav-diary" onclick="event.preventDefault();showView('diary-view')">Site Diary</a>
                             <a href="#" class="nav-item" id="nav-equipment" onclick="event.preventDefault();showView('equipment-view')">Equipment &amp; Plant</a>
                             <a href="#" class="nav-item" id="nav-pnl" onclick="event.preventDefault();showView('pnl-view')">Project Profit</a>
@@ -3895,6 +3896,70 @@
                     <div id="lead-detail"></div>
                 </div>
 
+                <div id="drawings-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Drawings &amp; Photos</h1><p class="subtitle">Every sheet and every revision, the one to build to marked - and the site's photographs</p></div>
+                        <div class="invoices-actions">
+                            <select id="drw-job" class="form-control" style="width:auto;min-width:220px;" onchange="loadDrawings()"></select>
+                            <button class="btn btn-primary" onclick="drawingAdd()">+ Drawing</button>
+                        </div>
+                    </div>
+                    <div class="stats-grid" id="drw-stats"></div>
+                    <div class="invoices-tabs" id="drw-tabs" style="margin:16px 0;">
+                        <button class="tab active" data-tab="drawings" onclick="drawingsTab('drawings')">Drawings register</button>
+                        <button class="tab" data-tab="photos" onclick="drawingsTab('photos')">Site photos</button>
+                    </div>
+                    <div id="drw-body"></div>
+                </div>
+
+                <div id="files-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:760px;">
+                        <div class="modal-header"><h3 id="files-title">Photos &amp; files</h3>
+                            <button class="modal-close" onclick="closeModal('files-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+                                <input id="files-caption" class="form-control" style="flex:1;min-width:200px;" placeholder="What it shows (optional)">
+                                <label class="btn btn-primary" style="cursor:pointer;margin:0;">Add photos
+                                    <input type="file" accept="image/*" capture="environment" multiple style="display:none;" onchange="filesPicked(this)"></label>
+                                <label class="btn btn-outline" style="cursor:pointer;margin:0;">Add a file
+                                    <input type="file" accept=".pdf,.dwg,.dxf,.xlsx,.docx,image/*" multiple style="display:none;" onchange="filesPicked(this)"></label>
+                            </div>
+                            <div id="files-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;"></div>
+                        </div>
+                        <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('files-modal')">Close</button></div>
+                    </div>
+                </div>
+
+                <div id="drwrev-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:520px;">
+                        <div class="modal-header"><h3 id="drwrev-title">New revision</h3>
+                            <button class="modal-close" onclick="closeModal('drwrev-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-group"><label>The sheet (PDF, DWG, DXF or a photo) *</label><input type="file" id="drwrev-file" class="form-control" accept=".pdf,.dwg,.dxf,image/*"></div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Revision *</label><input id="drwrev-rev" class="form-control" placeholder="R0, R1, A..."></div>
+                                <div class="form-group"><label>Status</label><select id="drwrev-status" class="form-control"></select></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Received on</label><input type="date" id="drwrev-date" class="form-control"></div>
+                                <div class="form-group"><label>From</label><input id="drwrev-from" class="form-control" placeholder="Consultant, client..."></div>
+                            </div>
+                            <div class="form-group"><label>What changed</label><input id="drwrev-remarks" class="form-control"></div>
+                        </div>
+                        <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('drwrev-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="drawingRevisionSave()">Add revision</button></div>
+                    </div>
+                </div>
+
+                <div id="drwhist-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:720px;">
+                        <div class="modal-header"><h3 id="drwhist-title">Revisions</h3>
+                            <button class="modal-close" onclick="closeModal('drwhist-modal')">&times;</button></div>
+                        <div class="modal-body" id="drwhist-body"></div>
+                        <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('drwhist-modal')">Close</button></div>
+                    </div>
+                </div>
+
                 <div id="eway-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div><h1>E-way Bills</h1><p class="subtitle">Goods over &#8377;50,000 on the road - site transfers, plant, returns - each with its e-way bill</p></div>
@@ -5149,7 +5214,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=113"></script>
+    <script src="app.js?v=114"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=65"></script>
@@ -5170,9 +5235,9 @@
     <script src="sheet.js?v=83"></script>
     <script src="documents.js?v=89"></script>
     <script src="mbdims.js?v=81"></script>
-    <script src="measurement.js?v=100"></script>
+    <script src="measurement.js?v=114"></script>
     <script src="stock.js?v=112"></script>
-    <script src="diary.js?v=81"></script>
+    <script src="diary.js?v=114"></script>
     <script src="money.js?v=91"></script>
     <script src="subbills.js?v=91"></script>
     <script src="estimate.js?v=81"></script>
@@ -5182,6 +5247,7 @@
     <script src="equipment.js?v=111"></script>
     <script src="rfq.js?v=96"></script>
     <script src="ewaybill.js?v=113"></script>
+    <script src="files.js?v=115"></script>
     <script src="leads.js?v=110"></script>
     <script src="schedule.js?v=99"></script>
     <script src="stores.js?v=108"></script>

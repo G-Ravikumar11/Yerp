@@ -66,7 +66,8 @@ async function refreshDiary() {
                 '<td>' + statusPill(r.status, r.status === 'SUBMITTED' ? 'good' : 'calm') + '</td>' +
                 '<td class="text-right">' +
                     '<button class="btn btn-sm btn-outline" onclick="openDiary(' + r.id +
-                    ')">Open</button> <a class="btn btn-sm btn-outline" href="/api/diary/' +
+                    ')">Open</button> <button class="btn btn-sm btn-outline" onclick="openFiles(\'diary\',' + r.id +
+                    ',\'diary ' + esc(r.diary_date) + '\')">Photos</button> <a class="btn btn-sm btn-outline" href="/api/diary/' +
                     r.id + '/export.xlsx">DPR</a></td>' +
                 '</tr>';
           }).join('')
