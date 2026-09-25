@@ -28,7 +28,7 @@
         }}
       };
     </script>
-    <link rel="stylesheet" href="styles.css?v=85">
+    <link rel="stylesheet" href="styles.css?v=102">
     <link rel="stylesheet" href="mobile.css?v=65">
 </head>
 <body>
@@ -975,7 +975,7 @@
                             <input type="hidden" id="bill-edit-id">
                             <div class="grid-2 gap-16">
                                 <div class="form-group"><label>Bill Number *</label><input type="text" id="bill-number" class="form-control" placeholder="BILL-0001"></div>
-                                <div class="form-group"><label>Vendor Name *</label><input type="text" id="bill-vendor" class="form-control" placeholder="Supplier name"></div>
+                                <div class="form-group"><label>Vendor Name *</label><input type="text" id="bill-vendor" class="form-control" list="supplier-names" autocomplete="off" placeholder="Supplier name"></div>
                                 <div class="form-group"><label>Vendor Email</label><input type="email" id="bill-vendor-email" class="form-control" placeholder="billing@supplier.com"></div>
                                 <div class="form-group"><label>Category</label><select id="bill-category" class="form-control"><option value="materials">Materials</option><option value="labour">Labour</option><option value="subcontract">Subcontract</option><option value="plant">Plant &amp; equipment</option><option value="other">Other</option><optgroup label="Overheads"><option value="office">Office supplies</option><option value="software">Software</option><option value="utilities">Utilities</option><option value="rent">Rent</option><option value="travel">Travel</option><option value="professional">Professional services</option><option value="general">General</option></optgroup></select></div>
                                 <div class="form-group"><label>Issue Date *</label><input type="date" id="bill-issue-date" class="form-control"></div>
@@ -4802,7 +4802,7 @@
                 <form id="order-form" onsubmit="return false;">
                     <input type="hidden" id="order-id">
                     <div class="form-row">
-                        <div class="form-group"><label>Supplier *</label><input type="text" id="order-supplier" class="form-control" placeholder="Ultratech Cement" required></div>
+                        <div class="form-group"><label>Supplier *</label><input type="text" id="order-supplier" class="form-control" list="supplier-names" autocomplete="off" placeholder="Ultratech Cement" required><datalist id="supplier-names"></datalist></div>
                         <div class="form-group"><label>Project</label>
                             <select id="order-job" class="form-control"><option value="">Not for a particular project</option></select></div>
                     </div>
@@ -4823,8 +4823,13 @@
                             <button type="button" class="btn btn-sm btn-outline" onclick="addOrderLine(true)" title="Hire, transport, a service - anything without a stock code">+ Add a line without a code</button>
                         </div>
                         <div style="font-size:0.9rem;">
-                            <span style="color:var(--text-secondary);">Tax</span>
-                            <input type="number" step="0.01" min="0" id="order-tax" class="form-control input-sm" value="0" style="width:110px;display:inline-block;text-align:right;margin:0 14px 0 6px;" oninput="orderTotals()">
+                            <span style="color:var(--text-secondary);">GST</span>
+                            <select id="order-gst" class="form-control input-sm" style="width:84px;display:inline-block;margin:0 6px;" onchange="orderTotals()">
+                                <option value="0">0%</option><option value="5">5%</option><option value="12">12%</option>
+                                <option value="18" selected>18%</option><option value="28">28%</option>
+                            </select>
+                            <span id="order-tax-shown" style="color:var(--text-secondary);margin-right:14px;">₹0.00</span>
+                            <input type="hidden" id="order-tax" value="0">
                             <span style="color:var(--text-secondary);">Order value</span>
                             <strong id="order-total" style="margin-left:6px;">₹0.00</strong>
                         </div>
@@ -5117,23 +5122,23 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=100"></script>
+    <script src="app.js?v=105"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=65"></script>
     <!-- Jobs, job costing and purchase orders. -->
-    <script src="jobs.js?v=82"></script>
+    <script src="jobs.js?v=107"></script>
     <!-- Item master, work orders and budget allocation. -->
     <script src="erp.js?v=90"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
-    <script src="erp-build.js?v=90"></script>
+    <script src="erp-build.js?v=103"></script>
     <!-- The spreadsheet grid the item master is entered through. -->
     <script src="erp-grid.js?v=65"></script>
     <!-- Preview and correct a sheet that arrived from outside. -->
-    <script src="erp-preview.js?v=65"></script>
+    <script src="erp-preview.js?v=102"></script>
     <script src="contracts.js?v=65"></script>
     <script src="sheet-viewer.js?v=65"></script>
-    <script src="subcontracts.js?v=81"></script>
+    <script src="subcontracts.js?v=104"></script>
     <script src="costs.js?v=65"></script>
     <script src="sheet.js?v=83"></script>
     <script src="documents.js?v=89"></script>
@@ -5146,7 +5151,7 @@
     <script src="estimate.js?v=81"></script>
     <script src="gst.js?v=79"></script>
     <script src="registers.js?v=84"></script>
-    <script src="ledger.js?v=92"></script>
+    <script src="ledger.js?v=104"></script>
     <script src="equipment.js?v=94"></script>
     <script src="rfq.js?v=96"></script>
     <script src="leads.js?v=98"></script>

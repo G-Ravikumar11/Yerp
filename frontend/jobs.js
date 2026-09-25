@@ -296,7 +296,13 @@ async function loadOrders() {
                 ? formatCurrency(o.billed_total) + ' <span style="font-size:0.75rem;color:var(--text-secondary);">(' + o.billed_count + ')</span>'
                 : '—') + '</td>' +
             '<td>' + statusPill(o.status, orderTone(o)) + '</td>' +
-            '<td class="text-right">' + (o.approval_status !== 'pending'
+            '<td class="text-right">' +
+                // The owner's own order is agreed by approving it here. There
+                // was no way to, and nothing is received against a draft -
+                // so an order raised on this screen could go no further.
+                ((o.status === 'Draft' || o.status === 'Rejected') && o.approval_status !== 'pending'
+                    ? '<button class="btn btn-sm btn-primary" onclick="approveOrder(' + o.id + ')">Approve</button> ' : '') +
+                (o.approval_status !== 'pending'
                 ? '<button class="btn btn-sm" onclick="editOrder(' + o.id + ')">Edit</button> ' : '') +
                 // An order is a document that gets sent on, so it can be taken
                 // away whatever state it is in.
@@ -308,6 +314,24 @@ async function loadOrders() {
     }).join('');
 }
 window.loadOrders = loadOrders;
+
+async function approveOrder(id) {
+    var o = _orders.filter(function (x) { return x.id === id; })[0];
+    if (!o) return;
+    if (!confirm('Approve ' + o.number + ' for ' + formatCurrency(o.total) + ' with ' +
+                 o.supplier_name + '? Goods can then be received against it.')) return;
+    var body = Object.assign({}, o, { status: 'Approved' });
+    try {
+        var res = await fetch('/api/purchase-orders/' + id, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            credentials: 'include', body: JSON.stringify(body) });
+        var out = await res.json();
+        if (!res.ok) { showToast(out.detail || 'Could not approve that order', 'error'); return; }
+        showToast(o.number + ' approved. Receive the goods under Store, Goods Receipt.', 'success');
+        loadOrders();
+    } catch (e) { showToast('Could not approve that order', 'error'); }
+}
+window.approveOrder = approveOrder;
 
 var _poLines = [];
 var _rmMaster = [];
@@ -414,12 +438,22 @@ function orderTotals() {
         var cell = document.getElementById('po-amt-' + i);
         if (cell) cell.textContent = formatCurrency(a);
     });
-    var tax = parseFloat((document.getElementById('order-tax') || {}).value) || 0;
+    // GST is a rate, worked out here the way the server works it out from
+    // the lines. The box used to take a rupee figure the server never read:
+    // every line was saved at 18% whatever the screen said.
+    var tax = Math.round(sub * orderGstRate()) / 100;
+    document.getElementById('order-tax').value = tax;
+    var shown = document.getElementById('order-tax-shown');
+    if (shown) shown.textContent = formatCurrency(tax);
     document.getElementById('order-amount').value = sub;
     var t = document.getElementById('order-total');
     if (t) t.textContent = formatCurrency(sub + tax);
 }
 window.orderTotals = orderTotals;
+
+function orderGstRate() {
+    return parseFloat((document.getElementById('order-gst') || {}).value) || 0;
+}
 
 async function showOrderModal() {
     var modal = document.getElementById('order-modal');
@@ -432,7 +466,8 @@ async function showOrderModal() {
         'What is being bought, line by line. Each line can be received against ' +
         'when the lorry arrives, and the bill matched to what actually came.';
     document.getElementById('order-save-btn').textContent = 'Save';
-    await Promise.all([fillJobPicker('order-job'), loadRmMaster()]);
+    await Promise.all([fillJobPicker('order-job'), loadRmMaster(),
+                       typeof fillSupplierNames === 'function' ? fillSupplierNames() : null]);
     _poLines = [];
     renderOrderLines();
     openModal('order-modal');
@@ -460,7 +495,14 @@ async function editOrder(id) {
     document.getElementById('order-modal-title').textContent = 'Edit ' + order.number;
     document.getElementById('order-id').value = order.id;
     document.getElementById('order-supplier').value = order.supplier_name || '';
-    document.getElementById('order-tax').value = order.tax_amount || 0;
+    // The rate the order was saved at: the lines carry it; an order from
+    // before they did is read off its tax and value.
+    var first = (order.line_items || [])[0] || {};
+    var rate = parseFloat(String(first.tax_rate || '').replace(/[^0-9.]/g, ''));
+    if (isNaN(rate)) rate = order.amount ? Math.round((order.tax_amount || 0) / order.amount * 100) : 18;
+    var gst = document.getElementById('order-gst');
+    var known = [0, 5, 12, 18, 28];
+    gst.value = String(known.reduce(function (a, b) { return Math.abs(b - rate) < Math.abs(a - rate) ? b : a; }));
     document.getElementById('order-date').value = order.issue_date || '';
     document.getElementById('order-needed').value = order.needed_by || '';
     document.getElementById('order-notes').value = order.notes || '';
@@ -480,7 +522,8 @@ async function saveOrder() {
         return (l.qty || 0) > 0 && (l.item_code || (l.description || '').trim());
     });
     var amount = lines.reduce(function (t, l) { return t + l.qty * l.price; }, 0);
-    var tax = parseFloat(document.getElementById('order-tax').value) || 0;
+    var rate = orderGstRate();
+    var tax = Math.round(amount * rate) / 100;
     var payload = {
         supplier_name: document.getElementById('order-supplier').value.trim(),
         amount: amount, tax_amount: tax, total: amount + tax,
@@ -490,7 +533,7 @@ async function saveOrder() {
         job_id: jobVal ? parseInt(jobVal) : null,
         line_items: lines.map(function (l) {
             return { item_code: l.item_code, description: l.description || l.item_code,
-                     uom: l.uom, qty: l.qty, price: l.price, tax_rate: '18%' };
+                     uom: l.uom, qty: l.qty, price: l.price, tax_rate: rate + '%' };
         }),
     };
     if (!payload.supplier_name) { showToast('Who is this order with?', 'error'); return; }

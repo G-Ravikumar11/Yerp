@@ -101,10 +101,10 @@ function renderWoPreview() {
                     (bad.code && bad.code.fix ? esc(bad.code.fix) : '') + '\')') + '</td>' +
             '<td class="px-1 py-1 align-top" style="width:100px;"><input type="number" step="any" class="' +
                 cellCls + ' text-right' + (bad.qty ? ' border-red-400' : '') + '" value="' + (l.qty || 0) +
-                '" oninput="editWoPreview(' + i + ',\'qty\',this.value)">' + problemNote(bad.qty, '') + '</td>' +
+                '" onchange="editWoPreview(' + i + ',\'qty\',this.value)">' + problemNote(bad.qty, '') + '</td>' +
             '<td class="px-1 py-1 align-top" style="width:110px;"><input type="number" step="any" class="' +
                 cellCls + ' text-right' + (bad.rate ? ' border-red-400' : '') + '" value="' + (l.rate || 0) +
-                '" oninput="editWoPreview(' + i + ',\'rate\',this.value)">' + problemNote(bad.rate, '') + '</td>' +
+                '" onchange="editWoPreview(' + i + ',\'rate\',this.value)">' + problemNote(bad.rate, '') + '</td>' +
             '<td class="px-2 py-2 text-right font-medium align-top">' +
                 formatCurrency((l.qty || 0) * (l.rate || 0)) + '</td></tr>';
     }).join('');
@@ -204,10 +204,10 @@ function renderBomPreview() {
             '<td class="px-1 py-1 align-top" style="min-width:210px;">' + chooser('rm_code', a.materials, l.rm_code) + '</td>' +
             '<td class="px-1 py-1 align-top" style="width:100px;"><input type="number" step="any" class="' +
                 cellCls + ' text-right' + (bad.qty ? ' border-red-400' : '') + '" value="' + (l.qty || 0) +
-                '" oninput="editBomPreview(' + i + ',\'qty\',this.value)">' + problemNote(bad.qty, '') + '</td>' +
+                '" onchange="editBomPreview(' + i + ',\'qty\',this.value)">' + problemNote(bad.qty, '') + '</td>' +
             '<td class="px-1 py-1 align-top" style="width:110px;"><input type="number" step="any" class="' +
                 cellCls + ' text-right" value="' + (l.rate || 0) +
-                '" oninput="editBomPreview(' + i + ',\'rate\',this.value)"></td>' +
+                '" onchange="editBomPreview(' + i + ',\'rate\',this.value)"></td>' +
             '<td class="px-2 py-2 text-right font-medium align-top">' +
                 formatCurrency((l.qty || 0) * (l.rate || 0)) + '</td></tr>';
     }).join('');

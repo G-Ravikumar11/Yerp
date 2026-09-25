@@ -155,7 +155,7 @@ function renderItemComposer() {
         '<div class="border border-slate-200 rounded-lg overflow-x-auto">' +
         '<table class="min-w-full text-[13px]"><thead class="bg-slate-50"><tr>' +
         ['Kind', 'Code', 'Name', 'Type', 'Unit', 'HSN', 'Tax', ''].map(function (h) {
-            return '<th class="px-2 py-2 text-left font-semibold text-ink-soft">' + h + '</th>';
+            return '<th class="px-2 py-2 text-left font-semibold text-ink-soft" style="white-space:nowrap;">' + h + '</th>';
         }).join('') + '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
         '<div class="flex items-center gap-2 mt-3">' +
         '<button class="btn btn-outline btn-sm" onclick="addItemRow()">+ Another row</button>' +
@@ -337,9 +337,33 @@ function editWoLine(i, field, value) {
     }
     _woDraft.lines[i][field] = (field === 'qty' || field === 'rate')
         ? (parseFloat(value) || 0) : value;
+    // A quantity or a rate is typed a key at a time. Redrawing the rows took
+    // the cursor out of the box after the first key, so "450" went in as
+    // "4"; only the figures that follow from it are rewritten, in place.
+    if (field === 'qty' || field === 'rate') { woLineFigures(i); return; }
     renderWorkOrderLines();
 }
 window.editWoLine = editWoLine;
+
+function woDraftTotalHtml() {
+    var total = _woDraft.lines.reduce(function (t, l) { return t + (l.qty || 0) * (l.rate || 0); }, 0);
+    var unpriced = _woDraft.lines.filter(function (l) { return !(l.rate > 0); }).length;
+    return 'Order value <strong class="ml-2">' + formatCurrency(total) + '</strong>' +
+        (unpriced ? '<div class="text-xxs" style="color:var(--warning-color);">' + unpriced +
+            ' line' + (unpriced === 1 ? '' : 's') + ' still to price</div>' : '');
+}
+
+function woLineFigures(i) {
+    var l = _woDraft.lines[i];
+    var amt = document.getElementById('wob-amt-' + i);
+    if (amt) amt.textContent = formatCurrency((l.qty || 0) * (l.rate || 0));
+    var rate = document.getElementById('wob-rate-' + i);
+    if (rate) rate.style.borderColor = l.rate ? '' : 'var(--warning-color)';
+    var hint = document.getElementById('wob-rate-hint-' + i);
+    if (hint) hint.style.display = l.rate ? 'none' : '';
+    var box = document.getElementById('wob-total');
+    if (box) box.innerHTML = woDraftTotalHtml();
+}
 
 function removeWoLine(i) {
     _woDraft.lines.splice(i, 1);
@@ -350,13 +374,10 @@ window.removeWoLine = removeWoLine;
 function renderWorkOrderLines() {
     var host = document.getElementById('wob-lines');
     if (!host) return;
-    var total = 0;
-    var unpriced = _woDraft.lines.filter(function (l) { return !(l.rate > 0); }).length;
 
     var rows = _woDraft.lines.map(function (l, i) {
         var item = _fgMaster.filter(function (x) { return x.item_code === l.code; })[0] || {};
         var amount = (l.qty || 0) * (l.rate || 0);
-        total += amount;
         var used = _woDraft.lines.map(function (x, j) { return j === i ? null : x.code; });
         var choices = _fgMaster.filter(function (x) { return used.indexOf(x.item_code) < 0; });
         return '<tr class="border-b border-slate-100">' +
@@ -375,12 +396,12 @@ function renderWorkOrderLines() {
                 '<div style="position:relative;">' +
                 '<span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);' +
                     'font-size:12px;color:var(--text-secondary);pointer-events:none;">&#8377;</span>' +
-                '<input type="number" min="0" step="any" class="' + cellCls + ' text-right" style="padding-left:20px;' +
+                '<input type="number" min="0" step="any" id="wob-rate-' + i + '" class="' + cellCls + ' text-right" style="padding-left:20px;' +
                 (l.rate ? '' : 'border-color:var(--warning-color);') + '" ' +
                 'placeholder="rate" value="' + (l.rate || '') + '" oninput="editWoLine(' + i + ',\'rate\',this.value)"></div>' +
-                (l.rate ? '' : '<div style="font-size:0.66rem;color:var(--warning-color);margin-top:2px;">' +
-                    'type the rate</div>') + '</td>' +
-            '<td class="px-2 py-1 text-right font-medium">' + formatCurrency(amount) + '</td>' +
+                '<div id="wob-rate-hint-' + i + '" style="font-size:0.66rem;color:var(--warning-color);margin-top:2px;' +
+                    (l.rate ? 'display:none;' : '') + '">type the rate</div></td>' +
+            '<td id="wob-amt-' + i + '" class="px-2 py-1 text-right font-medium" style="white-space:nowrap;">' + formatCurrency(amount) + '</td>' +
             '<td class="px-1 py-1 text-right"><button class="text-ink-faint hover:text-red-600 px-2" ' +
                 'onclick="removeWoLine(' + i + ')">&times;</button></td></tr>';
     }).join('');
@@ -389,7 +410,7 @@ function renderWorkOrderLines() {
         '<div class="border border-slate-200 rounded-lg overflow-x-auto"><table class="min-w-full text-[13px]">' +
         '<thead class="bg-slate-50"><tr>' +
         ['Item', 'Type', 'Qty', 'Unit', 'Rate per unit', 'Amount', ''].map(function (h) {
-            return '<th class="px-2 py-2 text-left font-semibold text-ink-soft">' + h + '</th>';
+            return '<th class="px-2 py-2 text-left font-semibold text-ink-soft" style="white-space:nowrap;">' + h + '</th>';
         }).join('') + '</tr></thead><tbody>' + (rows ||
             '<tr><td colspan="7" class="px-2 py-6 text-center text-[13px] text-ink-soft">' +
             'Nothing priced yet. Name the first deliverable below.</td></tr>') +
@@ -409,9 +430,7 @@ function renderWorkOrderLines() {
             ? '<span class="text-xxs text-ink-soft self-center">Every code you have named is on this order.</span>'
             : '') +
         '</div>' +
-        '<div class="text-[15px]">Order value <strong class="ml-2">' + formatCurrency(total) + '</strong>' +
-        (unpriced ? '<div class="text-xxs" style="color:var(--warning-color);">' + unpriced +
-            ' line' + (unpriced === 1 ? '' : 's') + ' still to price</div>' : '') + '</div>' +
+        '<div id="wob-total" class="text-[15px]">' + woDraftTotalHtml() + '</div>' +
         '</div>' +
         '<div class="flex gap-2 mt-3">' +
         '<button class="btn btn-primary" onclick="saveWorkOrder()">Create work order</button>' +
@@ -522,7 +541,34 @@ window.addBomLine = addBomLine;
 function editBomLine(i, field, value) {
     _bomDraft.lines[i][field] = (field === 'qty' || field === 'rate')
         ? (parseFloat(value) || 0) : value;
+    // Typed figures update the amount and the margin in place; redrawing the
+    // rows would take the cursor out of the box after one key.
+    if (field === 'qty' || field === 'rate') {
+        var l = _bomDraft.lines[i];
+        var amt = document.getElementById('bom-amt-' + i);
+        if (amt) amt.textContent = formatCurrency((l.qty || 0) * (l.rate || 0));
+        var box = document.getElementById('bom-summary');
+        if (box) box.innerHTML = bomSummaryHtml();
+        return;
+    }
     renderBomLines();
+}
+
+function bomSummaryHtml() {
+    /* The margin, live, as the budget is typed. It is the number the approver
+       is actually being asked about, so it should not require a save to see. */
+    var cost = _bomDraft.lines.reduce(function (t, l) { return t + (l.qty || 0) * (l.rate || 0); }, 0);
+    var value = _bomDraft.value || 0;
+    var margin = value - cost;
+    var pct = value ? Math.round(margin / value * 1000) / 10 : 0;
+    var tone = margin < 0 ? 'text-red-600' : 'text-emerald-700';
+    return '<div class="border border-slate-200 rounded-lg px-3 py-2"><div class="text-xxs text-ink-soft">Order value</div>' +
+            '<div class="font-semibold">' + formatCurrency(value) + '</div></div>' +
+        '<div class="border border-slate-200 rounded-lg px-3 py-2"><div class="text-xxs text-ink-soft">Budgeted cost</div>' +
+            '<div class="font-semibold">' + formatCurrency(cost) + '</div></div>' +
+        '<div class="border border-slate-200 rounded-lg px-3 py-2"><div class="text-xxs text-ink-soft">Margin</div>' +
+            '<div class="font-semibold ' + tone + '">' + formatCurrency(margin) +
+            ' <span class="text-xxs font-normal">' + pct + '%</span></div></div>';
 }
 window.editBomLine = editBomLine;
 
@@ -563,32 +609,18 @@ function renderBomLines() {
             '<td class="px-2 py-1 text-xxs text-ink-soft">' + esc(rm.units_of_measure || '') + '</td>' +
             '<td class="px-1 py-1" style="width:110px;"><input type="number" min="0" step="any" class="' + cellCls + ' text-right" ' +
                 'value="' + (l.rate || 0) + '" oninput="editBomLine(' + i + ',\'rate\',this.value)"></td>' +
-            '<td class="px-2 py-1 text-right font-medium">' + formatCurrency(amount) + '</td>' +
+            '<td id="bom-amt-' + i + '" class="px-2 py-1 text-right font-medium" style="white-space:nowrap;">' + formatCurrency(amount) + '</td>' +
             '<td class="px-1 py-1 text-right"><button class="text-ink-faint hover:text-red-600 px-2" ' +
                 'onclick="removeBomLine(' + i + ')">&times;</button></td></tr>';
     }).join('');
-
-    /* The margin, live, as the budget is typed. It is the number the approver
-       is actually being asked about, so it should not require a save to see. */
-    var value = _bomDraft.value || 0;
-    var margin = value - cost;
-    var pct = value ? Math.round(margin / value * 1000) / 10 : 0;
-    var tone = margin < 0 ? 'text-red-600' : 'text-emerald-700';
 
     host.innerHTML =
         '<div class="border border-slate-200 rounded-lg overflow-x-auto"><table class="min-w-full text-[13px]">' +
         '<thead class="bg-slate-50"><tr>' +
         ['Sold line (FG)', 'Consumes (RM)', 'Qty', 'Unit', 'Rate', 'Amount', ''].map(function (h) {
-            return '<th class="px-2 py-2 text-left font-semibold text-ink-soft">' + h + '</th>';
+            return '<th class="px-2 py-2 text-left font-semibold text-ink-soft" style="white-space:nowrap;">' + h + '</th>';
         }).join('') + '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
-        '<div class="grid grid-cols-3 gap-3 mt-3">' +
-        '<div class="border border-slate-200 rounded-lg px-3 py-2"><div class="text-xxs text-ink-soft">Order value</div>' +
-            '<div class="font-semibold">' + formatCurrency(value) + '</div></div>' +
-        '<div class="border border-slate-200 rounded-lg px-3 py-2"><div class="text-xxs text-ink-soft">Budgeted cost</div>' +
-            '<div class="font-semibold">' + formatCurrency(cost) + '</div></div>' +
-        '<div class="border border-slate-200 rounded-lg px-3 py-2"><div class="text-xxs text-ink-soft">Margin</div>' +
-            '<div class="font-semibold ' + tone + '">' + formatCurrency(margin) +
-            ' <span class="text-xxs font-normal">' + pct + '%</span></div></div></div>' +
+        '<div id="bom-summary" class="grid grid-cols-3 gap-3 mt-3">' + bomSummaryHtml() + '</div>' +
         '<div class="flex gap-2 mt-3">' +
         '<button class="btn btn-outline btn-sm" onclick="addBomLine()">+ Add material</button>' +
         '<button class="btn btn-primary" onclick="saveBom()">Save budget</button>' +

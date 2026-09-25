@@ -6377,9 +6377,25 @@ async function showAddBillModal() {
         var data = await res.json();
         document.getElementById('bill-number').value = data.number || 'BILL-0001';
     } catch(e) {}
+    fillSupplierNames();
     document.getElementById('add-bill-modal').style.display = 'flex';
 }
 window.showAddBillModal = showAddBillModal;
+
+// One list of suppliers behind every box that names one - the order, the
+// bill. Typed free-hand, "Ultratech" on the order and "UltraTech Cement" on
+// the bill were two suppliers with two ledgers and a balance on each.
+async function fillSupplierNames() {
+    var box = document.getElementById('supplier-names');
+    if (!box) return;
+    try {
+        var s = await (await fetch('/api/suppliers', { credentials: 'include' })).json();
+        var names = (s.suppliers || []).map(function (x) { return x.name; })
+            .concat(s.unregistered || []);
+        box.innerHTML = names.map(function (n) { return '<option value="' + esc(n) + '">'; }).join('');
+    } catch (e) { /* the box still takes a typed name */ }
+}
+window.fillSupplierNames = fillSupplierNames;
 
 function closeAddBillModal() {
     document.getElementById('add-bill-modal').style.display = 'none';

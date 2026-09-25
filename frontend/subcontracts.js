@@ -187,8 +187,10 @@ function field(label, html, hint) {
                 esc(hint) + '</p>' : '') + '</div>';
 }
 
-function options(list, value, valueKey, labelFn) {
-    return '<option value=""></option>' + list.map(function (x) {
+function options(list, value, valueKey, labelFn, placeholder) {
+    // The empty choice says what to do; a blank one opened as a bare bar,
+    // which read as a broken picker rather than an empty list.
+    return '<option value="">' + esc(placeholder || '') + '</option>' + list.map(function (x) {
         var v = valueKey ? x[valueKey] : x;
         return '<option value="' + esc(v) + '"' + (String(v) === String(value) ? ' selected' : '') +
             '>' + esc(labelFn ? labelFn(x) : x) + '</option>';
@@ -424,6 +426,16 @@ window.woAutoDuration = woAutoDuration;
 function stepDetails() {
     var o = WO.order || {}, v = WO.vocab;
     var locked = o.id && !o.editable;
+    // A new order starts on the only company there is, and on civil work -
+    // the answers nearly every order gives - rather than on blanks.
+    if (!o.id) {
+        o = Object.assign({}, o);
+        if (!o.business_unit_id && v.business_units.length === 1) o.business_unit_id = v.business_units[0].id;
+        if (!o.department && v.departments.indexOf('Civil') >= 0) o.department = 'Civil';
+    }
+    var pick = function (list, what) {
+        return list.length ? 'Choose ' + what : 'None yet — press + New';
+    };
     var dis = locked ? ' disabled' : '';
     // A picker plus a way to fill it. On a new installation all three are
     // empty, and without this the first order cannot be raised at all.
@@ -439,26 +451,29 @@ function stepDetails() {
 
     return '<div class="grid-2-1" style="display:grid;grid-template-columns:1fr 1fr;gap:0 18px;">' +
         field('Business unit *', withAdd('<select id="wo-bu" class="form-control"' + dis + '>' +
-            options(v.business_units, o.business_unit_id, 'id', function (b) { return b.name; }) +
+            options(v.business_units, o.business_unit_id, 'id', function (b) { return b.name; },
+                    pick(v.business_units, 'the company issuing it')) +
             '</select>', 'unit', !v.business_units.length),
             'The entity issuing the order. Its GSTIN prints on it.') +
         field('Contractor *', withAdd('<select id="wo-con" class="form-control"' + dis +
             ' onchange="woPickContractor(this.value)">' +
             options(v.contractors, o.contractor_id, 'id',
-                function (c) { return c.company_name + (c.vendor_code ? ' (' + c.vendor_code + ')' : ''); }) +
+                function (c) { return c.company_name + (c.vendor_code ? ' (' + c.vendor_code + ')' : ''); },
+                pick(v.contractors, 'a contractor')) +
             '</select>', 'contractor', !v.contractors.length)) +
         field('Project', withAdd('<select id="wo-job" class="form-control"' + dis + '>' +
-            options(v.jobs, o.job_id, 'id', function (j) { return j.number + ' — ' + j.name; }) +
+            options(v.jobs, o.job_id, 'id', function (j) { return j.number + ' — ' + j.name; },
+                    v.jobs.length ? 'Not tied to a project' : 'None yet — press + New') +
             '</select>', 'project', !v.jobs.length)) +
         field('Department *', '<select id="wo-dept" class="form-control"' + dis + '>' +
-            options(v.departments, o.department) + '</select>',
+            options(v.departments, o.department, null, null, 'Choose a department') + '</select>',
             'Decides the series the number is filed under.') +
         '</div>' +
         woVendorCard() +
         field('Work type', '<div style="display:flex;gap:6px;align-items:center;">' +
             '<div style="flex:1;min-width:0;"><select id="wo-wtype" class="form-control"' + dis + '>' +
             options(v.work_types || [], o.work_type, 'name', function (w) {
-                return w.name + (w.code ? ' (' + w.code + ')' : ''); }) + '</select></div>' +
+                return w.name + (w.code ? ' (' + w.code + ')' : ''); }, 'Choose (optional)') + '</select></div>' +
             (locked ? '' : '<button type="button" class="btn btn-sm btn-outline" ' +
                 'style="white-space:nowrap;" onclick="woRequestWorkType()">Not listed</button>') +
             '</div>',
@@ -712,6 +727,10 @@ function stepBoq() {
     var locked = WO.order && !WO.order.editable;
     var v = WO.vocab;
     var budgets = ((WO.order || {}).budgets || []);
+    // Without cost centres on the project the column is an empty picker
+    // taking the width that Rate and Amount need on a laptop screen.
+    var showCc = budgets.length > 0 || WO.boq.some(function (l) { return l.budget_id; });
+    var span = showCc ? 7 : 6;
     var rows = WO.boq.map(function (l, i) {
         var dis = locked ? ' disabled' : '';
         // A heading row: "ELECTRICAL WORK", "SUB STATION EQUIPMENT". It prices
@@ -721,7 +740,7 @@ function stepBoq() {
             return '<tr style="background:var(--bg-hover,rgba(0,0,0,0.04));">' +
                 '<td><input class="form-control" style="min-width:64px;font-weight:700;" value="' +
                     esc(l.activity_no || '') + '" oninput="woBoqSet(' + i + ',\'activity_no\',this.value)"' + dis + '></td>' +
-                '<td colspan="7"><input class="form-control" style="font-weight:700;text-transform:uppercase;" ' +
+                '<td colspan="' + span + '"><input class="form-control" style="font-weight:700;text-transform:uppercase;" ' +
                     'placeholder="Section heading" value="' + esc(l.item_description || '') +
                     '" oninput="woBoqSet(' + i + ',\'item_description\',this.value)"' + dis + '></td>' +
                 '<td class="text-right" style="white-space:nowrap;">' + (locked ? '' :
@@ -741,7 +760,7 @@ function stepBoq() {
                 // when the code is typed; one click copies it into the rate.
                 '<div id="wo-rate-hint-' + i + '" style="font-size:0.7rem;color:var(--text-secondary);margin-top:3px;">' +
                 (l._hint || '') + '</div></td>' +
-            '<td style="min-width:280px;">' +
+            '<td style="min-width:240px;">' +
                 '<textarea class="form-control wo-cell" rows="2"' + at('item_description') + ' ' +
                 'placeholder="What the line is" ' +
                 'oninput="woBoqSet(' + i + ',\'item_description\',this.value)"' + dis + '>' +
@@ -767,11 +786,11 @@ function stepBoq() {
                 '<span style="font-size:0.68rem;color:var(--text-secondary);">% tol</span></div></td>' +
             '<td><input type="number" step="any" class="form-control text-right wo-cell" style="min-width:100px;"' + at('unit_rate') + ' value="' +
                 (l.unit_rate || '') + '" oninput="woBoqSet(' + i + ',\'unit_rate\',this.value)"' + dis + '></td>' +
-            '<td><select class="form-control" style="min-width:130px;" ' +
+            (showCc ? '<td><select class="form-control" style="min-width:130px;" ' +
                 'onchange="woBoqSet(' + i + ',\'budget_id\',this.value)"' + dis + '>' +
                 options(budgets, l.budget_id, 'id', function (b) {
-                    return b.name || b.code || 'Cost centre'; }) + '</select></td>' +
-            '<td class="text-right" style="font-weight:600;white-space:nowrap;">' +
+                    return b.name || b.code || 'Cost centre'; }) + '</select></td>' : '') +
+            '<td id="wo-amt-' + i + '" class="text-right" style="font-weight:600;white-space:nowrap;">' +
                 formatCurrency(woLineAmount(l)) + '</td>' +
             '<td class="text-right" style="white-space:nowrap;">' + (locked ? '' :
                 '<button class="btn btn-sm btn-outline" title="Make it a heading" ' +
@@ -784,16 +803,16 @@ function stepBoq() {
     var o = WO.order || {};
 
     return '<div style="display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;' +
-        'align-items:start;" class="wo-boq-layout">' +
+        'align-items:start;" class="wo-boq-layout wo-boq-wide">' +
         '<div>' + (locked ? '' : woImportPanel()) +
         '<div class="table-responsive"><table class="data-table">' +
         '<thead><tr><th>Activity</th><th>Item code</th><th>Description</th><th>UOM</th>' +
-        '<th class="text-right">Qty</th><th class="text-right">Rate</th><th>Cost centre</th>' +
+        '<th class="text-right">Qty</th><th class="text-right">Rate</th>' + (showCc ? '<th>Cost centre</th>' : '') +
         '<th class="text-right">Amount</th><th></th></tr></thead>' +
-        '<tbody>' + (rows || '<tr><td colspan="9" style="text-align:center;padding:24px;' +
+        '<tbody>' + (rows || '<tr><td colspan="' + (span + 2) + '" style="text-align:center;padding:24px;' +
             'color:var(--text-secondary);">Nothing scheduled yet.</td></tr>') + '</tbody>' +
-        '<tfoot><tr><td colspan="7" class="text-right"><strong>Gross</strong></td>' +
-        '<td class="text-right" style="white-space:nowrap;"><strong>' + formatCurrency(gross) + '</strong></td><td></td></tr></tfoot>' +
+        '<tfoot><tr><td colspan="' + span + '" class="text-right"><strong>Gross</strong></td>' +
+        '<td class="text-right" style="white-space:nowrap;"><strong id="wo-gross">' + formatCurrency(gross) + '</strong></td><td></td></tr></tfoot>' +
         '</table></div>' +
         (locked ? '' : '<p style="font-size:0.74rem;color:var(--text-secondary);margin:8px 0 0;">' +
             'Works like a sheet: Enter or the arrows move down a column, Tab moves across, ' +
@@ -812,13 +831,13 @@ function stepBoq() {
         '<div>' +
         '<div class="widget"><div class="widget-header"><h3>Schedule value</h3></div>' +
         '<div style="padding:12px 16px;">' +
-        '<div style="font-size:1.45rem;font-weight:700;">' + formatCurrency(gross) + '</div>' +
+        '<div id="wo-gross-side" style="font-size:1.45rem;font-weight:700;">' + formatCurrency(gross) + '</div>' +
         '<p style="font-size:0.76rem;color:var(--text-secondary);margin:4px 0 0;">' +
             WO.boq.length + ' line(s). Tax and deductions are set on step three.</p>' +
         '</div></div>' +
         '<div class="widget" style="margin-top:14px;"><div class="widget-header">' +
             '<h3>Project budget</h3></div>' +
-        '<div style="padding:6px 16px 14px;">' + woBudgetPanel() + '</div></div>' +
+        '<div id="wo-budget-panel" style="padding:6px 16px 14px;">' + woBudgetPanel() + '</div></div>' +
         '</div></div>';
 }
 
@@ -890,11 +909,27 @@ window.woImportBoq = woImportBoq;
 
 function woBoqSet(i, key, value) {
     WO.boq[i][key] = key === 'budget_id' ? (parseInt(value) || null) : value;
-    // Only the money column is redrawn as you type; redrawing the table would
-    // take the caret out of the cell being edited.
-    if (key === 'quantity' || key === 'unit_rate' || key === 'budget_id') renderWizard();
+    // A cost centre is picked, not typed, so the whole step can be redrawn.
+    if (key === 'budget_id') { renderWizard(); return; }
+    // A quantity or rate is typed a key at a time. Redrawing the table here
+    // took the caret out of the cell after the first key, and the rest of the
+    // number went nowhere - "450" saved as "4". Only the figures that follow
+    // from it are rewritten, in place.
+    if (key === 'quantity' || key === 'unit_rate') woBoqFigures(i);
 }
 window.woBoqSet = woBoqSet;
+
+function woBoqFigures(i) {
+    var cell = document.getElementById('wo-amt-' + i);
+    if (cell) cell.textContent = formatCurrency(woLineAmount(WO.boq[i]));
+    var gross = WO.boq.reduce(function (t, l) { return t + (l.is_header ? 0 : woLineAmount(l)); }, 0);
+    ['wo-gross', 'wo-gross-side'].forEach(function (id) {
+        var e = document.getElementById(id);
+        if (e) e.textContent = formatCurrency(gross);
+    });
+    var panel = document.getElementById('wo-budget-panel');
+    if (panel) panel.innerHTML = woBudgetPanel();
+}
 
 /* --- The grid behaves like a sheet ------------------------------------------
    Enter and the arrows walk a column, Tab walks a row, and a block of cells
@@ -1106,7 +1141,7 @@ function stepBilling() {
         field('Mobilization advance %', num('wo-adv', o.mobilization_advance_percent, '0.5'),
               'Against an equivalent bank guarantee.') +
         field('Advance recovery %', num('wo-advrec', o.advance_recovery_percent, '1'),
-              'Taken back from each RA bill.') +
+              'The share of the advance taken back on each RA bill.') +
         '</div>' +
         '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0 16px;">' +
         field('Labour welfare cess %', num('wo-cess', o.labour_cess_percent, '0.5'),
@@ -1398,6 +1433,14 @@ function woActions(o) {
         buttons.push('<button class="btn btn-primary" onclick="woAct(\'execute\')">Mark executed</button>');
     if (can.indexOf('AMEND') >= 0)
         buttons.push('<button class="btn btn-outline" onclick="woAct(\'amend\')">Raise an amendment</button>');
+    // The mobilisation advance is only taken back out of bills once it has
+    // actually been paid, so paying it is a step on the order itself.
+    var advLeft = (o.mobilization_advance_amount || 0) - (o.advance_paid || 0);
+    if ((o.status === 'APPROVED' || o.status === 'EXECUTED') && advLeft > 0.009)
+        buttons.push('<button class="btn btn-outline" onclick="openPayBox(\'sub_advance\',' + o.id +
+            ',function(){openSubcontract(' + o.id + ');})" ' +
+            'title="Nothing is recovered from the gang\'s bills until it is paid">' +
+            'Pay the advance (' + formatCurrency(advLeft) + ')</button>');
     if (can.indexOf('CANCEL') >= 0)
         buttons.push('<button class="btn btn-outline" onclick="woAct(\'cancel\', true)">Cancel the order</button>');
     if (o.editable)
@@ -1617,9 +1660,14 @@ function woDocumentHtml(d) {
             'A mobilization advance of ' + d.mobilization_advance_percent + '% (' +
             formatCurrency(d.mobilization_advance_amount) + ') is payable against an ' +
             'equivalent bank guarantee' +
+            // Said the way the bill works it out: this share of the advance
+            // comes back on each Running Account bill. "Of each bill" read
+            // as a share of the bill's value, which is not what is deducted.
             (d.advance_recovery_percent
-                ? ', recovered at ' + d.advance_recovery_percent +
-                  '% of each Running Account bill' : '') + '.</p>' : '') +
+                ? ', recovered in instalments of ' + d.advance_recovery_percent +
+                  '% of the advance (' + formatCurrency(d.mobilization_advance_amount *
+                  d.advance_recovery_percent / 100) + ') from each Running Account bill' : '') +
+            '.</p>' : '') +
         (d.payment_terms
             ? '<p class="wo-muted" style="font-size:0.72rem;margin-top:4px;">' +
               esc(d.payment_terms) + '</p>' : '') +

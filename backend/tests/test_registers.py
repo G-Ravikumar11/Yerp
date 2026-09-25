@@ -121,7 +121,8 @@ def test_the_advance_and_what_has_come_back(tenant):
                                      advance_recovery_percent=10)
     reg = tenant.get("/api/registers/advances").json()
     row = reg["advances"][0]
-    assert row["advance"] == order["mobilization_advance_amount"]
+    assert row["advance"] == row["agreed"] == order["mobilization_advance_amount"]
+    assert row["not_yet_paid"] == 0
     assert row["recovered"] == bill["advance_recovery"] > 0
     assert row["outstanding"] == round(row["advance"] - row["recovered"], 2)
     assert row["secured_by_bg"] is False
@@ -148,3 +149,10 @@ def test_another_tenant_sees_empty_registers(tenant, second_tenant):
     assert second_tenant.get("/api/registers/tds").json()["deducted"] == []
     assert second_tenant.get("/api/registers/guarantees").json()["guarantees"] == []
     assert second_tenant.get("/api/registers/advances").json()["advances"] == []
+
+
+
+def test_an_advance_not_yet_paid_is_shown_as_such(tenant):
+    live_order(tenant, pay_advance=False, mobilization_advance_percent=10)
+    row = tenant.get("/api/registers/advances").json()["advances"][0]
+    assert row["advance"] == 0 and row["not_yet_paid"] == row["agreed"] > 0

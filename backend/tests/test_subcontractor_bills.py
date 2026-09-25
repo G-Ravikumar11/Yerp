@@ -12,16 +12,28 @@ retention: here it is us.
 from test_subcontract_orders import priced, BOQ
 
 
-def live_order(tenant, **over):
+def live_order(tenant, pay_advance=True, **over):
     """A priced subcontract order, submitted and approved - ready to measure.
 
     Terms go on the draft: once approved the figures are what somebody signed
-    for, and changing them afterwards is refused."""
+    for, and changing them afterwards is refused. Any mobilisation advance is
+    paid, as it is on site before the first bill - only a paid advance is
+    recovered."""
     order = priced(tenant, **over)
     tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
     res = tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
     assert res.status_code == 200, res.text
-    return res.json()["order"]
+    order = res.json()["order"]
+    if pay_advance and order.get("mobilization_advance_amount"):
+        paid = pay_the_advance(tenant, order["id"], order["mobilization_advance_amount"])
+        assert paid.status_code == 200, paid.text
+    return order
+
+
+def pay_the_advance(tenant, order_id, amount):
+    return tenant.post("/api/money/entries", json={
+        "doc_type": "sub_advance", "doc_id": order_id, "amount": amount,
+        "mode": "Bank transfer", "reference": "UTR-ADV-%d" % order_id})
 
 
 def book(tenant, order_id):
@@ -285,3 +297,61 @@ def test_the_advance_is_never_recovered_twice_over(tenant):
         tenant.post("/api/sub-bills/%d/certify" % bill["id"], json={})
         recovered += bill["advance_recovery"]
     assert round(recovered, 2) == advance
+
+
+
+def test_an_advance_never_paid_is_never_recovered(tenant):
+    """The agreed advance used to come off the first bill whether or not the
+    gang had ever been paid it."""
+    order = live_order(tenant, pay_advance=False, mobilization_advance_percent=10,
+                       advance_recovery_percent=10)
+    item = book(tenant, order["id"])["lines"][0]["item_id"]
+    measure(tenant, order["id"], item, 100)
+    bill = raise_bill(tenant, order["id"]).json()["bill"]
+    assert bill["advance_recovery"] == 0
+
+
+def test_only_what_was_paid_comes_back(tenant):
+    order = live_order(tenant, pay_advance=False, mobilization_advance_percent=10,
+                       advance_recovery_percent=100)
+    part = round(order["mobilization_advance_amount"] / 4, 2)
+    assert pay_the_advance(tenant, order["id"], part).status_code == 200
+    item = book(tenant, order["id"])["lines"][0]["item_id"]
+    measure(tenant, order["id"], item, 250)
+    bill = raise_bill(tenant, order["id"]).json()["bill"]
+    assert bill["advance_recovery"] == part
+
+
+def test_the_advance_cannot_be_paid_twice_over(tenant):
+    order = live_order(tenant, mobilization_advance_percent=10, advance_recovery_percent=10)
+    again = pay_the_advance(tenant, order["id"], 1)
+    assert again.status_code == 409 and "settled" in again.json()["detail"]
+    assert tenant.get("/api/wo/orders/%d" % order["id"]).json()["order"]["advance_paid"] ==         order["mobilization_advance_amount"]
+
+
+def test_a_draft_order_takes_no_advance(tenant):
+    order = priced(tenant, mobilization_advance_percent=10)
+    res = pay_the_advance(tenant, order["id"], 100)
+    assert res.status_code == 409
+
+
+def test_the_gangs_ledger_shows_only_the_advance_still_owed(tenant):
+    """Paid 10% advance, part of it taken back on a bill that was then paid
+    in full: the gang owes exactly what has not come back yet."""
+    order = live_order(tenant, mobilization_advance_percent=10, advance_recovery_percent=10)
+    item = book(tenant, order["id"])["lines"][0]["item_id"]
+    measure(tenant, order["id"], item, 100)
+    bill = raise_bill(tenant, order["id"]).json()["bill"]
+    tenant.post("/api/sub-bills/%d/submit" % bill["id"], json={})
+    tenant.post("/api/sub-bills/%d/certify" % bill["id"], json={})
+    bill = tenant.get("/api/sub-bills/%d" % bill["id"]).json()
+    bill = bill.get("bill", bill)
+    paid = tenant.post("/api/money/entries", json={
+        "doc_type": "sub_bill", "doc_id": bill["id"], "amount": bill["net_payable"],
+        "mode": "Bank transfer", "reference": "UTR-BILL"})
+    assert paid.status_code == 200, paid.text
+    gang = [p for p in tenant.get("/api/ledger/parties").json()["parties"]
+            if p["party_type"] == "contractor"][0]
+    still_out = round(order["mobilization_advance_amount"] - bill["advance_recovery"], 2)
+    assert bill["advance_recovery"] > 0
+    assert gang["balance"] == -still_out

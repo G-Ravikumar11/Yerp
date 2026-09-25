@@ -1764,6 +1764,14 @@ label { color: var(--text-secondary); font-size: 0.78rem; font-weight: 600; }
 @media (max-width: 1100px) {
     .wo-boq-layout { grid-template-columns: minmax(0, 1fr) !important; }
 }
+/* The schedule is wider than a form. At laptop widths the panel beside it
+   pushed Rate and Amount off the right edge, behind a scrollbar nobody saw,
+   so there the panel sits under the schedule instead. */
+@media (max-width: 1500px) {
+    .wo-boq-wide { grid-template-columns: minmax(0, 1fr) !important; }
+    .wo-boq-wide > div:last-child { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .wo-boq-wide > div:last-child > .widget { margin-top: 0 !important; }
+}
 
 /* A number typed into a table cell. The full form control is sized for a
    form; inside a row of quantities it pushes the columns apart until the

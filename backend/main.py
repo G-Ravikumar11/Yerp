@@ -241,6 +241,12 @@ def money(val) -> float:
     return float(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
+def qty_text(value) -> str:
+    """A quantity as it is written in a sentence: 100, 117.6, 0.125 - not the
+    float repr, which put "100.0 ordered" in front of the site engineer."""
+    return ("%.3f" % float(value or 0)).rstrip("0").rstrip(".") or "0"
+
+
 def inr(value) -> str:
     """A rupee figure the way it is read aloud here: 12,34,567.00.
 
@@ -17737,8 +17743,10 @@ def wo_billing_schedule(db, order):
     if order.mobilization_advance_percent:
         rows.append({"head": "Mobilization advance", "rate": order.mobilization_advance_percent,
                      "amount": money(order.mobilization_advance_amount), "kind": "info",
-                     "note": "paid up front, recovered at %s%% of each bill"
-                             % (order.advance_recovery_percent or 0)})
+                     "note": "paid up front, recovered %s%% of the advance (%s) on each bill"
+                             % (order.advance_recovery_percent or 0,
+                                inr((order.mobilization_advance_amount or 0)
+                                    * (order.advance_recovery_percent or 0) / 100.0))})
     if order.retention_percent:
         rows.append({"head": "Retention", "rate": order.retention_percent,
                      "amount": money(order.retention_amount), "kind": "hold",
@@ -17766,6 +17774,13 @@ def wo_pending_with(db, client_id):
             models.DBEmployee.status == "active").order_by(models.DBEmployee.id).all():
         names.append(("%s %s" % (emp.first_name or "", emp.last_name or "")).strip()
                      or emp.email or "")
+    if not names:
+        # The account holder can always approve. Leaving them off told an
+        # owner working alone that nobody could sign their own order - with
+        # the Approve button right there on the same screen.
+        owner = db.query(models.DBClient).filter(models.DBClient.id == client_id).first()
+        names.append("%s (owner)" % ((owner.contact_name or owner.email or "the account holder")
+                                     if owner else "the account holder"))
     return names
 
 
@@ -17836,6 +17851,7 @@ def wo_dict(db, order, detail=False):
         # order rather than fetched separately, so the figure an approver is
         # looking at is the one the approval will actually be checked against.
         row["billing_schedule"] = wo_billing_schedule(db, order)
+        row["advance_paid"] = advance_paid(db, order.client_id, order.id)
         row["pending_with"] = (wo_pending_with(db, order.client_id)
                                if order.status == "PROVISIONAL" else [])
         if order.copied_from_id:
@@ -18133,9 +18149,39 @@ class ContractorIn(BaseModel):
     address: Optional[str] = ""
 
 
+def ensure_company_unit(db, client):
+    """The company itself, as the business unit its orders are issued by.
+
+    One company issuing its own orders had to invent a "business unit" before
+    the first subcontract order could be raised: the picker opened empty and
+    nothing said what belonged in it. The answer is always the company, so
+    it is on file from the start - named, with the GSTIN, PAN and address the
+    company already gave - and any of those given later fill in what is
+    blank. A group with several trading names still adds the others."""
+    name = (client.company_name or "").strip()
+    if not name:
+        return
+    gstin = (client.gstin or "").strip().upper()
+    fill = {"gstin": gstin, "pan": gstin[2:12] if len(gstin) == 15 else "",
+            "address": company_address(db, client)}
+    rows = db.query(models.DBBusinessUnit).filter(
+        models.DBBusinessUnit.client_id == client.id).all()
+    if not rows:
+        db.add(models.DBBusinessUnit(client_id=client.id, name=name, **fill))
+        db.commit()
+        return
+    own = next((b for b in rows if norm_name(b.name) == norm_name(name)), None)
+    if own and any(v and not (getattr(own, k) or "").strip() for k, v in fill.items()):
+        for k, v in fill.items():
+            if v and not (getattr(own, k) or "").strip():
+                setattr(own, k, v)
+        db.commit()
+
+
 @app.get("/api/wo/business-units")
 def wo_list_business_units(request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
+    ensure_company_unit(db, client)
     rows = db.query(models.DBBusinessUnit).filter(
         models.DBBusinessUnit.client_id == client.id).order_by(
             models.DBBusinessUnit.name).all()
@@ -19160,7 +19206,7 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
     db.commit()
     db.refresh(order)
     return {"order": wo_dict(db, order, detail=True),
-            "message": "%d item(s) saved. Gross %s." % (kept, order.gross_amount)}
+            "message": "%d line%s saved. Gross %s." % (kept, "" if kept == 1 else "s", inr(order.gross_amount))}
 
 
 @app.put("/api/wo/orders/{order_id}/terms")
@@ -19906,11 +19952,46 @@ def our_state(db, client_id):
     return (c.state_code or "").strip() or state_from_gstin(c.gstin)
 
 
+# The first digits of a PIN code and the GST state they lie in - only where
+# the postal circle and the state are the same thing. Where a circle spans two
+# states (605 is Puducherry and Tamil Nadu, 24x is Uttar Pradesh and
+# Uttarakhand) nothing is guessed and the project's state has to be picked.
+PIN_STATES = {"11": "07", "30": "08", "31": "08", "32": "08", "33": "08", "34": "08",
+              "36": "24", "37": "24", "38": "24", "39": "24",
+              "40": "27", "41": "27", "42": "27", "43": "27", "44": "27",
+              "50": "36", "51": "37", "52": "37", "53": "37",
+              "56": "29", "57": "29", "58": "29", "59": "29",
+              "60": "33", "61": "33", "62": "33", "63": "33", "64": "33",
+              "67": "32", "68": "32", "69": "32"}
+PIN_EXCEPTIONS = {"403": "30", "605": ""}
+
+
+def state_from_pin(text):
+    """The GST state of an address, from its six-digit PIN, when that is
+    certain; "" when there is no PIN or its circle crosses a state line."""
+    m = re.search(r"\b(\d{6})\b", text or "")
+    if not m:
+        return ""
+    pin = m.group(1)
+    if pin[:3] in PIN_EXCEPTIONS:
+        return PIN_EXCEPTIONS[pin[:3]]
+    return PIN_STATES.get(pin[:2], "")
+
+
 def supply_state_for_job(db, job_id):
+    """Where a project's work is supplied, for the GST split.
+
+    Projects raised from the quick-add box, or before the state could be set,
+    had none - and every bill on them went out as IGST, even for a site in
+    the contractor's own city. The site address usually carries a PIN that
+    settles it; only when it does not is the state left unknown (and IGST,
+    the safe side, applies)."""
     if not job_id:
         return ""
     j = db.query(models.DBJob).filter(models.DBJob.id == job_id).first()
-    return (j.state_code or "").strip() if j else ""
+    if not j:
+        return ""
+    return (j.state_code or "").strip() or state_from_pin(j.site_address)
 
 
 class CompanyGstIn(BaseModel):
@@ -20525,7 +20606,7 @@ def record_measurement(work_order_id: int, body: MeasurementIn, request: Request
         # the order without knowing they have.
         "over_measured": money(measured - ordered) if measured > ordered else 0.0,
         "message": ("Recorded. %s measured against %s of %s ordered."
-                    % (measured, line.fg_code, ordered)),
+                    % (qty_text(measured), line.fg_code, qty_text(ordered))),
     }
 
 
@@ -20625,7 +20706,7 @@ def raise_ra_bill(body: RABillIn, request: Request, db: Session = Depends(get_db
     db.commit()
     db.refresh(bill)
     return {"bill": ra_bill_dict(db, bill, detail=True),
-            "message": "%s drawn up for %s." % (bill.number, bill.this_bill)}
+            "message": "%s drawn up for %s." % (bill.number, inr(bill.this_bill))}
 
 
 @app.get("/api/ra-bills")
@@ -24331,7 +24412,8 @@ def record_sub_measurement(order_id: int, body: SubMeasurementIn, request: Reque
             "balance_to_measure": money(ordered - measured),
             "over_measured": money(measured - ordered) if measured > ordered else 0.0,
             "message": "Recorded. %s measured against %s of %s ordered."
-                       % (measured, item.activity_no or "item", ordered)}
+                       % (qty_text(measured), ("activity " + item.activity_no) if item.activity_no
+                          else "the item", qty_text(ordered))}
 
 
 @app.delete("/api/sub-mb/entries/{entry_id}")
@@ -24484,7 +24566,11 @@ def sub_advance_recovery(db, order, bill, asked=None):
     small month's work does not come out negative; the shortfall waits for
     the next one.
     """
-    advance = money(order.mobilization_advance_amount or 0)
+    # What was actually handed over, not what the order allows. Recovering
+    # the agreed figure took an advance back out of a gang's bill that had
+    # never been paid to them.
+    advance = min(money(order.mobilization_advance_amount or 0),
+                  advance_paid(db, order.client_id, order.id))
     if not advance:
         return 0.0
     recovered = money(sum((b.advance_recovery or 0) for b in db.query(models.DBSubBill).filter(
@@ -25228,10 +25314,14 @@ def advance_register(request: Request, db: Session = Depends(get_db)):
         if not (o.mobilization_advance_amount or 0):
             continue
         con = contractors.get(o.contractor_id)
-        given = money(o.mobilization_advance_amount)
+        # Given means paid. The order's figure is what may be paid; until the
+        # money goes out there is nothing for the bills to take back.
+        agreed = money(o.mobilization_advance_amount)
+        given = advance_paid(db, client.id, o.id)
         back = money(recovered.get(o.id, 0.0))
         rows.append({
             "order_id": o.id, "order": o.wo_number or "", "contractor": con.company_name if con else "",
+            "agreed": agreed, "not_yet_paid": money(max(0.0, agreed - given)),
             "advance": given, "recovery_percent": o.advance_recovery_percent or 0,
             "recovered": back, "outstanding": money(given - back),
             "percent_recovered": round(back / given * 100, 1) if given else 0.0,
@@ -25241,6 +25331,7 @@ def advance_register(request: Request, db: Session = Depends(get_db)):
     return {
         "advances": rows,
         "summary": {
+            "agreed": money(sum(r["agreed"] for r in rows)),
             "given": money(sum(r["advance"] for r in rows)),
             "recovered": money(sum(r["recovered"] for r in rows)),
             "outstanding": money(sum(r["outstanding"] for r in rows)),
@@ -25507,8 +25598,44 @@ def settled_on(db, client_id, doc_type, doc_id):
         models.DBMoneyEntry.voided.is_(False)).all()))
 
 
+class AdvanceDoc:
+    """A subcontract order, seen as the mobilisation advance it promises the
+    gang - what a payment of the advance is recorded against."""
+
+    def __init__(self, order):
+        self.id = order.id
+        self.number = "%s advance" % (order.wo_number or "Order")
+        self.status = order.status
+        self.order = order
+
+
+def sub_order_or_404(db, client_id, order_id):
+    o = db.query(models.DBSubcontractOrder).filter(
+        models.DBSubcontractOrder.id == order_id,
+        models.DBSubcontractOrder.client_id == client_id).first()
+    if not o:
+        raise HTTPException(404, "Subcontract order not found")
+    return o
+
+
+def advance_paid(db, client_id, order_id):
+    """What has actually been handed over as the mobilisation advance."""
+    return settled_on(db, client_id, "sub_advance", order_id)
+
+
 def _doc_for(db, client_id, doc_type, doc_id):
     """The bill an entry settles, what it is worth, and who it is with."""
+    if doc_type == "sub_advance":
+        o = sub_order_or_404(db, client_id, doc_id)
+        if o.status not in ("APPROVED", "EXECUTED"):
+            raise HTTPException(409, "%s is %s. The advance is paid on an approved order."
+                                     % (o.wo_number, (o.status or "").lower()))
+        if not (o.mobilization_advance_amount or 0):
+            raise HTTPException(409, "%s carries no mobilisation advance." % o.wo_number)
+        con = db.query(models.DBContractor).filter(
+            models.DBContractor.id == o.contractor_id).first() if o.contractor_id else None
+        return (AdvanceDoc(o), money(o.mobilization_advance_amount), "OUT", "contractor",
+                (con.company_name if con else ""), o.contractor_id, o.job_id)
     if doc_type == "ra_bill":
         b = ra_bill_or_404(db, client_id, doc_id)
         if b.status not in ("CERTIFIED", "PAID"):
@@ -25700,6 +25827,9 @@ def void_money(entry_id: int, request: Request, body: dict = None,
 def _doc_for_any(db, client_id, doc_type, doc_id):
     """As _doc_for, without refusing a bill for its status - voiding must
     always be able to find what it settled."""
+    if doc_type == "sub_advance":
+        o = sub_order_or_404(db, client_id, doc_id)
+        return AdvanceDoc(o), money(o.mobilization_advance_amount)
     if doc_type == "ra_bill":
         b = ra_bill_or_404(db, client_id, doc_id)
         return b, money(b.net_payable)
@@ -25740,6 +25870,23 @@ def list_money(request: Request, direction: str = "", party: str = "", job_id: i
 
 # --- Ledgers ----------------------------------------------------------------------
 
+def _advance_set_off_row(party_type, party, on, bill):
+    """The part of a bill that went to pay back a mobilisation advance.
+
+    A bill's net payable already has the recovery taken off, so counting the
+    bill at its net alone left the advance looking wholly unpaid for ever: a
+    gang paid a 78,000 advance, with 7,800 of it taken back, showed as owing
+    all 78,000. The recovery is value the party earned and settled against
+    the advance, so it goes on their account beside the bill."""
+    back = money(bill.advance_recovery or 0)
+    if back <= 0:
+        return []
+    return [{"party_type": party_type, "party": party, "date": on,
+             "kind": "Advance set off", "number": bill.number,
+             "doc_type": "advance_set_off", "doc_id": bill.id,
+             "billed": back, "moved": 0.0, "job_id": bill.job_id}]
+
+
 def _ledger_rows(db, client_id):
     """Every bill and every movement of money, each tagged to a party.
 
@@ -25763,6 +25910,7 @@ def _ledger_rows(db, client_id):
         rows.append({"party_type": "client", "party": party, "date": on, "kind": "RA bill",
                      "number": b.number, "doc_type": "ra_bill", "doc_id": b.id,
                      "billed": money(b.net_payable), "moved": 0.0, "job_id": b.job_id})
+        rows.extend(_advance_set_off_row("client", party, on, b))
         if b.status == "PAID" and not settled.get(("ra_bill", b.id)):
             rows.append({"party_type": "client", "party": party, "date": (b.paid_at or on)[:10],
                          "kind": "Received (marked paid)", "number": b.number, "doc_type": "ra_bill",
@@ -25778,6 +25926,7 @@ def _ledger_rows(db, client_id):
         rows.append({"party_type": "contractor", "party": party, "date": on, "kind": "Their RA bill",
                      "number": b.number, "doc_type": "sub_bill", "doc_id": b.id,
                      "billed": money(b.net_payable), "moved": 0.0, "job_id": b.job_id})
+        rows.extend(_advance_set_off_row("contractor", party, on, b))
         if b.status == "PAID" and not settled.get(("sub_bill", b.id)):
             rows.append({"party_type": "contractor", "party": party, "date": (b.paid_at or on)[:10],
                          "kind": "Paid (marked paid)", "number": b.number, "doc_type": "sub_bill",
