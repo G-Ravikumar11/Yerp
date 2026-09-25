@@ -2842,3 +2842,72 @@ class DBScheduleProgress(Base):
     note = Column(String, default="")
     by_name = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBEwayBill(Base):
+    """An e-way bill for goods on the road: a store transfer between sites,
+    plant moved to a site, material returned to a supplier. Laid out here,
+    generated on the NIC portal from the file this app writes, and its number
+    and validity recorded back against the movement it covers."""
+    __tablename__ = "eway_bills"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    number = Column(String, default="", index=True)            # EWB-0001, our own reference
+    source_type = Column(String, default="manual")             # transfer | manual
+    source_ref = Column(String, default="", index=True)        # TRF-0001
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    supply_type = Column(String, default="O")                  # O outward | I inward
+    sub_type = Column(String, default="5")                     # NIC sub-supply code; 5 = own use
+    sub_type_desc = Column(String, default="")
+    doc_type = Column(String, default="CHL")                   # CHL challan | INV | BIL | OTH
+    doc_no = Column(String, default="")
+    doc_date = Column(String, default="")
+    from_name = Column(String, default="")
+    from_gstin = Column(String, default="")
+    from_address = Column(Text, default="")
+    from_place = Column(String, default="")
+    from_pincode = Column(String, default="")
+    from_state = Column(String, default="")                    # GST state code, "36"
+    to_name = Column(String, default="")
+    to_gstin = Column(String, default="")
+    to_address = Column(Text, default="")
+    to_place = Column(String, default="")
+    to_pincode = Column(String, default="")
+    to_state = Column(String, default="")
+    distance_km = Column(Integer, default=0)                   # 0 = let the portal work it out
+    trans_mode = Column(String, default="1")                   # 1 road, 2 rail, 3 air, 4 ship
+    vehicle_no = Column(String, default="")
+    vehicle_type = Column(String, default="R")                 # R regular, O over-dimensional
+    transporter_id = Column(String, default="")
+    transporter_name = Column(String, default="")
+    trans_doc_no = Column(String, default="")
+    trans_doc_date = Column(String, default="")
+    taxable_value = Column(Float, default=0.0)
+    cgst = Column(Float, default=0.0)
+    sgst = Column(Float, default=0.0)
+    igst = Column(Float, default=0.0)
+    total_value = Column(Float, default=0.0)
+    status = Column(String, default="DRAFT", index=True)       # DRAFT | GENERATED | CANCELLED
+    ewb_no = Column(String, default="", index=True)
+    ewb_date = Column(String, default="")
+    valid_upto = Column(String, default="")
+    cancel_reason = Column(String, default="")
+    vehicle_history = Column(Text, default="")                 # Part B changes, one per line
+    created_by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBEwayBillLine(Base):
+    __tablename__ = "eway_bill_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    eway_bill_id = Column(Integer, ForeignKey("eway_bills.id"), nullable=False, index=True)
+    item_code = Column(String, default="")
+    product_name = Column(String, default="")
+    hsn = Column(String, default="")
+    qty = Column(Float, default=0.0)
+    unit = Column(String, default="")
+    taxable = Column(Float, default=0.0)
+    tax_rate = Column(Float, default=0.0)
+    display_order = Column(Integer, default=0)

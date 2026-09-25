@@ -147,6 +147,7 @@
                         </button>
                         <div class="nav-group-items" id="nav-items-store">
                             <a href="#" class="nav-item" id="nav-rfqs" onclick="event.preventDefault();showView('rfq-view')">Enquiries &amp; Comparison</a>
+                            <a href="#" class="nav-item" id="nav-eway" onclick="event.preventDefault();showView('eway-view')">E-way Bills</a>
                             <a href="#" class="nav-item" id="nav-orders" onclick="event.preventDefault();showView('orders-view')">Purchase Orders</a>
                             <a href="#" class="nav-item" id="nav-stores" onclick="event.preventDefault();showView('stores-view')">Goods Receipt &amp; Match</a>
                             <a href="#" class="nav-item" id="nav-stock" onclick="event.preventDefault();showView('stock-view')">Stock &amp; Issues</a>
@@ -3894,6 +3895,27 @@
                     <div id="lead-detail"></div>
                 </div>
 
+                <div id="eway-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>E-way Bills</h1><p class="subtitle">Goods over &#8377;50,000 on the road - site transfers, plant, returns - each with its e-way bill</p></div>
+                        <div class="invoices-actions">
+                            <button class="btn btn-primary" onclick="ewbNew()">+ E-way bill</button>
+                            <button class="btn btn-outline" onclick="loadEway()">Refresh</button>
+                        </div>
+                    </div>
+                    <div class="stats-grid" id="eway-stats"></div>
+                    <div id="eway-body" style="margin-top:16px;"></div>
+                </div>
+
+                <div id="ewb-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:860px;">
+                        <div class="modal-header"><h3 id="ewb-title">E-way bill</h3>
+                            <button class="modal-close" onclick="closeModal('ewb-modal')">&times;</button></div>
+                        <div class="modal-body" id="ewb-body"></div>
+                        <div class="modal-footer" id="ewb-actions"></div>
+                    </div>
+                </div>
+
                 <div id="rfq-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div><h1>Enquiries &amp; Comparative Statements</h1><p class="subtitle">Three suppliers asked, their answers side by side, the lowest landed at site &mdash; and the purchase orders it makes</p></div>
@@ -5127,7 +5149,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=110"></script>
+    <script src="app.js?v=113"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=65"></script>
@@ -5159,6 +5181,7 @@
     <script src="ledger.js?v=104"></script>
     <script src="equipment.js?v=111"></script>
     <script src="rfq.js?v=96"></script>
+    <script src="ewaybill.js?v=113"></script>
     <script src="leads.js?v=110"></script>
     <script src="schedule.js?v=99"></script>
     <script src="stores.js?v=108"></script>

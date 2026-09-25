@@ -28425,6 +28425,25 @@ def attention_elsewhere(db, client_id, jobs, today):
                 " and %d more" % (len(due) - 3) if len(due) > 3 else ""),
         })
 
+    # --- goods on the road without an e-way bill --------------------------
+    covered = {r for (r,) in db.query(models.DBEwayBill.source_ref).filter(
+        models.DBEwayBill.client_id == client_id,
+        models.DBEwayBill.status != "CANCELLED").all() if r}
+    moved = {}
+    for m in db.query(models.DBStockMovement).filter(
+            models.DBStockMovement.client_id == client_id,
+            models.DBStockMovement.kind == "TRANSFER_OUT").all():
+        moved[m.source_ref] = money(moved.get(m.source_ref, 0.0) - (m.value or 0))
+    bare = [ref for ref, v in moved.items() if v > EWAY_THRESHOLD and ref not in covered]
+    if bare:
+        items.append({
+            "kind": "eway", "severity": "wrong", "value": 0.0, "count": len(bare),
+            "view": "eway-view",
+            "title": "Moved without an e-way bill",
+            "detail": "%s: over fifty thousand rupees of goods on the road with no "
+                      "e-way bill recorded. A lorry stopped without one is fined." % ", ".join(sorted(bare)[:4]),
+        })
+
     # --- enquiries that will not make a comparison ------------------------
     thin = []
     for r in db.query(models.DBRfq).filter(models.DBRfq.client_id == client_id,
@@ -28443,6 +28462,513 @@ def attention_elsewhere(db, client_id, jobs, today):
         })
     return items
 
+
+
+# ============================================================================
+# E-WAY BILLS
+#
+# Goods worth more than fifty thousand rupees do not go on the road without an
+# e-way bill - a site-to-site transfer of the contractor's own cement as much
+# as a sale. The bill is laid out here from the movement it covers, written
+# as the file the NIC portal takes in bulk, and once the portal has issued it
+# its number and validity are recorded against the movement. What the portal
+# would refuse is named before the file is written, not after.
+# ============================================================================
+
+EWAY_THRESHOLD = 50000.0
+# NIC sub-supply types a contractor meets.
+EWAY_SUB_TYPES = {"1": "Supply", "4": "Job work", "5": "For own use", "6": "Job work returns",
+                  "7": "Sales return", "8": "Others"}
+EWAY_DOC_TYPES = {"CHL": "Delivery challan", "INV": "Tax invoice", "BIL": "Bill of supply",
+                  "OTH": "Others"}
+EWAY_MODES = {"1": "Road", "2": "Rail", "3": "Air", "4": "Ship"}
+
+
+def next_eway_number(db, client_id):
+    n = db.query(models.DBEwayBill).filter(models.DBEwayBill.client_id == client_id).count() + 1
+    return "EWB-%04d" % n
+
+
+def eway_places(db, client):
+    """Where goods leave from and arrive at: the company's own address, and
+    each project's site - with the PIN and state the portal needs."""
+    gstin = (client.gstin or "").strip().upper()
+    home = company_address(db, client)
+    out = [{"key": "company", "name": client.company_name or "Head office", "gstin": gstin,
+            "address": home, "pincode": _pin_from(home),
+            "state": state_from_gstin(gstin) or state_from_pin(home), "job_id": None}]
+    for j in db.query(models.DBJob).filter(models.DBJob.client_id == client.id).order_by(
+            models.DBJob.id.desc()).all():
+        if (j.status or "") == "cancelled":
+            continue
+        out.append({"key": "job-%d" % j.id, "name": "%s %s" % (j.number or "", j.name or ""),
+                    "gstin": gstin, "address": j.site_address or "",
+                    "pincode": _pin_from(j.site_address),
+                    "state": (j.state_code or "").strip() or state_from_pin(j.site_address),
+                    "job_id": j.id})
+    return out
+
+
+def eway_totals(e, lines):
+    """Taxable value and the tax on it, split the way the two states say."""
+    taxable = money(sum(l.taxable or 0 for l in lines))
+    tax = money(sum((l.taxable or 0) * (l.tax_rate or 0) / 100.0 for l in lines))
+    intra = bool(e.from_state and e.to_state and e.from_state == e.to_state)
+    half = money(tax / 2.0) if intra else 0.0
+    e.taxable_value = taxable
+    e.cgst = half
+    e.sgst = money(tax - half) if intra else 0.0
+    e.igst = 0.0 if intra else tax
+    e.total_value = money(taxable + tax)
+
+
+def eway_validity(ewb_date, distance_km, vehicle_type="R"):
+    """Valid to the end of the day this many days on: one day for every 200 km
+    (20 km for over-dimensional cargo), a day at the least."""
+    try:
+        start = datetime.strptime((ewb_date or "")[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return ""
+    per_day = 20 if vehicle_type == "O" else 200
+    km = max(0, int(distance_km or 0))
+    days = max(1, -(-km // per_day)) if km else 1
+    return (start + timedelta(days=days)).isoformat() + " 23:59"
+
+
+def eway_line_dict(l):
+    return {"id": l.id, "item_code": l.item_code or "", "product_name": l.product_name or "",
+            "hsn": l.hsn or "", "qty": l.qty or 0, "unit": l.unit or "",
+            "taxable": money(l.taxable), "tax_rate": l.tax_rate or 0}
+
+
+def eway_lines(db, e):
+    return db.query(models.DBEwayBillLine).filter(
+        models.DBEwayBillLine.eway_bill_id == e.id).order_by(
+            models.DBEwayBillLine.display_order, models.DBEwayBillLine.id).all()
+
+
+def eway_dict(db, e, detail=False):
+    today = date.today().isoformat()
+    expiring = bool(e.status == "GENERATED" and e.valid_upto and e.valid_upto[:10] <= today)
+    out = {"id": e.id, "number": e.number, "source_type": e.source_type or "manual",
+           "source_ref": e.source_ref or "", "job_id": e.job_id,
+           "status": e.status or "DRAFT", "doc_type": e.doc_type, "doc_no": e.doc_no or "",
+           "doc_date": e.doc_date or "", "supply_type": e.supply_type or "O",
+           "sub_type": e.sub_type or "5",
+           "sub_type_label": EWAY_SUB_TYPES.get(e.sub_type or "", e.sub_type_desc or ""),
+           "from": {"name": e.from_name or "", "gstin": e.from_gstin or "",
+                    "address": e.from_address or "", "place": e.from_place or "",
+                    "pincode": e.from_pincode or "", "state": e.from_state or "",
+                    "state_name": GST_STATES.get(e.from_state or "", "")},
+           "to": {"name": e.to_name or "", "gstin": e.to_gstin or "",
+                  "address": e.to_address or "", "place": e.to_place or "",
+                  "pincode": e.to_pincode or "", "state": e.to_state or "",
+                  "state_name": GST_STATES.get(e.to_state or "", "")},
+           "distance_km": e.distance_km or 0, "trans_mode": e.trans_mode or "1",
+           "vehicle_no": e.vehicle_no or "", "vehicle_type": e.vehicle_type or "R",
+           "transporter_id": e.transporter_id or "", "transporter_name": e.transporter_name or "",
+           "trans_doc_no": e.trans_doc_no or "", "trans_doc_date": e.trans_doc_date or "",
+           "taxable_value": money(e.taxable_value), "cgst": money(e.cgst), "sgst": money(e.sgst),
+           "igst": money(e.igst), "total_value": money(e.total_value),
+           "ewb_no": e.ewb_no or "", "ewb_date": e.ewb_date or "", "valid_upto": e.valid_upto or "",
+           "expired": expiring, "cancel_reason": e.cancel_reason or "",
+           "needed": money(e.total_value) > EWAY_THRESHOLD,
+           "created_by_name": e.created_by_name or "", "created_at": e.created_at or ""}
+    if detail:
+        lines = eway_lines(db, e)
+        out["lines"] = [eway_line_dict(l) for l in lines]
+        out["vehicle_history"] = [x for x in (e.vehicle_history or "").split("\n") if x]
+        out["problems"] = eway_problems(db, e, lines)
+    return out
+
+
+VEHICLE_NO = re.compile(r"^[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{4}$|^TM[A-Z0-9]{6}$")
+
+
+def eway_problems(db, e, lines=None):
+    """What the portal would refuse, in words."""
+    lines = lines if lines is not None else eway_lines(db, e)
+    p = []
+    if not (e.from_gstin or "").strip():
+        p.append("our GSTIN (Settings > Company details)")
+    for side, pin, state in (("from", e.from_pincode, e.from_state), ("to", e.to_pincode, e.to_state)):
+        if not re.match(r"^[1-9][0-9]{5}$", pin or ""):
+            p.append("a six-digit PIN for where it goes %s" % side)
+        if not state or state not in GST_STATES:
+            p.append("the state it goes %s" % side)
+    if not (e.doc_no or "").strip():
+        p.append("the challan or invoice number")
+    elif len(re.sub(r"[^A-Za-z0-9/\-]", "", e.doc_no)) > 16:
+        p.append("a document number of sixteen characters or fewer")
+    if not e.doc_date:
+        p.append("the document date")
+    if (e.distance_km or 0) > 4000:
+        p.append("a distance under 4,000 km")
+    if e.vehicle_no and (e.trans_mode or "1") == "1" and not VEHICLE_NO.match(e.vehicle_no):
+        p.append("a vehicle number written like TS09UB1234")
+    if not lines:
+        p.append("at least one item")
+    for i, l in enumerate(lines, start=1):
+        if not re.match(r"^[0-9]{4,8}$", l.hsn or ""):
+            p.append("the HSN code on line %d (%s)" % (i, l.product_name or l.item_code or "item"))
+        if not (l.qty or 0) > 0:
+            p.append("a quantity on line %d" % i)
+    return p
+
+
+def eway_payload(db, client, e):
+    """One bill in the NIC bulk-generation format."""
+    lines = eway_lines(db, e)
+    fmt = lambda d: (datetime.strptime(d[:10], "%Y-%m-%d").strftime("%d/%m/%Y") if d else "")
+    f1, f2, _ = _addr_lines(e.from_address)
+    t1, t2, _ = _addr_lines(e.to_address)
+    intra = bool(e.from_state and e.from_state == e.to_state)
+    items = []
+    for i, l in enumerate(lines, start=1):
+        rate = l.tax_rate or 0
+        items.append({
+            "itemNo": i, "productName": (l.product_name or l.item_code or "")[:100],
+            "productDesc": (l.product_name or "")[:100], "hsnCode": int(l.hsn) if (l.hsn or "").isdigit() else 0,
+            "quantity": round(l.qty or 0, 3), "qtyUnit": UQC.get(canonical_unit(l.unit) or "", "OTH"),
+            "taxableAmount": money(l.taxable),
+            "sgstRate": rate / 2.0 if intra else 0, "cgstRate": rate / 2.0 if intra else 0,
+            "igstRate": 0 if intra else rate, "cessRate": 0, "cessNonAdvol": 0})
+    bill = {
+        "userGstin": (client.gstin or "").upper(), "supplyType": e.supply_type or "O",
+        "subSupplyType": int(e.sub_type or 5),
+        "subSupplyDesc": (e.sub_type_desc or "")[:20] if (e.sub_type or "") == "8" else "",
+        "docType": e.doc_type or "CHL",
+        "docNo": re.sub(r"[^A-Za-z0-9/\-]", "", e.doc_no or "")[:16], "docDate": fmt(e.doc_date),
+        "fromGstin": e.from_gstin or "URP", "fromTrdName": (e.from_name or "")[:100],
+        "fromAddr1": f1 or "-", "fromAddr2": f2, "fromPlace": (e.from_place or "")[:50],
+        "fromPincode": int(e.from_pincode) if (e.from_pincode or "").isdigit() else 0,
+        "fromStateCode": int(e.from_state or 0), "actFromStateCode": int(e.from_state or 0),
+        "toGstin": e.to_gstin or "URP", "toTrdName": (e.to_name or "")[:100],
+        "toAddr1": t1 or "-", "toAddr2": t2, "toPlace": (e.to_place or "")[:50],
+        "toPincode": int(e.to_pincode) if (e.to_pincode or "").isdigit() else 0,
+        "toStateCode": int(e.to_state or 0), "actToStateCode": int(e.to_state or 0),
+        "transactionType": 1,
+        "totalValue": money(e.taxable_value), "cgstValue": money(e.cgst), "sgstValue": money(e.sgst),
+        "igstValue": money(e.igst), "cessValue": 0, "cessNonAdvolValue": 0, "otherValue": 0,
+        "totInvValue": money(e.total_value),
+        "transMode": int(e.trans_mode or 1), "transDistance": int(e.distance_km or 0),
+        "transporterName": (e.transporter_name or "")[:100], "transporterId": e.transporter_id or "",
+        "transDocNo": e.trans_doc_no or "", "transDocDate": fmt(e.trans_doc_date),
+        "vehicleNo": (e.vehicle_no or "").upper(), "vehicleType": e.vehicle_type or "R",
+        "itemList": items,
+    }
+    return {"version": "1.0.0621", "billLists": [bill]}
+
+
+class EwayLineIn(BaseModel):
+    item_code: Optional[str] = ""
+    product_name: Optional[str] = ""
+    hsn: Optional[str] = ""
+    qty: Optional[float] = 0
+    unit: Optional[str] = ""
+    taxable: Optional[float] = 0
+    tax_rate: Optional[float] = 0
+
+
+class EwayIn(BaseModel):
+    source_type: Optional[str] = "manual"
+    source_ref: Optional[str] = ""
+    from_key: Optional[str] = ""          # a place from /api/eway-places, or give the fields
+    to_key: Optional[str] = ""
+    from_name: Optional[str] = None
+    from_gstin: Optional[str] = None
+    from_address: Optional[str] = None
+    from_pincode: Optional[str] = None
+    from_state: Optional[str] = None
+    to_name: Optional[str] = None
+    to_gstin: Optional[str] = None
+    to_address: Optional[str] = None
+    to_pincode: Optional[str] = None
+    to_state: Optional[str] = None
+    supply_type: Optional[str] = "O"
+    sub_type: Optional[str] = ""
+    sub_type_desc: Optional[str] = ""
+    doc_type: Optional[str] = ""
+    doc_no: Optional[str] = ""
+    doc_date: Optional[str] = ""
+    distance_km: Optional[int] = 0
+    trans_mode: Optional[str] = "1"
+    vehicle_no: Optional[str] = ""
+    vehicle_type: Optional[str] = "R"
+    transporter_id: Optional[str] = ""
+    transporter_name: Optional[str] = ""
+    trans_doc_no: Optional[str] = ""
+    trans_doc_date: Optional[str] = ""
+    lines: Optional[List[EwayLineIn]] = None
+
+
+def _eway_apply(db, client, e, body):
+    places = {p["key"]: p for p in eway_places(db, client)}
+    for side in ("from", "to"):
+        key = getattr(body, side + "_key") or ""
+        if key and key in places:
+            pl = places[key]
+            setattr(e, side + "_name", pl["name"])
+            setattr(e, side + "_gstin", pl["gstin"])
+            setattr(e, side + "_address", pl["address"])
+            setattr(e, side + "_pincode", pl["pincode"])
+            setattr(e, side + "_state", pl["state"])
+            setattr(e, side + "_place", (_addr_lines(pl["address"])[2] or pl["name"])[:50])
+            if side == "to" and pl["job_id"]:
+                e.job_id = pl["job_id"]
+        for f in ("name", "gstin", "address", "pincode", "state"):
+            v = getattr(body, "%s_%s" % (side, f))
+            if v is not None:
+                v = v.strip()
+                if f == "gstin":
+                    v = v.upper()
+                setattr(e, "%s_%s" % (side, f), v)
+        if getattr(body, side + "_address") is not None:
+            setattr(e, side + "_place", (_addr_lines(getattr(e, side + "_address"))[2] or "")[:50])
+        if not getattr(e, side + "_state") and getattr(e, side + "_gstin"):
+            setattr(e, side + "_state", state_from_gstin(getattr(e, side + "_gstin")))
+        if not getattr(e, side + "_state"):
+            setattr(e, side + "_state", state_from_pin(getattr(e, side + "_address") or getattr(e, side + "_pincode") or ""))
+    e.supply_type = body.supply_type if body.supply_type in ("O", "I") else "O"
+    if body.sub_type:
+        if body.sub_type not in EWAY_SUB_TYPES:
+            raise HTTPException(400, "Not a sub-supply type the portal knows: %s" % body.sub_type)
+        e.sub_type = body.sub_type
+    e.sub_type_desc = (body.sub_type_desc or "").strip()[:20]
+    if body.doc_type:
+        if body.doc_type not in EWAY_DOC_TYPES:
+            raise HTTPException(400, "Not a document type the portal knows: %s" % body.doc_type)
+        e.doc_type = body.doc_type
+    if body.doc_no:
+        e.doc_no = body.doc_no.strip()
+    if body.doc_date:
+        e.doc_date = body.doc_date[:10]
+    e.distance_km = max(0, int(body.distance_km or 0))
+    e.trans_mode = body.trans_mode if body.trans_mode in EWAY_MODES else "1"
+    e.vehicle_no = re.sub(r"[\s\-]", "", (body.vehicle_no or "")).upper()
+    e.vehicle_type = body.vehicle_type if body.vehicle_type in ("R", "O") else "R"
+    e.transporter_id = (body.transporter_id or "").strip().upper()
+    e.transporter_name = (body.transporter_name or "").strip()
+    e.trans_doc_no = (body.trans_doc_no or "").strip()
+    e.trans_doc_date = (body.trans_doc_date or "")[:10]
+
+
+def _eway_set_lines(db, client, e, lines):
+    db.query(models.DBEwayBillLine).filter(models.DBEwayBillLine.eway_bill_id == e.id).delete()
+    made = []
+    for i, l in enumerate(lines or []):
+        if not ((l.item_code or "").strip() or (l.product_name or "").strip()):
+            continue
+        item = db.query(models.DBItem).filter(models.DBItem.item_code == (l.item_code or "").strip()).first() \
+            if (l.item_code or "").strip() else None
+        row = models.DBEwayBillLine(
+            eway_bill_id=e.id, item_code=(l.item_code or "").strip(),
+            product_name=(l.product_name or (item.item_name if item else "") or "").strip(),
+            hsn=re.sub(r"\D", "", (l.hsn or (item.hsn_code if item else "") or "")),
+            qty=max(0.0, float(l.qty or 0)),
+            unit=canonical_unit(l.unit or (item.units_of_measure if item else ""), default="") or (l.unit or ""),
+            taxable=money(max(0.0, float(l.taxable or 0))),
+            tax_rate=max(0.0, min(28.0, float(l.tax_rate or 0))), display_order=i)
+        db.add(row)
+        made.append(row)
+    db.flush()
+    return made
+
+
+def eway_or_404(db, client_id, eid):
+    e = db.query(models.DBEwayBill).filter(models.DBEwayBill.id == eid,
+                                           models.DBEwayBill.client_id == client_id).first()
+    if not e:
+        raise HTTPException(404, "E-way bill not found")
+    return e
+
+
+def transfer_lines_for(db, client_id, number):
+    """The lines of a store transfer, priced at what they cost, with HSN."""
+    rows = db.query(models.DBStockMovement).filter(
+        models.DBStockMovement.client_id == client_id,
+        models.DBStockMovement.kind == "TRANSFER_OUT",
+        models.DBStockMovement.source_ref == number).all()
+    out = []
+    for m in rows:
+        item = db.query(models.DBItem).filter(models.DBItem.item_code == m.item_code).first()
+        out.append(EwayLineIn(item_code=m.item_code, product_name=m.item_name or (item.item_name if item else ""),
+                              hsn=(item.hsn_code if item else ""), qty=money(-m.quantity), unit=m.uom or "",
+                              taxable=money(-(m.value or 0)), tax_rate=0))
+    return rows, out
+
+
+@app.get("/api/eway-places")
+def eway_place_list(request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return {"places": eway_places(db, client), "sub_types": EWAY_SUB_TYPES,
+            "doc_types": EWAY_DOC_TYPES, "modes": EWAY_MODES, "threshold": EWAY_THRESHOLD}
+
+
+@app.get("/api/eway-bills")
+def list_eway_bills(request: Request, status: str = "", db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    q = db.query(models.DBEwayBill).filter(models.DBEwayBill.client_id == client.id)
+    if status:
+        q = q.filter(models.DBEwayBill.status == status.upper())
+    rows = [eway_dict(db, e) for e in q.order_by(models.DBEwayBill.id.desc()).all()]
+    covered = {r["source_ref"] for r in rows if r["source_ref"] and r["status"] != "CANCELLED"}
+    # Transfers heavy enough to need one and not yet covered.
+    uncovered = []
+    for t in list_transfers(request, db)["transfers"]:
+        if t["value"] > EWAY_THRESHOLD and t["number"] not in covered:
+            uncovered.append({"number": t["number"], "moved_on": t["moved_on"],
+                              "from_store": t["from_store"], "to_store": t["to_store"],
+                              "value": t["value"]})
+    today = date.today().isoformat()
+    return {"eway_bills": rows, "uncovered_transfers": uncovered,
+            "summary": {"drafts": len([r for r in rows if r["status"] == "DRAFT"]),
+                        "live": len([r for r in rows if r["status"] == "GENERATED"
+                                     and (r["valid_upto"] or "")[:10] >= today]),
+                        "expired": len([r for r in rows if r["expired"]]),
+                        "uncovered": len(uncovered)}}
+
+
+@app.post("/api/eway-bills")
+def create_eway_bill(body: EwayIn, request: Request, db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db)
+    e = models.DBEwayBill(client_id=client.id, number=next_eway_number(db, client.id),
+                          created_by_name=actor_name, status="DRAFT",
+                          doc_date=date.today().isoformat())
+    lines = body.lines
+    if (body.source_type or "") == "transfer":
+        ref = (body.source_ref or "").strip()
+        rows, from_transfer = transfer_lines_for(db, client.id, ref)
+        if not rows:
+            raise HTTPException(404, "No transfer %s." % ref)
+        clash = db.query(models.DBEwayBill).filter(
+            models.DBEwayBill.client_id == client.id, models.DBEwayBill.source_ref == ref,
+            models.DBEwayBill.status != "CANCELLED").first()
+        if clash:
+            raise HTTPException(409, "%s already has %s." % (ref, clash.number))
+        e.source_type, e.source_ref = "transfer", ref
+        e.doc_type, e.sub_type = "CHL", "5"          # our own goods, on a delivery challan
+        e.doc_no, e.doc_date = ref, (rows[0].moved_on or date.today().isoformat())[:10]
+        lines = lines or from_transfer
+    db.add(e)
+    db.flush()
+    _eway_apply(db, client, e, body)
+    made = _eway_set_lines(db, client, e, lines or [])
+    eway_totals(e, made)
+    log_audit(db, client.id, "eway_bill_drawn", "eway_bill", e.id, e.number,
+              "%s %s" % (e.source_ref or "manual", inr(e.total_value)), request)
+    db.commit()
+    return {"eway_bill": eway_dict(db, e, detail=True)}
+
+
+@app.get("/api/eway-bills/{eid}")
+def get_eway_bill(eid: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return {"eway_bill": eway_dict(db, eway_or_404(db, client.id, eid), detail=True)}
+
+
+@app.put("/api/eway-bills/{eid}")
+def update_eway_bill(eid: int, body: EwayIn, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    e = eway_or_404(db, client.id, eid)
+    if e.status != "DRAFT":
+        raise HTTPException(409, "%s has been generated on the portal; change it there, then "
+                                 "update the vehicle or cancel it here." % e.number)
+    _eway_apply(db, client, e, body)
+    made = _eway_set_lines(db, client, e, body.lines) if body.lines is not None else eway_lines(db, e)
+    eway_totals(e, made)
+    db.commit()
+    return {"eway_bill": eway_dict(db, e, detail=True)}
+
+
+@app.get("/api/eway-bills/{eid}/json")
+def eway_bill_json(eid: int, request: Request, db: Session = Depends(get_db)):
+    """The file for the portal's bulk generation."""
+    client = require_erp_read(request, db)
+    e = eway_or_404(db, client.id, eid)
+    problems = eway_problems(db, e)
+    if problems:
+        raise HTTPException(409, "Not ready for the portal - still needed: " + "; ".join(problems) + ".")
+    body = json.dumps(eway_payload(db, client, e), indent=2, ensure_ascii=False).encode("utf-8")
+    name = re.sub(r"[^A-Za-z0-9]+", "_", e.number)
+    return StreamingResponse(io.BytesIO(body), media_type="application/json",
+                             headers={"Content-Disposition": 'attachment; filename="ewaybill_%s.json"' % name})
+
+
+class EwayGeneratedIn(BaseModel):
+    ewb_no: str
+    ewb_date: Optional[str] = ""
+    valid_upto: Optional[str] = ""
+
+
+@app.post("/api/eway-bills/{eid}/generated")
+def eway_generated(eid: int, body: EwayGeneratedIn, request: Request, db: Session = Depends(get_db)):
+    """The portal has issued it: its twelve-digit number and how long it runs."""
+    client, _, actor_name = wo_actor(request, db)
+    e = eway_or_404(db, client.id, eid)
+    no = re.sub(r"\D", "", body.ewb_no or "")
+    if len(no) != 12:
+        raise HTTPException(400, "An e-way bill number is twelve digits.")
+    clash = db.query(models.DBEwayBill).filter(
+        models.DBEwayBill.client_id == client.id, models.DBEwayBill.ewb_no == no,
+        models.DBEwayBill.id != e.id).first()
+    if clash:
+        raise HTTPException(409, "%s is already recorded on %s." % (no, clash.number))
+    e.ewb_no = no
+    e.ewb_date = (body.ewb_date or date.today().isoformat())[:10]
+    e.valid_upto = (body.valid_upto or "").strip() or eway_validity(e.ewb_date, e.distance_km, e.vehicle_type)
+    e.status = "GENERATED"
+    log_audit(db, client.id, "eway_bill_generated", "eway_bill", e.id, e.number, no, request)
+    db.commit()
+    return {"eway_bill": eway_dict(db, e, detail=True),
+            "message": "%s recorded - valid to %s." % (no, e.valid_upto)}
+
+
+class EwayVehicleIn(BaseModel):
+    vehicle_no: str
+    reason: Optional[str] = ""
+
+
+@app.post("/api/eway-bills/{eid}/vehicle")
+def eway_vehicle(eid: int, body: EwayVehicleIn, request: Request, db: Session = Depends(get_db)):
+    """Part B: the lorry changed on the way, or was not known when it was drawn."""
+    client, _, actor_name = wo_actor(request, db)
+    e = eway_or_404(db, client.id, eid)
+    if e.status == "CANCELLED":
+        raise HTTPException(409, "%s is cancelled." % e.number)
+    v = re.sub(r"[\s\-]", "", body.vehicle_no or "").upper()
+    if not VEHICLE_NO.match(v):
+        raise HTTPException(400, "Write the vehicle number like TS09UB1234.")
+    e.vehicle_history = ((e.vehicle_history or "") + "%s  %s -> %s  %s  (%s)\n" % (
+        datetime.now().strftime("%Y-%m-%d %H:%M"), e.vehicle_no or "none", v,
+        (body.reason or "").strip(), actor_name))
+    e.vehicle_no = v
+    db.commit()
+    return {"eway_bill": eway_dict(db, e, detail=True)}
+
+
+class EwayCancelIn(BaseModel):
+    reason: str
+
+
+@app.post("/api/eway-bills/{eid}/cancel")
+def eway_cancel(eid: int, body: EwayCancelIn, request: Request, db: Session = Depends(get_db)):
+    """The portal allows cancelling within 24 hours of generation."""
+    client, _, _ = wo_actor(request, db)
+    e = eway_or_404(db, client.id, eid)
+    if not (body.reason or "").strip():
+        raise HTTPException(400, "Say why it is being cancelled.")
+    if e.status == "GENERATED" and e.ewb_date:
+        try:
+            made = datetime.strptime(e.ewb_date[:10], "%Y-%m-%d")
+            if datetime.now() - made > timedelta(hours=48):
+                raise HTTPException(409, "The portal only cancels an e-way bill within 24 hours of "
+                                         "generating it. Let it expire unused instead.")
+        except ValueError:
+            pass
+    e.status, e.cancel_reason = "CANCELLED", body.reason.strip()
+    db.commit()
+    return {"eway_bill": eway_dict(db, e, detail=True)}
 
 
 # Serve frontend

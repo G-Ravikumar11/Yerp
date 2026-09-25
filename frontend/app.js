@@ -431,6 +431,7 @@ function showView(viewId) {
         'ledger-view': 'nav-ledger',
         'equipment-view': 'nav-equipment',
         'rfq-view': 'nav-rfqs',
+        'eway-view': 'nav-eway',
         'leads-view': 'nav-leads',
         'schedule-view': 'nav-schedule',
         'stores-view': 'nav-stores',
@@ -503,6 +504,7 @@ function showView(viewId) {
     if (viewId === 'ledger-view' && typeof loadLedger === 'function') loadLedger();
     if (viewId === 'equipment-view' && typeof loadEquipment === 'function') loadEquipment();
     if (viewId === 'rfq-view' && typeof loadRfqs === 'function') loadRfqs();
+    if (viewId === 'eway-view' && typeof loadEway === 'function') loadEway();
     if (viewId === 'leads-view' && typeof loadLeads === 'function') loadLeads();
     if (viewId === 'schedule-view' && typeof loadSchedule === 'function') loadSchedule();
     if (viewId === 'dashboard-view' && typeof loadAttention === 'function') loadAttention();
