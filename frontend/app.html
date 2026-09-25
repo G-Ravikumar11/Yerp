@@ -1306,6 +1306,7 @@
                                 <div class="form-group"><label>Service every (meter)</label><input type="number" id="eqp-f-service_every" class="form-control" placeholder="250"></div>
                                 <div class="form-group"><label>or every (days)</label><input type="number" id="eqp-f-service_every_days" class="form-control" placeholder="90"></div>
                                 <div class="form-group"><label>Last serviced</label><input type="date" id="eqp-f-last_service_on" class="form-control"></div>
+                                <div class="form-group"><label>&hellip;at meter</label><input type="number" step="0.1" id="eqp-f-last_service_meter" class="form-control" placeholder="reading then"></div>
                             </div>
                             <div class="form-row">
                                 <div class="form-group"><label>Insurance until</label><input type="date" id="eqp-f-insurance_until" class="form-control"></div>
@@ -1737,9 +1738,13 @@
                         <div class="modal-body">
                             <div class="form-row">
                                 <div class="form-group"><label>Against which order</label>
-                                    <select id="issue-order" class="form-control"></select></div>
+                                    <select id="issue-order" class="form-control" onchange="issueOrderPicked()"></select></div>
+                                <div class="form-group" id="issue-job-wrap"><label>Or which project</label>
+                                    <select id="issue-job" class="form-control"></select></div>
                                 <div class="form-group"><label>Issued on</label>
                                     <input type="date" id="issue-date" class="form-control"></div>
+                                <div class="form-group"><label>From store</label>
+                                    <select id="issue-store" class="form-control"></select></div>
                             </div>
                             <div class="form-row">
                                 <div class="form-group"><label>Taken by</label>
@@ -2169,7 +2174,7 @@
                                 <div class="form-group"><label>Company Email</label><input type="email" id="settings-company-email" class="form-control" placeholder="hello@company.com"></div>
                                 <div class="form-group"><label>Company Phone</label><input type="tel" id="settings-company-phone" class="form-control" placeholder="+1 555 123 4567"></div>
                                 <div class="form-group"><label>Company Address</label><input type="text" id="settings-company-address" class="form-control" placeholder="123 Business St, City"></div>
-                                <div class="form-group"><label>GSTIN</label><input type="text" id="settings-company-abn" class="form-control" placeholder="12 345 678 901"></div>
+                                <div class="form-group"><label>GSTIN</label><input type="text" id="settings-company-abn" class="form-control" maxlength="15" style="text-transform:uppercase;" placeholder="36AABCY1234H1ZX"></div>
                                 <div class="form-group"><label>Website</label><input type="text" id="settings-company-website" class="form-control" placeholder="www.company.com"></div>
                                 <div class="form-group"><label>Invoice number prefix</label>
                                     <input type="text" id="setting-invoice-prefix" class="form-control" placeholder="INV-" maxlength="12">
@@ -2182,7 +2187,7 @@
                                 <div class="form-group"><label>Currency</label>
                                     <div class="currency-picker">
                                         <input type="text" id="setting-currency-display" class="form-control" placeholder="Select currency" readonly onclick="toggleCurrencyPicker('settingsCurrency', event)">
-                                        <input type="hidden" id="setting-currency" value="GBP">
+                                        <input type="hidden" id="setting-currency" value="INR">
                                         <div class="currency-picker-list" id="setting-currency-list" style="display:none;">
                                             <input type="text" class="currency-search" id="setting-currency-search" placeholder="Search currency or country..." oninput="renderCurrencyItems('settingsCurrency', this.value)">
                                             <div class="currency-items" id="setting-currency-items"></div>
@@ -5144,7 +5149,7 @@
     <script src="documents.js?v=89"></script>
     <script src="mbdims.js?v=81"></script>
     <script src="measurement.js?v=100"></script>
-    <script src="stock.js?v=95"></script>
+    <script src="stock.js?v=112"></script>
     <script src="diary.js?v=81"></script>
     <script src="money.js?v=91"></script>
     <script src="subbills.js?v=91"></script>
@@ -5152,7 +5157,7 @@
     <script src="gst.js?v=79"></script>
     <script src="registers.js?v=84"></script>
     <script src="ledger.js?v=104"></script>
-    <script src="equipment.js?v=94"></script>
+    <script src="equipment.js?v=111"></script>
     <script src="rfq.js?v=96"></script>
     <script src="leads.js?v=110"></script>
     <script src="schedule.js?v=99"></script>

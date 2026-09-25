@@ -83,6 +83,7 @@ function eqpEdit(i) {
               hire_basis: a.hire_basis || 'Day', meter_unit: a.meter_unit || 'Hours',
               meter_reading: a.meter_reading || '', service_every: a.service_every || '',
               service_every_days: a.service_every_days || '', last_service_on: a.last_service_on,
+              last_service_meter: a.id ? (a.last_service_meter || 0) : '',
               purchase_date: a.purchase_date, purchase_value: a.purchase_value || '',
               insurance_until: a.insurance_until, fitness_until: a.fitness_until, notes: a.notes };
     Object.keys(v).forEach(function (k) {
@@ -112,6 +113,9 @@ async function eqpSave() {
         meter_unit: val('meter_unit'), meter_reading: num('meter_reading'),
         service_every: num('service_every'), service_every_days: parseInt(val('service_every_days')) || 0,
         last_service_on: val('last_service_on'), purchase_date: val('purchase_date'),
+        // Left blank on a new machine, the service count starts from today's
+        // reading; given, a service already overdue shows as overdue.
+        last_service_meter: val('last_service_meter') === '' ? null : num('last_service_meter'),
         purchase_value: num('purchase_value'), insurance_until: val('insurance_until'),
         fitness_until: val('fitness_until'), notes: val('notes') };
     var res = await fetch('/api/assets' + (EQP.editing ? '/' + EQP.editing : ''), {

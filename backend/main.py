@@ -6637,7 +6637,19 @@ def aged_receivables(request: Request, db: Session = Depends(get_db)):
 def get_settings(request: Request, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
     settings = db.query(models.DBSettings).filter(models.DBSettings.client_id == client.id).all()
-    return {s.key: s.value for s in settings}
+    out = {s.key: s.value for s in settings}
+    # The company's own details, where Settings has none of its own: the form
+    # showed a blank name for a company whose name is on every document.
+    for key, column in SETTINGS_ON_THE_COMPANY.items():
+        if not (out.get(key) or "").strip():
+            out[key] = getattr(client, column, "") or ""
+    if not (out.get("company_email") or "").strip():
+        out["company_email"] = client.email or ""
+    if client.gstin:
+        out["company_abn"] = client.gstin      # the one the documents use
+    if not (out.get("currency") or "").strip():
+        out["currency"] = client.currency or DEFAULT_CURRENCY
+    return out
 
 # Settings keys that are the company itself. Saved here, they used to stay
 # here: every RA bill, purchase order, statement and e-invoice reads the
@@ -6650,6 +6662,15 @@ SETTINGS_ON_THE_COMPANY = {"company_name": "company_name", "company_address": "a
 @app.post("/api/settings")
 def save_settings(request: Request, body: dict = None, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
+    # The box on the Company details form is headed GSTIN but was stored as
+    # an "ABN" setting nothing read - bills and e-invoices take the company's
+    # GSTIN, set only on the GST screen. What is typed there is that GSTIN.
+    gstin = ((body or {}).get("company_abn") or "").strip().upper().replace(" ", "")
+    if gstin:
+        if len(gstin) != 15 or not state_from_gstin(gstin):
+            raise HTTPException(400, "A GSTIN is fifteen characters and starts with a state code.")
+        client.gstin, client.state_code = gstin, state_from_gstin(gstin)
+        body["company_abn"] = gstin
     if body:
         for key, val in body.items():
             setting = db.query(models.DBSettings).filter(models.DBSettings.key == key, models.DBSettings.client_id == client.id).first()
@@ -8269,12 +8290,17 @@ def nudge_onboarding(emp_id: int, request: Request, db: Session = Depends(get_db
 
 # What every new tenant starts with. Chosen to render exactly the labels the
 # app used before rates became editable, so nothing shifts under existing work.
+# GST at the slabs a contractor bills and is billed at. The list this
+# replaced was UK VAT - 20%, 5%, zero rated - left from the product the app
+# grew out of, and every picker offered it to an Indian contractor.
 DEFAULT_TAX_RATES = [
-    ("VAT", 20.0, True),
-    ("VAT", 5.0, False),
-    ("Zero Rated", 0.0, False),
+    ("GST", 18.0, True),
+    ("GST", 12.0, False),
+    ("GST", 5.0, False),
+    ("GST", 28.0, False),
     ("No Tax", 0.0, False),
 ]
+UK_TAX_RATES = [("VAT", 20.0), ("VAT", 5.0), ("Zero Rated", 0.0), ("No Tax", 0.0)]
 
 
 def tax_rate_label(name, percent):
@@ -8313,9 +8339,17 @@ def validate_tax_rate(name, percent):
 
 def seed_default_tax_rates(db, client_id):
     """Give a tenant the standard list the first time they look."""
-    existing = db.query(models.DBTaxRate).filter(
-        models.DBTaxRate.client_id == client_id).count()
-    if existing:
+    rows = db.query(models.DBTaxRate).filter(
+        models.DBTaxRate.client_id == client_id).order_by(models.DBTaxRate.sort_order).all()
+    # A list still exactly as it was handed out - the UK one - was never
+    # chosen by anybody; it is swapped for GST. A list somebody has edited
+    # is theirs and is left alone.
+    if rows and [(r.name, r.percent) for r in rows] == UK_TAX_RATES:
+        for r in rows:
+            db.delete(r)
+        db.flush()
+        rows = []
+    if rows:
         return
     for order, (name, percent, is_default) in enumerate(DEFAULT_TAX_RATES):
         db.add(models.DBTaxRate(client_id=client_id, name=name, percent=percent,
@@ -19701,7 +19735,7 @@ def cost_category_of(raw) -> str:
     return COST_CATEGORY_ALIASES.get(key, "other")
 
 
-def job_money(db, client_id, job):
+def job_money(db, client_id, job, pre=None):
     """One project's money, from every direction it moves in.
 
     Three quantities, kept apart on purpose because they answer different
@@ -19744,10 +19778,18 @@ def job_money(db, client_id, job):
         rates = {e.id: (e.hourly_rate or 0.0) for e in db.query(models.DBEmployee).filter(
             models.DBEmployee.client_id == client_id).all()}
     labour_hours = round(sum(a.total_hours or 0.0 for a in attendance), 2)
-    labour = money(sum((a.total_hours or 0.0) * rates.get(a.employee_id, 0.0)
-                       for a in attendance))
+    staff_time = money(sum((a.total_hours or 0.0) * rates.get(a.employee_id, 0.0)
+                           for a in attendance))
 
-    incurred = money(billed + labour)
+    # What the site has actually cost, taken from the project's profit
+    # account so the two screens say the same thing: this one read only
+    # supplier bills and clock-in hours, and a job with a gang bill, a signed
+    # diary and cement issued from the store showed nothing incurred at all.
+    pre = pre or preload_pnl_for_job(db, client_id, job.id)
+    pnl = project_pnl(db, client_id, job, pre=pre)
+    c = pnl["cost"]
+    labour = money(c["labour"] + staff_time)
+    incurred = money(c["incurred"] + staff_time)
 
     # --- what is promised on top of it -----------------------------------
     pos = db.query(models.DBPurchaseOrder).filter(
@@ -19766,7 +19808,16 @@ def job_money(db, client_id, job):
         models.DBSubcontractOrder.client_id == client_id,
         models.DBSubcontractOrder.job_id == job.id).all()
     live_subs = [x for x in subs if (x.status or "") not in ("CANCELLED", "AMENDED")]
-    subcontracted = money(sum(x.net_order_value or 0 for x in live_subs))
+    # What the gangs have still to bill. Their bills are incurred already;
+    # counting the whole order on top counted every rupee billed twice.
+    gang_billed = {}
+    for b in db.query(models.DBSubBill).filter(
+            models.DBSubBill.client_id == client_id,
+            models.DBSubBill.job_id == job.id,
+            models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all():
+        gang_billed[b.order_id] = money(gang_billed.get(b.order_id, 0.0) + (b.this_bill or 0))
+    subcontracted = money(sum(max(0.0, (x.gross_amount or x.net_order_value or 0)
+                                  - gang_billed.get(x.id, 0.0)) for x in live_subs))
 
     commitment = money(committed + subcontracted)
 
@@ -19792,23 +19843,44 @@ def job_money(db, client_id, job):
     invoices = [i for i in db.query(models.DBInvoice).filter(
         models.DBInvoice.client_id == client_id,
         models.DBInvoice.job_id == job.id).all() if (i.status or "") != "Void"]
-    invoiced = money(sum(invoice_total(i) for i in invoices))
-    received = money(sum(i.paid or 0 for i in invoices))
+    # Certified RA bills are this business's invoices; counting only the
+    # invoice module left every project "not yet invoiced".
+    ra = db.query(models.DBRABill).filter(
+        models.DBRABill.client_id == client_id, models.DBRABill.job_id == job.id,
+        models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all()
+    settled = settled_amounts(db, client_id)
+    ra_received = money(sum(
+        (b.net_payable or 0) if (b.status == "PAID" and not settled.get(("ra_bill", b.id)))
+        else settled.get(("ra_bill", b.id), 0.0) for b in ra))
+    invoiced = money(sum(invoice_total(i) for i in invoices) + sum(b.this_bill or 0 for b in ra))
+    received = money(sum(i.paid or 0 for i in invoices) + ra_received)
+    # What the client still owes is what each bill asks for less what came in
+    # against it - the bill's net payable carries its GST, retention and TDS,
+    # so "billed less received" mixed a figure before tax with cash after it.
+    owed = money(sum(max(0.0, invoice_total(i) - (i.paid or 0)) for i in invoices)
+                 + sum(max(0.0, (b.net_payable or 0) - settled.get(("ra_bill", b.id), 0.0))
+                       for b in ra if b.status == "CERTIFIED"))
 
     contract_value = sold or money(job.quoted_value or 0)
     # Revenue earned by the work done, against revenue actually invoiced. A
     # job billed ahead of its progress is borrowing from its own future.
     earned = money(contract_value * percent_complete / 100) if contract_value else 0.0
     retention_percent = float(job.retention_percent or 0)
-    retention_held = money(invoiced * retention_percent / 100)
+    retention_held = money(sum(invoice_total(i) for i in invoices) * retention_percent / 100
+                           + sum(b.retention_amount or 0 for b in ra))
 
     # --- cost by heading --------------------------------------------------
     by_category = {key: 0.0 for key in COST_CATEGORY_KEYS}
     by_category["labour"] = labour
+    stocked = pre.get("stocked") or {}
     for b in real_bills:
         key = cost_category_of(b.category)
-        by_category[key] = money(by_category[key] + (b.total or b.amount or 0))
-    by_category["subcontract"] = money(by_category["subcontract"] + subcontracted)
+        by_category[key] = money(by_category[key]
+                                 + (b.total or b.amount or 0) * (1.0 - stocked.get(b.id, 0.0)))
+    by_category["materials"] = money(by_category["materials"] + c["material_from_store"]
+                                     - c["material_recovered_from_gangs"])
+    by_category["subcontract"] = money(by_category["subcontract"] + c["subcontractors"] + subcontracted)
+    by_category["plant"] = money(by_category["plant"] + c["plant"] + c["equipment"])
     for p in open_pos:
         by_category["materials"] = money(by_category["materials"] + (p.total or 0))
 
@@ -19833,7 +19905,7 @@ def job_money(db, client_id, job):
         "percent_complete": percent_complete,
 
         "invoiced": invoiced, "received": received,
-        "outstanding": money(invoiced - received),
+        "outstanding": owed,
         "retention_percent": retention_percent,
         "retention_held": retention_held,
         "earned": earned,
@@ -19864,7 +19936,8 @@ def costs_by_project(request: Request, db: Session = Depends(get_db)):
     client = require_items_access(request, db, "reports.view")
     jobs = db.query(models.DBJob).filter(
         models.DBJob.client_id == client.id).order_by(models.DBJob.id.desc()).all()
-    rows = [job_money(db, client.id, j) for j in jobs]
+    pre = preload_pnl(db, client.id)          # once for every project, not per row
+    rows = [job_money(db, client.id, j, pre=pre) for j in jobs]
     return {
         "projects": rows,
         "summary": {
@@ -19940,7 +20013,8 @@ def costs_by_project_xlsx(request: Request, db: Session = Depends(get_db)):
     client = require_items_access(request, db, "reports.view")
     jobs = db.query(models.DBJob).filter(
         models.DBJob.client_id == client.id).order_by(models.DBJob.id.desc()).all()
-    rows = [job_money(db, client.id, j) for j in jobs]
+    pre = preload_pnl(db, client.id)
+    rows = [job_money(db, client.id, j, pre=pre) for j in jobs]
     return sheet_response(
         ["Project", "Name", "Customer", "Sold", "Budgeted cost", "Committed",
          "Subcontracted", "Total cost", "Margin", "Margin %", "Billed", "Unpaid"],
@@ -22349,8 +22423,41 @@ def stock_ledger(item_code: str, request: Request, db: Session = Depends(get_db)
 
 # --- Issuing to site ---------------------------------------------------------
 
+def store_holding(db, client_id, lines):
+    """The store an issue with no store named is drawn from: the one that
+    holds enough of everything on it, else the one holding most of the first
+    item. It used to be "Main store" whatever - material received into a site
+    store was issued out of an empty main store, which went negative while
+    the site store never went down."""
+    wanted = {}
+    for l in lines or []:
+        code = (l.get("item_code") or l.get("code") or "").strip()
+        try:
+            qty = float(l.get("quantity") if l.get("quantity") is not None else l.get("qty") or 0)
+        except (TypeError, ValueError):
+            qty = 0.0
+        if code and qty > 0:
+            wanted[code] = wanted.get(code, 0.0) + qty
+    if not wanted:
+        return "Main store"
+    names = sorted({s for (s,) in db.query(models.DBStockMovement.store).filter(
+        models.DBStockMovement.client_id == client_id,
+        models.DBStockMovement.item_code.in_(list(wanted))).distinct().all() if s})
+    best, best_qty = "", -1.0
+    first = next(iter(wanted))
+    for name in names:
+        held = replay_stock_ledger(db, client_id, store=name, item_codes=list(wanted))
+        if all((held.get(c) or {}).get("on_hand", 0) >= q - 1e-9 for c, q in wanted.items()):
+            return name
+        have = (held.get(first) or {}).get("on_hand", 0)
+        if have > best_qty:
+            best, best_qty = name, have
+    return best or "Main store"
+
+
 class StockIssueIn(BaseModel):
     work_order_id: Optional[int] = None
+    job_id: Optional[int] = None
     issued_on: Optional[str] = ""
     issued_to: Optional[str] = ""
     purpose: Optional[str] = ""
@@ -22444,13 +22551,18 @@ def create_stock_issue(body: StockIssueIn, request: Request,
     wo = None
     if body.work_order_id:
         wo = work_order_or_404(db, client.id, body.work_order_id)
+    # Material goes to a site before its order is placed - mobilisation, the
+    # first pour on a letter of intent. Issued "not against an order" it was
+    # charged to no project at all; the project can be named on its own.
+    job_id = wo.job_id if wo else (job_or_404(db, client.id, body.job_id).id if body.job_id else None)
 
     issue = models.DBStockIssue(
         client_id=client.id, work_order_id=(wo.id if wo else None),
-        job_id=(wo.job_id if wo else None),
+        job_id=job_id,
         number=next_issue_number(db, client.id),
         issued_on=(body.issued_on or datetime.now().strftime("%Y-%m-%d")),
-        store=(body.store or "Main store"), status="DRAFT",
+        store=((body.store or "").strip() or store_holding(db, client.id, body.lines or [])),
+        status="DRAFT",
         issued_to=(body.issued_to or "").strip(),
         purpose=(body.purpose or "").strip(),
         remarks=(body.remarks or "").strip(),
@@ -26493,6 +26605,13 @@ def update_asset(asset_id: int, body: AssetIn, request: Request, db: Session = D
     client, _, _ = wo_actor(request, db)
     a = asset_or_404(db, client.id, asset_id)
     _apply_asset(a, body)
+    # The form shows when it was last serviced; an edit that corrects it used
+    # to be dropped without a word, and the service warning kept counting
+    # from the wrong date. The meter itself moves with the daily log.
+    if body.last_service_on is not None:
+        a.last_service_on = (body.last_service_on or "").strip()
+    if body.last_service_meter is not None:
+        a.last_service_meter = max(0.0, float(body.last_service_meter))
     db.commit()
     return asset_dict(db, a)
 

@@ -165,6 +165,17 @@ async function showIssueModal() {
             return '<option value="' + w.id + '">' + esc(w.number) + ' — ' +
                 esc(w.job_name || '') + '</option>';
         }).join('');
+    if (typeof fillJobPicker === 'function') await fillJobPicker('issue-job');
+    issueOrderPicked();
+    // The stores that hold something, fullest first; left on "wherever it
+    // is", the server takes it from the store that has it.
+    try {
+        var st = (await (await fetch('/api/stock/stores', { credentials: 'include' })).json()).stores || [];
+        st = st.filter(function (x) { return x.value > 0; }).sort(function (a, b) { return b.value - a.value; });
+        document.getElementById('issue-store').innerHTML =
+            '<option value="">Wherever it is held</option>' +
+            st.map(function (x) { return '<option value="' + esc(x.store) + '">' + esc(x.store) + '</option>'; }).join('');
+    } catch (e) { /* the server picks */ }
 
     // Only what is actually in the store can be issued from it.
     var held = STOCK.rows.filter(function (r) { return r.on_hand > 0; });
@@ -247,6 +258,8 @@ async function saveIssue(andPost) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             work_order_id: parseInt(document.getElementById('issue-order').value) || null,
+            job_id: parseInt((document.getElementById('issue-job') || {}).value) || null,
+            store: (document.getElementById('issue-store') || {}).value || '',
             issued_on: document.getElementById('issue-date').value,
             issued_to: document.getElementById('issue-to').value,
             purpose: document.getElementById('issue-purpose').value,
@@ -432,3 +445,14 @@ async function saveTransfer() {
     loadStock();
 }
 window.saveTransfer = saveTransfer;
+
+
+// An order carries its project; without one, the project is picked here so
+// the material is still charged to the site it went to.
+function issueOrderPicked() {
+    var wrap = document.getElementById('issue-job-wrap');
+    var order = (document.getElementById('issue-order') || {}).value;
+    if (wrap) wrap.style.display = order ? 'none' : '';
+    if (order && document.getElementById('issue-job')) document.getElementById('issue-job').value = '';
+}
+window.issueOrderPicked = issueOrderPicked;

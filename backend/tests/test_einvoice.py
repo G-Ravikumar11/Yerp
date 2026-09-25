@@ -128,3 +128,16 @@ def test_a_project_for_a_new_client_puts_them_on_the_customer_list(tenant):
     tenant.post("/api/jobs", json={"name": "Tellapur phase 2", "customer_name": "aparna constructions"})
     customers = tenant.get("/api/customers").json()["customers"]
     assert len([c for c in customers if c["name"].lower() == "aparna constructions"]) == 1
+
+
+def test_the_gstin_typed_in_settings_is_the_companys_gstin(tenant):
+    res = tenant.post("/api/settings", json={"company_abn": "36aabcy1234h1zx"})
+    assert res.status_code == 200, res.text
+    assert tenant.get("/api/gst/settings").json()["gstin"] == "36AABCY1234H1ZX"
+    assert tenant.get("/api/settings").json()["company_abn"] == "36AABCY1234H1ZX"
+    assert tenant.post("/api/settings", json={"company_abn": "12 345 678 901"}).status_code == 400
+
+
+def test_settings_shows_the_company_it_belongs_to(tenant):
+    s = tenant.get("/api/settings").json()
+    assert s["company_name"] == "Acme Ltd" and s["currency"] == "INR"

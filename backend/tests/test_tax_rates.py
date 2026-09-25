@@ -13,7 +13,7 @@ import main
 def test_a_new_tenant_gets_the_standard_list(tenant):
     rates = tenant.get("/api/tax-rates").json()
     labels = [r["label"] for r in rates]
-    assert labels == ["20% VAT", "5% VAT", "0% Zero Rated", "No Tax"]
+    assert labels == ["18% GST", "12% GST", "5% GST", "28% GST", "No Tax"]
     assert sum(1 for r in rates if r["is_default"]) == 1
 
 
@@ -160,9 +160,34 @@ def test_one_tenant_s_rates_are_not_another_s(client, tenant):
 
     labels = [r["label"] for r in client.get("/api/tax-rates").json()]
     assert "42% Secret Levy" not in labels
-    assert labels == ["20% VAT", "5% VAT", "0% Zero Rated", "No Tax"]
+    assert labels == ["18% GST", "12% GST", "5% GST", "28% GST", "No Tax"]
 
 
 def test_tax_rates_require_a_session(client):
     assert client.get("/api/tax-rates").status_code == 401
     assert client.put("/api/tax-rates", json={"tax_rates": []}).status_code == 401
+
+
+def test_a_tenant_still_on_the_uk_list_is_moved_to_gst(tenant):
+    """The UK VAT list was handed out, never chosen; an untouched one goes."""
+    import database
+    import models
+    s = database.SessionLocal()
+    try:
+        client = s.query(models.DBClient).order_by(models.DBClient.id.desc()).first()
+        s.query(models.DBTaxRate).filter(models.DBTaxRate.client_id == client.id).delete()
+        for i, (n, p) in enumerate(main.UK_TAX_RATES):
+            s.add(models.DBTaxRate(client_id=client.id, name=n, percent=p, sort_order=i,
+                                   is_default=(i == 0)))
+        s.commit()
+    finally:
+        s.close()
+    labels = [r["label"] for r in tenant.get("/api/tax-rates").json()]
+    assert labels[0] == "18% GST"
+
+
+def test_an_edited_list_is_left_alone(tenant):
+    tenant.put("/api/tax-rates", json={"tax_rates": [
+        {"name": "VAT", "percent": 20, "is_default": True}, {"name": "VAT", "percent": 5}]})
+    labels = [r["label"] for r in tenant.get("/api/tax-rates").json()]
+    assert labels == ["20% VAT", "5% VAT"]

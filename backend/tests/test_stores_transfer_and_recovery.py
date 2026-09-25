@@ -173,3 +173,35 @@ def test_material_is_charged_only_to_a_live_order(tenant):
     iss = tenant.post("/api/stock-issues", json={"lines": [{"item_code": code, "qty": 5}]}).json()["issue"]
     res = tenant.post("/api/stock-issues/%d/post" % iss["id"], json={"recover_from_order_id": draft["id"]})
     assert res.status_code == 409
+
+
+def test_an_issue_comes_out_of_the_store_that_holds_it(tenant):
+    """Material received into a site store was issued out of an empty main
+    store: main went negative and the site store never went down."""
+    from test_goods_receipt import order, receipt, set_lines, post
+    from test_stock_control import rm_item
+    code = rm_item(tenant, name="OPC 53 CEMENT", uom="Bags")
+    po = order(tenant, lines=[{"description": "OPC 53", "item_code": code, "uom": "Bags",
+                               "qty": 100, "price": 400}])
+    grn = receipt(tenant, po, store_location="Vanya site store")
+    set_lines(tenant, grn, [{"received_qty": 100, "rejected_qty": 0}])
+    post(tenant, grn)
+    issue = tenant.post("/api/stock-issues", json={"issued_to": "Site",
+                                                  "lines": [{"item_code": code, "quantity": 10}]}).json()["issue"]
+    assert issue["store"] == "Vanya site store"
+    tenant.post("/api/stock-issues/%d/post" % issue["id"], json={})
+    stores = {s["store"]: s for s in tenant.get("/api/stock/stores").json()["stores"]}
+    assert stores["Vanya site store"]["value"] == 90 * 400
+    assert "Main store" not in stores or stores["Main store"]["value"] >= 0
+
+
+def test_an_issue_not_against_an_order_can_still_name_its_project(tenant):
+    from test_stock_control import rm_item, receive
+    job = tenant.post("/api/jobs", json={"name": "Mobilisation", "customer_name": "Arabtec"}).json()
+    code = rm_item(tenant)
+    receive(tenant, code, 50, 100)
+    issue = tenant.post("/api/stock-issues", json={"job_id": job["id"], "issued_to": "Site",
+                                                  "lines": [{"item_code": code, "quantity": 5}]}).json()["issue"]
+    tenant.post("/api/stock-issues/%d/post" % issue["id"], json={})
+    cost = tenant.get("/api/jobs/%d/pnl" % job["id"]).json()["cost"]
+    assert cost["material_from_store"] == 500

@@ -209,3 +209,19 @@ def test_another_tenant_sees_none_of_it(tenant, second_tenant):
     a = machine(tenant)
     assert second_tenant.get("/api/assets").json()["assets"] == []
     assert second_tenant.get("/api/assets/%d" % a["id"]).status_code == 404
+
+
+def test_a_machine_brought_in_overdue_shows_as_overdue(tenant):
+    a = machine(tenant, meter_reading=1200, service_every=250, last_service_meter=900)
+    assert a["service"]["due"] is True
+
+
+def test_correcting_the_last_service_is_kept(tenant):
+    a = machine(tenant)
+    body = {"name": a["name"], "ownership": "Owned", "meter_unit": "Hours",
+            "service_every": 250, "last_service_on": "2026-08-01", "last_service_meter": 1100}
+    res = tenant.put("/api/assets/%d" % a["id"], json=body)
+    assert res.status_code == 200, res.text
+    got = tenant.get("/api/assets/%d" % a["id"]).json()
+    got = got.get("asset", got)
+    assert got["last_service_on"] == "2026-08-01" and got["last_service_meter"] == 1100
