@@ -46,6 +46,14 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+# The business runs on Indian time; the server it is hosted on runs on UTC.
+# Every clock-in, diary stamp, approval and chat message took the server's
+# clock, five and a half hours behind the site. The POSIX form needs no
+# time-zone database on the server image, and TZ still overrides it.
+os.environ.setdefault("TZ", "IST-5:30")
+if hasattr(time, "tzset"):
+    time.tzset()
+
 def hash_password(password: str) -> str:
     salt = hashlib.sha256(os.urandom(32)).hexdigest().encode()
     pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100000)
@@ -23829,7 +23837,10 @@ def payables(request: Request, db: Session = Depends(get_db)):
     rows, buckets = [], _empty_buckets()
     for b in db.query(models.DBBill).filter(
             models.DBBill.client_id == client.id).all():
-        if (b.status or "") in ("Paid", "Cancelled", "Rejected"):
+        # A draft is a bill nobody here has accepted yet - one a supplier sent
+        # in through the portal, say. The ledger and the payment box both leave
+        # it out until it is; counting it here said we owed it already.
+        if (b.status or "") in ("Draft", "Paid", "Cancelled", "Rejected"):
             continue
         if (b.approval_status or "none") == "rejected":
             continue

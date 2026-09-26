@@ -286,3 +286,12 @@ def test_an_undated_supplier_bill_falls_due_on_the_suppliers_terms(tenant):
                                         "amount": 1000, "total": 1000}).json()
     got = [x for x in tenant.get("/api/bills").json() if x["id"] == b["id"]][0]
     assert got["due_date"] == (date.today() + timedelta(days=45)).isoformat()
+
+
+def test_a_draft_supplier_bill_is_not_owed_until_accepted(tenant):
+    """A bill a supplier sent in, not yet checked, is not money we owe - the
+    ledger and the payment box already said so; what-we-owe said otherwise."""
+    res = tenant.post("/api/bills", json={"number": "DRAFT-9", "vendor_name": "ACC Ltd", "amount": 50000,
+                                          "tax_amount": 9000, "total": 59000, "status": "Draft"})
+    assert res.status_code == 200, res.text
+    assert not [b for b in tenant.get("/api/money/payables").json()["bills"] if b["number"] == "DRAFT-9"]

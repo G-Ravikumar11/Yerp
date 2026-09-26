@@ -3923,7 +3923,7 @@
                         <div><h1>Programme &amp; Progress</h1><p class="subtitle">What is meant to happen when, what has happened, and what slips if the thing before it slips</p></div>
                         <div class="invoices-actions">
                             <select id="sch-job" class="form-control" style="width:auto;min-width:220px;" onchange="loadSchedule()"></select>
-                            <button class="btn btn-primary" onclick="schEdit()">+ Activity</button>
+                            <button class="btn btn-primary" data-perm="workorders.manage" onclick="schEdit()">+ Activity</button>
                             <button class="btn btn-outline" onclick="schFromWo()">Draw from a work order</button>
                             <button class="btn btn-outline" onclick="window.print()">Print</button>
                         </div>
@@ -4159,7 +4159,7 @@
                         <div><h1>Drawings &amp; Photos</h1><p class="subtitle">Every sheet and every revision, the one to build to marked - and the site's photographs</p></div>
                         <div class="invoices-actions">
                             <select id="drw-job" class="form-control" style="width:auto;min-width:220px;" onchange="loadDrawings()"></select>
-                            <button class="btn btn-primary" onclick="drawingAdd()">+ Drawing</button>
+                            <button class="btn btn-primary" data-perm="workorders.manage" onclick="drawingAdd()">+ Drawing</button>
                         </div>
                     </div>
                     <div class="stats-grid" id="drw-stats"></div>
@@ -4260,7 +4260,7 @@
                     <div class="invoices-header-area">
                         <div><h1>Equipment &amp; Plant</h1><p class="subtitle">Where each machine is, what it did, what it burned and when it is due &mdash; and what it cost the site it worked on</p></div>
                         <div class="invoices-actions">
-                            <button class="btn btn-primary" onclick="eqpEdit()">+ Machine</button>
+                            <button class="btn btn-primary" data-perm="workorders.manage" onclick="eqpEdit()">+ Machine</button>
                             <select id="eqp-status" class="form-control" style="width:auto;" onchange="loadEquipment()">
                                 <option value="">Every machine</option><option>Deployed</option><option>Available</option>
                                 <option>Under repair</option><option>Disposed</option></select>
@@ -4758,7 +4758,7 @@
                     <div class="invoices-header-area">
                         <div><h1>Subcontractor Bills</h1><p class="subtitle">What the gangs have built, and what we pay them for it</p></div>
                         <div class="invoices-actions">
-                            <button class="btn btn-primary" onclick="newSubBill()">Draw up a bill</button>
+                            <button class="btn btn-primary" data-perm="workorders.manage" onclick="newSubBill()">Draw up a bill</button>
                             <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
                         </div>
                     </div>
@@ -4808,7 +4808,7 @@
                     <div class="invoices-header-area">
                         <div><h1>Measurement &amp; RA Bills</h1><p class="subtitle">What has actually been done on site, and the running account bills that follow from it</p></div>
                         <div class="invoices-actions">
-                            <button class="btn btn-primary" onclick="newRaBill()">Draw up a bill</button>
+                            <button class="btn btn-primary" data-perm="workorders.manage" onclick="newRaBill()">Draw up a bill</button>
                             <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
                         </div>
                     </div>
