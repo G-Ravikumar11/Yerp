@@ -32771,6 +32771,181 @@ def close_thread(thread_id: int, action: str, request: Request, db: Session = De
             "message": "\"%s\" %s." % (t.title, "closed" if t.closed else "reopened")}
 
 
+# ============================================================================
+# A FULL BACKUP, IN THE OWNER'S HANDS
+#
+# Everything the business has put into the app - every project, bill,
+# measurement, diary day, payment and chat - as one download the owner can
+# keep on their own disk. Nothing here restores it; this is the copy that
+# makes the database not the only place the business exists.
+#
+# Each table the company owns, found by walking the schema rather than by a
+# list, so a table added next year is in next year's backup without anybody
+# remembering to add it. JSON for a machine to read back, CSV to open in a
+# spreadsheet. Photos and drawings on request, because they are the bulk of
+# it. Passwords, tokens and keys are left out: a backup is a file that gets
+# copied about, and it must not be a way into the app.
+# ============================================================================
+
+BACKUP_SKIP_TABLES = {"password_resets", "admin_users", "super_admins", "code_sequences",
+                      "job_runs", "pricing_rules"}
+BACKUP_SECRET = re.compile(r"password|(^|_)token(_|$)|secret|api_?key|access_key|private_key|(^|_)otp(_|$)", re.I)
+
+
+def backup_tables(db, client_id):
+    """{table name: [row dicts]} for everything this company owns: the rows
+    carrying its client_id, then the lines hanging off those, and so on down."""
+    from sqlalchemy import select
+    tables = [t for t in models.Base.metadata.sorted_tables if t.name not in BACKUP_SKIP_TABLES]
+    out, ids = {}, {}
+    for t in tables:
+        if t.name == "clients":
+            rows = db.execute(select(t).where(t.c.id == client_id)).mappings().all()
+        elif "client_id" in t.c:
+            rows = db.execute(select(t).where(t.c.client_id == client_id)).mappings().all()
+        else:
+            continue
+        out[t.name] = [dict(r) for r in rows]
+        ids[t.name] = {r["id"] for r in out[t.name] if "id" in r}
+    # Lines of lines: follow each table's first foreign key that leads to
+    # something already taken, until nothing more joins.
+    pending = [t for t in tables if t.name not in out]
+    progress = True
+    while pending and progress:
+        progress = False
+        for t in list(pending):
+            owner = next((c for c in t.c for fk in c.foreign_keys
+                          if fk.column.table.name in ids), None)
+            if owner is None:
+                continue
+            parent = next(iter(owner.foreign_keys)).column.table.name
+            wanted = sorted(ids[parent])
+            rows = []
+            for i in range(0, len(wanted), 500):
+                chunk = wanted[i:i + 500]
+                if chunk:
+                    rows += [dict(r) for r in db.execute(select(t).where(owner.in_(chunk))).mappings().all()]
+            out[t.name] = rows
+            ids[t.name] = {r["id"] for r in rows if "id" in r}
+            pending.remove(t)
+            progress = True
+    return out
+
+
+def _backup_clean(table, row):
+    """A row as it goes in the backup: secrets out, binary left to the files."""
+    clean = {}
+    for k, v in row.items():
+        if BACKUP_SECRET.search(k):
+            v = "[removed]" if v else v
+        elif isinstance(v, (bytes, bytearray, memoryview)):
+            v = None
+        clean[k] = v
+    if table == "settings" and BACKUP_SECRET.search(str(clean.get("key") or "")):
+        clean["value"] = "[removed]" if clean.get("value") else clean.get("value")
+    return clean
+
+
+def backup_owner(request, db):
+    """The account holder alone. A backup is the whole business in one file."""
+    client = get_client_user(request, db)
+    if request.session.get("member_id"):
+        raise HTTPException(403, "Only the account holder can take a full backup.")
+    return client
+
+
+@app.get("/api/backup/info")
+def backup_info(request: Request, db: Session = Depends(get_db)):
+    client = backup_owner(request, db)
+    tables = backup_tables(db, client.id)
+    from sqlalchemy import func
+    size = db.query(func.coalesce(func.sum(models.DBFile.size), 0)).filter(
+        models.DBFile.client_id == client.id).scalar() or 0
+    last = db.query(models.DBAuditLog).filter(models.DBAuditLog.client_id == client.id,
+                                              models.DBAuditLog.action == "backup_downloaded").order_by(
+        models.DBAuditLog.id.desc()).first()
+    return {"tables": len([t for t, rows in tables.items() if rows]),
+            "rows": sum(len(r) for r in tables.values()),
+            "files": len(tables.get("project_files", [])), "files_bytes": int(size),
+            "last_backup": (getattr(last, "created_at", "") or getattr(last, "timestamp", "") or "") if last else "",
+            "last_backup_details": last.details if last else ""}
+
+
+@app.get("/api/backup")
+def download_backup(request: Request, files: int = 0, db: Session = Depends(get_db)):
+    client = backup_owner(request, db)
+    if rate_limiter.is_rate_limited("backup:%d" % client.id, max_requests=6, window=3600):
+        raise HTTPException(429, "Six backups in an hour is plenty. Try again later.")
+    import csv as _csv
+    import tempfile
+    import zipfile
+    tables = backup_tables(db, client.id)
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    spool = tempfile.SpooledTemporaryFile(max_size=50 * 1024 * 1024)
+    counts, file_count = {}, 0
+    with zipfile.ZipFile(spool, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, rows in sorted(tables.items()):
+            clean = [_backup_clean(name, r) for r in rows]
+            counts[name] = len(clean)
+            if name == "project_files":
+                for r in clean:
+                    r["file"] = ("files/%d-%s" % (r["id"], re.sub(r"[^\w.\-]+", "_", r.get("name") or "file"))
+                                 if files else None)
+            z.writestr("data/%s.json" % name, json.dumps(clean, ensure_ascii=False, indent=1, default=str))
+            if clean:
+                buf = io.StringIO()
+                w = _csv.DictWriter(buf, fieldnames=list(clean[0].keys()), extrasaction="ignore")
+                w.writeheader()
+                for r in clean:
+                    w.writerow({k: ("" if v is None else v) for k, v in r.items()})
+                z.writestr("sheets/%s.csv" % name, buf.getvalue().encode("utf-8-sig"))
+        if files:
+            for f in db.query(models.DBFile.id, models.DBFile.name).filter(
+                    models.DBFile.client_id == client.id).order_by(models.DBFile.id).all():
+                blob = db.query(models.DBFile.data).filter(models.DBFile.id == f.id).scalar()
+                if blob:
+                    z.writestr("files/%d-%s" % (f.id, re.sub(r"[^\w.\-]+", "_", f.name or "file")), bytes(blob))
+                    file_count += 1
+        z.writestr("manifest.json", json.dumps({
+            "company": client.company_name or "", "gstin": client.gstin or "",
+            "exported_at": stamp, "tables": counts, "rows": sum(counts.values()),
+            "files_included": bool(files), "files": file_count,
+            "left_out": "passwords, sign-in tokens and API keys",
+            "app_version": os.getenv("RAILWAY_GIT_COMMIT_SHA", "")[:12]}, indent=1))
+        z.writestr("README.txt", (
+            "Y ERP backup of %s, taken %s.\n\n"
+            "data/    every table the company owns, as JSON - one file per table.\n"
+            "sheets/  the same tables as CSV, to open in Excel.\n"
+            "files/   photos, drawings and documents%s.\n\n"
+            "Rows point at each other by id: a ra_bill_lines row's ra_bill_id is the id of a row in\n"
+            "ra_bills.json. Passwords, sign-in tokens and API keys are not in this file.\n"
+            "Keep it somewhere the office computer is not.\n"
+            % (client.company_name or "the company", stamp,
+               "" if files else " - not in this backup; take one with files to include them")))
+    size = spool.tell()
+    spool.seek(0)
+    log_audit(db, client.id, "backup_downloaded", "company", client.id, client.company_name or "",
+              "%d rows, %s, %d KB" % (sum(counts.values()), "with %d files" % file_count if files else "data only",
+                                      size // 1024), request)
+    db.commit()
+
+    def chunks():
+        try:
+            while True:
+                part = spool.read(1024 * 256)
+                if not part:
+                    break
+                yield part
+        finally:
+            spool.close()
+
+    name = "yerp-backup-%s-%s.zip" % (re.sub(r"[^A-Za-z0-9]+", "-", client.company_name or "company").strip("-").lower(),
+                                      date.today().isoformat())
+    return StreamingResponse(chunks(), media_type="application/zip",
+                             headers={"Content-Disposition": 'attachment; filename="%s"' % name,
+                                      "Content-Length": str(size)})
+
+
 # Serve frontend
 frontend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
 if os.path.exists(frontend_path):

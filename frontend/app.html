@@ -1976,6 +1976,12 @@
                         <div><h1>Settings</h1><p class="subtitle">Manage your account and preferences</p></div>
                     </div>
 
+                    <div class="glass-widget" id="backup-widget" style="margin-bottom:24px;display:none;">
+                        <div class="widget-header"><div><h3>Backup</h3>
+                            <p style="font-size:0.8rem;color:var(--text-secondary);margin:2px 0 0;">Everything the business has put in, as one file for you to keep.</p></div></div>
+                        <div style="padding:14px 18px;" id="backup-info"></div>
+                    </div>
+
                     <div class="glass-widget" style="margin-bottom:24px;">
                         <div class="widget-header"><div><h3>Partner portal</h3>
                             <p style="font-size:0.8rem;color:var(--text-secondary);margin:2px 0 0;">A login for each gang and supplier to see their own orders, bills and payments.</p></div></div>
@@ -5591,7 +5597,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=125"></script>
+    <script src="app.js?v=126"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=66"></script>
@@ -5633,6 +5639,7 @@
     <script src="einvoice.js?v=123"></script>
     <script src="chat.js?v=126"></script>
     <script src="offline.js?v=126"></script>
+    <script src="backup.js?v=127"></script>
     <script src="leads.js?v=110"></script>
     <script src="schedule.js?v=99"></script>
     <script src="stores.js?v=108"></script>
