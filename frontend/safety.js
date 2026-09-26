@@ -33,7 +33,7 @@ async function loadSafety() {
                     (i.root_cause ? '<div style="font-size:0.72rem;color:var(--success-color);">Cause: ' + esc(i.root_cause) + ' &middot; Fix: ' + esc(i.corrective_action) + '</div>' : '') + '</td>' +
                     '<td>' + esc(i.injured_name) + (i.injury ? '<div style="font-size:0.72rem;">' + esc(i.injury) + (i.lost_days ? ', ' + i.lost_days + ' days lost' : '') + '</div>' : '') + '</td>' +
                     '<td style="white-space:nowrap;">' + statusPill(i.status, i.status === 'OPEN' ? (i.serious ? 'bad' : 'wait') : 'good') + '</td>' +
-                    '<td class="text-right" style="white-space:nowrap;">' + (i.status === 'OPEN' ? '<button class="btn btn-sm btn-outline" onclick="sfClose(' + i.id + ')">Close</button> ' : '') +
+                    '<td class="text-right" style="white-space:nowrap;">' + (i.status === 'OPEN' && can('site.signoff') ? '<button class="btn btn-sm btn-outline" onclick="sfClose(' + i.id + ')">Close</button> ' : '') +
                     '<button class="btn btn-sm btn-outline" onclick="openFiles(\'incident\',' + i.id + ',\'' + esc(i.number) + '\')">Photos</button></td></tr>';
             }).join('') || '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text-secondary);">Nothing reported. A near miss written down is the cheapest lesson there is.</td></tr>') +
             '</tbody></table></div>';
@@ -52,7 +52,7 @@ async function loadSafety() {
                 return '<tr><td style="font-family:monospace;white-space:nowrap;">' + esc(p.number) + '</td><td>' + esc(p.kind) + '</td><td>' + esc(p.location) + '</td>' +
                     '<td>' + esc(p.valid_from.slice(5)) + ' &rarr; ' + esc(p.valid_to.slice(5)) + '</td><td>' + esc(p.receiver) + '</td>' +
                     '<td style="white-space:nowrap;">' + statusPill(p.expired ? 'RUN OUT' : p.status, tone) + '</td><td class="text-right">' +
-                    (p.status === 'ACTIVE' ? '<button class="btn btn-sm btn-outline" onclick="sfPermitClose(' + p.id + ')">Close</button>' : '') + '</td></tr>';
+                    (p.status === 'ACTIVE' && can('site.signoff') ? '<button class="btn btn-sm btn-outline" onclick="sfPermitClose(' + p.id + ')">Close</button>' : '') + '</td></tr>';
             }).join('') || '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text-secondary);">No permits issued.</td></tr>') +
             '</tbody></table></div>';
     }
@@ -65,7 +65,10 @@ window.sfTab = sfTab;
 function sfNew() {
     if (!SAFE.jobId) { showToast('Pick the project first', 'error'); return; }
     if (SAFE.tab === 'talks') return sfTalk();
-    if (SAFE.tab === 'permits') return sfPermit();
+    if (SAFE.tab === 'permits') {
+        if (!can('site.signoff')) { showToast('A permit to work is issued by a supervisor.', 'info'); return; }
+        return sfPermit();
+    }
     document.getElementById('sfi-kind').innerHTML = SAFE.data.kinds.map(function (k) { return '<option>' + esc(k) + '</option>'; }).join('');
     ['sfi-where', 'sfi-what', 'sfi-who', 'sfi-injury', 'sfi-treat', 'sfi-lost', 'sfi-action', 'sfi-time'].forEach(function (id) { document.getElementById(id).value = ''; });
     document.getElementById('sfi-date').value = localDate(new Date());

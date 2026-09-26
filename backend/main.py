@@ -9389,6 +9389,14 @@ PORTAL_PERMISSIONS = [
     # who pays the bill. Kept separate so those three signatures stay apart.
     {"key": "stores.receive", "group": "Contracts",
      "label": "Record goods received against a purchase order"},
+    # The site's own record. Held by the people who are on the site, not only
+    # by whoever manages the contract - a diary is written by the engineer
+    # standing in the rain, and it could not be while writing it needed the
+    # right to manage work orders.
+    {"key": "site.record", "group": "Site",
+     "label": "Record site work - diary, measurements, photos, quality, safety, plant and material"},
+    {"key": "site.signoff", "group": "Site",
+     "label": "Sign off site work - diary days, permits to work, incidents, inspections and NCRs"},
 ]
 PERMISSION_KEYS = {p["key"] for p in PORTAL_PERMISSIONS}
 
@@ -9401,7 +9409,7 @@ PERMISSION_ROLES = [
         "label": "Staff",
         "description": "Site and office staff. Their own timesheet, leave and "
                        "payslips, and can send a cost up for approval.",
-        "permissions": ["self.service", "bills.submit"],
+        "permissions": ["self.service", "bills.submit", "site.record"],
     },
     {
         "code": "supervisor",
@@ -9410,7 +9418,7 @@ PERMISSION_ROLES = [
                        "their crew's costs, leave and attendance.",
         "permissions": ["self.service", "bills.submit", "bills.approve",
                         "attendance.view_team", "leave.approve",
-                        "stores.receive"],
+                        "stores.receive", "site.record", "site.signoff"],
     },
     {
         "code": "manager",
@@ -9422,7 +9430,7 @@ PERMISSION_ROLES = [
                         "leave.approve", "reports.view",
                         "items.manage", "workorders.manage",
                         "customers.manage", "subcontracts.approve",
-                        "stores.receive"],
+                        "stores.receive", "site.record", "site.signoff"],
     },
     {
         "code": "finance",
@@ -20239,7 +20247,7 @@ def gst_outward(request: Request, date_from: str = "", date_to: str = "",
     Grouped by month because that is how the return is filed, and by rate
     because that is how the return's tables are laid out.
     """
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     rows = []
     for b in db.query(models.DBRABill).filter(
             models.DBRABill.client_id == client.id,
@@ -20300,7 +20308,7 @@ def gst_inward(request: Request, date_from: str = "", date_to: str = "",
                db: Session = Depends(get_db)):
     """What we were charged - the input credit side. Subcontractor bills and
     supplier bills."""
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     rows = []
     contractors = {c.id: c for c in db.query(models.DBContractor).filter(
         models.DBContractor.client_id == client.id).all()}
@@ -20374,7 +20382,7 @@ def gst_inward(request: Request, date_from: str = "", date_to: str = "",
 @app.get("/api/gst/outward.xlsx")
 def gst_outward_export(request: Request, date_from: str = "", date_to: str = "",
                        db: Session = Depends(get_db)):
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     d = gst_outward(request, date_from, date_to, db)
     rows = [(r["date"], r["number"], r["party"], r["project"], r["place_of_supply"],
              r["sac"], r["rate"], r["taxable"], r["cgst"], r["sgst"], r["igst"],
@@ -20767,7 +20775,7 @@ def measurement_book(work_order_id: int, request: Request,
 def record_measurement(work_order_id: int, body: MeasurementIn, request: Request,
                        db: Session = Depends(get_db)):
     """Write one entry into the book."""
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "site.record")
     wo = work_order_or_404(db, client.id, work_order_id)
     if (wo.status or "") == "Draft":
         raise HTTPException(
@@ -20817,7 +20825,7 @@ def record_measurement(work_order_id: int, body: MeasurementIn, request: Request
 @app.delete("/api/mb/entries/{entry_id}")
 def delete_measurement(entry_id: int, request: Request, db: Session = Depends(get_db)):
     """Only while it is unbilled. Once claimed it is part of a bill's history."""
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "site.record")
     entry = db.query(models.DBMeasurement).filter(
         models.DBMeasurement.id == entry_id,
         models.DBMeasurement.client_id == client.id).first()
@@ -22616,7 +22624,7 @@ def list_stock_issues(request: Request, work_order_id: int = 0,
 def create_stock_issue(body: StockIssueIn, request: Request,
                        db: Session = Depends(get_db)):
     """Draw up an issue note, priced at what the store's stock actually cost."""
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "site.record")
     wo = None
     if body.work_order_id:
         wo = work_order_or_404(db, client.id, body.work_order_id)
@@ -22707,7 +22715,7 @@ def get_stock_issue(issue_id: int, request: Request, db: Session = Depends(get_d
 @app.put("/api/stock-issues/{issue_id}")
 def update_stock_issue(issue_id: int, body: StockIssueIn, request: Request,
                        db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "site.record")
     issue = issue_or_404(db, client.id, issue_id)
     if (issue.status or "DRAFT") != "DRAFT":
         raise HTTPException(409, "A posted issue cannot be changed. "
@@ -22727,7 +22735,7 @@ def update_stock_issue(issue_id: int, body: StockIssueIn, request: Request,
 def post_stock_issue(issue_id: int, request: Request, body: dict = None,
                      db: Session = Depends(get_db)):
     """Take it out of the store. This is where stock actually moves."""
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "site.record")
     issue = issue_or_404(db, client.id, issue_id)
     if (issue.status or "DRAFT") != "DRAFT":
         raise HTTPException(409, "Only a draft can be posted.")
@@ -23116,7 +23124,7 @@ def list_diaries(request: Request, job_id: int = 0, date_from: str = "",
 
 @app.post("/api/diary")
 def create_diary(body: DiaryIn, request: Request, db: Session = Depends(get_db)):
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "site.record")
     if not body.job_id:
         raise HTTPException(400, "A diary belongs to a site.")
     job = db.query(models.DBJob).filter(
@@ -23168,7 +23176,7 @@ def get_diary(diary_id: int, request: Request, db: Session = Depends(get_db)):
 @app.put("/api/diary/{diary_id}")
 def update_diary(diary_id: int, body: DiaryIn, request: Request,
                  db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "site.record")
     diary = diary_or_404(db, client.id, diary_id)
     if (diary.status or "DRAFT") != "DRAFT":
         raise HTTPException(
@@ -23195,7 +23203,7 @@ def update_diary(diary_id: int, body: DiaryIn, request: Request,
 
 @app.post("/api/diary/{diary_id}/submit")
 def submit_diary(diary_id: int, request: Request, db: Session = Depends(get_db)):
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "site.signoff")
     diary = diary_or_404(db, client.id, diary_id)
     if (diary.status or "DRAFT") != "DRAFT":
         raise HTTPException(409, "Already signed off.")
@@ -23215,7 +23223,7 @@ def submit_diary(diary_id: int, request: Request, db: Session = Depends(get_db))
 
 @app.delete("/api/diary/{diary_id}")
 def delete_diary(diary_id: int, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "site.record")
     diary = diary_or_404(db, client.id, diary_id)
     if (diary.status or "DRAFT") != "DRAFT":
         raise HTTPException(409, "A signed off day cannot be deleted.")
@@ -23571,7 +23579,7 @@ def project_pnl(db, client_id, job, pre=None):
 
 @app.get("/api/jobs/{job_id}/pnl")
 def job_pnl(job_id: int, request: Request, db: Session = Depends(get_db)):
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "reports.view")
     job = db.query(models.DBJob).filter(
         models.DBJob.id == job_id, models.DBJob.client_id == client.id).first()
     if not job:
@@ -23586,7 +23594,7 @@ def portfolio_pnl(request: Request, db: Session = Depends(get_db)):
     An owner does not want to open eleven screens to find the one job that is
     losing money, so the one that is losing money is at the top.
     """
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "reports.view")
     rows = []
     pre = preload_pnl(db, client.id)
     for job in db.query(models.DBJob).filter(
@@ -23623,7 +23631,7 @@ def portfolio_pnl(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/api/jobs/{job_id}/pnl.xlsx")
 def job_pnl_export(job_id: int, request: Request, db: Session = Depends(get_db)):
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "reports.view")
     job = db.query(models.DBJob).filter(
         models.DBJob.id == job_id, models.DBJob.client_id == client.id).first()
     if not job:
@@ -23712,7 +23720,7 @@ def _empty_buckets():
 @app.get("/api/money/receivables")
 def receivables(request: Request, db: Session = Depends(get_db)):
     """What customers owe, and how long they have owed it."""
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     today = date.today()
     jobs = {j.id: j for j in db.query(models.DBJob).filter(
         models.DBJob.client_id == client.id).all()}
@@ -23813,7 +23821,7 @@ def payables(request: Request, db: Session = Depends(get_db)):
     somebody signed for it - so it belongs here beside the supplier invoices
     rather than out of sight on the subcontract screen.
     """
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     today = date.today()
     jobs = {j.id: j for j in db.query(models.DBJob).filter(
         models.DBJob.client_id == client.id).all()}
@@ -23920,7 +23928,7 @@ def retention_register(request: Request, db: Session = Depends(get_db)):
     period, so a job that finished a year ago may still be owed the second
     half - and nothing in this app used to say so.
     """
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     jobs = {j.id: j for j in db.query(models.DBJob).filter(
         models.DBJob.client_id == client.id).all()}
 
@@ -23976,7 +23984,7 @@ def retention_register(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/api/money/receivables.xlsx")
 def receivables_export(request: Request, db: Session = Depends(get_db)):
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     data = receivables(request, db)
     b = data["buckets"]
     rows = [(r["number"], r["customer"], r["project"], r["issue_date"],
@@ -23998,7 +24006,7 @@ def receivables_export(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/api/money/retention.xlsx")
 def retention_export(request: Request, db: Session = Depends(get_db)):
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     data = retention_register(request, db)
     rows = [(r["number"], r["project"], r["customer"], r["job_status"],
              r["claimed_value"], r["retained"], r["released"], r["held"],
@@ -24766,7 +24774,7 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
 @app.post("/api/sub-mb/{order_id}/entries")
 def record_sub_measurement(order_id: int, body: SubMeasurementIn, request: Request,
                            db: Session = Depends(get_db)):
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "site.record")
     order = wo_or_404(db, client.id, order_id)
     if (order.status or "") not in ("APPROVED", "EXECUTED"):
         raise HTTPException(
@@ -24824,7 +24832,7 @@ def record_sub_measurement(order_id: int, body: SubMeasurementIn, request: Reque
 
 @app.delete("/api/sub-mb/entries/{entry_id}")
 def delete_sub_measurement(entry_id: int, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "site.record")
     entry = db.query(models.DBSubMeasurement).filter(
         models.DBSubMeasurement.id == entry_id,
         models.DBSubMeasurement.client_id == client.id).first()
@@ -25599,7 +25607,7 @@ def tds_register(request: Request, year: str = "", quarter: str = "",
     it can be claimed. Two directions, one screen, because both are checked
     against the same calendar.
     """
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     contractors = {c.id: c for c in db.query(models.DBContractor).filter(
         models.DBContractor.client_id == client.id).all()}
     jobs = {j.id: j for j in db.query(models.DBJob).filter(
@@ -25676,7 +25684,7 @@ def guarantee_register(request: Request, db: Session = Depends(get_db)):
     A guarantee that expires while the defects period is still running is
     worth nothing, and the bank does not write to say so.
     """
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     today = datetime.now().strftime("%Y-%m-%d")
     contractors = {c.id: c for c in db.query(models.DBContractor).filter(
         models.DBContractor.client_id == client.id).all()}
@@ -25720,7 +25728,7 @@ def advance_register(request: Request, db: Session = Depends(get_db)):
     Summed from the bills, not stored: a cancelled bill gives its recovery
     back without anybody having to remember to.
     """
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     contractors = {c.id: c for c in db.query(models.DBContractor).filter(
         models.DBContractor.client_id == client.id).all()}
     recovered = {}
@@ -25956,7 +25964,7 @@ def account_dict(a):
 
 @app.get("/api/bank-accounts")
 def list_bank_accounts(request: Request, db: Session = Depends(get_db)):
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     rows = db.query(models.DBBankAccount).filter(
         models.DBBankAccount.client_id == client.id).order_by(models.DBBankAccount.id).all()
     out = []
@@ -26283,7 +26291,7 @@ def _doc_for_any(db, client_id, doc_type, doc_id):
 @app.get("/api/money/entries")
 def list_money(request: Request, direction: str = "", party: str = "", job_id: int = 0,
                date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     q = db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.client_id == client.id)
     if direction:
         q = q.filter(models.DBMoneyEntry.direction == direction.upper())
@@ -26408,7 +26416,7 @@ def _ledger_rows(db, client_id):
 def ledger_parties(request: Request, party_type: str = "", db: Session = Depends(get_db)):
     """Every party, what has been billed with them, what has moved, and the
     balance - owed to us for a client, owed by us for everybody else."""
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     parties = {}
     for r in _ledger_rows(db, client.id):
         if party_type and r["party_type"] != party_type:
@@ -26440,7 +26448,7 @@ def ledger_statement(request: Request, party_type: str, party: str,
     """A statement of account for one party, oldest first, with the balance
     after every line - the document that is sent to a supplier to agree what
     is owed, and the one a client is sent before a payment is chased."""
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     key = norm_name(party)
     rows = [r for r in _ledger_rows(db, client.id)
             if r["party_type"] == party_type and norm_name(r["party"]) == key]
@@ -26482,7 +26490,7 @@ def money_book(request: Request, account_id: int = 0, date_from: str = "", date_
                db: Session = Depends(get_db)):
     """The bank book or the cash book: every movement through one account,
     in date order, with the balance after each."""
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     account = None
     if account_id:
         account = db.query(models.DBBankAccount).filter(
@@ -26522,7 +26530,7 @@ def money_book(request: Request, account_id: int = 0, date_from: str = "", date_
 @app.get("/api/money/outstanding/{doc_type}/{doc_id}")
 def doc_outstanding(doc_type: str, doc_id: int, request: Request, db: Session = Depends(get_db)):
     """What is still owed on one bill - for the payment box to open with."""
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     doc, worth = _doc_for_any(db, client.id, doc_type, doc_id)
     got = settled_on(db, client.id, doc_type, doc_id)
     if doc_type in ("ra_bill", "sub_bill") and doc.status == "PAID" and not got:
@@ -26825,7 +26833,7 @@ class AssetMoveIn(BaseModel):
 @app.post("/api/assets/{asset_id}/move")
 def move_asset(asset_id: int, body: AssetMoveIn, request: Request, db: Session = Depends(get_db)):
     """To a site, between sites, or back to the yard."""
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "site.record")
     a = asset_or_404(db, client.id, asset_id)
     if a.status == "Disposed":
         raise HTTPException(409, "%s has been disposed of." % a.code)
@@ -26874,7 +26882,7 @@ def hire_cost_for(a, hours_worked):
 @app.post("/api/assets/{asset_id}/logs")
 def log_asset_day(asset_id: int, body: AssetLogIn, request: Request, db: Session = Depends(get_db)):
     """One machine, one day - on the site it is deployed to."""
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "site.record")
     a = asset_or_404(db, client.id, asset_id)
     if a.status != "Deployed" or not a.current_job_id:
         raise HTTPException(409, "%s is not on a site. Deploy it before logging its day." % a.code)
@@ -26924,7 +26932,7 @@ class AssetServiceIn(BaseModel):
 def service_asset(asset_id: int, body: AssetServiceIn, request: Request, db: Session = Depends(get_db)):
     """A service resets the clock; a breakdown may take the machine off work
     until it is put back."""
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "site.record")
     a = asset_or_404(db, client.id, asset_id)
     kind = body.kind if body.kind in ("Preventive", "Breakdown", "Repair") else "Repair"
     on = (body.service_on or datetime.now().strftime("%Y-%m-%d"))[:10]
@@ -26952,7 +26960,7 @@ def service_asset(asset_id: int, body: AssetServiceIn, request: Request, db: Ses
 
 @app.post("/api/assets/{asset_id}/back-in-service")
 def asset_back(asset_id: int, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "site.record")
     a = asset_or_404(db, client.id, asset_id)
     if a.status != "Under repair":
         raise HTTPException(409, "%s is not under repair." % a.code)
@@ -28204,7 +28212,7 @@ class ProgressIn(BaseModel):
 @app.post("/api/schedule/activities/{activity_id}/progress")
 def report_progress(activity_id: int, body: ProgressIn, request: Request, db: Session = Depends(get_db)):
     """For an activity the book does not measure. Dated, never overwritten."""
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "site.record")
     a = db.query(models.DBScheduleActivity).filter(
         models.DBScheduleActivity.id == activity_id,
         models.DBScheduleActivity.client_id == client.id).first()
@@ -29330,7 +29338,7 @@ def upload_file(request: Request, file: UploadFile = File(...), thumb: Optional[
                 kind: str = Form(""), caption: str = Form(""), taken_on: str = Form(""),
                 db: Session = Depends(get_db)):
     """A photo or a document, kept against the record it proves."""
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "site.record")
     job_id, _locked = attachment_target(db, client.id, attached_type, attached_id)
     data = file.file.read()
     small = thumb.file.read() if thumb is not None else None
@@ -30060,7 +30068,7 @@ def list_inspections(request: Request, job_id: int = 0, db: Session = Depends(ge
 
 @app.post("/api/qc/inspections")
 def create_inspection(body: InspectionIn, request: Request, db: Session = Depends(get_db)):
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "site.record")
     job = _qc_job(db, client.id, body.job_id)
     items = body.items
     if items is None:
@@ -30100,7 +30108,7 @@ def _inspection_or_404(db, client_id, iid):
 
 @app.put("/api/qc/inspections/{iid}")
 def update_inspection(iid: int, body: InspectionIn, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "site.record")
     i = _inspection_or_404(db, client.id, iid)
     if i.result != "OPEN":
         raise HTTPException(409, "%s is %s - it is the record now." % (i.number, i.result.lower()))
@@ -30120,7 +30128,7 @@ def update_inspection(iid: int, body: InspectionIn, request: Request, db: Sessio
 def close_inspection(iid: int, request: Request, db: Session = Depends(get_db)):
     """Passed when nothing on it is "not ok", failed otherwise - every item
     has to have been looked at first."""
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "site.signoff")
     i = _inspection_or_404(db, client.id, iid)
     if i.result != "OPEN":
         raise HTTPException(409, "%s is already %s." % (i.number, i.result.lower()))
@@ -30215,7 +30223,7 @@ def list_cubes(request: Request, job_id: int = 0, db: Session = Depends(get_db))
 
 @app.post("/api/qc/cubes")
 def create_cube_set(body: CubeSetIn, request: Request, db: Session = Depends(get_db)):
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "site.record")
     job = _qc_job(db, client.id, body.job_id)
     grade = (body.grade or "M25").strip().upper()
     if not re.match(r"^M\d{2,3}$", grade):
@@ -30239,7 +30247,7 @@ class CubeResultIn(BaseModel):
 
 @app.post("/api/qc/cubes/{sid}/results")
 def add_cube_result(sid: int, body: CubeResultIn, request: Request, db: Session = Depends(get_db)):
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "site.record")
     s = db.query(models.DBCubeSet).filter(models.DBCubeSet.id == sid,
                                           models.DBCubeSet.client_id == client.id).first()
     if not s:
@@ -30311,7 +30319,7 @@ def list_ncrs(request: Request, job_id: int = 0, status: str = "", db: Session =
 def raise_ncr(body: NcrIn, request: Request, db: Session = Depends(get_db)):
     """By hand, or from a failed inspection or a set of cubes below grade -
     which fills in what went wrong from the record."""
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "site.record")
     job_id, location, desc = body.job_id, (body.location or "").strip(), (body.description or "").strip()
     if body.source_type == "inspection" and body.source_id:
         i = _inspection_or_404(db, client.id, body.source_id)
@@ -30356,7 +30364,7 @@ class NcrCloseIn(BaseModel):
 
 @app.post("/api/qc/ncrs/{nid}/close")
 def close_ncr(nid: int, body: NcrCloseIn, request: Request, db: Session = Depends(get_db)):
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "site.signoff")
     n = db.query(models.DBNcr).filter(models.DBNcr.id == nid, models.DBNcr.client_id == client.id).first()
     if not n:
         raise HTTPException(404, "NCR not found")
@@ -30477,7 +30485,7 @@ def safety_overview(request: Request, job_id: int = 0, db: Session = Depends(get
 
 @app.post("/api/safety/incidents")
 def report_incident(body: IncidentIn, request: Request, db: Session = Depends(get_db)):
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "site.record")
     job = job_or_404(db, client.id, body.job_id)
     if body.kind not in INCIDENT_KINDS:
         raise HTTPException(400, "What kind: " + ", ".join(INCIDENT_KINDS))
@@ -30510,7 +30518,7 @@ class IncidentCloseIn(BaseModel):
 @app.post("/api/safety/incidents/{iid}/close")
 def close_incident(iid: int, body: IncidentCloseIn, request: Request, db: Session = Depends(get_db)):
     """Closed only with why it happened and what stops it happening again."""
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "site.signoff")
     i = db.query(models.DBSafetyIncident).filter(models.DBSafetyIncident.id == iid,
                                                  models.DBSafetyIncident.client_id == client.id).first()
     if not i:
@@ -30538,7 +30546,7 @@ class TalkIn(BaseModel):
 
 @app.post("/api/safety/talks")
 def record_talk(body: TalkIn, request: Request, db: Session = Depends(get_db)):
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "site.record")
     job = job_or_404(db, client.id, body.job_id)
     if not (body.topic or "").strip():
         raise HTTPException(400, "What was the talk about?")
@@ -30570,7 +30578,7 @@ class PermitIn(BaseModel):
 def issue_permit(body: PermitIn, request: Request, db: Session = Depends(get_db)):
     """Issued only with every precaution for that kind of work ticked, and
     for one shift at most."""
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "site.signoff")
     job = job_or_404(db, client.id, body.job_id)
     if body.kind not in PERMIT_PRECAUTIONS:
         raise HTTPException(400, "Which permit: " + ", ".join(PERMIT_PRECAUTIONS))
@@ -30605,7 +30613,7 @@ class PermitCloseIn(BaseModel):
 
 @app.post("/api/safety/permits/{pid}/close")
 def close_permit(pid: int, body: PermitCloseIn, request: Request, db: Session = Depends(get_db)):
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "site.signoff")
     p = db.query(models.DBWorkPermit).filter(models.DBWorkPermit.id == pid,
                                              models.DBWorkPermit.client_id == client.id).first()
     if not p:
@@ -30819,7 +30827,7 @@ def retention_positions(db, client_id, today=None):
 
 @app.get("/api/retention")
 def retention_overview(request: Request, db: Session = Depends(get_db)):
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     positions = retention_positions(db, client.id)
     settled = settled_amounts(db, client.id)
     releases = [release_dict(db, r, settled) for r in db.query(models.DBRetentionRelease).filter(
@@ -30926,7 +30934,7 @@ def create_release(body: RetentionReleaseIn, request: Request, db: Session = Dep
 
 @app.get("/api/retention/releases/{release_id}")
 def get_release(release_id: int, request: Request, db: Session = Depends(get_db)):
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     return release_dict(db, release_or_404(db, client.id, release_id))
 
 
@@ -30955,7 +30963,7 @@ def cancel_release(release_id: int, request: Request, body: dict = None,
 def export_release(release_id: int, request: Request, db: Session = Depends(get_db)):
     """The release as a bill: the RA bills whose retention it gives back,
     then what was held, released before, released now, and the tax."""
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     r = release_or_404(db, client.id, release_id)
     d = release_dict(db, r)
     if r.side == "client":
@@ -31230,7 +31238,7 @@ def fixed_asset_register(request: Request, fy: str = "", db: Session = Depends(g
     """The fixed asset register for one financial year: every owned asset
     with a book, what it opened at, what was added, the year's depreciation,
     what went, and what it closes at."""
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     year = fy_start_year(fy) if fy else fy_start_year(date.today())
     if year is None:
         raise HTTPException(400, "Financial year should read like 2026-27.")
@@ -31382,7 +31390,7 @@ def set_up_all_books(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/api/fixed-assets/{asset_id}/schedule")
 def asset_book_schedule(asset_id: int, request: Request, db: Session = Depends(get_db)):
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     a = asset_or_404(db, client.id, asset_id)
     b = asset_book_or_none(db, client.id, a.id)
     if not b:
@@ -31509,7 +31517,7 @@ def tax_block_schedule(db, client_id, year):
 
 @app.get("/api/fixed-assets/tax-blocks")
 def tax_blocks(request: Request, fy: str = "", db: Session = Depends(get_db)):
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     year = fy_start_year(fy) if fy else fy_start_year(date.today())
     if year is None:
         raise HTTPException(400, "Financial year should read like 2026-27.")
@@ -31555,7 +31563,7 @@ def save_tax_block(block_id: int, body: TaxBlockIn, request: Request, db: Sessio
 
 @app.get("/api/fixed-assets.xlsx")
 def fixed_assets_export(request: Request, fy: str = "", db: Session = Depends(get_db)):
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     data = fixed_asset_register(request, fy, db)
     rows = [(r["code"], r["name"], r["category"], r["put_to_use_on"], r["cost"],
              "%s %s%%" % (r["method"], r["rate_percent"]) if r["method"] == "WDV" else "SLM %g yrs" % r["life_years"],
@@ -31575,7 +31583,7 @@ def fixed_assets_export(request: Request, fy: str = "", db: Session = Depends(ge
 
 @app.get("/api/fixed-assets/tax-blocks.xlsx")
 def tax_blocks_export(request: Request, fy: str = "", db: Session = Depends(get_db)):
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     data = tax_blocks(request, fy, db)
     rows = [(r["block"], r["rate"], r["opening"], r["added_full"], r["added_half"], r["deleted"],
              r["depreciation"], r["closing"], r["short_term_gain"], r["short_term_loss"])
@@ -32366,7 +32374,7 @@ def qr_svg(text, size=180):
 
 @app.get("/api/einvoice/irns")
 def list_irns(request: Request, db: Session = Depends(get_db)):
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     rows = db.query(models.DBEinvoiceIrn).filter(models.DBEinvoiceIrn.client_id == client.id).order_by(
         models.DBEinvoiceIrn.id.desc()).limit(500).all()
     return {"irns": [irn_dict(r) for r in rows]}

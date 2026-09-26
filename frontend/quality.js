@@ -73,7 +73,7 @@ async function loadQuality() {
                     (n.closure_note ? '<div style="font-size:0.74rem;color:var(--success-color);">Closed: ' + esc(n.closure_note) + '</div>' : '') + '</td>' +
                     '<td>' + esc(n.responsible) + '</td><td style="' + (n.overdue ? 'color:var(--danger-color);font-weight:600;' : '') + '">' + esc(n.target_date) + '</td>' +
                     '<td>' + statusPill(n.status, n.overdue ? 'bad' : tone[n.status]) + '</td><td class="text-right" style="white-space:nowrap;">' +
-                    (n.status === 'OPEN' ? '<button class="btn btn-sm btn-outline" onclick="qcNcrClose(' + n.id + ')">Close</button> ' : '') +
+                    (n.status === 'OPEN' && can('site.signoff') ? '<button class="btn btn-sm btn-outline" onclick="qcNcrClose(' + n.id + ')">Close</button> ' : '') +
                     '<button class="btn btn-sm btn-outline" onclick="openFiles(\'ncr\',' + n.id + ',\'' + esc(n.number) + '\')">Photos</button></td></tr>';
             }).join('') || '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-secondary);">No non-conformances.</td></tr>') +
             '</tbody></table></div>';
@@ -131,7 +131,7 @@ function qcOpen(id) {
         (i.witnessed_by ? ', witnessed by ' + esc(i.witnessed_by) : '') + '.</p>';
     var b = [];
     if (open) b.push('<button class="btn btn-outline" onclick="qcSave(false)">Save</button>',
-                     '<button class="btn btn-primary" onclick="qcSave(true)">Close it</button>');
+                     (can('site.signoff') ? '<button class="btn btn-primary" onclick="qcSave(true)">Close it</button>' : ''));
     if (i.result === 'FAILED') b.push('<button class="btn btn-outline" style="color:var(--danger-color);" onclick="qcNcrFrom(\'inspection\',' + i.id + ')">Raise NCR</button>');
     b.push('<button class="btn btn-outline" onclick="openFiles(\'inspection\',' + i.id + ',\'' + esc(i.number) + '\')">Photos</button>',
            '<button class="btn btn-outline" onclick="closeModal(\'qcins-modal\')">Done</button>');

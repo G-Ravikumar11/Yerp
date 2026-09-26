@@ -41,7 +41,7 @@ window.loadRfqs = loadRfqs;
 
 async function newRfq() {
     try {
-        var d = await (await fetch('/api/jobs', { credentials: 'include' })).json();
+        var d = await projectList();
         document.getElementById('rfqn-job').innerHTML = '<option value="">No particular project</option>' +
             (d.jobs || d || []).map(function (j) {
                 return '<option value="' + j.id + '">' + esc((j.number || '') + ' — ' + j.name) + '</option>';

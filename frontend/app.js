@@ -4885,12 +4885,29 @@ var OWNER_PERMISSIONS = [
     'invoices.manage', 'reports.view', 'attendance.view_team', 'leave.approve',
     'people.manage', 'payroll.manage', 'recruitment.manage',
     'items.manage', 'workorders.manage', 'workorders.approve',
-    'customers.manage', 'subcontracts.approve'
+    'customers.manage', 'subcontracts.approve', 'stores.receive',
+    'site.record', 'site.signoff'
 ];
 
 function can(permission) {
+    // The account holder holds everything, including rights added after this
+    // list was last written - a new right must never hide a screen from them.
+    if (portalUser.type === 'owner') return true;
     return portalUser.permissions.indexOf(permission) >= 0;
 }
+
+/* The projects this person works on: every live one for the office, the
+   sites they are assigned to for staff. The full list is the office's - it
+   carries contract values a site login has no business reading. */
+async function projectList() {
+    try {
+        var res = await fetch(isEmployee() ? '/api/employee/jobs' : '/api/jobs', { credentials: 'include' });
+        if (!res.ok) return { jobs: [] };
+        var d = await res.json();
+        return { jobs: Array.isArray(d) ? d : (d.jobs || []) };
+    } catch (e) { return { jobs: [] }; }
+}
+window.projectList = projectList;
 window.can = can;
 
 function isEmployee() { return portalUser.type === 'employee'; }
@@ -4944,6 +4961,9 @@ function applyPermissions() {
     // their access says otherwise; the My Work group is theirs.
     var myWork = document.getElementById('nav-group-mywork');
     if (myWork) myWork.hidden = !isEmployee();
+    // Company settings are the account's, not a member of staff's.
+    var settings = document.getElementById('nav-settings');
+    if (settings) settings.hidden = isEmployee();
     var dash = document.getElementById('nav-dashboard');
     if (dash) dash.hidden = isEmployee() && !can('reports.view');
     var costs = document.getElementById('nav-group-costs');

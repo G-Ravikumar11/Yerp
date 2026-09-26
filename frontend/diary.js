@@ -16,7 +16,7 @@ var WEATHER = ['Clear', 'Cloudy', 'Rain', 'Heavy rain'];
 async function loadDiary() {
     var pick = document.getElementById('diary-job');
     if (!pick) return;
-    var d = await (await fetch('/api/jobs', { credentials: 'include' })).json();
+    var d = await projectList();
     var jobs = d.jobs || d;
     pick.innerHTML = jobs.length
         ? jobs.map(function (j) {
@@ -174,7 +174,8 @@ function renderDiaryForm(d) {
     document.querySelectorAll('#diary-form input, #diary-form select, #diary-form textarea')
         .forEach(function (el) { el.disabled = locked; });
     document.getElementById('diary-save').style.display = locked ? 'none' : '';
-    document.getElementById('diary-submit').style.display = locked ? 'none' : '';
+    // Signing off a day is a supervisor's; the button is only for those who may.
+    document.getElementById('diary-submit').style.display = (locked || !can('site.signoff')) ? 'none' : '';
     document.getElementById('diary-locked').textContent = locked
         ? 'Signed off on ' + (d.submitted_at || '') + ' — a diary that can be rewritten afterwards is worth nothing in a claim.'
         : '';

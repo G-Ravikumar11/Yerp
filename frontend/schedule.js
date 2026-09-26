@@ -13,7 +13,7 @@ async function loadSchedule() {
     var pick = document.getElementById('sch-job');
     if (!pick) return;
     if (!SCH.jobs.length) {
-        var d = await (await fetch('/api/jobs', { credentials: 'include' })).json();
+        var d = await projectList();
         SCH.jobs = (d.jobs || d || []);
         pick.innerHTML = SCH.jobs.map(function (j) {
             return '<option value="' + j.id + '">' + esc((j.number || '') + ' — ' + j.name) + '</option>'; }).join('');

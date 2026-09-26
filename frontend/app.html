@@ -127,7 +127,7 @@
                             <a href="#" class="nav-item" id="nav-diary" onclick="event.preventDefault();showView('diary-view')">Site Diary</a>
                             <a href="#" class="nav-item" id="nav-chat" onclick="event.preventDefault();showView('chat-view')">Project Chat</a>
                             <a href="#" class="nav-item" id="nav-equipment" onclick="event.preventDefault();showView('equipment-view')">Equipment &amp; Plant</a>
-                            <a href="#" class="nav-item" id="nav-pnl" onclick="event.preventDefault();showView('pnl-view')">Project Profit</a>
+                            <a href="#" class="nav-item" id="nav-pnl" data-perm="reports.view" onclick="event.preventDefault();showView('pnl-view')">Project Profit</a>
                             <a href="#" class="nav-item" id="nav-costs" data-perm="reports.view" onclick="event.preventDefault();showView('costs-view')">Cost by Project</a>
                         </div>
                     </div>
@@ -137,10 +137,10 @@
                             Contract <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
                         <div class="nav-group-items" id="nav-items-contracts">
-                            <a href="#" class="nav-item" id="nav-leads" onclick="event.preventDefault();showView('leads-view')">Tender Pipeline</a>
+                            <a href="#" class="nav-item" id="nav-leads" data-perm="workorders.manage" onclick="event.preventDefault();showView('leads-view')">Tender Pipeline</a>
                             <a href="#" class="nav-item" id="nav-estimates" data-perm="workorders.manage" onclick="event.preventDefault();showView('estimates-view')">Tenders &amp; Estimates</a>
                             <a href="#" class="nav-item" id="nav-workorders" data-perm="workorders.manage" onclick="event.preventDefault();showView('workorders-view')">Work Orders</a>
-                            <a href="#" class="nav-item" id="nav-measurement" onclick="event.preventDefault();showView('measurement-view')">Measurement &amp; RA Bills</a>
+                            <a href="#" class="nav-item" id="nav-measurement" data-perm="site.record" onclick="event.preventDefault();showView('measurement-view')">Measurement &amp; RA Bills</a>
                             <a href="#" class="nav-item" id="nav-customers" data-perm="customers.manage" onclick="event.preventDefault();showView('customers-view')">Customers</a>
                         </div>
                     </div>
@@ -160,12 +160,12 @@
                             Store <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
                         <div class="nav-group-items" id="nav-items-store">
-                            <a href="#" class="nav-item" id="nav-rfqs" onclick="event.preventDefault();showView('rfq-view')">Enquiries &amp; Comparison</a>
-                            <a href="#" class="nav-item" id="nav-eway" onclick="event.preventDefault();showView('eway-view')">E-way Bills</a>
-                            <a href="#" class="nav-item" id="nav-orders" onclick="event.preventDefault();showView('orders-view')">Purchase Orders</a>
-                            <a href="#" class="nav-item" id="nav-stores" onclick="event.preventDefault();showView('stores-view')">Goods Receipt &amp; Match</a>
-                            <a href="#" class="nav-item" id="nav-stock" onclick="event.preventDefault();showView('stock-view')">Stock &amp; Issues</a>
-                            <a href="#" class="nav-item" id="nav-consume" onclick="event.preventDefault();showView('consume-view')">Material Used vs Costed</a>
+                            <a href="#" class="nav-item" id="nav-rfqs" data-perm="workorders.manage" onclick="event.preventDefault();showView('rfq-view')">Enquiries &amp; Comparison</a>
+                            <a href="#" class="nav-item" id="nav-eway" data-perm="workorders.manage" onclick="event.preventDefault();showView('eway-view')">E-way Bills</a>
+                            <a href="#" class="nav-item" id="nav-orders" data-perm="workorders.manage" onclick="event.preventDefault();showView('orders-view')">Purchase Orders</a>
+                            <a href="#" class="nav-item" id="nav-stores" data-perm="stores.receive" onclick="event.preventDefault();showView('stores-view')">Goods Receipt &amp; Match</a>
+                            <a href="#" class="nav-item" id="nav-stock" data-perm="site.record" onclick="event.preventDefault();showView('stock-view')">Stock &amp; Issues</a>
+                            <a href="#" class="nav-item" id="nav-consume" data-perm="reports.view" onclick="event.preventDefault();showView('consume-view')">Material Used vs Costed</a>
                             <a href="#" class="nav-item" id="nav-items" data-perm="items.manage" onclick="event.preventDefault();showView('items-view')">Item Master</a>
                         </div>
                     </div>
@@ -175,13 +175,13 @@
                             Money <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
                         <div class="nav-group-items" id="nav-items-money">
-                            <a href="#" class="nav-item" id="nav-ledger" onclick="event.preventDefault();showView('ledger-view')">Payments &amp; Ledgers</a>
-                            <a href="#" class="nav-item" id="nav-money" onclick="event.preventDefault();showView('money-view')">Owed &amp; Retention</a>
-                            <a href="#" class="nav-item" id="nav-bills" onclick="event.preventDefault();showView('bills-view')">Supplier Bills</a>
+                            <a href="#" class="nav-item" id="nav-ledger" data-perm="bills.view_all" onclick="event.preventDefault();showView('ledger-view')">Payments &amp; Ledgers</a>
+                            <a href="#" class="nav-item" id="nav-money" data-perm="bills.view_all" onclick="event.preventDefault();showView('money-view')">Owed &amp; Retention</a>
+                            <a href="#" class="nav-item" id="nav-bills" data-perm="bills.view_all" onclick="event.preventDefault();showView('bills-view')">Supplier Bills</a>
                             <a href="#" class="nav-item legacy-hidden" id="nav-invoices" data-perm="invoices.manage" onclick="event.preventDefault();showView('invoices-view')">Client Invoices</a>
-                            <a href="#" class="nav-item" id="nav-gst" onclick="event.preventDefault();showView('gst-view')">GST</a>
-                            <a href="#" class="nav-item" id="nav-fixedassets" onclick="event.preventDefault();showView('fixedassets-view')">Fixed Assets</a>
-                            <a href="#" class="nav-item" id="nav-registers" onclick="event.preventDefault();showView('registers-view')">TDS, Guarantees &amp; Advances</a>
+                            <a href="#" class="nav-item" id="nav-gst" data-perm="bills.view_all" onclick="event.preventDefault();showView('gst-view')">GST</a>
+                            <a href="#" class="nav-item" id="nav-fixedassets" data-perm="bills.view_all" onclick="event.preventDefault();showView('fixedassets-view')">Fixed Assets</a>
+                            <a href="#" class="nav-item" id="nav-registers" data-perm="bills.view_all" onclick="event.preventDefault();showView('registers-view')">TDS, Guarantees &amp; Advances</a>
                         </div>
                     </div>
 
@@ -5602,7 +5602,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=131"></script>
+    <script src="app.js?v=132"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=67"></script>
@@ -5625,20 +5625,20 @@
     <script src="mbdims.js?v=81"></script>
     <script src="measurement.js?v=115"></script>
     <script src="stock.js?v=112"></script>
-    <script src="diary.js?v=115"></script>
+    <script src="diary.js?v=117"></script>
     <script src="money.js?v=95"></script>
     <script src="subbills.js?v=91"></script>
     <script src="estimate.js?v=81"></script>
     <script src="gst.js?v=79"></script>
     <script src="registers.js?v=84"></script>
     <script src="ledger.js?v=105"></script>
-    <script src="equipment.js?v=111"></script>
-    <script src="rfq.js?v=96"></script>
+    <script src="equipment.js?v=112"></script>
+    <script src="rfq.js?v=97"></script>
     <script src="ewaybill.js?v=113"></script>
     <script src="files.js?v=115"></script>
     <script src="alerts.js?v=117"></script>
-    <script src="quality.js?v=118"></script>
-    <script src="safety.js?v=120"></script>
+    <script src="quality.js?v=119"></script>
+    <script src="safety.js?v=121"></script>
     <script src="fixedassets.js?v=121"></script>
     <script src="partners.js?v=122"></script>
     <script src="einvoice.js?v=123"></script>
@@ -5646,7 +5646,7 @@
     <script src="offline.js?v=126"></script>
     <script src="backup.js?v=127"></script>
     <script src="leads.js?v=110"></script>
-    <script src="schedule.js?v=99"></script>
+    <script src="schedule.js?v=100"></script>
     <script src="stores.js?v=108"></script>
 
     <!-- The assistant orb, its chat window and the "powered by" badge that

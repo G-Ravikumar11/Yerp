@@ -13,7 +13,7 @@ var EQP_TONE = { 'Available': 'calm', 'Deployed': 'good', 'Under repair': 'bad',
 
 async function eqpJobs() {
     try {
-        var d = await (await fetch('/api/jobs', { credentials: 'include' })).json();
+        var d = await projectList();
         EQP.jobs = (d.jobs || d || []).filter(function (j) {
             return ['complete', 'cancelled'].indexOf(j.status) < 0; });
     } catch (e) { EQP.jobs = []; }
