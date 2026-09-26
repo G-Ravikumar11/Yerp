@@ -4041,6 +4041,7 @@
                         <div><h1>Safety</h1><p class="subtitle">Incidents and near misses with their cause and fix, the morning toolbox talk, and permits to work</p></div>
                         <div class="invoices-actions">
                             <select id="sf-job" class="form-control" style="width:auto;min-width:220px;" onchange="loadSafety()"></select>
+                            <span id="sf-exports" style="display:inline-flex;gap:8px;"></span>
                             <button class="btn btn-primary" onclick="sfNew()">+ New</button>
                         </div>
                     </div>
@@ -4107,6 +4108,7 @@
                         <div><h1>Quality</h1><p class="subtitle">Checklists walked before work is covered, cubes read against the grade, and non-conformances followed to a close</p></div>
                         <div class="invoices-actions">
                             <select id="qc-job" class="form-control" style="width:auto;min-width:220px;" onchange="loadQuality()"></select>
+                            <span id="qc-exports" style="display:inline-flex;gap:8px;"></span>
                             <button class="btn btn-primary" onclick="qcNew()">+ New</button>
                         </div>
                     </div>
@@ -4288,6 +4290,7 @@
                     <div class="invoices-header-area">
                         <div><h1>Payments &amp; Ledgers</h1><p class="subtitle">Every rupee in and out, what each party owes, and what is in the bank &mdash; the books, kept from the bills already here</p></div>
                         <div class="invoices-actions">
+                            <a class="btn btn-outline" href="/api/money/entries.xlsx">Payments register</a>
                             <button class="btn btn-outline" onclick="loadLedger()">Refresh</button>
                             <button class="btn btn-outline" onclick="window.print()">Print</button>
                         </div>
@@ -4305,6 +4308,9 @@
                     <div class="invoices-header-area">
                         <div><h1>Registers</h1><p class="subtitle">The three sheets the accountant kept by hand: TDS by quarter, guarantees and when they lapse, advances and what has come back</p></div>
                         <div class="invoices-actions">
+                            <a class="btn btn-outline" href="/api/registers/tds.xlsx">TDS</a>
+                            <a class="btn btn-outline" href="/api/registers/advances.xlsx">Advances</a>
+                            <a class="btn btn-outline" href="/api/registers/guarantees.xlsx">Guarantees</a>
                             <button class="btn btn-outline" onclick="loadRegisters()">Refresh</button>
                             <button class="btn btn-outline" onclick="window.print()">Print</button>
                         </div>
@@ -4379,6 +4385,7 @@
                         <div><h1>GST</h1><p class="subtitle">What we charged and what we were charged, split the way the return wants it</p></div>
                         <div class="invoices-actions">
                             <a class="btn btn-outline" id="gst-export" href="/api/gst/outward.xlsx" title="Outward supplies as a workbook, for the return">Download outward</a>
+                            <a class="btn btn-outline" id="gst-inward-export" href="/api/gst/inward.xlsx" title="Input supplies as a workbook, for the credit">Download inward</a>
                             <button class="btn btn-outline" onclick="loadGst()">Refresh</button>
                         </div>
                     </div>
@@ -4514,6 +4521,7 @@
                         <div class="invoices-actions">
                             <a class="btn btn-outline" href="/api/money/receivables.xlsx">Owed to us</a>
                             <a class="btn btn-outline" href="/api/money/retention.xlsx">Retention</a>
+                            <a class="btn btn-outline" href="/api/money/payables.xlsx">What we owe</a>
                             <button class="btn btn-outline" onclick="loadMoney()">Refresh</button>
                         </div>
                     </div>
@@ -5634,7 +5642,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=133"></script>
+    <script src="app.js?v=135"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=68"></script>
@@ -5656,21 +5664,21 @@
     <script src="documents.js?v=92"></script>
     <script src="mbdims.js?v=81"></script>
     <script src="measurement.js?v=117"></script>
-    <script src="stock.js?v=113"></script>
+    <script src="stock.js?v=114"></script>
     <script src="diary.js?v=117"></script>
     <script src="money.js?v=95"></script>
     <script src="subbills.js?v=92"></script>
     <script src="estimate.js?v=81"></script>
-    <script src="gst.js?v=79"></script>
+    <script src="gst.js?v=80"></script>
     <script src="registers.js?v=84"></script>
     <script src="ledger.js?v=106"></script>
     <script src="equipment.js?v=113"></script>
-    <script src="rfq.js?v=97"></script>
+    <script src="rfq.js?v=98"></script>
     <script src="ewaybill.js?v=113"></script>
     <script src="files.js?v=115"></script>
     <script src="alerts.js?v=117"></script>
-    <script src="quality.js?v=119"></script>
-    <script src="safety.js?v=121"></script>
+    <script src="quality.js?v=120"></script>
+    <script src="safety.js?v=122"></script>
     <script src="fixedassets.js?v=121"></script>
     <script src="partners.js?v=122"></script>
     <script src="einvoice.js?v=123"></script>

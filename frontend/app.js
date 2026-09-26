@@ -5000,6 +5000,50 @@ function failBootGate(message) {
 }
 window.failBootGate = failBootGate;
 
+/* Every workbook is also a PDF at the same address with .pdf in place of
+   .xlsx (the server draws both from the same rows), so every Excel button
+   gets its PDF beside it here, once, wherever it was drawn. */
+(function () {
+    var queued = false;
+    function bare(h) { return String(h || '').split('?')[0]; }
+    function pairPdf() {
+        queued = false;
+        document.querySelectorAll('a[href*=".xlsx"]:not([data-pdf])').forEach(function (a) {
+            a.setAttribute('data-pdf', '');
+            var href = a.getAttribute('href') || '';
+            if (/template|\/api\/sheets\//.test(href)) return;
+            var twin = bare(href).replace('.xlsx', '.pdf');
+            var dir = bare(href).replace(/[^\/]+$/, '');
+            // Already paired by hand: a neighbour that is this very PDF, or the
+            // same record's document.pdf (an RA bill's PDF beside its workbook).
+            var paired = [a.previousElementSibling, a.nextElementSibling].some(function (n) {
+                if (!n || n.tagName !== 'A') return false;
+                var h = bare(n.getAttribute('href'));
+                return h === twin || (h === dir + 'document.pdf');
+            });
+            if (paired) return;
+            var label = (a.textContent || '').trim();
+            var plain = /^(download|excel)$/i.test(label);
+            var name = label.replace(/^download\s+/i, '').replace(/\s*\((excel|pdf)\)$/i, '');
+            name = name.charAt(0).toUpperCase() + name.slice(1);
+            a.textContent = plain ? 'Excel' : name + ' (Excel)';
+            var pdf = document.createElement('a');
+            pdf.className = a.className;
+            pdf.href = href.replace('.xlsx', '.pdf');
+            pdf.target = '_blank'; pdf.rel = 'noopener';
+            pdf.setAttribute('data-pdf', '');
+            pdf.textContent = plain ? 'PDF' : name + ' (PDF)';
+            if (a.title) pdf.title = a.title.replace(/workbook/i, 'PDF');
+            a.insertAdjacentElement('afterend', pdf);
+            if (a.parentNode && getComputedStyle(a.parentNode).display.indexOf('flex') < 0) pdf.insertAdjacentText('beforebegin', ' ');
+        });
+    }
+    new MutationObserver(function () {
+        if (!queued) { queued = true; setTimeout(pairPdf, 40); }
+    }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['href'] });
+    document.addEventListener('DOMContentLoaded', pairPdf);
+})();
+
 /* A date or a document number is read as one thing. Browsers break at the
    hyphen and the slash, so a narrow column showed "2026-09-" over "26" and
    "WO-" over "0001". Any cell holding one short unspaced token keeps it on

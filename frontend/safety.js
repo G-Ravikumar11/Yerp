@@ -22,6 +22,8 @@ async function loadSafety() {
         statCard('Permits live', String(s.active_permits || 0) +
             (s.expired_open ? ' <span style="font-size:0.72rem;color:var(--danger-color);">(' + s.expired_open + ' run out)</span>' : ''));
     document.querySelectorAll('#sf-tabs button').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === SAFE.tab); });
+    var ex = document.getElementById('sf-exports');
+    if (ex) ex.innerHTML = '<a class="btn btn-outline" href="/api/safety/' + SAFE.tab + '.xlsx' + (SAFE.jobId ? '?job_id=' + SAFE.jobId : '') + '">Register</a>';
     var host = document.getElementById('sf-body');
     if (SAFE.tab === 'incidents') {
         host.innerHTML = '<div class="table-responsive"><table class="data-table"><thead><tr><th>No.</th><th>When</th><th>Kind</th><th>What happened</th>' +
@@ -34,7 +36,8 @@ async function loadSafety() {
                     '<td>' + esc(i.injured_name) + (i.injury ? '<div style="font-size:0.72rem;">' + esc(i.injury) + (i.lost_days ? ', ' + i.lost_days + ' days lost' : '') + '</div>' : '') + '</td>' +
                     '<td style="white-space:nowrap;">' + statusPill(i.status, i.status === 'OPEN' ? (i.serious ? 'bad' : 'wait') : 'good') + '</td>' +
                     '<td class="text-right" style="white-space:nowrap;">' + (i.status === 'OPEN' && can('site.signoff') ? '<button class="btn btn-sm btn-outline" onclick="sfClose(' + i.id + ')">Close</button> ' : '') +
-                    '<button class="btn btn-sm btn-outline" onclick="openFiles(\'incident\',' + i.id + ',\'' + esc(i.number) + '\')">Photos</button></td></tr>';
+                    '<button class="btn btn-sm btn-outline" onclick="openFiles(\'incident\',' + i.id + ',\'' + esc(i.number) + '\')">Photos</button> ' +
+                    '<a class="btn btn-sm btn-outline" target="_blank" rel="noopener" href="/api/safety/incidents/' + i.id + '/document.pdf">PDF</a></td></tr>';
             }).join('') || '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text-secondary);">Nothing reported. A near miss written down is the cheapest lesson there is.</td></tr>') +
             '</tbody></table></div>';
     } else if (SAFE.tab === 'talks') {
@@ -52,7 +55,8 @@ async function loadSafety() {
                 return '<tr><td style="font-family:monospace;white-space:nowrap;">' + esc(p.number) + '</td><td>' + esc(p.kind) + '</td><td>' + esc(p.location) + '</td>' +
                     '<td>' + esc(p.valid_from.slice(5)) + ' &rarr; ' + esc(p.valid_to.slice(5)) + '</td><td>' + esc(p.receiver) + '</td>' +
                     '<td style="white-space:nowrap;">' + statusPill(p.expired ? 'RUN OUT' : p.status, tone) + '</td><td class="text-right">' +
-                    (p.status === 'ACTIVE' && can('site.signoff') ? '<button class="btn btn-sm btn-outline" onclick="sfPermitClose(' + p.id + ')">Close</button>' : '') + '</td></tr>';
+                    (p.status === 'ACTIVE' && can('site.signoff') ? '<button class="btn btn-sm btn-outline" onclick="sfPermitClose(' + p.id + ')">Close</button> ' : '') +
+                    '<a class="btn btn-sm btn-outline" target="_blank" rel="noopener" href="/api/safety/permits/' + p.id + '/document.pdf">PDF</a></td></tr>';
             }).join('') || '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text-secondary);">No permits issued.</td></tr>') +
             '</tbody></table></div>';
     }

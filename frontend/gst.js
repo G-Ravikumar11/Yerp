@@ -28,6 +28,8 @@ async function loadGst() {
     renderOutward(out);
     renderInward(inw);
     document.getElementById('gst-export').href = '/api/gst/outward.xlsx' + q;
+    var inward = document.getElementById('gst-inward-export');
+    if (inward) inward.href = '/api/gst/inward.xlsx' + q;
 }
 window.loadGst = loadGst;
 

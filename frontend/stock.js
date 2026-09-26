@@ -142,7 +142,9 @@ async function loadIssues() {
             '<td>' + statusPill(i.status,
                 i.status === 'POSTED' ? 'good' : i.status === 'CANCELLED' ? 'bad' : 'calm') +
                 '</td>' +
-            '<td class="text-right">' + (i.status === 'DRAFT'
+            '<td class="text-right" style="white-space:nowrap;">' +
+                '<a class="btn btn-sm btn-outline" target="_blank" rel="noopener" href="/api/stock-issues/' + i.id + '/document.pdf">Slip</a> ' +
+                (i.status === 'DRAFT'
                 ? '<button class="btn btn-sm btn-primary" onclick="postIssue(' + i.id +
                   ')">Post it</button> '
                 : '') + (i.status !== 'CANCELLED' && can('workorders.manage')

@@ -34,6 +34,7 @@ legible, which is what happens to these.
 """
 import io
 import re
+import threading
 
 from wo_pdf import (PDF_AVAILABLE, _IMPORT_ERROR, _draw_watermark, _logo, inr,  # noqa: F401
                     _date)
@@ -54,6 +55,11 @@ else:  # pragma: no cover
 
 MARGIN = 14 * mm
 WIDTH = 182 * mm            # A4 less the two margins
+_PAGE = threading.local()    # this build's writing width: portrait, or a wide report on its side
+
+
+def _W():
+    return getattr(_PAGE, "width", WIDTH)
 GRID = 0.6                  # line weight of the ruling
 SHADE = "#d9d9d9"           # the grey of a band or a table head
 
@@ -131,8 +137,8 @@ def _header(block, st):
              ("VALIGN", (0, 0), (-1, -1), "TOP")]
     if not logo:
         # No mark on file: the company takes the width rather than leave an empty box.
-        return _box([[lines, right]], [116 * mm, 66 * mm], flush)
-    return _box([[lines, logo, right]], [78 * mm, 38 * mm, 66 * mm],
+        return _box([[lines, right]], [_W() - 66 * mm, 66 * mm], flush)
+    return _box([[lines, logo, right]], [_W() - 104 * mm, 38 * mm, 66 * mm],
                 flush + [("ALIGN", (1, 0), (1, 0), "CENTER"), ("VALIGN", (1, 0), (1, 0), "MIDDLE")])
 
 
@@ -145,7 +151,7 @@ def _party(block, st):
     if facts:
         right.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0, colors.white),
                                    ("LINEBEFORE", (1, 0), (1, -1), 0, colors.white)]))
-    return _box([[left, right]], [116 * mm, 66 * mm],
+    return _box([[left, right]], [_W() - 66 * mm, 66 * mm],
                 [("VALIGN", (0, 0), (-1, -1), "TOP"),
                  ("LEFTPADDING", (1, 0), (1, 0), 0), ("RIGHTPADDING", (1, 0), (1, 0), 0),
                  ("TOPPADDING", (1, 0), (1, 0), 0), ("BOTTOMPADDING", (1, 0), (1, 0), 0)])
@@ -164,15 +170,16 @@ def _pairs(block, st):
                 pair = None
         if pair is not None:
             data.append(pair + ["", ""])
-        return _box(data, [30 * mm, 61 * mm, 30 * mm, 61 * mm])
+        half = (_W() - 60 * mm) / 2.0
+        return _box(data, [30 * mm, half, 30 * mm, half])
     lw = (block.get("label_width") or 42) * mm
-    return _pairs_table(rows, st, lw, WIDTH - lw)
+    return _pairs_table(rows, st, lw, _W() - lw)
 
 
 def _table(block, st):
     cols = block["columns"]
     widths = [w * mm for _, w, _ in cols]
-    scale = WIDTH / float(sum(widths))
+    scale = _W() / float(sum(widths))
     widths = [w * scale for w in widths]
     align = {"L": st["body"], "C": st["centre"], "R": st["right"]}
     head = [Paragraph(_esc(t), st["centrebold"]) for t, _, _ in cols]
@@ -182,6 +189,23 @@ def _table(block, st):
     if not block.get("rows"):
         data.append([Paragraph("-", st["centre"])] + [""] * (len(cols) - 1))
     extra = [("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(SHADE)), ("VALIGN", (0, 1), (-1, -1), "TOP")]
+    # Totals laid under their own columns: a label, then each figure where its
+    # column is - "Mandays 10 ... Amount 9,000" rather than one number for both.
+    for foot in block.get("foot") or []:
+        first = next((i for i, v in enumerate(foot) if str(v).strip()), None)
+        if first is None:
+            continue
+        nxt = next((i for i in range(first + 1, len(foot)) if str(foot[i]).strip()), len(cols))
+        label_end = max(first, nxt - 1)
+        row = [Paragraph(_esc(foot[first]), st["rightbold"])] + [""] * (label_end - first)
+        row = [""] * first + row
+        for i in range(label_end + 1, len(cols)):
+            v = foot[i] if i < len(foot) else ""
+            row.append(Paragraph(_esc(v), st["rightbold"] if cols[i][2] == "R" else st["bold"]))
+        data.append(row[:len(cols)])
+        r = len(data) - 1
+        if label_end > first:
+            extra.append(("SPAN", (first, r), (label_end, r)))
     for label, value, bold in block.get("totals") or []:
         data.append([Paragraph(_esc(label), st["rightbold"] if bold else st["right"])] + [""] * (len(cols) - 2)
                     + [Paragraph(_esc(value), st["rightbold"] if bold else st["right"])])
@@ -196,7 +220,7 @@ def _sums(block, st):
     data = [[Paragraph(_esc(label), st["rightbold"] if bold else st["right"]),
              Paragraph(_esc(value), st["rightbold"] if bold else st["right"])]
             for label, value, bold in block.get("rows") or []]
-    return _box(data, [WIDTH - 40 * mm, 40 * mm])
+    return _box(data, [_W() - 40 * mm, 40 * mm])
 
 
 def _qr(block, st):
@@ -206,7 +230,7 @@ def _qr(block, st):
     b = w.getBounds()
     d = Drawing(size, size, transform=[size / (b[2] - b[0]), 0, 0, size / (b[3] - b[1]), 0, 0])
     d.add(w)
-    return _box([[lines, d]], [WIDTH - 36 * mm, 36 * mm],
+    return _box([[lines, d]], [_W() - 36 * mm, 36 * mm],
                 [("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("ALIGN", (1, 0), (1, 0), "CENTER")])
 
 
@@ -214,7 +238,7 @@ def _signatures(block, st):
     boxes = block.get("boxes") or []
     if not boxes:
         return None
-    w = WIDTH / len(boxes)
+    w = _W() / len(boxes)
     cells = []
     for role, name in boxes:
         cells.append([Paragraph(_esc(role), st["centrebold"]), Paragraph("&nbsp;", st["body"]),
@@ -228,7 +252,7 @@ def _numbered(block, st):
     data = [[Paragraph("%d. %s" % (i, _br(item)), st["body"])] for i, item in enumerate(block.get("items") or [], 1)]
     for extra in block.get("closing") or []:
         data.append([Paragraph(_br(extra), st["body"])])
-    return _box(data or [[""]], [WIDTH], [("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)])
+    return _box(data or [[""]], [_W()], [("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)])
 
 
 def _flow(blocks, st):
@@ -242,19 +266,19 @@ def _flow(blocks, st):
         elif kind == "pairs":
             out.append(_pairs(b, st))
         elif kind == "band":
-            out.append(_box([[Paragraph(_esc(b.get("text", "")), st["band"])]], [WIDTH],
+            out.append(_box([[Paragraph(_esc(b.get("text", "")), st["band"])]], [_W()],
                             [("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(SHADE))]))
         elif kind == "table":
             out.append(_table(b, st))
         elif kind == "words":
             out.append(_box([[Paragraph(_esc(b.get("label", "Rupees")), st["body"]),
-                              Paragraph(_esc(b.get("text", "")), st["bold"])]], [24 * mm, WIDTH - 24 * mm]))
+                              Paragraph(_esc(b.get("text", "")), st["bold"])]], [24 * mm, _W() - 24 * mm]))
         elif kind == "text":
             out.append(_box([[Paragraph(_br(b.get("text", "")) if b.get("plain", True) else b.get("text", ""),
-                                        st.get(b.get("style") or "body", st["body"]))]], [WIDTH]))
+                                        st.get(b.get("style") or "body", st["body"]))]], [_W()]))
         elif kind == "terms":
             lw = (b.get("label_width") or 62) * mm
-            out.append(_pairs_table(b.get("rows") or [], st, lw, WIDTH - lw))
+            out.append(_pairs_table(b.get("rows") or [], st, lw, _W() - lw))
         elif kind == "sums":
             out.append(_sums(b, st))
         elif kind == "qr" and b.get("data"):
@@ -296,21 +320,26 @@ def build_form_pdf(spec):
                 self.setFont("Helvetica", 6.8)
                 self.setFillColor(colors.HexColor("#555555"))
                 self.drawString(MARGIN, 8 * mm, footer)
-                self.drawRightString(A4[0] - MARGIN, 8 * mm, "Page %d of %d" % (self._pageNumber, total))
+                self.drawRightString(page[0] - MARGIN, 8 * mm, "Page %d of %d" % (self._pageNumber, total))
                 self.restoreState()
                 super().showPage()
             super().save()
 
     def on_page(canvas, _doc):
-        _draw_watermark(canvas, A4[0], A4[1], watermark)
+        _draw_watermark(canvas, page[0], page[1], watermark)
 
-    template = BaseDocTemplate(buf, pagesize=A4, leftMargin=MARGIN, rightMargin=MARGIN,
+    page = (A4[1], A4[0]) if spec.get("landscape") else A4
+    _PAGE.width = page[0] - 2 * MARGIN
+    template = BaseDocTemplate(buf, pagesize=page, leftMargin=MARGIN, rightMargin=MARGIN,
                                topMargin=12 * mm, bottomMargin=14 * mm,
                                title=spec.get("title", ""), author=spec.get("author", ""))
-    frame = Frame(MARGIN, 14 * mm, WIDTH, A4[1] - 26 * mm,
+    frame = Frame(MARGIN, 14 * mm, _W(), page[1] - 26 * mm,
                   leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
     template.addPageTemplates([PageTemplate(id="form", frames=[frame], onPage=on_page)])
-    template.build(_flow(spec.get("blocks") or [], st), canvasmaker=Numbered)
+    try:
+        template.build(_flow(spec.get("blocks") or [], st), canvasmaker=Numbered)
+    finally:
+        _PAGE.width = WIDTH
     return buf.getvalue()
 
 

@@ -145,6 +145,7 @@ async function openRfq(id) {
         '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
         (open ? '<button class="btn btn-sm btn-outline" onclick="rfqQuote()">+ Quote</button>' +
                 (sups.length ? '<button class="btn btn-sm btn-primary" onclick="rfqAward()">Award</button>' : '') : '') +
+        '<a class="btn btn-sm btn-outline" href="/api/rfqs/' + RFQ.current + '/comparison.xlsx">Comparison</a>' +
         '<button class="btn btn-sm btn-outline" onclick="window.print()">Print</button>' +
         '<button class="btn btn-sm btn-outline" onclick="RFQ.current=null;document.getElementById(\'rfq-detail\').innerHTML=\'\'">Close</button></div></div>' +
         (sups.length

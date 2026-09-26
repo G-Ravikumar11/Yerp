@@ -2982,6 +2982,12 @@ def sheet_response(headers, sample, filename, fmt="xlsx", preamble=None, closing
     preamble = list(preamble or [])
     closing = list(closing or [])
 
+    # Asked for at the .pdf twin of this address: the same rows, on paper.
+    as_pdf = SHEET_AS_PDF.get()
+    if as_pdf is not None:
+        return form_pdf_response(sheet_report_spec(headers, sample, filename, preamble, closing,
+                                                   as_pdf.get("client")), filename.rsplit(".", 1)[0])
+
     if fmt == "csv" or filename.endswith(".csv"):
         buf = io.StringIO()
         writer = csv.writer(buf)
@@ -33708,8 +33714,472 @@ def ledger_statement_pdf(request: Request, party_type: str, party: str, date_fro
     return form_pdf_response(statement_form_spec(client, party, label, s, date_from, date_to), "statement_" + party)
 
 
+# ============================================================================
+# EVERY WORKBOOK ALSO AS A PDF
+#
+# A report goes two ways: into Excel to be worked on, and onto paper to be
+# signed, filed or sent. Every .xlsx the app produces has a .pdf beside it at
+# the same address, drawn from the very rows the workbook is written from - so
+# the two can never disagree - in the same ruled form as the documents, turned
+# on its side when the table is too wide to stand up.
+# ============================================================================
+
+import contextvars
+import functools
+
+SHEET_AS_PDF = contextvars.ContextVar("sheet_as_pdf", default=None)
+
+
+def _cell_text(v):
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "Yes" if v else ""
+    if isinstance(v, float):
+        return form_pdf.inr(v) if v != int(v) or abs(v) >= 1000 else form_pdf.inr(v, 0 if v == int(v) else 2)
+    if isinstance(v, int):
+        return form_pdf.inr(v, 0) if abs(v) >= 1000 else str(v)
+    text = str(v)
+    # Stored ISO so they sort; printed as dates are read here.
+    if re.match(r"^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$", text):
+        return form_pdf.date_text(text[:10]) + (text[10:16] if len(text) > 10 else "")
+    return text
+
+
+def sheet_report_spec(headers, rows, filename, preamble=None, closing=None, client=None):
+    """A workbook's rows as a ruled report."""
+    pre = [list(r) for r in (preamble or []) if r and any(str(x).strip() for x in r)]
+    title = str(pre[0][0]).strip() if pre else re.sub(r"[_\-]+", " ", filename.rsplit(".", 1)[0]).upper()
+    facts, notes = [], []
+    for r in pre[1:] if pre else []:
+        cells = [c for c in r if str(c).strip() != ""]
+        if len(cells) == 1:
+            notes.append(str(cells[0]))
+        else:
+            for i in range(0, len(cells) - 1, 2):
+                facts.append((str(cells[i]), _cell_text(cells[i + 1])))
+    # The preamble often names the company beside the title; the header says it already.
+    of = str(pre[0][1]).strip() if pre and len(pre[0]) > 1 else ""
+    if of and not (client is not None and of == (client.company_name or "")):
+        facts.insert(0, ("Of", of))
+    body = [[_cell_text(v) for v in r] for r in rows]
+    n = len(headers)
+    # Each column as wide as what it holds, within reason.
+    pref = []
+    for i, h in enumerate(headers):
+        longest = max([len(str(h))] + [len(r[i]) for r in body[:300] if i < len(r)])
+        pref.append(max(6, min(longest, 46)))
+    numeric = [all((not r[i]) or re.match(r"^[\(\-]?[\d,]+(\.\d+)?\)?%?$", r[i]) for r in body[:300] if i < len(r))
+               for i in range(n)]
+    landscape = n > 7 or sum(pref) > 110
+    columns = [(str(h), p, "R" if numeric[i] and body else "L") for i, (h, p) in enumerate(zip(headers, pref))]
+    foot = []
+    for r in closing or []:
+        if len([c for c in r if str(c).strip() != ""]) >= 2:
+            foot.append([_cell_text(c) for c in list(r)[:n]] + [""] * max(0, n - len(r)))
+    company = {}
+    if client is not None:
+        company = {"name": client.company_name or "", "address": client.address or "", "gstin": client.gstin or "",
+                   "pan": "", "state": _state_line(client.gstin), "logo_url": client.logo_url or ""}
+    head = {"type": "header", "company": company, "title": title[:40],
+            "facts": (facts[:5] or [("Printed", datetime.now().strftime("%d/%m/%Y"))])}
+    blocks = [head]
+    if len(facts) > 5:
+        blocks.append({"type": "pairs", "cols": 2, "rows": facts[5:]})
+    for note in notes:
+        blocks.append({"type": "text", "style": "small", "text": note})
+    blocks.append({"type": "table", "columns": columns, "rows": body, "foot": foot})
+    return {"title": title, "author": company.get("name", ""), "landscape": landscape, "blocks": blocks,
+            "footer": "%s  |  %s  |  Printed %s" % (title.title(), company.get("name", ""),
+                                                    datetime.now().strftime("%d/%m/%Y %H:%M"))}
+
+
+def _pdf_twin(endpoint):
+    @functools.wraps(endpoint)
+    def twin(*args, **kwargs):
+        request, db = kwargs.get("request"), kwargs.get("db")
+        client = None
+        if request is not None and db is not None:
+            try:
+                client = require_items_access(request, db, None)
+            except HTTPException:
+                client = None
+        token = SHEET_AS_PDF.set({"client": client})
+        try:
+            return endpoint(*args, **kwargs)
+        finally:
+            SHEET_AS_PDF.reset(token)
+    return twin
+
+
+def add_pdf_twins():
+    """A .pdf beside every .xlsx - added once every route exists."""
+    from fastapi.routing import APIRoute
+    import asyncio
+    have = {r.path for r in app.routes if isinstance(r, APIRoute)}
+    added = 0
+    for r in list(app.routes):
+        if not isinstance(r, APIRoute) or "GET" not in r.methods or not r.path.endswith(".xlsx"):
+            continue
+        if "/api/sheets/" in r.path or asyncio.iscoroutinefunction(r.endpoint):
+            continue
+        path = r.path[:-5] + ".pdf"
+        if path in have:
+            continue
+        app.add_api_route(path, _pdf_twin(r.endpoint), methods=["GET"])
+        added += 1
+    return added
+
+
+# --- The registers that had no workbook (each gets its .pdf twin too) ---------------------
+
+def _pre(client, title, *facts):
+    rows = [(title, client.company_name or ""), ("As at", date.today().isoformat())]
+    rows += [f for f in facts if f]
+    return rows + [()]
+
+
+@app.get("/api/money/payables.xlsx")
+def payables_export(request: Request, db: Session = Depends(get_db)):
+    client = require_items_access(request, db, "bills.view_all")
+    d = payables(request, db)
+    rows = [(r["number"], r["kind"], r["party"], r["project"], r["due_date"], r["outstanding"], r["bucket"],
+             r["days_overdue"], "yes" if r.get("approved") else "no") for r in d["bills"]]
+    b = d["buckets"]
+    return sheet_response(("Document", "Kind", "Party", "Project", "Due", "Outstanding", "Age", "Days overdue", "Approved"),
+                          rows, "what_we_owe.xlsx",
+                          preamble=_pre(client, "WHAT WE OWE", ("Not due", b["Not due"], "0-30", b["0-30"], "31-60", b["31-60"]),
+                                        ("61-90", b["61-90"], "90+", b["90+"])),
+                          closing=[(), ("Total owed", "", "", "", "", d["summary"]["owed"])])
+
+
+@app.get("/api/gst/inward.xlsx")
+def gst_inward_export(request: Request, date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+    client = require_items_access(request, db, "bills.view_all")
+    d = gst_inward(request, date_from, date_to, db)
+    rows = [(r["date"], r["kind"], r["number"], r["party"], r.get("party_gstin", ""), r.get("sac", ""), r["rate"],
+             r["taxable"], r["cgst"], r["sgst"], r["igst"], r["tax"]) for r in d["supplies"]]
+    s = d["summary"]
+    return sheet_response(("Date", "Kind", "Number", "Party", "GSTIN", "SAC/HSN", "Rate %", "Taxable", "CGST", "SGST",
+                           "IGST", "Tax"), rows, "gst_inward.xlsx",
+                          preamble=_pre(client, "GST - INPUT REGISTER", ("Period", "%s to %s" % (date_from or "start", date_to or "today"))),
+                          closing=[(), ("Total", "", "", "", "", "", "", s["taxable"], s["cgst"], s["sgst"], s["igst"], s["tax"])])
+
+
+@app.get("/api/registers/tds.xlsx")
+def tds_export(request: Request, year: str = "", quarter: str = "", db: Session = Depends(get_db)):
+    client = require_items_access(request, db, "bills.view_all")
+    d = tds_register(request, year, quarter, db)
+    rows = []
+    for side, label in (("deducted", "Deducted by us"), ("suffered", "Deducted from us")):
+        for r in d.get(side) or []:
+            rows.append((label, r.get("date", ""), r.get("quarter", ""), r.get("bill", ""),
+                         r.get("deductee") or r.get("deductor") or r.get("party", ""), r.get("pan", ""),
+                         r.get("section", ""), r.get("rate", 0), r.get("amount_credited") or r.get("amount", 0),
+                         r.get("tds", 0), r.get("paid_on", "") or r.get("status", "")))
+    return sheet_response(("Side", "Date", "Quarter", "Bill", "Party", "PAN", "Section", "Rate %", "Amount", "TDS",
+                           "Paid / status"), rows, "tds_register.xlsx",
+                          preamble=_pre(client, "TDS REGISTER", ("Year", year or "all", "Quarter", quarter or "all")),
+                          closing=[(), ("Deducted by us", "", "", "", "", "", "", "", "",
+                                        money(sum(r.get("tds", 0) for r in d.get("deducted") or []))),
+                                   ("Deducted from us", "", "", "", "", "", "", "", "",
+                                    money(sum(r.get("tds", 0) for r in d.get("suffered") or [])))])
+
+
+@app.get("/api/registers/guarantees.xlsx")
+def guarantees_export(request: Request, db: Session = Depends(get_db)):
+    client = require_items_access(request, db, "bills.view_all")
+    d = guarantee_register(request, db)
+    keys = [k for k in (d["guarantees"][0].keys() if d["guarantees"] else ["number", "bank", "amount", "valid_until", "status"])
+            if not k.endswith("_id") and k != "id"]
+    rows = [tuple(g.get(k, "") for k in keys) for g in d["guarantees"]]
+    return sheet_response(tuple(k.replace("_", " ").title() for k in keys), rows, "guarantees.xlsx",
+                          preamble=_pre(client, "BANK GUARANTEES"))
+
+
+@app.get("/api/registers/advances.xlsx")
+def advances_export(request: Request, db: Session = Depends(get_db)):
+    client = require_items_access(request, db, "bills.view_all")
+    d = advance_register(request, db)
+    rows = [(a["order"], a["contractor"], a["agreed"], a["advance"], a["recovery_percent"], a["recovered"],
+             a["outstanding"], a["percent_recovered"]) for a in d["advances"]]
+    return sheet_response(("Order", "Contractor", "Agreed", "Paid", "Recovery %", "Recovered", "Still to recover",
+                           "% recovered"), rows, "advances.xlsx", preamble=_pre(client, "MOBILISATION ADVANCES"),
+                          closing=[(), ("Total", "", money(sum(a["agreed"] for a in d["advances"])),
+                                        money(sum(a["advance"] for a in d["advances"])), "",
+                                        money(sum(a["recovered"] for a in d["advances"])),
+                                        money(sum(a["outstanding"] for a in d["advances"])))])
+
+
+@app.get("/api/money/entries.xlsx")
+def money_entries_export(request: Request, direction: str = "", party: str = "", job_id: int = 0,
+                         date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+    client = require_items_access(request, db, "bills.view_all")
+    d = list_money(request, direction, party, job_id, date_from, date_to, db)
+    rows = [(e["paid_on"], e["number"], "Received" if e["direction"] == "IN" else "Paid", e["party_name"],
+             e["doc_number"] or "on account", e["mode"], e["reference"], e["account"], e["amount"],
+             "void" if e["voided"] else "") for e in d["entries"]]
+    s = d["summary"]
+    return sheet_response(("Date", "Voucher", "Way", "Party", "Against", "Mode", "Reference", "Account", "Amount", "Void"),
+                          rows, "payments_and_receipts.xlsx",
+                          preamble=_pre(client, "PAYMENTS AND RECEIPTS",
+                                        ("Period", "%s to %s" % (date_from or "start", date_to or "today"))),
+                          closing=[(), ("Received", "", "", "", "", "", "", "", s["received"]),
+                                   ("Paid", "", "", "", "", "", "", "", s["paid"])])
+
+
+@app.get("/api/qc/inspections.xlsx")
+def inspections_export(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    d = list_inspections(request, job_id, db)
+    rows = [(i["number"], i["inspected_on"], i["checklist"], i["location"], i["inspected_by"], i["witnessed_by"],
+             i.get("result") or "open", i.get("remarks", "")) for i in d["inspections"]]
+    return sheet_response(("No.", "Date", "Checklist", "Location", "Inspected by", "Witnessed by", "Result", "Remarks"),
+                          rows, "inspections.xlsx", preamble=_pre(client, "QUALITY INSPECTIONS"))
+
+
+@app.get("/api/qc/cubes.xlsx")
+def cubes_export(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    d = list_cubes(request, job_id, db)
+    rows = []
+    for c in d["cubes"]:
+        res = {r.get("age_days"): r for r in c.get("results") or []}
+        def avg(age):
+            r = res.get(age)
+            return r.get("average") or r.get("avg_strength") or r.get("strength") or "" if r else ""
+        rows.append((c["number"], c["cast_on"], c["location"], c["grade"], c.get("fck", ""), c.get("supplier", ""),
+                     c.get("docket", ""), avg(7), avg(28), c.get("verdict") or c.get("status", "")))
+    return sheet_response(("Set", "Cast on", "Pour", "Grade", "fck", "Supplier", "Docket", "7-day", "28-day", "Result"),
+                          rows, "cube_tests.xlsx", preamble=_pre(client, "CUBE TEST REGISTER"))
+
+
+@app.get("/api/qc/ncrs.xlsx")
+def ncrs_export(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    d = list_ncrs(request, job_id, "", db)
+    keys = ["number", "raised_on", "location", "description", "severity", "responsible", "target_date", "status"]
+    rows = [tuple(n.get(k, "") for k in keys) for n in d["ncrs"]]
+    return sheet_response(("No.", "Raised", "Location", "Description", "Severity", "Responsible", "Target", "Status"),
+                          rows, "ncrs.xlsx", preamble=_pre(client, "NON-CONFORMANCE REGISTER"))
+
+
+@app.get("/api/safety/incidents.xlsx")
+def incidents_export(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    d = safety_overview(request, job_id, db)
+    rows = [(i["number"], i["happened_on"], i["kind"], i["location"], i["description"], i["injured_name"], i["injury"],
+             i["lost_days"], i["root_cause"], i["corrective_action"], i["status"]) for i in d["incidents"]]
+    return sheet_response(("No.", "Date", "Kind", "Where", "What happened", "Hurt", "Injury", "Days lost", "Root cause",
+                           "Corrective action", "Status"), rows, "incidents.xlsx",
+                          preamble=_pre(client, "INCIDENT REGISTER"))
+
+
+@app.get("/api/safety/permits.xlsx")
+def permits_export(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    d = safety_overview(request, job_id, db)
+    rows = [(p["number"], p["kind"], p["location"], p["valid_from"], p["valid_to"], p["receiver"],
+             p.get("issued_by", ""), "RUN OUT" if p.get("expired") else p["status"]) for p in d["permits"]]
+    return sheet_response(("Permit", "Kind", "Where", "From", "Until", "Worker", "Issued by", "Status"), rows,
+                          "permits.xlsx", preamble=_pre(client, "PERMIT TO WORK REGISTER"))
+
+
+@app.get("/api/safety/talks.xlsx")
+def talks_export(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    d = safety_overview(request, job_id, db)
+    rows = [(t["held_on"], t["topic"], t["conducted_by"], t["attendees"], t.get("attendee_names", ""))
+            for t in d["talks"]]
+    return sheet_response(("Date", "Topic", "Conducted by", "Attended", "Names"), rows, "toolbox_talks.xlsx",
+                          preamble=_pre(client, "TOOLBOX TALKS"))
+
+
+@app.get("/api/rfqs/{rfq_id}/comparison.xlsx")
+def rfq_comparison_export(rfq_id: int, request: Request, db: Session = Depends(get_db)):
+    """The comparative statement: each line against each supplier, then each
+    supplier's total landed at site and its rank."""
+    client = require_erp_read(request, db)
+    d = comparative_statement(db, rfq_or_404(db, client.id, rfq_id))
+    names = [s["supplier_name"] for s in d["suppliers"]]
+    rows = []
+    for l in d["lines"]:
+        by = {o["supplier_name"]: o["rate"] for o in l["offers"]}
+        rows.append(tuple([l["item_code"], l["description"], l["uom"], l["qty"]] + [by.get(n, "") for n in names] +
+                          [l["lowest"], l["lowest_rate"]]))
+    closing = [(), tuple(["Basic", "", "", ""] + [s["basic"] for s in d["suppliers"]]),
+               tuple(["GST", "", "", ""] + [s["tax"] for s in d["suppliers"]]),
+               tuple(["Freight", "", "", ""] + [s["freight"] for s in d["suppliers"]]),
+               tuple(["Landed at site", "", "", ""] + [s["landed"] for s in d["suppliers"]]),
+               tuple(["Rank", "", "", ""] + [s.get("rank", "incomplete") for s in d["suppliers"]])]
+    rfq = d.get("rfq") or {}
+    return sheet_response(tuple(["Code", "Description", "UoM", "Qty"] + names + ["Lowest", "Lowest rate"]), rows,
+                          "comparison_%s.xlsx" % (rfq.get("number") or rfq_id),
+                          preamble=_pre(client, "COMPARATIVE STATEMENT", ("Enquiry", rfq.get("number", ""),
+                                                                          "L1", d.get("l1") or "-")),
+                          closing=closing)
+
+
+# --- Field documents: signed on site, filed in the site office ---------------------------
+
+def _company_of(db, client):
+    return {"name": client.company_name or "", "address": company_address(db, client), "gstin": client.gstin or "",
+            "pan": "", "state": _state_line(client.gstin), "logo_url": client.logo_url or ""}
+
+
+def _job_line(db, job_id):
+    j = db.query(models.DBJob).filter(models.DBJob.id == job_id).first() if job_id else None
+    return (("%s %s" % (j.number or "", j.name or "")).strip() if j else ""), ((j.site_address or "") if j else "")
+
+
+def _field_doc(db, client, title, facts, blocks, signatures, footer_no, watermark=""):
+    blocks = [{"type": "header", "company": _company_of(db, client), "title": title, "facts": facts}] + blocks
+    if signatures:
+        blocks.append({"type": "signatures", "boxes": signatures})
+    return {"title": "%s %s" % (title.title(), footer_no), "author": client.company_name or "", "watermark": watermark,
+            "blocks": blocks, "footer": "%s  |  %s  |  Printed %s" % (footer_no, client.company_name or "",
+                                                                      datetime.now().strftime("%d/%m/%Y %H:%M"))}
+
+
+@app.get("/api/safety/permits/{pid}/document.pdf")
+def permit_pdf(pid: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    p = db.query(models.DBWorkPermit).filter(models.DBWorkPermit.id == pid, models.DBWorkPermit.client_id == client.id).first()
+    if not p:
+        raise HTTPException(404, "Permit not found")
+    d = permit_dict(p)
+    project, site = _job_line(db, p.job_id)
+    blocks = [
+        {"type": "pairs", "cols": 2, "rows": [("Project", project), ("Location", d["location"]),
+                                              ("Work", d["description"] or "-"), ("Worker", d["receiver"]),
+                                              ("Valid from", d["valid_from"]), ("Valid until", d["valid_to"])]},
+        {"type": "band", "text": "PRECAUTIONS IN PLACE BEFORE WORK STARTS"},
+        {"type": "table", "columns": [("#", 6, "C"), ("Precaution", 140, "L"), ("Done", 20, "C")],
+         "rows": [[str(i), x.get("item", ""), "YES" if x.get("done") else "NO"]
+                  for i, x in enumerate(d.get("precautions") or [], 1)]},
+        {"type": "text", "style": "small", "text": "This permit is valid only for the work, place and hours stated. "
+                                                   "It is to be displayed at the work point and returned for closing when "
+                                                   "the work stops or the time runs out, whichever is first."},
+        {"type": "pairs", "rows": [("Closed", ("%s by %s - %s" % (d["closed_at"], d["closed_by"], d["closure_note"]))
+                                    if d["status"] != "ACTIVE" else "Open")], "label_width": 30},
+    ]
+    sig = [("Issued By", d["issued_by"]), ("Received By (Worker)", d["receiver"]), ("Safety Officer", ""),
+           ("Closed By", d["closed_by"] or "")]
+    wm = "RUN OUT - CLOSE THIS PERMIT" if d.get("expired") else ("CLOSED" if d["status"] == "CLOSED" else "")
+    return form_pdf_response(_field_doc(db, client, "PERMIT TO WORK",
+                                        [("Permit No", d["number"]), ("Kind", d["kind"]), ("Status", d["status"])],
+                                        blocks, sig, d["number"], wm), d["number"])
+
+
+@app.get("/api/safety/incidents/{iid}/document.pdf")
+def incident_pdf(iid: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    i = db.query(models.DBSafetyIncident).filter(models.DBSafetyIncident.id == iid,
+                                                 models.DBSafetyIncident.client_id == client.id).first()
+    if not i:
+        raise HTTPException(404, "Incident not found")
+    d = incident_dict(i)
+    project, site = _job_line(db, i.job_id)
+    blocks = [
+        {"type": "pairs", "cols": 2, "rows": [("Project", project), ("Where", d["location"] or "-"),
+                                              ("Date", form_pdf.date_text(d["happened_on"])), ("Time", d["happened_at"] or "-"),
+                                              ("Reported by", d["reported_by"] or "-"), ("Serious", "YES" if d["serious"] else "No")]},
+        {"type": "band", "text": "WHAT HAPPENED"},
+        {"type": "text", "text": d["description"] or "-"},
+        {"type": "pairs", "rows": [("Person hurt", d["injured_name"] or "None"), ("Injury", d["injury"] or "-"),
+                                   ("Treatment", d["treatment"] or "-"), ("Days lost", str(d["lost_days"] or 0)),
+                                   ("Done straight away", d["immediate_action"] or "-")], "label_width": 42},
+        {"type": "band", "text": "INVESTIGATION"},
+        {"type": "pairs", "rows": [("Root cause", d["root_cause"] or "To be found"),
+                                   ("Corrective action", d["corrective_action"] or "To be decided"),
+                                   ("Closed on", form_pdf.date_text(d["closed_on"]) or "Open")], "label_width": 42},
+    ]
+    sig = [("Reported By", d["reported_by"] or ""), ("Site Engineer", ""), ("Safety Officer", ""), ("Project Manager", "")]
+    return form_pdf_response(_field_doc(db, client, "INCIDENT REPORT",
+                                        [("Report No", d["number"]), ("Kind", d["kind"]), ("Status", d["status"])],
+                                        blocks, sig, d["number"]), d["number"])
+
+
+@app.get("/api/qc/inspections/{iid}/document.pdf")
+def inspection_pdf(iid: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    i = db.query(models.DBInspection).filter(models.DBInspection.id == iid, models.DBInspection.client_id == client.id).first()
+    if not i:
+        raise HTTPException(404, "Inspection not found")
+    d = inspection_dict(i)
+    project, site = _job_line(db, i.job_id)
+    marks = {"ok": "OK", "pass": "OK", "yes": "OK", "fail": "NOT OK", "no": "NOT OK", "na": "N/A", "": "-"}
+    rows = [[str(n), it.get("item", ""), marks.get(str(it.get("result") or "").lower(), str(it.get("result") or "-")).upper(),
+             it.get("remark", "")] for n, it in enumerate(d.get("items") or [], 1)]
+    blocks = [
+        {"type": "pairs", "cols": 2, "rows": [("Project", project), ("Location", d["location"] or "-"),
+                                              ("Inspected on", form_pdf.date_text(d["inspected_on"])),
+                                              ("Result", d.get("result") or "Open")]},
+        {"type": "table", "columns": [("#", 6, "C"), ("Check", 106, "L"), ("Result", 20, "C"), ("Remark", 50, "L")],
+         "rows": rows},
+        {"type": "pairs", "rows": [("Remarks", d.get("remarks") or "-")], "label_width": 30},
+    ]
+    sig = [("Inspected By", d["inspected_by"] or ""), ("Witnessed By", d["witnessed_by"] or ""),
+           ("Quality Engineer", ""), ("Client's Engineer", "")]
+    return form_pdf_response(_field_doc(db, client, "INSPECTION REPORT",
+                                        [("Report No", d["number"]), ("Checklist", d["checklist"]),
+                                         ("Date", form_pdf.date_text(d["inspected_on"]))], blocks, sig, d["number"]),
+                             d["number"])
+
+
+@app.get("/api/qc/ncrs/{nid}/document.pdf")
+def ncr_pdf(nid: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    n = db.query(models.DBNcr).filter(models.DBNcr.id == nid, models.DBNcr.client_id == client.id).first()
+    if not n:
+        raise HTTPException(404, "NCR not found")
+    d = ncr_dict(n)
+    project, site = _job_line(db, n.job_id)
+    blocks = [
+        {"type": "pairs", "cols": 2, "rows": [("Project", project), ("Location", d["location"] or "-"),
+                                              ("Raised on", form_pdf.date_text(d["raised_on"])), ("Raised by", d["raised_by"] or "-"),
+                                              ("Severity", d["severity"] or "-"), ("Responsible", d["responsible"] or "-")]},
+        {"type": "band", "text": "NON-CONFORMANCE"},
+        {"type": "text", "text": d["description"] or "-"},
+        {"type": "pairs", "rows": [("Corrective action", d["corrective_action"] or "To be agreed"),
+                                   ("Target date", form_pdf.date_text(d["target_date"]) or "-"),
+                                   ("Closed", ("%s - %s" % (form_pdf.date_text(d["closed_on"]), d["closure_note"]))
+                                    if d["status"] == "CLOSED" else "Open")], "label_width": 42},
+    ]
+    sig = [("Raised By", d["raised_by"] or ""), ("Responsible", d["responsible"] or ""), ("Quality Engineer", ""),
+           ("Closed By", d.get("closed_by") or "")]
+    return form_pdf_response(_field_doc(db, client, "NON-CONFORMANCE REPORT",
+                                        [("NCR No", d["number"]), ("Status", d["status"]),
+                                         ("Target", form_pdf.date_text(d["target_date"]) or "-")],
+                                        blocks, sig, d["number"], "OVERDUE" if d.get("overdue") else ""), d["number"])
+
+
+@app.get("/api/stock-issues/{issue_id}/document.pdf")
+def stock_issue_pdf(issue_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    d = issue_dict(db, issue_or_404(db, client.id, issue_id), detail=True)
+    rows = [[str(n), l["item_code"], l["item_name"], l["uom"], form_pdf.qty_text(l["quantity"]),
+             form_pdf.plain_number(l["rate"]), form_pdf.plain_number(l["amount"])] for n, l in enumerate(d["lines"], 1)]
+    blocks = [
+        {"type": "pairs", "cols": 2, "rows": [("From store", d["store"]), ("Issued to", d["issued_to"] or "-"),
+                                              ("Work order", d["work_order"] or "-"), ("Purpose", d["purpose"] or "-")]},
+        {"type": "table", "columns": [("#", 6, "C"), ("Code", 22, "L"), ("Material", 72, "L"), ("UoM", 14, "C"),
+                                      ("Qty", 20, "R"), ("Rate", 20, "R"), ("Value", 28, "R")],
+         "rows": rows, "totals": [("TOTAL VALUE", form_pdf.plain_number(d["total_value"]), True)]},
+        {"type": "pairs", "rows": [("Remarks", d["remarks"] or "-")], "label_width": 30},
+    ]
+    sig = [("Issued By (Store)", d["issued_by_name"] or ""), ("Received By (Site)", ""), ("Site Engineer", ""),
+           ("Store In-charge", "")]
+    return form_pdf_response(_field_doc(db, client, "MATERIAL ISSUE SLIP",
+                                        [("Issue No", d["number"]), ("Date", form_pdf.date_text(d["issued_on"])),
+                                         ("Status", d["status"])], blocks, sig, d["number"],
+                                        "DRAFT - NOT POSTED" if d["status"] == "DRAFT" else ""), d["number"])
+
+
 # Serve frontend
 frontend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
+# Last of all, with every route in place: a .pdf beside each .xlsx.
+PDF_TWINS = add_pdf_twins()
 if os.path.exists(frontend_path):
     app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
 else:

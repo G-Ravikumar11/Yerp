@@ -19,6 +19,8 @@ async function loadQuality() {
     QC.jobId = parseInt(sel.value) || 0;
     if (!QC.checklists) QC.checklists = (await (await fetch('/api/qc/checklists', { credentials: 'include' })).json()).checklists;
     document.querySelectorAll('#qc-tabs button').forEach(function (b) { b.classList.toggle('active', b.dataset.tab === QC.tab); });
+    var ex = document.getElementById('qc-exports');
+    if (ex) ex.innerHTML = '<a class="btn btn-outline" href="/api/qc/' + QC.tab + '.xlsx' + (QC.jobId ? '?job_id=' + QC.jobId : '') + '">Register</a>';
     var q = QC.jobId ? '?job_id=' + QC.jobId : '';
     var host = document.getElementById('qc-body');
     var [ins, cubes, ncrs] = await Promise.all([
@@ -41,6 +43,7 @@ async function loadQuality() {
                     '<td>' + esc(i.inspected_on) + '</td><td>' + esc(i.inspected_by) + '</td><td>' + statusPill(i.result, tone[i.result]) +
                     (i.failed_items ? ' <span style="font-size:0.72rem;color:var(--danger-color);">' + i.failed_items + ' not ok</span>' : '') + '</td>' +
                     '<td class="text-right" style="white-space:nowrap;"><button class="btn btn-sm btn-outline" onclick="qcOpen(' + i.id + ')">Open</button> ' +
+                    '<a class="btn btn-sm btn-outline" target="_blank" rel="noopener" href="/api/qc/inspections/' + i.id + '/document.pdf">PDF</a> ' +
                     '<button class="btn btn-sm btn-outline" onclick="openFiles(\'inspection\',' + i.id + ',\'' + esc(i.number) + '\')">Photos</button></td></tr>';
             }).join('') || '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text-secondary);">No inspections yet. Walk the checklist before work is covered up.</td></tr>') +
             '</tbody></table></div>';
@@ -74,6 +77,7 @@ async function loadQuality() {
                     '<td>' + esc(n.responsible) + '</td><td style="' + (n.overdue ? 'color:var(--danger-color);font-weight:600;' : '') + '">' + esc(n.target_date) + '</td>' +
                     '<td>' + statusPill(n.status, n.overdue ? 'bad' : tone[n.status]) + '</td><td class="text-right" style="white-space:nowrap;">' +
                     (n.status === 'OPEN' && can('site.signoff') ? '<button class="btn btn-sm btn-outline" onclick="qcNcrClose(' + n.id + ')">Close</button> ' : '') +
+                    '<a class="btn btn-sm btn-outline" target="_blank" rel="noopener" href="/api/qc/ncrs/' + n.id + '/document.pdf">PDF</a> ' +
                     '<button class="btn btn-sm btn-outline" onclick="openFiles(\'ncr\',' + n.id + ',\'' + esc(n.number) + '\')">Photos</button></td></tr>';
             }).join('') || '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-secondary);">No non-conformances.</td></tr>') +
             '</tbody></table></div>';
