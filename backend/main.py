@@ -19489,6 +19489,10 @@ def wo_submit(order_id: int, body: WoActionIn, request: Request,
               order.wo_number, "", request)
     db.commit()
     db.refresh(order)
+    notify(db, client.id, "subcontract_submitted", "%s is waiting for approval" % order.wo_number,
+           "%s - %s." % (order.subject or "Subcontract order", inr(order.gross_amount)),
+           view="subcontracts-view", ref_type="subcontract_order", ref_id=order.id, severity="action")
+    db.refresh(order)
     return {"order": wo_dict(db, order, detail=True),
             "message": order.wo_number + " submitted for approval."}
 
@@ -21005,6 +21009,18 @@ def _ra_action(bill_id, action, body, request, db, permission="workorders.manage
               bill.number, (body.comments or "").strip(), request)
     db.commit()
     db.refresh(bill)
+    if action in ("SUBMIT", "CERTIFY"):
+        job = db.query(models.DBJob).filter(models.DBJob.id == bill.job_id).first()
+        if action == "SUBMIT":
+            notify(db, client.id, "ra_bill_submitted", "%s is waiting to be certified" % bill.number,
+                   "%s of work claimed on %s." % (inr(bill.this_bill), job.name if job else "the project"),
+                   view="measurement-view", ref_type="ra_bill", ref_id=bill.id, severity="action")
+        else:
+            notify(db, client.id, "ra_bill_certified", "%s certified" % bill.number,
+                   "%s to receive from %s, net of retention and TDS." % (
+                       inr(bill.net_payable), (job.customer_name if job else "") or "the client"),
+                   view="ledger-view", ref_type="ra_bill", ref_id=bill.id, severity="money")
+        db.refresh(bill)
     return {"bill": ra_bill_dict(db, bill, detail=True),
             "message": "%s %s." % (bill.number, bill.status.lower())}
 
@@ -21974,6 +21990,12 @@ def act_on_variation(vo_id: int, action: str, request: Request, body: dict = Non
               vo.work_order_id, vo.number or "", "%s -> %s" % (was, vo.status), request)
     db.commit()
     db.refresh(vo)
+    if move in ("SUBMIT", "APPROVE"):
+        notify(db, client.id, "variation_submitted" if move == "SUBMIT" else "variation_approved",
+               ("%s is waiting for approval" if move == "SUBMIT" else "%s agreed") % vo.number,
+               "%s of extra work." % inr(vo.value), view="measurement-view",
+               ref_type="variation", ref_id=vo.id, severity="action" if move == "SUBMIT" else "money")
+        db.refresh(vo)
     return {"ok": True, "variation": vo_dict(db, vo, detail=True),
             "message": "%s is now %s." % (vo.number, vo.status.lower())}
 
@@ -24928,6 +24950,19 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
               bill.number or "", "%s -> %s %s" % (was, bill.status, comments), request)
     db.commit()
     db.refresh(bill)
+    if move in ("SUBMIT", "CERTIFY"):
+        con = db.query(models.DBContractor).filter(models.DBContractor.id == bill.contractor_id).first() \
+            if bill.contractor_id else None
+        gang = (con.company_name if con else "") or "the gang"
+        if move == "SUBMIT":
+            notify(db, client.id, "sub_bill_submitted", "%s from %s is waiting to be certified" % (bill.number, gang),
+                   "%s of work billed." % inr(bill.this_bill), view="subbills-view",
+                   ref_type="sub_bill", ref_id=bill.id, severity="action")
+        else:
+            notify(db, client.id, "sub_bill_certified", "%s certified - %s to pay %s" % (
+                bill.number, inr(bill.net_payable), gang), "Pay it from Subcontractor Bills.",
+                   view="subbills-view", ref_type="sub_bill", ref_id=bill.id, severity="money")
+        db.refresh(bill)
     return {"ok": True, "bill": sub_bill_dict(db, bill, detail=True),
             "message": "%s %s." % (bill.number, bill.status.lower())}
 
@@ -26068,6 +26103,14 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
     log_audit(db, client.id, "money_" + direction.lower(), doc_type, e.doc_id or 0,
               e.number, "%s %s %s" % (party_name, inr(amount), doc_number), request)
     db.commit()
+    db.refresh(e)
+    notify(db, client.id, "money_in" if direction == "IN" else "money_out",
+           "%s %s %s %s" % (e.number, "received" if direction == "IN" else "paid", inr(amount),
+                            ("from " if direction == "IN" else "to ") + (party_name or "")),
+           "%s%s by %s." % (("against " + doc_number + ", ") if doc_number else "on account, ",
+                            mode or "", actor_name or ""),
+           view="ledger-view", ref_type="money", ref_id=e.id,
+           severity="money")
     db.refresh(e)
     left = money(worth - settled) if doc else None
     return {"ok": True, "entry": money_entry_dict(e, {account.id: account} if account else {}),
@@ -29307,6 +29350,257 @@ def drawing_status(did: int, body: DrawingStatusIn, request: Request, db: Sessio
     cur.status = d.status = body.status
     db.commit()
     return {"drawing": drawing_dict(db, d, detail=True)}
+
+
+# ============================================================================
+# NOTIFICATIONS
+#
+# A bill waiting on a signature, a receipt from a client, a gang bill to pay:
+# each used to sit until somebody happened to open the right screen. They are
+# announced now - on the bell in the app for everybody in the office, and by
+# email or WhatsApp to whoever the company has named for each kind - and every
+# morning the dashboard's list goes out as one digest.
+# ============================================================================
+
+NOTIFY_KINDS = {
+    "ra_bill_submitted": "An RA bill is waiting to be certified",
+    "ra_bill_certified": "An RA bill has been certified",
+    "sub_bill_submitted": "A gang's bill is waiting to be certified",
+    "sub_bill_certified": "A gang's bill has been certified",
+    "subcontract_submitted": "A subcontract order is waiting for approval",
+    "variation_submitted": "A variation is waiting for approval",
+    "variation_approved": "A variation has been agreed",
+    "money_in": "Money received",
+    "money_out": "Money paid out",
+    "daily_digest": "The morning list of what needs looking at",
+}
+# Out of the box: the bell for everything, email for the money and the digest.
+NOTIFY_DEFAULT_EMAIL = {"ra_bill_certified", "money_in", "daily_digest"}
+
+
+def notify_settings(db, client_id):
+    rows = {s.key: s.value for s in db.query(models.DBSettings).filter(
+        models.DBSettings.client_id == client_id,
+        models.DBSettings.key.in_(["notify_emails", "notify_whatsapp", "notify_channels",
+                                   "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN"])).all()}
+    try:
+        channels = json.loads(rows.get("notify_channels") or "{}")
+    except ValueError:
+        channels = {}
+    for k in NOTIFY_KINDS:
+        channels.setdefault(k, ["email"] if k in NOTIFY_DEFAULT_EMAIL else [])
+    split = lambda v: [x.strip() for x in re.split(r"[,;\s]+", v or "") if x.strip()]
+    return {"emails": split(rows.get("notify_emails")),
+            "whatsapp": [re.sub(r"\D", "", x) for x in split(rows.get("notify_whatsapp"))],
+            "channels": channels,
+            "whatsapp_ready": bool(rows.get("WHATSAPP_PHONE_NUMBER_ID") and rows.get("WHATSAPP_ACCESS_TOKEN")),
+            "wa_phone_id": rows.get("WHATSAPP_PHONE_NUMBER_ID") or "",
+            "wa_token": rows.get("WHATSAPP_ACCESS_TOKEN") or ""}
+
+
+def _send_whatsapp_for(phone_id, token, number, text):
+    """One WhatsApp message through the company's own Business number."""
+    try:
+        r = httpx.post("https://graph.facebook.com/v17.0/%s/messages" % phone_id,
+                       headers={"Authorization": "Bearer %s" % token, "Content-Type": "application/json"},
+                       json={"messaging_product": "whatsapp", "to": number, "type": "text",
+                             "text": {"body": text[:4000]}}, timeout=15)
+        r.raise_for_status()
+        return True
+    except Exception as exc:
+        logger.error("WhatsApp to %s failed: %s", number, exc)
+        return False
+
+
+def _deliver(client_id, from_email, emails, numbers, wa_phone_id, wa_token, subject, text):
+    """Runs off the request: the person who certified a bill is not kept
+    waiting on a mail server."""
+    for to in emails:
+        try:
+            send_email_background(to, subject, text, from_email, client_id=client_id)
+        except Exception as exc:
+            logger.error("Notification email to %s failed: %s", to, exc)
+    for n in numbers:
+        _send_whatsapp_for(wa_phone_id, wa_token, n, "%s\n\n%s" % (subject, text))
+
+
+NOTIFY_SYNC = False          # tests set this to deliver inline instead of on a thread
+
+
+def notify(db, client_id, kind, title, body="", view="", ref_type="", ref_id=None, severity="info"):
+    """Announce something. Never allowed to break what raised it."""
+    try:
+        n = models.DBAlert(client_id=client_id, kind=kind, title=title[:200], body=(body or "")[:2000],
+                                  view=view or "", ref_type=ref_type or "", ref_id=ref_id, severity=severity)
+        cfg = notify_settings(db, client_id)
+        wanted = cfg["channels"].get(kind, [])
+        emails = cfg["emails"] if "email" in wanted else []
+        numbers = cfg["whatsapp"] if ("whatsapp" in wanted and cfg["whatsapp_ready"]) else []
+        n.sent_to = ", ".join(emails + ["+" + x for x in numbers])
+        db.add(n)
+        db.commit()
+        if emails or numbers:
+            client = db.query(models.DBClient).filter(models.DBClient.id == client_id).first()
+            args = (client_id, (client.email if client else "") or "", emails, numbers,
+                    cfg["wa_phone_id"], cfg["wa_token"],
+                    "%s - %s" % ((client.company_name if client else "") or "Y ERP", title), body or title)
+            if NOTIFY_SYNC:
+                _deliver(*args)
+            else:
+                threading.Thread(target=_deliver, args=args, daemon=True).start()
+        return n
+    except Exception as exc:
+        logger.error("Notification %s failed: %s", kind, exc)
+        db.rollback()
+        return None
+
+
+def viewer_key(request):
+    member = request.session.get("member_id")
+    return "member:%s" % member if member else "owner"
+
+
+@app.get("/api/alerts")
+def list_notifications(request: Request, limit: int = 30, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    me = viewer_key(request)
+    rows = db.query(models.DBAlert).filter(models.DBAlert.client_id == client.id).order_by(
+        models.DBAlert.id.desc()).limit(min(max(limit, 1), 200)).all()
+    seen = {r.alert_id for r in db.query(models.DBAlertRead.alert_id).filter(
+        models.DBAlertRead.viewer == me,
+        models.DBAlertRead.alert_id.in_([n.id for n in rows] or [0])).all()}
+    unread = db.query(sqlfunc.count(models.DBAlert.id)).filter(
+        models.DBAlert.client_id == client.id,
+        ~models.DBAlert.id.in_(db.query(models.DBAlertRead.alert_id).filter(
+            models.DBAlertRead.viewer == me))).scalar() or 0
+    return {"alerts": [{"id": n.id, "kind": n.kind, "title": n.title, "body": n.body or "",
+                               "view": n.view or "", "ref_type": n.ref_type or "", "ref_id": n.ref_id,
+                               "severity": n.severity or "info", "created_at": n.created_at,
+                               "sent_to": n.sent_to or "", "read": n.id in seen} for n in rows],
+            "unread": unread}
+
+
+class NotificationReadIn(BaseModel):
+    ids: Optional[List[int]] = None
+    all: Optional[bool] = False
+
+
+@app.post("/api/alerts/read")
+def mark_notifications_read(body: NotificationReadIn, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    me = viewer_key(request)
+    q = db.query(models.DBAlert.id).filter(models.DBAlert.client_id == client.id)
+    if not body.all:
+        q = q.filter(models.DBAlert.id.in_(body.ids or [0]))
+    already = {r.alert_id for r in db.query(models.DBAlertRead.alert_id).filter(
+        models.DBAlertRead.viewer == me).all()}
+    n = 0
+    for (nid,) in q.all():
+        if nid not in already:
+            db.add(models.DBAlertRead(alert_id=nid, viewer=me))
+            n += 1
+    db.commit()
+    return {"marked": n}
+
+
+@app.get("/api/alerts/settings")
+def get_notification_settings(request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    cfg = notify_settings(db, client.id)
+    return {"emails": cfg["emails"], "whatsapp": cfg["whatsapp"], "channels": cfg["channels"],
+            "kinds": NOTIFY_KINDS, "whatsapp_ready": cfg["whatsapp_ready"],
+            "wa_phone_id": cfg["wa_phone_id"], "wa_token_set": bool(cfg["wa_token"]),
+            "email_ready": bool(get_stored_refresh_token(db, client_id=client.id))}
+
+
+class NotificationSettingsIn(BaseModel):
+    emails: Optional[List[str]] = None
+    whatsapp: Optional[List[str]] = None
+    channels: Optional[dict] = None
+    wa_phone_id: Optional[str] = None
+    wa_token: Optional[str] = None
+
+
+def _put_setting(db, client_id, key, value):
+    row = db.query(models.DBSettings).filter(models.DBSettings.client_id == client_id,
+                                             models.DBSettings.key == key).first()
+    if row:
+        row.value = value
+    else:
+        db.add(models.DBSettings(client_id=client_id, key=key, value=value))
+
+
+@app.put("/api/alerts/settings")
+def save_notification_settings(body: NotificationSettingsIn, request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    if body.emails is not None:
+        bad = [e for e in body.emails if e.strip() and not validate_email_address(e.strip())]
+        if bad:
+            raise HTTPException(400, "Not an email address: %s" % bad[0])
+        _put_setting(db, client.id, "notify_emails", ", ".join(e.strip() for e in body.emails if e.strip()))
+    if body.whatsapp is not None:
+        nums = [re.sub(r"\D", "", x) for x in body.whatsapp if x.strip()]
+        bad = [x for x in nums if not (10 <= len(x) <= 15)]
+        if bad:
+            raise HTTPException(400, "A WhatsApp number with its country code, e.g. 919848012345: %s" % bad[0])
+        nums = ["91" + x if len(x) == 10 else x for x in nums]
+        _put_setting(db, client.id, "notify_whatsapp", ", ".join(nums))
+    if body.channels is not None:
+        clean = {k: [c for c in (v or []) if c in ("email", "whatsapp")]
+                 for k, v in body.channels.items() if k in NOTIFY_KINDS}
+        _put_setting(db, client.id, "notify_channels", json.dumps(clean))
+    if body.wa_phone_id is not None:
+        _put_setting(db, client.id, "WHATSAPP_PHONE_NUMBER_ID", body.wa_phone_id.strip())
+    if body.wa_token:
+        _put_setting(db, client.id, "WHATSAPP_ACCESS_TOKEN", body.wa_token.strip())
+    db.commit()
+    return get_notification_settings(request, db)
+
+
+@app.post("/api/alerts/test")
+def test_notification(request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    cfg = notify_settings(db, client.id)
+    saved = cfg["channels"]
+    _put_setting(db, client.id, "notify_channels", json.dumps(dict(saved, daily_digest=["email", "whatsapp"])))
+    db.commit()
+    n = notify(db, client.id, "daily_digest", "Test from Y ERP",
+               "If this arrived, notifications reach you here.", view="dashboard-view")
+    _put_setting(db, client.id, "notify_channels", json.dumps(saved))
+    db.commit()
+    return {"sent_to": (n.sent_to if n else "") or "",
+            "message": ("Sent to " + n.sent_to) if n and n.sent_to else
+                       "Shown on the bell. Add an email or a WhatsApp number to have it sent too."}
+
+
+def digest_key(now=None):
+    """The day, once it is past seven; before that a key per hour, so an early
+    tick cannot use up the day's digest before there is anything to send."""
+    now = now or datetime.now()
+    return now.strftime("%Y-%m-%d") if now.hour >= 7 else now.strftime("early-%Y-%m-%d-%H")
+
+
+@scheduled_job("morning_digest", digest_key)
+def job_morning_digest(db, now):
+    """Every morning, the dashboard's list as one message - only when there
+    is something on it, and not before seven."""
+    if now.hour < 7:
+        return "too early"
+    sent = 0
+    for client in db.query(models.DBClient).filter(models.DBClient.is_active.is_(True)).all():
+        try:
+            items = attention_items(db, client.id)
+        except Exception as exc:
+            logger.error("Digest for %s failed: %s", client.id, exc)
+            continue
+        if not items:
+            continue
+        lines = ["- %s: %s" % (i["title"], i["detail"]) for i in items[:8]]
+        notify(db, client.id, "daily_digest",
+               "%d thing%s worth a look today" % (len(items), "" if len(items) == 1 else "s"),
+               "\n".join(lines), view="dashboard-view", severity="action")
+        sent += 1
+    return "%d digest(s)" % sent
 
 
 # Serve frontend

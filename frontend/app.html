@@ -200,6 +200,17 @@
                     </span>
                     <input type="text" id="global-search" placeholder="Search..." onkeyup="handleGlobalSearch(event)">
                 </div>
+                <!-- The bell: bills waiting on a signature, money in and out,
+                     the morning list. Hidden until signed in. -->
+                <div id="alerts-wrap" style="position:relative;">
+                    <button id="alerts-bell" class="btn-icon rounded-lg hover:bg-slate-100 text-ink-soft p-1.5"
+                            style="display:none;position:relative;align-items:center;" onclick="toggleAlerts(event)"
+                            title="Alerts" aria-label="Alerts">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                        <span id="alerts-badge" style="display:none;position:absolute;top:-2px;right:-4px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--danger-color);color:#fff;font-size:10px;font-weight:700;line-height:16px;text-align:center;"></span>
+                    </button>
+                    <div id="alerts-panel" style="display:none;position:absolute;right:0;top:40px;width:360px;max-width:92vw;z-index:1000;background:var(--card-bg,#fff);border:1px solid var(--border-color);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.14);"></div>
+                </div>
                 <!-- Who is signed in, and what they are allowed to do. Access
                      level on the chip because in this app it decides what the
                      person can even see, so it is worth reading at a glance. -->
@@ -1946,6 +1957,12 @@
                 <div id="settings-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div><h1>Settings</h1><p class="subtitle">Manage your account and preferences</p></div>
+                    </div>
+
+                    <div class="glass-widget" style="margin-bottom:24px;">
+                        <div class="widget-header"><div><h3>Alerts</h3>
+                            <p style="font-size:0.8rem;color:var(--text-secondary);margin:2px 0 0;">Who hears about what, by email or WhatsApp. Everything also shows on the bell.</p></div></div>
+                        <div style="padding:14px 18px;" id="alert-settings"></div>
                     </div>
 
                     <!-- Two numbers that decide how much of the chain a cost has
@@ -5214,7 +5231,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=114"></script>
+    <script src="app.js?v=116"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=65"></script>
@@ -5248,6 +5265,7 @@
     <script src="rfq.js?v=96"></script>
     <script src="ewaybill.js?v=113"></script>
     <script src="files.js?v=115"></script>
+    <script src="alerts.js?v=116"></script>
     <script src="leads.js?v=110"></script>
     <script src="schedule.js?v=99"></script>
     <script src="stores.js?v=108"></script>

@@ -468,6 +468,7 @@ function showView(viewId) {
     if (viewId === 'create-invoice-view' && typeof setupContactAutocomplete === 'function') setupContactAutocomplete();
     if (viewId === 'settings-view' && typeof loadGmailStatus === 'function') loadGmailStatus();
     if (viewId === 'settings-view' && typeof loadSettings === 'function') loadSettings();
+    if (viewId === 'settings-view' && typeof loadAlertSettings === 'function') loadAlertSettings();
     if (viewId === 'settings-view' && typeof loadTaxRates === 'function') loadTaxRates();
     if (viewId === 'settings-view' && typeof loadTeam === 'function') loadTeam();
     if (viewId === 'settings-view' && typeof loadBrandingThemes === 'function') loadBrandingThemes();
@@ -596,6 +597,7 @@ async function checkAuthStatus() {
                     // overwrote it with a single letter a moment later.
                     portalUser.name = data.contact_name || data.email || portalUser.name;
                     if (typeof paintUserChip === 'function') paintUserChip();
+                    if (typeof startAlerts === 'function') startAlerts();
                 }
             } else {
                 if (loginBtn) loginBtn.style.display = 'inline-block';
