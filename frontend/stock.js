@@ -48,7 +48,7 @@ async function loadStock() {
                 '<button class="btn btn-sm btn-outline" onclick="showLedger(\'' +
                 esc(r.item_code) + '\')">Ledger</button> ' +
                 // A count adjusts the books; that is the office's to do.
-                (can('workorders.manage') ? '<button class="btn btn-sm btn-outline" onclick="countStock(\'' +
+                (can('stores.manage') ? '<button class="btn btn-sm btn-outline" onclick="countStock(\'' +
                 esc(r.item_code) + '\',' + r.on_hand + ')">Count</button>' : '') + '</td>' +
             '</tr>';
     }).join('') : '<tr><td colspan="7" style="text-align:center;padding:30px;' +
@@ -147,7 +147,7 @@ async function loadIssues() {
                 (i.status === 'DRAFT'
                 ? '<button class="btn btn-sm btn-primary" onclick="postIssue(' + i.id +
                   ')">Post it</button> '
-                : '') + (i.status !== 'CANCELLED' && can('workorders.manage')
+                : '') + (i.status !== 'CANCELLED' && can('stores.manage')
                 ? '<button class="btn btn-sm btn-outline" onclick="cancelIssue(' + i.id +
                   ')">Cancel</button>' : '') + '</td>' +
             '</tr>';

@@ -61,7 +61,7 @@ async function loadEquipment() {
                 esc((a.meter_unit || '').toLowerCase()) + flag + '</td>' +
             '<td class="text-right" style="white-space:nowrap;">' + formatCurrency(a.cost_to_date) + '</td>' +
             '<td class="text-right" style="white-space:nowrap;">' + acts +
-                (can('workorders.manage') ? '<button class="btn btn-sm btn-outline" onclick="eqpEdit(' + i + ')">Edit</button>' : '') + '</td></tr>';
+                (can('stores.manage|workorders.manage') ? '<button class="btn btn-sm btn-outline" onclick="eqpEdit(' + i + ')">Edit</button>' : '') + '</td></tr>';
     }).join('') : '<tr><td colspan="7" style="text-align:center;padding:26px;color:var(--text-secondary);">' +
         'No machines on the register yet. Add what the business owns, and what it hires in.</td></tr>';
     if (EQP.current) eqpOpen(EQP.current);

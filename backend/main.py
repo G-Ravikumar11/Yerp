@@ -1361,7 +1361,7 @@ def get_dashboard_summary(request: Request, db: Session = Depends(get_db)):
 
     from datetime import datetime, timedelta
 
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "reports.view")
     all_invoices = db.query(models.DBInvoice).filter(models.DBInvoice.client_id == client.id).all()
 
     today = datetime.now().date()
@@ -2102,7 +2102,7 @@ def delete_contact(contact_id: int, request: Request, db: Session = Depends(get_
 
 @app.get("/api/bills")
 def list_bills(request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     bills = db.query(models.DBBill).filter(models.DBBill.client_id == client.id).order_by(models.DBBill.id.desc()).all()
     submitters = {
         e.id: f"{e.first_name} {e.last_name}".strip()
@@ -2142,7 +2142,9 @@ def resolve_po_line_id(db, purchase_order_id, raw):
 
 @app.post("/api/bills")
 def create_bill(request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, ("accounts.manage", "bills.pay"))
+    if session_employee(request, db):
+        return employee_create_bill(request, body, db)
     if not body:
         raise HTTPException(status_code=400, detail="Bill data required")
     existing = db.query(models.DBBill).filter(models.DBBill.number == body.get("number", ""), models.DBBill.client_id == client.id).first()
@@ -2189,7 +2191,7 @@ def create_bill(request: Request, body: dict = None, db: Session = Depends(get_d
 
 @app.get("/api/bills/{bill_id}")
 def get_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "bills.view_all")
     bill = db.query(models.DBBill).filter(models.DBBill.id == bill_id, models.DBBill.client_id == client.id).first()
     if not bill:
         raise HTTPException(status_code=404, detail="Bill not found")
@@ -2211,10 +2213,22 @@ def get_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
 
 @app.put("/api/bills/{bill_id}")
 def update_bill(bill_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, ("accounts.manage", "bills.pay"))
     bill = db.query(models.DBBill).filter(models.DBBill.id == bill_id, models.DBBill.client_id == client.id).first()
     if not bill:
         raise HTTPException(status_code=404, detail="Bill not found")
+    if body and session_employee(request, db):
+        # Staff correct a bill; they do not mark it paid or approved by
+        # editing it, and they do not change one somebody is deciding on or
+        # has already approved.
+        body = {k: v for k, v in body.items() if k not in ("status", "amount_paid")}
+        if bill.approval_status == "pending":
+            raise HTTPException(409, "This bill is with an approver and cannot be changed.")
+        if bill.approval_status == "approved" and any(
+                k in body and money(body[k] or 0) != money(getattr(bill, k) or 0)
+                for k in ("amount", "tax_amount", "total")):
+            raise HTTPException(409, "This bill has been approved at its amount. "
+                                     "Ask the approver to send it back before changing it.")
     if body:
         for field in ["number", "vendor_name", "vendor_email", "issue_date", "due_date", "amount", "tax_amount", "total", "amount_paid", "status", "category", "reference", "notes"]:
             if field in body:
@@ -2251,10 +2265,14 @@ def delete_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
 
 @app.post("/api/bills/{bill_id}/pay")
 def mark_bill_paid(bill_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "bills.pay")
     bill = db.query(models.DBBill).filter(models.DBBill.id == bill_id, models.DBBill.client_id == client.id).first()
     if not bill:
         raise HTTPException(status_code=404, detail="Bill not found")
+    # Staff pay what has been approved; a bill the owner entered themselves
+    # carries no chain and is theirs to settle.
+    if session_employee(request, db) and bill.submitted_by and bill.approval_status != "approved":
+        raise HTTPException(status_code=403, detail="This bill has not been approved yet.")
     if bill.approval_status and bill.approval_status not in ("none", "approved", ""):
         raise HTTPException(status_code=403, detail=f"Cannot mark bill paid: approval status is '{bill.approval_status}'.")
     bill.amount_paid = bill.total or bill.amount or 0.0
@@ -2268,7 +2286,7 @@ def mark_bill_paid(bill_id: int, request: Request, body: dict = None, db: Sessio
 
 @app.get("/api/next-bill-number")
 def next_bill_number(request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, ("bills.view_all", "bills.submit"))
     last = db.query(models.DBBill).filter(models.DBBill.client_id == client.id).order_by(models.DBBill.id.desc()).first()
     if last and last.number:
         try:
@@ -2539,7 +2557,7 @@ def validate_job_money(name, value):
 @app.get("/api/jobs")
 def list_jobs(request: Request, status: str = "", q: str = "", open_only: bool = False,
               db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage"))
     query = db.query(models.DBJob).filter(models.DBJob.client_id == client.id)
     if status:
         query = query.filter(models.DBJob.status == validate_job_status(status))
@@ -2559,7 +2577,7 @@ def list_jobs(request: Request, status: str = "", q: str = "", open_only: bool =
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: int, request: Request, db: Session = Depends(get_db)):
     """The job, its money, and everything filed against it."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage"))
     job = job_or_404(db, client.id, job_id)
     row = job_to_dict(db, job, costing=True)
 
@@ -2596,7 +2614,7 @@ def get_job(job_id: int, request: Request, db: Session = Depends(get_db)):
 
 @app.post("/api/jobs")
 def create_job(body: JobIn, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "workorders.manage")
     name = (body.name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Give the job a name")
@@ -2649,7 +2667,7 @@ def create_job(body: JobIn, request: Request, db: Session = Depends(get_db)):
 
 @app.put("/api/jobs/{job_id}")
 def update_job(job_id: int, body: JobIn, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "workorders.manage")
     job = job_or_404(db, client.id, job_id)
     name = (body.name or "").strip()
     if not name:
@@ -2846,7 +2864,7 @@ def jobs_summary(request: Request, db: Session = Depends(get_db)):
     hundred and fifty round trips drawing one screen - and every job added made
     it worse. Everything is read once here and grouped in memory instead.
     """
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage"))
     jobs = db.query(models.DBJob).filter(
         models.DBJob.client_id == client.id,
         ~models.DBJob.status.in_(JOB_CLOSED_STATUSES),
@@ -3395,9 +3413,12 @@ def require_items_access(request, db, permission="items.manage"):
             raise
 
     emp = get_employee_user(request, db)
-    if permission and not employee_can(emp, permission):
-        label = next((p["label"] for p in PORTAL_PERMISSIONS if p["key"] == permission),
-                     permission)
+    # One right, or several of which any will do: the plant register is kept
+    # by the store and by the project office alike.
+    wanted = (permission,) if isinstance(permission, str) else tuple(permission or ())
+    if wanted and not any(employee_can(emp, p) for p in wanted):
+        label = " or ".join(next((p["label"] for p in PORTAL_PERMISSIONS if p["key"] == w), w)
+                            for w in wanted)
         raise HTTPException(
             status_code=403,
             detail="Your access does not include: " + label + ". Ask HR if you need it.")
@@ -4881,19 +4902,19 @@ def erp_wo_submit(wo_id: int, request: Request, body: dict = None,
         raise HTTPException(
             409, "Allocate the budget first - there is no cost to approve against.")
 
-    submitted_by = (body or {}).get("submitted_by")
+    staff = session_employee(request, db)
+    submitted_by = staff.id if staff else (body or {}).get("submitted_by")
     if not submitted_by:
         emp = db.query(models.DBEmployee).filter(
             models.DBEmployee.client_id == client.id,
             models.DBEmployee.email == client.email).first()
         submitted_by = emp.id if emp else None
+    actor = employee_name(staff) if staff else (client.contact_name or client.email)
     if not submitted_by:
-        raise HTTPException(
-            400, "There is no employee record matching your account, so there is "
-                 "nobody above you to approve this. Add yourself under People.")
-
-    return start_approval(db, client.id, wo, "work_order", submitted_by, request,
-                          actor=client.contact_name or client.email)
+        # The owner, with no staff record of their own: theirs is the last
+        # word anyway, so there is nobody further to send it to.
+        return owner_signs_own(db, client.id, wo, "work_order", request, actor)
+    return start_approval(db, client.id, wo, "work_order", submitted_by, request, actor=actor)
 
 
 @app.delete("/api/erp/work-orders/{wo_id}")
@@ -5200,7 +5221,8 @@ def get_approval_chain_history(entity_type, entity_id, db):
             "status": s.status,
             "notes": s.notes or "",
             "decided_at": s.decided_at or "",
-            "approver_name": f"{approver.first_name} {approver.last_name}".strip() if approver else "Unknown",
+            "approver_name": f"{approver.first_name} {approver.last_name}".strip() if approver
+                             else ("Owner" if s.approver_id is None else "Unknown"),
             "approver_level": s.level,
             "approver_role": approver.role if approver else "",
             "submitter_name": f"{submitter.first_name} {submitter.last_name}".strip() if submitter else "",
@@ -5370,24 +5392,30 @@ def start_approval(db, client_id, doc, entity_type, submitted_by, request, actor
             "sign-off limit.")
 
     chain = build_approval_chain(submitted_by, client_id, db)
+    if not chain:
+        # Nobody set as this person's manager - which is most people, since
+        # nobody fills that field in. Rather than wave the paper through, it
+        # goes up the departments: the nearest rank above them that may
+        # approve this kind of document, and from the top of the staff to the
+        # owner. Only the owner raising their own paper needs nobody.
+        if raised_by_owner(db, client_id, submitted_by):
+            return finish_approval(
+                db, client_id, doc, entity_type, submitted_by, request, actor,
+                "Approved: raised by the owner.")
+        up = ladder_approver(db, client_id, submitted_by, entity_type,
+                             getattr(doc, "job_id", None))
+        chain = [chain_rung(up)] if up else []
 
     # A large cost gets an extra rung, if there is anybody who can hold it.
     if finance_above and total >= finance_above:
         already = {step["employee_id"] for step in chain} | {submitted_by}
         purse = finance_approver_for(db, client_id, already)
         if purse:
-            chain.append({
-                "employee_id": purse.id, "level": purse.level or "",
-                "role": purse.role or "employee", "name": employee_name(purse),
-            })
+            chain.append(chain_rung(purse))
 
     if not chain:
-        # Nobody to send it to: the submitter is at the top of the tree. The
-        # alternative - parking it pending forever with no possible approver -
-        # is worse than recording that it needed no sign-off.
-        return finish_approval(
-            db, client_id, doc, entity_type, submitted_by, request, actor,
-            "Approved automatically: you have no manager to send this to.")
+        # Nobody on the staff above them: the owner signs.
+        chain = [chain_rung(None, db, client_id)]
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for i, step in enumerate(chain):
@@ -5403,7 +5431,8 @@ def start_approval(db, client_id, doc, entity_type, submitted_by, request, actor
 
     notify_employee(db, client_id, chain[0]["employee_id"],
                     "Approval needed",
-                    f"{getattr(doc, 'number', 'A document')} is waiting for your approval.")
+                    f"{getattr(doc, 'number', 'A document')} is waiting for your approval.",
+                    link="/app.html#approvals")
 
     log_audit(db, client_id, f"{entity_type}_submitted_for_approval", entity_type, doc.id,
               getattr(doc, "number", str(doc.id)),
@@ -5411,6 +5440,8 @@ def start_approval(db, client_id, doc, entity_type, submitted_by, request, actor
               + (" (over its purchase order)" if over_order else ""),
               request, user_name=actor)
     db.commit()
+    if chain[0]["employee_id"] is None:
+        tell_owner_approval(db, client_id, doc, entity_type)
     message = f"Sent to {chain[0]['name']} for approval."
     if over_order:
         message += " This is more than the order it settles, so it needs a look."
@@ -5496,12 +5527,14 @@ def decide_approval_step(db, step, action, notes, request, client_id, actor=""):
     if next_step:
         doc.current_approval_step = next_step.step
         notify_employee(db, client_id, next_step.approver_id, "Approval needed",
-                        f"{number} is waiting for your approval.")
+                        f"{number} is waiting for your approval.", link="/app.html#approvals")
         log_audit(db, client_id, f"{step.entity_type}_approved_step", step.entity_type,
                   doc.id, number,
                   f"Approved step {step.step}, escalated to step {next_step.step}",
                   request, user_name=actor)
         db.commit()
+        if next_step.approver_id is None:
+            tell_owner_approval(db, client_id, doc, step.entity_type)
         return {"ok": True, "status": "pending", "next_step": next_step.step}
 
     doc.approval_status = "approved"
@@ -5549,11 +5582,8 @@ def submit_for_approval(body: dict, request: Request, db: Session = Depends(get_
             submitted_by = emp.id
 
     if not submitted_by:
-        raise HTTPException(
-            status_code=400,
-            detail="There is no employee record matching your account, so there is "
-                   "nobody above you to approve this. Add yourself under People, "
-                   "or raise it from a staff account.")
+        return owner_signs_own(db, client.id, doc, entity_type, request,
+                               client.contact_name or client.email)
 
     return start_approval(db, client.id, doc, entity_type, submitted_by, request,
                           actor=client.contact_name or client.email)
@@ -5570,25 +5600,20 @@ def get_pending_approvals(request: Request, db: Session = Depends(get_db)):
         models.DBEmployee.status == "active"
     ).all()]
 
-    if not employee_ids:
-        return {"pending": []}
-
-    # Find all pending approval steps where the approver is one of these employees
+    # Every pending step: those addressed to staff, and those addressed to
+    # the owner, which carry no employee at all.
     steps = db.query(models.DBApprovalChain).filter(
         models.DBApprovalChain.client_id == client.id,
-        models.DBApprovalChain.approver_id.in_(employee_ids),
         models.DBApprovalChain.status == "pending",
     ).all()
 
     result = []
     for s in steps:
-        # Get the document
-        if s.entity_type == "invoice":
-            doc = db.query(models.DBInvoice).filter(models.DBInvoice.id == s.entity_id).first()
-        else:
-            doc = db.query(models.DBBill).filter(models.DBBill.id == s.entity_id).first()
-
-        if not doc:
+        # Every kind of document on the chain, not only invoices and bills -
+        # this read orders and work orders as bills, and so lost them.
+        doc = approval_doc(db, s.entity_type, s.entity_id, client.id)
+        if not doc or doc.approval_status != "pending" or \
+                (doc.current_approval_step or 0) != s.step:
             continue
 
         approver = db.query(models.DBEmployee).filter(models.DBEmployee.id == s.approver_id).first()
@@ -5619,7 +5644,8 @@ def get_pending_approvals(request: Request, db: Session = Depends(get_db)):
             "step": s.step,
             "total_steps": total_steps,
             "approved_steps": approved_steps,
-            "approver_name": f"{approver.first_name} {approver.last_name}".strip() if approver else "Unknown",
+            "approver_name": f"{approver.first_name} {approver.last_name}".strip() if approver
+                             else ("Owner" if s.approver_id is None else "Unknown"),
             "approver_level": s.level,
             "submitter_name": f"{submitter.first_name} {submitter.last_name}".strip() if submitter else "Unknown",
             "created_at": s.created_at,
@@ -5757,7 +5783,7 @@ def invoices_by_currency(invoices, base: str) -> dict:
 
 @app.get("/api/reports/profit-loss")
 def profit_loss_report(request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "reports.view")
     base = base_currency(client)
     invoices = db.query(models.DBInvoice).filter(models.DBInvoice.client_id == client.id).all()
     bills = db.query(models.DBBill).filter(models.DBBill.client_id == client.id).all()
@@ -5796,7 +5822,7 @@ def profit_loss_report(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/api/reports/balance-sheet")
 def balance_sheet_report(request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "reports.view")
     base = base_currency(client)
     invoices = db.query(models.DBInvoice).filter(models.DBInvoice.client_id == client.id).all()
     bills = db.query(models.DBBill).filter(models.DBBill.client_id == client.id).all()
@@ -5827,7 +5853,7 @@ def balance_sheet_report(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/api/reports/cash-summary")
 def cash_summary_report(request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "reports.view")
     base = base_currency(client)
     invoices = db.query(models.DBInvoice).filter(models.DBInvoice.client_id == client.id).all()
     bills = db.query(models.DBBill).filter(models.DBBill.client_id == client.id).all()
@@ -6598,7 +6624,7 @@ def update_invoice(number: str, invoice: InvoiceCreate, request: Request, db: Se
 def aged_receivables(request: Request, db: Session = Depends(get_db)):
     """Outstanding balances bucketed by how late they are - the report every
     finance team asks for first."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "reports.view")
     base = base_currency(client)
     invoices = db.query(models.DBInvoice).filter(
         models.DBInvoice.client_id == client.id,
@@ -8006,7 +8032,7 @@ def sales_pipeline(request: Request, db: Session = Depends(get_db)):
     Nothing is dragged between columns: send a quote, accept it, convert it,
     take the payment, and the card moves because the document moved.
     """
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "reports.view")
     today = datetime.now().date()
 
     buckets = {key: [] for key, _, _ in SALES_STAGES}
@@ -9403,6 +9429,17 @@ PORTAL_PERMISSIONS = [
     # who pays the bill. Kept separate so those three signatures stay apart.
     {"key": "stores.receive", "group": "Contracts",
      "label": "Record goods received against a purchase order"},
+    # The departments' own work, split out of "workorders.manage", which had
+    # grown to cover tenders, stock, purchasing and GST alike - so that giving
+    # a storekeeper the store also gave them the tender book.
+    {"key": "billing.manage", "group": "Planning & Billing",
+     "label": "Tenders, estimates, RA bills to the client, variations and subcontractor bills"},
+    {"key": "purchase.manage", "group": "Purchase",
+     "label": "Enquiries, quote comparison, purchase orders and the supplier list"},
+    {"key": "stores.manage", "group": "Stores",
+     "label": "Issue, transfer and adjust stock, and keep the plant and machinery register"},
+    {"key": "accounts.manage", "group": "Accounts",
+     "label": "GST, e-invoices, e-way bills, fixed assets and retention release"},
     # The site's own record. Held by the people who are on the site, not only
     # by whoever manages the contract - a diary is written by the engineer
     # standing in the rain, and it could not be while writing it needed the
@@ -9416,18 +9453,96 @@ PERMISSION_KEYS = {p["key"] for p in PORTAL_PERMISSIONS}
 
 # Presets rather than per-person checkboxes: with a workforce that turns over,
 # the question asked at hiring is "what does this person do", and a fixed set
-# of answers is far harder to get quietly wrong than twelve tick boxes.
+# of answers is far harder to get quietly wrong than twelve tick boxes. The
+# answers are the firm's own departments.
+#
+# `rank` is the ladder a document climbs when the person who raised it has
+# no manager set: it goes to the nearest rank above them that holds the right
+# to approve it, and from the top of the staff to the owner.
+_SITE = ["site.record"]
+_PROJECT_MANAGER = ["self.service", "bills.submit", "bills.approve", "bills.view_all",
+                    "attendance.view_team", "leave.approve", "reports.view",
+                    "site.record", "site.signoff", "stores.receive",
+                    "workorders.manage", "billing.manage", "subcontracts.approve",
+                    "customers.manage", "items.manage"]
+# What "workorders.manage" used to open on its own. The older presets keep all
+# of it, so nobody already on one loses a screen the day the split lands.
+_SPLIT_OUT = ["billing.manage", "purchase.manage", "stores.manage", "accounts.manage"]
+
 PERMISSION_ROLES = [
     {
-        "code": "staff",
-        "label": "Staff",
-        "description": "Site and office staff. Their own timesheet, leave and "
-                       "payslips, and can send a cost up for approval.",
-        "permissions": ["self.service", "bills.submit", "site.record"],
+        "code": "staff", "label": "Site staff", "rank": 1,
+        "description": "Their own timesheet, leave and payslips; records site work "
+                       "and sends a cost up for approval.",
+        "permissions": ["self.service", "bills.submit"] + _SITE,
     },
     {
-        "code": "supervisor",
-        "label": "Supervisor",
+        "code": "construction", "label": "Construction management team", "rank": 2,
+        "description": "Site engineers and supervisors running the work: the site's "
+                       "record and its sign-offs, material received at the gate, and "
+                       "their crew's costs, leave and attendance.",
+        "permissions": ["self.service", "bills.submit", "bills.approve",
+                        "attendance.view_team", "leave.approve", "stores.receive",
+                        "site.record", "site.signoff"],
+    },
+    {
+        "code": "planning_billing", "label": "Planning & Billing", "rank": 2,
+        "description": "Tenders, estimates and budgets; drafts work orders; measures "
+                       "and bills the client; checks subcontractor bills. Sends them "
+                       "for approval - does not approve them.",
+        "permissions": ["self.service", "bills.submit", "billing.manage",
+                        "workorders.manage", "items.manage", "customers.manage",
+                        "reports.view"] + _SITE,
+    },
+    {
+        "code": "purchase", "label": "Purchase", "rank": 2,
+        "description": "Enquiries, quote comparison, purchase orders and suppliers. "
+                       "An order goes for approval before it is placed.",
+        "permissions": ["self.service", "bills.submit", "purchase.manage", "items.manage"],
+    },
+    {
+        "code": "stores", "label": "Stores", "rank": 2,
+        "description": "Receives material against orders, issues it to site, "
+                       "transfers and adjusts stock, keeps the item master and the "
+                       "plant register.",
+        "permissions": ["self.service", "bills.submit", "stores.receive",
+                        "stores.manage", "items.manage"] + _SITE,
+    },
+    {
+        "code": "accounts", "label": "Accounts", "rank": 2,
+        "description": "The money: supplier bills, payments, GST, TDS, e-invoices, "
+                       "fixed assets and the reports. Pays what has been approved; "
+                       "does not approve it.",
+        "permissions": ["self.service", "bills.submit", "bills.view_all", "bills.pay",
+                        "invoices.manage", "reports.view", "accounts.manage",
+                        "customers.manage"],
+    },
+    {
+        "code": "hr_admin", "label": "HR admin", "rank": 2,
+        "description": "Looks after people. Adds employees, decides what each "
+                       "can do, runs payroll, hiring and leave.",
+        "permissions": ["self.service", "bills.submit", "attendance.view_team",
+                        "leave.approve", "people.manage", "payroll.manage",
+                        "recruitment.manage"],
+    },
+    {
+        "code": "project_manager", "label": "Project manager", "rank": 3,
+        "description": "Runs projects: everything on site, work orders and billing, "
+                       "and approves the work orders, bills, variations and costs "
+                       "raised below them.",
+        "permissions": list(_PROJECT_MANAGER),
+    },
+    {
+        "code": "head_projects", "label": "Head projects", "rank": 4,
+        "description": "Over every project: a project manager's rights on all of "
+                       "them plus purchase and stores, and the last approval before "
+                       "the owner.",
+        "permissions": _PROJECT_MANAGER + ["purchase.manage", "stores.manage"],
+    },
+    # The first presets, before the list followed the departments. Still
+    # honoured for whoever holds one, and offered only to them.
+    {
+        "code": "supervisor", "label": "Supervisor", "rank": 2, "retired": True,
         "description": "Runs a crew. Everything staff can do, plus signing off "
                        "their crew's costs, leave and attendance.",
         "permissions": ["self.service", "bills.submit", "bills.approve",
@@ -9435,8 +9550,7 @@ PERMISSION_ROLES = [
                         "stores.receive", "site.record", "site.signoff"],
     },
     {
-        "code": "manager",
-        "label": "Manager",
+        "code": "manager", "label": "Manager", "rank": 3, "retired": True,
         "description": "Runs a part of the business. A supervisor's rights plus "
                        "sight of all costs and the financial reports.",
         "permissions": ["self.service", "bills.submit", "bills.approve",
@@ -9444,36 +9558,26 @@ PERMISSION_ROLES = [
                         "leave.approve", "reports.view",
                         "items.manage", "workorders.manage",
                         "customers.manage", "subcontracts.approve",
-                        "stores.receive", "site.record", "site.signoff"],
+                        "stores.receive", "site.record", "site.signoff"] + _SPLIT_OUT,
     },
     {
-        "code": "finance",
-        "label": "Finance",
+        "code": "finance", "label": "Finance", "rank": 3, "retired": True,
         "description": "Looks after the money. Approves and pays bills, raises "
                        "invoices and quotes, sees the reports.",
         "permissions": ["self.service", "bills.submit", "bills.approve",
                         "bills.view_all", "bills.pay", "invoices.manage",
                         "reports.view", "items.manage", "workorders.manage",
-                        "customers.manage", "subcontracts.approve"],
+                        "customers.manage", "subcontracts.approve"] + _SPLIT_OUT,
     },
     {
-        "code": "hr_admin",
-        "label": "HR Admin",
-        "description": "Looks after people. Adds employees, decides what each "
-                       "can do, runs payroll and hiring.",
-        "permissions": ["self.service", "bills.submit", "attendance.view_team",
-                        "leave.approve", "people.manage", "payroll.manage",
-                        "recruitment.manage"],
-    },
-    {
-        "code": "owner",
-        "label": "Owner",
+        "code": "owner", "label": "Owner", "rank": 5,
         "description": "Full access to everything in the portal.",
         "permissions": sorted(PERMISSION_KEYS),
     },
 ]
 PERMISSION_ROLE_CODES = {r["code"] for r in PERMISSION_ROLES}
 ROLE_PERMISSIONS = {r["code"]: set(r["permissions"]) for r in PERMISSION_ROLES}
+ROLE_RANK = {r["code"]: r.get("rank", 1) for r in PERMISSION_ROLES}
 DEFAULT_PERMISSION_ROLE = "staff"
 
 
@@ -12612,7 +12716,7 @@ def apply_order_fields(db, client_id, order, body):
 @app.get("/api/purchase-orders")
 def list_purchase_orders(request: Request, job_id: int = 0, status: str = "",
                          db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, ("purchase.manage", "bills.view_all", "stores.receive"))
     query = db.query(models.DBPurchaseOrder).filter(
         models.DBPurchaseOrder.client_id == client.id)
     if job_id:
@@ -12625,7 +12729,7 @@ def list_purchase_orders(request: Request, job_id: int = 0, status: str = "",
 
 @app.get("/api/purchase-orders/{order_id}")
 def get_purchase_order(order_id: int, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, ("purchase.manage", "bills.view_all", "stores.receive"))
     order = purchase_order_or_404(db, client.id, order_id)
     row = purchase_order_to_dict(db, order, include_chain=True)
     row["our"] = our_party(db, client.id)
@@ -12638,7 +12742,11 @@ def get_purchase_order(order_id: int, request: Request, db: Session = Depends(ge
 @app.post("/api/purchase-orders")
 def create_purchase_order(request: Request, body: dict = None,
                           db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "purchase.manage")
+    # Staff raise an order through the same route as everyone else, and theirs
+    # goes for approval the moment it exists - the owner's is theirs to place.
+    if session_employee(request, db):
+        return employee_create_purchase_order(request, body, db)
     body = body or {}
     order = models.DBPurchaseOrder(
         client_id=client.id, number=allocate_po_number(db, client.id), status="Draft")
@@ -12662,12 +12770,23 @@ def create_purchase_order(request: Request, body: dict = None,
 @app.put("/api/purchase-orders/{order_id}")
 def update_purchase_order(order_id: int, request: Request, body: dict = None,
                           db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "purchase.manage")
+    staff = session_employee(request, db)
     order = purchase_order_or_404(db, client.id, order_id)
     if order.approval_status == "pending":
         raise HTTPException(status_code=409,
                             detail="This order is with an approver and cannot be changed.")
+    wanted = (body or {}).get("status")
+    if staff and wanted in (PO_AWAITING_APPROVAL, PO_APPROVED, PO_REJECTED) and wanted != order.status:
+        raise HTTPException(403, "Approval is given in Approvals, by whoever the order is "
+                                 "sent to - not by changing its status.")
+    before = (order.supplier_name, money(order.total or 0))
     apply_order_fields(db, client.id, order, body or {})
+    # An approved order that a member of staff then changes is a different
+    # order from the one that was approved, and goes back to be approved again.
+    if staff and order.approval_status == "approved" and \
+            before != (order.supplier_name, money(order.total or 0)):
+        order.approval_status, order.status, order.current_approval_step = "none", "Draft", 0
 
     # An order that was promised and then was not has to be able to say so.
     # Without this there was no way to cancel one at all, and a withdrawn
@@ -12684,7 +12803,7 @@ def update_purchase_order(order_id: int, request: Request, body: dict = None,
 
 @app.delete("/api/purchase-orders/{order_id}")
 def delete_purchase_order(order_id: int, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "purchase.manage")
     order = purchase_order_or_404(db, client.id, order_id)
     if db.query(models.DBBill).filter(models.DBBill.purchase_order_id == order.id).count():
         raise HTTPException(
@@ -12756,7 +12875,9 @@ def employee_resubmit_purchase_order(order_id: int, request: Request,
                                      db: Session = Depends(get_db)):
     emp = require_employee_permission(request, db, "bills.submit")
     order = purchase_order_or_404(db, emp.client_id, order_id)
-    if order.submitted_by != emp.id:
+    # Whoever raised it sends it; so may the purchase department, for a draft
+    # that came off the budget or a quote comparison with nobody's name on it.
+    if order.submitted_by != emp.id and not employee_can(emp, "purchase.manage"):
         raise HTTPException(status_code=403, detail="Only the person who raised this can send it")
     return start_approval(db, emp.client_id, order, "purchase_order", emp.id, request,
                           actor=employee_name(emp))
@@ -16642,7 +16763,13 @@ def action_leave_simple(leave_id: int, request: Request, body: dict = None, db: 
     leave = db.query(models.DBLeaveRequest).filter(models.DBLeaveRequest.id == leave_id, models.DBLeaveRequest.client_id == client.id).first()
     if not leave:
         raise HTTPException(status_code=404, detail="Leave request not found")
-    action = (body.get("action") or "").strip().lower()
+    return decide_leave(db, client.id, leave, body.get("action"), body.get("approved_by", "HR"), request)
+
+
+def decide_leave(db, client_id, leave, action, approver, request):
+    """Approve or turn down a leave request, within the entitlement."""
+    client = db.query(models.DBClient).filter(models.DBClient.id == client_id).first()
+    action = (action or "").strip().lower()
     if action not in ("approve", "reject"):
         raise HTTPException(status_code=400, detail="Action must be 'approve' or 'reject'")
     if leave.status != "pending":
@@ -16665,7 +16792,7 @@ def action_leave_simple(leave_id: int, request: Request, body: dict = None, db: 
                 )
 
     leave.status = "approved" if action == "approve" else "rejected"
-    leave.approved_by = body.get("approved_by", "HR")
+    leave.approved_by = approver or "HR"
     leave.decided_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     db.add(models.DBNotification(
         client_id=client.id, employee_id=leave.employee_id,
@@ -17915,16 +18042,12 @@ def wo_billing_schedule(db, order):
             "place_of_supply": supply, "contractor_state": origin}
 
 
-def wo_pending_with(db, client_id):
+def wo_pending_with(db, client_id, raised_by=None):
     """Who an order awaiting approval is waiting on - named, so the person
-    who raised it knows whose desk to walk to."""
-    roles = [code for code, granted in ROLE_PERMISSIONS.items()
-             if "subcontracts.approve" in granted]
+    who raised it knows whose desk to walk to. Not the person who raised it:
+    they may not approve their own order."""
     names = []
-    for emp in db.query(models.DBEmployee).filter(
-            models.DBEmployee.client_id == client_id,
-            models.DBEmployee.permission_role.in_(roles),
-            models.DBEmployee.status == "active").order_by(models.DBEmployee.id).all():
+    for emp in holders_of(db, client_id, "subcontracts.approve", exclude={raised_by}):
         names.append(("%s %s" % (emp.first_name or "", emp.last_name or "")).strip()
                      or emp.email or "")
     if not names:
@@ -18005,7 +18128,7 @@ def wo_dict(db, order, detail=False):
         # looking at is the one the approval will actually be checked against.
         row["billing_schedule"] = wo_billing_schedule(db, order)
         row["advance_paid"] = advance_paid(db, order.client_id, order.id)
-        row["pending_with"] = (wo_pending_with(db, order.client_id)
+        row["pending_with"] = (wo_pending_with(db, order.client_id, order.submitted_by)
                                if order.status == "PROVISIONAL" else [])
         if order.copied_from_id:
             src = db.query(models.DBSubcontractOrder.wo_number).filter(
@@ -19437,13 +19560,7 @@ def wo_notify(db, client, order, action, actor_id, actor_name, comments=""):
     """
     try:
         if action == "SUBMIT":
-            roles = [code for code, granted in ROLE_PERMISSIONS.items()
-                     if "subcontracts.approve" in granted]
-            approvers = db.query(models.DBEmployee).filter(
-                models.DBEmployee.client_id == client.id,
-                models.DBEmployee.permission_role.in_(roles),
-                models.DBEmployee.status == "active").all()
-            for emp in approvers:
+            for emp in holders_of(db, client.id, "subcontracts.approve"):
                 # Not the person who just sent it. Being told about your own
                 # submission is the noise that gets notifications turned off.
                 if emp.id == actor_id:
@@ -19454,7 +19571,7 @@ def wo_notify(db, client, order, action, actor_id, actor_name, comments=""):
                         order.wo_number,
                         wo_dict(db, order).get("contractor") or "a contractor",
                         format_money_plain(order.net_order_value), actor_name),
-                    link="/app.html#subcontracts")
+                    link="/app.html#approvals")
         elif action in ("APPROVE", "REJECT", "CANCEL") and order.submitted_by:
             if order.submitted_by == actor_id:
                 return
@@ -19505,6 +19622,14 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
                 400, "Say why it is going back, so it can be corrected.")
         order.rejection_reason = (comments or "").strip()
     elif action == "APPROVE":
+        # The person who priced it is not the person who commits the business
+        # to it - that is what the provisional state is for. The owner, who
+        # answers to nobody, may approve an order they raised themselves.
+        if actor_id and order.submitted_by == actor_id:
+            raise HTTPException(
+                403, "You raised this order, so somebody else has to approve it. "
+                     "It is waiting with: " + ", ".join(
+                         wo_pending_with(db, client.id, actor_id)) + ".")
         # The budget is checked here and nowhere earlier. A draft may be priced
         # at any figure - finding out it is too big is what pricing it is for -
         # but approving it is the moment the business is committed, so it is
@@ -19727,7 +19852,7 @@ def erp_work_order_xlsx(wo_id: int, request: Request, db: Session = Depends(get_
 @app.get("/api/purchase-orders/{po_id}/export.xlsx")
 def purchase_order_xlsx(po_id: int, request: Request, db: Session = Depends(get_db)):
     """One purchase order, as sent to the supplier."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, ("purchase.manage", "bills.view_all", "stores.receive"))
     po = db.query(models.DBPurchaseOrder).filter(
         models.DBPurchaseOrder.id == po_id,
         models.DBPurchaseOrder.client_id == client.id).first()
@@ -20240,7 +20365,7 @@ class JobStateIn(BaseModel):
 @app.put("/api/jobs/{job_id}/place-of-supply")
 def set_job_state(job_id: int, body: JobStateIn, request: Request,
                   db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, ("accounts.manage", "workorders.manage"))
     job = job_or_404(db, client.id, job_id)
     code = (body.state_code or "").strip()
     if code and code not in GST_STATES:
@@ -20886,7 +21011,7 @@ def raise_ra_bill(body: RABillIn, request: Request, db: Session = Depends(get_db
     earlier bills already claimed, which is the one calculation nobody should
     be doing on paper.
     """
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "billing.manage")
     wo = work_order_or_404(db, client.id, body.work_order_id)
     if (wo.status or "") == "Draft":
         raise HTTPException(409, "Place the order before billing against it.")
@@ -20975,7 +21100,7 @@ def update_ra_bill(bill_id: int, body: RABillIn, request: Request,
                    db: Session = Depends(get_db)):
     """The deductions are a judgement; the quantities are not, so only the
     deductions can be changed here."""
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "billing.manage")
     bill = ra_bill_or_404(db, client.id, bill_id)
     if bill.status not in RA_EDITABLE:
         raise HTTPException(
@@ -21070,7 +21195,7 @@ def refuse_cancel_with_money(db, client_id, doc_type, bill, verb):
                                  % (bill.number, inr(got), verb))
 
 
-def _ra_action(bill_id, action, body, request, db, permission="workorders.manage"):
+def _ra_action(bill_id, action, body, request, db, permission="billing.manage"):
     client, actor_id, actor_name = wo_actor(request, db, permission)
     bill = ra_bill_or_404(db, client.id, bill_id)
     if action == "CANCEL":
@@ -21944,7 +22069,7 @@ def suggest_variation(work_order_id: int, request: Request,
 def create_variation(body: VariationIn, request: Request,
                      db: Session = Depends(get_db)):
     """Draw one up - from the measurement book unless lines are supplied."""
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "billing.manage")
     wo = work_order_or_404(db, client.id, body.work_order_id)
     if (wo.status or "") == "Draft":
         raise HTTPException(409, "Vary the order after it has been placed, not before.")
@@ -22032,7 +22157,7 @@ def apply_variation(db, vo):
 @app.post("/api/variations/{vo_id}/{action}")
 def act_on_variation(vo_id: int, action: str, request: Request, body: dict = None,
                      db: Session = Depends(get_db)):
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "billing.manage")
     vo = vo_or_404(db, client.id, vo_id)
     move = (action or "").upper()
     allowed = VO_TRANSITIONS.get(vo.status or "DRAFT", {})
@@ -22074,7 +22199,7 @@ def act_on_variation(vo_id: int, action: str, request: Request, body: dict = Non
 
 @app.delete("/api/variations/{vo_id}")
 def delete_variation(vo_id: int, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "billing.manage")
     vo = vo_or_404(db, client.id, vo_id)
     if (vo.status or "DRAFT") != "DRAFT":
         raise HTTPException(409, "Only a draft can be deleted. Cancel it instead.")
@@ -22474,7 +22599,7 @@ def rebuild_balances(request: Request, db: Session = Depends(get_db)):
     is worth knowing about - it means something wrote stock without going
     through the one door that should.
     """
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "stores.manage")
     before = {b.item_code: money(b.on_hand) for b in db.query(models.DBStockBalance).filter(
         models.DBStockBalance.client_id == client.id).all()}
     n = rebuild_stock_balances(db, client.id)
@@ -22822,7 +22947,7 @@ def post_stock_issue(issue_id: int, request: Request, body: dict = None,
 def cancel_stock_issue(issue_id: int, request: Request, body: dict = None,
                        db: Session = Depends(get_db)):
     """A posted issue is reversed by putting the material back, not erased."""
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "stores.manage")
     issue = issue_or_404(db, client.id, issue_id)
     if (issue.status or "DRAFT") == "CANCELLED":
         raise HTTPException(409, "Already cancelled.")
@@ -22854,7 +22979,7 @@ class AdjustmentIn(BaseModel):
 def adjust_stock(body: AdjustmentIn, request: Request,
                  db: Session = Depends(get_db)):
     """A physical count. The difference is posted, the history is left alone."""
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "stores.manage")
     code = (body.item_code or "").strip()
     bal = stock_balances(db, client.id, item_code=code).get(code, {})
     on_hand = money(bal.get("on_hand", 0))
@@ -24433,7 +24558,8 @@ def raise_po_from_bom(wo_id: int, body: RaisePoIn, request: Request,
     approve - the point is not to spend money automatically, it is that
     nobody should retype a schedule the app already holds.
     """
-    client = require_workorder_access(request, db)
+    client = require_items_access(request, db, ("purchase.manage", "workorders.manage"))
+    raiser = session_employee(request, db)
     wo = work_order_or_404(db, client.id, wo_id)
     if not (body.supplier_name or "").strip():
         raise HTTPException(400, "Who is this order with?")
@@ -24457,6 +24583,7 @@ def raise_po_from_bom(wo_id: int, body: RaisePoIn, request: Request,
         needed_by=(body.needed_by or ""),
         amount=amount, tax_amount=0.0, total=amount,
         status="Draft", category="material",
+        submitted_by=raiser.id if raiser else None, approval_status="none",
         reference=wo.number or "",
         notes="Raised from the budget for %s" % (wo.number or "this order"))
     db.add(order)
@@ -24943,7 +25070,7 @@ def list_sub_bills(request: Request, order_id: int = 0, db: Session = Depends(ge
 
 @app.post("/api/sub-bills")
 def create_sub_bill(body: SubBillIn, request: Request, db: Session = Depends(get_db)):
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "billing.manage")
     order = wo_or_404(db, client.id, body.order_id)
     if (order.status or "") not in ("APPROVED", "EXECUTED"):
         raise HTTPException(409, "Approve the order before billing against it.")
@@ -25037,7 +25164,8 @@ def get_sub_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
 @app.post("/api/sub-bills/{bill_id}/{action}")
 def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = None,
                     db: Session = Depends(get_db)):
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(
+        request, db, ("billing.manage", "subcontracts.approve", "bills.pay"))
     bill = sub_bill_or_404(db, client.id, bill_id)
     move = (action or "").upper()
     allowed = SUB_TRANSITIONS.get(bill.status or "DRAFT", {})
@@ -25049,6 +25177,11 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     order = wo_or_404(db, client.id, bill.order_id)
 
+    # Drawing up and sending is billing's; certifying or sending back is the
+    # approver's; paying is the accounts department's.
+    require_items_access(request, db, {"CERTIFY": "subcontracts.approve",
+                                       "REJECT": "subcontracts.approve",
+                                       "PAY": "bills.pay"}.get(move, "billing.manage"))
     if move == "SUBMIT":
         # Redrawn from the book on the way out, so anything measured since
         # the draft was opened is on it.
@@ -25058,7 +25191,6 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
             raise HTTPException(409, "There is nothing on this bill to submit.")
     elif move == "CERTIFY":
         # Certifying a subcontractor's bill is agreeing to pay it.
-        require_items_access(request, db, "subcontracts.approve")
         bill.certified_by, bill.certified_by_name, bill.certified_at = actor_id, actor_name, now
     elif move == "REJECT":
         if not comments:
@@ -25305,7 +25437,7 @@ def list_estimates(request: Request, db: Session = Depends(get_db)):
 
 @app.post("/api/estimates")
 def create_estimate(body: EstimateIn, request: Request, db: Session = Depends(get_db)):
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "billing.manage")
     if not (body.title or "").strip():
         raise HTTPException(400, "Give the tender a name.")
     est = models.DBEstimate(
@@ -25332,7 +25464,7 @@ def get_estimate(est_id: int, request: Request, db: Session = Depends(get_db)):
 @app.put("/api/estimates/{est_id}")
 def update_estimate(est_id: int, body: EstimateIn, request: Request,
                     db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "billing.manage")
     est = estimate_or_404(db, client.id, est_id)
     if (est.status or "DRAFT") != "DRAFT":
         raise HTTPException(409, "A submitted tender is the price somebody was given. "
@@ -25357,7 +25489,7 @@ def update_estimate(est_id: int, body: EstimateIn, request: Request,
 @app.post("/api/estimates/{est_id}/items")
 def add_estimate_item(est_id: int, body: EstimateItemIn, request: Request,
                       db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "billing.manage")
     est = estimate_or_404(db, client.id, est_id)
     if (est.status or "DRAFT") != "DRAFT":
         raise HTTPException(409, "Reopen the tender to change its items.")
@@ -25382,7 +25514,7 @@ def add_estimate_item(est_id: int, body: EstimateItemIn, request: Request,
 @app.put("/api/estimates/{est_id}/items/{item_id}")
 def update_estimate_item(est_id: int, item_id: int, body: EstimateItemIn,
                          request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "billing.manage")
     est = estimate_or_404(db, client.id, est_id)
     if (est.status or "DRAFT") != "DRAFT":
         raise HTTPException(409, "Reopen the tender to change its items.")
@@ -25412,7 +25544,7 @@ def update_estimate_item(est_id: int, item_id: int, body: EstimateItemIn,
 @app.delete("/api/estimates/{est_id}/items/{item_id}")
 def delete_estimate_item(est_id: int, item_id: int, request: Request,
                          db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "billing.manage")
     est = estimate_or_404(db, client.id, est_id)
     if (est.status or "DRAFT") != "DRAFT":
         raise HTTPException(409, "Reopen the tender to change its items.")
@@ -25431,7 +25563,7 @@ def set_rate_analysis(est_id: int, item_id: int, body: dict, request: Request,
                       db: Session = Depends(get_db)):
     """Replace the build-up for one item. The whole list, every time - a
     rate analysis is read as one thing and edited as one thing."""
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "billing.manage")
     est = estimate_or_404(db, client.id, est_id)
     if (est.status or "DRAFT") != "DRAFT":
         raise HTTPException(409, "Reopen the tender to change its rates.")
@@ -25468,7 +25600,7 @@ def act_on_estimate(est_id: int, action: str, request: Request, body: dict = Non
     becomes a work order, line for line, and the estimate remembers which
     one so the two can be laid side by side when the job is over.
     """
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "billing.manage")
     est = estimate_or_404(db, client.id, est_id)
     move = (action or "").upper()
     allowed = EST_TRANSITIONS.get(est.status or "DRAFT", {})
@@ -25917,7 +26049,7 @@ def list_suppliers(request: Request, q: str = "", db: Session = Depends(get_db))
 
 @app.post("/api/suppliers")
 def create_supplier(body: SupplierIn, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "purchase.manage")
     s = models.DBSupplier(client_id=client.id, code=next_supplier_code(db, client.id))
     _apply_supplier(db, client.id, s, body)
     db.add(s)
@@ -25929,7 +26061,7 @@ def create_supplier(body: SupplierIn, request: Request, db: Session = Depends(ge
 @app.put("/api/suppliers/{supplier_id}")
 def update_supplier(supplier_id: int, body: SupplierIn, request: Request,
                     db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "purchase.manage")
     s = db.query(models.DBSupplier).filter(
         models.DBSupplier.id == supplier_id, models.DBSupplier.client_id == client.id).first()
     if not s:
@@ -25943,7 +26075,7 @@ def update_supplier(supplier_id: int, body: SupplierIn, request: Request,
 def adopt_suppliers(request: Request, body: dict = None, db: Session = Depends(get_db)):
     """Put the suppliers already named on orders and bills into the master.
     Their history is theirs from that moment: the ledger matches by name."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "purchase.manage")
     names = (body or {}).get("names") or list_suppliers(request, "", db)["unregistered"]
     made = []
     for name in names[:200]:
@@ -26780,7 +26912,7 @@ def list_assets(request: Request, status: str = "", job_id: int = 0, db: Session
 
 @app.post("/api/assets")
 def create_asset(body: AssetIn, request: Request, db: Session = Depends(get_db)):
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, ("stores.manage", "workorders.manage"))
     a = models.DBAsset(client_id=client.id, code=next_asset_code(db, client.id), status="Available")
     _apply_asset(a, body)
     a.meter_reading = max(0.0, float(body.meter_reading or 0))
@@ -26795,7 +26927,7 @@ def create_asset(body: AssetIn, request: Request, db: Session = Depends(get_db))
 
 @app.put("/api/assets/{asset_id}")
 def update_asset(asset_id: int, body: AssetIn, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, ("stores.manage", "workorders.manage"))
     a = asset_or_404(db, client.id, asset_id)
     _apply_asset(a, body)
     # The form shows when it was last serviced; an edit that corrects it used
@@ -26992,7 +27124,7 @@ def asset_back(asset_id: int, request: Request, db: Session = Depends(get_db)):
 
 @app.post("/api/assets/{asset_id}/dispose")
 def dispose_asset(asset_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, ("stores.manage", "workorders.manage"))
     a = asset_or_404(db, client.id, asset_id)
     if a.current_job_id:
         raise HTTPException(409, "%s is still on a site. Bring it back to the yard first." % a.code)
@@ -27095,7 +27227,7 @@ def transfer_stock(body: TransferIn, request: Request, db: Session = Depends(get
     paper of cement that is not in the shed is how two sites end up counting
     the same bags.
     """
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "stores.manage")
     src, dst = (body.from_store or "").strip(), (body.to_store or "").strip()
     if not src or not dst:
         raise HTTPException(400, "Say where it is coming from and where it is going.")
@@ -27447,7 +27579,7 @@ def _make_rfq(db, client, actor_name, title, job_id, needed_by, notes, lines, wo
 
 @app.post("/api/rfqs")
 def create_rfq(body: RfqIn, request: Request, db: Session = Depends(get_db)):
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "purchase.manage")
     if not (body.title or "").strip():
         raise HTTPException(400, "Say what is being bought - \"Cement for Block A raft\".")
     r = _make_rfq(db, client, actor_name, body.title, body.job_id, body.needed_by, body.notes,
@@ -27460,7 +27592,7 @@ def create_rfq(body: RfqIn, request: Request, db: Session = Depends(get_db)):
 def rfq_from_work_order(wo_id: int, request: Request, db: Session = Depends(get_db)):
     """An enquiry for exactly what the order still needs: what its budget
     calls for, less what is in the store and already on order."""
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "purchase.manage")
     wo = work_order_or_404(db, client.id, wo_id)
     rows = [r for r in material_required(db, client.id, wo) if not r["covered"]]
     if not rows:
@@ -27485,7 +27617,7 @@ def get_rfq(rfq_id: int, request: Request, db: Session = Depends(get_db)):
 def record_quote(rfq_id: int, body: QuoteIn, request: Request, db: Session = Depends(get_db)):
     """A supplier's answer. Sent again, it replaces their last one - a
     revised quote is the same supplier changing their mind, not a new one."""
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "purchase.manage")
     r = rfq_or_404(db, client.id, rfq_id)
     if r.status != "OPEN":
         raise HTTPException(409, "%s is %s; its quotes are closed." % (r.number, r.status.lower()))
@@ -27529,7 +27661,7 @@ def record_quote(rfq_id: int, body: QuoteIn, request: Request, db: Session = Dep
 def award_rfq(rfq_id: int, body: AwardIn, request: Request, db: Session = Depends(get_db)):
     """The choice, and the purchase orders it makes - one per supplier, at
     the rates they quoted. Anything but the lowest has to say why."""
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "purchase.manage")
     r = rfq_or_404(db, client.id, rfq_id)
     if r.status != "OPEN":
         raise HTTPException(409, "%s is already %s." % (r.number, r.status.lower()))
@@ -27594,6 +27726,7 @@ def award_rfq(rfq_id: int, body: AwardIn, request: Request, db: Session = Depend
         freight = q["freight"] * (amount / q["basic"]) if q["basic"] else 0.0
         po = models.DBPurchaseOrder(
             client_id=client.id, number=allocate_po_number(db, client.id), status="Draft",
+            submitted_by=actor_id, approval_status="none",
             supplier_name=supplier, job_id=r.job_id,
             issue_date=datetime.now().strftime("%Y-%m-%d"),
             needed_by=(body.needed_by or r.needed_by or ""), category="materials",
@@ -27632,7 +27765,7 @@ def award_rfq(rfq_id: int, body: AwardIn, request: Request, db: Session = Depend
 
 @app.post("/api/rfqs/{rfq_id}/cancel")
 def cancel_rfq(rfq_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "purchase.manage")
     r = rfq_or_404(db, client.id, rfq_id)
     if r.status != "OPEN":
         raise HTTPException(409, "%s is %s." % (r.number, r.status.lower()))
@@ -27789,7 +27922,7 @@ def next_lead_number(db, client_id):
 
 @app.post("/api/leads")
 def create_lead(body: LeadIn, request: Request, db: Session = Depends(get_db)):
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "billing.manage")
     l = models.DBLead(client_id=client.id, number=next_lead_number(db, client.id), status="NEW")
     _apply_lead(l, body)
     if not l.owner_name:
@@ -27803,7 +27936,7 @@ def create_lead(body: LeadIn, request: Request, db: Session = Depends(get_db)):
 
 @app.put("/api/leads/{lead_id}")
 def update_lead(lead_id: int, body: LeadIn, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "billing.manage")
     l = lead_or_404(db, client.id, lead_id)
     _apply_lead(l, body)
     db.commit()
@@ -27836,7 +27969,7 @@ class LeadMoveIn(BaseModel):
 def move_lead(lead_id: int, body: LeadMoveIn, request: Request, db: Session = Depends(get_db)):
     """Along the pipeline. A lost tender says who won it and at what, because
     that is the only way next year's rates learn anything."""
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "billing.manage")
     l = lead_or_404(db, client.id, lead_id)
     to = (body.status or "").upper()
     if to not in LEAD_STATUSES:
@@ -27868,7 +28001,7 @@ class LeadActivityIn(BaseModel):
 
 @app.post("/api/leads/{lead_id}/activities")
 def add_lead_activity(lead_id: int, body: LeadActivityIn, request: Request, db: Session = Depends(get_db)):
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "billing.manage")
     l = lead_or_404(db, client.id, lead_id)
     if not (body.note or "").strip():
         raise HTTPException(400, "What happened?")
@@ -27883,7 +28016,7 @@ def add_lead_activity(lead_id: int, body: LeadActivityIn, request: Request, db: 
 def estimate_lead(lead_id: int, request: Request, db: Session = Depends(get_db)):
     """Price it: an estimate opened from the tender, carrying its name, its
     client, its reference and its bid date."""
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "billing.manage")
     l = lead_or_404(db, client.id, lead_id)
     if l.estimate_id:
         raise HTTPException(409, "%s already has an estimate." % l.number)
@@ -27910,7 +28043,7 @@ class EmdReturnIn(BaseModel):
 
 @app.post("/api/leads/{lead_id}/emd-returned")
 def emd_returned(lead_id: int, body: EmdReturnIn, request: Request, db: Session = Depends(get_db)):
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "billing.manage")
     l = lead_or_404(db, client.id, lead_id)
     if not l.emd_amount or not l.emd_paid_on:
         raise HTTPException(409, "No EMD was paid on %s." % l.number)
@@ -29092,7 +29225,7 @@ def list_eway_bills(request: Request, status: str = "", db: Session = Depends(ge
 
 @app.post("/api/eway-bills")
 def create_eway_bill(body: EwayIn, request: Request, db: Session = Depends(get_db)):
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, ("accounts.manage", "stores.manage"))
     e = models.DBEwayBill(client_id=client.id, number=next_eway_number(db, client.id),
                           created_by_name=actor_name, status="DRAFT",
                           doc_date=date.today().isoformat())
@@ -29130,7 +29263,7 @@ def get_eway_bill(eid: int, request: Request, db: Session = Depends(get_db)):
 
 @app.put("/api/eway-bills/{eid}")
 def update_eway_bill(eid: int, body: EwayIn, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, ("accounts.manage", "stores.manage"))
     e = eway_or_404(db, client.id, eid)
     if e.status != "DRAFT":
         raise HTTPException(409, "%s has been generated on the portal; change it there, then "
@@ -29165,7 +29298,7 @@ class EwayGeneratedIn(BaseModel):
 @app.post("/api/eway-bills/{eid}/generated")
 def eway_generated(eid: int, body: EwayGeneratedIn, request: Request, db: Session = Depends(get_db)):
     """The portal has issued it: its twelve-digit number and how long it runs."""
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, ("accounts.manage", "stores.manage"))
     e = eway_or_404(db, client.id, eid)
     no = re.sub(r"\D", "", body.ewb_no or "")
     if len(no) != 12:
@@ -29193,7 +29326,7 @@ class EwayVehicleIn(BaseModel):
 @app.post("/api/eway-bills/{eid}/vehicle")
 def eway_vehicle(eid: int, body: EwayVehicleIn, request: Request, db: Session = Depends(get_db)):
     """Part B: the lorry changed on the way, or was not known when it was drawn."""
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, ("accounts.manage", "stores.manage"))
     e = eway_or_404(db, client.id, eid)
     if e.status == "CANCELLED":
         raise HTTPException(409, "%s is cancelled." % e.number)
@@ -29215,7 +29348,7 @@ class EwayCancelIn(BaseModel):
 @app.post("/api/eway-bills/{eid}/cancel")
 def eway_cancel(eid: int, body: EwayCancelIn, request: Request, db: Session = Depends(get_db)):
     """The portal allows cancelling within 24 hours of generation."""
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, ("accounts.manage", "stores.manage"))
     e = eway_or_404(db, client.id, eid)
     if not (body.reason or "").strip():
         raise HTTPException(400, "Say why it is being cancelled.")
@@ -29692,6 +29825,15 @@ def notify(db, client_id, kind, title, body="", view="", ref_type="", ref_id=Non
         n.sent_to = ", ".join(emails + ["+" + x for x in numbers])
         db.add(n)
         db.commit()
+        # Paper waiting for a decision is also put in front of the people who
+        # can make it, in their own notices - the bell alone told everybody,
+        # which is the same as telling nobody.
+        right = APPROVER_ALERTS.get(kind)
+        if right:
+            for emp in holders_of(db, client_id, right):
+                notify_employee(db, client_id, emp.id, title[:200], (body or title)[:500],
+                                link="/app.html#approvals")
+            db.commit()
         if emails or numbers:
             client = db.query(models.DBClient).filter(models.DBClient.id == client_id).first()
             args = (client_id, (client.email if client else "") or "", emails, numbers,
@@ -30894,7 +31036,7 @@ def create_release(body: RetentionReleaseIn, request: Request, db: Session = Dep
         raise HTTPException(400, "Is this retention the client holds, or retention we hold from a gang?")
     # Owing a gang money is a decision, as certifying their bill is.
     client, actor_id, actor_name = wo_actor(
-        request, db, "workorders.manage" if side == "client" else "subcontracts.approve")
+        request, db, ("billing.manage", "accounts.manage") if side == "client" else "subcontracts.approve")
     stage = (body.stage or "").strip()
     if stage not in RETENTION_STAGES:
         raise HTTPException(400, "Which stage is this - %s?" % ", ".join(RETENTION_STAGES))
@@ -30964,7 +31106,7 @@ def cancel_release(release_id: int, request: Request, body: dict = None,
                    db: Session = Depends(get_db)):
     """A release raised in error goes back to being held. Not once money has
     moved against it - that is voided first, as with any bill."""
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, ("billing.manage", "accounts.manage", "subcontracts.approve"))
     r = release_or_404(db, client.id, release_id)
     reason = ((body or {}).get("reason") or "").strip()
     if not reason:
@@ -31364,7 +31506,7 @@ def _apply_book(db, client_id, a, b, body):
 
 @app.put("/api/fixed-assets/{asset_id}/book")
 def save_asset_book(asset_id: int, body: AssetBookIn, request: Request, db: Session = Depends(get_db)):
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "accounts.manage")
     a = asset_or_404(db, client.id, asset_id)
     if (a.ownership or "Owned") != "Owned":
         raise HTTPException(409, "%s is hired in. Only what the business owns is depreciated." % a.code)
@@ -31387,7 +31529,7 @@ def save_asset_book(asset_id: int, body: AssetBookIn, request: Request, db: Sess
 def set_up_all_books(request: Request, db: Session = Depends(get_db)):
     """Every owned asset with a purchase value and date gets a book on its
     category's defaults. Anything missing either is left to be done by hand."""
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "accounts.manage")
     have = {b.asset_id for b in db.query(models.DBAssetBook).filter(
         models.DBAssetBook.client_id == client.id).all()}
     made, skipped = [], []
@@ -31433,7 +31575,7 @@ def dispose_booked_asset(asset_id: int, body: AssetDisposalIn, request: Request,
                          db: Session = Depends(get_db)):
     """Sold or scrapped: depreciation stops that day, and what it fetched
     against what the books still carried is the gain or the loss."""
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "accounts.manage")
     a = asset_or_404(db, client.id, asset_id)
     b = asset_book_or_none(db, client.id, a.id)
     if not b:
@@ -31558,7 +31700,7 @@ class TaxBlockIn(BaseModel):
 
 @app.put("/api/fixed-assets/tax-blocks/{block_id}")
 def save_tax_block(block_id: int, body: TaxBlockIn, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "accounts.manage")
     blk = db.query(models.DBTaxBlock).filter(models.DBTaxBlock.id == block_id,
                                              models.DBTaxBlock.client_id == client.id).first()
     if not blk:
@@ -32418,7 +32560,7 @@ def cancel_irn(irn_id: int, request: Request, body: dict = None, db: Session = D
     """Record that the IRN was cancelled on the portal. The portal cancels
     only within a day of registering; after that a mistake is put right
     with a credit note, and this refuses to pretend otherwise."""
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "accounts.manage")
     row = db.query(models.DBEinvoiceIrn).filter(models.DBEinvoiceIrn.id == irn_id,
                                                 models.DBEinvoiceIrn.client_id == client.id).first()
     if not row:
@@ -32468,7 +32610,7 @@ def einvoice_file(doc_type: str, doc_id: int, request: Request, db: Session = De
 @app.post("/api/einvoice/{doc_type}/{doc_id}/irn")
 def record_irn(doc_type: str, doc_id: int, request: Request, body: dict = None,
                db: Session = Depends(get_db)):
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "accounts.manage")
     doc, payload, problems = einvoice_document(db, client, doc_type, doc_id)
     if problems:
         raise HTTPException(409, "%s is not ready for the portal - still needed: %s."
@@ -34174,6 +34316,454 @@ def stock_issue_pdf(issue_id: int, request: Request, db: Session = Depends(get_d
                                         [("Issue No", d["number"]), ("Date", form_pdf.date_text(d["issued_on"])),
                                          ("Status", d["status"])], blocks, sig, d["number"],
                                         "DRAFT - NOT POSTED" if d["status"] == "DRAFT" else ""), d["number"])
+
+
+# --- Who approves what, and one inbox for all of it ----------------------------
+#
+# Approvals used to live in five places: the reporting-line chain (bills,
+# purchase orders, client work orders), the subcontract order's provisional
+# state, RA bills and subcontractor bills waiting to be certified, variations
+# waiting to be agreed, and leave. Each told somebody in its own way, or told
+# nobody. The inbox below reads all of them for whoever is asking, and the
+# decide route sends each decision back through that document's own rules.
+
+# The right that approves each kind of paper on the reporting-line chain.
+APPROVE_RIGHT = {"bill": "bills.approve", "purchase_order": "bills.approve",
+                 "invoice": "bills.approve", "work_order": "subcontracts.approve"}
+
+# Tenant notices that mean "somebody has to decide this", and who decides.
+APPROVER_ALERTS = {"ra_bill_submitted": "subcontracts.approve",
+                   "sub_bill_submitted": "subcontracts.approve",
+                   "variation_submitted": "subcontracts.approve"}
+
+
+def session_employee(request, db):
+    """The member of staff behind this request, or None for the owner."""
+    try:
+        get_client_user(request, db)
+        return None
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+    try:
+        return get_employee_user(request, db)
+    except HTTPException:
+        return None
+
+
+def session_person(request, db):
+    """The tenant and, for a staff login, the member of staff."""
+    try:
+        return get_client_user(request, db), None
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+    emp = get_employee_user(request, db)
+    client = db.query(models.DBClient).filter(models.DBClient.id == emp.client_id).first()
+    if not client or not client.is_active:
+        raise HTTPException(403, "Account disabled")
+    return client, emp
+
+
+def role_rank(emp):
+    return ROLE_RANK.get((getattr(emp, "permission_role", "") or DEFAULT_PERMISSION_ROLE).lower(), 1)
+
+
+def holders_of(db, client_id, permission, exclude=()):
+    """Every active member of staff whose access includes this right - by
+    their department or by what HR ticked for them on top of it, less what
+    was withheld. Asked of the person rather than of the preset: a right
+    granted to one project manager is as real as one that came with a title."""
+    skip = {e for e in (exclude or ()) if e}
+    return [e for e in db.query(models.DBEmployee).filter(
+                models.DBEmployee.client_id == client_id,
+                models.DBEmployee.status == "active").order_by(models.DBEmployee.id).all()
+            if e.id not in skip and employee_can(e, permission)]
+
+
+def raised_by_owner(db, client_id, employee_id):
+    """The owner's own staff record - theirs is the last word anyway."""
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == employee_id).first()
+    client = db.query(models.DBClient).filter(models.DBClient.id == client_id).first()
+    if not emp or not client:
+        return False
+    return ((emp.permission_role or "") == "owner"
+            or (emp.email or "").strip().lower() == (client.email or "").strip().lower())
+
+
+def ladder_approver(db, client_id, submitted_by, entity_type, job_id=None):
+    """Who signs when nobody is set as the raiser's manager.
+
+    The holders of the right to approve this kind of paper who rank above the
+    person who raised it: somebody on the same site first (anyone not tied to
+    particular sites counts as on every site), then the nearest rank, then
+    whoever was set up first. None means nobody on the staff is above them,
+    and the owner signs.
+    """
+    right = APPROVE_RIGHT.get(entity_type, "bills.approve")
+    me = db.query(models.DBEmployee).filter(models.DBEmployee.id == submitted_by).first()
+    mine = role_rank(me) if me else 0
+    my_sites = (employee_site_ids(db, me) if me else None) or set()
+    if job_id:
+        my_sites = set(my_sites) | {job_id}
+    best = None
+    for emp in holders_of(db, client_id, right, exclude={submitted_by}):
+        rank = role_rank(emp)
+        if rank <= mine:
+            continue
+        theirs = employee_site_ids(db, emp)
+        same_site = theirs is None or not my_sites or bool(theirs & my_sites)
+        key = (0 if same_site else 1, rank, emp.id)
+        if best is None or key < best[0]:
+            best = (key, emp)
+    return best[1] if best else None
+
+
+def owner_label(db, client_id):
+    client = db.query(models.DBClient).filter(models.DBClient.id == client_id).first()
+    name = (client.contact_name or "").strip() if client else ""
+    return "%s (owner)" % name if name else "the owner"
+
+
+def chain_rung(emp, db=None, client_id=None):
+    """One step on the chain. No employee means the owner."""
+    if emp is None:
+        return {"employee_id": None, "level": "owner", "role": "owner",
+                "name": owner_label(db, client_id)}
+    return {"employee_id": emp.id, "level": emp.level or "",
+            "role": emp.role or "employee", "name": employee_name(emp)}
+
+
+def tell_owner_approval(db, client_id, doc, entity_type):
+    kind = {"bill": "Bill", "purchase_order": "Purchase order", "work_order": "Work order",
+            "invoice": "Invoice"}.get(entity_type, "A document")
+    notify(db, client_id, "approval_needed",
+           "%s %s is waiting for your approval" % (kind, getattr(doc, "number", "") or ""),
+           "Nobody on the staff ranks above the person who raised it.",
+           view="approvals-view", ref_type=entity_type, ref_id=doc.id, severity="action")
+
+
+def owner_signs_own(db, client_id, doc, entity_type, request, actor):
+    """The owner raising paper with no staff record: approved as raised."""
+    if doc.approval_status == "pending":
+        raise HTTPException(status_code=409, detail="Already pending approval")
+    if doc.approval_status == "approved":
+        raise HTTPException(status_code=409, detail="Already approved")
+    return finish_approval(db, client_id, doc, entity_type, None, request, actor,
+                           "Approved: raised by the owner.")
+
+
+# --- Reading the inbox ----------------------------------------------------------
+
+CHAIN_KIND = {"bill": ("Bill", "bills-view"), "purchase_order": ("Purchase order", "orders-view"),
+              "work_order": ("Client work order", "workorders-view"), "invoice": ("Invoice", "invoices-view")}
+
+
+def _party_of(doc):
+    for attr in ("vendor_name", "supplier_name", "customer_name", "to_contact", "contact"):
+        v = getattr(doc, attr, None)
+        if v:
+            return v
+    return ""
+
+
+def _person(db, emp_id):
+    if not emp_id:
+        return ""
+    e = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id).first()
+    return employee_name(e) if e else ""
+
+
+def _job_of(db, job_id):
+    return db.query(models.DBJob).filter(models.DBJob.id == job_id).first() if job_id else None
+
+
+def _row(kind, label, id, number, amount, **more):
+    row = {"key": "%s:%s" % (kind, id), "kind": kind, "kind_label": label, "id": id,
+           "number": number or "", "amount": money(amount or 0), "party": "", "project": "",
+           "raised_by": "", "since": "", "what": "", "view": "", "pdf": "",
+           "approve_label": "Approve", "reject_label": "Send back",
+           "note_to_approve": False, "mine": True, "waiting_on": "", "warnings": []}
+    row.update(more)
+    return row
+
+
+def approval_inbox(db, client, emp):
+    """Everything waiting on this person to decide - or, for the owner,
+    everything waiting on anybody, marked with whose it is."""
+    items = []
+    can = (lambda p: True) if emp is None else (lambda p: employee_can(emp, p))
+
+    # 1. The reporting-line chain.
+    q = db.query(models.DBApprovalChain).filter(
+        models.DBApprovalChain.client_id == client.id,
+        models.DBApprovalChain.status == "pending")
+    if emp is not None:
+        q = q.filter(models.DBApprovalChain.approver_id == emp.id)
+    for s in q.order_by(models.DBApprovalChain.id).all():
+        doc = approval_doc(db, s.entity_type, s.entity_id, client.id)
+        if not doc or doc.approval_status != "pending" or (doc.current_approval_step or 0) != s.step:
+            continue
+        label, view = CHAIN_KIND.get(s.entity_type, (s.entity_type, ""))
+        total_steps = db.query(models.DBApprovalChain).filter(
+            models.DBApprovalChain.entity_type == s.entity_type,
+            models.DBApprovalChain.entity_id == s.entity_id).count()
+        items.append(_row(
+            "step", label, s.id, getattr(doc, "number", "") or str(doc.id),
+            getattr(doc, "total", None) or getattr(doc, "due", 0) or 0,
+            party=_party_of(doc), project=job_label_for(db, getattr(doc, "job_id", None)),
+            raised_by=_person(db, s.employee_id), since=s.created_at or "",
+            what=((getattr(doc, "notes", "") or "")[:200]
+                  + (" - Step %d of %d." % (s.step, total_steps) if total_steps > 1 else "")).strip(" -"),
+            view=view, doc_type=s.entity_type, doc_id=doc.id,
+            pdf=("/api/purchase-orders/%d/document.pdf" % doc.id) if s.entity_type == "purchase_order" else "",
+            note_to_approve=True,
+            mine=emp is not None or s.approver_id is None,
+            waiting_on=owner_label(db, client.id) if s.approver_id is None else _person(db, s.approver_id),
+            warnings=["More than the order it settles"] if bill_exceeds_its_order(db, doc, s.entity_type) else []))
+
+    # 2. Subcontract work orders waiting for approval.
+    if can("subcontracts.approve"):
+        for o in db.query(models.DBSubcontractOrder).filter(
+                models.DBSubcontractOrder.client_id == client.id,
+                models.DBSubcontractOrder.status == "PROVISIONAL").order_by(models.DBSubcontractOrder.id).all():
+            if emp is not None and o.submitted_by == emp.id:
+                continue
+            con = db.query(models.DBContractor).filter(models.DBContractor.id == o.contractor_id).first() \
+                if o.contractor_id else None
+            job = _job_of(db, o.job_id)
+            sent = db.query(models.DBSubcontractApproval).filter(
+                models.DBSubcontractApproval.order_id == o.id,
+                models.DBSubcontractApproval.action == "SUBMIT").order_by(
+                models.DBSubcontractApproval.id.desc()).first()
+            try:
+                over = wo_budget_breaches(db, client, o)
+            except Exception:
+                over = []
+            items.append(_row(
+                "subcontract_order", "Work order", o.id, o.wo_number, o.net_order_value or o.gross_amount,
+                party=(con.company_name if con else ""),
+                project=(("%s %s" % (job.number or "", job.name or "")).strip() if job else ""),
+                raised_by=_person(db, o.submitted_by) or (sent.actor_name if sent else ""),
+                since=(sent.created_at if sent else o.updated_at) or "",
+                what=(o.subject or "")[:200], view="subcontracts-view",
+                pdf="/api/wo/orders/%d/document.pdf" % o.id,
+                waiting_on=", ".join(wo_pending_with(db, client.id, o.submitted_by)),
+                warnings=["Over the project allocation: " + "; ".join(over)] if over else [],
+                overrun=bool(over)))
+
+    # 3. RA bills to the client, waiting to be certified.
+    if can("subcontracts.approve"):
+        for b in db.query(models.DBRABill).filter(
+                models.DBRABill.client_id == client.id,
+                models.DBRABill.status == "SUBMITTED").order_by(models.DBRABill.id).all():
+            job = _job_of(db, b.job_id)
+            items.append(_row(
+                "ra_bill", "RA bill", b.id, b.number, b.this_bill,
+                party=(job.customer_name if job else "") or "",
+                project=(("%s %s" % (job.number or "", job.name or "")).strip() if job else ""),
+                since=getattr(b, "submitted_at", "") or getattr(b, "updated_at", "") or "",
+                what="Work claimed this bill.", view="measurement-view",
+                pdf="/api/ra-bills/%d/document.pdf" % b.id, approve_label="Certify"))
+
+    # 4. Subcontractor bills, waiting to be certified.
+    if can("subcontracts.approve"):
+        for b in db.query(models.DBSubBill).filter(
+                models.DBSubBill.client_id == client.id,
+                models.DBSubBill.status == "SUBMITTED").order_by(models.DBSubBill.id).all():
+            con = db.query(models.DBContractor).filter(models.DBContractor.id == b.contractor_id).first() \
+                if b.contractor_id else None
+            job = _job_of(db, b.job_id)
+            items.append(_row(
+                "sub_bill", "Subcontractor bill", b.id, b.number, b.this_bill,
+                party=(con.company_name if con else ""),
+                project=(("%s %s" % (job.number or "", job.name or "")).strip() if job else ""),
+                since=getattr(b, "updated_at", "") or "",
+                what="Net payable %s after deductions." % inr(b.net_payable or 0),
+                view="subbills-view", pdf="/api/sub-bills/%d/document.pdf" % b.id,
+                approve_label="Certify"))
+
+    # 5. Variations waiting to be agreed.
+    if can("subcontracts.approve"):
+        for v in db.query(models.DBVariationOrder).filter(
+                models.DBVariationOrder.client_id == client.id,
+                models.DBVariationOrder.status == "SUBMITTED").order_by(models.DBVariationOrder.id).all():
+            job = _job_of(db, v.job_id)
+            items.append(_row(
+                "variation", "Variation", v.id, v.number, v.value,
+                party=(job.customer_name if job else "") or "",
+                project=(("%s %s" % (job.number or "", job.name or "")).strip() if job else ""),
+                raised_by=v.raised_by_name or "", since=getattr(v, "updated_at", "") or "",
+                what=(getattr(v, "description", "") or getattr(v, "reason", "") or "")[:200],
+                view="measurement-view"))
+
+    # 6. Leave.
+    if can("leave.approve"):
+        q = db.query(models.DBLeaveRequest).filter(
+            models.DBLeaveRequest.client_id == client.id,
+            models.DBLeaveRequest.status == "pending")
+        if emp is not None:
+            q = q.filter(models.DBLeaveRequest.employee_id != emp.id)
+            if not employee_can(emp, "people.manage"):
+                team = [e.id for e in db.query(models.DBEmployee.id).filter(
+                    models.DBEmployee.client_id == client.id,
+                    models.DBEmployee.reports_to == emp.id).all()]
+                q = q.filter(models.DBLeaveRequest.employee_id.in_(team or [0]))
+        for lv in q.order_by(models.DBLeaveRequest.id).all():
+            who = _person(db, lv.employee_id)
+            items.append(_row(
+                "leave", "Leave", lv.id, "Leave", 0, party=who, raised_by=who,
+                since=lv.created_at or "",
+                what="%s leave, %s to %s (%g day%s)%s" % (
+                    (lv.leave_type or "").title(), lv.start_date, lv.end_date, lv.days or 0,
+                    "" if (lv.days or 0) == 1 else "s", (": " + lv.reason) if lv.reason else ""),
+                view="leave-view"))
+
+    items.sort(key=lambda r: (not r["mine"], r["since"] or ""))
+    return items
+
+
+@app.get("/api/approvals/inbox")
+def approvals_inbox(request: Request, db: Session = Depends(get_db)):
+    client, emp = session_person(request, db)
+    items = approval_inbox(db, client, emp)
+    return {"items": items, "mine": len([i for i in items if i["mine"]]), "count": len(items),
+            "owner": emp is None}
+
+
+class ApprovalDecisionIn(BaseModel):
+    kind: str
+    id: int
+    decision: str
+    note: Optional[str] = ""
+    override: Optional[bool] = False
+
+
+@app.post("/api/approvals/decide")
+def approvals_decide(body: ApprovalDecisionIn, request: Request, db: Session = Depends(get_db)):
+    """One door for every decision in the inbox. Each kind goes through its
+    own route's rules, so deciding here and deciding on the document's own
+    screen can never disagree."""
+    client, emp = session_person(request, db)
+    decision = (body.decision or "").strip().lower()
+    if decision not in ("approve", "reject"):
+        raise HTTPException(400, "Approve or send back?")
+    note = (body.note or "").strip()
+    if decision == "reject" and not note:
+        raise HTTPException(400, "Say why it is going back, so it can be put right.")
+    kind = body.kind
+
+    if kind == "step":
+        step = db.query(models.DBApprovalChain).filter(
+            models.DBApprovalChain.id == body.id,
+            models.DBApprovalChain.client_id == client.id).first()
+        if not step:
+            raise HTTPException(404, "Approval step not found")
+        if emp is not None and step.approver_id != emp.id:
+            raise HTTPException(403, "This approval is addressed to somebody else")
+        actor = employee_name(emp) if emp else (client.contact_name or client.email)
+        return decide_approval_step(db, step, decision, note, request, client.id, actor=actor)
+    if kind == "subcontract_order":
+        args = WoActionIn(comments=note, override=bool(body.override))
+        return (wo_approve if decision == "approve" else wo_reject)(body.id, args, request, db)
+    if kind == "ra_bill":
+        return _ra_action(body.id, "CERTIFY" if decision == "approve" else "REJECT",
+                          RAActionIn(comments=note), request, db, "subcontracts.approve")
+    if kind == "sub_bill":
+        return act_on_sub_bill(body.id, "certify" if decision == "approve" else "reject",
+                               request, {"comments": note}, db)
+    if kind == "variation":
+        return act_on_variation(body.id, decision, request, {"comments": note}, db)
+    if kind == "leave":
+        leave = db.query(models.DBLeaveRequest).filter(
+            models.DBLeaveRequest.id == body.id,
+            models.DBLeaveRequest.client_id == client.id).first()
+        if not leave:
+            raise HTTPException(404, "Leave request not found")
+        if emp is not None:
+            if not employee_can(emp, "leave.approve"):
+                raise HTTPException(403, "Your access does not include approving leave.")
+            if leave.employee_id == emp.id:
+                raise HTTPException(403, "Your own leave is approved by somebody else.")
+            if not employee_can(emp, "people.manage"):
+                them = db.query(models.DBEmployee).filter(models.DBEmployee.id == leave.employee_id).first()
+                if not them or them.reports_to != emp.id:
+                    raise HTTPException(403, "Only their own manager or HR decides this leave.")
+        who = employee_name(emp) if emp else (client.contact_name or "Owner")
+        return decide_leave(db, client.id, leave, decision, who, request)
+    raise HTTPException(400, "Unknown kind of approval")
+
+
+@app.get("/api/approvals/sent")
+def approvals_sent(request: Request, db: Session = Depends(get_db)):
+    """What this person has sent for approval and where each one is - or,
+    for the owner, everything the staff have in flight."""
+    client, emp = session_person(request, db)
+    rows = []
+    for entity_type, model in APPROVAL_MODELS.items():
+        q = db.query(model).filter(model.client_id == client.id,
+                                   model.approval_status.in_(["pending", "approved", "rejected"]))
+        if emp is not None:
+            q = q.filter(model.submitted_by == emp.id)
+        else:
+            q = q.filter(model.submitted_by.isnot(None))
+        for doc in q.order_by(model.id.desc()).limit(60).all():
+            label, view = CHAIN_KIND.get(entity_type, (entity_type, ""))
+            waiting = ""
+            if doc.approval_status == "pending":
+                step = db.query(models.DBApprovalChain).filter(
+                    models.DBApprovalChain.entity_type == entity_type,
+                    models.DBApprovalChain.entity_id == doc.id,
+                    models.DBApprovalChain.step == (doc.current_approval_step or 0)).first()
+                if step:
+                    waiting = owner_label(db, client.id) if step.approver_id is None \
+                        else _person(db, step.approver_id)
+            rows.append({"kind_label": label, "number": getattr(doc, "number", "") or str(doc.id),
+                         "party": _party_of(doc), "amount": money(getattr(doc, "total", None) or getattr(doc, "due", 0) or 0),
+                         "status": doc.approval_status, "waiting_on": waiting,
+                         "raised_by": _person(db, doc.submitted_by),
+                         "reason": getattr(doc, "rejection_reason", "") or "",
+                         "view": view, "when": getattr(doc, "updated_at", "") or getattr(doc, "created_at", "") or ""})
+    q = db.query(models.DBSubcontractOrder).filter(
+        models.DBSubcontractOrder.client_id == client.id,
+        models.DBSubcontractOrder.submitted_by.isnot(None),
+        models.DBSubcontractOrder.status.in_(["PROVISIONAL", "APPROVED", "EXECUTED", "DRAFT"]))
+    if emp is not None:
+        q = q.filter(models.DBSubcontractOrder.submitted_by == emp.id)
+    for o in q.order_by(models.DBSubcontractOrder.id.desc()).limit(60).all():
+        if o.status == "DRAFT" and not (o.rejection_reason or ""):
+            continue
+        con = db.query(models.DBContractor).filter(models.DBContractor.id == o.contractor_id).first() \
+            if o.contractor_id else None
+        status = {"PROVISIONAL": "pending", "DRAFT": "rejected"}.get(o.status, "approved")
+        rows.append({"kind_label": "Work order", "number": o.wo_number or "", "party": con.company_name if con else "",
+                     "amount": money(o.net_order_value or o.gross_amount or 0), "status": status,
+                     "waiting_on": ", ".join(wo_pending_with(db, client.id, o.submitted_by)) if status == "pending" else "",
+                     "raised_by": _person(db, o.submitted_by), "reason": o.rejection_reason or "",
+                     "view": "subcontracts-view", "when": o.updated_at or o.created_at or ""})
+    rows.sort(key=lambda r: (r["status"] != "pending", "" if not r["when"] else r["when"]), reverse=False)
+    pending = [r for r in rows if r["status"] == "pending"]
+    done = sorted([r for r in rows if r["status"] != "pending"], key=lambda r: r["when"] or "", reverse=True)
+    return {"items": pending + done[:60]}
+
+
+@app.get("/api/approvals/who-approves")
+def approvals_who(request: Request, db: Session = Depends(get_db)):
+    """The routing, spelled out: who each kind of paper goes to when its
+    raiser has no manager set. For the owner to check the set-up against."""
+    client = get_client_user(request, db)
+    out = []
+    for right, label in (("subcontracts.approve", "Work orders, RA bills, subcontractor bills and variations"),
+                         ("bills.approve", "Bills and purchase orders"),
+                         ("bills.pay", "Paying approved bills"),
+                         ("leave.approve", "Leave")):
+        out.append({"right": right, "what": label,
+                    "people": [{"name": employee_name(e),
+                                "department": next((r["label"] for r in PERMISSION_ROLES
+                                                    if r["code"] == (e.permission_role or "staff")), ""),
+                                "rank": role_rank(e)}
+                               for e in holders_of(db, client.id, right)]})
+    return {"routes": out, "owner": owner_label(db, client.id)}
 
 
 # Serve frontend

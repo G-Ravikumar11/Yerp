@@ -32,6 +32,21 @@ def sign_out(client):
     client.post("/api/employee/auth/logout")
 
 
+def approved_order(portal, tenant, **fields):
+    """An order raised by a manager with nobody above them, which goes to
+    the owner, and signed off by the owner from the approvals inbox."""
+    top = staff(tenant, permission_role="manager")
+    sign_in(portal, top)
+    order = portal.post("/api/employee/purchase-orders", json=fields).json()["order"]
+    sign_out(portal)
+    step = [i for i in tenant.get("/api/approvals/inbox").json()["items"]
+            if i["kind"] == "step" and i["number"] == order["number"]][0]
+    res = tenant.post("/api/approvals/decide", json={"kind": "step", "id": step["id"],
+                                                     "decision": "approve", "note": "Agreed"})
+    assert res.status_code == 200, res.text
+    return order
+
+
 def make_job(tenant, **overrides):
     payload = {"name": "Fairview, plot 3", "customer_name": "Fairview Homes",
                "status": "in_progress", "quoted_value": 20000.0, "budget": 14000.0}
@@ -216,11 +231,7 @@ def test_an_order_goes_up_the_line_before_the_money_is_spent(portal, tenant):
 
 def test_an_approved_order_is_committed_cost_not_spend(portal, tenant):
     job = make_job(tenant)
-    top = staff(tenant, permission_role="manager")
-    sign_in(portal, top)
-    portal.post("/api/employee/purchase-orders", json={
-        "supplier_name": "Speedy Hire", "amount": 1000.0, "job_id": job["id"]})
-    sign_out(portal)
+    approved_order(portal, tenant, **{"supplier_name": "Speedy Hire", "amount": 1000.0, "job_id": job["id"]})
 
     c = tenant.get(f"/api/jobs/{job['id']}").json()["costing"]
     assert c["committed"] == 1000.0
@@ -230,11 +241,7 @@ def test_an_approved_order_is_committed_cost_not_spend(portal, tenant):
 
 def test_a_matched_bill_replaces_the_commitment(portal, tenant):
     job = make_job(tenant)
-    top = staff(tenant, permission_role="manager")
-    sign_in(portal, top)
-    order = portal.post("/api/employee/purchase-orders", json={
-        "supplier_name": "Speedy Hire", "amount": 1000.0, "job_id": job["id"]}).json()["order"]
-    sign_out(portal)
+    order = approved_order(portal, tenant, **{"supplier_name": "Speedy Hire", "amount": 1000.0, "job_id": job["id"]})
 
     tenant.post("/api/bills", json={"number": "B1", "vendor_name": "Speedy Hire",
                                     "amount": 1000.0, "total": 1000.0,
@@ -260,11 +267,7 @@ def test_a_bill_cannot_be_matched_to_an_unapproved_order(portal, tenant):
 
 
 def test_a_bill_over_its_order_is_flagged(portal, tenant):
-    top = staff(tenant, permission_role="manager")
-    sign_in(portal, top)
-    order = portal.post("/api/employee/purchase-orders", json={
-        "supplier_name": "Jewson", "amount": 500.0}).json()["order"]
-    sign_out(portal)
+    order = approved_order(portal, tenant, **{"supplier_name": "Jewson", "amount": 500.0})
 
     tenant.post("/api/bills", json={"number": "B1", "vendor_name": "Jewson",
                                     "amount": 800.0, "total": 800.0,
@@ -277,11 +280,7 @@ def test_a_bill_over_its_order_is_flagged(portal, tenant):
 
 
 def test_an_order_with_a_bill_against_it_cannot_be_deleted(portal, tenant):
-    top = staff(tenant, permission_role="manager")
-    sign_in(portal, top)
-    order = portal.post("/api/employee/purchase-orders", json={
-        "supplier_name": "X", "amount": 100.0}).json()["order"]
-    sign_out(portal)
+    order = approved_order(portal, tenant, **{"supplier_name": "X", "amount": 100.0})
     tenant.post("/api/bills", json={"number": "B1", "vendor_name": "X", "amount": 100.0,
                                     "total": 100.0, "purchase_order_id": order["id"]})
     assert tenant.delete(f"/api/purchase-orders/{order['id']}").status_code == 409

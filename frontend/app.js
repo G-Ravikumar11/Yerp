@@ -491,10 +491,7 @@ function showView(viewId) {
     if (viewId === 'my-leave-view' && typeof loadMyLeave === 'function') loadMyLeave();
     if (viewId === 'my-payslips-view' && typeof loadMyPayslips === 'function') loadMyPayslips();
     if (viewId === 'my-documents-view' && typeof loadMyDocuments === 'function') loadMyDocuments();
-    if (viewId === 'approvals-view') {
-        if (isEmployee() && typeof loadStaffApprovals === 'function') loadStaffApprovals();
-        else if (typeof loadPendingApprovals === 'function') loadPendingApprovals();
-    }
+    if (viewId === 'approvals-view' && typeof loadApprovalsInbox === 'function') loadApprovalsInbox('inbox');
     if (viewId === 'jobs-view' && typeof loadJobs === 'function') loadJobs();
     if (viewId === 'customers-view' && typeof searchCustomers === 'function') searchCustomers();
     if (viewId === 'inquiry-view' && typeof loadInquiry === 'function') loadInquiry();
@@ -4894,7 +4891,11 @@ function can(permission) {
     // The account holder holds everything, including rights added after this
     // list was last written - a new right must never hide a screen from them.
     if (portalUser.type === 'owner') return true;
-    return portalUser.permissions.indexOf(permission) >= 0;
+    // "a|b": any one of them will do - the plant register is kept by the store
+    // and by the project office alike.
+    return String(permission || '').split('|').some(function (p) {
+        return portalUser.permissions.indexOf(p) >= 0;
+    });
 }
 
 /* The projects this person works on: every live one for the office, the

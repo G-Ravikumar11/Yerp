@@ -170,12 +170,12 @@ function renderSubBillList(bills, summary) {
 
     document.getElementById('sub-bill-body').innerHTML = bills.length ? bills.map(function (b) {
         var act = '';
-        if (b.actions.indexOf('SUBMIT') >= 0)
+        if (b.actions.indexOf('SUBMIT') >= 0 && can('billing.manage'))
             act = '<button class="btn btn-sm btn-primary" onclick="subBillAct(' + b.id + ',\'submit\')">Submit</button>';
-        else if (b.actions.indexOf('CERTIFY') >= 0)
+        else if (b.actions.indexOf('CERTIFY') >= 0 && can('subcontracts.approve'))
             act = '<button class="btn btn-sm btn-primary" onclick="subBillAct(' + b.id + ',\'certify\')">Certify</button> ' +
                   '<button class="btn btn-sm btn-outline" onclick="subBillAct(' + b.id + ',\'reject\',true)">Send back</button>';
-        else if (b.actions.indexOf('PAY') >= 0)
+        else if (b.actions.indexOf('PAY') >= 0 && can('bills.pay'))
             act = '<button class="btn btn-sm btn-primary" onclick="openPayBox(\'sub_bill\',' + b.id + ',function(){if(typeof loadSubBills===\'function\')loadSubBills();})">Pay</button>';
         return '<tr>' +
             '<td style="font-family:monospace;font-weight:600;">' + esc(b.number) + '</td>' +

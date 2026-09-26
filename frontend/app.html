@@ -88,7 +88,7 @@
                 <nav class="top-nav-menu" id="main-nav">
                     <a href="#" class="nav-item active" id="nav-dashboard" onclick="event.preventDefault();showView('dashboard-view')">Dashboard</a>
 
-                    <a href="#" class="nav-item nav-approvals-link" id="nav-approvals" data-perm="bills.approve" onclick="event.preventDefault();showView('approvals-view')">
+                    <a href="#" class="nav-item nav-approvals-link" id="nav-approvals" onclick="event.preventDefault();showView('approvals-view')">
                         Approvals <span class="nav-badge" id="nav-approvals-count" hidden>0</span>
                     </a>
 
@@ -137,10 +137,10 @@
                             Contract <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
                         <div class="nav-group-items" id="nav-items-contracts">
-                            <a href="#" class="nav-item" id="nav-leads" data-perm="workorders.manage" onclick="event.preventDefault();showView('leads-view')">Tender Pipeline</a>
-                            <a href="#" class="nav-item" id="nav-estimates" data-perm="workorders.manage" onclick="event.preventDefault();showView('estimates-view')">Tenders &amp; Estimates</a>
+                            <a href="#" class="nav-item" id="nav-leads" data-perm="billing.manage" onclick="event.preventDefault();showView('leads-view')">Tender Pipeline</a>
+                            <a href="#" class="nav-item" id="nav-estimates" data-perm="billing.manage" onclick="event.preventDefault();showView('estimates-view')">Tenders &amp; Estimates</a>
                             <a href="#" class="nav-item" id="nav-workorders" data-perm="workorders.manage" onclick="event.preventDefault();showView('workorders-view')">Work Orders</a>
-                            <a href="#" class="nav-item" id="nav-measurement" data-perm="site.record" onclick="event.preventDefault();showView('measurement-view')">Measurement &amp; RA Bills</a>
+                            <a href="#" class="nav-item" id="nav-measurement" data-perm="site.record|billing.manage" onclick="event.preventDefault();showView('measurement-view')">Measurement &amp; RA Bills</a>
                             <a href="#" class="nav-item" id="nav-customers" data-perm="customers.manage" onclick="event.preventDefault();showView('customers-view')">Customers</a>
                         </div>
                     </div>
@@ -160,11 +160,11 @@
                             Store <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
                         <div class="nav-group-items" id="nav-items-store">
-                            <a href="#" class="nav-item" id="nav-rfqs" data-perm="workorders.manage" onclick="event.preventDefault();showView('rfq-view')">Enquiries &amp; Comparison</a>
-                            <a href="#" class="nav-item" id="nav-eway" data-perm="workorders.manage" onclick="event.preventDefault();showView('eway-view')">E-way Bills</a>
-                            <a href="#" class="nav-item" id="nav-orders" data-perm="workorders.manage" onclick="event.preventDefault();showView('orders-view')">Purchase Orders</a>
+                            <a href="#" class="nav-item" id="nav-rfqs" data-perm="purchase.manage" onclick="event.preventDefault();showView('rfq-view')">Enquiries &amp; Comparison</a>
+                            <a href="#" class="nav-item" id="nav-eway" data-perm="accounts.manage|stores.manage" onclick="event.preventDefault();showView('eway-view')">E-way Bills</a>
+                            <a href="#" class="nav-item" id="nav-orders" data-perm="purchase.manage|bills.view_all" onclick="event.preventDefault();showView('orders-view')">Purchase Orders</a>
                             <a href="#" class="nav-item" id="nav-stores" data-perm="stores.receive" onclick="event.preventDefault();showView('stores-view')">Goods Receipt &amp; Match</a>
-                            <a href="#" class="nav-item" id="nav-stock" data-perm="site.record" onclick="event.preventDefault();showView('stock-view')">Stock &amp; Issues</a>
+                            <a href="#" class="nav-item" id="nav-stock" data-perm="site.record|stores.manage" onclick="event.preventDefault();showView('stock-view')">Stock &amp; Issues</a>
                             <a href="#" class="nav-item" id="nav-consume" data-perm="reports.view" onclick="event.preventDefault();showView('consume-view')">Material Used vs Costed</a>
                             <a href="#" class="nav-item" id="nav-items" data-perm="items.manage" onclick="event.preventDefault();showView('items-view')">Item Master</a>
                         </div>
@@ -2036,6 +2036,7 @@
                                 A bill that comes in higher than the order it settles always goes for approval, whatever these say.
                             </p>
                             <button class="btn btn-primary" onclick="saveApprovalRules()">Save approval rules</button>
+                            <div id="rule-routing" style="margin-top:20px;"></div>
                         </div>
                     </div>
 
@@ -3553,13 +3554,12 @@
                     <div class="invoices-header-area">
                         <div>
                             <h1>Approvals</h1>
-                            <p class="subtitle">Review and approve invoices &amp; bills</p>
+                            <p class="subtitle">Work orders, RA and subcontractor bills, variations, purchase orders, bills and leave waiting for a signature</p>
                         </div>
                     </div>
-                    <div class="invoices-tabs">
-                        <button class="tab active" onclick="loadPendingApprovals(this)">Pending My Approval <span id="pending-approval-count" style="background:var(--danger-color);color:#fff;border-radius:10px;padding:1px 8px;font-size:0.75rem;margin-left:4px;display:none;">0</span></button>
-                        <button class="tab" onclick="loadMySubmissions(this)">My Submissions</button>
-                        <button class="tab" onclick="loadApprovalHistory(this)">History</button>
+                    <div class="invoices-tabs" id="approvals-tabs">
+                        <button class="tab active" data-tab="inbox" onclick="loadApprovalsInbox('inbox')">Waiting on me <span id="pending-approval-count" style="background:var(--danger-color);color:#fff;border-radius:10px;padding:1px 8px;font-size:0.75rem;margin-left:4px;display:none;">0</span></button>
+                        <button class="tab" data-tab="sent" onclick="loadApprovalsInbox('sent')">Sent for approval</button>
                     </div>
                     <div class="glass-widget" style="margin-top:20px;">
                         <div id="approvals-content">
@@ -4268,7 +4268,7 @@
                     <div class="invoices-header-area">
                         <div><h1>Equipment &amp; Plant</h1><p class="subtitle">Where each machine is, what it did, what it burned and when it is due &mdash; and what it cost the site it worked on</p></div>
                         <div class="invoices-actions">
-                            <button class="btn btn-primary" data-perm="workorders.manage" onclick="eqpEdit()">+ Machine</button>
+                            <button class="btn btn-primary" data-perm="stores.manage|workorders.manage" onclick="eqpEdit()">+ Machine</button>
                             <select id="eqp-status" class="form-control" style="width:auto;" onchange="loadEquipment()">
                                 <option value="">Every machine</option><option>Deployed</option><option>Available</option>
                                 <option>Under repair</option><option>Disposed</option></select>
@@ -4772,7 +4772,7 @@
                     <div class="invoices-header-area">
                         <div><h1>Subcontractor Bills</h1><p class="subtitle">What the gangs have built, and what we pay them for it</p></div>
                         <div class="invoices-actions">
-                            <button class="btn btn-primary" data-perm="workorders.manage" onclick="newSubBill()">Draw up a bill</button>
+                            <button class="btn btn-primary" data-perm="billing.manage" onclick="newSubBill()">Draw up a bill</button>
                             <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
                         </div>
                     </div>
@@ -4822,7 +4822,7 @@
                     <div class="invoices-header-area">
                         <div><h1>Measurement &amp; RA Bills</h1><p class="subtitle">What has actually been done on site, and the running account bills that follow from it</p></div>
                         <div class="invoices-actions">
-                            <button class="btn btn-primary" data-perm="workorders.manage" onclick="newRaBill()">Draw up a bill</button>
+                            <button class="btn btn-primary" data-perm="billing.manage" onclick="newRaBill()">Draw up a bill</button>
                             <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
                         </div>
                     </div>
@@ -5642,12 +5642,12 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=135"></script>
+    <script src="app.js?v=136"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
-    <script src="staff-portal.js?v=68"></script>
+    <script src="staff-portal.js?v=69"></script>
     <!-- Jobs, job costing and purchase orders. -->
-    <script src="jobs.js?v=119"></script>
+    <script src="jobs.js?v=120"></script>
     <!-- Item master, work orders and budget allocation. -->
     <script src="erp.js?v=90"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
@@ -5662,17 +5662,18 @@
     <script src="costs.js?v=65"></script>
     <script src="sheet.js?v=83"></script>
     <script src="documents.js?v=92"></script>
+    <script src="approvals.js?v=1"></script>
     <script src="mbdims.js?v=81"></script>
-    <script src="measurement.js?v=117"></script>
-    <script src="stock.js?v=114"></script>
+    <script src="measurement.js?v=118"></script>
+    <script src="stock.js?v=115"></script>
     <script src="diary.js?v=117"></script>
     <script src="money.js?v=95"></script>
-    <script src="subbills.js?v=92"></script>
+    <script src="subbills.js?v=93"></script>
     <script src="estimate.js?v=81"></script>
     <script src="gst.js?v=80"></script>
     <script src="registers.js?v=84"></script>
     <script src="ledger.js?v=106"></script>
-    <script src="equipment.js?v=113"></script>
+    <script src="equipment.js?v=114"></script>
     <script src="rfq.js?v=98"></script>
     <script src="ewaybill.js?v=113"></script>
     <script src="files.js?v=115"></script>

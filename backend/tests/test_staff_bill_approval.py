@@ -309,12 +309,23 @@ def test_a_manager_with_view_all_sees_the_lot(tenant):
     assert len(listing["bills"]) == 1
 
 
-def test_somebody_with_no_manager_needs_no_signoff(tenant):
+def test_somebody_with_nobody_above_them_goes_to_the_owner(tenant):
+    # Nobody set as their manager and nobody on the staff ranks above them:
+    # the owner signs. It used to be waved through with nobody looking.
     top = staff(tenant, permission_role="manager")
     sign_in(tenant, top)
     result = raise_bill(tenant)
-    assert result["status"] == "approved"
-    assert result["bill"]["status"] == "Approved for payment"
+    assert result["status"] == "pending"
+    assert "owner" in result["next_approver"]
+    sign_out(tenant)
+
+    inbox = tenant.get("/api/approvals/inbox").json()
+    item = [i for i in inbox["items"] if i["kind"] == "step"][0]
+    assert item["mine"] is True
+    res = tenant.post("/api/approvals/decide", json={"kind": "step", "id": item["id"],
+                                                     "decision": "approve", "note": "Fine"})
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "approved"
 
 
 def test_a_decision_must_carry_a_reason(tenant):

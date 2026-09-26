@@ -58,7 +58,7 @@ async function bootStaffPortal() {
     showView('my-overview-view');
     var work = [];
     if (can('bills.submit')) work.push(loadMyCosts);
-    if (can('bills.approve')) work.push(loadStaffApprovals);
+    if (typeof refreshApprovalBadge === 'function') work.push(refreshApprovalBadge);
     await Promise.all(work.map(function (fn) { return fn(); }));
     await loadMyOverview();
 }
@@ -115,10 +115,10 @@ async function loadMyOverview() {
     ((MYDAY && MYDAY.waiting) || []).forEach(function (w) {
         items.push('<a href="#" onclick="event.preventDefault();myGo(\'' + w.view + '\',' + w.job_id + ')">' + esc(w.text) + '</a>');
     });
-    if (can('bills.approve') && _myApprovals.length) {
-        var n = _myApprovals.length;
+    if (typeof APPROVALS !== 'undefined' && APPROVALS.mine) {
+        var n = APPROVALS.mine;
         items.push('<a href="#" onclick="event.preventDefault();showView(\'approvals-view\')">' +
-            n + ' ' + (n === 1 ? 'cost is' : 'costs are') + ' waiting for your approval</a>');
+            n + ' ' + (n === 1 ? 'thing is' : 'things are') + ' waiting for your approval</a>');
     }
     if (can('bills.submit')) {
         var sentBack = _myCosts.filter(function (b) { return b.approval_status === 'rejected'; });
@@ -699,8 +699,11 @@ async function loadPermissionRoles(current) {
         _permissionRoles = data.permission_roles || [];
         _permissions = data.permissions || [];
         if (!_permissionRoles.length) return;
-        select.innerHTML = _permissionRoles.map(function (r) {
-            return '<option value="' + esc(r.code) + '">' + esc(r.label) + '</option>';
+        select.innerHTML = _permissionRoles.filter(function (r) {
+            return !r.retired || r.code === current;
+        }).map(function (r) {
+            return '<option value="' + esc(r.code) + '">' + esc(r.label) +
+                (r.retired ? ' (older access level)' : '') + '</option>';
         }).join('');
         select.value = current || 'staff';
         describeAccessChoice();

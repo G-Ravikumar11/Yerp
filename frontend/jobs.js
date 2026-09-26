@@ -711,13 +711,42 @@ async function loadApprovalRules() {
             note.textContent = data.has_finance_approver
                 ? 'Above this, ' + data.finance_approver + ' is added to the chain as a final approver.'
                 : 'Nobody currently has permission to release payment, so this rule will add no one. '
-                  + 'Give somebody the Finance access level under People.';
+                  + 'Give somebody the Accounts access level under People.';
             note.style.color = data.has_finance_approver
                 ? 'var(--text-secondary)' : 'var(--warning-color)';
         }
     } catch (e) { /* leave the fields as they are */ }
+    loadApprovalRouting();
 }
 window.loadApprovalRules = loadApprovalRules;
+
+/* Who each kind of paper goes to, read from the access levels actually set,
+   so a routing that reaches nobody shows up here rather than on the day a
+   work order sits unapproved. */
+async function loadApprovalRouting() {
+    var host = document.getElementById('rule-routing');
+    if (!host) return;
+    try {
+        var res = await fetch('/api/approvals/who-approves');
+        if (!res.ok) return;
+        var data = await res.json();
+        host.innerHTML = '<h4 style="font-size:0.9rem;margin-bottom:4px;">Who approves what</h4>' +
+            '<p style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:10px;">' +
+            'Paper goes to the manager set for whoever raised it. With no manager set, it goes to the ' +
+            'nearest rank above them that holds the right below - someone on the same site first - ' +
+            'and from the top of the staff to ' + esc(data.owner) + '. Change who holds a right under People.</p>' +
+            '<div class="table-responsive"><table class="data-table"><tbody>' +
+            data.routes.map(function (r) {
+                var people = r.people.length
+                    ? r.people.map(function (p) {
+                        return esc(p.name) + ' <span style="color:var(--text-secondary);">(' + esc(p.department) + ')</span>';
+                    }).join(', ')
+                    : '<span style="color:var(--warning-color);">Nobody on the staff - it all comes to ' + esc(data.owner) + '</span>';
+                return '<tr><td style="width:38%;font-weight:600;">' + esc(r.what) + '</td><td>' + people + '</td></tr>';
+            }).join('') + '</tbody></table></div>';
+    } catch (e) { /* the rules above still work without the summary */ }
+}
+window.loadApprovalRouting = loadApprovalRouting;
 
 async function saveApprovalRules() {
     try {

@@ -219,7 +219,7 @@ async function loadRaBills(woId) {
         // Only the move the bill can actually make next.
         var act = '';
         // Each step only for whoever may take it - a button the server refuses is a dead end.
-        if (b.actions.indexOf('SUBMIT') >= 0 && can('workorders.manage'))
+        if (b.actions.indexOf('SUBMIT') >= 0 && can('billing.manage'))
             act = '<button class="btn btn-sm btn-primary" onclick="raAct(' + b.id + ',\'submit\')">Submit</button>';
         else if (b.actions.indexOf('CERTIFY') >= 0 && can('subcontracts.approve'))
             act = '<button class="btn btn-sm btn-primary" onclick="raAct(' + b.id + ',\'certify\')">Certify</button> ' +
@@ -244,7 +244,7 @@ async function loadRaBills(woId) {
                 '/document.pdf" target="_blank" rel="noopener" title="The bill in the ruled form it is signed on">PDF</a>' +
                 ' <a class="btn btn-sm btn-outline" href="/api/ra-bills/' + b.id +
                 '/export.xlsx" title="As a workbook">Excel</a>' +
-                ((b.status === 'CERTIFIED' || b.status === 'PAID') && can('workorders.manage')
+                ((b.status === 'CERTIFIED' || b.status === 'PAID') && can('accounts.manage')
                     ? ' <button class="btn btn-sm btn-outline" onclick="raEinvoice(' + b.id + ')" ' +
                       'title="The file for the GST Invoice Registration Portal">e-Invoice</button>' : '') +
                 '</td>' +
