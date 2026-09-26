@@ -19883,8 +19883,15 @@ def job_money(db, client_id, job, pre=None):
     # job billed ahead of its progress is borrowing from its own future.
     earned = money(contract_value * percent_complete / 100) if contract_value else 0.0
     retention_percent = float(job.retention_percent or 0)
+    # Released retention is no longer held: it is a claim of its own, owed
+    # until it is received.
+    rels = [r for r in _live_releases(db, client_id, "client") if r.job_id == job.id]
     retention_held = money(sum(invoice_total(i) for i in invoices) * retention_percent / 100
-                           + sum(b.retention_amount or 0 for b in ra))
+                           + sum(b.retention_amount or 0 for b in ra)
+                           - sum(r.amount or 0 for r in rels))
+    received = money(received + sum(settled.get(("retention_release", r.id), 0.0) for r in rels))
+    owed = money(owed + sum(max(0.0, (r.net_amount or 0) - settled.get(("retention_release", r.id), 0.0))
+                            for r in rels if r.status == "CERTIFIED"))
 
     # --- cost by heading --------------------------------------------------
     by_category = {key: 0.0 for key in COST_CATEGORY_KEYS}
@@ -20237,6 +20244,7 @@ def gst_outward(request: Request, date_from: str = "", date_to: str = "",
             "igst": money(b.igst_amount), "tax": money(b.tax_amount),
             "total": money(taxable + (b.tax_amount or 0)),
         })
+    rows.extend(release_gst_rows(db, client.id, "client", date_from, date_to))
     by_month, by_rate = {}, {}
     for r in rows:
         m = by_month.setdefault(_month_key(r["date"]), {
@@ -20293,6 +20301,7 @@ def gst_inward(request: Request, date_from: str = "", date_to: str = "",
             "taxable": taxable, "cgst": money(b.cgst_amount), "sgst": money(b.sgst_amount),
             "igst": money(b.igst_amount), "tax": money(b.gst_amount),
         })
+    rows.extend(release_gst_rows(db, client.id, "contractor", date_from, date_to))
     # The supplier's GSTIN is on the supplier list; the bill only has a name.
     # Without it every supplier bill sat in the register with no GSTIN and
     # its tax in one lump - nothing to reconcile the input credit against.
@@ -22092,7 +22101,8 @@ def work_order_statement(db, client, wo):
     awaiting = money(sum(b.net_payable or 0 for b in bills
                          if (b.status or "") == "CERTIFIED"))
     retention = money(sum(b.retention_amount or 0 for b in bills
-                          if (b.status or "") in ("CERTIFIED", "PAID")))
+                          if (b.status or "") in ("CERTIFIED", "PAID"))
+                      - released_retention(db, wo.client_id, "client").get(wo.id, 0.0))
     tds = money(sum(b.tds_amount or 0 for b in bills if (b.status or "") == "PAID"))
 
     return {
@@ -23368,6 +23378,7 @@ def preload_pnl_for_job(db, client_id, job_id):
         "sub": one(db.query(models.DBSubBill).filter(
             models.DBSubBill.client_id == client_id, models.DBSubBill.job_id == job_id,
             models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all()),
+        "released": one([r for r in _live_releases(db, client_id, "client") if r.job_id == job_id]),
         "equipment": {job_id: equipment_cost_by_job(db, client_id).get(job_id, 0.0)},
         "recovered": material_recovered_by_job(db, client_id, job_id),
         "stocked": stocked_share_of_bills(db, client_id),
@@ -23417,6 +23428,7 @@ def preload_pnl(db, client_id):
         "sub": by_job(db.query(models.DBSubBill).filter(
             models.DBSubBill.client_id == client_id,
             models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all()),
+        "released": by_job(_live_releases(db, client_id, "client")),
         "equipment": equipment_cost_by_job(db, client_id),
         "recovered": material_recovered_by_job(db, client_id),
         "stocked": stocked_share_of_bills(db, client_id),
@@ -23440,7 +23452,8 @@ def project_pnl(db, client_id, job, pre=None):
 
     bills = pre["ra"].get(job.id, [])
     certified = money(sum(b.this_bill or 0 for b in bills))
-    retention = money(sum(b.retention_amount or 0 for b in bills))
+    retention = money(sum(b.retention_amount or 0 for b in bills)
+                      - sum(r.amount or 0 for r in (pre.get("released") or {}).get(job.id, [])))
 
     # --- what it cost ----------------------------------------------------
     supplier_bills = [b for b in pre["bills"].get(job.id, [])
@@ -23728,6 +23741,29 @@ def receivables(request: Request, db: Session = Depends(get_db)):
             "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
             "status": r.status or "",
         })
+    # Retention released and claimed is owed like any certified bill.
+    for rel in db.query(models.DBRetentionRelease).filter(
+            models.DBRetentionRelease.client_id == client.id,
+            models.DBRetentionRelease.side == "client",
+            models.DBRetentionRelease.status == "CERTIFIED").all():
+        received = settled.get(("retention_release", rel.id), 0.0)
+        outstanding = money((rel.net_amount or 0) - received)
+        if outstanding <= 0:
+            continue
+        due = days_after(rel.release_on, RA_CREDIT_DAYS)
+        bucket, days = ageing_bucket(due or rel.release_on, today)
+        buckets[bucket] = money(buckets[bucket] + outstanding)
+        job = jobs.get(rel.job_id)
+        rows.append({
+            "id": rel.id, "number": rel.number or "", "kind": "Retention release",
+            "customer": job.customer_name if job else "",
+            "project": job.name if job else "", "job_id": rel.job_id,
+            "issue_date": rel.release_on or "", "due_date": due or rel.release_on or "",
+            "total": money(rel.net_amount), "paid": money(received), "outstanding": outstanding,
+            "doc_type": "retention_release",
+            "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
+            "status": rel.status or "",
+        })
     for r in rows:
         r.setdefault("kind", "Invoice")
 
@@ -23810,6 +23846,30 @@ def payables(request: Request, db: Session = Depends(get_db)):
             "status": r.status or "", "approved": True,
         })
 
+    # A gang's retention, once released, is owed on their order's terms.
+    for rel in db.query(models.DBRetentionRelease).filter(
+            models.DBRetentionRelease.client_id == client.id,
+            models.DBRetentionRelease.side == "contractor",
+            models.DBRetentionRelease.status == "CERTIFIED").all():
+        outstanding = money((rel.net_amount or 0) - settled.get(("retention_release", rel.id), 0.0))
+        if outstanding <= 0:
+            continue
+        terms = db.query(models.DBSubcontractOrder.payment_days).filter(
+            models.DBSubcontractOrder.id == rel.sub_order_id).scalar() or 0
+        due = days_after(rel.release_on, terms)
+        bucket, days = ageing_bucket(due or rel.release_on, today)
+        buckets[bucket] = money(buckets[bucket] + outstanding)
+        job = jobs.get(rel.job_id)
+        con = contractors.get(rel.contractor_id)
+        rows.append({
+            "kind": "Retention release", "doc_type": "retention_release", "id": rel.id,
+            "number": rel.number or "", "party": con.company_name if con else "",
+            "project": job.name if job else "", "due_date": due or rel.release_on or "",
+            "outstanding": outstanding, "bucket": bucket,
+            "days_overdue": days if (days or 0) > 0 else 0,
+            "status": rel.status or "", "approved": True,
+        })
+
     rows.sort(key=lambda r: -(r["days_overdue"] or 0))
     return {
         "bills": rows, "buckets": buckets,
@@ -23864,17 +23924,24 @@ def retention_register(request: Request, db: Session = Depends(get_db)):
             "certified_at": (b.certified_at or "")[:10],
         })
 
+    # What has been released is no longer held; held is what is left.
+    released = released_by_job(db, client.id)
+    for r in by_job.values():
+        r["retained"] = r["held"]
+        r["released"] = money(released.get(r["job_id"], 0.0))
+        r["held"] = money(max(0.0, r["retained"] - r["released"]))
     rows = sorted(by_job.values(), key=lambda r: -r["held"])
     for r in rows:
         # A finished job's retention is money that should be being chased;
         # a running job's is money that is simply not due yet.
-        r["releasable"] = (r["job_status"] or "").lower() == JOB_FINISHED
-        r["effective_percent"] = (round(r["held"] / r["claimed_value"] * 100, 2)
+        r["releasable"] = (r["job_status"] or "").lower() == JOB_FINISHED and r["held"] > 0
+        r["effective_percent"] = (round(r["retained"] / r["claimed_value"] * 100, 2)
                                   if r["claimed_value"] else 0.0)
     return {
         "projects": rows,
         "summary": {
             "held": money(sum(r["held"] for r in rows)),
+            "released": money(sum(r["released"] for r in rows)),
             "projects": len(rows),
             "on_finished_jobs": money(sum(r["held"] for r in rows
                                           if r["releasable"])),
@@ -23910,19 +23977,20 @@ def retention_export(request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     data = retention_register(request, db)
     rows = [(r["number"], r["project"], r["customer"], r["job_status"],
-             r["claimed_value"], r["held"], r["effective_percent"],
-             len(r["bills"]), "yes" if r["releasable"] else "")
+             r["claimed_value"], r["retained"], r["released"], r["held"],
+             r["effective_percent"], len(r["bills"]), "yes" if r["releasable"] else "")
             for r in data["projects"]]
     return sheet_response(
-        ("Project", "Name", "Customer", "Status", "Claimed", "Retention held",
-         "Effective %", "Bills", "Job finished"),
+        ("Project", "Name", "Customer", "Status", "Claimed", "Retained", "Released",
+         "Still held", "Effective %", "Bills", "Job finished"),
         rows, "retention_register.xlsx",
         preamble=[("RETENTION HELD", client.company_name or ""),
                   ("As at", date.today().strftime("%Y-%m-%d")),
                   ("Money already earned and not yet released",),
                   ()],
-        closing=[(), ("Total held", "", "", "", "", data["summary"]["held"]),
-                 ("On finished jobs", "", "", "", "",
+        closing=[(), ("Released", "", "", "", "", "", data["summary"]["released"]),
+                 ("Still held", "", "", "", "", "", "", data["summary"]["held"]),
+                 ("On finished jobs", "", "", "", "", "", "",
                   data["summary"]["on_finished_jobs"])])
 
 
@@ -24096,6 +24164,8 @@ def attention_items(db, client_id):
                 models.DBRABill.client_id == client_id,
                 models.DBRABill.job_id.in_(list(finished)),
                 models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all()))
+        gone = released_by_job(db, client_id)
+        on_finished = money(on_finished - sum(v for k, v in gone.items() if k in finished))
         if on_finished > 0:
             items.append({
                 "kind": "retention", "severity": "money", "value": on_finished,
@@ -24811,7 +24881,8 @@ def list_sub_bills(request: Request, order_id: int = 0, db: Session = Depends(ge
             "certified_unpaid": money(sum(r["net_payable"] for r in rows
                                           if r["status"] == "CERTIFIED")),
             "retention_held": money(sum(r["retention_amount"] for r in rows
-                                        if r["status"] in ("CERTIFIED", "PAID"))),
+                                        if r["status"] in ("CERTIFIED", "PAID"))
+                                    - contractor_released(db, client.id, order_id)),
             "paid": money(sum(r["net_payable"] for r in rows if r["status"] == "PAID")),
         },
     }
@@ -25996,6 +26067,13 @@ def _doc_for(db, client_id, doc_type, doc_id):
             if norm_name(s.name) == norm_name(b.vendor_name)), None)
         return (b, money(b.total or b.amount or 0), "OUT", "supplier", b.vendor_name or "",
                 (sup.id if sup else None), b.job_id)
+    if doc_type == "retention_release":
+        r = release_or_404(db, client_id, doc_id)
+        if r.status not in ("CERTIFIED", "PAID"):
+            raise HTTPException(409, "%s is %s." % (r.number, (r.status or "").lower()))
+        party_type, party, party_id = release_party(db, r)
+        return (r, money(r.net_amount), "IN" if r.side == "client" else "OUT",
+                party_type, party, party_id, r.job_id)
     raise HTTPException(400, "Unknown document type: %s" % doc_type)
 
 
@@ -26003,7 +26081,7 @@ def _settle_doc(db, client_id, doc_type, doc, worth, on):
     """Move the bill to paid when it is fully settled, back when it is not."""
     got = settled_on(db, client_id, doc_type, doc.id)
     full = got >= worth - 0.009
-    if doc_type in ("ra_bill", "sub_bill"):
+    if doc_type in ("ra_bill", "sub_bill", "retention_release"):
         if full and doc.status == "CERTIFIED":
             doc.status, doc.paid_at = "PAID", on
         elif not full and doc.status == "PAID":
@@ -26170,6 +26248,9 @@ def _doc_for_any(db, client_id, doc_type, doc_id):
     if doc_type == "sub_bill":
         b = sub_bill_or_404(db, client_id, doc_id)
         return b, money(b.net_payable)
+    if doc_type == "retention_release":
+        r = release_or_404(db, client_id, doc_id)
+        return r, money(r.net_amount)
     b = db.query(models.DBBill).filter(models.DBBill.id == doc_id,
                                        models.DBBill.client_id == client_id).first()
     return b, money(b.total or b.amount or 0)
@@ -26283,6 +26364,8 @@ def _ledger_rows(db, client_id):
                          "kind": "Paid (marked paid)", "number": b.number or "",
                          "doc_type": "supplier_bill", "doc_id": b.id, "billed": 0.0,
                          "moved": pre_ledger, "job_id": b.job_id})
+
+    rows.extend(release_ledger_rows(db, client_id))
 
     for e in db.query(models.DBMoneyEntry).filter(
             models.DBMoneyEntry.client_id == client_id,
@@ -28563,6 +28646,7 @@ def attention_elsewhere(db, client_id, jobs, today):
             "detail": "%d enquir%s with fewer than three prices in. One price "
                       "is not a comparison." % (len(thin), "y" if len(thin) == 1 else "ies"),
         })
+    items.extend(release_attention(db, client_id, today))
     return items
 
 
@@ -29452,6 +29536,7 @@ NOTIFY_KINDS = {
     "money_out": "Money paid out",
     "qc_failed": "A quality check failed or an NCR was raised",
     "safety_incident": "A safety incident or near miss was reported",
+    "retention_released": "Retention was released - to claim, or to pay a gang",
     "daily_digest": "The morning list of what needs looking at",
 }
 # Out of the box: the bell for everything, email for the money and the digest.
@@ -30473,6 +30558,437 @@ def close_permit(pid: int, body: PermitCloseIn, request: Request, db: Session = 
     p.closure_note = (body.note or "").strip()
     db.commit()
     return {"permit": permit_dict(p)}
+
+
+# ============================================================================
+# RETENTION RELEASED
+#
+# The register above says how much is being held. This is what brings it
+# back: a release on the client at practical completion or at the end of the
+# defects period, and the same thing the other way for the gangs whose
+# retention we hold. A release is a bill in its own right - it goes in the
+# party's ledger, is received or paid through the same box as any other, ages
+# in what is owed, and carries the GST the RA bills left off, because each of
+# them charged tax only on what it asked for after the retention came off.
+# ============================================================================
+
+RETENTION_STAGES = ("Practical completion", "End of defects period",
+                    "Against a bank guarantee", "Part release")
+
+
+def months_after(on, months):
+    """The date `months` calendar months after `on`, or "" when it is not a
+    date. The last day of a short month stands in for a day it lacks."""
+    try:
+        d = datetime.strptime(str(on or "")[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return ""
+    m = d.month - 1 + int(months or 0)
+    year, month = d.year + m // 12, m % 12 + 1
+    return date(year, month, min(d.day, calendar.monthrange(year, month)[1])).isoformat()
+
+
+def _live_releases(db, client_id, side=None):
+    q = db.query(models.DBRetentionRelease).filter(
+        models.DBRetentionRelease.client_id == client_id,
+        models.DBRetentionRelease.status != "CANCELLED")
+    if side:
+        q = q.filter(models.DBRetentionRelease.side == side)
+    return q.all()
+
+
+def released_retention(db, client_id, side):
+    """{order id: retention released on it} - the client's work orders, or
+    the gangs' subcontract orders. Cancelled releases gave nothing back."""
+    out = {}
+    for r in _live_releases(db, client_id, side):
+        key = r.work_order_id if side == "client" else r.sub_order_id
+        out[key] = money(out.get(key, 0.0) + (r.amount or 0))
+    return out
+
+
+def released_by_job(db, client_id, side="client"):
+    out = {}
+    for r in _live_releases(db, client_id, side):
+        out[r.job_id] = money(out.get(r.job_id, 0.0) + (r.amount or 0))
+    return out
+
+
+def contractor_released(db, client_id, order_id=0):
+    return money(sum(r.amount or 0 for r in _live_releases(db, client_id, "contractor")
+                     if not order_id or r.sub_order_id == order_id))
+
+
+def release_or_404(db, client_id, release_id):
+    r = db.query(models.DBRetentionRelease).filter(
+        models.DBRetentionRelease.id == release_id,
+        models.DBRetentionRelease.client_id == client_id).first()
+    if not r:
+        raise HTTPException(404, "Release not found")
+    return r
+
+
+def release_party(db, r):
+    """(party type, name, id) - the client of the job, or the gang."""
+    if r.side == "client":
+        job = db.query(models.DBJob).filter(models.DBJob.id == r.job_id).first()
+        return "client", (job.customer_name if job else ""), None
+    con = db.query(models.DBContractor).filter(
+        models.DBContractor.id == r.contractor_id).first() if r.contractor_id else None
+    return "contractor", (con.company_name if con else ""), r.contractor_id
+
+
+def _order_number(db, r):
+    if r.side == "client":
+        wo = db.query(models.DBWorkOrder).filter(models.DBWorkOrder.id == r.work_order_id).first()
+        return wo.number if wo else ""
+    o = db.query(models.DBSubcontractOrder).filter(
+        models.DBSubcontractOrder.id == r.sub_order_id).first()
+    return (o.wo_number or "") if o else ""
+
+
+def release_dict(db, r, settled=None):
+    got = (settled.get(("retention_release", r.id), 0.0) if settled is not None
+           else settled_on(db, r.client_id, "retention_release", r.id))
+    job = db.query(models.DBJob).filter(models.DBJob.id == r.job_id).first()
+    party_type, party, _ = release_party(db, r)
+    return {
+        "id": r.id, "number": r.number or "", "side": r.side,
+        "stage": r.stage or "", "release_on": r.release_on or "",
+        "order_id": r.work_order_id if r.side == "client" else r.sub_order_id,
+        "order_number": _order_number(db, r),
+        "job_id": r.job_id, "project": ("%s %s" % (job.number or "", job.name or "")).strip() if job else "",
+        "party": party, "party_type": party_type,
+        "amount": money(r.amount), "gst_percent": r.gst_percent or 0,
+        "gst_amount": money(r.gst_amount), "cgst_amount": money(r.cgst_amount),
+        "sgst_amount": money(r.sgst_amount), "igst_amount": money(r.igst_amount),
+        "place_of_supply": r.place_of_supply or "",
+        "net_amount": money(r.net_amount),
+        "settled": money(got),
+        "outstanding": money(max(0.0, (r.net_amount or 0) - got)) if r.status != "CANCELLED" else 0.0,
+        "status": r.status or "CERTIFIED", "notes": r.notes or "",
+        "cancel_reason": r.cancel_reason or "",
+        "created_by_name": r.created_by_name or "", "paid_at": r.paid_at or "",
+        "created_at": r.created_at or "",
+    }
+
+
+def retention_positions(db, client_id, today=None):
+    """Every order with retention on it, both ways: what its certified bills
+    held back, what has been released, and what the next release would be.
+
+    Half at practical completion and the rest at the end of the defects
+    period is how most contracts read, so that is what is suggested - the
+    amount stays the user's to change, and any release up to the balance can
+    be raised."""
+    today = today or date.today()
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client_id).all()}
+    out = []
+
+    def position(side, order_id, order_number, job, party, bills, rate_of, released, extra):
+        held = money(sum(b.retention_amount or 0 for b in bills))
+        if held <= 0:
+            return
+        gone = money(released.get(order_id, 0.0))
+        balance = money(max(0.0, held - gone))
+        latest = max(bills, key=lambda b: (b.sequence or 0, b.id))
+        if gone <= 0:
+            stage, suggest = "Practical completion", money(held / 2.0)
+        else:
+            stage, suggest = "End of defects period", balance
+        row = {
+            "side": side, "order_id": order_id, "order_number": order_number or "",
+            "job_id": job.id if job else None,
+            "project": ("%s %s" % (job.number or "", job.name or "")).strip() if job else "",
+            "job_status": (job.status or "") if job else "",
+            "finished": bool(job and (job.status or "").lower() == JOB_FINISHED),
+            "completed_at": ((job.completed_at or "")[:10]) if job else "",
+            "party": party or "",
+            "bills": len(bills), "claimed": money(sum(b.this_bill or 0 for b in bills)),
+            "held": held, "released": gone, "balance": balance,
+            "gst_percent": rate_of(latest) or 0,
+            "suggest": {"stage": stage, "amount": min(suggest, balance)} if balance > 0 else None,
+            "dlp_ends": "", "dlp_over": False,
+        }
+        row.update(extra)
+        out.append(row)
+
+    # The client's side: retention on our RA bills, per work order.
+    ra_by_wo = {}
+    for b in db.query(models.DBRABill).filter(
+            models.DBRABill.client_id == client_id,
+            models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all():
+        ra_by_wo.setdefault(b.work_order_id, []).append(b)
+    wos = {w.id: w for w in db.query(models.DBWorkOrder).filter(
+        models.DBWorkOrder.client_id == client_id).all()}
+    released = released_retention(db, client_id, "client")
+    for wo_id, bills in ra_by_wo.items():
+        wo = wos.get(wo_id)
+        job = jobs.get(wo.job_id if wo else bills[0].job_id)
+        position("client", wo_id, wo.number if wo else "", job,
+                 job.customer_name if job else "", bills,
+                 lambda b: b.tax_percent, released, {})
+
+    # The gangs' side: retention we held on their bills, per subcontract order.
+    sub_by_order = {}
+    for b in db.query(models.DBSubBill).filter(
+            models.DBSubBill.client_id == client_id,
+            models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all():
+        sub_by_order.setdefault(b.order_id, []).append(b)
+    orders = {o.id: o for o in db.query(models.DBSubcontractOrder).filter(
+        models.DBSubcontractOrder.client_id == client_id).all()}
+    contractors = {c.id: c for c in db.query(models.DBContractor).filter(
+        models.DBContractor.client_id == client_id).all()}
+    released = released_retention(db, client_id, "contractor")
+    for order_id, bills in sub_by_order.items():
+        o = orders.get(order_id)
+        job = jobs.get(o.job_id if o else bills[0].job_id)
+        con = contractors.get(o.contractor_id if o else bills[0].contractor_id)
+        # The defects period runs from the order's completion; the second
+        # half is theirs once it has run out.
+        ends = months_after(o.completion_date, o.defect_liability_months) \
+            if o and o.completion_date and (o.defect_liability_months or 0) > 0 else ""
+        position("contractor", order_id, (o.wo_number if o else ""), job,
+                 con.company_name if con else "", bills, lambda b: b.gst_percent, released,
+                 {"contractor_id": con.id if con else None, "dlp_ends": ends,
+                  "dlp_months": (o.defect_liability_months or 0) if o else 0,
+                  "dlp_over": bool(ends and ends <= today.isoformat())})
+
+    out.sort(key=lambda r: (r["side"] != "client", -r["balance"]))
+    return out
+
+
+@app.get("/api/retention")
+def retention_overview(request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    positions = retention_positions(db, client.id)
+    settled = settled_amounts(db, client.id)
+    releases = [release_dict(db, r, settled) for r in db.query(models.DBRetentionRelease).filter(
+        models.DBRetentionRelease.client_id == client.id).order_by(
+            models.DBRetentionRelease.id.desc()).limit(500).all()]
+    ours = [p for p in positions if p["side"] == "client"]
+    theirs = [p for p in positions if p["side"] == "contractor"]
+    live = [r for r in releases if r["status"] != "CANCELLED"]
+    return {
+        "positions": positions, "releases": releases, "stages": list(RETENTION_STAGES),
+        "summary": {
+            "client_held": money(sum(p["balance"] for p in ours)),
+            "client_released": money(sum(p["released"] for p in ours)),
+            "client_on_finished": money(sum(p["balance"] for p in ours if p["finished"])),
+            "client_to_receive": money(sum(r["outstanding"] for r in live if r["side"] == "client")),
+            "contractor_held": money(sum(p["balance"] for p in theirs)),
+            "contractor_released": money(sum(p["released"] for p in theirs)),
+            "contractor_dlp_over": money(sum(p["balance"] for p in theirs if p["dlp_over"])),
+            "contractor_to_pay": money(sum(r["outstanding"] for r in live if r["side"] == "contractor")),
+        },
+    }
+
+
+class RetentionReleaseIn(BaseModel):
+    side: str = "client"
+    order_id: int
+    stage: Optional[str] = "Practical completion"
+    amount: float
+    release_on: Optional[str] = ""
+    gst_percent: Optional[float] = None
+    notes: Optional[str] = ""
+
+
+@app.post("/api/retention/releases")
+def create_release(body: RetentionReleaseIn, request: Request, db: Session = Depends(get_db)):
+    """Release retention: claim it from the client, or owe it to a gang.
+
+    Never more than is still held on that order. The tax is worked out the
+    way the order's own bills worked theirs out - the site's state against
+    ours, or against the gang's for their side."""
+    side = (body.side or "").strip().lower()
+    if side not in ("client", "contractor"):
+        raise HTTPException(400, "Is this retention the client holds, or retention we hold from a gang?")
+    # Owing a gang money is a decision, as certifying their bill is.
+    client, actor_id, actor_name = wo_actor(
+        request, db, "workorders.manage" if side == "client" else "subcontracts.approve")
+    stage = (body.stage or "").strip()
+    if stage not in RETENTION_STAGES:
+        raise HTTPException(400, "Which stage is this - %s?" % ", ".join(RETENTION_STAGES))
+    amount = money(body.amount or 0)
+    if amount <= 0:
+        raise HTTPException(400, "How much is being released?")
+    pos = next((p for p in retention_positions(db, client.id)
+                if p["side"] == side and p["order_id"] == body.order_id), None)
+    if not pos:
+        raise HTTPException(404, "No retention is held on that order.")
+    if amount > pos["balance"] + 0.009:
+        raise HTTPException(400, "Only %s is still held on %s; %s is more than that."
+                                 % (inr(pos["balance"]), pos["order_number"] or "that order", inr(amount)))
+    on = (body.release_on or date.today().isoformat())[:10]
+    if not _parse_date(on):
+        raise HTTPException(400, "Release date should be YYYY-MM-DD.")
+    rate = pos["gst_percent"] if body.gst_percent is None else max(0.0, min(28.0, float(body.gst_percent)))
+
+    supply = supply_state_for_job(db, pos["job_id"]) if pos["job_id"] else ""
+    if side == "client":
+        origin = our_state(db, client.id)
+    else:
+        origin = contractor_state(db, pos.get("contractor_id")) or our_state(db, client.id)
+    gst = split_gst(amount, rate, origin, supply)
+
+    stem = "RET" if side == "client" else "RETG"
+    n = db.query(models.DBRetentionRelease).filter(
+        models.DBRetentionRelease.client_id == client.id,
+        models.DBRetentionRelease.side == side).count() + 1
+    r = models.DBRetentionRelease(
+        client_id=client.id, side=side,
+        work_order_id=body.order_id if side == "client" else None,
+        sub_order_id=body.order_id if side == "contractor" else None,
+        job_id=pos["job_id"], contractor_id=pos.get("contractor_id"),
+        number="%s-%04d" % (stem, n), stage=stage, release_on=on, amount=amount,
+        gst_percent=rate, gst_amount=gst["total"], cgst_amount=gst["cgst"],
+        sgst_amount=gst["sgst"], igst_amount=gst["igst"], place_of_supply=supply,
+        net_amount=money(amount + gst["total"]), status="CERTIFIED",
+        notes=(body.notes or "").strip()[:500], created_by_name=actor_name or "")
+    db.add(r)
+    db.flush()
+    log_audit(db, client.id, "retention_released", "retention_release", r.id, r.number,
+              "%s %s on %s" % (stage, inr(amount), pos["order_number"]), request)
+    db.commit()
+    db.refresh(r)
+    if side == "client":
+        notify(db, client.id, "retention_released", "%s - retention to claim from %s" % (r.number, pos["party"] or "the client"),
+               "%s released at %s on %s, %s with GST." % (inr(amount), stage.lower(), pos["project"], inr(r.net_amount)),
+               view="money-view", ref_type="retention_release", ref_id=r.id, severity="money")
+    else:
+        notify(db, client.id, "retention_released", "%s - retention due to %s" % (r.number, pos["party"] or "the gang"),
+               "%s released at %s on %s, %s with GST." % (inr(amount), stage.lower(), pos["order_number"], inr(r.net_amount)),
+               view="money-view", ref_type="retention_release", ref_id=r.id, severity="action")
+    db.refresh(r)
+    return {"release": release_dict(db, r),
+            "message": "%s raised: %s released, %s with GST." % (r.number, inr(amount), inr(r.net_amount))}
+
+
+@app.get("/api/retention/releases/{release_id}")
+def get_release(release_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return release_dict(db, release_or_404(db, client.id, release_id))
+
+
+@app.post("/api/retention/releases/{release_id}/cancel")
+def cancel_release(release_id: int, request: Request, body: dict = None,
+                   db: Session = Depends(get_db)):
+    """A release raised in error goes back to being held. Not once money has
+    moved against it - that is voided first, as with any bill."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    r = release_or_404(db, client.id, release_id)
+    reason = ((body or {}).get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(400, "Say why it is being cancelled.")
+    if r.status == "CANCELLED":
+        raise HTTPException(409, "%s is already cancelled." % r.number)
+    refuse_cancel_with_money(db, client.id, "retention_release", r,
+                             "received" if r.side == "client" else "paid")
+    r.status, r.cancel_reason = "CANCELLED", reason[:300]
+    log_audit(db, client.id, "retention_release_cancelled", "retention_release", r.id, r.number, reason, request)
+    db.commit()
+    return {"release": release_dict(db, r), "message": "%s cancelled; the retention is held again." % r.number}
+
+
+@app.get("/api/retention/releases/{release_id}/export.xlsx")
+def export_release(release_id: int, request: Request, db: Session = Depends(get_db)):
+    """The release as a bill: the RA bills whose retention it gives back,
+    then what was held, released before, released now, and the tax."""
+    client = require_erp_read(request, db)
+    r = release_or_404(db, client.id, release_id)
+    d = release_dict(db, r)
+    if r.side == "client":
+        bills = db.query(models.DBRABill).filter(
+            models.DBRABill.work_order_id == r.work_order_id,
+            models.DBRABill.status.in_(("CERTIFIED", "PAID"))).order_by(models.DBRABill.id).all()
+    else:
+        bills = db.query(models.DBSubBill).filter(
+            models.DBSubBill.order_id == r.sub_order_id,
+            models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).order_by(models.DBSubBill.id).all()
+    held = money(sum(b.retention_amount or 0 for b in bills))
+    before = money(sum(x.amount or 0 for x in _live_releases(db, client.id, r.side)
+                       if x.id < r.id and (x.work_order_id, x.sub_order_id) == (r.work_order_id, r.sub_order_id)))
+    rows = [(b.number or "", (b.certified_at or "")[:10], money(b.this_bill),
+             b.retention_percent or 0, money(b.retention_amount)) for b in bills]
+    tax = []
+    if r.cgst_amount or r.sgst_amount:
+        tax = [("CGST @ %s%%" % (d["gst_percent"] / 2), "", "", "", d["cgst_amount"]),
+               ("SGST @ %s%%" % (d["gst_percent"] / 2), "", "", "", d["sgst_amount"])]
+    elif r.igst_amount:
+        tax = [("IGST @ %s%%" % d["gst_percent"], "", "", "", d["igst_amount"])]
+    title = "RETENTION RELEASE" if r.side == "client" else "RETENTION RELEASED TO SUBCONTRACTOR"
+    return sheet_response(
+        ("Bill", "Certified", "Bill value", "Retention %", "Retention held"),
+        rows, "%s.xlsx" % (r.number or "release"),
+        preamble=[(title, client.company_name or ""),
+                  ("Number", d["number"]), ("Date", d["release_on"]),
+                  ("To" if r.side == "client" else "Payable to", d["party"]),
+                  ("Project", d["project"]), ("Order", d["order_number"]),
+                  ("Stage", d["stage"]),
+                  ("Place of supply", d["place_of_supply"]), ("SAC", WORKS_CONTRACT_SAC),
+                  ()],
+        closing=[(), ("Retention held on these bills", "", "", "", held),
+                 ("Released before", "", "", "", -before),
+                 ("Released now", "", "", "", d["amount"])] + tax +
+                [("Total %s" % ("claimed" if r.side == "client" else "payable"), "", "", "", d["net_amount"])] +
+                ([(), ("Note", d["notes"])] if d["notes"] else []))
+
+
+def release_ledger_rows(db, client_id):
+    """Releases in the party ledgers: a claim on the client, or a sum owed to
+    a gang, the day it was raised."""
+    rows = []
+    for r in db.query(models.DBRetentionRelease).filter(
+            models.DBRetentionRelease.client_id == client_id,
+            models.DBRetentionRelease.status.in_(("CERTIFIED", "PAID"))).all():
+        party_type, party, _ = release_party(db, r)
+        rows.append({"party_type": party_type, "party": party, "date": r.release_on or (r.created_at or "")[:10],
+                     "kind": "Retention released" if r.side == "client" else "Their retention released",
+                     "number": r.number, "doc_type": "retention_release", "doc_id": r.id,
+                     "billed": money(r.net_amount), "moved": 0.0, "job_id": r.job_id})
+    return rows
+
+
+def release_gst_rows(db, client_id, side, date_from="", date_to=""):
+    """Releases as supplies for the GST registers - ours outward, the gangs'
+    inward. Taxable is the retention released; the bills taxed the rest."""
+    rows = []
+    for r in db.query(models.DBRetentionRelease).filter(
+            models.DBRetentionRelease.client_id == client_id,
+            models.DBRetentionRelease.side == side,
+            models.DBRetentionRelease.status.in_(("CERTIFIED", "PAID"))).all():
+        on = (r.release_on or r.created_at or "")[:10]
+        if (date_from and on < date_from) or (date_to and on > date_to):
+            continue
+        party_type, party, party_id = release_party(db, r)
+        job = db.query(models.DBJob).filter(models.DBJob.id == r.job_id).first()
+        row = {"kind": "Retention release", "number": r.number or "", "date": on,
+               "party": party, "project": job.name if job else "",
+               "place_of_supply": r.place_of_supply or "",
+               "sac": WORKS_CONTRACT_SAC, "rate": r.gst_percent or 0,
+               "taxable": money(r.amount), "cgst": money(r.cgst_amount), "sgst": money(r.sgst_amount),
+               "igst": money(r.igst_amount), "tax": money(r.gst_amount),
+               "total": money(r.net_amount)}
+        if side == "contractor":
+            con = db.query(models.DBContractor).filter(models.DBContractor.id == party_id).first() if party_id else None
+            row["party_gstin"] = (con.gst_number or "") if con else ""
+        rows.append(row)
+    return rows
+
+
+def release_attention(db, client_id, today):
+    """A gang's defects period that has run out with their retention still
+    held: they will be asking for it, and should be paid it on time."""
+    over = [p for p in retention_positions(db, client_id, today)
+            if p["side"] == "contractor" and p["dlp_over"] and p["balance"] > 0]
+    if not over:
+        return []
+    return [{"kind": "retention_gangs", "severity": "action",
+             "value": money(sum(p["balance"] for p in over)), "count": len(over),
+             "view": "money-view", "title": "Gangs' retention due back",
+             "detail": "%s held on %d order%s whose defects period has run out."
+                       % (inr(sum(p["balance"] for p in over)), len(over), "" if len(over) == 1 else "s")}]
 
 
 # Serve frontend

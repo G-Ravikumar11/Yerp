@@ -3160,3 +3160,45 @@ class DBWorkPermit(Base):
     closed_by = Column(String, default="")
     closure_note = Column(Text, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+# ===========================================================================
+# RETENTION RELEASED
+#
+# Retention is held on every certified bill, both ways: the client holds it
+# from us, and we hold it from the gangs. A release is the document that
+# brings it back - a claim on the client at practical completion or at the
+# end of the defects period, or a payment due to a gang. It carries the GST
+# the bills did not, because each bill charged tax only on what it asked for.
+# ===========================================================================
+
+class DBRetentionRelease(Base):
+    __tablename__ = "retention_releases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    side = Column(String, default="client", index=True)      # client | contractor
+    work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True, index=True)
+    sub_order_id = Column(Integer, ForeignKey("subcontract_orders.id"), nullable=True, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    contractor_id = Column(Integer, ForeignKey("contractors.id"), nullable=True, index=True)
+
+    number = Column(String, default="", index=True)
+    stage = Column(String, default="")
+    release_on = Column(String, default="")
+    amount = Column(Float, default=0.0)            # the retention given back
+    gst_percent = Column(Float, default=0.0)
+    gst_amount = Column(Float, default=0.0)
+    cgst_amount = Column(Float, default=0.0)
+    sgst_amount = Column(Float, default=0.0)
+    igst_amount = Column(Float, default=0.0)
+    place_of_supply = Column(String, default="")
+    net_amount = Column(Float, default=0.0)        # what moves: the release and its tax
+
+    # CERTIFIED (due) | PAID | CANCELLED
+    status = Column(String, default="CERTIFIED", index=True)
+    notes = Column(Text, default="")
+    cancel_reason = Column(String, default="")
+    created_by_name = Column(String, default="")
+    paid_at = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))

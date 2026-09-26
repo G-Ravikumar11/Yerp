@@ -10,7 +10,7 @@
 var LEDGER = { tab: 'parties', accounts: [], suppliers: [], pay: null };
 
 var LEDGER_KIND = { ra_bill: 'Receive against', sub_bill: 'Pay the gang for',
-                    supplier_bill: 'Pay the supplier for', sub_advance: 'Pay the' };
+                    supplier_bill: 'Pay the supplier for', sub_advance: 'Pay the', retention_release: 'Settle' };
 
 async function ledgerAccounts() {
     try {
