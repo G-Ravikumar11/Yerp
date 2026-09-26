@@ -3273,3 +3273,32 @@ class DBPortalUser(Base):
     last_login = Column(String, default="")
     created_by_name = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+# ===========================================================================
+# E-INVOICE REGISTRATIONS
+#
+# What the Invoice Registration Portal gave back for a bill: the IRN, the
+# acknowledgement, and the signed QR the printed invoice has to carry.
+# ===========================================================================
+
+class DBEinvoiceIrn(Base):
+    __tablename__ = "einvoice_irns"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    doc_type = Column(String, default="ra_bill", index=True)     # ra_bill | retention_release
+    doc_id = Column(Integer, nullable=False, index=True)
+    doc_number = Column(String, default="")
+    irn = Column(String, default="", index=True)
+    ack_no = Column(String, default="")
+    ack_date = Column(String, default="")
+    signed_qr = Column(Text, default="")
+    signed_invoice = Column(Text, default="")
+    qr_data = Column(Text, default="")                           # what the QR says, decoded
+    ewb_no = Column(String, default="")
+    status = Column(String, default="ACTIVE", index=True)        # ACTIVE | CANCELLED
+    cancel_reason = Column(String, default="")
+    cancelled_at = Column(String, default="")
+    created_by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))

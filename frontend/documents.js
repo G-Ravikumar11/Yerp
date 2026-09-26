@@ -151,6 +151,7 @@ function docRaBill(b) {
     return '<div class="wo-sheet">' + docWatermark(b.status) +
         docHead(our, 'RUNNING ACCOUNT BILL', b.number,
             '<div class="wo-muted" style="font-size:0.7rem;text-align:right;">RA ' + b.sequence + '</div>') +
+        docEinvoice(b.einvoice) +
 
         '<div class="wo-cols" style="margin-top:14px;"><div>' +
             '<span class="wo-label">Bill to</span>' +
@@ -199,6 +200,20 @@ function docRaBill(b) {
                   ['Certified by', b.certified_by_name || '', b.certified_at ? docDate(b.certified_at) : "Client's Engineer"],
                   ['For ' + (our.name || ''), '', 'Authorised signatory']]) +
         '</div>';
+}
+
+/* The e-invoice registration a B2B tax invoice has to carry: the IRN, the
+   acknowledgement and the portal's signed QR. */
+function docEinvoice(e) {
+    if (!e) return '';
+    return '<div style="display:flex;gap:14px;align-items:center;justify-content:space-between;margin-top:12px;' +
+        'padding:8px 10px;border:1px solid #cbd5e1;border-radius:4px;">' +
+        '<div style="font-size:0.7rem;line-height:1.5;min-width:0;">' +
+            '<div><strong>e-Invoice</strong></div>' +
+            '<div>IRN: <span style="font-family:monospace;word-break:break-all;">' + esc(e.irn) + '</span></div>' +
+            '<div>Ack No: ' + esc(e.ack_no) + ' &nbsp;|&nbsp; Ack Date: ' + esc(e.ack_date) + '</div>' +
+            (e.ewb_no ? '<div>E-way bill: ' + esc(e.ewb_no) + '</div>' : '') +
+        '</div><img src="' + e.qr_url + '" alt="e-Invoice QR" style="width:110px;height:110px;flex:0 0 auto;"></div>';
 }
 
 /* --- The gang's RA bill --------------------------------------------------- */

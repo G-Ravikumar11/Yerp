@@ -158,6 +158,8 @@ async function loadRetention() {
             acts += '<button class="btn btn-sm btn-outline" onclick="openPayBox(\'retention_release\',' + r.id + ',loadMoney)">' +
                 (r.side === 'client' ? 'Receive' : 'Pay') + '</button> ';
         acts += '<a class="btn btn-sm btn-outline" href="/api/retention/releases/' + r.id + '/export.xlsx">Sheet</a>';
+        if (r.side === 'client' && r.status !== 'CANCELLED')
+            acts += ' <button class="btn btn-sm btn-outline" onclick="einvoiceBox(\'retention_release\',' + r.id + ')">e-Invoice</button>';
         if (r.status === 'CERTIFIED' && !r.settled)
             acts += ' <button class="btn btn-sm btn-outline" onclick="rrCancel(' + r.id + ')">Cancel</button>';
         return '<tr style="' + (r.status === 'CANCELLED' ? 'opacity:.55;' : '') + '">' +

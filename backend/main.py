@@ -20249,6 +20249,10 @@ def gst_outward(request: Request, date_from: str = "", date_to: str = "",
             "total": money(taxable + (b.tax_amount or 0)),
         })
     rows.extend(release_gst_rows(db, client.id, "client", date_from, date_to))
+    irns = {r.doc_number: r.irn for r in db.query(models.DBEinvoiceIrn).filter(
+        models.DBEinvoiceIrn.client_id == client.id, models.DBEinvoiceIrn.status == "ACTIVE").all()}
+    for r in rows:
+        r["irn"] = irns.get(r["number"], "")
     by_month, by_rate = {}, {}
     for r in rows:
         m = by_month.setdefault(_month_key(r["date"]), {
@@ -20273,6 +20277,7 @@ def gst_outward(request: Request, date_from: str = "", date_to: str = "",
             "tax": money(sum(r["tax"] for r in rows)),
             "bills": len(rows),
             "missing_place_of_supply": len([r for r in rows if not r["place_of_supply"]]),
+            "without_irn": len([r for r in rows if not r["irn"]]),
         },
     }
 
@@ -20592,6 +20597,7 @@ def ra_bill_dict(db, bill, detail=False):
         row["work_order_detail"] = ({"number": wo.number, "date": wo.order_date or "",
                                      "reference": wo.reference or "",
                                      "value": money(wo.total_value)} if wo else {})
+        row["einvoice"] = irn_brief(db, bill.client_id, "ra_bill", bill.id)
     return row
 
 
@@ -21030,6 +21036,7 @@ def _ra_action(bill_id, action, body, request, db, permission="workorders.manage
     bill = ra_bill_or_404(db, client.id, bill_id)
     if action == "CANCEL":
         refuse_cancel_with_money(db, client.id, "ra_bill", bill, "received")
+        refuse_cancel_with_irn(db, client.id, "ra_bill", bill)
     ra_apply(db, client, bill, action, actor_id, actor_name, body.comments)
     log_audit(db, client.id, "ra_bill_" + action.lower(), "ra_bill", bill.id,
               bill.number, (body.comments or "").strip(), request)
@@ -28320,13 +28327,9 @@ def einvoice_buyer(db, client_id, job):
     return c
 
 
-def einvoice_payload(db, client, bill):
-    """(payload, problems). The payload is only worth sending when the list
-    of problems is empty."""
-    problems = []
-    if bill.status not in ("CERTIFIED", "PAID"):
-        problems.append("the bill is %s - only a certified bill is invoiced" % (bill.status or "").lower())
-    job = db.query(models.DBJob).filter(models.DBJob.id == bill.job_id).first()
+def einvoice_parties(db, client, job, place_of_supply, problems):
+    """The seller and buyer blocks of an e-invoice. Whatever the portal would
+    refuse is named in `problems` instead of being sent."""
     buyer = einvoice_buyer(db, client.id, job)
 
     seller_gstin = (client.gstin or "").strip().upper()
@@ -28350,14 +28353,42 @@ def einvoice_payload(db, client, bill):
     b_pin = b_pin if re.match(r"^\d{6}$", b_pin) else _pin_from(b_addr)
     if buyer and not b_pin:
         problems.append("a six-digit PIN on the client's contact")
-    if not bill.place_of_supply:
+    if not place_of_supply:
         problems.append("the state the site is in (Projects > place of supply)")
-    number = re.sub(r"[^A-Za-z0-9/\-]", "", bill.number or "")
+    b1, b2, bloc = _addr_lines(b_addr)
+    seller = {"Gstin": seller_gstin, "LglNm": (client.company_name or "")[:100],
+              "Addr1": s1 or (client.company_name or "")[:100], "Addr2": s2 or None,
+              "Loc": sloc or "-", "Pin": int(seller_pin) if seller_pin else None,
+              "Stcd": seller_gstin[:2] if seller_gstin else None}
+    buyer_block = {"Gstin": b_gstin,
+                   "LglNm": ((buyer.name if buyer else job.customer_name if job else "") or "")[:100],
+                   "Pos": place_of_supply or None, "Addr1": b1 or "-", "Addr2": b2 or None,
+                   "Loc": bloc or "-", "Pin": int(b_pin) if b_pin else None,
+                   "Stcd": b_gstin[:2] if b_gstin else None}
+    # Leave optional keys out rather than send nulls the portal rejects.
+    return ({k: v for k, v in seller.items() if v is not None},
+            {k: v for k, v in buyer_block.items() if v is not None})
+
+
+def einvoice_doc_number(number):
+    """The portal takes sixteen characters; RA numbers built from order
+    numbers run longer, so the invoice carries a shortened form and the full
+    number rides along as a reference."""
+    number = re.sub(r"[^A-Za-z0-9/\-]", "", number or "")
     if len(number) > 16:
-        # The portal takes sixteen characters; RA numbers built from order
-        # numbers run longer, so the invoice carries a shortened form and
-        # the full number rides along as a reference.
         number = number[-16:].lstrip("/-")
+    return number
+
+
+def einvoice_payload(db, client, bill):
+    """(payload, problems). The payload is only worth sending when the list
+    of problems is empty."""
+    problems = []
+    if bill.status not in ("CERTIFIED", "PAID"):
+        problems.append("the bill is %s - only a certified bill is invoiced" % (bill.status or "").lower())
+    job = db.query(models.DBJob).filter(models.DBJob.id == bill.job_id).first()
+    seller, buyer = einvoice_parties(db, client, job, bill.place_of_supply, problems)
+    number = einvoice_doc_number(bill.number)
 
     lines = db.query(models.DBRABillLine).filter(
         models.DBRABillLine.ra_bill_id == bill.id).order_by(
@@ -28405,28 +28436,18 @@ def einvoice_payload(db, client, bill):
         doc_date = datetime.strptime(on, "%Y-%m-%d").strftime("%d/%m/%Y")
     except ValueError:
         doc_date = datetime.now().strftime("%d/%m/%Y")
-    b1, b2, bloc = _addr_lines(b_addr)
     total_tax = money(used["cgst"] + used["sgst"] + used["igst"])
     payload = {
         "Version": "1.1",
         "TranDtls": {"TaxSch": "GST", "SupTyp": "B2B", "RegRev": "N", "IgstOnIntra": "N"},
         "DocDtls": {"Typ": "INV", "No": number, "Dt": doc_date},
-        "SellerDtls": {"Gstin": seller_gstin, "LglNm": (client.company_name or "")[:100],
-                       "Addr1": s1 or (client.company_name or "")[:100], "Addr2": s2 or None,
-                       "Loc": sloc or "-", "Pin": int(seller_pin) if seller_pin else None,
-                       "Stcd": seller_gstin[:2] if seller_gstin else None},
-        "BuyerDtls": {"Gstin": b_gstin, "LglNm": ((buyer.name if buyer else job.customer_name if job else "") or "")[:100],
-                      "Pos": bill.place_of_supply or None, "Addr1": b1 or "-", "Addr2": b2 or None,
-                      "Loc": bloc or "-", "Pin": int(b_pin) if b_pin else None,
-                      "Stcd": b_gstin[:2] if b_gstin else None},
+        "SellerDtls": seller,
+        "BuyerDtls": buyer,
         "ItemList": items,
         "ValDtls": {"AssVal": used["ass"], "CgstVal": used["cgst"], "SgstVal": used["sgst"],
                     "IgstVal": used["igst"], "TotInvVal": money(used["ass"] + total_tax)},
         "RefDtls": {"InvRm": ("RA bill %s against %s" % (bill.number, job.name if job else ""))[:100]},
     }
-    # Leave optional keys out rather than send nulls the portal rejects.
-    for block in ("SellerDtls", "BuyerDtls"):
-        payload[block] = {k: v for k, v in payload[block].items() if v is not None}
     if money(payload["ValDtls"]["TotInvVal"]) != money(bill.this_bill - deductions + (bill.tax_amount or 0)):
         problems.append("the tax on the bill does not add up - redraw the bill")
     return payload, problems
@@ -30903,6 +30924,7 @@ def cancel_release(release_id: int, request: Request, body: dict = None,
         raise HTTPException(409, "%s is already cancelled." % r.number)
     refuse_cancel_with_money(db, client.id, "retention_release", r,
                              "received" if r.side == "client" else "paid")
+    refuse_cancel_with_irn(db, client.id, "retention_release", r)
     r.status, r.cancel_reason = "CANCELLED", reason[:300]
     log_audit(db, client.id, "retention_release_cancelled", "retention_release", r.id, r.number, reason, request)
     db.commit()
@@ -32116,6 +32138,341 @@ def portal_send_invoice(request: Request, file: UploadFile = File(...),
                inr(b.total), (" against " + po.number) if po else ""),
            view="bills-view", ref_type="supplier_bill", ref_id=b.id, severity="action")
     return {"ok": True, "message": "Invoice %s received. The office will check it against the delivery." % number}
+
+
+# ============================================================================
+# E-INVOICE: WHAT THE PORTAL GAVE BACK
+#
+# The file goes up to the Invoice Registration Portal and an IRN comes back,
+# with an acknowledgement and a QR code the portal has signed. A B2B invoice
+# without that QR printed on it is not a valid tax invoice, so the three are
+# kept against the bill and the QR goes on the print.
+#
+# The QR is the portal's own signed statement of what it registered - the
+# seller, the buyer, the invoice number, the value and the IRN - so it is
+# read before it is accepted. A response pasted against the wrong bill is
+# refused with what does not match, rather than printed on a bill it does
+# not belong to. (Its signature is the portal's to vouch for; reading it
+# needs no key, checking the signature would need NIC's.)
+# ============================================================================
+
+EINVOICE_DOC_TYPES = ("ra_bill", "retention_release")
+IRN_CANCEL_HOURS = 24
+
+
+def einvoice_release_payload(db, client, r):
+    """A retention release claimed from the client, as an e-invoice: one
+    line, the retention given back, at the rate the release was taxed at."""
+    problems = []
+    if r.side != "client":
+        problems.append("a gang's release is their invoice to us, not ours")
+    if r.status not in ("CERTIFIED", "PAID"):
+        problems.append("the release is %s" % (r.status or "").lower())
+    job = db.query(models.DBJob).filter(models.DBJob.id == r.job_id).first()
+    seller, buyer = einvoice_parties(db, client, job, r.place_of_supply, problems)
+    ass = money(r.amount)
+    try:
+        doc_date = datetime.strptime((r.release_on or "")[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
+    except ValueError:
+        doc_date = datetime.now().strftime("%d/%m/%Y")
+    payload = {
+        "Version": "1.1",
+        "TranDtls": {"TaxSch": "GST", "SupTyp": "B2B", "RegRev": "N", "IgstOnIntra": "N"},
+        "DocDtls": {"Typ": "INV", "No": einvoice_doc_number(r.number), "Dt": doc_date},
+        "SellerDtls": seller, "BuyerDtls": buyer,
+        "ItemList": [{"SlNo": "1", "PrdDesc": ("Retention released - %s" % (r.stage or "")).strip()[:300],
+                      "IsServc": "Y", "HsnCd": WORKS_CONTRACT_SAC, "Qty": 1, "Unit": "OTH",
+                      "UnitPrice": ass, "TotAmt": ass, "Discount": 0, "AssAmt": ass,
+                      "GstRt": r.gst_percent or 0, "IgstAmt": money(r.igst_amount),
+                      "CgstAmt": money(r.cgst_amount), "SgstAmt": money(r.sgst_amount),
+                      "TotItemVal": money(r.net_amount)}],
+        "ValDtls": {"AssVal": ass, "CgstVal": money(r.cgst_amount), "SgstVal": money(r.sgst_amount),
+                    "IgstVal": money(r.igst_amount), "TotInvVal": money(r.net_amount)},
+        "RefDtls": {"InvRm": ("Retention released, %s" % (job.name if job else ""))[:100]},
+    }
+    return payload, problems
+
+
+def einvoice_document(db, client, doc_type, doc_id):
+    """(the bill, its e-invoice payload, what is missing)."""
+    if doc_type == "ra_bill":
+        doc = ra_bill_or_404(db, client.id, doc_id)
+        payload, problems = einvoice_payload(db, client, doc)
+    elif doc_type == "retention_release":
+        doc = release_or_404(db, client.id, doc_id)
+        payload, problems = einvoice_release_payload(db, client, doc)
+    else:
+        raise HTTPException(404, "Not a document that is e-invoiced")
+    return doc, payload, problems
+
+
+def _signed_qr_data(token):
+    """What a signed QR says: the JWT's payload, whose "data" is the invoice
+    summary the portal registered. None when it is not one."""
+    parts = (token or "").strip().split(".")
+    if len(parts) != 3 or not parts[1]:
+        return None
+    try:
+        raw = parts[1] + "=" * (-len(parts[1]) % 4)
+        body = json.loads(base64.urlsafe_b64decode(raw.encode("ascii")).decode("utf-8"))
+    except (ValueError, UnicodeError):
+        return None
+    data = body.get("data") if isinstance(body, dict) else None
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except ValueError:
+            return None
+    return data if isinstance(data, dict) else None
+
+
+def _pick(obj, *names):
+    low = {str(k).lower(): v for k, v in (obj or {}).items()}
+    for n in names:
+        v = low.get(n.lower())
+        if v not in (None, ""):
+            return v
+    return None
+
+
+def parse_irn_input(body):
+    """The IRN, acknowledgement and signed QR - from the portal's response
+    pasted whole, or from the fields typed in one by one."""
+    raw = body.get("response")
+    src = {}
+    if isinstance(raw, str) and raw.strip():
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            raise HTTPException(400, "That is not the portal's response. Paste the JSON it gave back, "
+                                     "or fill in the IRN, acknowledgement and QR below.")
+    if isinstance(raw, list):
+        raw = raw[0] if raw else {}
+    if isinstance(raw, dict):
+        # Some responses carry the result inside: {"Status": 1, "Data": "{...}"}.
+        inner = _pick(raw, "Data", "Result")
+        if isinstance(inner, str):
+            try:
+                inner = json.loads(inner)
+            except ValueError:
+                inner = None
+        src = inner if isinstance(inner, dict) and _pick(inner, "Irn") else raw
+    got = {
+        "irn": _pick(src, "Irn") or body.get("irn"),
+        "ack_no": _pick(src, "AckNo", "AckNum") or body.get("ack_no"),
+        "ack_date": _pick(src, "AckDt", "AckDate") or body.get("ack_date"),
+        "signed_qr": _pick(src, "SignedQRCode", "SignedQrCode") or body.get("signed_qr"),
+        "signed_invoice": _pick(src, "SignedInvoice") or body.get("signed_invoice"),
+        "ewb_no": _pick(src, "EwbNo") or body.get("ewb_no"),
+    }
+    return {k: (str(v).strip() if v is not None else "") for k, v in got.items()}
+
+
+def ack_datetime(text):
+    t = (text or "").strip().split(".")[0].replace("T", " ")
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %I:%M:%S %p",
+                "%d-%m-%Y %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(t, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def irn_dict(row):
+    ack = ack_datetime(row.ack_date)
+    try:
+        qr = json.loads(row.qr_data or "{}")
+    except ValueError:
+        qr = {}
+    return {"id": row.id, "doc_type": row.doc_type, "doc_id": row.doc_id, "doc_number": row.doc_number or "",
+            "irn": row.irn or "", "ack_no": row.ack_no or "", "ack_date": row.ack_date or "",
+            "ewb_no": row.ewb_no or "", "status": row.status or "ACTIVE",
+            "cancel_reason": row.cancel_reason or "", "cancelled_at": row.cancelled_at or "",
+            "created_by_name": row.created_by_name or "", "created_at": row.created_at or "",
+            "qr_url": "/api/einvoice/irns/%d/qr.svg" % row.id,
+            "registered": {"doc_no": qr.get("DocNo", ""), "doc_date": qr.get("DocDt", ""),
+                           "value": qr.get("TotInvVal"), "buyer_gstin": qr.get("BuyerGstin", "")},
+            "cancellable": bool(row.status == "ACTIVE" and ack and
+                                datetime.now() - ack <= timedelta(hours=IRN_CANCEL_HOURS))}
+
+
+def active_irn(db, client_id, doc_type, doc_id):
+    return db.query(models.DBEinvoiceIrn).filter(
+        models.DBEinvoiceIrn.client_id == client_id, models.DBEinvoiceIrn.doc_type == doc_type,
+        models.DBEinvoiceIrn.doc_id == doc_id, models.DBEinvoiceIrn.status == "ACTIVE").first()
+
+
+def irn_brief(db, client_id, doc_type, doc_id):
+    row = active_irn(db, client_id, doc_type, doc_id)
+    return irn_dict(row) if row else None
+
+
+def refuse_cancel_with_irn(db, client_id, doc_type, doc):
+    """A bill registered on the portal is cancelled there first. Cancelling
+    it here alone would leave a live IRN for an invoice the books no longer
+    have - and the client's GSTR-2B would still show it."""
+    row = active_irn(db, client_id, doc_type, doc.id)
+    if row:
+        raise HTTPException(409, "%s has IRN %s... on the e-invoice portal. Cancel the IRN first "
+                                 "(within %d hours of registering it), or raise a credit note."
+                                 % (doc.number, row.irn[:12], IRN_CANCEL_HOURS))
+
+
+def qr_svg(text, size=180):
+    """The QR as one SVG path - a signed QR is a thousand characters, and
+    drawn a square at a time it came to half a megabyte."""
+    from reportlab.graphics.barcode import qrencoder
+    q = qrencoder.QRCode(None, qrencoder.QRErrorCorrectLevel.M)
+    q.addData(text)
+    q.make()
+    n, quiet = q.getModuleCount(), 4
+    parts = []
+    for r in range(n):
+        c = 0
+        while c < n:
+            if q.isDark(r, c):
+                start = c
+                while c < n and q.isDark(r, c):
+                    c += 1
+                parts.append("M%d %dh%dv1h-%dz" % (start + quiet, r + quiet, c - start, c - start))
+            else:
+                c += 1
+    total = n + 2 * quiet
+    return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" width="%d" height="%d" '
+            'shape-rendering="crispEdges"><rect width="%d" height="%d" fill="#fff"/>'
+            '<path fill="#000" d="%s"/></svg>' % (total, total, size, size, total, total, "".join(parts)))
+
+
+@app.get("/api/einvoice/irns")
+def list_irns(request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    rows = db.query(models.DBEinvoiceIrn).filter(models.DBEinvoiceIrn.client_id == client.id).order_by(
+        models.DBEinvoiceIrn.id.desc()).limit(500).all()
+    return {"irns": [irn_dict(r) for r in rows]}
+
+
+@app.get("/api/einvoice/irns/{irn_id}/qr.svg")
+def irn_qr(irn_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    row = db.query(models.DBEinvoiceIrn).filter(models.DBEinvoiceIrn.id == irn_id,
+                                                models.DBEinvoiceIrn.client_id == client.id).first()
+    if not row or not row.signed_qr:
+        raise HTTPException(404, "No QR for that")
+    return Response(content=qr_svg(row.signed_qr), media_type="image/svg+xml",
+                    headers={"Cache-Control": "private, max-age=86400"})
+
+
+@app.post("/api/einvoice/irns/{irn_id}/cancel")
+def cancel_irn(irn_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """Record that the IRN was cancelled on the portal. The portal cancels
+    only within a day of registering; after that a mistake is put right
+    with a credit note, and this refuses to pretend otherwise."""
+    client, _, actor_name = wo_actor(request, db)
+    row = db.query(models.DBEinvoiceIrn).filter(models.DBEinvoiceIrn.id == irn_id,
+                                                models.DBEinvoiceIrn.client_id == client.id).first()
+    if not row:
+        raise HTTPException(404, "IRN not found")
+    if row.status != "ACTIVE":
+        raise HTTPException(409, "That IRN is already cancelled.")
+    reason = ((body or {}).get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(400, "The reason given on the portal - duplicate, data entry mistake, order cancelled.")
+    if not irn_dict(row)["cancellable"]:
+        raise HTTPException(409, "The portal cancels an IRN only within %d hours of registering it. "
+                                 "Past that, correct the invoice with a credit note." % IRN_CANCEL_HOURS)
+    row.status, row.cancel_reason = "CANCELLED", reason[:200]
+    row.cancelled_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_audit(db, client.id, "irn_cancelled", row.doc_type, row.doc_id, row.doc_number, reason, request)
+    db.commit()
+    return {"irn": irn_dict(row), "message": "IRN for %s recorded as cancelled." % row.doc_number}
+
+
+@app.get("/api/einvoice/{doc_type}/{doc_id}")
+def einvoice_status(doc_type: str, doc_id: int, request: Request, db: Session = Depends(get_db)):
+    """Everything the e-invoice box shows: whether the bill can go to the
+    portal, what is missing if not, and the IRN if it has been."""
+    client = require_erp_read(request, db)
+    doc, payload, problems = einvoice_document(db, client, doc_type, doc_id)
+    history = db.query(models.DBEinvoiceIrn).filter(
+        models.DBEinvoiceIrn.client_id == client.id, models.DBEinvoiceIrn.doc_type == doc_type,
+        models.DBEinvoiceIrn.doc_id == doc.id).order_by(models.DBEinvoiceIrn.id.desc()).all()
+    return {"number": doc.number or "", "ready": not problems, "missing": problems,
+            "payload": payload if not problems else None,
+            "irn": next((irn_dict(h) for h in history if h.status == "ACTIVE"), None),
+            "history": [irn_dict(h) for h in history if h.status != "ACTIVE"]}
+
+
+@app.get("/api/einvoice/{doc_type}/{doc_id}/json")
+def einvoice_file(doc_type: str, doc_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    doc, payload, problems = einvoice_document(db, client, doc_type, doc_id)
+    if problems:
+        raise HTTPException(409, "Not ready for the portal - still needed: " + "; ".join(problems) + ".")
+    name = re.sub(r"[^A-Za-z0-9]+", "_", doc.number or doc_type)
+    return StreamingResponse(io.BytesIO(json.dumps([payload], indent=2, ensure_ascii=False).encode("utf-8")),
+                             media_type="application/json",
+                             headers={"Content-Disposition": 'attachment; filename="einvoice_%s.json"' % name})
+
+
+@app.post("/api/einvoice/{doc_type}/{doc_id}/irn")
+def record_irn(doc_type: str, doc_id: int, request: Request, body: dict = None,
+               db: Session = Depends(get_db)):
+    client, _, actor_name = wo_actor(request, db)
+    doc, payload, problems = einvoice_document(db, client, doc_type, doc_id)
+    if problems:
+        raise HTTPException(409, "%s is not ready for the portal - still needed: %s."
+                                 % (doc.number, "; ".join(problems)))
+    f = parse_irn_input(body or {})
+    irn = f["irn"].lower()
+    if not re.match(r"^[0-9a-f]{64}$", irn):
+        raise HTTPException(400, "An IRN is 64 characters, the digits 0-9 and letters a-f.")
+    if not re.match(r"^\d{10,20}$", f["ack_no"]):
+        raise HTTPException(400, "The acknowledgement number - the long number the portal gave with the IRN.")
+    ack = ack_datetime(f["ack_date"])
+    if not ack:
+        raise HTTPException(400, "The acknowledgement date and time, as the portal gave it.")
+    if not f["signed_qr"]:
+        raise HTTPException(400, "The signed QR code (SignedQRCode). The printed invoice has to carry it.")
+    qr = _signed_qr_data(f["signed_qr"])
+    if qr is None:
+        raise HTTPException(400, "That signed QR could not be read. Copy it whole - it is one long line "
+                                 "with two dots in it.")
+    wrong = []
+    if qr.get("Irn") and str(qr["Irn"]).lower() != irn:
+        wrong.append("the QR carries a different IRN")
+    if qr.get("SellerGstin") and str(qr["SellerGstin"]).upper() != payload["SellerDtls"].get("Gstin", ""):
+        wrong.append("it was registered by %s, not us" % qr["SellerGstin"])
+    if qr.get("BuyerGstin") and str(qr["BuyerGstin"]).upper() != payload["BuyerDtls"].get("Gstin", ""):
+        wrong.append("its buyer is %s, this bill's is %s" % (qr["BuyerGstin"], payload["BuyerDtls"].get("Gstin", "")))
+    if qr.get("DocNo") and str(qr["DocNo"]).upper() != payload["DocDtls"]["No"].upper():
+        wrong.append("it is invoice %s, this bill goes up as %s" % (qr["DocNo"], payload["DocDtls"]["No"]))
+    try:
+        if qr.get("TotInvVal") is not None and abs(float(qr["TotInvVal"]) - payload["ValDtls"]["TotInvVal"]) > 1:
+            wrong.append("it is for %s, this bill is %s" % (inr(float(qr["TotInvVal"])),
+                                                            inr(payload["ValDtls"]["TotInvVal"])))
+    except (TypeError, ValueError):
+        wrong.append("its value could not be read")
+    if wrong:
+        raise HTTPException(409, "That is not %s's registration: %s." % (doc.number, "; ".join(wrong)))
+    if active_irn(db, client.id, doc_type, doc.id):
+        raise HTTPException(409, "%s already has an IRN. Cancel that one first." % doc.number)
+    other = db.query(models.DBEinvoiceIrn).filter(models.DBEinvoiceIrn.client_id == client.id,
+                                                  models.DBEinvoiceIrn.irn == irn,
+                                                  models.DBEinvoiceIrn.status == "ACTIVE").first()
+    if other:
+        raise HTTPException(409, "That IRN is already on %s." % other.doc_number)
+    row = models.DBEinvoiceIrn(
+        client_id=client.id, doc_type=doc_type, doc_id=doc.id, doc_number=doc.number or "", irn=irn,
+        ack_no=f["ack_no"], ack_date=ack.strftime("%Y-%m-%d %H:%M:%S"), signed_qr=f["signed_qr"],
+        signed_invoice=f["signed_invoice"][:200000], qr_data=json.dumps(qr)[:4000],
+        ewb_no=re.sub(r"\D", "", f["ewb_no"])[:12], created_by_name=actor_name or "")
+    db.add(row)
+    db.flush()
+    log_audit(db, client.id, "irn_recorded", doc_type, doc.id, doc.number, "IRN %s..., ack %s" % (irn[:12], f["ack_no"]),
+              request)
+    db.commit()
+    return {"irn": irn_dict(row), "message": "IRN recorded on %s. The QR now prints on the bill." % doc.number}
 
 
 # Serve frontend
