@@ -3062,6 +3062,9 @@
 
                     <!-- LIVE TAB -->
                     <div id="att-sub-live">
+                        <div class="widget" style="margin-bottom:16px;"><div class="widget-header"><h3>Today by site</h3>
+                            <span style="font-size:0.78rem;color:var(--text-secondary);">clock-ins inside each project's site location</span></div>
+                            <div id="att-by-site" style="padding:10px 16px;"></div></div>
                         <div class="grid-5 mb-24" id="att-stats-grid">
                             <section class="widget" style="padding:20px;">
                                 <div style="color:var(--text-secondary);font-size:0.82rem;margin-bottom:8px;">Total Employees</div>
@@ -4874,7 +4877,14 @@
                     </div>
                     <div class="form-group"><label>Site address</label><input type="text" id="job-site" class="form-control">
                             <div class="form-group" style="margin-top:10px;"><label>State the site is in (GST place of supply)</label>
-                                <select id="job-state" class="form-control"><option value="">Not set</option></select></div></div>
+                                <select id="job-state" class="form-control"><option value="">Not set</option></select></div>
+                            <div class="form-group" style="margin-top:10px;"><label>Site location, for attendance</label>
+                                <div style="display:flex;gap:6px;">
+                                    <input type="text" id="job-geo" class="form-control" style="flex:1;" placeholder="17.4239, 78.3413 - or paste a Google Maps link">
+                                    <input type="number" id="job-geo-radius" class="form-control" style="width:96px;" placeholder="300 m" title="How far from that point still counts as on site, in metres">
+                                    <button type="button" class="btn btn-outline btn-sm" onclick="useMyLocation()" title="Standing on site? Use where you are">Here</button>
+                                </div>
+                                <p style="font-size:0.72rem;color:var(--text-secondary);margin:3px 0 0;">Staff who clock in inside it are counted on this project.</p></div></div>
                     <div class="grid-2 gap-16">
                         <div class="form-group"><label>Quoted value</label><input type="number" step="0.01" min="0" id="job-quoted" class="form-control" value="0"></div>
                         <div class="form-group"><label>Cost budget</label><input type="number" step="0.01" min="0" id="job-budget" class="form-control" value="0"></div>
@@ -5231,12 +5241,12 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=116"></script>
+    <script src="app.js?v=117"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=65"></script>
     <!-- Jobs, job costing and purchase orders. -->
-    <script src="jobs.js?v=110"></script>
+    <script src="jobs.js?v=117"></script>
     <!-- Item master, work orders and budget allocation. -->
     <script src="erp.js?v=90"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->

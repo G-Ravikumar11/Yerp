@@ -2995,3 +2995,19 @@ class DBAlertRead(Base):
     alert_id = Column(Integer, ForeignKey("office_alerts.id"), nullable=False, index=True)
     viewer = Column(String, default="owner", index=True)
     read_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBSiteGeofence(Base):
+    """Where a project's site is, for attendance: a point and how far from it
+    still counts as on site. A clock-in inside it is tagged to the project -
+    the man-hours land on the job they were worked on."""
+    __tablename__ = "site_geofences"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True, unique=True)
+    lat = Column(Float, default=0.0)
+    lng = Column(Float, default=0.0)
+    radius_m = Column(Float, default=300.0)
+    set_by_name = Column(String, default="")
+    updated_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))

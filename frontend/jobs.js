@@ -186,9 +186,62 @@ function showJobModal() {
     document.getElementById('job-retention').value = 0;
     fillJobStatePicker('');
     if (typeof fillCustomerNames === 'function') fillCustomerNames();
+    document.getElementById('job-geo').value = '';
+    document.getElementById('job-geo-radius').value = '';
+    document.getElementById('job-geo').dataset.was = '';
     openModal('job-modal');
 }
 window.showJobModal = showJobModal;
+
+// Standing on the site: its position from the phone or laptop.
+function useMyLocation() {
+    if (!navigator.geolocation) { showToast('This browser cannot tell where it is', 'error'); return; }
+    navigator.geolocation.getCurrentPosition(function (p) {
+        document.getElementById('job-geo').value = p.coords.latitude.toFixed(6) + ', ' + p.coords.longitude.toFixed(6);
+        showToast('Position taken - accurate to about ' + Math.round(p.coords.accuracy) + ' m.', 'success');
+    }, function () { showToast('Location was not allowed', 'error'); }, { enableHighAccuracy: true, timeout: 15000 });
+}
+window.useMyLocation = useMyLocation;
+
+async function saveSiteLocation(jobId) {
+    var box = document.getElementById('job-geo');
+    var text = (box.value || '').trim();
+    var radius = parseFloat(document.getElementById('job-geo-radius').value) || 300;
+    if (!text) {
+        if (box.dataset.was) await fetch('/api/jobs/' + jobId + '/site-location', { method: 'DELETE', credentials: 'include' });
+        return;
+    }
+    var res = await fetch('/api/jobs/' + jobId + '/site-location', {
+        method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ position: text, radius_m: radius }) });
+    if (!res.ok) {
+        var out = await res.json().catch(function () { return {}; });
+        showToast(out.detail || 'The site location was not saved', 'error');
+    }
+}
+
+async function loadAttendanceBySite() {
+    var host = document.getElementById('att-by-site');
+    if (!host) return;
+    var d = await (await fetch('/api/attendance/by-site', { credentials: 'include' })).json();
+    if (!d.fenced_sites) {
+        host.innerHTML = '<p style="color:var(--text-secondary);font-size:0.84rem;">No project has a site location yet. Add one on the project ' +
+            '(Projects &rarr; Edit &rarr; Site location) and clock-ins there are counted on it.</p>';
+        return;
+    }
+    var person = function (p) {
+        return '<span style="display:inline-block;margin:2px 6px 2px 0;padding:2px 8px;border-radius:12px;background:var(--bg-hover,rgba(0,0,0,.05));font-size:0.78rem;">' +
+            esc(p.employee) + (p.job_title ? ' <span style="color:var(--text-secondary);">' + esc(p.job_title) + '</span>' : '') +
+            ' &middot; ' + esc((p.clock_in || '').slice(0, 5)) + '</span>';
+    };
+    host.innerHTML = (d.sites || []).map(function (s) {
+        return '<div style="padding:6px 0;border-bottom:1px solid var(--border-color);"><strong>' + esc(s.project) + '</strong> ' +
+            '<span style="color:var(--text-secondary);font-size:0.8rem;">' + s.people.length + ' on site</span><div>' +
+            (s.people.map(person).join('') || '<span style="font-size:0.78rem;color:var(--text-secondary);">nobody clocked in here</span>') + '</div></div>';
+    }).join('') + (d.elsewhere.length ? '<div style="padding:6px 0;"><strong style="color:var(--warning-color);">Not at any site</strong><div>' +
+        d.elsewhere.map(person).join('') + '</div></div>' : '');
+}
+window.loadAttendanceBySite = loadAttendanceBySite;
 
 function closeJobModal() {
     var modal = document.getElementById('job-modal');
@@ -214,6 +267,12 @@ function editJob(id) {
     document.getElementById('job-start').value = job.start_date || '';
     document.getElementById('job-end').value = job.target_end_date || '';
     document.getElementById('job-description').value = job.description || '';
+    fetch('/api/jobs/' + job.id + '/site-location', { credentials: 'include' }).then(function (r) { return r.json(); }).then(function (g) {
+        var box = document.getElementById('job-geo');
+        box.value = g.set ? g.lat + ', ' + g.lng : '';
+        box.dataset.was = g.set ? '1' : '';
+        document.getElementById('job-geo-radius').value = g.set ? g.radius_m : '';
+    }).catch(function () {});
 }
 window.editJob = editJob;
 
@@ -249,6 +308,7 @@ async function saveJob() {
         });
         var data = await res.json();
         if (!res.ok) { showToast(data.detail || 'Could not save', 'error'); return; }
+        await saveSiteLocation(id || data.id);
         showToast(id ? 'Project updated' : 'Project created', 'success');
         closeJobModal();
         _jobPickerCache = null;

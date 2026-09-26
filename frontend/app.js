@@ -4591,7 +4591,7 @@ showView = function(viewId) {
     if (viewId === 'departments-view') fetchDepartments();
     if (viewId === 'onboarding-hub-view') { loadOnboardingHub(); loadDocumentQueue(); loadExpiringDocuments(); loadOnboardingPipeline(); }
     if (viewId === 'payroll-view') { fetchPayslips(currentPsFilter); loadPayrollAnomalies(); }
-    if (viewId === 'attendance-view') { loadAttendanceStats(); loadAttendanceButtons(); loadAttendance(); loadLiveAttendance(); loadAttendanceSettings(); switchAttTab('live'); }
+    if (viewId === 'attendance-view') { loadAttendanceStats(); loadAttendanceButtons(); loadAttendance(); loadLiveAttendance(); loadAttendanceSettings(); switchAttTab('live'); if (typeof loadAttendanceBySite === 'function') loadAttendanceBySite(); }
     if (viewId === 'orgchart-view') loadOrgChart();
     if (viewId === 'recruitment-view') {
         loadRecAnalytics();

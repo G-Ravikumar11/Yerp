@@ -11720,11 +11720,16 @@ def employee_login(request: Request, body: dict = None, db: Session = Depends(ge
                 check_type = "office"
             else:
                 check_type = "field"
+    site, _ = site_for_point(db, emp.client_id, lat, lng)
+    if site:
+        check_type = "site"
     att = models.DBAttendance(
         client_id=emp.client_id, employee_id=emp.id, date=today,
         clock_in=now_str, status="present", check_type=check_type,
         ip_address=ip, device_info=device,
-        location_lat=lat, location_lng=lng, location_label=loc_label,
+        location_lat=lat, location_lng=lng,
+        location_label=loc_label or (("%s %s" % (site.number, site.name)) if site else ""),
+        job_id=site.id if site else None,
     )
     db.add(att)
     db.commit()
@@ -11873,9 +11878,14 @@ def employee_clock_in(request: Request, body: dict = None, db: Session = Depends
         except (ValueError, TypeError):
             pass
 
+    site, _ = site_for_point(db, client_id, lat, lng)
+    if site:
+        check_type = "site"
+        loc_label = loc_label or "%s %s" % (site.number, site.name)
     if existing:
         # A row may already exist for today (e.g. marked absent); reuse it
         # rather than creating a duplicate for the same employee and date.
+        existing.job_id = site.id if site else existing.job_id
         existing.clock_in = now_str
         existing.status = status
         existing.check_type = check_type
@@ -11891,12 +11901,15 @@ def employee_clock_in(request: Request, body: dict = None, db: Session = Depends
             clock_in=now_str, status=status, check_type=check_type,
             ip_address=ip, device_info=device,
             location_lat=lat, location_lng=lng, location_label=loc_label,
+            job_id=site.id if site else None,
         )
         db.add(att)
     db.commit()
     return {
-        "message": "Clocked in", "clock_in": now_str, "check_type": check_type,
+        "message": ("Clocked in at %s" % loc_label) if site else "Clocked in",
+        "clock_in": now_str, "check_type": check_type,
         "status": status, "minutes_late": minutes_late,
+        "site": ({"job_id": site.id, "name": "%s %s" % (site.number, site.name)} if site else None),
     }
 
 @app.post("/api/employee/attendance/clock-out")
@@ -29601,6 +29614,141 @@ def job_morning_digest(db, now):
                "\n".join(lines), view="dashboard-view", severity="action")
         sent += 1
     return "%d digest(s)" % sent
+
+
+# ============================================================================
+# SITE LOCATIONS FOR ATTENDANCE
+#
+# The office was the only place a clock-in was checked against, so a site
+# engineer on a site twenty kilometres out read as "field" every day and his
+# hours landed on no project. Each project can carry its site's position and
+# how far from it still counts as on site; a clock-in inside one is tagged to
+# that project, and one outside every site says so.
+# ============================================================================
+
+def distance_m(lat1, lng1, lat2, lng2):
+    from math import radians, cos, sin, asin, sqrt
+    dlat = radians(lat2 - lat1)
+    dlng = radians(lng2 - lng1)
+    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlng / 2) ** 2
+    return 2 * 6371000 * asin(sqrt(a))
+
+
+def site_for_point(db, client_id, lat, lng):
+    """(job, metres) for the nearest site whose circle the point is inside,
+    or (None, metres to the nearest site) when it is inside none."""
+    if not (lat and lng):
+        return None, None
+    best, best_d, nearest = None, None, None
+    for g in db.query(models.DBSiteGeofence).filter(models.DBSiteGeofence.client_id == client_id).all():
+        d = distance_m(g.lat, g.lng, lat, lng)
+        nearest = d if nearest is None else min(nearest, d)
+        if d <= (g.radius_m or 300) and (best_d is None or d < best_d):
+            best, best_d = g, d
+    if not best:
+        return None, nearest
+    job = db.query(models.DBJob).filter(models.DBJob.id == best.job_id).first()
+    return job, best_d
+
+
+def parse_position(text):
+    """A position from how people have one: "17.4239, 78.3413", or a Google
+    Maps link with @17.4239,78.3413 or ?q=17.4239,78.3413 in it."""
+    m = re.search(r"(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})", text or "")
+    if not m:
+        return None
+    lat, lng = float(m.group(1)), float(m.group(2))
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return None
+    return lat, lng
+
+
+class SiteLocationIn(BaseModel):
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    position: Optional[str] = ""       # or pasted: "17.42, 78.34" or a maps link
+    radius_m: Optional[float] = 300
+
+
+@app.get("/api/jobs/{job_id}/site-location")
+def get_site_location(job_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    job = job_or_404(db, client.id, job_id)
+    g = db.query(models.DBSiteGeofence).filter(models.DBSiteGeofence.job_id == job.id).first()
+    if not g:
+        return {"set": False, "job_id": job.id}
+    return {"set": True, "job_id": job.id, "lat": g.lat, "lng": g.lng, "radius_m": g.radius_m,
+            "set_by_name": g.set_by_name or "", "updated_at": g.updated_at or "",
+            "map": "https://www.google.com/maps?q=%s,%s" % (g.lat, g.lng)}
+
+
+@app.put("/api/jobs/{job_id}/site-location")
+def set_site_location(job_id: int, body: SiteLocationIn, request: Request, db: Session = Depends(get_db)):
+    client, _, actor_name = wo_actor(request, db)
+    job = job_or_404(db, client.id, job_id)
+    lat, lng = body.lat, body.lng
+    if (lat is None or lng is None) and body.position:
+        got = parse_position(body.position)
+        if not got:
+            raise HTTPException(400, "Paste the position as 17.4239, 78.3413 or a Google Maps link to the site.")
+        lat, lng = got
+    if lat is None or lng is None or not (-90 <= lat <= 90 and -180 <= lng <= 180) or (lat == 0 and lng == 0):
+        raise HTTPException(400, "Where is the site? Use your location on site, or paste it from Google Maps.")
+    radius = max(50.0, min(5000.0, float(body.radius_m or 300)))
+    g = db.query(models.DBSiteGeofence).filter(models.DBSiteGeofence.job_id == job.id).first()
+    if not g:
+        g = models.DBSiteGeofence(client_id=client.id, job_id=job.id)
+        db.add(g)
+    g.lat, g.lng, g.radius_m = round(lat, 6), round(lng, 6), radius
+    g.set_by_name, g.updated_at = actor_name, datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    db.commit()
+    return get_site_location(job_id, request, db)
+
+
+@app.delete("/api/jobs/{job_id}/site-location")
+def clear_site_location(job_id: int, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    job = job_or_404(db, client.id, job_id)
+    db.query(models.DBSiteGeofence).filter(models.DBSiteGeofence.job_id == job.id).delete()
+    db.commit()
+    return {"set": False, "job_id": job.id}
+
+
+@app.get("/api/attendance/by-site")
+def attendance_by_site(request: Request, day: str = "", db: Session = Depends(get_db)):
+    """Who clocked in where on a day: each site with the people inside its
+    circle, and anybody who clocked in outside every site."""
+    client = require_erp_read(request, db)
+    day = (day or date.today().isoformat())[:10]
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client.id).all()}
+    fenced = {g.job_id: g for g in db.query(models.DBSiteGeofence).filter(
+        models.DBSiteGeofence.client_id == client.id).all()}
+    people = {e.id: e for e in db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id).all()}
+    sites, elsewhere = {}, []
+    for a in db.query(models.DBAttendance).filter(models.DBAttendance.client_id == client.id,
+                                                  models.DBAttendance.date == day).all():
+        if not a.clock_in:
+            continue
+        e = people.get(a.employee_id)
+        row = {"employee": ("%s %s" % (e.first_name or "", e.last_name or "")).strip() if e else "",
+               "job_title": (e.job_title or "") if e else "", "clock_in": a.clock_in or "",
+               "clock_out": a.clock_out or "", "hours": a.total_hours or 0, "check_type": a.check_type or "",
+               "located": bool(a.location_lat and a.location_lng)}
+        if a.job_id and a.job_id in jobs:
+            j = jobs[a.job_id]
+            sites.setdefault(a.job_id, {"job_id": j.id, "project": "%s %s" % (j.number or "", j.name or ""),
+                                        "fenced": a.job_id in fenced, "people": []})["people"].append(row)
+        else:
+            elsewhere.append(row)
+    for jid, g in fenced.items():
+        if jid in jobs and jid not in sites:
+            j = jobs[jid]
+            sites[jid] = {"job_id": j.id, "project": "%s %s" % (j.number or "", j.name or ""),
+                          "fenced": True, "people": []}
+    return {"day": day, "sites": sorted(sites.values(), key=lambda x: -len(x["people"])),
+            "elsewhere": elsewhere, "fenced_sites": len(fenced),
+            "summary": {"on_site": sum(len(x["people"]) for x in sites.values()),
+                        "elsewhere": len(elsewhere)}}
 
 
 # Serve frontend
