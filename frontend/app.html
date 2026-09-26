@@ -113,6 +113,7 @@
                             <a href="#" class="nav-item" id="nav-schedule" onclick="event.preventDefault();showView('schedule-view')">Programme &amp; Progress</a>
                             <a href="#" class="nav-item" id="nav-drawings" onclick="event.preventDefault();showView('drawings-view')">Drawings &amp; Photos</a>
                             <a href="#" class="nav-item" id="nav-quality" onclick="event.preventDefault();showView('quality-view')">Quality</a>
+                            <a href="#" class="nav-item" id="nav-safety" onclick="event.preventDefault();showView('safety-view')">Safety</a>
                             <a href="#" class="nav-item" id="nav-diary" onclick="event.preventDefault();showView('diary-view')">Site Diary</a>
                             <a href="#" class="nav-item" id="nav-equipment" onclick="event.preventDefault();showView('equipment-view')">Equipment &amp; Plant</a>
                             <a href="#" class="nav-item" id="nav-pnl" onclick="event.preventDefault();showView('pnl-view')">Project Profit</a>
@@ -3917,6 +3918,72 @@
                     <div id="lead-detail"></div>
                 </div>
 
+                <div id="safety-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Safety</h1><p class="subtitle">Incidents and near misses with their cause and fix, the morning toolbox talk, and permits to work</p></div>
+                        <div class="invoices-actions">
+                            <select id="sf-job" class="form-control" style="width:auto;min-width:220px;" onchange="loadSafety()"></select>
+                            <button class="btn btn-primary" onclick="sfNew()">+ New</button>
+                        </div>
+                    </div>
+                    <div class="stats-grid" id="sf-stats"></div>
+                    <div class="invoices-tabs" id="sf-tabs" style="margin:16px 0;">
+                        <button class="tab active" data-tab="incidents" onclick="sfTab('incidents')">Incidents</button>
+                        <button class="tab" data-tab="talks" onclick="sfTab('talks')">Toolbox talks</button>
+                        <button class="tab" data-tab="permits" onclick="sfTab('permits')">Permits to work</button>
+                    </div>
+                    <div id="sf-body"></div>
+                </div>
+
+                <div id="sfi-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:600px;">
+                        <div class="modal-header"><h3>Report an incident</h3><button class="modal-close" onclick="closeModal('sfi-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-row">
+                                <div class="form-group"><label>What kind</label><select id="sfi-kind" class="form-control"></select></div>
+                                <div class="form-group"><label>On</label><input type="date" id="sfi-date" class="form-control"></div>
+                                <div class="form-group"><label>At</label><input type="time" id="sfi-time" class="form-control"></div>
+                            </div>
+                            <div class="form-group"><label>Where</label><input id="sfi-where" class="form-control" placeholder="Tower A, level 3"></div>
+                            <div class="form-group"><label>What happened *</label><textarea id="sfi-what" class="form-control" rows="3"></textarea></div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Who was hurt</label><input id="sfi-who" class="form-control"></div>
+                                <div class="form-group"><label>Injury</label><input id="sfi-injury" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Treatment</label><input id="sfi-treat" class="form-control" placeholder="First aid on site, hospital..."></div>
+                                <div class="form-group"><label>Days lost</label><input type="number" id="sfi-lost" class="form-control"></div>
+                            </div>
+                            <div class="form-group"><label>What was done straight away</label><input id="sfi-action" class="form-control"></div>
+                        </div>
+                        <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('sfi-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="sfReport()">Report it</button></div>
+                    </div>
+                </div>
+
+                <div id="sfp-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:600px;">
+                        <div class="modal-header"><h3>Permit to work</h3><button class="modal-close" onclick="closeModal('sfp-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-row">
+                                <div class="form-group"><label>For</label><select id="sfp-kind" class="form-control" onchange="sfPermitKind()"></select></div>
+                                <div class="form-group"><label>Where</label><input id="sfp-where" class="form-control"></div>
+                            </div>
+                            <div class="form-group"><label>The work</label><input id="sfp-what" class="form-control"></div>
+                            <div class="form-row">
+                                <div class="form-group"><label>From</label><input type="datetime-local" id="sfp-from" class="form-control"></div>
+                                <div class="form-group"><label>Until (one shift at most)</label><input type="datetime-local" id="sfp-to" class="form-control"></div>
+                            </div>
+                            <div class="form-group"><label>Who does the work *</label><input id="sfp-who" class="form-control"></div>
+                            <div style="padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;">
+                                <div style="font-weight:600;font-size:0.84rem;margin-bottom:4px;">In place before it is issued</div>
+                                <div id="sfp-checks"></div></div>
+                        </div>
+                        <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('sfp-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="sfPermitIssue()">Issue the permit</button></div>
+                    </div>
+                </div>
+
                 <div id="quality-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div><h1>Quality</h1><p class="subtitle">Checklists walked before work is covered, cubes read against the grade, and non-conformances followed to a close</p></div>
@@ -5300,7 +5367,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=118"></script>
+    <script src="app.js?v=119"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=65"></script>
@@ -5336,6 +5403,7 @@
     <script src="files.js?v=115"></script>
     <script src="alerts.js?v=116"></script>
     <script src="quality.js?v=118"></script>
+    <script src="safety.js?v=120"></script>
     <script src="leads.js?v=110"></script>
     <script src="schedule.js?v=99"></script>
     <script src="stores.js?v=108"></script>

@@ -28507,6 +28507,27 @@ def attention_elsewhere(db, client_id, jobs, today):
     except Exception as exc:
         logger.error("Quality items failed: %s", exc)
 
+    # --- safety: permits run out and still open, injuries not closed -----
+    stale = db.query(models.DBWorkPermit).filter(
+        models.DBWorkPermit.client_id == client_id, models.DBWorkPermit.status == "ACTIVE",
+        models.DBWorkPermit.valid_to != "",
+        models.DBWorkPermit.valid_to < datetime.now().strftime("%Y-%m-%d %H:%M")).count()
+    if stale:
+        items.append({"kind": "permits_expired", "severity": "wrong", "value": 0.0, "count": stale,
+                      "view": "safety-view", "title": "Permits run out, still open",
+                      "detail": "%d permit%s to work past their time and not closed. Either the work "
+                                "stopped and nobody closed it, or it is going on without a permit."
+                                % (stale, "" if stale == 1 else "s")})
+    serious = db.query(models.DBSafetyIncident).filter(
+        models.DBSafetyIncident.client_id == client_id, models.DBSafetyIncident.status == "OPEN",
+        models.DBSafetyIncident.kind.in_(SERIOUS_KINDS)).count()
+    if serious:
+        items.append({"kind": "incidents_open", "severity": "wrong", "value": 0.0, "count": serious,
+                      "view": "safety-view", "title": "Serious incidents not closed",
+                      "detail": "%d lost-time injur%s or dangerous occurrence%s without a root cause "
+                                "and a fix on record." % (serious, "y" if serious == 1 else "ies",
+                                                          "" if serious == 1 else "s")})
+
     # --- goods on the road without an e-way bill --------------------------
     covered = {r for (r,) in db.query(models.DBEwayBill.source_ref).filter(
         models.DBEwayBill.client_id == client_id,
@@ -29117,6 +29138,12 @@ def attachment_target(db, client_id, attached_type, attached_id):
         if not i:
             raise HTTPException(404, "Inspection not found")
         return i.job_id, False
+    if t == "incident":
+        x = db.query(models.DBSafetyIncident).filter(models.DBSafetyIncident.id == attached_id,
+                                                     models.DBSafetyIncident.client_id == client_id).first()
+        if not x:
+            raise HTTPException(404, "Incident not found")
+        return x.job_id, False
     if t == "ncr":
         n = db.query(models.DBNcr).filter(models.DBNcr.id == attached_id,
                                           models.DBNcr.client_id == client_id).first()
@@ -29424,6 +29451,7 @@ NOTIFY_KINDS = {
     "money_in": "Money received",
     "money_out": "Money paid out",
     "qc_failed": "A quality check failed or an NCR was raised",
+    "safety_incident": "A safety incident or near miss was reported",
     "daily_digest": "The morning list of what needs looking at",
 }
 # Out of the box: the bell for everything, email for the money and the digest.
@@ -30196,6 +30224,255 @@ def close_ncr(nid: int, body: NcrCloseIn, request: Request, db: Session = Depend
     n.closure_note = body.closure_note.strip()
     db.commit()
     return {"ncr": ncr_dict(n)}
+
+
+# ============================================================================
+# SAFETY: INCIDENTS, TOOLBOX TALKS AND PERMITS TO WORK
+#
+# A near miss written down is the cheapest lesson a site will ever get; the
+# same one not written down is the next accident. Every incident is logged
+# with what was done and why it happened, the morning toolbox talk with who
+# stood through it, and dangerous work - hot work, heights, confined spaces -
+# only on a permit that says until when, on which precautions, and is closed
+# when the work stops.
+# ============================================================================
+
+INCIDENT_KINDS = ("Near miss", "First aid", "Medical treatment", "Lost time injury",
+                  "Property damage", "Dangerous occurrence", "Fatality")
+SERIOUS_KINDS = ("Lost time injury", "Dangerous occurrence", "Fatality")
+PERMIT_PRECAUTIONS = {
+    "Work at height": ["Full body harness, anchored", "Scaffold tagged and inspected", "Guard rails and toe boards",
+                       "Safety net or fall arrest below", "Area below barricaded", "Ladders tied and footed"],
+    "Hot work": ["Combustibles cleared 11 m around", "Fire extinguisher at hand", "Fire watch posted, stays 30 min after",
+                 "Gas cylinders upright, flashback arrestors fitted", "Welding screens in place"],
+    "Confined space": ["Atmosphere tested - oxygen, gas", "Forced ventilation running", "Standby person at the entry",
+                       "Rescue tripod and harness ready", "Entry and exit logged"],
+    "Excavation": ["Underground services located and marked", "Shoring or benching per depth", "Spoil kept 1 m back from the edge",
+                   "Edge barricaded and lit", "Ladder within reach every 30 m", "Dewatering arranged"],
+    "Electrical isolation": ["Isolated at source", "Locked and tagged out", "Tested dead before touching",
+                             "Earthed", "Authorised electrician only"],
+    "Lifting": ["Crane certificate and operator licence checked", "Load within the chart", "Slings and shackles inspected",
+                "Tag lines on the load", "Area cleared under the lift", "Signaller appointed"],
+}
+
+
+def incident_dict(i):
+    return {"id": i.id, "job_id": i.job_id, "number": i.number, "happened_on": i.happened_on or "",
+            "happened_at": i.happened_at or "", "kind": i.kind, "location": i.location or "",
+            "description": i.description or "", "injured_name": i.injured_name or "", "injury": i.injury or "",
+            "treatment": i.treatment or "", "lost_days": i.lost_days or 0,
+            "immediate_action": i.immediate_action or "", "root_cause": i.root_cause or "",
+            "corrective_action": i.corrective_action or "", "reported_by": i.reported_by or "",
+            "status": i.status, "closed_on": i.closed_on or "", "closure_note": i.closure_note or "",
+            "serious": i.kind in SERIOUS_KINDS}
+
+
+def permit_dict(p):
+    try:
+        pre = json.loads(p.precautions or "[]")
+    except ValueError:
+        pre = []
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    return {"id": p.id, "job_id": p.job_id, "number": p.number, "kind": p.kind, "location": p.location or "",
+            "description": p.description or "", "valid_from": p.valid_from or "", "valid_to": p.valid_to or "",
+            "issued_by": p.issued_by or "", "receiver": p.receiver or "", "precautions": pre,
+            "status": p.status, "closed_at": p.closed_at or "", "closed_by": p.closed_by or "",
+            "closure_note": p.closure_note or "",
+            "expired": p.status == "ACTIVE" and bool(p.valid_to) and p.valid_to < now}
+
+
+class IncidentIn(BaseModel):
+    job_id: int
+    kind: str
+    description: str
+    happened_on: Optional[str] = ""
+    happened_at: Optional[str] = ""
+    location: Optional[str] = ""
+    injured_name: Optional[str] = ""
+    injury: Optional[str] = ""
+    treatment: Optional[str] = ""
+    lost_days: Optional[float] = 0
+    immediate_action: Optional[str] = ""
+    root_cause: Optional[str] = ""
+    corrective_action: Optional[str] = ""
+
+
+@app.get("/api/safety")
+def safety_overview(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+    """Everything on the safety screen for one project, or every project."""
+    client = require_erp_read(request, db)
+
+    def scoped(model):
+        q = db.query(model).filter(model.client_id == client.id)
+        return q.filter(model.job_id == job_id) if job_id else q
+    incidents = [incident_dict(i) for i in scoped(models.DBSafetyIncident).order_by(models.DBSafetyIncident.id.desc()).all()]
+    talks = scoped(models.DBToolboxTalk).order_by(models.DBToolboxTalk.held_on.desc(), models.DBToolboxTalk.id.desc()).all()
+    permits = [permit_dict(p) for p in scoped(models.DBWorkPermit).order_by(models.DBWorkPermit.id.desc()).all()]
+    today = date.today()
+    ltis = sorted([i["happened_on"] for i in incidents if i["kind"] in ("Lost time injury", "Fatality") and i["happened_on"]])
+    try:
+        since = (today - datetime.strptime(ltis[-1], "%Y-%m-%d").date()).days if ltis else None
+    except ValueError:
+        since = None
+    month = today.strftime("%Y-%m")
+    week_ago = (today - timedelta(days=7)).isoformat()
+    return {"incidents": incidents,
+            "talks": [{"id": t.id, "job_id": t.job_id, "held_on": t.held_on, "topic": t.topic,
+                       "conducted_by": t.conducted_by or "", "attendees": t.attendees or 0,
+                       "attendee_names": t.attendee_names or "", "minutes": t.minutes or 0,
+                       "notes": t.notes or ""} for t in talks],
+            "permits": permits, "kinds": list(INCIDENT_KINDS), "permit_kinds": PERMIT_PRECAUTIONS,
+            "summary": {"days_without_lti": since,
+                        "incidents_this_month": len([i for i in incidents if (i["happened_on"] or "")[:7] == month]),
+                        "near_misses": len([i for i in incidents if i["kind"] == "Near miss"]),
+                        "open": len([i for i in incidents if i["status"] == "OPEN"]),
+                        "talks_this_week": len([t for t in talks if (t.held_on or "") >= week_ago]),
+                        "active_permits": len([p for p in permits if p["status"] == "ACTIVE" and not p["expired"]]),
+                        "expired_open": len([p for p in permits if p["expired"]])}}
+
+
+@app.post("/api/safety/incidents")
+def report_incident(body: IncidentIn, request: Request, db: Session = Depends(get_db)):
+    client, _, actor_name = wo_actor(request, db)
+    job = job_or_404(db, client.id, body.job_id)
+    if body.kind not in INCIDENT_KINDS:
+        raise HTTPException(400, "What kind: " + ", ".join(INCIDENT_KINDS))
+    if not (body.description or "").strip():
+        raise HTTPException(400, "Say what happened.")
+    if body.kind in ("First aid", "Medical treatment", "Lost time injury", "Fatality") and not (body.injured_name or "").strip():
+        raise HTTPException(400, "Who was hurt?")
+    i = models.DBSafetyIncident(
+        client_id=client.id, job_id=job.id, number=next_number(db, models.DBSafetyIncident, client.id, "INC"),
+        happened_on=(body.happened_on or date.today().isoformat())[:10], happened_at=(body.happened_at or "")[:5],
+        kind=body.kind, location=(body.location or "").strip(), description=body.description.strip(),
+        injured_name=(body.injured_name or "").strip(), injury=(body.injury or "").strip(),
+        treatment=(body.treatment or "").strip(), lost_days=max(0.0, float(body.lost_days or 0)),
+        immediate_action=(body.immediate_action or "").strip(), root_cause=(body.root_cause or "").strip(),
+        corrective_action=(body.corrective_action or "").strip(), reported_by=actor_name)
+    db.add(i)
+    db.commit()
+    notify(db, client.id, "safety_incident", "%s on %s: %s" % (i.kind, job.name, i.number),
+           i.description[:300], view="safety-view", ref_type="incident", ref_id=i.id,
+           severity="wrong" if i.kind in SERIOUS_KINDS else "action")
+    return {"incident": incident_dict(i)}
+
+
+class IncidentCloseIn(BaseModel):
+    root_cause: Optional[str] = ""
+    corrective_action: Optional[str] = ""
+    closure_note: Optional[str] = ""
+
+
+@app.post("/api/safety/incidents/{iid}/close")
+def close_incident(iid: int, body: IncidentCloseIn, request: Request, db: Session = Depends(get_db)):
+    """Closed only with why it happened and what stops it happening again."""
+    client, _, _ = wo_actor(request, db)
+    i = db.query(models.DBSafetyIncident).filter(models.DBSafetyIncident.id == iid,
+                                                 models.DBSafetyIncident.client_id == client.id).first()
+    if not i:
+        raise HTTPException(404, "Incident not found")
+    if i.status == "CLOSED":
+        raise HTTPException(409, "%s is already closed." % i.number)
+    i.root_cause = (body.root_cause or "").strip() or i.root_cause
+    i.corrective_action = (body.corrective_action or "").strip() or i.corrective_action
+    if not (i.root_cause and i.corrective_action):
+        raise HTTPException(400, "Close it with why it happened and what stops it happening again.")
+    i.status, i.closed_on, i.closure_note = "CLOSED", date.today().isoformat(), (body.closure_note or "").strip()
+    db.commit()
+    return {"incident": incident_dict(i)}
+
+
+class TalkIn(BaseModel):
+    job_id: int
+    topic: str
+    held_on: Optional[str] = ""
+    attendees: Optional[int] = 0
+    attendee_names: Optional[str] = ""
+    minutes: Optional[int] = 15
+    notes: Optional[str] = ""
+
+
+@app.post("/api/safety/talks")
+def record_talk(body: TalkIn, request: Request, db: Session = Depends(get_db)):
+    client, _, actor_name = wo_actor(request, db)
+    job = job_or_404(db, client.id, body.job_id)
+    if not (body.topic or "").strip():
+        raise HTTPException(400, "What was the talk about?")
+    names = [n.strip() for n in re.split(r"[,\n]+", body.attendee_names or "") if n.strip()]
+    count = max(int(body.attendees or 0), len(names))
+    if count < 1:
+        raise HTTPException(400, "How many stood through it?")
+    t = models.DBToolboxTalk(client_id=client.id, job_id=job.id, held_on=(body.held_on or date.today().isoformat())[:10],
+                             topic=body.topic.strip(), conducted_by=actor_name, attendees=count,
+                             attendee_names=", ".join(names), minutes=max(1, int(body.minutes or 15)),
+                             notes=(body.notes or "").strip())
+    db.add(t)
+    db.commit()
+    return {"ok": True, "id": t.id}
+
+
+class PermitIn(BaseModel):
+    job_id: int
+    kind: str
+    location: Optional[str] = ""
+    description: Optional[str] = ""
+    valid_from: Optional[str] = ""
+    valid_to: str
+    receiver: Optional[str] = ""
+    precautions: Optional[list] = None
+
+
+@app.post("/api/safety/permits")
+def issue_permit(body: PermitIn, request: Request, db: Session = Depends(get_db)):
+    """Issued only with every precaution for that kind of work ticked, and
+    for one shift at most."""
+    client, _, actor_name = wo_actor(request, db)
+    job = job_or_404(db, client.id, body.job_id)
+    if body.kind not in PERMIT_PRECAUTIONS:
+        raise HTTPException(400, "Which permit: " + ", ".join(PERMIT_PRECAUTIONS))
+    start = (body.valid_from or datetime.now().strftime("%Y-%m-%d %H:%M")).replace("T", " ")[:16]
+    end = (body.valid_to or "").replace("T", " ")[:16]
+    try:
+        a, b = datetime.strptime(start, "%Y-%m-%d %H:%M"), datetime.strptime(end, "%Y-%m-%d %H:%M")
+    except ValueError:
+        raise HTTPException(400, "When it runs from and to, as date and time.")
+    if b <= a or b - a > timedelta(hours=12):
+        raise HTTPException(400, "A permit runs for one shift at most - twelve hours - and ends after it starts.")
+    given = {(x.get("item") if isinstance(x, dict) else str(x)): bool(x.get("done")) if isinstance(x, dict) else True
+             for x in (body.precautions or [])}
+    missing = [p for p in PERMIT_PRECAUTIONS[body.kind] if not given.get(p)]
+    if missing:
+        raise HTTPException(409, "Not issued - still to be in place: %s." % "; ".join(missing))
+    if not (body.receiver or "").strip():
+        raise HTTPException(400, "Who is doing the work?")
+    p = models.DBWorkPermit(client_id=client.id, job_id=job.id, number=next_number(db, models.DBWorkPermit, client.id, "PTW"),
+                            kind=body.kind, location=(body.location or "").strip(), description=(body.description or "").strip(),
+                            valid_from=start, valid_to=end, issued_by=actor_name, receiver=body.receiver.strip(),
+                            precautions=json.dumps([{"item": x, "done": True} for x in PERMIT_PRECAUTIONS[body.kind]]))
+    db.add(p)
+    db.commit()
+    return {"permit": permit_dict(p)}
+
+
+class PermitCloseIn(BaseModel):
+    note: Optional[str] = ""
+    cancel: Optional[bool] = False
+
+
+@app.post("/api/safety/permits/{pid}/close")
+def close_permit(pid: int, body: PermitCloseIn, request: Request, db: Session = Depends(get_db)):
+    client, _, actor_name = wo_actor(request, db)
+    p = db.query(models.DBWorkPermit).filter(models.DBWorkPermit.id == pid,
+                                             models.DBWorkPermit.client_id == client.id).first()
+    if not p:
+        raise HTTPException(404, "Permit not found")
+    if p.status != "ACTIVE":
+        raise HTTPException(409, "%s is already %s." % (p.number, p.status.lower()))
+    p.status = "CANCELLED" if body.cancel else "CLOSED"
+    p.closed_at, p.closed_by = datetime.now().strftime("%Y-%m-%d %H:%M"), actor_name
+    p.closure_note = (body.note or "").strip()
+    db.commit()
+    return {"permit": permit_dict(p)}
 
 
 # Serve frontend
