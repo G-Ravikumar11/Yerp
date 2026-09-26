@@ -376,6 +376,11 @@ async function openStatement(type, party) {
     DOC.back = (typeof currentView === 'string' && currentView) || 'ledger-view';
     showView('document-view');
     document.getElementById('document-title').textContent = 'Statement of account';
+    var pdf = document.getElementById('doc-pdf');
+    if (pdf) {
+        pdf.style.display = '';
+        pdf.href = '/api/ledger/statement.pdf?party_type=' + encodeURIComponent(type) + '&party=' + encodeURIComponent(party);
+    }
     host.innerHTML = '<p style="text-align:center;padding:40px;color:var(--text-secondary);">Drawing up the statement...</p>';
     var d = await (await fetch('/api/ledger/statement?party_type=' + encodeURIComponent(type) +
                                '&party=' + encodeURIComponent(party), { credentials: 'include' })).json();

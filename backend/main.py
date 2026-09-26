@@ -31966,6 +31966,7 @@ def _portal_bills(db, u, party, party_name):
             if b.status == "PAID" and not got:
                 got = money(b.net_payable)
             out.append({"id": b.id, "number": b.number or "", "status": b.status,
+                        "pdf": "/api/portal/bills/%d/document.pdf" % b.id,
                         "where": {"SUBMITTED": "with the engineer to certify", "CERTIFIED": "passed for payment",
                                   "PAID": "paid"}[b.status],
                         "date": (b.certified_at or b.created_at or "")[:10],
@@ -33398,6 +33399,313 @@ def check_sheet_rows(kind: str, request: Request, body: dict = None, db: Session
             row[k] = sheet_number(r.get(k))
         rows.append(row)
     return {"problems": {str(k): v for k, v in _check_sheet_rows(db, client.id, kind, rows).items()}}
+
+
+# ============================================================================
+# THE SITE ENGINEER'S DAY
+#
+# Staff open the app on a phone, on a site, with a job to do. What they need
+# first is not four statistics but their day: am I clocked in, is today's
+# diary written, is anything open on my sites that should not be - and, for a
+# supervisor, what is waiting for my signature. One call, the sites they are
+# assigned to, nothing of anybody else's.
+# ============================================================================
+
+@app.get("/api/employee/today")
+def employee_today(request: Request, db: Session = Depends(get_db)):
+    emp = get_employee_user(request, db)
+    today = date.today().isoformat()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    q = db.query(models.DBJob).filter(models.DBJob.client_id == emp.client_id,
+                                      ~models.DBJob.status.in_(JOB_CLOSED_STATUSES))
+    allowed = employee_site_ids(db, emp)
+    if allowed is not None:
+        q = q.filter(models.DBJob.id.in_(allowed or {0}))
+    jobs = q.order_by(models.DBJob.number).limit(30).all()
+    me = "employee:%d" % emp.id
+    sites, waiting = [], []
+    signoff = employee_can(emp, "site.signoff")
+    for j in jobs:
+        diary = db.query(models.DBSiteDiary).filter(models.DBSiteDiary.client_id == emp.client_id,
+                                                    models.DBSiteDiary.job_id == j.id,
+                                                    models.DBSiteDiary.diary_date == today).first()
+        permits = db.query(models.DBWorkPermit).filter(models.DBWorkPermit.client_id == emp.client_id,
+                                                       models.DBWorkPermit.job_id == j.id,
+                                                       models.DBWorkPermit.status == "ACTIVE").all()
+        overdue = [p for p in permits if (p.valid_to or "") and p.valid_to[:16] < now]
+        incidents = db.query(models.DBSafetyIncident).filter(models.DBSafetyIncident.client_id == emp.client_id,
+                                                             models.DBSafetyIncident.job_id == j.id,
+                                                             models.DBSafetyIncident.status == "OPEN").count()
+        inspections = db.query(models.DBInspection).filter(models.DBInspection.client_id == emp.client_id,
+                                                           models.DBInspection.job_id == j.id,
+                                                           ~models.DBInspection.result.in_(("PASSED", "FAILED"))).count()
+        unread = 0
+        for t in db.query(models.DBProjectThread).filter(models.DBProjectThread.client_id == emp.client_id,
+                                                         models.DBProjectThread.job_id == j.id,
+                                                         models.DBProjectThread.closed.is_(False)).all():
+            unread += db.query(models.DBProjectMessage).filter(
+                models.DBProjectMessage.thread_id == t.id, models.DBProjectMessage.author != me,
+                models.DBProjectMessage.deleted.is_(False),
+                models.DBProjectMessage.id > _last_read(db, t.id, me)).count()
+        sites.append({"job_id": j.id, "number": j.number or "", "name": j.name or "",
+                      "diary": ({"id": diary.id, "status": diary.status} if diary else None),
+                      "permits_live": len(permits), "permits_overdue": len(overdue),
+                      "incidents_open": incidents, "inspections_open": inspections, "unread": unread})
+        if signoff:
+            drafts = db.query(models.DBSiteDiary).filter(models.DBSiteDiary.client_id == emp.client_id,
+                                                         models.DBSiteDiary.job_id == j.id,
+                                                         models.DBSiteDiary.status == "DRAFT",
+                                                         models.DBSiteDiary.diary_date < today).count()
+            if drafts:
+                waiting.append({"kind": "diary", "job_id": j.id, "view": "diary-view",
+                                "text": "%d diary day%s on %s to sign off" % (drafts, "" if drafts == 1 else "s", j.name)})
+            if overdue:
+                waiting.append({"kind": "permits", "job_id": j.id, "view": "safety-view",
+                                "text": "%d permit%s on %s ran out and %s still open" % (
+                                    len(overdue), "" if len(overdue) == 1 else "s", j.name,
+                                    "is" if len(overdue) == 1 else "are")})
+            if incidents:
+                waiting.append({"kind": "incidents", "job_id": j.id, "view": "safety-view",
+                                "text": "%d incident%s on %s to close" % (incidents, "" if incidents == 1 else "s", j.name)})
+    att = db.query(models.DBAttendance).filter(models.DBAttendance.client_id == emp.client_id,
+                                               models.DBAttendance.employee_id == emp.id,
+                                               models.DBAttendance.date == today).first()
+    at_site = None
+    if att and att.job_id:
+        j = db.query(models.DBJob).filter(models.DBJob.id == att.job_id).first()
+        at_site = j.name if j else None
+    return {"date": today, "name": ("%s %s" % (emp.first_name or "", emp.last_name or "")).strip(),
+            "clock": {"in": (att.clock_in or "")[:5] if att else "", "out": (att.clock_out or "")[:5] if att else "",
+                      "site": at_site or ""},
+            "sites": sites, "waiting": waiting}
+
+
+# --- The purchase order and the gang's bill in the same form ------------------------
+
+def po_form_spec(db, client, order):
+    """The purchase order: supplier with GSTIN, the lines with their GST, the
+    total in words, delivery and payment, and the signatures."""
+    d = purchase_order_to_dict(db, order)
+    sig = doc_signatories(db, client.id)
+    sup = next((s for s in db.query(models.DBSupplier).filter(models.DBSupplier.client_id == client.id).all()
+                if norm_name(s.name) == norm_name(order.supplier_name)), None)
+    our = d.get("our") or our_party(db, client.id)
+    company = {"name": our.get("name") or client.company_name or "", "address": our.get("address") or "",
+               "gstin": our.get("gstin") or client.gstin or "", "pan": "",
+               "state": _state_line(our.get("gstin") or client.gstin), "logo_url": our.get("logo_url") or ""}
+    job = db.query(models.DBJob).filter(models.DBJob.id == order.job_id).first() if order.job_id else None
+    rows, sub = [], 0.0
+    for i, l in enumerate(d.get("line_items") or [], 1):
+        amt = money((l.get("qty") or 0) * (l.get("price") or 0))
+        sub += amt
+        rows.append([str(i), l.get("item_code") or "", l.get("description") or "", l.get("uom") or "",
+                     form_pdf.qty_text(l.get("qty")), form_pdf.plain_number(l.get("price")),
+                     str(l.get("tax_rate") or "").replace("GST", "").strip(), form_pdf.plain_number(amt)])
+    days = (sup.payment_days if sup and sup.payment_days else 30)
+    deliver = d.get("deliver_to") or (job.site_address if job else "") or "As instructed"
+    signatures = [("Supplier Acceptance", order.supplier_name or ""),
+                  ("Prepared By", _sig_line(sig["prepared"])), ("Proposed By", _sig_line(sig["proposed"])),
+                  ("Recommended By", _sig_line(sig["recommended"])), ("Authorized Signatory", _sig_line(sig["authorised"]))]
+    blocks = [
+        {"type": "header", "company": company, "title": "PURCHASE ORDER",
+         "facts": [("PO No", d.get("number") or ""), ("Date", form_pdf.date_text(d.get("issue_date"))),
+                   ("Needed By", form_pdf.date_text(d.get("needed_by")) or "-"),
+                   ("Project", (job.number if job else "") or "General")]},
+        {"type": "party", "label": "Supplier Name", "name": order.supplier_name or "",
+         "address": (sup.address if sup else "") or "",
+         "facts": [("GSTIN No.", (sup.gstin if sup else "") or ""), ("PAN No", (sup.pan if sup else "") or "")]},
+        {"type": "pairs", "cols": 2, "rows": [("Contact Person", (sup.contact_person if sup else "") or ""),
+                                              ("Mobile No.", (sup.phone if sup else "") or ""),
+                                              ("Email", order.supplier_email or (sup.email if sup else "") or ""),
+                                              ("Reference", d.get("reference") or "-")]},
+        {"type": "table", "columns": [("#", 6, "C"), ("Item Code", 20, "L"), ("Description", 62, "L"), ("UoM", 13, "C"),
+                                      ("Qty", 18, "R"), ("Rate", 20, "R"), ("GST", 13, "C"), ("Amount", 30, "R")],
+         "rows": rows, "totals": [("SUB TOTAL", form_pdf.plain_number(sub), False),
+                                  ("GST", form_pdf.plain_number(d.get("tax_amount")), False),
+                                  ("TOTAL AMOUNT", form_pdf.plain_number(d.get("total")), True)]},
+        {"type": "words", "label": "Rupees", "text": _words(d.get("total"))},
+        {"type": "band", "text": "Delivery & Payment Terms"},
+        {"type": "terms", "rows": [("1. Delivery Address", deliver),
+                                   ("2. Delivery By", form_pdf.date_text(d.get("needed_by")) or "As agreed"),
+                                   ("3. Payment", "Within %d days of receipt of material and a correct GST invoice" % days),
+                                   ("4. Invoice", "Quote this PO number on the invoice, the delivery challan and the e-way bill"),
+                                   ("5. Inspection", "Material is accepted on receipt and inspection at site; rejected material "
+                                                     "is returned at the supplier's cost"),
+                                   ("6. Notes", d.get("notes") or "-")], "label_width": 42},
+        {"type": "signatures", "boxes": signatures},
+    ]
+    watermark = {"Draft": "DRAFT - NOT ISSUED", "Cancelled": "CANCELLED", "Rejected": "REJECTED"}.get(order.status, "")
+    if (order.approval_status or "") == "pending":
+        watermark = "AWAITING APPROVAL"
+    return {"title": "Purchase Order %s" % (d.get("number") or ""), "author": company["name"], "watermark": watermark,
+            "blocks": blocks, "footer": "%s  |  %s  |  Printed %s" % (d.get("number") or "", company["name"],
+                                                                      datetime.now().strftime("%d/%m/%Y %H:%M"))}
+
+
+def sub_bill_form_spec(db, client, bill):
+    """The gang's RA bill: measured work, retention held, advance recovered,
+    TDS and labour cess withheld, and what is paid."""
+    b = sub_bill_dict(db, bill, detail=True)
+    sig = doc_signatories(db, client.id)
+    our = b.get("our") or our_party(db, client.id)
+    con = b.get("contractor_detail") or {}
+    company = {"name": our.get("name") or client.company_name or "", "address": our.get("address") or "",
+               "gstin": our.get("gstin") or client.gstin or "", "pan": "",
+               "state": _state_line(our.get("gstin") or client.gstin), "logo_url": our.get("logo_url") or ""}
+    rows = [[str(i), l.get("activity_no") or "", l.get("description") or "", l.get("uom") or "",
+             form_pdf.qty_text(l.get("ordered_qty")), form_pdf.qty_text(l.get("previously_billed_qty")),
+             form_pdf.qty_text(l.get("this_bill_qty")), form_pdf.qty_text(l.get("measured_to_date")),
+             form_pdf.plain_number(l.get("rate")), form_pdf.plain_number(l.get("amount"))]
+            for i, l in enumerate(b.get("lines") or [], 1)]
+    fi = form_pdf.inr
+    taxable = money(b["this_bill"] - b["retention_amount"] - b["advance_recovery"] - b["other_deductions"])
+    rate = b.get("gst_percent") or 0
+    sums = [("Value of work done up to date", fi(b["gross_to_date"]), False),
+            ("Less: claimed in earlier bills", fi(-b["previously_billed"]), False),
+            ("Value of work in this bill", fi(b["this_bill"]), True)]
+    if b["retention_amount"]:
+        sums.append(("Less: retention (FSD) @ %g%%" % b["retention_percent"], fi(-b["retention_amount"]), False))
+    if b["advance_recovery"]:
+        sums.append(("Less: mobilisation advance recovered", fi(-b["advance_recovery"]), False))
+    if b["other_deductions"]:
+        sums.append(("Less: other deductions%s" % ((" (%s)" % b["deduction_notes"]) if b["deduction_notes"] else ""),
+                     fi(-b["other_deductions"]), False))
+    sums.append(("Taxable value", fi(taxable), True))
+    if b["cgst_amount"] or b["sgst_amount"]:
+        sums += [("Add: CGST @ %g%%" % (rate / 2), fi(b["cgst_amount"]), False),
+                 ("Add: SGST @ %g%%" % (rate / 2), fi(b["sgst_amount"]), False)]
+    elif b["igst_amount"]:
+        sums.append(("Add: IGST @ %g%%" % rate, fi(b["igst_amount"]), False))
+    if b["tds_amount"]:
+        sums.append(("Less: TDS @ %g%% u/s 194C" % b["tds_percent"], fi(-b["tds_amount"]), False))
+    if b.get("labour_cess_amount"):
+        sums.append(("Less: labour welfare cess @ %g%%" % b["labour_cess_percent"], fi(-b["labour_cess_amount"]), False))
+    sums.append(("NET AMOUNT PAYABLE", fi(b["net_payable"]), True))
+    od = b.get("order_detail") or {}
+    certified = b.get("certified_by_name") or ""
+    signatures = [("Contractor Signature", b.get("contractor") or ""),
+                  ("Prepared By", _sig_line(sig["prepared"])), ("Checked By", _sig_line(sig["recommended"])),
+                  ("Certified By", certified or _sig_line(sig["proposed"])),
+                  ("Authorized Signatory", _sig_line(sig["authorised"]))]
+    period = ("%s to %s" % (form_pdf.date_text(b.get("period_from")), form_pdf.date_text(b.get("period_to")))
+              if b.get("period_from") else (form_pdf.date_text(b.get("period_to")) or "-"))
+    blocks = [
+        {"type": "header", "company": company, "title": "SUB CONTRACTOR BILL",
+         "facts": [("Bill No", b["number"]), ("RA No", str(b.get("sequence") or 1)),
+                   ("Bill Date", form_pdf.date_text((b.get("certified_at") or b.get("created_at") or "")[:10])),
+                   ("Period", period)]},
+        {"type": "party", "label": "Sub Contractor Name", "name": b.get("contractor") or "",
+         "address": con.get("address") or "",
+         "facts": [("PAN No", con.get("pan") or ""), ("GSTIN No.", con.get("gst_number") or "")]},
+        {"type": "pairs", "cols": 2, "rows": [("Project", b.get("project") or ""),
+                                              ("Work Order", od.get("wo_number") or b.get("order") or ""),
+                                              ("Site", b.get("site") or "-"),
+                                              ("Place of Supply", b.get("place_of_supply_name") or "-")]},
+        {"type": "table", "columns": [("#", 5, "C"), ("Act.", 12, "L"), ("Description", 54, "L"), ("UoM", 11, "C"),
+                                      ("Order Qty", 16, "R"), ("Previous", 16, "R"), ("This Bill", 16, "R"),
+                                      ("Up to Date", 16, "R"), ("Rate", 16, "R"), ("Amount", 20, "R")],
+         "rows": rows, "totals": [("VALUE OF WORK IN THIS BILL", form_pdf.plain_number(b["this_bill"]), True)]},
+        {"type": "sums", "rows": sums},
+        {"type": "words", "label": "Rupees", "text": _words(b["net_payable"])},
+        {"type": "text", "style": "small", "text": "Quantities are as jointly measured and recorded in the measurement "
+                                                   "book. Retention (FSD) is released after the defects liability period."},
+        {"type": "signatures", "boxes": signatures},
+    ]
+    watermark = {"DRAFT": "DRAFT - NOT CERTIFIED", "SUBMITTED": "SUBMITTED - NOT YET CERTIFIED",
+                 "CANCELLED": "CANCELLED"}.get(b["status"], "")
+    return {"title": "Sub Contractor Bill %s" % b["number"], "author": company["name"], "watermark": watermark,
+            "blocks": blocks, "footer": "%s  |  %s  |  Printed %s" % (b["number"], company["name"],
+                                                                      datetime.now().strftime("%d/%m/%Y %H:%M"))}
+
+
+def statement_form_spec(client, party_name, party_label, s, date_from="", date_to=""):
+    """A party's statement of account, in the same form."""
+    company = {"name": client.company_name or "", "address": client.address or "", "gstin": client.gstin or "",
+               "pan": "", "state": _state_line(client.gstin), "logo_url": client.logo_url or ""}
+    fi = form_pdf.inr
+    rows = [[form_pdf.date_text(r.get("date")), r.get("kind") or "", r.get("number") or "",
+             r.get("against") or r.get("reference") or "", fi(r["billed"]) if r.get("billed") else "",
+             fi(r.get("paid", r.get("moved", 0))) if r.get("paid", r.get("moved")) else "", fi(r.get("balance"))]
+            for r in s.get("rows") or []]
+    closing = s.get("closing") or 0
+    blocks = [
+        {"type": "header", "company": company, "title": "STATEMENT OF ACCOUNT",
+         "facts": [("Party", party_name), ("From", form_pdf.date_text(date_from) or "Beginning"),
+                   ("To", form_pdf.date_text(date_to) or datetime.now().strftime("%d/%m/%Y")),
+                   ("Printed", datetime.now().strftime("%d/%m/%Y"))]},
+        {"type": "pairs", "rows": [(party_label, party_name), ("Opening balance", fi(s.get("opening") or 0))],
+         "label_width": 42},
+        {"type": "table", "columns": [("Date", 18, "C"), ("Entry", 34, "L"), ("Number", 30, "L"), ("Against / Ref", 30, "L"),
+                                      ("Billed", 23, "R"), ("Paid", 23, "R"), ("Balance", 24, "R")],
+         "rows": rows, "totals": [("CLOSING BALANCE %s" % ("DUE TO YOU" if closing >= 0 else "DUE FROM YOU"),
+                                   fi(abs(closing)), True)]},
+        {"type": "words", "label": "Rupees", "text": _words(abs(closing))},
+        {"type": "text", "style": "small", "text": "Please check this statement and tell us within fifteen days of any "
+                                                   "difference; after that it is taken as agreed."},
+    ]
+    return {"title": "Statement - %s" % party_name, "author": company["name"], "blocks": blocks,
+            "footer": "Statement of account  |  %s  |  %s" % (party_name, company["name"])}
+
+
+@app.get("/api/purchase-orders/{order_id}/document.pdf")
+def purchase_order_pdf(order_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    order = purchase_order_or_404(db, client.id, order_id)
+    return form_pdf_response(po_form_spec(db, client, order), order.number)
+
+
+@app.get("/api/sub-bills/{bill_id}/document.pdf")
+def sub_bill_pdf(bill_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    bill = sub_bill_or_404(db, client.id, bill_id)
+    return form_pdf_response(sub_bill_form_spec(db, client, bill), bill.number)
+
+
+# --- The partner portal gets its papers in the same form ------------------------------
+
+@app.get("/api/portal/orders/{order_id}/document.pdf")
+def portal_order_pdf(order_id: int, request: Request, db: Session = Depends(get_db)):
+    u, client, party, name = get_portal_user(request, db)
+    if not any(o["id"] == order_id for o in _portal_orders(db, u, party, name)):
+        raise HTTPException(404, "Order not found")
+    if u.party_type == "contractor":
+        order = db.query(models.DBSubcontractOrder).filter(models.DBSubcontractOrder.id == order_id,
+                                                           models.DBSubcontractOrder.client_id == u.client_id).first()
+        return form_pdf_response(wo_form_spec(db, client, order), order.wo_number)
+    order = db.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.id == order_id,
+                                                    models.DBPurchaseOrder.client_id == u.client_id).first()
+    return form_pdf_response(po_form_spec(db, client, order), order.number)
+
+
+@app.get("/api/portal/bills/{bill_id}/document.pdf")
+def portal_bill_pdf(bill_id: int, request: Request, db: Session = Depends(get_db)):
+    u, client, party, name = get_portal_user(request, db)
+    if u.party_type != "contractor":
+        raise HTTPException(404, "Your invoices are your own documents.")
+    bill = db.query(models.DBSubBill).filter(models.DBSubBill.id == bill_id, models.DBSubBill.client_id == u.client_id,
+                                             models.DBSubBill.contractor_id == party.id,
+                                             models.DBSubBill.status.in_(("SUBMITTED", "CERTIFIED", "PAID"))).first()
+    if not bill:
+        raise HTTPException(404, "Bill not found")
+    return form_pdf_response(sub_bill_form_spec(db, client, bill), bill.number)
+
+
+@app.get("/api/portal/statement.pdf")
+def portal_statement_pdf(request: Request, date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+    u, client, party, name = get_portal_user(request, db)
+    s = _portal_statement(db, u, name, date_from, date_to)
+    return form_pdf_response(statement_form_spec(client, name, "Sub Contractor" if u.party_type == "contractor"
+                                                 else "Supplier", s, date_from, date_to), "statement")
+
+
+@app.get("/api/ledger/statement.pdf")
+def ledger_statement_pdf(request: Request, party_type: str, party: str, date_from: str = "", date_to: str = "",
+                         db: Session = Depends(get_db)):
+    """The office's copy of a party's statement, to send them."""
+    client = require_items_access(request, db, "bills.view_all")
+    s = ledger_statement(request, party_type, party, date_from, date_to, db)
+    label = {"client": "Client", "contractor": "Sub Contractor", "supplier": "Supplier"}.get(party_type, "Party")
+    return form_pdf_response(statement_form_spec(client, party, label, s, date_from, date_to), "statement_" + party)
 
 
 # Serve frontend

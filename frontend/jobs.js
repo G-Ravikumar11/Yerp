@@ -370,7 +370,9 @@ async function loadOrders() {
                 '<button class="btn btn-sm btn-outline" onclick="openDocument(\'po\',' + o.id + ')" ' +
                 'title="The order as it prints">View</button> ' +
                 '<a class="btn btn-sm btn-outline" href="/api/purchase-orders/' + o.id +
-                '/export.xlsx" title="This order as a workbook">Download</a></td>' +
+                '/document.pdf" target="_blank" rel="noopener" title="The order in the ruled form it is signed on">PDF</a> ' +
+                '<a class="btn btn-sm btn-outline" href="/api/purchase-orders/' + o.id +
+                '/export.xlsx" title="This order as a workbook">Excel</a></td>' +
             '</tr>';
     }).join('');
 }

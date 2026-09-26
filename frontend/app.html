@@ -4985,7 +4985,31 @@
                         <div><h1 id="my-greeting">My Work</h1><p class="subtitle" id="my-role-label"></p></div>
                         <div class="invoices-actions" id="my-clock-actions"></div>
                     </div>
-                    <div class="stats-grid" id="my-stats"></div>
+                    <style>
+                        .my-clock { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:16px 18px;
+                                    border:1px solid var(--border-color); border-radius:14px; background:var(--card-bg, #fff); }
+                        .my-clock .big { font-size:1.15rem; font-weight:700; }
+                        .my-actions { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:10px; margin:16px 0; }
+                        .my-action { display:flex; flex-direction:column; gap:6px; align-items:flex-start; padding:14px; min-height:84px;
+                                     border:1px solid var(--border-color); border-radius:14px; background:var(--card-bg, #fff);
+                                     cursor:pointer; text-align:left; font:inherit; color:inherit; }
+                        .my-action:hover { border-color:var(--primary-color); }
+                        .my-action .ico { font-size:1.4rem; line-height:1; }
+                        .my-action b { font-size:0.92rem; }
+                        .my-action small { color:var(--text-secondary); font-size:0.74rem; }
+                        .my-site { border:1px solid var(--border-color); border-radius:14px; padding:14px 16px; margin-bottom:10px; background:var(--card-bg, #fff); }
+                        .my-site .row { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+                        .my-chip { font-size:0.76rem; padding:3px 10px; border-radius:999px; background:var(--surface-sunken); border:1px solid var(--border-color);
+                                   cursor:pointer; white-space:nowrap; }
+                        .my-chip.bad { background:var(--danger-soft); color:var(--danger-color); border-color:transparent; }
+                        .my-chip.good { background:var(--success-soft); color:var(--success-color); border-color:transparent; }
+                        @media (max-width: 560px) { .my-actions { grid-template-columns:1fr 1fr; } }
+                    </style>
+                    <div class="stats-grid" id="my-stats" style="display:none;"></div>
+                    <div id="my-clock" class="my-clock"></div>
+                    <div id="my-actions" class="my-actions"></div>
+                    <h3 style="font-size:1rem;margin:6px 0 10px;" id="my-sites-title">My sites today</h3>
+                    <div id="my-sites"></div>
                     <div class="widget" style="margin-top:20px;">
                         <div class="widget-header"><h3>Waiting on me</h3></div>
                         <div class="widget-content" id="my-todo">
@@ -5613,9 +5637,9 @@
     <script src="app.js?v=133"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
-    <script src="staff-portal.js?v=67"></script>
+    <script src="staff-portal.js?v=68"></script>
     <!-- Jobs, job costing and purchase orders. -->
-    <script src="jobs.js?v=118"></script>
+    <script src="jobs.js?v=119"></script>
     <!-- Item master, work orders and budget allocation. -->
     <script src="erp.js?v=90"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
@@ -5629,17 +5653,17 @@
     <script src="subcontracts.js?v=105"></script>
     <script src="costs.js?v=65"></script>
     <script src="sheet.js?v=83"></script>
-    <script src="documents.js?v=91"></script>
+    <script src="documents.js?v=92"></script>
     <script src="mbdims.js?v=81"></script>
     <script src="measurement.js?v=117"></script>
     <script src="stock.js?v=113"></script>
     <script src="diary.js?v=117"></script>
     <script src="money.js?v=95"></script>
-    <script src="subbills.js?v=91"></script>
+    <script src="subbills.js?v=92"></script>
     <script src="estimate.js?v=81"></script>
     <script src="gst.js?v=79"></script>
     <script src="registers.js?v=84"></script>
-    <script src="ledger.js?v=105"></script>
+    <script src="ledger.js?v=106"></script>
     <script src="equipment.js?v=113"></script>
     <script src="rfq.js?v=97"></script>
     <script src="ewaybill.js?v=113"></script>

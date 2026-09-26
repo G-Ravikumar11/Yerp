@@ -144,7 +144,8 @@ async function pOrders() {
             return '<tr><td><span class="mono">' + esc(o.number) + '</span>' + (o.superseded ? ' ' + pill('replaced by an amendment', 'calm') : '') +
                 (o.subject ? '<div class="sub">' + esc(o.subject.slice(0, 90)) + '</div>' : '') + '</td><td>' + esc(o.project) + '</td>' +
                 '<td class="r">' + rs(o.value) + '</td><td class="sub" style="white-space:nowrap;">' + esc(o.from || '') + (o.to ? ' → ' + esc(o.to) : '') + '</td>' +
-                '<td class="r"><button class="btn" onclick="pOrder(' + o.id + ')">Items</button></td></tr>';
+                '<td class="r" style="white-space:nowrap;"><button class="btn" onclick="pOrder(' + o.id + ')">Items</button> ' +
+                '<a class="btn" href="/api/portal/orders/' + o.id + '/document.pdf" target="_blank" rel="noopener">PDF</a></td></tr>';
         }).join(''), 'No orders yet.', 5) + '<div id="pa-order"></div>');
 }
 
@@ -182,7 +183,9 @@ async function pBills() {
             return '<tr><td><span class="mono">' + esc(b.number) + '</span><div class="sub">' + esc(b.date) + '</div></td>' +
                 '<td><div>' + pill(b.where, billTone(b)) + (b.note ? '<div class="sub">' + esc(b.note) + '</div>' : '') + '</div></td>' +
                 '<td class="r"><div>' + rs(b.claimed) + deduct + '</div></td><td class="r"><b>' + rs(b.net) + '</b></td>' +
-                '<td class="r">' + rs(b.paid) + '</td><td class="r">' + rs(b.left) + '</td></tr>';
+                '<td class="r">' + rs(b.paid) + '</td><td class="r">' + rs(b.left) +
+                (b.pdf ? '<div><a class="btn" style="padding:4px 10px;margin-top:4px;" href="' + b.pdf + '" target="_blank" rel="noopener">PDF</a></div>' : '') +
+                '</td></tr>';
         }).join(''), 'No bills yet.', 6));
 }
 
@@ -206,7 +209,8 @@ async function pStatement() {
         '<div class="filters"><div><label for="ps-from">From</label><input type="date" id="ps-from" value="' + esc(from) + '"></div>' +
         '<div><label for="ps-to">To</label><input type="date" id="ps-to" value="' + esc(to) + '"></div>' +
         '<div style="flex:0 0 auto;display:flex;gap:8px;"><button class="btn" onclick="pStatement()">Show</button>' +
-        '<a class="btn" href="/api/portal/statement.xlsx' + q + '">Download</a></div></div>' +
+        '<a class="btn" href="/api/portal/statement.pdf' + q + '" target="_blank" rel="noopener">PDF</a>' +
+        '<a class="btn" href="/api/portal/statement.xlsx' + q + '">Excel</a></div></div>' +
         (s.opening ? '<p class="sub" style="margin-top:12px;">Brought forward: ' + rs(s.opening) + '</p>' : '') +
         table('<th>Date</th><th>Entry</th><th class="r">Billed</th><th class="r">Paid</th><th class="r">Balance</th>',
             (s.rows || []).map(function (r) {

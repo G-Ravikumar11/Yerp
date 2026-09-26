@@ -16,8 +16,8 @@ var DOC = { kind: null, id: null, data: null, back: null };
 
 var DOC_SOURCES = {
     'ra-bill':  { url: function (id) { return '/api/ra-bills/' + id; },  pdf: function (id) { return '/api/ra-bills/' + id + '/document.pdf'; }, pick: 'bill',  render: function (d) { return docRaBill(d); },       title: 'Running Account Bill' },
-    'sub-bill': { url: function (id) { return '/api/sub-bills/' + id; }, pick: null,    render: function (d) { return docSubBill(d); },      title: 'Subcontractor RA Bill' },
-    'po':       { url: function (id) { return '/api/purchase-orders/' + id; }, pick: null, render: function (d) { return docPurchaseOrder(d); }, title: 'Purchase Order' },
+    'sub-bill': { url: function (id) { return '/api/sub-bills/' + id; }, pdf: function (id) { return '/api/sub-bills/' + id + '/document.pdf'; }, pick: null,    render: function (d) { return docSubBill(d); },      title: 'Subcontractor RA Bill' },
+    'po':       { url: function (id) { return '/api/purchase-orders/' + id; }, pdf: function (id) { return '/api/purchase-orders/' + id + '/document.pdf'; }, pick: null, render: function (d) { return docPurchaseOrder(d); }, title: 'Purchase Order' },
     'grn':      { url: function (id) { return '/api/grn/' + id; },       pick: null,    render: function (d) { return docGrn(d); },          title: 'Goods Receipt' },
 };
 

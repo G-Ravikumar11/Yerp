@@ -98,20 +98,23 @@ function statCard(label, value) {
         '<div class="stat-value" style="font-size:1.3rem;">' + value + '</div></div>';
 }
 
+/* The site engineer's day, first thing: clocked in or not, what to do in one
+   tap, each of their sites as it stands today, and what waits on them. */
+var MYDAY = null;
+
 async function loadMyOverview() {
-    var stats = document.getElementById('my-stats');
     var todo = document.getElementById('my-todo');
-    var today = portalUser.today || {};
-    if (stats) {
-        stats.innerHTML =
-            statCard('Today', today.today_clock_in ? ('In at ' + esc(today.today_clock_in)) : 'Not clocked in') +
-            statCard('Hours today', (today.today_hours || 0).toFixed(2)) +
-            statCard('Status', esc(today.today_status || 'absent')) +
-            statCard('Access', esc(portalUser.roleLabel || 'Staff'));
-    }
+    try {
+        var r = await fetch('/api/employee/today', { credentials: 'include' });
+        MYDAY = r.ok ? await r.json() : null;
+    } catch (e) { MYDAY = null; }
+    paintMyDay();
     if (!todo) return;
 
     var items = [];
+    ((MYDAY && MYDAY.waiting) || []).forEach(function (w) {
+        items.push('<a href="#" onclick="event.preventDefault();myGo(\'' + w.view + '\',' + w.job_id + ')">' + esc(w.text) + '</a>');
+    });
     if (can('bills.approve') && _myApprovals.length) {
         var n = _myApprovals.length;
         items.push('<a href="#" onclick="event.preventDefault();showView(\'approvals-view\')">' +
@@ -131,6 +134,104 @@ async function loadMyOverview() {
         : '<p style="color:var(--text-secondary);">Nothing right now.</p>';
 }
 window.loadMyOverview = loadMyOverview;
+
+function paintMyDay() {
+    var d = MYDAY;
+    var clock = document.getElementById('my-clock');
+    if (clock) {
+        var c = (d && d.clock) || {};
+        var line = c.out ? 'Out at ' + esc(c.out) + (c['in'] ? ' &middot; in at ' + esc(c['in']) : '')
+            : c['in'] ? 'In at ' + esc(c['in']) + (c.site ? ' &middot; ' + esc(c.site) : '') : 'Not clocked in yet';
+        clock.innerHTML = '<div><div style="font-size:0.78rem;color:var(--text-secondary);">' +
+            new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' }) + '</div>' +
+            '<div class="big">' + line + '</div></div>' +
+            (c.out ? '' : '<button class="btn btn-primary" onclick="myClock(\'' + (c['in'] ? 'out' : 'in') + '\')">' +
+                (c['in'] ? 'Clock out' : 'Clock in') + '</button>');
+    }
+    var sites = (d && d.sites) || [];
+    var first = sites[0] ? sites[0].job_id : 0;
+    var acts = [];
+    var act = function (ico, title, sub, go) {
+        acts.push('<button class="my-action" onclick="' + go + '"><span class="ico">' + ico + '</span><b>' + esc(title) +
+            '</b><small>' + esc(sub) + '</small></button>');
+    };
+    if (can('site.record')) {
+        act('\u{1F4DD}', "Today's diary", 'Labour, weather, work done', "myGo('diary-view'," + first + ",'new')");
+        act('\u{1F4F7}', 'Site photo', 'Straight from the camera', 'myPhoto(' + first + ')');
+        act('\u{1F4CF}', 'Measure work', 'Into the measurement book', "myGo('measurement-view')");
+        act('\u26A0\uFE0F', 'Near miss', 'Report it in a minute', "myGo('safety-view'," + first + ",'new')");
+        act('\u{1F9F1}', 'Material to site', 'Issue from the store', "myGo('stock-view')");
+        act('\u{1F69C}', 'Plant hours', 'Log a machine day', "myGo('equipment-view')");
+    }
+    var unread = sites.reduce(function (s, x) { return s + (x.unread || 0); }, 0);
+    act('\u{1F4AC}', 'Project chat', unread ? unread + ' unread' : 'Talk to the office', "myGo('chat-view')");
+    if (can('bills.submit')) act('\u{1F9FE}', 'A cost', 'Send a bill for approval', "myGo('my-costs-view')");
+    var host = document.getElementById('my-actions');
+    if (host) host.innerHTML = acts.join('');
+
+    var sh = document.getElementById('my-sites');
+    if (!sh) return;
+    document.getElementById('my-sites-title').style.display = sites.length ? '' : 'none';
+    sh.innerHTML = sites.map(function (s) {
+        var diary = s.diary
+            ? '<span class="my-chip good" onclick="myGo(\'diary-view\',' + s.job_id + ')">Diary ' + (s.diary.status === 'DRAFT' ? 'written' : 'signed off') + '</span>'
+            : '<span class="my-chip bad" onclick="myGo(\'diary-view\',' + s.job_id + ',\'new\')">Diary not written - write it</span>';
+        var chips = [diary];
+        if (s.permits_live) chips.push('<span class="my-chip' + (s.permits_overdue ? ' bad' : '') + '" onclick="myGo(\'safety-view\',' + s.job_id + ')">' +
+            s.permits_live + ' permit' + (s.permits_live === 1 ? '' : 's') + ' live' + (s.permits_overdue ? ', ' + s.permits_overdue + ' ran out' : '') + '</span>');
+        if (s.incidents_open) chips.push('<span class="my-chip bad" onclick="myGo(\'safety-view\',' + s.job_id + ')">' + s.incidents_open + ' incident' + (s.incidents_open === 1 ? '' : 's') + ' open</span>');
+        if (s.inspections_open) chips.push('<span class="my-chip" onclick="myGo(\'quality-view\',' + s.job_id + ')">' + s.inspections_open + ' inspection' + (s.inspections_open === 1 ? '' : 's') + ' open</span>');
+        if (s.unread) chips.push('<span class="my-chip" onclick="myGo(\'chat-view\')">' + s.unread + ' unread</span>');
+        return '<div class="my-site"><div style="font-weight:700;">' + esc(s.name) +
+            ' <span style="font-weight:400;font-size:0.76rem;color:var(--text-secondary);">' + esc(s.number) + '</span></div>' +
+            '<div class="row">' + chips.join('') + '</div></div>';
+    }).join('') || '<p style="color:var(--text-secondary);font-size:0.86rem;">No sites assigned to you yet. Ask the office to add you to a project.</p>';
+}
+
+/* Straight to the screen, on the right site, and into the form where there is one. */
+async function myGo(view, jobId, action) {
+    showView(view);
+    if (!jobId) return;
+    await new Promise(function (r) { setTimeout(r, 900); });
+    var pickers = { 'diary-view': 'diary-job', 'safety-view': 'sf-job', 'quality-view': 'qc-job' };
+    var sel = document.getElementById(pickers[view]);
+    if (sel && sel.querySelector('option[value="' + jobId + '"]')) {
+        sel.value = String(jobId);
+        sel.dispatchEvent(new Event('change'));
+        await new Promise(function (r) { setTimeout(r, 700); });
+    }
+    if (action === 'new') {
+        if (view === 'diary-view' && typeof newDiary === 'function') newDiary();
+        if (view === 'safety-view' && typeof sfNew === 'function') { SAFE.tab = 'incidents'; sfNew(); }
+    }
+}
+window.myGo = myGo;
+
+function myPhoto(jobId) {
+    if (!jobId) { showToast('No site assigned to you yet', 'error'); return; }
+    var s = ((MYDAY && MYDAY.sites) || []).filter(function (x) { return x.job_id === jobId; })[0];
+    if (typeof openFiles === 'function') openFiles('job', jobId, s ? s.name : 'Site');
+}
+window.myPhoto = myPhoto;
+
+/* Clocked in where the phone is: the server matches the position to a site. */
+async function myClock(which) {
+    var coords = await new Promise(function (res) {
+        if (!navigator.geolocation) return res(null);
+        navigator.geolocation.getCurrentPosition(function (p) { res(p.coords); }, function () { res(null); },
+                                                 { timeout: 8000, enableHighAccuracy: true, maximumAge: 60000 });
+    });
+    var body = { device_info: (navigator.userAgent || '').slice(0, 120) };
+    if (coords) { body.latitude = coords.latitude; body.longitude = coords.longitude; }
+    var res = await fetch('/api/employee/attendance/clock-' + which, { method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    var out = {};
+    try { out = await res.json(); } catch (e) {}
+    if (!res.ok) { showToast(out.detail || 'Could not clock ' + which, 'error'); return; }
+    showToast(out.message || ('Clocked ' + which + '.'), 'success');
+    loadMyOverview();
+}
+window.myClock = myClock;
 
 /* --- My costs ---------------------------------------------------------- */
 

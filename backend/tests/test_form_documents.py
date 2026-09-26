@@ -58,3 +58,42 @@ def test_the_ra_bill_prints_in_the_same_form(tenant):
 def test_another_company_cannot_print_ours(tenant, second_tenant):
     order = live_order(tenant)
     assert second_tenant.get("/api/wo/orders/%d/document.pdf" % order["id"]).status_code == 404
+
+
+def test_the_purchase_order_and_the_gangs_bill_print_in_the_same_form(tenant):
+    tenant.post("/api/suppliers", json={"name": "ACC Ltd", "gstin": "36AAACA1234C1Z5"})
+    po = tenant.post("/api/purchase-orders", json={"supplier_name": "ACC Ltd", "amount": 38500,
+                                                   "line_items": [{"description": "OPC 53 cement", "uom": "Bags",
+                                                                   "qty": 100, "price": 385}]}).json()
+    _, text = pdf_text(tenant.get("/api/purchase-orders/%d/document.pdf" % po["id"]))
+    for words in ("PURCHASE ORDER", "Supplier Name", "36AAACA1234C1Z5", "OPC 53 cement", "Delivery", "Supplier Acceptance"):
+        assert words in text, words
+    from test_subcontractor_bills import book, measure as smeasure, raise_bill as sraise
+    order = live_order(tenant, retention_percent=5)
+    smeasure(tenant, order["id"], book(tenant, order["id"])["lines"][0]["item_id"], 10)
+    sb = sraise(tenant, order["id"]).json()["bill"]
+    _, text = pdf_text(tenant.get("/api/sub-bills/%d/document.pdf" % sb["id"]))
+    for words in ("SUB CONTRACTOR BILL", "retention (FSD) @ 5%", "NET AMOUNT PAYABLE", "Contractor Signature"):
+        assert words in text, words
+
+
+def test_a_party_statement_prints(tenant):
+    order = live_order(tenant)
+    party = order["contractor"] if "contractor" in order else tenant.get("/api/wo/orders/%d" % order["id"]).json()["contractor"]
+    _, text = pdf_text(tenant.get("/api/ledger/statement.pdf", params={"party_type": "contractor", "party": party}))
+    assert "STATEMENT OF ACCOUNT" in text and "CLOSING BALANCE" in text
+
+
+def test_a_gang_prints_its_own_order_and_nobody_elses(tenant, portal):
+    from urllib.parse import urlparse, parse_qs
+    mine = live_order(tenant)
+    theirs = live_order(tenant)
+    inv = tenant.post("/api/portal-access", json={"party_type": "contractor", "party_id": mine["contractor_id"],
+                                                  "email": "gang.pdf@example.com"}).json()
+    token = parse_qs(urlparse(inv["invite_url"]).query)["invite"][0]
+    assert portal.post("/api/portal/accept-invite", json={"token": token, "password": "Portal1234x"}).status_code == 200
+    _, text = pdf_text(portal.get("/api/portal/orders/%d/document.pdf" % mine["id"]))
+    assert "WORK ORDER" in text and mine["wo_number"] in text
+    assert portal.get("/api/portal/orders/%d/document.pdf" % theirs["id"]).status_code == 404
+    _, text = pdf_text(portal.get("/api/portal/statement.pdf"))
+    assert "STATEMENT OF ACCOUNT" in text

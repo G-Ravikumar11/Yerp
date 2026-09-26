@@ -191,8 +191,10 @@ function renderSubBillList(bills, summary) {
             '<td class="text-right" style="white-space:nowrap;">' + act +
                 ' <button class="btn btn-sm btn-outline" onclick="openDocument(\'sub-bill\',' + b.id + ')" ' +
                 'title="The bill as it prints">View bill</button>' +
+                ' <a class="btn btn-sm btn-outline" href="/api/sub-bills/' + b.id +
+                '/document.pdf" target="_blank" rel="noopener" title="The bill in the ruled form it is signed on">PDF</a>' +
                 ' <a class="btn btn-sm btn-outline" href="/api/sub-bills/' +
-                b.id + '/export.xlsx" title="As a workbook">Download</a></td></tr>';
+                b.id + '/export.xlsx" title="As a workbook">Excel</a></td></tr>';
     }).join('') : '<tr><td colspan="8" style="text-align:center;padding:24px;' +
         'color:var(--text-secondary);">No bills yet. Measure the gang\'s work, then draw one up.</td></tr>';
 }
