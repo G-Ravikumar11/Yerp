@@ -33291,7 +33291,7 @@ def ra_bill_pdf(bill_id: int, request: Request, db: Session = Depends(get_db)):
 # per kind of line; the grid on the screen is shared too.
 # ============================================================================
 
-SHEET_KINDS = {
+IMPORT_SHEETS = {
     "po_lines": {
         "title": "Purchase order lines",
         "columns": [("item_code", "Item Code"), ("description", "Description"), ("uom", "UOM"),
@@ -33311,7 +33311,7 @@ SHEET_KINDS = {
 
 
 def _sheet_kind(kind):
-    spec = SHEET_KINDS.get(kind)
+    spec = IMPORT_SHEETS.get(kind)
     if not spec:
         raise HTTPException(404, "Unknown kind of sheet")
     return spec
