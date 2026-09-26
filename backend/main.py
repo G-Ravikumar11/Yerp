@@ -29272,6 +29272,12 @@ def attachment_target(db, client_id, attached_type, attached_id):
         if not d:
             raise HTTPException(404, "Drawing not found")
         return d.job_id, False
+    if t == "thread":
+        th = db.query(models.DBProjectThread).filter(models.DBProjectThread.id == attached_id,
+                                                     models.DBProjectThread.client_id == client_id).first()
+        if not th:
+            raise HTTPException(404, "Thread not found")
+        return th.job_id, False
     if t == "bill":
         b = db.query(models.DBBill).filter(models.DBBill.id == attached_id,
                                            models.DBBill.client_id == client_id).first()
@@ -29576,6 +29582,7 @@ NOTIFY_KINDS = {
     "safety_incident": "A safety incident or near miss was reported",
     "retention_released": "Retention was released - to claim, or to pay a gang",
     "portal_invoice": "A supplier sent an invoice through the partner portal",
+    "chat_mention": "Somebody was named in a project chat",
     "daily_digest": "The morning list of what needs looking at",
 }
 # Out of the box: the bell for everything, email for the money and the digest.
@@ -32473,6 +32480,295 @@ def record_irn(doc_type: str, doc_id: int, request: Request, body: dict = None,
               request)
     db.commit()
     return {"irn": irn_dict(row), "message": "IRN recorded on %s. The QR now prints on the bill." % doc.number}
+
+
+# ============================================================================
+# PROJECT CHAT
+#
+# A site runs on conversation: the pour moved to Thursday, the client's
+# engineer wants the cover blocks checked, here is a photo of the crack. It
+# happened in WhatsApp groups - one per site, per trade, per mood - where it
+# could not be found a month later and left with whoever left the company.
+#
+# Here each project has threads, each thread a subject, and everybody signed
+# in to the business can take part: the owner, the office, and the site staff
+# on their phones. Photos go in beside the words. Naming somebody with @ puts
+# it on the bell, and each person's unread count is their own.
+# ============================================================================
+
+CHAT_MAX_BODY = 4000
+
+
+def chat_actor(request, db):
+    """(tenant, who as "kind:id", display name) for whoever is signed in."""
+    client = require_items_access(request, db, None)
+    try:
+        emp = get_employee_user(request, db)
+        return client, "employee:%d" % emp.id, ("%s %s" % (emp.first_name or "", emp.last_name or "")).strip()
+    except HTTPException:
+        pass
+    member_id = request.session.get("member_id")
+    if member_id:
+        m = db.query(models.DBTeamMember).filter(models.DBTeamMember.id == member_id).first()
+        if m:
+            return client, "member:%d" % m.id, (m.name or m.email or "Office")
+    return client, "owner:%d" % client.id, (client.contact_name or client.company_name or "Owner")
+
+
+def chat_people(db, client_id):
+    """Everybody who can be named in a thread."""
+    c = db.query(models.DBClient).filter(models.DBClient.id == client_id).first()
+    out = [{"key": "owner:%d" % c.id, "name": c.contact_name or c.company_name or "Owner", "role": "Owner"}] if c else []
+    out += [{"key": "member:%d" % m.id, "name": m.name or m.email, "role": "Office"}
+            for m in db.query(models.DBTeamMember).filter(models.DBTeamMember.client_id == client_id,
+                                                          models.DBTeamMember.is_active.is_(True)).all()]
+    out += [{"key": "employee:%d" % e.id, "name": ("%s %s" % (e.first_name or "", e.last_name or "")).strip(),
+             "role": e.job_title or "Staff"}
+            for e in db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client_id,
+                                                        models.DBEmployee.status != "terminated").all()]
+    return out
+
+
+def find_mentions(body, people):
+    """Who an "@Name" in the message means - the longest name that fits, so
+    "@Ravi Kumar" is not taken for a "Ravi" who is somebody else."""
+    text = (body or "").lower()
+    hits = []
+    for p in sorted(people, key=lambda p: -len(p["name"] or "")):
+        name = (p["name"] or "").strip().lower()
+        if name and re.search(r"@" + re.escape(name) + r"(?![\w])", text):
+            hits.append(p)
+            text = re.sub(r"@" + re.escape(name) + r"(?![\w])", " ", text)
+    return hits
+
+
+def thread_or_404(db, client_id, thread_id):
+    t = db.query(models.DBProjectThread).filter(models.DBProjectThread.id == thread_id,
+                                                models.DBProjectThread.client_id == client_id).first()
+    if not t:
+        raise HTTPException(404, "Thread not found")
+    return t
+
+
+def _files_for(db, client_id, ids):
+    if not ids:
+        return []
+    rows = db.query(models.DBFile.id, models.DBFile.name, models.DBFile.content_type,
+                    models.DBFile.size, models.DBFile.attached_type, models.DBFile.attached_id).filter(
+        models.DBFile.client_id == client_id, models.DBFile.id.in_(ids)).all()
+    return [{"id": r.id, "name": r.name or "", "size": r.size or 0,
+             "is_image": (r.content_type or "").startswith("image/"),
+             "url": "/api/files/%d" % r.id, "thumb_url": "/api/files/%d/thumb" % r.id} for r in rows]
+
+
+def message_dict(db, m, me=""):
+    ids = [int(x) for x in (m.file_ids or "").split(",") if x.strip().isdigit()]
+    return {"id": m.id, "thread_id": m.thread_id, "author": m.author, "author_name": m.author_name or "",
+            "mine": m.author == me, "body": "" if m.deleted else (m.body or ""), "deleted": bool(m.deleted),
+            "files": [] if m.deleted else _files_for(db, m.client_id, ids),
+            "mentions": [x for x in (m.mentions or "").split(",") if x],
+            "created_at": m.created_at or ""}
+
+
+def _last_read(db, thread_id, me):
+    r = db.query(models.DBThreadRead).filter(models.DBThreadRead.thread_id == thread_id,
+                                             models.DBThreadRead.reader == me).first()
+    return r.last_read_id if r else 0
+
+
+def _mark_read(db, thread_id, me, upto):
+    r = db.query(models.DBThreadRead).filter(models.DBThreadRead.thread_id == thread_id,
+                                             models.DBThreadRead.reader == me).first()
+    if not r:
+        db.add(models.DBThreadRead(thread_id=thread_id, reader=me, last_read_id=upto))
+    elif upto > (r.last_read_id or 0):
+        r.last_read_id = upto
+
+
+def thread_dict(db, t, me, jobs=None):
+    msgs = db.query(models.DBProjectMessage).filter(models.DBProjectMessage.thread_id == t.id)
+    last = msgs.order_by(models.DBProjectMessage.id.desc()).first()
+    seen = _last_read(db, t.id, me)
+    unread = msgs.filter(models.DBProjectMessage.id > seen, models.DBProjectMessage.author != me,
+                         models.DBProjectMessage.deleted.is_(False)).count()
+    job = (jobs or {}).get(t.job_id) or db.query(models.DBJob).filter(models.DBJob.id == t.job_id).first()
+    return {"id": t.id, "job_id": t.job_id, "project": ("%s %s" % (job.number or "", job.name or "")).strip() if job else "",
+            "title": t.title or "", "started_by_name": t.started_by_name or "", "closed": bool(t.closed),
+            "messages": msgs.filter(models.DBProjectMessage.deleted.is_(False)).count(), "unread": unread,
+            "last": ({"author_name": last.author_name, "body": ("" if last.deleted else (last.body or ""))[:120]
+                      or ("a photo" if last.file_ids else ""), "at": last.created_at} if last else None),
+            "last_message_at": t.last_message_at or t.created_at or "", "created_at": t.created_at or ""}
+
+
+@app.get("/api/chat/threads")
+def chat_threads(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+    """The threads - one project's, or every project's with the busiest
+    first. Each with the reader's own unread count."""
+    client, me, _ = chat_actor(request, db)
+    q = db.query(models.DBProjectThread).filter(models.DBProjectThread.client_id == client.id)
+    if job_id:
+        job_or_404(db, client.id, job_id)
+        q = q.filter(models.DBProjectThread.job_id == job_id)
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client.id).all()}
+    rows = [thread_dict(db, t, me, jobs) for t in q.order_by(
+        models.DBProjectThread.closed, models.DBProjectThread.last_message_at.desc()).limit(300).all()]
+    return {"threads": rows, "me": me, "unread": sum(r["unread"] for r in rows)}
+
+
+@app.get("/api/chat/unread")
+def chat_unread(request: Request, db: Session = Depends(get_db)):
+    """For the badge on the menu: messages to me I have not opened."""
+    client, me, _ = chat_actor(request, db)
+    total = 0
+    for t in db.query(models.DBProjectThread).filter(models.DBProjectThread.client_id == client.id,
+                                                     models.DBProjectThread.closed.is_(False)).all():
+        total += db.query(models.DBProjectMessage).filter(
+            models.DBProjectMessage.thread_id == t.id, models.DBProjectMessage.author != me,
+            models.DBProjectMessage.deleted.is_(False),
+            models.DBProjectMessage.id > _last_read(db, t.id, me)).count()
+    return {"unread": total}
+
+
+@app.get("/api/chat/people")
+def chat_people_list(request: Request, db: Session = Depends(get_db)):
+    client, me, name = chat_actor(request, db)
+    return {"people": chat_people(db, client.id), "me": me, "my_name": name}
+
+
+class ThreadIn(BaseModel):
+    job_id: int
+    title: str
+    body: Optional[str] = ""
+    file_ids: Optional[list] = None
+
+
+class MessageIn(BaseModel):
+    body: Optional[str] = ""
+    file_ids: Optional[list] = None
+
+
+def _post_message(db, client, t, me, name, body, file_ids, request):
+    body = (body or "").strip()
+    if len(body) > CHAT_MAX_BODY:
+        raise HTTPException(400, "That is a long message - keep it under %d characters, or attach it." % CHAT_MAX_BODY)
+    ids = []
+    for fid in (file_ids or [])[:10]:
+        f = db.query(models.DBFile).filter(models.DBFile.id == int(fid), models.DBFile.client_id == client.id).first()
+        # Only a file put up in this thread goes in its messages - never one
+        # pulled across from another record by its number.
+        if not f or f.attached_type != "thread" or f.attached_id != t.id:
+            raise HTTPException(400, "That photo was not uploaded to this thread.")
+        ids.append(f.id)
+    if not body and not ids:
+        raise HTTPException(400, "Write something, or attach a photo.")
+    if t.closed:
+        raise HTTPException(409, "This thread is closed. Reopen it to carry on.")
+    mentioned = find_mentions(body, chat_people(db, client.id))
+    m = models.DBProjectMessage(client_id=client.id, thread_id=t.id, author=me, author_name=name, body=body,
+                                file_ids=",".join(str(i) for i in ids),
+                                mentions=",".join(p["key"] for p in mentioned if p["key"] != me))
+    db.add(m)
+    db.flush()
+    t.last_message_at = m.created_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _mark_read(db, t.id, me, m.id)
+    db.commit()
+    names = [p["name"] for p in mentioned if p["key"] != me]
+    if names:
+        job = db.query(models.DBJob).filter(models.DBJob.id == t.job_id).first()
+        notify(db, client.id, "chat_mention", "%s mentioned %s" % (name, ", ".join(names)),
+               "In \"%s\" on %s: %s" % (t.title, job.name if job else "the project", body[:160]),
+               view="chat-view", ref_type="thread", ref_id=t.id, severity="action")
+    return m
+
+
+@app.post("/api/chat/threads")
+def start_thread(body: ThreadIn, request: Request, db: Session = Depends(get_db)):
+    client, me, name = chat_actor(request, db)
+    job_or_404(db, client.id, body.job_id)
+    title = (body.title or "").strip()[:140]
+    if not title:
+        raise HTTPException(400, "What is it about? A thread needs a subject - \"Raft pour, grid A-C\".")
+    t = models.DBProjectThread(client_id=client.id, job_id=body.job_id, title=title, started_by=me,
+                               started_by_name=name, last_message_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    db.add(t)
+    db.flush()
+    if (body.body or "").strip() or body.file_ids:
+        _post_message(db, client, t, me, name, body.body, body.file_ids, request)
+    else:
+        db.commit()
+    return {"thread": thread_dict(db, t, me)}
+
+
+@app.get("/api/chat/threads/{thread_id}")
+def read_thread(thread_id: int, request: Request, after: int = 0, db: Session = Depends(get_db)):
+    """The thread's messages - all of them, or only those after `after` for
+    a screen that is already showing the rest. Opening it marks it read."""
+    client, me, _ = chat_actor(request, db)
+    t = thread_or_404(db, client.id, thread_id)
+    q = db.query(models.DBProjectMessage).filter(models.DBProjectMessage.thread_id == t.id)
+    if after:
+        q = q.filter(models.DBProjectMessage.id > after)
+    msgs = q.order_by(models.DBProjectMessage.id).limit(500).all()
+    if msgs:
+        _mark_read(db, t.id, me, msgs[-1].id)
+        db.commit()
+    return {"thread": thread_dict(db, t, me), "messages": [message_dict(db, m, me) for m in msgs], "me": me}
+
+
+@app.post("/api/chat/threads/{thread_id}/messages")
+def post_message(thread_id: int, body: MessageIn, request: Request, db: Session = Depends(get_db)):
+    client, me, name = chat_actor(request, db)
+    t = thread_or_404(db, client.id, thread_id)
+    m = _post_message(db, client, t, me, name, body.body, body.file_ids, request)
+    return {"message": message_dict(db, m, me)}
+
+
+@app.delete("/api/chat/messages/{message_id}")
+def remove_message(message_id: int, request: Request, db: Session = Depends(get_db)):
+    """Your own message can be taken back; it stays as "removed" so the
+    replies around it still make sense."""
+    client, me, _ = chat_actor(request, db)
+    m = db.query(models.DBProjectMessage).filter(models.DBProjectMessage.id == message_id,
+                                                 models.DBProjectMessage.client_id == client.id).first()
+    if not m:
+        raise HTTPException(404, "Message not found")
+    if m.author != me:
+        raise HTTPException(403, "Only whoever wrote a message can remove it.")
+    m.deleted = True
+    db.commit()
+    return {"message": message_dict(db, m, me)}
+
+
+@app.post("/api/chat/threads/{thread_id}/files")
+def chat_upload(thread_id: int, request: Request, file: UploadFile = File(...),
+                thumb: Optional[UploadFile] = File(None), db: Session = Depends(get_db)):
+    """A photo or a document put up in a thread, for the next message to
+    carry. Anybody in the conversation can, not only those who may file
+    drawings - the site engineer with the photo of the crack most of all."""
+    client, me, name = chat_actor(request, db)
+    t = thread_or_404(db, client.id, thread_id)
+    if t.closed:
+        raise HTTPException(409, "This thread is closed. Reopen it to carry on.")
+    data = file.file.read()
+    small = thumb.file.read() if thumb is not None else None
+    ctype = (file.content_type or "").lower()
+    f = store_file(db, client.id, file, data, job_id=t.job_id, attached_type="thread", attached_id=t.id,
+                   kind="photo" if ctype.startswith("image/") else "document",
+                   taken_on=date.today().isoformat(), by=name, thumb=small)
+    db.commit()
+    return {"file": file_dict(f)}
+
+
+@app.post("/api/chat/threads/{thread_id}/{action}")
+def close_thread(thread_id: int, action: str, request: Request, db: Session = Depends(get_db)):
+    client, me, name = chat_actor(request, db)
+    if action not in ("close", "reopen"):
+        raise HTTPException(404, "Not found")
+    t = thread_or_404(db, client.id, thread_id)
+    t.closed = action == "close"
+    db.commit()
+    return {"thread": thread_dict(db, t, me),
+            "message": "\"%s\" %s." % (t.title, "closed" if t.closed else "reopened")}
 
 
 # Serve frontend

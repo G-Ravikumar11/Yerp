@@ -3302,3 +3302,50 @@ class DBEinvoiceIrn(Base):
     cancelled_at = Column(String, default="")
     created_by_name = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+# ===========================================================================
+# PROJECT CHAT
+#
+# The conversation about a site - the pour moved to Thursday, the client's
+# engineer wants the cover blocks checked, a photo of the crack - kept on
+# the project instead of in forty WhatsApp groups nobody can search.
+# ===========================================================================
+
+class DBProjectThread(Base):
+    __tablename__ = "project_threads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    title = Column(String, default="")
+    started_by = Column(String, default="")          # "member:3", "employee:7", "owner:1"
+    started_by_name = Column(String, default="")
+    closed = Column(Boolean, default=False, index=True)
+    last_message_at = Column(String, default="", index=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBProjectMessage(Base):
+    __tablename__ = "project_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    thread_id = Column(Integer, ForeignKey("project_threads.id"), nullable=False, index=True)
+    author = Column(String, default="")              # as started_by
+    author_name = Column(String, default="")
+    body = Column(Text, default="")
+    file_ids = Column(String, default="")            # "12,13"
+    mentions = Column(String, default="")            # "member:3,employee:7"
+    deleted = Column(Boolean, default=False)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBThreadRead(Base):
+    """How far one person has read one thread."""
+    __tablename__ = "project_thread_reads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    thread_id = Column(Integer, ForeignKey("project_threads.id"), nullable=False, index=True)
+    reader = Column(String, default="", index=True)
+    last_read_id = Column(Integer, default=0)
