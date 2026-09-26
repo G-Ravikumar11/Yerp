@@ -28481,6 +28481,32 @@ def attention_elsewhere(db, client_id, jobs, today):
                 " and %d more" % (len(due) - 3) if len(due) > 3 else ""),
         })
 
+    # --- quality: cubes to crush, non-conformances past their date --------
+    try:
+        cubes = list_cubes_for(db, client_id)
+        due = [d for c in cubes for d in c["due"] if d["overdue"] or d["today"]]
+        below = [c for c in cubes if c["status"] == "below grade"]
+        if due:
+            items.append({"kind": "cubes_due", "severity": "action", "value": 0.0, "count": len(due),
+                          "view": "quality-view", "title": "Cubes to crush",
+                          "detail": "%d cube test%s due or overdue. A result nobody took is a pour "
+                                    "nobody can vouch for." % (len(due), "" if len(due) == 1 else "s")})
+        if below:
+            items.append({"kind": "cubes_below", "severity": "wrong", "value": 0.0, "count": len(below),
+                          "view": "quality-view", "title": "Concrete below grade",
+                          "detail": ", ".join("%s %s" % (c["number"], c["location"]) for c in below[:3])})
+        late = db.query(models.DBNcr).filter(models.DBNcr.client_id == client_id,
+                                             models.DBNcr.status == "OPEN",
+                                             models.DBNcr.target_date != "",
+                                             models.DBNcr.target_date < today.isoformat()).count()
+        if late:
+            items.append({"kind": "ncr_overdue", "severity": "action", "value": 0.0, "count": late,
+                          "view": "quality-view", "title": "Non-conformances past their date",
+                          "detail": "%d NCR%s still open after the date set to put it right."
+                                    % (late, "" if late == 1 else "s")})
+    except Exception as exc:
+        logger.error("Quality items failed: %s", exc)
+
     # --- goods on the road without an e-way bill --------------------------
     covered = {r for (r,) in db.query(models.DBEwayBill.source_ref).filter(
         models.DBEwayBill.client_id == client_id,
@@ -29085,6 +29111,18 @@ def attachment_target(db, client_id, attached_type, attached_id):
         if not v:
             raise HTTPException(404, "Variation not found")
         return v.job_id, False
+    if t == "inspection":
+        i = db.query(models.DBInspection).filter(models.DBInspection.id == attached_id,
+                                                 models.DBInspection.client_id == client_id).first()
+        if not i:
+            raise HTTPException(404, "Inspection not found")
+        return i.job_id, False
+    if t == "ncr":
+        n = db.query(models.DBNcr).filter(models.DBNcr.id == attached_id,
+                                          models.DBNcr.client_id == client_id).first()
+        if not n:
+            raise HTTPException(404, "NCR not found")
+        return n.job_id, False
     if t == "drawing":
         d = db.query(models.DBDrawing).filter(models.DBDrawing.id == attached_id,
                                               models.DBDrawing.client_id == client_id).first()
@@ -29092,7 +29130,7 @@ def attachment_target(db, client_id, attached_type, attached_id):
             raise HTTPException(404, "Drawing not found")
         return d.job_id, False
     raise HTTPException(400, "Files are kept against a project, a diary day, a measurement, "
-                             "a variation or a drawing.")
+                             "a variation, a drawing, an inspection or an NCR.")
 
 
 def store_file(db, client_id, upload, data, *, job_id, attached_type, attached_id, kind,
@@ -29385,6 +29423,7 @@ NOTIFY_KINDS = {
     "variation_approved": "A variation has been agreed",
     "money_in": "Money received",
     "money_out": "Money paid out",
+    "qc_failed": "A quality check failed or an NCR was raised",
     "daily_digest": "The morning list of what needs looking at",
 }
 # Out of the box: the bell for everything, email for the money and the digest.
@@ -29749,6 +29788,414 @@ def attendance_by_site(request: Request, day: str = "", db: Session = Depends(ge
             "elsewhere": elsewhere, "fenced_sites": len(fenced),
             "summary": {"on_site": sum(len(x["people"]) for x in sites.values()),
                         "elsewhere": len(elsewhere)}}
+
+
+# ============================================================================
+# QUALITY: CHECKLISTS, CUBE TESTS AND NON-CONFORMANCES
+#
+# What is poured over cannot be looked at again. The checklist is walked
+# before it is covered - reinforcement, shuttering, the pre-pour - item by
+# item; the cubes cast from each pour are crushed at seven and twenty-eight
+# days and read against the grade; and anything not as specified becomes a
+# non-conformance with an owner and a date, open until somebody closes it
+# with what was done.
+# ============================================================================
+
+QC_CHECKLISTS = {
+    "Pre-pour (concrete)": [
+        "Reinforcement as per the drawing - diameter, spacing, laps",
+        "Cover blocks in place, correct cover", "Shuttering in line, level and plumb, joints tight",
+        "Shuttering clean and oiled", "Sleeves, inserts and embedments fixed",
+        "Construction joint prepared", "Grade and slump confirmed on the docket",
+        "Vibrators working, a standby on site", "Curing arranged", "Client's engineer has cleared the pour"],
+    "Reinforcement": [
+        "Bar diameter and grade (Fe500D) as per the BBS", "Number and spacing of bars",
+        "Lap lengths and where the laps fall", "Bends, hooks and anchorage",
+        "Chairs and spacers", "Tied with binding wire, no loose bars", "Clear cover",
+        "Bars clean - no rust flakes, oil or mud"],
+    "Shuttering": [
+        "Plates and ply in good condition", "Dimensions as per the drawing", "Line, level and plumb",
+        "Props and staging adequate and braced", "Joints sealed against leakage",
+        "Release agent applied", "Openings and cut-outs in the right place"],
+    "Brickwork / blockwork": [
+        "Bricks soaked before laying", "Mortar mix as specified", "Courses in line and level",
+        "Plumb", "Joints full and not over 10 mm", "Bond as specified", "Curing"],
+    "Plastering": [
+        "Surface hacked, cleaned and wetted", "Mix as specified", "Thickness", "Line and level",
+        "Corners and edges true", "Curing"],
+    "Waterproofing": [
+        "Surface clean and dry", "Primer applied", "Membrane or coating as specified",
+        "Laps and upstands", "Flood test held (24/48 h)", "Protection screed laid"],
+}
+CUBE_AGES = (7, 28)
+EARLY_SHARE = 0.65            # a 7-day set is expected near two-thirds of the grade
+
+
+def grade_fck(grade):
+    m = re.search(r"(\d{2,3})", grade or "")
+    return float(m.group(1)) if m else 25.0
+
+
+def next_number(db, model, client_id, stem):
+    n = db.query(model).filter(model.client_id == client_id).count() + 1
+    return "%s-%04d" % (stem, n)
+
+
+def _qc_job(db, client_id, job_id):
+    return job_or_404(db, client_id, job_id)
+
+
+# --- Inspections -------------------------------------------------------------
+
+def inspection_dict(i):
+    try:
+        items = json.loads(i.items or "[]")
+    except ValueError:
+        items = []
+    bad = [x for x in items if x.get("result") == "not ok"]
+    return {"id": i.id, "job_id": i.job_id, "number": i.number, "checklist": i.checklist,
+            "location": i.location or "", "inspected_on": i.inspected_on or "",
+            "inspected_by": i.inspected_by or "", "witnessed_by": i.witnessed_by or "",
+            "items": items, "result": i.result, "remarks": i.remarks or "",
+            "failed_items": len(bad), "checked": len([x for x in items if x.get("result")])}
+
+
+class InspectionIn(BaseModel):
+    job_id: int
+    checklist: Optional[str] = ""
+    # None, not "": an edit that sends only the ticks leaves the rest as it was.
+    location: Optional[str] = None
+    inspected_on: Optional[str] = None
+    witnessed_by: Optional[str] = None
+    items: Optional[list] = None
+    remarks: Optional[str] = None
+
+
+@app.get("/api/qc/checklists")
+def qc_checklists(request: Request, db: Session = Depends(get_db)):
+    require_erp_read(request, db)
+    return {"checklists": QC_CHECKLISTS}
+
+
+@app.get("/api/qc/inspections")
+def list_inspections(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    q = db.query(models.DBInspection).filter(models.DBInspection.client_id == client.id)
+    if job_id:
+        q = q.filter(models.DBInspection.job_id == job_id)
+    return {"inspections": [inspection_dict(i) for i in q.order_by(models.DBInspection.id.desc()).all()]}
+
+
+@app.post("/api/qc/inspections")
+def create_inspection(body: InspectionIn, request: Request, db: Session = Depends(get_db)):
+    client, _, actor_name = wo_actor(request, db)
+    job = _qc_job(db, client.id, body.job_id)
+    items = body.items
+    if items is None:
+        if body.checklist not in QC_CHECKLISTS:
+            raise HTTPException(400, "Pick a checklist, or give the items to check.")
+        items = [{"item": x, "result": "", "remark": ""} for x in QC_CHECKLISTS[body.checklist]]
+    i = models.DBInspection(client_id=client.id, job_id=job.id,
+                            number=next_number(db, models.DBInspection, client.id, "INS"),
+                            checklist=(body.checklist or "Custom").strip(), location=(body.location or "").strip(),
+                            inspected_on=(body.inspected_on or date.today().isoformat())[:10],
+                            inspected_by=actor_name, witnessed_by=(body.witnessed_by or "").strip(),
+                            items=json.dumps(_clean_items(items)), remarks=(body.remarks or "").strip())
+    db.add(i)
+    db.commit()
+    return {"inspection": inspection_dict(i)}
+
+
+def _clean_items(items):
+    out = []
+    for x in items or []:
+        text = (x.get("item") or "").strip() if isinstance(x, dict) else str(x).strip()
+        if not text:
+            continue
+        res = (x.get("result") or "") if isinstance(x, dict) else ""
+        out.append({"item": text[:200], "result": res if res in ("ok", "not ok", "na") else "",
+                    "remark": ((x.get("remark") or "") if isinstance(x, dict) else "")[:300]})
+    return out
+
+
+def _inspection_or_404(db, client_id, iid):
+    i = db.query(models.DBInspection).filter(models.DBInspection.id == iid,
+                                             models.DBInspection.client_id == client_id).first()
+    if not i:
+        raise HTTPException(404, "Inspection not found")
+    return i
+
+
+@app.put("/api/qc/inspections/{iid}")
+def update_inspection(iid: int, body: InspectionIn, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    i = _inspection_or_404(db, client.id, iid)
+    if i.result != "OPEN":
+        raise HTTPException(409, "%s is %s - it is the record now." % (i.number, i.result.lower()))
+    if body.items is not None:
+        i.items = json.dumps(_clean_items(body.items))
+    for f in ("location", "witnessed_by", "remarks"):
+        v = getattr(body, f)
+        if v is not None:
+            setattr(i, f, v.strip())
+    if body.inspected_on:
+        i.inspected_on = body.inspected_on[:10]
+    db.commit()
+    return {"inspection": inspection_dict(i)}
+
+
+@app.post("/api/qc/inspections/{iid}/close")
+def close_inspection(iid: int, request: Request, db: Session = Depends(get_db)):
+    """Passed when nothing on it is "not ok", failed otherwise - every item
+    has to have been looked at first."""
+    client, _, actor_name = wo_actor(request, db)
+    i = _inspection_or_404(db, client.id, iid)
+    if i.result != "OPEN":
+        raise HTTPException(409, "%s is already %s." % (i.number, i.result.lower()))
+    d = inspection_dict(i)
+    unchecked = [x["item"] for x in d["items"] if not x["result"]]
+    if unchecked:
+        raise HTTPException(409, "Not looked at yet: %s." % "; ".join(unchecked[:3]))
+    i.result = "FAILED" if d["failed_items"] else "PASSED"
+    db.commit()
+    out = {"inspection": inspection_dict(i)}
+    if i.result == "FAILED":
+        notify(db, client.id, "qc_failed",
+               "%s failed at %s" % (i.number, i.location or i.checklist),
+               "; ".join(x["item"] for x in d["items"] if x["result"] == "not ok")[:400],
+               view="quality-view", ref_type="inspection", ref_id=i.id, severity="wrong")
+    return out
+
+
+# --- Cube tests -------------------------------------------------------------
+
+def cube_verdict(s, results):
+    """What the crushed cubes say, age by age."""
+    out = {}
+    for r in results:
+        vals = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", r.strengths or "")]
+        avg = round(sum(vals) / len(vals), 2) if vals else 0.0
+        # IS 516: a cube more than 15% off the set's average makes the set doubtful.
+        spread_ok = all(abs(v - avg) <= 0.15 * avg for v in vals) if vals and avg else True
+        if r.age_days >= 28:
+            ok = avg >= (s.fck or 0)
+            verdict = "meets %s" % s.grade if ok else "below %s" % s.grade
+        else:
+            want = round(EARLY_SHARE * (s.fck or 0), 1)
+            ok = avg >= want
+            verdict = "on course" if ok else "low for %d days (expected about %s)" % (r.age_days, want)
+        out[r.age_days] = {"age_days": r.age_days, "tested_on": r.tested_on or "", "strengths": vals,
+                           "average": avg, "ok": ok, "spread_ok": spread_ok, "verdict": verdict,
+                           "lab": r.lab or ""}
+    return out
+
+
+def cube_dict(db, s):
+    results = db.query(models.DBCubeResult).filter(models.DBCubeResult.set_id == s.id).order_by(
+        models.DBCubeResult.age_days).all()
+    v = cube_verdict(s, results)
+    due = []
+    today = date.today()
+    try:
+        cast = datetime.strptime((s.cast_on or "")[:10], "%Y-%m-%d").date()
+    except ValueError:
+        cast = None
+    for age in CUBE_AGES:
+        if age not in v and cast:
+            on = cast + timedelta(days=age)
+            due.append({"age_days": age, "due_on": on.isoformat(), "overdue": on < today, "today": on == today})
+    final = v.get(28)
+    return {"id": s.id, "job_id": s.job_id, "number": s.number, "cast_on": s.cast_on or "",
+            "location": s.location or "", "grade": s.grade, "fck": s.fck, "slump_mm": s.slump_mm or 0,
+            "supplier": s.supplier or "", "docket": s.docket or "", "cast_by": s.cast_by or "",
+            "results": list(v.values()), "due": due,
+            "status": ("below grade" if final and not final["ok"] else "meets grade" if final
+                       else "awaiting results")}
+
+
+class CubeSetIn(BaseModel):
+    job_id: int
+    cast_on: Optional[str] = ""
+    location: Optional[str] = ""
+    grade: Optional[str] = "M25"
+    slump_mm: Optional[float] = 0
+    supplier: Optional[str] = ""
+    docket: Optional[str] = ""
+    remarks: Optional[str] = ""
+
+
+def list_cubes_for(db, client_id):
+    return [cube_dict(db, s) for s in db.query(models.DBCubeSet).filter(
+        models.DBCubeSet.client_id == client_id).all()]
+
+
+@app.get("/api/qc/cubes")
+def list_cubes(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    q = db.query(models.DBCubeSet).filter(models.DBCubeSet.client_id == client.id)
+    if job_id:
+        q = q.filter(models.DBCubeSet.job_id == job_id)
+    rows = [cube_dict(db, s) for s in q.order_by(models.DBCubeSet.id.desc()).all()]
+    return {"cubes": rows, "summary": {
+        "sets": len(rows), "below": len([r for r in rows if r["status"] == "below grade"]),
+        "due": len([d for r in rows for d in r["due"] if d["overdue"] or d["today"]])}}
+
+
+@app.post("/api/qc/cubes")
+def create_cube_set(body: CubeSetIn, request: Request, db: Session = Depends(get_db)):
+    client, _, actor_name = wo_actor(request, db)
+    job = _qc_job(db, client.id, body.job_id)
+    grade = (body.grade or "M25").strip().upper()
+    if not re.match(r"^M\d{2,3}$", grade):
+        raise HTTPException(400, "The grade as it is written: M20, M25, M30...")
+    s = models.DBCubeSet(client_id=client.id, job_id=job.id, number=next_number(db, models.DBCubeSet, client.id, "CT"),
+                         cast_on=(body.cast_on or date.today().isoformat())[:10], location=(body.location or "").strip(),
+                         grade=grade, fck=grade_fck(grade), slump_mm=body.slump_mm or 0,
+                         supplier=(body.supplier or "").strip(), docket=(body.docket or "").strip(),
+                         cast_by=actor_name, remarks=(body.remarks or "").strip())
+    db.add(s)
+    db.commit()
+    return {"cube_set": cube_dict(db, s)}
+
+
+class CubeResultIn(BaseModel):
+    age_days: int
+    strengths: str                  # "31.2, 29.8, 30.5"
+    tested_on: Optional[str] = ""
+    lab: Optional[str] = ""
+
+
+@app.post("/api/qc/cubes/{sid}/results")
+def add_cube_result(sid: int, body: CubeResultIn, request: Request, db: Session = Depends(get_db)):
+    client, _, actor_name = wo_actor(request, db)
+    s = db.query(models.DBCubeSet).filter(models.DBCubeSet.id == sid,
+                                          models.DBCubeSet.client_id == client.id).first()
+    if not s:
+        raise HTTPException(404, "Cube set not found")
+    vals = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", body.strengths or "")]
+    if not vals or any(v <= 0 or v > 150 for v in vals):
+        raise HTTPException(400, "The crushing strengths in N/mm2, one per cube: 31.2, 29.8, 30.5")
+    if not 1 <= body.age_days <= 90:
+        raise HTTPException(400, "Age in days - 7 or 28 as a rule.")
+    if db.query(models.DBCubeResult).filter(models.DBCubeResult.set_id == s.id,
+                                            models.DBCubeResult.age_days == body.age_days).first():
+        raise HTTPException(409, "%s already has its %d-day result." % (s.number, body.age_days))
+    db.add(models.DBCubeResult(set_id=s.id, age_days=body.age_days,
+                               tested_on=(body.tested_on or date.today().isoformat())[:10],
+                               strengths=", ".join("%g" % v for v in vals),
+                               average=round(sum(vals) / len(vals), 2), lab=(body.lab or "").strip(),
+                               recorded_by_name=actor_name))
+    db.commit()
+    d = cube_dict(db, s)
+    got = [r for r in d["results"] if r["age_days"] == body.age_days][0]
+    if not got["ok"]:
+        notify(db, client.id, "qc_failed", "%s %s at %d days: %s N/mm2" % (s.number, s.grade, body.age_days, got["average"]),
+               "%s, cast %s. %s." % (s.location or "", s.cast_on, got["verdict"].capitalize()),
+               view="quality-view", ref_type="cube_set", ref_id=s.id, severity="wrong")
+    return {"cube_set": d}
+
+
+# --- Non-conformances -------------------------------------------------------
+
+def ncr_dict(n):
+    today = date.today().isoformat()
+    return {"id": n.id, "job_id": n.job_id, "number": n.number, "raised_on": n.raised_on or "",
+            "raised_by": n.raised_by or "", "location": n.location or "", "description": n.description or "",
+            "severity": n.severity or "Minor", "responsible": n.responsible or "",
+            "corrective_action": n.corrective_action or "", "target_date": n.target_date or "",
+            "source_type": n.source_type or "", "source_id": n.source_id, "status": n.status,
+            "closed_on": n.closed_on or "", "closure_note": n.closure_note or "", "closed_by": n.closed_by or "",
+            "overdue": n.status == "OPEN" and bool(n.target_date) and n.target_date < today}
+
+
+class NcrIn(BaseModel):
+    job_id: Optional[int] = None
+    location: Optional[str] = ""
+    description: Optional[str] = ""
+    severity: Optional[str] = "Minor"
+    responsible: Optional[str] = ""
+    corrective_action: Optional[str] = ""
+    target_date: Optional[str] = ""
+    source_type: Optional[str] = ""
+    source_id: Optional[int] = None
+
+
+@app.get("/api/qc/ncrs")
+def list_ncrs(request: Request, job_id: int = 0, status: str = "", db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    q = db.query(models.DBNcr).filter(models.DBNcr.client_id == client.id)
+    if job_id:
+        q = q.filter(models.DBNcr.job_id == job_id)
+    if status:
+        q = q.filter(models.DBNcr.status == status.upper())
+    rows = [ncr_dict(n) for n in q.order_by(models.DBNcr.id.desc()).all()]
+    return {"ncrs": rows, "summary": {"open": len([r for r in rows if r["status"] == "OPEN"]),
+                                      "overdue": len([r for r in rows if r["overdue"]]),
+                                      "major_open": len([r for r in rows if r["status"] == "OPEN"
+                                                         and r["severity"] == "Major"])}}
+
+
+@app.post("/api/qc/ncrs")
+def raise_ncr(body: NcrIn, request: Request, db: Session = Depends(get_db)):
+    """By hand, or from a failed inspection or a set of cubes below grade -
+    which fills in what went wrong from the record."""
+    client, _, actor_name = wo_actor(request, db)
+    job_id, location, desc = body.job_id, (body.location or "").strip(), (body.description or "").strip()
+    if body.source_type == "inspection" and body.source_id:
+        i = _inspection_or_404(db, client.id, body.source_id)
+        d = inspection_dict(i)
+        job_id = i.job_id
+        location = location or i.location
+        desc = desc or "%s (%s) failed: %s" % (i.number, i.checklist, "; ".join(
+            x["item"] + (" - " + x["remark"] if x["remark"] else "") for x in d["items"] if x["result"] == "not ok"))
+    elif body.source_type == "cube_set" and body.source_id:
+        s = db.query(models.DBCubeSet).filter(models.DBCubeSet.id == body.source_id,
+                                              models.DBCubeSet.client_id == client.id).first()
+        if not s:
+            raise HTTPException(404, "Cube set not found")
+        d = cube_dict(db, s)
+        job_id = s.job_id
+        location = location or s.location
+        low = [r for r in d["results"] if not r["ok"]]
+        desc = desc or "%s %s cast %s: %s" % (s.number, s.grade, s.cast_on, "; ".join(
+            "%d-day average %s N/mm2 (%s)" % (r["age_days"], r["average"], r["verdict"]) for r in low))
+    if not job_id:
+        raise HTTPException(400, "Which project is it on?")
+    job = _qc_job(db, client.id, job_id)
+    if not desc:
+        raise HTTPException(400, "Say what is not as specified.")
+    n = models.DBNcr(client_id=client.id, job_id=job.id, number=next_number(db, models.DBNcr, client.id, "NCR"),
+                     raised_on=date.today().isoformat(), raised_by=actor_name, location=location[:200],
+                     description=desc[:3000], severity="Major" if body.severity == "Major" else "Minor",
+                     responsible=(body.responsible or "").strip(), corrective_action=(body.corrective_action or "").strip(),
+                     target_date=(body.target_date or "")[:10], source_type=body.source_type or "manual",
+                     source_id=body.source_id)
+    db.add(n)
+    db.commit()
+    notify(db, client.id, "qc_failed", "%s raised - %s" % (n.number, n.location or job.name),
+           n.description[:300], view="quality-view", ref_type="ncr", ref_id=n.id,
+           severity="wrong" if n.severity == "Major" else "action")
+    return {"ncr": ncr_dict(n)}
+
+
+class NcrCloseIn(BaseModel):
+    closure_note: str
+
+
+@app.post("/api/qc/ncrs/{nid}/close")
+def close_ncr(nid: int, body: NcrCloseIn, request: Request, db: Session = Depends(get_db)):
+    client, _, actor_name = wo_actor(request, db)
+    n = db.query(models.DBNcr).filter(models.DBNcr.id == nid, models.DBNcr.client_id == client.id).first()
+    if not n:
+        raise HTTPException(404, "NCR not found")
+    if n.status == "CLOSED":
+        raise HTTPException(409, "%s is already closed." % n.number)
+    if not (body.closure_note or "").strip():
+        raise HTTPException(400, "Say what was done to put it right.")
+    n.status, n.closed_on, n.closed_by = "CLOSED", date.today().isoformat(), actor_name
+    n.closure_note = body.closure_note.strip()
+    db.commit()
+    return {"ncr": ncr_dict(n)}
 
 
 # Serve frontend

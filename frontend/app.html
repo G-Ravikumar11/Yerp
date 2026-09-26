@@ -112,6 +112,7 @@
                             <a href="#" class="nav-item" id="nav-jobs" data-perm="reports.view" onclick="event.preventDefault();showView('jobs-view')">Projects</a>
                             <a href="#" class="nav-item" id="nav-schedule" onclick="event.preventDefault();showView('schedule-view')">Programme &amp; Progress</a>
                             <a href="#" class="nav-item" id="nav-drawings" onclick="event.preventDefault();showView('drawings-view')">Drawings &amp; Photos</a>
+                            <a href="#" class="nav-item" id="nav-quality" onclick="event.preventDefault();showView('quality-view')">Quality</a>
                             <a href="#" class="nav-item" id="nav-diary" onclick="event.preventDefault();showView('diary-view')">Site Diary</a>
                             <a href="#" class="nav-item" id="nav-equipment" onclick="event.preventDefault();showView('equipment-view')">Equipment &amp; Plant</a>
                             <a href="#" class="nav-item" id="nav-pnl" onclick="event.preventDefault();showView('pnl-view')">Project Profit</a>
@@ -3916,6 +3917,64 @@
                     <div id="lead-detail"></div>
                 </div>
 
+                <div id="quality-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Quality</h1><p class="subtitle">Checklists walked before work is covered, cubes read against the grade, and non-conformances followed to a close</p></div>
+                        <div class="invoices-actions">
+                            <select id="qc-job" class="form-control" style="width:auto;min-width:220px;" onchange="loadQuality()"></select>
+                            <button class="btn btn-primary" onclick="qcNew()">+ New</button>
+                        </div>
+                    </div>
+                    <div class="stats-grid" id="qc-stats"></div>
+                    <div class="invoices-tabs" id="qc-tabs" style="margin:16px 0;">
+                        <button class="tab active" data-tab="inspections" onclick="qcTab('inspections')">Inspections</button>
+                        <button class="tab" data-tab="cubes" onclick="qcTab('cubes')">Cube tests</button>
+                        <button class="tab" data-tab="ncrs" onclick="qcTab('ncrs')">Non-conformances</button>
+                    </div>
+                    <div id="qc-body"></div>
+                </div>
+
+                <div id="qcnew-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:480px;">
+                        <div class="modal-header"><h3>New inspection</h3><button class="modal-close" onclick="closeModal('qcnew-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-group"><label>Checklist</label><select id="qcnew-list" class="form-control"></select></div>
+                            <div class="form-group"><label>Where</label><input id="qcnew-where" class="form-control" placeholder="Raft, grid A-C"></div>
+                            <div class="form-group"><label>Witnessed by</label><input id="qcnew-witness" class="form-control" placeholder="Client's engineer"></div>
+                        </div>
+                        <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('qcnew-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="qcCreate()">Start it</button></div>
+                    </div>
+                </div>
+
+                <div id="qcins-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:820px;">
+                        <div class="modal-header"><h3 id="qcins-title">Inspection</h3><button class="modal-close" onclick="closeModal('qcins-modal')">&times;</button></div>
+                        <div class="modal-body" id="qcins-body"></div>
+                        <div class="modal-footer" id="qcins-actions"></div>
+                    </div>
+                </div>
+
+                <div id="qccube-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:520px;">
+                        <div class="modal-header"><h3>Cubes cast</h3><button class="modal-close" onclick="closeModal('qccube-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-row">
+                                <div class="form-group"><label>Cast on</label><input type="date" id="qccube-date" class="form-control"></div>
+                                <div class="form-group"><label>Grade</label><input id="qccube-grade" class="form-control" value="M25"></div>
+                                <div class="form-group"><label>Slump (mm)</label><input type="number" id="qccube-slump" class="form-control"></div>
+                            </div>
+                            <div class="form-group"><label>Which pour</label><input id="qccube-where" class="form-control" placeholder="Raft pour 1, grid A-C"></div>
+                            <div class="form-row">
+                                <div class="form-group"><label>RMC plant / mixer</label><input id="qccube-supplier" class="form-control"></div>
+                                <div class="form-group"><label>Docket no.</label><input id="qccube-docket" class="form-control"></div>
+                            </div>
+                        </div>
+                        <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('qccube-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="qcCubeSave()">Log the set</button></div>
+                    </div>
+                </div>
+
                 <div id="drawings-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div><h1>Drawings &amp; Photos</h1><p class="subtitle">Every sheet and every revision, the one to build to marked - and the site's photographs</p></div>
@@ -5241,7 +5300,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=117"></script>
+    <script src="app.js?v=118"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=65"></script>
@@ -5276,6 +5335,7 @@
     <script src="ewaybill.js?v=113"></script>
     <script src="files.js?v=115"></script>
     <script src="alerts.js?v=116"></script>
+    <script src="quality.js?v=118"></script>
     <script src="leads.js?v=110"></script>
     <script src="schedule.js?v=99"></script>
     <script src="stores.js?v=108"></script>
