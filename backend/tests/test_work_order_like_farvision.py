@@ -6,6 +6,7 @@ billing-terms tab with every head laid out (CGST/SGST or IGST, TDS, retention,
 labour welfare cess), copy-an-order, a change history, a searchable register
 with an Excel export, and a printed letter. Each of those is a test here.
 """
+from conftest import fund_order
 from test_subcontract_orders import draft, priced, BOQ, staff, sign_in
 from test_subcontractor_bills import live_order, book, measure, raise_bill
 
@@ -29,7 +30,7 @@ def grouped(tenant, **over):
     order = draft(tenant, **over)
     res = tenant.put("/api/wo/orders/%d/boq" % order["id"], json=GROUPED)
     assert res.status_code == 200, res.text
-    return res.json()["order"]
+    return fund_order(tenant, res.json()["order"])
 
 
 # --- Item info: headings and tolerance ------------------------------------------

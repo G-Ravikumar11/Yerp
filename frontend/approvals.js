@@ -93,6 +93,9 @@ function apRow(i) {
         (i.warnings || []).map(function (w) {
             return '<div style="font-size:0.75rem;color:var(--danger-color);font-weight:700;">' + esc(w) + '</div>';
         }).join('') +
+        (i.budget || []).map(function (b) {
+            return '<div style="font-size:0.75rem;color:var(--text-secondary);">Budget - ' + esc(b) + '</div>';
+        }).join('') +
         (!i.mine && i.waiting_on ? '<div style="font-size:0.75rem;color:var(--text-secondary);">With ' + esc(i.waiting_on) + '</div>' : '');
     return '<tr>' +
         '<td>' + apPill(i.kind_label, colour) + '<div style="font-weight:700;margin-top:4px;font-family:monospace;">' + number + '</div></td>' +

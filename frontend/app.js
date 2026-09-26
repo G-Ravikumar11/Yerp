@@ -476,6 +476,7 @@ function showView(viewId) {
     if (viewId === 'settings-view' && typeof loadPortalAccess === 'function') loadPortalAccess();
     if (viewId === 'settings-view' && typeof loadBackupInfo === 'function') loadBackupInfo();
     if (viewId === 'settings-view' && typeof loadSignatories === 'function') loadSignatories();
+    if (viewId === 'settings-view' && typeof loadLetterheads === 'function') { loadLetterheads(); loadTermsLibrary(); }
     if (viewId === 'settings-view' && typeof loadTaxRates === 'function') loadTaxRates();
     if (viewId === 'settings-view' && typeof loadTeam === 'function') loadTeam();
     if (viewId === 'settings-view' && typeof loadBrandingThemes === 'function') loadBrandingThemes();

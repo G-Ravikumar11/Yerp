@@ -234,15 +234,53 @@ def _qr(block, st):
                 [("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("ALIGN", (1, 0), (1, 0), "CENTER")])
 
 
+def _picture(value, max_w, max_h):
+    """A signature or a seal carried in the document as a data: URI, scaled
+    into its box. Anything that will not decode prints as a blank for a pen."""
+    if not value or not str(value).startswith("data:image"):
+        return None
+    try:
+        import base64
+        from reportlab.lib.utils import ImageReader
+        from reportlab.platypus import Image
+        raw = base64.b64decode(str(value).partition(",")[2], validate=False)
+        reader = ImageReader(io.BytesIO(raw))
+        w, h = reader.getSize()
+        if not w or not h:
+            return None
+        scale = min(max_h / float(h), max_w / float(w))
+        return Image(io.BytesIO(raw), width=w * scale, height=h * scale)
+    except Exception:
+        return None
+
+
 def _signatures(block, st):
+    """The signature row. A box is (role, name) or (role, name, signature
+    picture); the block's seal goes on the authorised signatory's box."""
     boxes = block.get("boxes") or []
     if not boxes:
         return None
     w = _W() / len(boxes)
+    seal_value = block.get("seal") or ""
     cells = []
-    for role, name in boxes:
-        cells.append([Paragraph(_esc(role), st["centrebold"]), Paragraph("&nbsp;", st["body"]),
-                      Paragraph("&nbsp;", st["body"]), Paragraph(_esc(name or ""), st["centre"])])
+    for box in boxes:
+        role, name = box[0], box[1]
+        image = box[2] if len(box) > 2 else ""
+        authorised = (role or "").strip().lower().startswith("authori")
+        seal = _picture(seal_value, 16 * mm, 15 * mm) if (seal_value and authorised) else None
+        sign = _picture(image, (w - 20 * mm) if seal else (w - 6 * mm), 12 * mm) if image else None
+        if seal:
+            middle = [Table([[seal, sign or ""]], colWidths=[17 * mm, w - 23 * mm],
+                            style=[("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("ALIGN", (1, 0), (1, 0), "CENTER"),
+                                   ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                                   ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)])]
+        elif sign:
+            sign.hAlign = "CENTER"
+            middle = [sign]
+        else:
+            middle = [Paragraph("&nbsp;", st["body"]), Paragraph("&nbsp;", st["body"])]
+        cells.append([Paragraph(_esc(role), st["centrebold"])] + middle +
+                     [Paragraph(_esc(name or ""), st["centre"])])
     return _box([cells], [w] * len(boxes), [("VALIGN", (0, 0), (-1, -1), "TOP"),
                                             ("TOPPADDING", (0, 0), (-1, -1), 4),
                                             ("BOTTOMPADDING", (0, 0), (-1, -1), 4)])

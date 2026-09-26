@@ -196,3 +196,16 @@ def work_every_day(tenant):
     """
     res = tenant.put("/api/attendance/settings", json={"working_days": "1,2,3,4,5,6,7"})
     assert res.status_code == 200, res.text
+
+
+def fund_order(tenant, order, amount=100_000_000.0, name="Works"):
+    """Give a subcontract order's project a cost centre and charge the
+    order's schedule to it - every work order spends a budget before it can
+    be sent for approval."""
+    budget = tenant.post("/api/wo/projects/%d/budgets" % order["job_id"],
+                         json={"name": name, "allocated_amount": amount})
+    assert budget.status_code == 200, budget.text
+    res = tenant.post("/api/wo/orders/%d/charge-budget" % order["id"],
+                      json={"budget_id": budget.json()["id"]})
+    assert res.status_code == 200, res.text
+    return res.json()["order"]

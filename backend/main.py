@@ -19518,8 +19518,24 @@ def wo_terms_library(request: Request, db: Session = Depends(get_db)):
     Offered as a starting point rather than imposed: they are edited per order,
     but nobody should be retyping the measurement mode from memory.
     """
-    require_erp_read(request, db)
-    return {"library": WO_STANDARD_TERMS}
+    client = require_erp_read(request, db)
+    own = company_terms(db, client.id, fallback=False)
+    return {"library": own or WO_STANDARD_TERMS, "custom": bool(own), "standard": WO_STANDARD_TERMS}
+
+
+@app.put("/api/wo/terms/library")
+def wo_save_terms_library(body: TermsIn, request: Request, db: Session = Depends(get_db)):
+    """The company's own general conditions, printed on every work order
+    that has none of its own. Saving an empty list goes back to the standard."""
+    client = get_client_user(request, db)
+    clauses = [{"clause_category": (t.clause_category or "").strip()[:80],
+                "clause_text": (t.clause_text or "").strip()[:4000]}
+               for t in body.terms if (t.clause_text or "").strip()][:80]
+    put_setting(db, client.id, "wo_terms_library", json.dumps(clauses) if clauses else "")
+    db.commit()
+    return {"library": clauses or WO_STANDARD_TERMS, "custom": bool(clauses),
+            "message": ("%d conditions saved. Every work order without its own prints these." % len(clauses))
+                       if clauses else "Back to the standard conditions."}
 
 
 # --- Moving the order along ------------------------------------------------
@@ -19547,7 +19563,49 @@ def wo_ready_to_submit(db, order):
         missing.append("a commencement date")
     if not (order.completion_date or "").strip():
         missing.append("a completion date")
+    missing += wo_budget_missing(db, order)
     return missing
+
+
+def wo_budget_missing(db, order):
+    """Every order spends a budget, and says which.
+
+    The project has to have money allocated, and every priced line of the
+    schedule has to be charged to one of its cost centres - otherwise the
+    approver is signing a figure with nothing to hold it against, and the
+    overrun check has nothing to check.
+    """
+    if not order.job_id:
+        return ["the project it is for, so it can be held against that project's budget"]
+    heads = {b.id: b for b in db.query(models.DBProjectBudget).filter(
+        models.DBProjectBudget.client_id == order.client_id,
+        models.DBProjectBudget.job_id == order.job_id,
+        models.DBProjectBudget.is_active == True).all()}  # noqa: E712
+    if not heads:
+        return ["a budget on the project - add a cost centre with the amount allocated to it"]
+    lines = [i for i in db.query(models.DBSubcontractItem).filter(
+        models.DBSubcontractItem.order_id == order.id).all()
+        if not i.is_header and money(i.total_amount or 0) > 0]
+    uncharged = [i for i in lines if not i.budget_id or i.budget_id not in heads]
+    out = []
+    if uncharged:
+        out.append("a cost centre on %d line%s of the schedule" % (
+            len(uncharged), "" if len(uncharged) == 1 else "s"))
+    unset = sorted({heads[i.budget_id].name or heads[i.budget_id].code or "a cost centre"
+                    for i in lines if i.budget_id in heads and money(heads[i.budget_id].allocated_amount or 0) <= 0})
+    if unset:
+        out.append("an amount allocated to " + ", ".join(unset))
+    return out
+
+
+def wo_budget_summary(db, order):
+    """The cost centres this order spends, as an approver reads them."""
+    if not order.job_id:
+        return []
+    return ["%s: allocated %s, this order %s, left after it %s" % (
+                r["name"] or r["code"] or "Cost centre", format_money_plain(r["allocated"]),
+                format_money_plain(r["this_order"]), format_money_plain(r["available"]))
+            for r in wo_budget_rows(db, order.client_id, order.job_id, order) if r["this_order"] > 0]
 
 
 def wo_notify(db, client, order, action, actor_id, actor_name, comments=""):
@@ -20923,6 +20981,7 @@ def record_measurement(work_order_id: int, body: MeasurementIn, request: Request
     if (wo.status or "") == "Draft":
         raise HTTPException(
             409, "Nothing is measured against an order that has not been placed.")
+    refuse_unapproved_order(wo, "measured")
 
     line = db.query(models.DBWorkOrderLine).filter(
         models.DBWorkOrderLine.id == body.line_id,
@@ -21015,6 +21074,7 @@ def raise_ra_bill(body: RABillIn, request: Request, db: Session = Depends(get_db
     wo = work_order_or_404(db, client.id, body.work_order_id)
     if (wo.status or "") == "Draft":
         raise HTTPException(409, "Place the order before billing against it.")
+    refuse_unapproved_order(wo, "billed")
 
     open_bill = db.query(models.DBRABill).filter(
         models.DBRABill.work_order_id == wo.id,
@@ -33153,14 +33213,30 @@ def doc_signatories(db, client_id):
         models.DBSettings.client_id == client_id,
         models.DBSettings.key.like("sig_%")).all()}
     return {key: {"role": role, "name": got.get("sig_%s_name" % key, ""),
-                  "title": got.get("sig_%s_title" % key, title)}
+                  "title": got.get("sig_%s_title" % key, title),
+                  "image": got.get("sig_%s_image" % key, "")}
             for key, role, title in DOC_SIGNATORIES}
+
+
+def doc_seal(db, client_id):
+    row = db.query(models.DBSettings).filter(models.DBSettings.client_id == client_id,
+                                             models.DBSettings.key == "doc_seal_image").first()
+    return (row.value or "") if row else ""
 
 
 @app.get("/api/documents/signatories")
 def get_doc_signatories(request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
-    return {"signatories": doc_signatories(db, client.id)}
+    sig = doc_signatories(db, client.id)
+    seal = doc_seal(db, client.id)
+    # The signature images are the owner's to see and change. Staff are told
+    # whether one is on file, not handed a copy of somebody's signature.
+    owner = session_employee(request, db) is None
+    for s in sig.values():
+        s["has_image"] = bool(s["image"])
+        if not owner:
+            s["image"] = ""
+    return {"signatories": sig, "seal": seal if owner else "", "has_seal": bool(seal)}
 
 
 @app.put("/api/documents/signatories")
@@ -33171,16 +33247,15 @@ def save_doc_signatories(request: Request, body: dict = None, db: Session = Depe
         for field in ("name", "title"):
             if field not in item:
                 continue
-            k = "sig_%s_%s" % (key, field)
-            row = db.query(models.DBSettings).filter(models.DBSettings.client_id == client.id,
-                                                     models.DBSettings.key == k).first()
-            value = str(item.get(field) or "").strip()[:80]
-            if row:
-                row.value = value
-            else:
-                db.add(models.DBSettings(client_id=client.id, key=k, value=value))
+            put_setting(db, client.id, "sig_%s_%s" % (key, field), str(item.get(field) or "").strip()[:80])
+        if "image" in item:
+            put_setting(db, client.id, "sig_%s_image" % key,
+                        image_data_url(item.get("image"), "The signature"))
+    if "seal" in (body or {}):
+        put_setting(db, client.id, "doc_seal_image", image_data_url(body.get("seal"), "The seal"))
     db.commit()
-    return {"signatories": doc_signatories(db, client.id), "message": "Saved. Every document signs with these."}
+    return {"signatories": doc_signatories(db, client.id), "seal": doc_seal(db, client.id),
+            "message": "Saved. Every document signs with these."}
 
 
 def _sig_line(s):
@@ -33264,8 +33339,11 @@ def wo_form_spec(db, client, order):
                   ("Authorized Signatory", _sig_line(sig["authorised"]))]
     clauses = [("%s: %s" % (t.get("clause_category"), t.get("clause_text")) if t.get("clause_category") else t.get("clause_text"))
                for t in (doc.get("terms") or [])] or \
-              ["%s: %s" % (t["clause_category"], t["clause_text"]) for t in WO_STANDARD_TERMS]
+              [("%s: %s" % (t["clause_category"], t["clause_text"]) if t.get("clause_category") else t["clause_text"])
+               for t in company_terms(db, client.id)]
     company = _company_box(db, unit, client)
+    stage = {"PROVISIONAL": "submitted", "APPROVED": "approved", "EXECUTED": "approved"}.get(order.status or "")
+    signatures, seal = sign_boxes(db, client.id, signatures, stage)
     blocks = [
         {"type": "header", "company": company, "title": "WORK ORDER",
          "facts": [("Project", (job.number if job else "") or doc.get("project") or ""),
@@ -33299,14 +33377,14 @@ def wo_form_spec(db, client, order):
             "the company's authorised representatives."},
         {"type": "band", "text": "Payment Terms & Conditions"},
         {"type": "terms", "rows": terms, "label_width": 58},
-        {"type": "signatures", "boxes": signatures},
+        {"type": "signatures", "boxes": signatures, "seal": seal},
         {"type": "page_break"},
         {"type": "band", "text": "GENERAL CONTRACT CONDITIONS (GCC)"},
         {"type": "numbered", "items": clauses, "closing": [
             "Where a special condition is stated in this order, it supersedes the related condition above.",
             "Please return the duplicate copy duly signed and stamped as your receipt and acceptance of this order.",
             "If the acceptance is not received within one week, the order shall be taken as accepted."]},
-        {"type": "signatures", "boxes": signatures},
+        {"type": "signatures", "boxes": signatures, "seal": seal},
     ]
     return {"title": "Work Order %s" % (doc.get("wo_number") or ""), "author": company["name"],
             "watermark": doc.get("watermark") or "", "blocks": blocks,
@@ -33393,8 +33471,10 @@ def ra_form_spec(db, client, bill):
         {"type": "text", "style": "small", "text": "Quantities are as recorded in the measurement book and jointly "
                                                    "verified. Retention is held as per the contract and released on "
                                                    "completion of the defects liability period."},
-        {"type": "signatures", "boxes": signatures},
     ]
+    signatures, seal = sign_boxes(db, client.id, signatures, {"SUBMITTED": "submitted", "CERTIFIED": "approved",
+                                                              "PAID": "approved"}.get(b["status"]))
+    blocks.append({"type": "signatures", "boxes": signatures, "seal": seal})
     watermark = {"DRAFT": "DRAFT - NOT A CLAIM", "SUBMITTED": "SUBMITTED - NOT YET CERTIFIED",
                  "CANCELLED": "CANCELLED"}.get(b["status"], "")
     return {"title": "RA Bill %s" % b["number"], "author": company["name"], "watermark": watermark,
@@ -33680,8 +33760,11 @@ def po_form_spec(db, client, order):
                                    ("5. Inspection", "Material is accepted on receipt and inspection at site; rejected material "
                                                      "is returned at the supplier's cost"),
                                    ("6. Notes", d.get("notes") or "-")], "label_width": 42},
-        {"type": "signatures", "boxes": signatures},
     ]
+    po_stage = "approved" if ((order.approval_status or "") == "approved" or order.status in ("Approved", "Closed")) \
+        else ("submitted" if (order.approval_status or "") == "pending" else None)
+    signatures, seal = sign_boxes(db, client.id, signatures, po_stage)
+    blocks.append({"type": "signatures", "boxes": signatures, "seal": seal})
     watermark = {"Draft": "DRAFT - NOT ISSUED", "Cancelled": "CANCELLED", "Rejected": "REJECTED"}.get(order.status, "")
     if (order.approval_status or "") == "pending":
         watermark = "AWAITING APPROVAL"
@@ -33757,8 +33840,10 @@ def sub_bill_form_spec(db, client, bill):
         {"type": "words", "label": "Rupees", "text": _words(b["net_payable"])},
         {"type": "text", "style": "small", "text": "Quantities are as jointly measured and recorded in the measurement "
                                                    "book. Retention (FSD) is released after the defects liability period."},
-        {"type": "signatures", "boxes": signatures},
     ]
+    signatures, seal = sign_boxes(db, client.id, signatures, {"SUBMITTED": "submitted", "CERTIFIED": "approved",
+                                                              "PAID": "approved"}.get(b["status"]))
+    blocks.append({"type": "signatures", "boxes": signatures, "seal": seal})
     watermark = {"DRAFT": "DRAFT - NOT CERTIFIED", "SUBMITTED": "SUBMITTED - NOT YET CERTIFIED",
                  "CANCELLED": "CANCELLED"}.get(b["status"], "")
     return {"title": "Sub Contractor Bill %s" % b["number"], "author": company["name"], "watermark": watermark,
@@ -34550,7 +34635,7 @@ def approval_inbox(db, client, emp):
                 pdf="/api/wo/orders/%d/document.pdf" % o.id,
                 waiting_on=", ".join(wo_pending_with(db, client.id, o.submitted_by)),
                 warnings=["Over the project allocation: " + "; ".join(over)] if over else [],
-                overrun=bool(over)))
+                overrun=bool(over), budget=wo_budget_summary(db, o)))
 
     # 3. RA bills to the client, waiting to be certified.
     if can("subcontracts.approve"):
@@ -34764,6 +34849,198 @@ def approvals_who(request: Request, db: Session = Depends(get_db)):
                                 "rank": role_rank(e)}
                                for e in holders_of(db, client.id, right)]})
     return {"routes": out, "owner": owner_label(db, client.id)}
+
+
+# --- The letterhead, the gang's particulars, the company's terms, signatures ----
+#
+# What prints on a work order is only as good as what is on file. The company
+# block, the gang's PAN and GSTIN, the conditions and the signatures could be
+# entered once and never corrected; these routes let them be kept up.
+
+def put_setting(db, client_id, key, value):
+    row = db.query(models.DBSettings).filter(models.DBSettings.client_id == client_id,
+                                             models.DBSettings.key == key).first()
+    if row:
+        row.value = value
+    else:
+        db.add(models.DBSettings(client_id=client_id, key=key, value=value))
+
+
+IMAGE_LIMIT = 900_000       # characters of data URL: a logo or a signature, not a photograph
+
+
+def image_data_url(value, label, limit=IMAGE_LIMIT):
+    """A PNG or JPEG carried in the page, or nothing. Only an image that
+    travels with the document is printed (see wo_pdf._logo)."""
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if not re.match(r"^data:image/(png|jpe?g);base64,[A-Za-z0-9+/=\s]+$", value[:80] + "="):
+        raise HTTPException(400, "%s has to be a PNG or JPEG picture." % label)
+    if len(value) > limit:
+        raise HTTPException(400, "%s picture is too large. Use one under about 600 KB." % label)
+    return value
+
+
+def clean_tax_ids(gstin, pan):
+    """A GSTIN and a PAN as the forms want them, or a plain reason why not.
+    The PAN is inside the GSTIN, so one given without the other is filled in,
+    and two that disagree are refused - they would print two different
+    businesses on one document."""
+    gstin = re.sub(r"\s", "", gstin or "").upper()
+    pan = re.sub(r"\s", "", pan or "").upper()
+    if gstin and (len(gstin) != 15 or not state_from_gstin(gstin)
+                  or not re.match(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$", gstin)):
+        raise HTTPException(400, "A GSTIN is fifteen characters: a state code, the PAN, then three more "
+                                 "(for example 36AABCY1234H1ZX).")
+    if pan and not re.match(r"^[A-Z]{5}[0-9]{4}[A-Z]$", pan):
+        raise HTTPException(400, "A PAN is five letters, four digits and a letter (for example AABCY1234H).")
+    if gstin and not pan:
+        pan = gstin[2:12]
+    if gstin and pan and gstin[2:12] != pan:
+        raise HTTPException(400, "The PAN %s is not the one inside the GSTIN %s." % (pan, gstin))
+    return gstin, pan
+
+
+def company_terms(db, client_id, fallback=True):
+    """The company's own general conditions, else the standard list."""
+    raw = tenant_setting(db, client_id, "wo_terms_library", "")
+    try:
+        own = [t for t in json.loads(raw) if (t.get("clause_text") or "").strip()] if raw else []
+    except (ValueError, TypeError, AttributeError):
+        own = []
+    return own or (list(WO_STANDARD_TERMS) if fallback else [])
+
+
+SIGN_KEYS = {"prepared by": "prepared", "proposed by": "proposed", "recommended by": "recommended",
+             "checked by": "recommended", "certified by": "proposed",
+             "authorized signatory": "authorised", "authorised signatory": "authorised"}
+
+
+def sign_boxes(db, client_id, boxes, stage):
+    """The signature row with the signatures on it that the paper has earned.
+
+    Nothing is signed on a draft. Once it is sent, the person who prepared it
+    has signed; once it is approved or certified, the whole row has, and the
+    company's seal goes on the authorised signatory's box. A signature is only
+    put above the name it belongs to - where the row names somebody else (the
+    person who actually certified a bill), that box is left for a pen.
+    """
+    if not stage:
+        return boxes, ""
+    sig = doc_signatories(db, client_id)
+    out, seal = [], ""
+    for box in boxes:
+        role, name = box[0], box[1]
+        key = SIGN_KEYS.get((role or "").strip().lower())
+        image = ""
+        if key and (stage == "approved" or key == "prepared"):
+            s = sig.get(key) or {}
+            if s.get("image") and s.get("name") and s["name"] in (name or ""):
+                image = s["image"]
+        out.append((role, name, image))
+    if stage == "approved":
+        seal = doc_seal(db, client_id)
+    return out, seal
+
+
+def refuse_unapproved_order(wo, verb):
+    """A client work order is measured and billed once it is approved - the
+    budget and the margin have been looked at, and not before."""
+    if (wo.approval_status or "") != "approved":
+        where = {"pending": "It is waiting for approval.", "rejected": "It was sent back and has to be sent again."}.get(
+            wo.approval_status or "", "Send it for approval first.")
+        raise HTTPException(409, "Only an approved work order can be %s. %s" % (verb, where))
+
+
+@app.put("/api/wo/business-units/{unit_id}")
+def wo_update_business_unit(unit_id: int, body: BusinessUnitIn, request: Request,
+                            db: Session = Depends(get_db)):
+    """The letterhead: name, address, GSTIN, PAN and logo, as they print at
+    the top of every work order, bill and purchase order this unit issues."""
+    client = require_items_access(request, db, "workorders.manage")
+    unit = db.query(models.DBBusinessUnit).filter(models.DBBusinessUnit.id == unit_id,
+                                                  models.DBBusinessUnit.client_id == client.id).first()
+    if not unit:
+        raise HTTPException(404, "Business unit not found")
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "The business unit needs a name")
+    gstin, pan = clean_tax_ids(body.gstin, body.pan)
+    unit.name, unit.code = name, (body.code or "").strip().upper()
+    unit.gstin, unit.pan = gstin, pan
+    unit.address = (body.address or "").strip()
+    unit.logo_url = image_data_url(body.logo_url, "The logo") if (body.logo_url or "").startswith("data:") \
+        else ("" if not body.logo_url else unit.logo_url)
+    log_audit(db, client.id, "business_unit_updated", "business_unit", unit.id, name, gstin, request)
+    db.commit()
+    return {"id": unit.id, "name": unit.name, "message": "%s saved. Documents print with it from now on." % name}
+
+
+@app.put("/api/wo/contractors/{con_id}")
+def wo_update_contractor(con_id: int, body: ContractorIn, request: Request,
+                         db: Session = Depends(get_db)):
+    """The gang's particulars as the order, the bill and the TDS return need them."""
+    client = require_items_access(request, db, ("workorders.manage", "billing.manage"))
+    con = db.query(models.DBContractor).filter(models.DBContractor.id == con_id,
+                                               models.DBContractor.client_id == client.id).first()
+    if not con:
+        raise HTTPException(404, "Contractor not found")
+    name = (body.company_name or "").strip()
+    if not name:
+        raise HTTPException(400, "The contractor needs a company name")
+    clash = db.query(models.DBContractor).filter(
+        models.DBContractor.client_id == client.id, models.DBContractor.id != con.id,
+        sqlfunc.lower(models.DBContractor.company_name) == name.lower()).first()
+    if clash:
+        raise HTTPException(409, "'" + name + "' is already on the contractor list")
+    gstin, pan = clean_tax_ids(body.gst_number, body.pan)
+    ifsc = (body.bank_ifsc or "").strip().upper()
+    if ifsc and not re.match(r"^[A-Z]{4}0[A-Z0-9]{6}$", ifsc):
+        raise HTTPException(400, "An IFSC is eleven characters: four letters, a zero, then six (for example SBIN0001234).")
+    con.company_name = name
+    con.contact_person = (body.contact_person or "").strip()
+    con.email = (body.email or "").strip()
+    con.phone_number = (body.phone_number or "").strip()
+    con.pan, con.gst_number = pan, gstin
+    con.bank_name = (body.bank_name or "").strip()
+    con.bank_account = re.sub(r"\s", "", body.bank_account or "")
+    con.bank_ifsc = ifsc
+    con.address = (body.address or "").strip()
+    log_audit(db, client.id, "contractor_updated", "contractor", con.id, name, pan, request)
+    db.commit()
+    return {"id": con.id, "company_name": con.company_name, "message": "%s saved." % name}
+
+
+class ChargeBudgetIn(BaseModel):
+    budget_id: int
+    only_blank: Optional[bool] = True
+
+
+@app.post("/api/wo/orders/{order_id}/charge-budget")
+def wo_charge_budget(order_id: int, body: ChargeBudgetIn, request: Request,
+                     db: Session = Depends(get_db)):
+    """Charge the schedule to one cost centre in a single move - the lines
+    not yet charged, or every line. Most orders spend one allocation, and
+    picking it on two hundred lines one at a time is how lines get missed."""
+    client, _, _ = wo_actor(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    if order.status not in WO_EDITABLE:
+        raise HTTPException(409, "Only a draft order can be re-charged.")
+    budget_id = wo_valid_budget_id(db, client.id, order, body.budget_id)
+    if not budget_id:
+        raise HTTPException(400, "That cost centre is not on this order's project.")
+    n = 0
+    for item in db.query(models.DBSubcontractItem).filter(
+            models.DBSubcontractItem.order_id == order.id).all():
+        if item.is_header or (body.only_blank and item.budget_id):
+            continue
+        item.budget_id = budget_id
+        n += 1
+    db.commit()
+    db.refresh(order)
+    return {"order": wo_dict(db, order, detail=True),
+            "message": "%d line%s charged." % (n, "" if n == 1 else "s")}
 
 
 # Serve frontend

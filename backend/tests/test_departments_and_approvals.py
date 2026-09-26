@@ -6,7 +6,7 @@ or when nobody is set - which is most people - the nearest rank above them
 that holds the right, and from the top of the staff, the owner.
 """
 import main
-from conftest import make_employee
+from conftest import fund_order, make_employee
 
 
 PASSWORD = "Crew1234"
@@ -187,7 +187,7 @@ def priced_order(client):
     res = client.put("/api/wo/orders/%d/boq" % order["id"], json={"lines": [
         {"item_description": "Shuttering", "uom": "sqm", "quantity": 1000, "unit_rate": 180}]})
     assert res.status_code == 200, res.text
-    return res.json()["order"]
+    return fund_order(client, res.json()["order"])
 
 
 def test_a_work_order_reaches_the_project_manager_and_is_approved_from_the_inbox(tenant, portal):

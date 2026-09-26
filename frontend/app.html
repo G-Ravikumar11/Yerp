@@ -1984,8 +1984,20 @@
 
                     <div class="glass-widget" style="margin-bottom:24px;">
                         <div class="widget-header"><div><h3>Signatures on documents</h3>
-                            <p style="font-size:0.8rem;color:var(--text-secondary);margin:2px 0 0;">The names printed in the signature row of every work order, RA bill and other document.</p></div></div>
+                            <p style="font-size:0.8rem;color:var(--text-secondary);margin:2px 0 0;">The names, designations and signatures in the signature row of every work order, RA bill and purchase order.</p></div></div>
                         <div style="padding:14px 18px;" id="signatories-form"></div>
+                    </div>
+
+                    <div class="glass-widget" style="margin-bottom:24px;">
+                        <div class="widget-header"><div><h3>Letterhead</h3>
+                            <p style="font-size:0.8rem;color:var(--text-secondary);margin:2px 0 0;">Logo, name, address, GSTIN and PAN at the top of every work order, bill and purchase order.</p></div></div>
+                        <div style="padding:6px 18px 14px;" id="letterhead-list"></div>
+                    </div>
+
+                    <div class="glass-widget" style="margin-bottom:24px;">
+                        <div class="widget-header"><div><h3>Work order terms &amp; conditions</h3>
+                            <p style="font-size:0.8rem;color:var(--text-secondary);margin:2px 0 0;">The General Contract Conditions printed on page two of every work order.</p></div></div>
+                        <div style="padding:14px 18px;" id="terms-library"></div>
                     </div>
 
                     <div class="glass-widget" id="backup-widget" style="margin-bottom:24px;display:none;">
@@ -5642,7 +5654,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=136"></script>
+    <script src="app.js?v=137"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=69"></script>
@@ -5658,11 +5670,12 @@
     <script src="erp-preview.js?v=102"></script>
     <script src="contracts.js?v=65"></script>
     <script src="sheet-viewer.js?v=65"></script>
-    <script src="subcontracts.js?v=105"></script>
+    <script src="subcontracts.js?v=107"></script>
     <script src="costs.js?v=65"></script>
     <script src="sheet.js?v=83"></script>
-    <script src="documents.js?v=92"></script>
-    <script src="approvals.js?v=1"></script>
+    <script src="documents.js?v=93"></script>
+    <script src="approvals.js?v=2"></script>
+    <script src="letterhead.js?v=1"></script>
     <script src="mbdims.js?v=81"></script>
     <script src="measurement.js?v=118"></script>
     <script src="stock.js?v=115"></script>

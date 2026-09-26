@@ -50,14 +50,26 @@ async function loadSignatories() {
     if (!host) return;
     var res = await fetch('/api/documents/signatories', { credentials: 'include' });
     if (!res.ok) return;
-    var s = (await res.json()).signatories;
+    var data = await res.json();
+    var s = data.signatories;
+    /* Each signatory: name, designation and the signature itself. The
+       picture prints only once a document is approved - the preparer's once
+       it is sent - so a draft never carries anybody's signature. */
     host.innerHTML = Object.keys(s).map(function (k) {
-        return '<div class="form-row" style="align-items:end;">' +
+        return '<div style="border-bottom:1px solid var(--border-color);padding:10px 0;">' +
+            '<div class="form-row" style="align-items:end;">' +
             '<div class="form-group" style="flex:0 0 170px;"><label>' + esc(s[k].role) + '</label>' +
                 '<input class="form-control" data-sig="' + k + '" data-f="name" value="' + esc(s[k].name) + '" placeholder="Name"></div>' +
             '<div class="form-group"><label>&nbsp;</label><input class="form-control" data-sig="' + k + '" data-f="title" value="' +
-                esc(s[k].title) + '" placeholder="Designation"></div></div>';
-    }).join('') + '<button class="btn btn-primary" onclick="saveSignatories()">Save</button>';
+                esc(s[k].title) + '" placeholder="Designation"></div></div>' +
+            pictureField('sig-img-' + k, 'Signature', s[k].image, '', 500, 160, true) + '</div>';
+    }).join('') +
+    '<div style="padding:10px 0;">' + pictureField('sig-seal', 'Company seal', data.seal,
+        'Printed on the authorised signatory\'s box once a document is approved.', 300, 300, true) + '</div>' +
+    '<p style="font-size:0.78rem;color:var(--text-secondary);margin:4px 0 12px;">A signature prints above its name only once ' +
+    'the document is approved or certified - the preparer\'s once it is sent. A photo of a signature on white paper works; ' +
+    'the white is taken out.</p>' +
+    '<button class="btn btn-primary" onclick="saveSignatories()">Save</button>';
 }
 window.loadSignatories = loadSignatories;
 
@@ -67,6 +79,12 @@ async function saveSignatories() {
         body[el.dataset.sig] = body[el.dataset.sig] || {};
         body[el.dataset.sig][el.dataset.f] = el.value;
     });
+    Object.keys(body).forEach(function (k) {
+        var img = document.getElementById('sig-img-' + k);
+        if (img) body[k].image = img.value;
+    });
+    var seal = document.getElementById('sig-seal');
+    if (seal) body.seal = seal.value;
     var res = await fetch('/api/documents/signatories', { method: 'PUT', credentials: 'include',
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     var out = await res.json();

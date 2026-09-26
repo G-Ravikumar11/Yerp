@@ -5,7 +5,7 @@ way the site office files it, it cannot be signed off by the person who priced
 it, and once it has been signed it stops being editable - it is amended
 instead, and the original stays as it was signed.
 """
-from conftest import as_owner, make_employee
+from conftest import as_owner, fund_order, make_employee
 
 import main
 
@@ -71,11 +71,14 @@ BOQ = {"lines": [
 ]}
 
 
-def priced(tenant, **over):
+def priced(tenant, fund=True, **over):
+    """A draft with its schedule priced and, unless asked not to, charged to a
+    cost centre of its project - every order spends a budget."""
     order = draft(tenant, **over)
     res = tenant.put("/api/wo/orders/%d/boq" % order["id"], json=BOQ)
     assert res.status_code == 200, res.text
-    return res.json()["order"]
+    order = res.json()["order"]
+    return fund_order(tenant, order) if fund else order
 
 
 # --- The number -------------------------------------------------------------
@@ -528,12 +531,32 @@ def test_the_overrun_is_stated_before_anybody_clicks_approve(tenant):
     assert "allocated" in detail["budget_warnings"][0]
 
 
-def test_an_unallocated_cost_centre_does_not_block_anything(tenant):
-    """Nought allocated means nobody has set it, not that it is fully spent."""
+def test_a_cost_centre_with_nothing_allocated_is_no_budget(tenant):
+    """Nought allocated means nobody has set it - so there is nothing yet to
+    hold the order against, and it cannot go for approval."""
     order, _ = budgeted(tenant, allocation=0)
-    tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
-    res = tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
-    assert res.status_code == 200, res.text
+    res = tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    assert res.status_code == 400
+    assert "allocated" in res.json()["detail"]
+
+
+def test_an_order_with_no_budget_cannot_be_sent(tenant):
+    order = priced(tenant, fund=False)
+    res = tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    assert res.status_code == 400
+    assert "budget" in res.json()["detail"]
+
+
+def test_every_priced_line_has_to_be_charged_to_a_cost_centre(tenant):
+    order = draft(tenant)
+    budget = allocate(tenant, order["job_id"], amount=10000000)
+    lines = [dict(BOQ["lines"][0], budget_id=budget["id"]), BOQ["lines"][1]]
+    tenant.put("/api/wo/orders/%d/boq" % order["id"], json={"lines": lines})
+    res = tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    assert res.status_code == 400 and "1 line" in res.json()["detail"]
+    res = tenant.post("/api/wo/orders/%d/charge-budget" % order["id"], json={"budget_id": budget["id"]})
+    assert res.status_code == 200 and "1 line charged" in res.json()["message"]
+    assert tenant.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 200
 
 
 def test_cancelling_gives_the_money_back(tenant):
@@ -666,7 +689,8 @@ def test_the_deductions_are_stated_on_the_document(tenant):
 def test_an_amendment_keeps_the_commercial_terms(tenant):
     order = draft(tenant, retention_percent=5, mobilization_advance_percent=10,
                   advance_recovery_percent=20)
-    tenant.put("/api/wo/orders/%d/boq" % order["id"], json=BOQ)
+    order = tenant.put("/api/wo/orders/%d/boq" % order["id"], json=BOQ).json()["order"]
+    fund_order(tenant, order)
     tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
     tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
     revision = tenant.post("/api/wo/orders/%d/amend" % order["id"],

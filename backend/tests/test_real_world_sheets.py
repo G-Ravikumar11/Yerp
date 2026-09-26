@@ -7,6 +7,7 @@ the person who made the template spelt it, a row of guidance for the typist
 left under the header, a grand total sitting at the foot of the sheet, and a
 budget that heads two different columns with the same two words.
 """
+from conftest import fund_order
 import io
 
 import openpyxl
@@ -426,7 +427,8 @@ def test_a_submitted_order_will_not_take_an_import(tenant):
         "department": "Civil", "subject": "Civil works",
         "business_unit_id": order["business_unit_id"],
         "contractor_id": order["contractor_id"], "job_id": order["job_id"]})
-    tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    fund_order(tenant, order)
+    assert tenant.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 200
     res = import_boq(tenant, order, [
         BOQ_HEADER, ["1.0", "CIV-EXC", "Excavation", "", "cum", 10, 100]])
     assert res.status_code == 409

@@ -314,13 +314,15 @@ function woVendorCard() {
     ].filter(function (r) { return r[1]; });
 
     var missing = [];
+    var edit = '<button type="button" class="btn btn-sm btn-outline" style="float:right;" ' +
+        'onclick="openContractorEditor(' + con.id + ', woRefreshVocab)">Edit details</button>';
     if (!con.pan) missing.push('PAN');
     if (!con.gst_number) missing.push('GST number');
     if (!con.bank_account) missing.push('bank details');
 
     return '<div style="border:1px solid var(--border-color);border-radius:8px;' +
         'padding:12px 14px;margin-bottom:14px;">' +
-        '<div style="font-weight:700;font-size:0.88rem;margin-bottom:8px;">' +
+        edit + '<div style="font-weight:700;font-size:0.88rem;margin-bottom:8px;">' +
             esc(con.company_name) + '</div>' +
         (con.address ? '<div style="font-size:0.78rem;color:var(--text-secondary);' +
             'margin-bottom:8px;white-space:pre-line;">' + esc(con.address) + '</div>' : '') +
@@ -453,15 +455,17 @@ function stepDetails() {
         field('Business unit *', withAdd('<select id="wo-bu" class="form-control"' + dis + '>' +
             options(v.business_units, o.business_unit_id, 'id', function (b) { return b.name; },
                     pick(v.business_units, 'the company issuing it')) +
-            '</select>', 'unit', !v.business_units.length),
-            'The entity issuing the order. Its GSTIN prints on it.') +
+            '</select>', 'unit', !v.business_units.length) +
+            '<a href="#" style="font-size:0.78rem;" onclick="event.preventDefault();woEditLetterhead()">' +
+                'Edit the letterhead - logo, GSTIN, PAN, address</a>',
+            'The company issuing the order. Its logo, GSTIN and PAN print on it.') +
         field('Contractor *', withAdd('<select id="wo-con" class="form-control"' + dis +
             ' onchange="woPickContractor(this.value)">' +
             options(v.contractors, o.contractor_id, 'id',
                 function (c) { return c.company_name + (c.vendor_code ? ' (' + c.vendor_code + ')' : ''); },
                 pick(v.contractors, 'a contractor')) +
             '</select>', 'contractor', !v.contractors.length)) +
-        field('Project', withAdd('<select id="wo-job" class="form-control"' + dis + '>' +
+        field('Project *', withAdd('<select id="wo-job" class="form-control"' + dis + '>' +
             options(v.jobs, o.job_id, 'id', function (j) { return j.number + ' — ' + j.name; },
                     v.jobs.length ? 'Not tied to a project' : 'None yet — press + New') +
             '</select>', 'project', !v.jobs.length)) +
@@ -671,6 +675,43 @@ function woBudgetBar(b) {
             ' &middot; this order ' + formatCurrency(b.this_order) + '</div></div>';
 }
 
+/* After the gang's particulars or the letterhead are corrected, the pickers
+   and the card read them again - and whatever is typed on step one stays. */
+async function woRefreshVocab() {
+    WO.order = Object.assign({}, WO.order || {}, detailsPayload());
+    WO.vocab = null;
+    await woVocab();
+    renderWizard();
+}
+window.woRefreshVocab = woRefreshVocab;
+
+function woEditLetterhead() {
+    var id = parseInt((document.getElementById('wo-bu') || {}).value);
+    if (!id) { showToast('Choose the business unit first', 'error'); return; }
+    openUnitEditor(id, woRefreshVocab);
+}
+window.woEditLetterhead = woEditLetterhead;
+
+/* Every order spends a budget: each priced line is charged to one of the
+   project's cost centres before it can go for approval. Most orders spend
+   one, so the whole schedule can be charged to it at once. */
+function woChargeAll() {
+    var sel = document.getElementById('wo-charge-all');
+    var id = sel ? parseInt(sel.value) : 0;
+    if (!id) { showToast('Choose the cost centre', 'error'); return; }
+    var n = 0;
+    WO.boq.forEach(function (l) {
+        if (!l.is_header && !l.budget_id) { l.budget_id = id; n++; }
+    });
+    showToast(n ? n + ' line' + (n === 1 ? '' : 's') + ' charged - save the schedule to keep it' : 'Every line is already charged', n ? 'success' : 'info');
+    renderWizard();
+}
+window.woChargeAll = woChargeAll;
+
+function woUncharged() {
+    return WO.boq.filter(function (l) { return !l.is_header && woLineAmount(l) > 0 && !l.budget_id; }).length;
+}
+
 function woBudgetPanel() {
     var o = WO.order || {};
     if (!o.job_id) {
@@ -680,12 +721,19 @@ function woBudgetPanel() {
     }
     var rows = woBudgetRows();
     if (!rows.length) {
-        return '<p style="font-size:0.8rem;color:var(--text-secondary);padding:8px 0;">' +
-            'Nothing allocated on this project yet. Add a cost centre to check what ' +
-            'this order spends against it.</p>' +
+        return '<p style="font-size:0.8rem;color:var(--warning-color);padding:8px 0;">' +
+            'Nothing allocated on this project yet. Every work order spends a budget: add a cost ' +
+            'centre with the amount allocated, then charge the schedule to it.</p>' +
             '<button class="btn btn-sm btn-outline" onclick="woAddBudget()">+ Cost centre</button>';
     }
+    var loose = woUncharged();
     return rows.map(woBudgetBar).join('') +
+        (loose ? '<div style="margin-top:10px;padding:8px 10px;border-radius:6px;background:rgba(217,119,6,0.08);' +
+            'font-size:0.8rem;">' + loose + ' line' + (loose === 1 ? ' is' : 's are') + ' not charged to a cost centre. ' +
+            'Every line has to be before the order can go for approval.' +
+            '<div style="display:flex;gap:6px;margin-top:6px;"><select id="wo-charge-all" class="form-control" style="flex:1;">' +
+            rows.map(function (b) { return '<option value="' + b.id + '">' + esc(b.name || b.code) + '</option>'; }).join('') +
+            '</select><button class="btn btn-sm btn-primary" onclick="woChargeAll()">Charge them</button></div></div>' : '') +
         '<div style="margin-top:10px;"><button class="btn btn-sm btn-outline" ' +
         'onclick="woAddBudget()">+ Cost centre</button></div>';
 }

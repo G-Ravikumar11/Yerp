@@ -289,7 +289,9 @@ def _logo(value, max_height=16 * mm):
         if not width or not height:
             return None
         scale = min(max_height / float(height), (46 * mm) / float(width))
-        return Image(reader, width=width * scale, height=height * scale)
+        # The flowable wants the bytes, not the reader: handed a reader it
+        # raised, the except below swallowed it, and no logo ever printed.
+        return Image(io.BytesIO(raw), width=width * scale, height=height * scale)
     except Exception:
         # A logo that will not decode is a cosmetic problem. Printing the
         # order without it beats refusing to print the order.
