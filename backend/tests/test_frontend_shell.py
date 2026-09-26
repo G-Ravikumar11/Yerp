@@ -108,7 +108,8 @@ def test_the_suites_the_app_was_started_from_stay_hidden():
     h = read("app.html")
     for view in ("quotes-view", "recurring-view", "recruitment-view", "goals-view",
                  "orgchart-view", "onboarding-hub-view", "sales-pipeline-view",
-                 "reports-view", "viewer-view"):
+                 "reports-view", "viewer-view", "invoices-view", "create-invoice-view",
+                 "view-invoice-view"):
         assert ('id="%s" data-legacy="1"' % view) in h, view + " is not marked legacy"
     css = read("styles.css")
     assert ".view-section[data-legacy]" in css and "display: none !important" in css

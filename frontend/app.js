@@ -800,7 +800,10 @@ async function runGlobalSearch(q) {
         });
         if (!res.ok) { hideSearchResults(); return; }
         var data = await res.json();
-        showSearchResults(data.results || [], q);
+        // Invoices, quotes and repeat invoices belong to the invoicing product
+        // this began as; their screens are hidden, so a hit would open a blank page.
+        var hidden = { invoice: 1, quote: 1, recurring: 1 };
+        showSearchResults((data.results || []).filter(function (r) { return !hidden[r.type]; }), q);
     } catch (e) {
         hideSearchResults();
     }
@@ -9192,8 +9195,8 @@ window.loadTaxRates = loadTaxRates;
 // document carries.
 function taxOptionsHtml(selected) {
     var list = _taxRates.length ? _taxRates : [
-        { label: '20% VAT', is_default: true }, { label: '5% VAT' },
-        { label: '0% Zero Rated' }, { label: 'No Tax' }
+        { label: '18% GST', is_default: true }, { label: '12% GST' }, { label: '5% GST' },
+        { label: '28% GST' }, { label: '0% GST' }
     ];
     var labels = list.map(function (t) { return t.label; });
     if (selected && labels.indexOf(selected) === -1) labels.unshift(selected);

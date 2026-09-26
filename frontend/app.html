@@ -178,7 +178,7 @@
                             <a href="#" class="nav-item" id="nav-ledger" onclick="event.preventDefault();showView('ledger-view')">Payments &amp; Ledgers</a>
                             <a href="#" class="nav-item" id="nav-money" onclick="event.preventDefault();showView('money-view')">Owed &amp; Retention</a>
                             <a href="#" class="nav-item" id="nav-bills" onclick="event.preventDefault();showView('bills-view')">Supplier Bills</a>
-                            <a href="#" class="nav-item" id="nav-invoices" data-perm="invoices.manage" onclick="event.preventDefault();showView('invoices-view')">Client Invoices</a>
+                            <a href="#" class="nav-item legacy-hidden" id="nav-invoices" data-perm="invoices.manage" onclick="event.preventDefault();showView('invoices-view')">Client Invoices</a>
                             <a href="#" class="nav-item" id="nav-gst" onclick="event.preventDefault();showView('gst-view')">GST</a>
                             <a href="#" class="nav-item" id="nav-fixedassets" onclick="event.preventDefault();showView('fixedassets-view')">Fixed Assets</a>
                             <a href="#" class="nav-item" id="nav-registers" onclick="event.preventDefault();showView('registers-view')">TDS, Guarantees &amp; Advances</a>
@@ -337,7 +337,7 @@
 
 
                 <!-- ========== WALLET ========== -->
-                <div id="invoices-view" class="view-section dashboard" style="display:none;">
+                <div id="invoices-view" data-legacy="1" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div>
                             <h1>Invoices</h1>
@@ -717,7 +717,7 @@
                 </div>
 
                 <!-- ========== CREATE INVOICE ========== -->
-                <div id="create-invoice-view" class="view-section dashboard" style="display:none;">
+                <div id="create-invoice-view" data-legacy="1" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div style="display:flex;gap:8px;align-items:center;">
                             <span style="color:var(--text-secondary);font-size:0.9rem;cursor:pointer;" onclick="showView('invoices-view')">Invoices</span>
@@ -842,7 +842,7 @@
                 </div>
 
                 <!-- ========== VIEW INVOICE ========== -->
-                <div id="view-invoice-view" class="view-section dashboard" style="display:none;">
+                <div id="view-invoice-view" data-legacy="1" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div style="display:flex;gap:8px;align-items:center;">
                             <span style="color:var(--text-secondary);font-size:0.9rem;cursor:pointer;" onclick="showView('invoices-view')">Invoices</span>
@@ -2288,10 +2288,9 @@
                         </div>
                         <div class="widget-content">
                             <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:16px;">
-                                These are the tax options you pick from on invoice and quote lines. Name them
-                                whatever your country uses &mdash; VAT, GST, Sales Tax. Documents you have already
-                                issued keep the rate they were written with, so changing this list never
-                                restates them.
+                                The GST rates you pick from on purchase order lines and supplier bills.
+                                A document already issued keeps the rate it was written with, so changing
+                                this list never restates it.
                             </p>
                             <div class="table-responsive">
                                 <table class="data-table" style="min-width:520px;">
@@ -2327,7 +2326,7 @@
                     
                     
                     
-                    <div class="glass-widget" style="margin-bottom:24px;">
+                    <div class="glass-widget legacy-hidden" style="margin-bottom:24px;">
                         <div class="widget-header"><h3>Legal & Authorization</h3></div>
                         <div class="widget-content">
                             <div class="form-group">
@@ -5603,7 +5602,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=129"></script>
+    <script src="app.js?v=131"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=67"></script>
