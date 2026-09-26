@@ -169,6 +169,7 @@
                             <a href="#" class="nav-item" id="nav-bills" onclick="event.preventDefault();showView('bills-view')">Supplier Bills</a>
                             <a href="#" class="nav-item" id="nav-invoices" data-perm="invoices.manage" onclick="event.preventDefault();showView('invoices-view')">Client Invoices</a>
                             <a href="#" class="nav-item" id="nav-gst" onclick="event.preventDefault();showView('gst-view')">GST</a>
+                            <a href="#" class="nav-item" id="nav-fixedassets" onclick="event.preventDefault();showView('fixedassets-view')">Fixed Assets</a>
                             <a href="#" class="nav-item" id="nav-registers" onclick="event.preventDefault();showView('registers-view')">TDS, Guarantees &amp; Advances</a>
                         </div>
                     </div>
@@ -4308,6 +4309,88 @@
                     </div>
                 </div>
 
+                <div id="fixedassets-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-header-area">
+                        <div><h1>Fixed Assets</h1><p class="subtitle">What each owned asset is worth on the books, the year's depreciation, and the income-tax blocks the return is filed on</p></div>
+                        <div class="invoices-actions">
+                            <select id="fa-fy" class="form-control" style="width:auto;" onchange="faYear()"></select>
+                            <button class="btn btn-outline" id="fa-setup-all" style="display:none;" onclick="faSetUpAll()">Set up all on usual lives</button>
+                            <a class="btn btn-outline" id="fa-xlsx" href="#">Excel</a>
+                        </div>
+                    </div>
+                    <div class="invoices-tabs" id="fa-tabs" style="margin:0 0 16px;">
+                        <button class="tab active" data-tab="register" onclick="faTab('register')">Company's books</button>
+                        <button class="tab" data-tab="blocks" onclick="faTab('blocks')">Income-tax blocks</button>
+                    </div>
+                    <div class="stats-grid" id="fa-stats"></div>
+                    <div id="fa-body" style="margin-top:16px;"></div>
+                </div>
+
+                <div id="fab-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:560px;">
+                        <div class="modal-header"><h3 id="fab-title">Book</h3><button class="modal-close" onclick="closeModal('fab-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-row">
+                                <div class="form-group"><label>Cost</label><input type="number" id="fab-cost" class="form-control" oninput="faRate()"></div>
+                                <div class="form-group"><label>Put to use on</label><input type="date" id="fab-put" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Method</label><select id="fab-method" class="form-control" onchange="faRate()"><option value="WDV">Written-down value</option><option value="SLM">Straight line</option></select></div>
+                                <div class="form-group"><label>Useful life (years)</label><input type="number" id="fab-life" class="form-control" step="0.5" oninput="faRate()"></div>
+                                <div class="form-group"><label>Residual %</label><input type="number" id="fab-residual" class="form-control" step="0.5" oninput="faRate()"></div>
+                            </div>
+                            <div id="fab-rate" style="font-size:0.84rem;margin:-4px 0 12px;"></div>
+                            <div class="form-group"><label>Income-tax block</label><select id="fab-block" class="form-control"></select></div>
+                            <details id="fab-old" style="margin-top:6px;"><summary style="cursor:pointer;font-size:0.86rem;">Bought before the app - start from the audited book value</summary>
+                                <div class="form-row" style="margin-top:10px;">
+                                    <div class="form-group"><label>From the year</label><input id="fab-opening-fy" class="form-control" placeholder="2025-26"></div>
+                                    <div class="form-group"><label>Book value on 1 April of it</label><input type="number" id="fab-opening-value" class="form-control"></div>
+                                </div>
+                            </details>
+                        </div>
+                        <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('fab-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="faSave()">Save the book</button></div>
+                    </div>
+                </div>
+
+                <div id="fas-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:640px;">
+                        <div class="modal-header"><h3 id="fas-title">Year by year</h3><button class="modal-close" onclick="closeModal('fas-modal')">&times;</button></div>
+                        <div class="modal-body" id="fas-body"></div>
+                    </div>
+                </div>
+
+                <div id="fad-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:460px;">
+                        <div class="modal-header"><h3 id="fad-title">Sold</h3><button class="modal-close" onclick="closeModal('fad-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-row">
+                                <div class="form-group"><label>On</label><input type="date" id="fad-date" class="form-control"></div>
+                                <div class="form-group"><label>What it fetched</label><input type="number" id="fad-value" class="form-control" placeholder="0 if scrapped"></div>
+                            </div>
+                            <div class="form-group"><label>Note</label><input id="fad-note" class="form-control" placeholder="Sold to, invoice no..."></div>
+                        </div>
+                        <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('fad-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="faDisposeSave()">Record it</button></div>
+                    </div>
+                </div>
+
+                <div id="fatb-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:460px;">
+                        <div class="modal-header"><h3 id="fatb-title">Block</h3><button class="modal-close" onclick="closeModal('fatb-modal')">&times;</button></div>
+                        <div class="modal-body">
+                            <div class="form-group"><label>Rate %</label><input type="number" id="fatb-rate" class="form-control" step="0.5"></div>
+                            <p style="font-size:0.82rem;color:var(--text-secondary);margin:4px 0 10px;">If the business had this block before the app, give the written-down value the last return closed it at.</p>
+                            <div class="form-row">
+                                <div class="form-group"><label>Opening in the year</label><input id="fatb-fy" class="form-control" placeholder="2025-26"></div>
+                                <div class="form-group"><label>WDV on 1 April of it</label><input type="number" id="fatb-wdv" class="form-control"></div>
+                            </div>
+                        </div>
+                        <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('fatb-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="faBlockSave()">Save</button></div>
+                    </div>
+                </div>
+
                 <div id="money-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
                         <div><h1>Money Owed &amp; Retention</h1><p class="subtitle">Who owes what today, how long they have owed it, and the money already earned that is still being held back</p></div>
@@ -5407,7 +5490,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=119"></script>
+    <script src="app.js?v=121"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=65"></script>
@@ -5444,6 +5527,7 @@
     <script src="alerts.js?v=116"></script>
     <script src="quality.js?v=118"></script>
     <script src="safety.js?v=120"></script>
+    <script src="fixedassets.js?v=121"></script>
     <script src="leads.js?v=110"></script>
     <script src="schedule.js?v=99"></script>
     <script src="stores.js?v=108"></script>

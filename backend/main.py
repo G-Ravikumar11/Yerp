@@ -26525,7 +26525,8 @@ def doc_outstanding(doc_type: str, doc_id: int, request: Request, db: Session = 
 # ============================================================================
 
 ASSET_CATEGORIES = ("Earthmoving", "Concrete", "Lifting", "Transport", "Compaction",
-                    "Power", "Pumping", "Shuttering", "Survey", "Tools", "Vehicle", "Other")
+                    "Power", "Pumping", "Shuttering", "Survey", "Tools", "Vehicle",
+                    "Computers", "Furniture", "Office equipment", "Building", "Other")
 ASSET_STATUSES = ("Available", "Deployed", "Under repair", "Disposed")
 HIRE_BASES = ("Hour", "Day", "Month")
 # The working days a monthly hire is spread across, the way sites cost it.
@@ -26947,6 +26948,11 @@ def dispose_asset(asset_id: int, request: Request, body: dict = None, db: Sessio
         raise HTTPException(400, "Say why - sold, scrapped, returned to the hirer.")
     a.status = "Disposed"
     a.notes = ((a.notes or "") + "\nDisposed %s: %s" % (date.today().isoformat(), reason)).strip()
+    b = asset_book_or_none(db, client.id, a.id)
+    if b and not b.disposed_on:
+        b.disposed_on = date.today().isoformat()
+        b.disposal_value = money((body or {}).get("value") or 0)
+        b.disposal_note = reason[:300]
     db.commit()
     return {"ok": True, "message": "%s disposed of." % a.code}
 
@@ -28647,6 +28653,7 @@ def attention_elsewhere(db, client_id, jobs, today):
                       "is not a comparison." % (len(thin), "y" if len(thin) == 1 else "ies"),
         })
     items.extend(release_attention(db, client_id, today))
+    items.extend(fixed_asset_attention(db, client_id))
     return items
 
 
@@ -30989,6 +30996,561 @@ def release_attention(db, client_id, today):
              "view": "money-view", "title": "Gangs' retention due back",
              "detail": "%s held on %d order%s whose defects period has run out."
                        % (inr(sum(p["balance"] for p in over)), len(over), "" if len(over) == 1 else "s")}]
+
+
+# ============================================================================
+# FIXED ASSETS AND DEPRECIATION
+#
+# The equipment register says where a machine is and what it burned. It did
+# not say what it is worth: an excavator bought for forty lakhs three years
+# ago was carried at forty lakhs for ever, and the depreciation schedule the
+# auditor asks for every March was built by hand from the purchase bills.
+#
+# Two books, because the law keeps two. The company's own (Schedule II:
+# straight line or written-down value over a useful life, pro rata from the
+# day the asset was put to use) and the income-tax one (blocks of assets at
+# a rate, half the rate on anything used for less than 180 days in the year
+# it was bought). The lives and rates below are the usual ones and are only
+# where each asset starts - every one of them can be changed.
+# ============================================================================
+
+# Category -> (useful life in years, income-tax block).
+ASSET_BOOK_DEFAULTS = {
+    "Earthmoving": (9, "Plant & machinery"),
+    "Concrete": (12, "Plant & machinery"),
+    "Lifting": (15, "Plant & machinery"),
+    "Compaction": (12, "Plant & machinery"),
+    "Transport": (8, "Motor vehicles"),
+    "Vehicle": (8, "Motor vehicles"),
+    "Power": (15, "Plant & machinery"),
+    "Pumping": (15, "Plant & machinery"),
+    "Shuttering": (12, "Plant & machinery"),
+    "Survey": (15, "Plant & machinery"),
+    "Tools": (15, "Plant & machinery"),
+    "Computers": (3, "Computers"),
+    "Furniture": (10, "Furniture & fittings"),
+    "Office equipment": (5, "Plant & machinery"),
+    "Building": (60, "Buildings"),
+    "Other": (15, "Plant & machinery"),
+}
+TAX_BLOCK_DEFAULTS = (("Plant & machinery", 15.0), ("Motor vehicles", 15.0),
+                      ("Lorries used on hire", 30.0), ("Computers", 40.0),
+                      ("Furniture & fittings", 10.0), ("Buildings", 10.0),
+                      ("Intangible assets", 25.0))
+BOOK_METHODS = ("WDV", "SLM")
+HALF_RATE_DAYS = 180
+
+
+def fy_label(y):
+    return "%d-%02d" % (y, (y + 1) % 100)
+
+
+def fy_start_year(value):
+    """The year a financial year starts in, from "2026-27", a date, or a
+    date object. April to March."""
+    if isinstance(value, date):
+        return value.year if value.month >= 4 else value.year - 1
+    text = str(value or "").strip()
+    m = re.match(r"^(\d{4})-(\d{2})$", text)
+    if m and int(m.group(2)) == (int(m.group(1)) + 1) % 100:
+        return int(m.group(1))
+    d = _parse_date(text)
+    return fy_start_year(d) if d else None
+
+
+def fy_bounds(y):
+    return date(y, 4, 1), date(y + 1, 3, 31)
+
+
+def ensure_tax_blocks(db, client_id):
+    have = {b.name for b in db.query(models.DBTaxBlock).filter(
+        models.DBTaxBlock.client_id == client_id).all()}
+    added = False
+    for name, rate in TAX_BLOCK_DEFAULTS:
+        if name not in have:
+            db.add(models.DBTaxBlock(client_id=client_id, name=name, rate=rate))
+            added = True
+    if added:
+        db.flush()
+    return db.query(models.DBTaxBlock).filter(
+        models.DBTaxBlock.client_id == client_id).order_by(models.DBTaxBlock.id).all()
+
+
+def wdv_rate(book):
+    """The written-down rate that brings cost to its residual over the life:
+    1 - (residual / cost) ^ (1 / life)."""
+    cost = book.cost or 0
+    residual = cost * (book.residual_percent or 0) / 100.0
+    if cost <= 0 or residual <= 0 or (book.life_years or 0) <= 0:
+        return 0.0
+    return 1.0 - (residual / cost) ** (1.0 / float(book.life_years))
+
+
+def book_schedule(book, upto_year):
+    """Year by year, from the year the book starts to `upto_year`: opening,
+    added, depreciation, what it fetched if it went, and closing."""
+    rows = []
+    put = _parse_date(book.put_to_use_on)
+    cost = money(book.cost or 0)
+    if not put or cost <= 0 or (book.life_years or 0) <= 0:
+        return rows
+    residual = money(cost * (book.residual_percent or 0) / 100.0)
+    rate = wdv_rate(book)
+    annual = (cost - residual) / float(book.life_years)
+    opening_year = fy_start_year(book.opening_fy) if book.opening_fy else None
+    if opening_year is not None and opening_year <= fy_start_year(put):
+        opening_year = None          # an opening no earlier than purchase is just the purchase
+    start = opening_year if opening_year is not None else fy_start_year(put)
+    gone = _parse_date(book.disposed_on)
+    closing = 0.0
+    for y in range(start, upto_year + 1):
+        fy_from, fy_to = fy_bounds(y)
+        days_in = (fy_to - fy_from).days + 1
+        if y == start and opening_year is not None:
+            opening, added, from_day = money(book.opening_book_value or 0), 0.0, fy_from
+        elif y == start:
+            opening, added, from_day = 0.0, cost, put
+        else:
+            opening, added, from_day = closing, 0.0, fy_from
+        if gone and gone < from_day:
+            break
+        to_day = gone if gone and gone <= fy_to else fy_to
+        used = max(0, (to_day - from_day).days + 1)
+        base = money(opening + added)
+        room = max(0.0, base - residual)
+        if book.method == "SLM":
+            dep = min(annual * used / days_in, room)
+        else:
+            dep = min(base * rate * used / days_in, room)
+        dep = money(dep)
+        closing = money(base - dep)
+        row = {"fy": fy_label(y), "opening": opening, "added": added, "depreciation": dep,
+               "closing": closing, "accumulated": money(cost - closing),
+               "days": used, "disposed": False, "disposal_value": 0.0, "gain": 0.0}
+        if gone and fy_from <= gone <= fy_to:
+            row.update({"disposed": True, "disposal_value": money(book.disposal_value or 0),
+                        "book_value_at_sale": closing,
+                        "gain": money((book.disposal_value or 0) - closing), "closing": 0.0,
+                        "accumulated": money(cost - closing)})
+            rows.append(row)
+            break
+        rows.append(row)
+    return rows
+
+
+def book_dict(book, a, fy_year):
+    rows = book_schedule(book, fy_year)
+    row = next((r for r in rows if r["fy"] == fy_label(fy_year)), None)
+    before = rows[-1] if rows and not row else None
+    return {
+        "asset_id": a.id, "code": a.code or "", "name": a.name or "", "category": a.category or "",
+        "status": a.status or "", "method": book.method or "WDV",
+        "life_years": book.life_years or 0, "residual_percent": book.residual_percent or 0,
+        "rate_percent": round(wdv_rate(book) * 100, 2) if book.method != "SLM"
+        else (round(100.0 / book.life_years, 2) if book.life_years else 0),
+        "put_to_use_on": book.put_to_use_on or "", "cost": money(book.cost),
+        "opening_fy": book.opening_fy or "", "opening_book_value": money(book.opening_book_value),
+        "tax_block": book.tax_block or "", "disposed_on": book.disposed_on or "",
+        "disposal_value": money(book.disposal_value), "disposal_note": book.disposal_note or "",
+        # The year asked for; an asset gone before it, or not yet bought, has none.
+        "year": row,
+        "in_year": bool(row),
+        "gone_before": bool(before and before.get("disposed")),
+    }
+
+
+def asset_book_or_none(db, client_id, asset_id):
+    return db.query(models.DBAssetBook).filter(
+        models.DBAssetBook.client_id == client_id,
+        models.DBAssetBook.asset_id == asset_id).first()
+
+
+def default_book(a):
+    life, block = ASSET_BOOK_DEFAULTS.get(a.category or "Other", ASSET_BOOK_DEFAULTS["Other"])
+    return {"method": "WDV", "life_years": life, "residual_percent": 5.0,
+            "put_to_use_on": a.purchase_date or "", "cost": money(a.purchase_value),
+            "tax_block": block}
+
+
+@app.get("/api/fixed-assets")
+def fixed_asset_register(request: Request, fy: str = "", db: Session = Depends(get_db)):
+    """The fixed asset register for one financial year: every owned asset
+    with a book, what it opened at, what was added, the year's depreciation,
+    what went, and what it closes at."""
+    client = require_erp_read(request, db)
+    year = fy_start_year(fy) if fy else fy_start_year(date.today())
+    if year is None:
+        raise HTTPException(400, "Financial year should read like 2026-27.")
+    blocks = ensure_tax_blocks(db, client.id)
+    db.commit()
+    books = {b.asset_id: b for b in db.query(models.DBAssetBook).filter(
+        models.DBAssetBook.client_id == client.id).all()}
+    rows, unset = [], []
+    first = year
+    for a in db.query(models.DBAsset).filter(models.DBAsset.client_id == client.id).order_by(
+            models.DBAsset.code).all():
+        if (a.ownership or "Owned") != "Owned":
+            continue
+        b = books.get(a.id)
+        if not b:
+            d = default_book(a)
+            unset.append({"asset_id": a.id, "code": a.code or "", "name": a.name or "",
+                          "category": a.category or "", "status": a.status or "",
+                          "suggest": d, "ready": bool(d["cost"] > 0 and d["put_to_use_on"])})
+            continue
+        d = book_dict(b, a, year)
+        start = fy_start_year(b.opening_fy) if b.opening_fy else fy_start_year(b.put_to_use_on)
+        if start is not None:
+            first = min(first, start)
+        if d["in_year"]:
+            rows.append(d)
+    ys = [r["year"] for r in rows]
+    return {
+        "fy": fy_label(year), "fys": [fy_label(y) for y in range(max(first, year - 15), fy_start_year(date.today()) + 2)][::-1],
+        "assets": rows, "not_set_up": unset,
+        "methods": list(BOOK_METHODS), "blocks": [b.name for b in blocks],
+        "defaults": {k: {"life_years": v[0], "tax_block": v[1]} for k, v in ASSET_BOOK_DEFAULTS.items()},
+        "totals": {
+            "cost": money(sum(r["cost"] for r in rows)),
+            "opening": money(sum(y["opening"] for y in ys)),
+            "added": money(sum(y["added"] for y in ys)),
+            "depreciation": money(sum(y["depreciation"] for y in ys)),
+            "disposed": money(sum(y["disposal_value"] for y in ys)),
+            "gain": money(sum(y["gain"] for y in ys)),
+            "closing": money(sum(y["closing"] for y in ys)),
+            "accumulated": money(sum(y["accumulated"] for y in ys if not y["disposed"])),
+            "assets": len(rows), "not_set_up": len(unset),
+        },
+    }
+
+
+class AssetBookIn(BaseModel):
+    method: Optional[str] = "WDV"
+    life_years: Optional[float] = None
+    residual_percent: Optional[float] = 5.0
+    put_to_use_on: Optional[str] = ""
+    cost: Optional[float] = None
+    opening_fy: Optional[str] = ""
+    opening_book_value: Optional[float] = 0
+    tax_block: Optional[str] = ""
+
+
+def _apply_book(db, client_id, a, b, body):
+    method = (body.method or "WDV").upper()
+    if method not in BOOK_METHODS:
+        raise HTTPException(400, "Method is WDV (written-down value) or SLM (straight line).")
+    d = default_book(a)
+    life = float(body.life_years if body.life_years is not None else d["life_years"])
+    if not 0 < life <= 100:
+        raise HTTPException(400, "Useful life should be between a year and a hundred.")
+    residual = float(body.residual_percent if body.residual_percent is not None else 5.0)
+    if not 0 <= residual < 100:
+        raise HTTPException(400, "Residual value is a percentage of cost, under a hundred.")
+    if method == "WDV" and residual <= 0:
+        raise HTTPException(400, "Written-down value needs a residual above nought - five per cent is usual.")
+    cost = money(body.cost if body.cost is not None else d["cost"])
+    if cost <= 0:
+        raise HTTPException(400, "What did it cost? The purchase bill value, with anything spent to bring it into use.")
+    put = (body.put_to_use_on or d["put_to_use_on"] or "")[:10]
+    if not _parse_date(put):
+        raise HTTPException(400, "When was it put to use? (YYYY-MM-DD)")
+    opening_fy = (body.opening_fy or "").strip()
+    opening_value = money(body.opening_book_value or 0)
+    if opening_fy:
+        y = fy_start_year(opening_fy)
+        if y is None:
+            raise HTTPException(400, "Opening year should read like 2025-26.")
+        opening_fy = fy_label(y)
+        if y > fy_start_year(put):
+            if opening_value <= 0:
+                raise HTTPException(400, "What was its book value at the start of %s? The last audited "
+                                         "accounts carry it." % opening_fy)
+            if opening_value > cost + 0.009:
+                raise HTTPException(400, "The opening book value cannot be more than it cost.")
+        else:
+            opening_fy, opening_value = "", 0.0
+    blocks = {x.name for x in ensure_tax_blocks(db, client_id)}
+    block = (body.tax_block or d["tax_block"]).strip()
+    if block not in blocks:
+        raise HTTPException(400, "Unknown income-tax block: %s" % block)
+    b.method, b.life_years, b.residual_percent = method, life, residual
+    b.cost, b.put_to_use_on, b.tax_block = cost, put, block
+    b.opening_fy, b.opening_book_value = opening_fy, opening_value
+    b.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return b
+
+
+@app.put("/api/fixed-assets/{asset_id}/book")
+def save_asset_book(asset_id: int, body: AssetBookIn, request: Request, db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db)
+    a = asset_or_404(db, client.id, asset_id)
+    if (a.ownership or "Owned") != "Owned":
+        raise HTTPException(409, "%s is hired in. Only what the business owns is depreciated." % a.code)
+    b = asset_book_or_none(db, client.id, a.id)
+    if b and b.disposed_on:
+        raise HTTPException(409, "%s was disposed of on %s; its book is closed." % (a.code, b.disposed_on))
+    new = b is None
+    if new:
+        b = models.DBAssetBook(client_id=client.id, asset_id=a.id)
+        db.add(b)
+    _apply_book(db, client.id, a, b, body)
+    log_audit(db, client.id, "asset_book_" + ("set" if new else "changed"), "asset", a.id, a.code,
+              "%s %s yrs, cost %s" % (b.method, b.life_years, inr(b.cost)), request)
+    db.commit()
+    return {"book": book_dict(b, a, fy_start_year(date.today())),
+            "message": "%s: %s over %g years from %s." % (a.code, b.method, b.life_years, b.put_to_use_on)}
+
+
+@app.post("/api/fixed-assets/set-up-all")
+def set_up_all_books(request: Request, db: Session = Depends(get_db)):
+    """Every owned asset with a purchase value and date gets a book on its
+    category's defaults. Anything missing either is left to be done by hand."""
+    client, _, _ = wo_actor(request, db)
+    have = {b.asset_id for b in db.query(models.DBAssetBook).filter(
+        models.DBAssetBook.client_id == client.id).all()}
+    made, skipped = [], []
+    for a in db.query(models.DBAsset).filter(models.DBAsset.client_id == client.id).all():
+        if (a.ownership or "Owned") != "Owned" or a.id in have:
+            continue
+        if not (a.purchase_value or 0) > 0 or not _parse_date(a.purchase_date):
+            skipped.append(a.code)
+            continue
+        b = models.DBAssetBook(client_id=client.id, asset_id=a.id)
+        db.add(b)
+        _apply_book(db, client.id, a, b, AssetBookIn())
+        made.append(a.code)
+    log_audit(db, client.id, "asset_books_set_up", "asset", 0, "", "%d set up" % len(made), request)
+    db.commit()
+    return {"made": made, "skipped": skipped,
+            "message": "%d asset%s set up on the usual lives%s." % (
+                len(made), "" if len(made) == 1 else "s",
+                ("; %d need a purchase value and date first" % len(skipped)) if skipped else "")}
+
+
+@app.get("/api/fixed-assets/{asset_id}/schedule")
+def asset_book_schedule(asset_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    a = asset_or_404(db, client.id, asset_id)
+    b = asset_book_or_none(db, client.id, a.id)
+    if not b:
+        raise HTTPException(404, "%s has no book yet." % a.code)
+    upto = fy_start_year(date.today())
+    if b.disposed_on:
+        upto = fy_start_year(b.disposed_on) or upto
+    return {"book": book_dict(b, a, upto), "rows": book_schedule(b, upto)}
+
+
+class AssetDisposalIn(BaseModel):
+    disposed_on: str
+    disposal_value: Optional[float] = 0
+    note: Optional[str] = ""
+
+
+@app.post("/api/fixed-assets/{asset_id}/dispose")
+def dispose_booked_asset(asset_id: int, body: AssetDisposalIn, request: Request,
+                         db: Session = Depends(get_db)):
+    """Sold or scrapped: depreciation stops that day, and what it fetched
+    against what the books still carried is the gain or the loss."""
+    client, _, actor_name = wo_actor(request, db)
+    a = asset_or_404(db, client.id, asset_id)
+    b = asset_book_or_none(db, client.id, a.id)
+    if not b:
+        raise HTTPException(404, "%s has no book yet. Set it up first, so the sale is set against "
+                                 "what it was worth." % a.code)
+    if b.disposed_on:
+        raise HTTPException(409, "%s was already disposed of on %s." % (a.code, b.disposed_on))
+    if a.current_job_id:
+        raise HTTPException(409, "%s is still on a site. Bring it back to the yard first." % a.code)
+    on = _parse_date(body.disposed_on)
+    if not on:
+        raise HTTPException(400, "When did it go? (YYYY-MM-DD)")
+    if on < _parse_date(b.put_to_use_on):
+        raise HTTPException(400, "It cannot go before it was put to use (%s)." % b.put_to_use_on)
+    if on > date.today():
+        raise HTTPException(400, "That date has not come yet.")
+    value = money(body.disposal_value or 0)
+    if value < 0:
+        raise HTTPException(400, "What it fetched cannot be less than nothing.")
+    b.disposed_on, b.disposal_value = on.isoformat(), value
+    b.disposal_note = (body.note or "").strip()[:300]
+    a.status = "Disposed"
+    a.notes = ((a.notes or "") + "\nDisposed %s for %s%s" % (
+        on.isoformat(), inr(value), (": " + b.disposal_note) if b.disposal_note else "")).strip()
+    rows = book_schedule(b, fy_start_year(on))
+    last = rows[-1] if rows else {"book_value_at_sale": 0.0, "gain": value}
+    log_audit(db, client.id, "asset_disposed", "asset", a.id, a.code,
+              "for %s, book %s" % (inr(value), inr(last.get("book_value_at_sale", 0))), request)
+    db.commit()
+    gain = last.get("gain", 0.0)
+    return {"book": book_dict(b, a, fy_start_year(on)), "book_value": last.get("book_value_at_sale", 0.0),
+            "gain": gain,
+            "message": "%s disposed of for %s against a book value of %s: a %s of %s." % (
+                a.code, inr(value), inr(last.get("book_value_at_sale", 0.0)),
+                "profit" if gain >= 0 else "loss", inr(abs(gain)))}
+
+
+def tax_block_schedule(db, client_id, year):
+    """Income-tax depreciation, block by block, for one year.
+
+    Opening WDV, plus what was bought (at the full rate if used 180 days or
+    more that year, half the rate if less), less what anything sold fetched.
+    Where sales take a block below nothing, the excess is a short-term gain
+    and the block closes at nought; where every asset in a block has gone,
+    what is left is a short-term loss and no depreciation is due on it."""
+    blocks = ensure_tax_blocks(db, client_id)
+    books = db.query(models.DBAssetBook).filter(models.DBAssetBook.client_id == client_id).all()
+    out = []
+    for blk in blocks:
+        mine = [b for b in books if b.tax_block == blk.name and _parse_date(b.put_to_use_on)]
+        open_year = fy_start_year(blk.opening_fy) if blk.opening_fy else None
+        years = [fy_start_year(b.put_to_use_on) for b in mine]
+        start = open_year if open_year is not None else (min(years) if years else year)
+        closing = money(blk.opening_wdv or 0) if open_year is not None else 0.0
+        row = None
+        for y in range(start, year + 1):
+            fy_from, fy_to = fy_bounds(y)
+            opening = closing
+            full = half = deleted = 0.0
+            counted = []
+            for b in mine:
+                put = _parse_date(b.put_to_use_on)
+                # Bought before the block's opening: already inside that WDV.
+                if open_year is not None and fy_start_year(put) < open_year:
+                    pass
+                elif fy_from <= put <= fy_to:
+                    if (fy_to - put).days + 1 >= HALF_RATE_DAYS:
+                        full += b.cost or 0
+                    else:
+                        half += b.cost or 0
+                gone = _parse_date(b.disposed_on)
+                if gone and fy_from <= gone <= fy_to:
+                    deleted += b.disposal_value or 0
+                    counted.append(b)
+            base = money(opening + full + half - deleted)
+            left = [b for b in mine if not (_parse_date(b.disposed_on) and _parse_date(b.disposed_on) <= fy_to)]
+            ceased = bool(mine) and not left and not (blk.opening_wdv or 0)
+            gain = loss = dep = 0.0
+            if base < 0:
+                gain, closing = money(-base), 0.0
+            elif ceased:
+                loss, closing = base, 0.0
+            else:
+                half_part = min(money(half), base)
+                full_part = money(base - half_part)
+                dep = money(full_part * blk.rate / 100.0 + half_part * blk.rate / 200.0)
+                closing = money(base - dep)
+            row = {"block_id": blk.id, "block": blk.name, "rate": blk.rate, "fy": fy_label(y),
+                   "opening": opening, "added_full": money(full), "added_half": money(half),
+                   "deleted": money(deleted), "depreciation": dep, "closing": closing,
+                   "short_term_gain": gain, "short_term_loss": loss,
+                   "opening_fy": blk.opening_fy or "", "opening_wdv": money(blk.opening_wdv),
+                   "assets": len(left)}
+        if row is None:
+            row = {"block_id": blk.id, "block": blk.name, "rate": blk.rate, "fy": fy_label(year),
+                   "opening": 0.0, "added_full": 0.0, "added_half": 0.0, "deleted": 0.0,
+                   "depreciation": 0.0, "closing": 0.0, "short_term_gain": 0.0, "short_term_loss": 0.0,
+                   "opening_fy": blk.opening_fy or "", "opening_wdv": money(blk.opening_wdv), "assets": 0}
+        out.append(row)
+    return out
+
+
+@app.get("/api/fixed-assets/tax-blocks")
+def tax_blocks(request: Request, fy: str = "", db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    year = fy_start_year(fy) if fy else fy_start_year(date.today())
+    if year is None:
+        raise HTTPException(400, "Financial year should read like 2026-27.")
+    rows = tax_block_schedule(db, client.id, year)
+    db.commit()
+    return {"fy": fy_label(year), "blocks": rows, "totals": {
+        k: money(sum(r[k] for r in rows)) for k in
+        ("opening", "added_full", "added_half", "deleted", "depreciation", "closing",
+         "short_term_gain", "short_term_loss")}}
+
+
+class TaxBlockIn(BaseModel):
+    rate: Optional[float] = None
+    opening_fy: Optional[str] = ""
+    opening_wdv: Optional[float] = 0
+
+
+@app.put("/api/fixed-assets/tax-blocks/{block_id}")
+def save_tax_block(block_id: int, body: TaxBlockIn, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    blk = db.query(models.DBTaxBlock).filter(models.DBTaxBlock.id == block_id,
+                                             models.DBTaxBlock.client_id == client.id).first()
+    if not blk:
+        raise HTTPException(404, "Block not found")
+    if body.rate is not None:
+        if not 0 <= body.rate <= 100:
+            raise HTTPException(400, "A rate is a percentage.")
+        blk.rate = float(body.rate)
+    if body.opening_fy:
+        y = fy_start_year(body.opening_fy)
+        if y is None:
+            raise HTTPException(400, "Opening year should read like 2025-26.")
+        if (body.opening_wdv or 0) < 0:
+            raise HTTPException(400, "The written-down value cannot be below nought.")
+        blk.opening_fy, blk.opening_wdv = fy_label(y), money(body.opening_wdv or 0)
+    else:
+        blk.opening_fy, blk.opening_wdv = "", 0.0
+    log_audit(db, client.id, "tax_block_changed", "tax_block", blk.id, blk.name,
+              "%s%% from %s at %s" % (blk.rate, blk.opening_fy or "purchase", inr(blk.opening_wdv)), request)
+    db.commit()
+    return {"ok": True, "message": "%s saved." % blk.name}
+
+
+@app.get("/api/fixed-assets.xlsx")
+def fixed_assets_export(request: Request, fy: str = "", db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    data = fixed_asset_register(request, fy, db)
+    rows = [(r["code"], r["name"], r["category"], r["put_to_use_on"], r["cost"],
+             "%s %s%%" % (r["method"], r["rate_percent"]) if r["method"] == "WDV" else "SLM %g yrs" % r["life_years"],
+             r["year"]["opening"], r["year"]["added"], r["year"]["depreciation"],
+             r["year"]["disposal_value"], r["year"]["gain"], r["year"]["closing"], r["year"]["accumulated"])
+            for r in data["assets"]]
+    t = data["totals"]
+    return sheet_response(
+        ("Code", "Asset", "Category", "In use from", "Cost", "Method", "Opening", "Added",
+         "Depreciation", "Sold for", "Profit / loss on sale", "Closing", "Accumulated"),
+        rows, "fixed_assets_%s.xlsx" % data["fy"],
+        preamble=[("FIXED ASSET REGISTER", client.company_name or ""),
+                  ("Financial year", data["fy"]), ("Depreciation as per the company's books",), ()],
+        closing=[(), ("Total", "", "", "", t["cost"], "", t["opening"], t["added"], t["depreciation"],
+                      t["disposed"], t["gain"], t["closing"])])
+
+
+@app.get("/api/fixed-assets/tax-blocks.xlsx")
+def tax_blocks_export(request: Request, fy: str = "", db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    data = tax_blocks(request, fy, db)
+    rows = [(r["block"], r["rate"], r["opening"], r["added_full"], r["added_half"], r["deleted"],
+             r["depreciation"], r["closing"], r["short_term_gain"], r["short_term_loss"])
+            for r in data["blocks"]]
+    t = data["totals"]
+    return sheet_response(
+        ("Block", "Rate %", "Opening WDV", "Added, used 180 days or more", "Added, used under 180 days",
+         "Sold", "Depreciation", "Closing WDV", "Short-term gain", "Short-term loss"),
+        rows, "tax_depreciation_%s.xlsx" % data["fy"],
+        preamble=[("DEPRECIATION AS PER THE INCOME-TAX ACT", client.company_name or ""),
+                  ("Financial year", data["fy"]), ()],
+        closing=[(), ("Total", "", t["opening"], t["added_full"], t["added_half"], t["deleted"],
+                      t["depreciation"], t["closing"], t["short_term_gain"], t["short_term_loss"])])
+
+
+def fixed_asset_attention(db, client_id):
+    have = {b.asset_id for b in db.query(models.DBAssetBook).filter(
+        models.DBAssetBook.client_id == client_id).all()}
+    bare = [a for a in db.query(models.DBAsset).filter(
+        models.DBAsset.client_id == client_id, models.DBAsset.status != "Disposed").all()
+        if (a.ownership or "Owned") == "Owned" and a.id not in have and (a.purchase_value or 0) > 0]
+    if not bare:
+        return []
+    return [{"kind": "assets_unbooked", "severity": "notice", "value": 0.0, "count": len(bare),
+             "view": "fixedassets-view", "title": "Owned assets with no depreciation",
+             "detail": "%d owned asset%s carried at cost for ever. Set up the book so the "
+                       "register shows what %s worth." % (len(bare), "" if len(bare) == 1 else "s",
+                                                          "it is" if len(bare) == 1 else "they are")}]
 
 
 # Serve frontend

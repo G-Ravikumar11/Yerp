@@ -3202,3 +3202,47 @@ class DBRetentionRelease(Base):
     created_by_name = Column(String, default="")
     paid_at = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+# ===========================================================================
+# FIXED ASSETS
+#
+# What each owned asset is worth on the books: cost, how it wears down (WDV
+# or straight line, over a life), and what it fetched when it went. Kept
+# beside the equipment register rather than in it, because an asset's book
+# is an accountant's record and its register is a site's.
+# ===========================================================================
+
+class DBAssetBook(Base):
+    __tablename__ = "asset_books"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    asset_id = Column(Integer, ForeignKey("assets.id"), nullable=False, index=True)
+    method = Column(String, default="WDV")               # WDV | SLM
+    life_years = Column(Float, default=15.0)
+    residual_percent = Column(Float, default=5.0)
+    put_to_use_on = Column(String, default="")
+    cost = Column(Float, default=0.0)
+    # An asset bought before the app: the book value it carried at the start
+    # of this financial year, as the last audited accounts have it.
+    opening_fy = Column(String, default="")              # "2025-26"
+    opening_book_value = Column(Float, default=0.0)
+    tax_block = Column(String, default="Plant & machinery")
+    disposed_on = Column(String, default="")
+    disposal_value = Column(Float, default=0.0)
+    disposal_note = Column(String, default="")
+    updated_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBTaxBlock(Base):
+    """A block of assets for income-tax depreciation, with its rate and the
+    written-down value it opened a year on."""
+    __tablename__ = "tax_blocks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    name = Column(String, default="")
+    rate = Column(Float, default=15.0)
+    opening_fy = Column(String, default="")
+    opening_wdv = Column(Float, default=0.0)
