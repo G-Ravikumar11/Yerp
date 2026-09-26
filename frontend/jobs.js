@@ -455,6 +455,25 @@ function editOrderLine(i, field, value) {
 window.editOrderLine = editOrderLine;
 
 function removeOrderLine(i) { _poLines.splice(i, 1); renderOrderLines(); }
+
+/* A supplier's quotation or a site's requirement list, from Excel: read,
+   checked and corrected in the grid, then put on the order for its save. */
+function importOrderLines() {
+    openSheetGrid({
+        kind: 'po_lines', title: 'Order lines from Excel', confirmLabel: 'Put these on the order',
+        onConfirm: function (rows) {
+            rows.forEach(function (r) {
+                var known = r.item_code && rmByCode(r.item_code);
+                _poLines.push({ item_code: known ? r.item_code : '', description: r.description || r.item_code || '',
+                                uom: r.uom || '', qty: parseFloat(r.qty) || 0, price: parseFloat(r.price) || 0 });
+            });
+            renderOrderLines();
+            showToast(rows.length + ' line' + (rows.length === 1 ? '' : 's') + ' added. Check them and save the order.', 'success');
+            return true;
+        }
+    });
+}
+window.importOrderLines = importOrderLines;
 window.removeOrderLine = removeOrderLine;
 
 function renderOrderLines() {

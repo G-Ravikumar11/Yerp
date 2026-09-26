@@ -33270,6 +33270,136 @@ def ra_bill_pdf(bill_id: int, request: Request, db: Session = Depends(get_db)):
     return form_pdf_response(ra_form_spec(db, client, bill), bill.number)
 
 
+# ============================================================================
+# READ A SHEET, FIX IT HERE, THEN SAVE
+#
+# Lines arrive in Excel - a client's BOQ, a supplier's quotation. Read straight
+# into a document they either all went in or nothing did, and a sheet with one
+# bad row meant opening Excel again, fixing it blind and uploading again.
+#
+# Here a sheet is only read: every row comes back, the good and the bad, each
+# with what is wrong with it, and nothing is saved. The rows land in a grid in
+# the app where they are corrected, added to or struck out, and it is the
+# ordinary save of the document that commits them. One reader, one template
+# per kind of line; the grid on the screen is shared too.
+# ============================================================================
+
+SHEET_KINDS = {
+    "po_lines": {
+        "title": "Purchase order lines",
+        "columns": [("item_code", "Item Code"), ("description", "Description"), ("uom", "UOM"),
+                    ("qty", "Qty"), ("price", "Rate")],
+        "aliases": {
+            "item_code": ["itemcode", "code", "materialcode", "rmcode", "sku", "erpcode"],
+            "description": ["description", "item", "itemname", "material", "materialname", "particulars",
+                            "name", "specification"],
+            "uom": ["uom", "unit", "units", "unitofmeasure", "measure"],
+            "qty": ["qty", "quantity", "orderqty", "reqqty", "requiredqty"],
+            "price": ["rate", "price", "unitrate", "unitprice", "basicrate"],
+        },
+        "numbers": ("qty", "price"),
+        "example": ["", "OPC 53 grade cement", "Bags", "400", "385"],
+    },
+}
+
+
+def _sheet_kind(kind):
+    spec = SHEET_KINDS.get(kind)
+    if not spec:
+        raise HTTPException(404, "Unknown kind of sheet")
+    return spec
+
+
+@app.get("/api/sheets/{kind}/template.xlsx")
+def sheet_template(kind: str, request: Request, db: Session = Depends(get_db)):
+    require_erp_read(request, db)
+    spec = _sheet_kind(kind)
+    return sheet_response([label for _, label in spec["columns"]], [spec["example"]],
+                          "%s_template.xlsx" % kind)
+
+
+def _check_sheet_rows(db, client_id, kind, rows):
+    """{row index: [problems]} - what the grid shows beside each row."""
+    problems = {}
+    master = {}
+    if kind == "po_lines":
+        master = {i.item_code.upper(): i for i in db.query(models.DBItem).filter(
+            models.DBItem.client_id == client_id, models.DBItem.kind == "RM").all()}
+    seen = set()
+    for i, r in enumerate(rows):
+        p = []
+        if kind == "po_lines":
+            code = (r.get("item_code") or "").upper()
+            if code and code not in master:
+                p.append("%s is not in the item master - it will go on as a line without a code" % code)
+            if not (r.get("description") or code):
+                p.append("what is being bought?")
+            if (r.get("qty") or 0) <= 0:
+                p.append("quantity must be more than nought")
+            if (r.get("price") or 0) < 0:
+                p.append("rate cannot be negative")
+        if p:
+            problems[i] = p
+    return problems
+
+
+@app.post("/api/sheets/{kind}/read")
+async def read_sheet(kind: str, request: Request, file: UploadFile = File(...), sheet: str = Form(""),
+                     db: Session = Depends(get_db)):
+    """Every row of the sheet, with what is wrong with each. Nothing is saved."""
+    client = require_erp_read(request, db)
+    spec = _sheet_kind(kind)
+    header, body = await read_sheet_rows(file, sheet)
+    mapping, unmapped = map_headers_with(header, spec["aliases"])
+    fields = set(mapping.values())
+    wanted = [k for k, _ in spec["columns"]]
+    if not fields & set(wanted):
+        raise HTTPException(400, "None of the columns could be read. Download the template to see the headings "
+                                 "expected - %s." % ", ".join(label for _, label in spec["columns"]) + sheet_note())
+    rows, skipped = [], 0
+    for r in rows_from(header, body, mapping):
+        row = {k: (r.get(k) or "").strip() for k in wanted}
+        for k in spec["numbers"]:
+            row[k] = sheet_number(row.get(k))
+        # The sheet's own grand total: numbers and no words. Counted, not read as a line.
+        words = [k for k in wanted if k not in spec["numbers"] and row.get(k)]
+        if not words:
+            skipped += 1
+            continue
+        row["_line"] = r.get("_line")
+        rows.append(row)
+    if kind == "po_lines":
+        master = {i.item_code.upper(): i for i in db.query(models.DBItem).filter(
+            models.DBItem.client_id == client.id, models.DBItem.kind == "RM").all()}
+        for row in rows:
+            it = master.get((row.get("item_code") or "").upper())
+            if it:
+                row["item_code"] = it.item_code
+                row["description"] = row.get("description") or it.item_name
+                row["uom"] = row.get("uom") or (it.units_of_measure or "")
+    problems = _check_sheet_rows(db, client.id, kind, rows)
+    return {"kind": kind, "columns": [{"key": k, "label": l, "number": k in spec["numbers"]} for k, l in spec["columns"]],
+            "rows": rows, "problems": {str(k): v for k, v in problems.items()}, "skipped": skipped,
+            "read_as": mapping_report(header, mapping),
+            "message": "%d row%s read%s." % (len(rows), "" if len(rows) == 1 else "s",
+                                             ("; %d total or blank row%s left out" % (skipped, "" if skipped == 1 else "s"))
+                                             if skipped else "")}
+
+
+@app.post("/api/sheets/{kind}/check")
+def check_sheet_rows(kind: str, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """The same checks, on rows as edited in the grid."""
+    client = require_erp_read(request, db)
+    spec = _sheet_kind(kind)
+    rows = []
+    for r in (body or {}).get("rows") or []:
+        row = {k: str(r.get(k) or "").strip() for k, _ in spec["columns"]}
+        for k in spec["numbers"]:
+            row[k] = sheet_number(r.get(k))
+        rows.append(row)
+    return {"problems": {str(k): v for k, v in _check_sheet_rows(db, client.id, kind, rows).items()}}
+
+
 # Serve frontend
 frontend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
 if os.path.exists(frontend_path):

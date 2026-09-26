@@ -5308,6 +5308,7 @@
                         <div>
                             <button type="button" class="btn btn-sm btn-outline" onclick="addOrderLine()">+ Add a material</button>
                             <button type="button" class="btn btn-sm btn-outline" onclick="addOrderLine(true)" title="Hire, transport, a service - anything without a stock code">+ Add a line without a code</button>
+                            <button type="button" class="btn btn-sm btn-outline" onclick="importOrderLines()" title="Read the lines off a quotation or a requirement sheet, check them here, then save">From Excel</button>
                         </div>
                         <div style="font-size:0.9rem;">
                             <span style="color:var(--text-secondary);">GST</span>
@@ -5614,7 +5615,7 @@
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=67"></script>
     <!-- Jobs, job costing and purchase orders. -->
-    <script src="jobs.js?v=117"></script>
+    <script src="jobs.js?v=118"></script>
     <!-- Item master, work orders and budget allocation. -->
     <script src="erp.js?v=90"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
@@ -5652,6 +5653,7 @@
     <script src="chat.js?v=126"></script>
     <script src="offline.js?v=126"></script>
     <script src="backup.js?v=127"></script>
+    <script src="sheetgrid.js?v=131"></script>
     <script src="leads.js?v=110"></script>
     <script src="schedule.js?v=100"></script>
     <script src="stores.js?v=108"></script>
