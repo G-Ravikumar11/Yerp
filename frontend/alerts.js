@@ -113,8 +113,8 @@ async function loadAlertSettings() {
             '" placeholder="98480 12345, ..."><p style="font-size:0.72rem;color:var(--text-secondary);margin:3px 0 0;">' +
             (s.whatsapp_ready ? 'Sent through your WhatsApp Business number.' : 'Needs a WhatsApp Business number - below.') + '</p></div>' +
         '</div>' +
-        '<table class="data-table" style="margin:6px 0 12px;"><thead><tr><th>When</th><th style="text-align:center;">Email</th>' +
-        '<th style="text-align:center;">WhatsApp</th></tr></thead><tbody>' + Object.keys(s.kinds).map(row).join('') + '</tbody></table>' +
+        '<div class="table-responsive" style="margin:6px 0 12px;"><table class="data-table"><thead><tr><th>When</th><th style="text-align:center;">Email</th>' +
+        '<th style="text-align:center;">WhatsApp</th></tr></thead><tbody>' + Object.keys(s.kinds).map(row).join('') + '</tbody></table></div>' +
         '<details style="margin-bottom:12px;"><summary style="cursor:pointer;font-size:0.84rem;">WhatsApp Business number</summary>' +
         '<p style="font-size:0.76rem;color:var(--text-secondary);">From Meta Business &rarr; WhatsApp &rarr; API setup: the phone number ID and a permanent access token.</p>' +
         '<div class="form-row"><div class="form-group"><label>Phone number ID</label><input id="al-waid" class="form-control" value="' + esc(s.wa_phone_id) + '"></div>' +

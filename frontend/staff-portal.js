@@ -70,7 +70,7 @@ function statusPill(text, tone) {
         wait: 'var(--warning-color)', calm: 'var(--text-secondary)'
     };
     var c = colours[tone] || colours.calm;
-    return '<span style="display:inline-block;padding:2px 10px;border-radius:10px;font-size:0.75rem;' +
+    return '<span style="display:inline-block;padding:2px 10px;border-radius:10px;font-size:0.75rem;white-space:nowrap;' +
         'font-weight:600;background:' + c + ';color:#fff;opacity:0.9;">' + esc(text) + '</span>';
 }
 window.statusPill = statusPill;

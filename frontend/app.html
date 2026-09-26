@@ -20,6 +20,12 @@
     <script>
       tailwind.config = {
         corePlugins: { preflight: false },
+        // The app named its own spacing classes in pixels (mb-24 is 24px) long
+        // before Tailwind arrived, and Tailwind reads the same names in quarter
+        // rems (mb-24 is 96px). Loaded later, Tailwind won - every screen built
+        // with them sat on gaps four times too wide. These stay the app's.
+        blocklist: ['grid-2', 'grid-3', 'grid-4', 'grid-5', 'gap-8', 'gap-12', 'gap-16', 'gap-24',
+                    'gap-32', 'mb-12', 'mb-16', 'mb-24', 'mt-24'],
         theme: { extend: {
           colors: {
             brand: { DEFAULT: '#4f46e5', light: '#6366f1', dark: '#4338ca', soft: '#eef2ff' },
@@ -30,8 +36,8 @@
         }}
       };
     </script>
-    <link rel="stylesheet" href="styles.css?v=102">
-    <link rel="stylesheet" href="mobile.css?v=65">
+    <link rel="stylesheet" href="styles.css?v=104">
+    <link rel="stylesheet" href="mobile.css?v=66">
 </head>
 <body>
     <!-- Held back until the boot confirms who is signed in. See #boot-gate. -->
@@ -5597,10 +5603,10 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=126"></script>
+    <script src="app.js?v=129"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
-    <script src="staff-portal.js?v=66"></script>
+    <script src="staff-portal.js?v=67"></script>
     <!-- Jobs, job costing and purchase orders. -->
     <script src="jobs.js?v=117"></script>
     <!-- Item master, work orders and budget allocation. -->
@@ -5631,7 +5637,7 @@
     <script src="rfq.js?v=96"></script>
     <script src="ewaybill.js?v=113"></script>
     <script src="files.js?v=115"></script>
-    <script src="alerts.js?v=116"></script>
+    <script src="alerts.js?v=117"></script>
     <script src="quality.js?v=118"></script>
     <script src="safety.js?v=120"></script>
     <script src="fixedassets.js?v=121"></script>

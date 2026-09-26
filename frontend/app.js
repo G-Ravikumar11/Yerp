@@ -2992,7 +2992,19 @@ async function fillSitePicker(selected) {
 }
 window.fillSitePicker = fillSitePicker;
 
+// One click, one employee. Enter in a field also presses Create, so a quick
+// Enter-then-click sent the form twice and made the same person twice.
+var _savingEmployee = false;
 async function submitNewEmployee() {
+    if (_savingEmployee) return;
+    _savingEmployee = true;
+    var btn = document.querySelector('#add-employee-form button[type="submit"]');
+    if (btn) btn.disabled = true;
+    try { return await createEmployeeFromForm(); }
+    finally { _savingEmployee = false; if (btn) btn.disabled = false; }
+}
+
+async function createEmployeeFromForm() {
     var firstName = document.getElementById('emp-first-name').value.trim();
     var lastName = document.getElementById('emp-last-name').value.trim();
     var email = document.getElementById('emp-email').value.trim();
@@ -4963,6 +4975,27 @@ function failBootGate(message) {
     if (spinner) spinner.style.display = 'none';
 }
 window.failBootGate = failBootGate;
+
+/* A date or a document number is read as one thing. Browsers break at the
+   hyphen and the slash, so a narrow column showed "2026-09-" over "26" and
+   "WO-" over "0001". Any cell holding one short unspaced token keeps it on
+   one line; the table scrolls instead. Watched, because every screen draws
+   its tables after it loads. */
+(function () {
+    var queued = false;
+    function keepWhole() {
+        queued = false;
+        document.querySelectorAll('td:not([data-nw]), th:not([data-nw])').forEach(function (c) {
+            c.setAttribute('data-nw', '');
+            var t = (c.textContent || '').trim();
+            if (t && t.length <= 32 && !/\s/.test(t)) c.style.whiteSpace = 'nowrap';
+        });
+    }
+    new MutationObserver(function () {
+        // A timer, not a frame: frames stop in a tab that is not on screen.
+        if (!queued) { queued = true; setTimeout(keepWhole, 30); }
+    }).observe(document.documentElement, { childList: true, subtree: true });
+})();
 
 document.addEventListener('DOMContentLoaded', async function() {
     // Nothing renders until we know who is signed in. Before this, a failure

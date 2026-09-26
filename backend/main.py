@@ -9912,9 +9912,22 @@ def get_employees(request: Request, q: str = "", status: str = "", db: Session =
         })
     return result
 
+def serialise(db, key):
+    """Hold a lock on `key` until this transaction ends, on Postgres.
+
+    "Is this email taken?" then "insert it" is two steps, and two requests
+    a moment apart both got through the first before either did the second -
+    the same person twice. SQLite already writes one at a time."""
+    if db.bind.dialect.name == "postgresql":
+        import zlib
+        from sqlalchemy import text as sql_text
+        db.execute(sql_text("SELECT pg_advisory_xact_lock(:k)"), {"k": zlib.crc32(key.encode("utf-8"))})
+
+
 @app.post("/api/employees")
 def create_employee(request: Request, body: EmployeeCreate, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
+    serialise(db, "employee-create:%d" % client.id)
     first_name = clean_person_name(body.first_name, "First name")
     last_name = clean_person_name(body.last_name, "Last name")
     email = clean_employee_email(db, client.id, body.email, required=bool(body.password))

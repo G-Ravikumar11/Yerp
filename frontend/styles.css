@@ -85,7 +85,14 @@ img, svg, video, canvas { max-width: 100%; height: auto; }
 
 /* Long unbroken strings (emails, references, URLs) are common in this app and
    are the usual cause of horizontal overflow on narrow screens. */
-h1, h2, h3, h4, p, td, th, li, .stat-value { overflow-wrap: anywhere; }
+h1, h2, h3, h4, p, li, .stat-value { overflow-wrap: anywhere; }
+/* In a table "anywhere" also lets the browser crush a column to one character
+   and split a figure down the middle - "₹5,00,000." over "00". break-word
+   still breaks a long email, but sizes the column to its longest word first. */
+td, th { overflow-wrap: break-word; }
+/* A figure is read as one thing: it never wraps, the table scrolls instead. */
+td.text-right, th.text-right { white-space: nowrap; }
+.status-pill { white-space: nowrap; }
 
 /* Visible keyboard focus everywhere, without adding outlines for mouse users. */
 :focus-visible {
@@ -755,6 +762,7 @@ textarea.table-input.item-desc {
 .grid-auto { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
 .gap-8 { gap: 8px; }
 .gap-12 { gap: 12px; }
+.gap-16 { gap: 16px; }
 .gap-24 { gap: 24px; }
 .gap-32 { gap: 32px; }
 .mb-24 { margin-bottom: 24px; }
@@ -1546,15 +1554,21 @@ select option:hover {
     font-size: 0.72rem; font-weight: 600; letter-spacing: 0.01em;
     border: 1px solid transparent; white-space: nowrap;
 }
-.status-paid, .status-approved, .status-active, .status-completed {
+/* A status nobody gave a colour still reads as a pill, not loose bold text. */
+.status-pill { background: var(--surface-sunken); color: var(--text-secondary); border-color: var(--border-color); }
+.status-paid, .status-approved, .status-active, .status-completed,
+.status-processed, .status-received, .status-accepted, .status-present {
     background: var(--success-soft); color: var(--success-color);
     border-color: color-mix(in srgb, var(--success-color) 22%, transparent);
 }
-.status-overdue, .status-rejected, .status-failed, .status-void {
+.status-overdue, .status-rejected, .status-failed, .status-void,
+.status-terminated, .status-cancelled, .status-disabled {
     background: var(--danger-soft); color: var(--danger-color);
     border-color: color-mix(in srgb, var(--danger-color) 22%, transparent);
 }
-.status-pending, .status-awaiting, .status-partial, .status-sent {
+.status-pending, .status-awaiting, .status-partial, .status-sent,
+.status-onboarding, .status-offboarding, .status-partially-paid, .status-awaiting-payment,
+.status-on-leave, .status-on_leave, .status-invited, .status-submitted, .status-processing {
     background: var(--warning-soft); color: var(--warning-color);
     border-color: color-mix(in srgb, var(--warning-color) 24%, transparent);
 }
