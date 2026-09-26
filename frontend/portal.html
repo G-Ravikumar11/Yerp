@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Partner portal</title>
+    <meta name="theme-color" content="#0f172a">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏗</text></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root { --ink: #0f172a; --muted: #64748b; --line: #e2e8f0; --bg: #f8fafc; --card: #fff;
+                --brand: #2563eb; --good: #059669; --warn: #d97706; --bad: #dc2626; }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--ink); min-height: 100vh; }
+        button, input, select { font: inherit; }
+        .hidden { display: none !important; }
+        .auth { min-height: 100vh; display: grid; place-items: center; padding: 20px 16px; }
+        .auth-card { width: 100%; max-width: 400px; background: var(--card); border: 1px solid var(--line);
+                     border-radius: 18px; padding: 32px 26px; box-shadow: 0 20px 50px rgba(15,23,42,.08); }
+        .auth-card h1 { font-size: 1.35rem; font-weight: 800; margin-bottom: 6px; }
+        .auth-card p { color: var(--muted); font-size: .9rem; line-height: 1.5; margin-bottom: 20px; }
+        label { display: block; font-size: .8rem; font-weight: 600; margin: 12px 0 5px; }
+        input, select { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+        input:focus, select:focus { outline: 2px solid rgba(37,99,235,.25); border-color: var(--brand); }
+        .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 16px;
+               border-radius: 10px; border: 1px solid var(--line); background: #fff; color: var(--ink);
+               font-weight: 600; font-size: .88rem; cursor: pointer; text-decoration: none; }
+        .btn-primary { background: var(--brand); color: #fff; border-color: var(--brand); }
+        .btn-block { width: 100%; margin-top: 20px; padding: 12px; }
+        .msg { font-size: .85rem; margin-top: 12px; min-height: 1.2em; }
+        .msg.bad { color: var(--bad); } .msg.good { color: var(--good); }
+
+        header { background: var(--ink); color: #e2e8f0; padding: 14px 16px; }
+        header .row { max-width: 1040px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        header .who { font-weight: 700; color: #fff; font-size: 1rem; }
+        header .with { font-size: .78rem; color: #94a3b8; margin-top: 2px; }
+        header .btn { background: transparent; color: #e2e8f0; border-color: rgba(255,255,255,.2); padding: 7px 12px; }
+        nav { background: #fff; border-bottom: 1px solid var(--line); overflow-x: auto; }
+        nav .row { max-width: 1040px; margin: 0 auto; display: flex; gap: 2px; padding: 0 8px; }
+        nav button { background: none; border: none; padding: 13px 12px; font-weight: 600; font-size: .86rem;
+                     color: var(--muted); border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap; }
+        nav button.active { color: var(--brand); border-bottom-color: var(--brand); }
+        main { max-width: 1040px; margin: 0 auto; padding: 18px 16px 40px; }
+        h2 { font-size: 1.05rem; font-weight: 700; margin: 4px 0 12px; }
+        .cards { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+        .card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+        .card .k { font-size: .75rem; color: var(--muted); }
+        .card .v { font-size: 1.2rem; font-weight: 800; margin-top: 4px; }
+        .card .s { font-size: .74rem; color: var(--muted); margin-top: 3px; }
+        .table-wrap { background: #fff; border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; margin-top: 12px; }
+        table { width: 100%; border-collapse: collapse; font-size: .86rem; }
+        th { text-align: left; font-size: .7rem; text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
+             padding: 10px 12px; border-bottom: 1px solid var(--line); background: #f8fafc; white-space: nowrap; }
+        td { padding: 11px 12px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+        tr:last-child td { border-bottom: none; }
+        .r { text-align: right; white-space: nowrap; }
+        .mono { font-family: ui-monospace, monospace; font-weight: 600; }
+        .sub { font-size: .74rem; color: var(--muted); margin-top: 2px; }
+        .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: .72rem; font-weight: 700; color: #fff; white-space: nowrap; }
+        .pill.good { background: var(--good); } .pill.wait { background: var(--warn); } .pill.bad { background: var(--bad); } .pill.calm { background: #94a3b8; }
+        .empty { text-align: center; color: var(--muted); padding: 26px; }
+        .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
+        .filters > div { flex: 1 1 140px; }
+        .form { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px; max-width: 560px; }
+        .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        @media (max-width: 560px) { .two { grid-template-columns: 1fr; } }
+        /* On a phone each row becomes a card, every figure beside its label. */
+        @media (max-width: 640px) {
+            table.stack thead { display: none; }
+            table.stack tr { display: block; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+            table.stack tr:last-child { border-bottom: none; }
+            table.stack td { display: flex; justify-content: space-between; align-items: baseline; gap: 14px;
+                             padding: 3px 0; border: none; text-align: right; white-space: normal; }
+            table.stack td::before { content: attr(data-label); color: var(--muted); font-size: .74rem;
+                                     text-align: left; flex: 0 0 auto; }
+            table.stack td:first-child { font-size: .95rem; }
+            table.stack td:first-child::before { content: none; }
+            table.stack td.empty { justify-content: center; }
+            table.stack td.empty::before { content: none; }
+            .table-wrap { overflow-x: visible; }
+        }
+    </style>
+</head>
+<body>
+    <div id="p-login" class="auth hidden">
+        <div class="auth-card">
+            <h1>Partner portal</h1>
+            <p>For subcontractors and suppliers: your orders, bills, payments and statement.</p>
+            <form onsubmit="event.preventDefault(); pLogin();">
+                <label for="pl-email">Email</label>
+                <input id="pl-email" type="email" autocomplete="username" required>
+                <label for="pl-pass">Password</label>
+                <input id="pl-pass" type="password" autocomplete="current-password" required>
+                <button class="btn btn-primary btn-block" type="submit">Sign in</button>
+            </form>
+            <div class="msg" id="pl-msg"></div>
+            <p style="margin:16px 0 0;font-size:.8rem;">Forgotten your password? Ask the office for a new link.</p>
+        </div>
+    </div>
+
+    <div id="p-invite" class="auth hidden">
+        <div class="auth-card">
+            <h1 id="pi-title">Welcome</h1>
+            <p id="pi-text"></p>
+            <form onsubmit="event.preventDefault(); pAccept();">
+                <label for="pi-pass">Choose a password</label>
+                <input id="pi-pass" type="password" autocomplete="new-password" minlength="8" required>
+                <label for="pi-pass2">Once more</label>
+                <input id="pi-pass2" type="password" autocomplete="new-password" minlength="8" required>
+                <button class="btn btn-primary btn-block" type="submit">Set password and open</button>
+            </form>
+            <div class="msg" id="pi-msg"></div>
+        </div>
+    </div>
+
+    <div id="p-app" class="hidden">
+        <header><div class="row">
+            <div><div class="who" id="pa-party"></div><div class="with" id="pa-with"></div></div>
+            <button class="btn" onclick="pLogout()">Sign out</button>
+        </div></header>
+        <nav><div class="row" id="pa-tabs">
+            <button data-tab="overview" class="active" onclick="pTab('overview')">Overview</button>
+            <button data-tab="orders" onclick="pTab('orders')">Orders</button>
+            <button data-tab="bills" onclick="pTab('bills')">Bills</button>
+            <button data-tab="payments" onclick="pTab('payments')">Payments</button>
+            <button data-tab="statement" onclick="pTab('statement')">Statement</button>
+            <button data-tab="send" id="pa-send-tab" class="hidden" onclick="pTab('send')">Send an invoice</button>
+        </div></nav>
+        <main id="pa-main"></main>
+    </div>
+
+    <script src="portal.js?v=3"></script>
+</body>
+</html>

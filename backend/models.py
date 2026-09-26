@@ -3246,3 +3246,30 @@ class DBTaxBlock(Base):
     rate = Column(Float, default=15.0)
     opening_fy = Column(String, default="")
     opening_wdv = Column(Float, default=0.0)
+
+
+# ===========================================================================
+# THE PARTNER PORTAL
+#
+# A gang or a supplier signs in to see their own orders, bills, payments and
+# statement - the phone call asking "has my bill been passed?" answered
+# without anybody in the office picking up. One login is one person at one
+# party, and it sees nothing of anybody else's.
+# ===========================================================================
+
+class DBPortalUser(Base):
+    __tablename__ = "partner_portal_users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    party_type = Column(String, default="contractor", index=True)     # contractor | supplier
+    party_id = Column(Integer, nullable=False, index=True)
+    name = Column(String, default="")
+    email = Column(String, default="", index=True)
+    password_hash = Column(String, default="")
+    invite_token_hash = Column(String, default="", index=True)
+    invite_expires = Column(String, default="")
+    is_active = Column(Boolean, default=True)
+    last_login = Column(String, default="")
+    created_by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))

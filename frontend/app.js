@@ -472,6 +472,7 @@ function showView(viewId) {
     if (viewId === 'settings-view' && typeof loadGmailStatus === 'function') loadGmailStatus();
     if (viewId === 'settings-view' && typeof loadSettings === 'function') loadSettings();
     if (viewId === 'settings-view' && typeof loadAlertSettings === 'function') loadAlertSettings();
+    if (viewId === 'settings-view' && typeof loadPortalAccess === 'function') loadPortalAccess();
     if (viewId === 'settings-view' && typeof loadTaxRates === 'function') loadTaxRates();
     if (viewId === 'settings-view' && typeof loadTeam === 'function') loadTeam();
     if (viewId === 'settings-view' && typeof loadBrandingThemes === 'function') loadBrandingThemes();
@@ -6343,6 +6344,9 @@ function renderBills(bills) {
             '<td><span class="status-pill status-' + statusClass + '">' + esc(b.status || 'Draft') + '</span></td>' +
             '<td class="text-right">' +
                 '<button class="btn btn-outline btn-sm" onclick="editBill(' + b.id + ')" style="margin-right:4px;">Edit</button>' +
+                // Sent in through the partner portal: the supplier's own copy is attached.
+                (/partner portal/.test(b.notes || '') && typeof openFiles === 'function'
+                    ? '<button class="btn btn-outline btn-sm" onclick="openFiles(\'bill\',' + b.id + ',\'' + esc(b.number) + '\')" style="margin-right:4px;">Invoice</button>' : '') +
                 // A draft is accepted before it is paid - the payment box
                 // refuses a draft, and there was no way on the screen to
                 // accept one, so no bill typed in here could ever be paid.

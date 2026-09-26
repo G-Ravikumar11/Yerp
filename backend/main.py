@@ -719,6 +719,7 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
                 raise HTTPException(status_code=403, detail="Account disabled")
             request.session.pop("employee_id", None)
             request.session.pop("employee_client_id", None)
+            request.session.pop("portal_user_id", None)
             request.session["client_id"] = owner.id
             request.session["member_id"] = member.id
             member.last_login = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -733,6 +734,7 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
         raise HTTPException(status_code=403, detail="Account disabled")
     request.session.pop("employee_id", None)
     request.session.pop("employee_client_id", None)
+    request.session.pop("portal_user_id", None)
     request.session["client_id"] = client.id
     request.session.pop("member_id", None)
     log_login(db, client.id, body.email, "client", "password", request, "success")
@@ -6014,6 +6016,7 @@ async def google_signin_callback(request: Request, db: Session = Depends(get_db)
             return RedirectResponse("/login.html?error=account_disabled")
         request.session.pop("employee_id", None)
         request.session.pop("employee_client_id", None)
+        request.session.pop("portal_user_id", None)
         request.session["client_id"] = client.id
         log_login(db, client.id, email, "client", "google", request)
         return RedirectResponse(target if client.is_onboarded else "/onboard.html")
@@ -11679,6 +11682,7 @@ def employee_login(request: Request, body: dict = None, db: Session = Depends(ge
     # every permission check below is answered by the wrong person.
     request.session.pop('client_id', None)
     request.session.pop('member_id', None)
+    request.session.pop('portal_user_id', None)
     request.session['employee_id'] = emp.id
     request.session['employee_client_id'] = emp.client_id
     today = datetime.now().strftime("%Y-%m-%d")
@@ -29247,6 +29251,12 @@ def attachment_target(db, client_id, attached_type, attached_id):
         if not d:
             raise HTTPException(404, "Drawing not found")
         return d.job_id, False
+    if t == "bill":
+        b = db.query(models.DBBill).filter(models.DBBill.id == attached_id,
+                                           models.DBBill.client_id == client_id).first()
+        if not b:
+            raise HTTPException(404, "Bill not found")
+        return b.job_id, (b.status or "") not in ("Draft",)
     raise HTTPException(400, "Files are kept against a project, a diary day, a measurement, "
                              "a variation, a drawing, an inspection or an NCR.")
 
@@ -29544,6 +29554,7 @@ NOTIFY_KINDS = {
     "qc_failed": "A quality check failed or an NCR was raised",
     "safety_incident": "A safety incident or near miss was reported",
     "retention_released": "Retention was released - to claim, or to pay a gang",
+    "portal_invoice": "A supplier sent an invoice through the partner portal",
     "daily_digest": "The morning list of what needs looking at",
 }
 # Out of the box: the bell for everything, email for the money and the digest.
@@ -31551,6 +31562,560 @@ def fixed_asset_attention(db, client_id):
              "detail": "%d owned asset%s carried at cost for ever. Set up the book so the "
                        "register shows what %s worth." % (len(bare), "" if len(bare) == 1 else "s",
                                                           "it is" if len(bare) == 1 else "they are")}]
+
+
+# ============================================================================
+# THE PARTNER PORTAL
+#
+# "Has my bill been passed? When is the money coming?" is most of the phone
+# calls a site office takes from gangs and suppliers. Each of them can now
+# sign in and see it for themselves: their orders, their bills and where each
+# one is, what has been paid and when, and a running statement. A supplier
+# can send an invoice in, which lands as a draft for the office to check.
+#
+# Kept apart from every other login. A portal session carries only its own
+# key, signing in clears any office or staff session in that browser, and
+# every query below is filtered by the company and by the party - there is no
+# route here that takes another party's id.
+# ============================================================================
+
+PORTAL_PARTY_TYPES = ("contractor", "supplier")
+PORTAL_INVITE_DAYS = 7
+PORTAL_INVOICE_TYPES = ("application/pdf", "image/jpeg", "image/png", "image/webp")
+
+
+def _portal_token_hash(token):
+    return hashlib.sha256((token or "").encode()).hexdigest()
+
+
+def portal_party(db, client_id, party_type, party_id):
+    """(the contractor or supplier row, its name) - or (None, "")."""
+    if party_type == "contractor":
+        p = db.query(models.DBContractor).filter(models.DBContractor.id == party_id,
+                                                 models.DBContractor.client_id == client_id).first()
+        return p, ((p.company_name or "") if p else "")
+    if party_type == "supplier":
+        p = db.query(models.DBSupplier).filter(models.DBSupplier.id == party_id,
+                                               models.DBSupplier.client_id == client_id).first()
+        return p, ((p.name or "") if p else "")
+    return None, ""
+
+
+def get_portal_user(request: Request, db: Session):
+    uid = request.session.get("portal_user_id")
+    if not uid:
+        raise HTTPException(401, "Not signed in")
+    u = db.query(models.DBPortalUser).filter(models.DBPortalUser.id == uid).first()
+    if not u or not u.is_active:
+        request.session.pop("portal_user_id", None)
+        raise HTTPException(401, "Your access has been removed. Ask the office if you need it back.")
+    client = db.query(models.DBClient).filter(models.DBClient.id == u.client_id).first()
+    if not client or not client.is_active:
+        raise HTTPException(403, "Account disabled")
+    party, name = portal_party(db, u.client_id, u.party_type, u.party_id)
+    if not party or party.is_active is False:
+        raise HTTPException(403, "Your company is no longer on %s's list. Ask the office."
+                                 % (client.company_name or "the"))
+    return u, client, party, name
+
+
+def portal_user_dict(db, u):
+    _, party = portal_party(db, u.client_id, u.party_type, u.party_id)
+    return {"id": u.id, "party_type": u.party_type, "party_id": u.party_id, "party": party,
+            "name": u.name or "", "email": u.email or "", "is_active": bool(u.is_active),
+            "has_password": bool(u.password_hash),
+            "invite_open": bool(u.invite_token_hash) and (u.invite_expires or "") > datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "invite_expires": u.invite_expires or "", "last_login": u.last_login or "",
+            "created_by_name": u.created_by_name or "", "created_at": u.created_at or ""}
+
+
+def _issue_invite(u):
+    token = secrets.token_urlsafe(32)
+    u.invite_token_hash = _portal_token_hash(token)
+    u.invite_expires = (datetime.now() + timedelta(days=PORTAL_INVITE_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    return token
+
+
+def _invite_link(request, token):
+    base = (os.getenv("APP_BASE_URL") or str(request.base_url)).rstrip("/")
+    return "%s/portal.html?invite=%s" % (base, token)
+
+
+def _send_invite(background_tasks, db, client, u, link):
+    """By email when the company's mail is connected; the link is always
+    handed back as well, to send on WhatsApp or read out on the phone."""
+    if not get_stored_refresh_token(db, client_id=client.id):
+        return False
+    company = client.company_name or "Our office"
+    body = ("%s has given you access to its partner portal - your orders, bills, payments and "
+            "statement in one place.\n\nSet your password here (the link works for %d days):\n%s\n"
+            % (company, PORTAL_INVITE_DAYS, link))
+    background_tasks.add_task(send_email_background, u.email, "%s - your partner portal" % company, body,
+                              "%s <%s>" % (company, os.getenv("FROM_EMAIL", "hello@billing.com")),
+                              None, None, "", "", client_id=client.id)
+    return True
+
+
+# --- The office's side: who has access ------------------------------------------
+
+@app.get("/api/portal-access")
+def list_portal_access(request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    users = [portal_user_dict(db, u) for u in db.query(models.DBPortalUser).filter(
+        models.DBPortalUser.client_id == client.id).order_by(models.DBPortalUser.id.desc()).all()]
+    contractors = [{"id": c.id, "name": c.company_name or "", "email": c.email or "",
+                    "contact": c.contact_person or ""}
+                   for c in db.query(models.DBContractor).filter(
+                       models.DBContractor.client_id == client.id,
+                       models.DBContractor.is_active.isnot(False)).order_by(models.DBContractor.company_name).all()]
+    suppliers = [{"id": s.id, "name": s.name or "", "email": s.email or "", "contact": s.contact_person or ""}
+                 for s in db.query(models.DBSupplier).filter(
+                     models.DBSupplier.client_id == client.id,
+                     models.DBSupplier.is_active.isnot(False)).order_by(models.DBSupplier.name).all()]
+    return {"users": users, "contractors": contractors, "suppliers": suppliers}
+
+
+class PortalInviteIn(BaseModel):
+    party_type: str
+    party_id: int
+    email: str
+    name: Optional[str] = ""
+
+
+@app.post("/api/portal-access")
+def invite_to_portal(body: PortalInviteIn, request: Request, background_tasks: BackgroundTasks,
+                     db: Session = Depends(get_db)):
+    """Give one person at a gang or a supplier their own login. Letting an
+    outsider in is an approver's decision, like passing their bill."""
+    client, _, actor_name = wo_actor(request, db, "subcontracts.approve")
+    if body.party_type not in PORTAL_PARTY_TYPES:
+        raise HTTPException(400, "A portal login is for a subcontractor or a supplier.")
+    party, party_name = portal_party(db, client.id, body.party_type, body.party_id)
+    if not party:
+        raise HTTPException(404, "Not on your list.")
+    if party.is_active is False:
+        raise HTTPException(409, "%s is marked inactive." % party_name)
+    email = (body.email or "").strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise HTTPException(400, "Their email address - it is what they sign in with.")
+    if db.query(models.DBPortalUser).filter(sqlfunc.lower(models.DBPortalUser.email) == email).first():
+        raise HTTPException(409, "%s already has a portal login." % email)
+    u = models.DBPortalUser(client_id=client.id, party_type=body.party_type, party_id=party.id,
+                            name=(body.name or getattr(party, "contact_person", "") or party_name).strip()[:120],
+                            email=email, created_by_name=actor_name or "")
+    token = _issue_invite(u)
+    db.add(u)
+    db.flush()
+    log_audit(db, client.id, "portal_invited", body.party_type, party.id, party_name, email, request)
+    db.commit()
+    link = _invite_link(request, token)
+    emailed = _send_invite(background_tasks, db, client, u, link)
+    return {"user": portal_user_dict(db, u), "invite_url": link, "emailed": emailed,
+            "message": "%s invited%s. The link works for %d days." % (
+                email, " by email" if emailed else "", PORTAL_INVITE_DAYS)}
+
+
+def _portal_user_or_404(db, client_id, user_id):
+    u = db.query(models.DBPortalUser).filter(models.DBPortalUser.id == user_id,
+                                             models.DBPortalUser.client_id == client_id).first()
+    if not u:
+        raise HTTPException(404, "Portal login not found")
+    return u
+
+
+@app.post("/api/portal-access/{user_id}/reinvite")
+def reinvite_to_portal(user_id: int, request: Request, background_tasks: BackgroundTasks,
+                       db: Session = Depends(get_db)):
+    """A fresh link - for an invite that ran out, or a forgotten password.
+    Any earlier link stops working."""
+    client, _, _ = wo_actor(request, db, "subcontracts.approve")
+    u = _portal_user_or_404(db, client.id, user_id)
+    if not u.is_active:
+        raise HTTPException(409, "Turn the login back on first.")
+    token = _issue_invite(u)
+    log_audit(db, client.id, "portal_reinvited", u.party_type, u.party_id, u.email, "", request)
+    db.commit()
+    link = _invite_link(request, token)
+    emailed = _send_invite(background_tasks, db, client, u, link)
+    return {"user": portal_user_dict(db, u), "invite_url": link, "emailed": emailed,
+            "message": "A new link for %s%s." % (u.email, ", sent by email" if emailed else "")}
+
+
+@app.post("/api/portal-access/{user_id}/{action}")
+def switch_portal_access(user_id: int, action: str, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db, "subcontracts.approve")
+    if action not in ("disable", "enable"):
+        raise HTTPException(404, "Not found")
+    u = _portal_user_or_404(db, client.id, user_id)
+    u.is_active = action == "enable"
+    if not u.is_active:
+        u.invite_token_hash = ""
+    log_audit(db, client.id, "portal_" + action + "d", u.party_type, u.party_id, u.email, "", request)
+    db.commit()
+    return {"user": portal_user_dict(db, u),
+            "message": "%s can %s sign in." % (u.email, "now" if u.is_active else "no longer")}
+
+
+# --- Signing in ----------------------------------------------------------------
+
+def _portal_signed_in(request, db, u):
+    # One identity per browser: a portal session must never ride on top of
+    # an office one, or the office's rights would answer for the partner.
+    for k in ("client_id", "member_id", "employee_id", "employee_client_id"):
+        request.session.pop(k, None)
+    request.session["portal_user_id"] = u.id
+    u.last_login = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_login(db, u.client_id, u.email, "partner", "password", request, "success")
+    db.commit()
+
+
+@app.get("/api/portal/invite")
+def portal_invite_check(token: str = "", db: Session = Depends(get_db)):
+    """Who the link is for, so the page can greet them before they choose a
+    password - and say plainly when it has run out."""
+    u = db.query(models.DBPortalUser).filter(
+        models.DBPortalUser.invite_token_hash == _portal_token_hash(token)).first() if token else None
+    if not u or not u.is_active or (u.invite_expires or "") < datetime.now().strftime("%Y-%m-%d %H:%M:%S"):
+        raise HTTPException(410, "This link has run out or been replaced. Ask the office for a new one.")
+    client = db.query(models.DBClient).filter(models.DBClient.id == u.client_id).first()
+    _, party = portal_party(db, u.client_id, u.party_type, u.party_id)
+    return {"email": u.email, "name": u.name or "", "party": party,
+            "company": (client.company_name or "") if client else ""}
+
+
+class PortalPasswordIn(BaseModel):
+    token: str
+    password: str
+
+
+@app.post("/api/portal/accept-invite")
+def portal_accept_invite(body: PortalPasswordIn, request: Request, db: Session = Depends(get_db)):
+    ip = request.client.host if request.client else "unknown"
+    if rate_limiter.is_rate_limited(f"portal_invite:{ip}", max_requests=10, window=300):
+        raise HTTPException(429, "Too many attempts. Try again in a few minutes.")
+    portal_invite_check(body.token, db)
+    u = db.query(models.DBPortalUser).filter(
+        models.DBPortalUser.invite_token_hash == _portal_token_hash(body.token)).first()
+    validate_password_strength(body.password)
+    u.password_hash = hash_password(body.password)
+    u.invite_token_hash, u.invite_expires = "", ""
+    _portal_signed_in(request, db, u)
+    return {"ok": True}
+
+
+class PortalLoginIn(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/api/portal/login")
+def portal_login(body: PortalLoginIn, request: Request, db: Session = Depends(get_db)):
+    ip = request.client.host if request.client else "unknown"
+    if rate_limiter.is_rate_limited(f"portal_login:{ip}", max_requests=10, window=60):
+        raise HTTPException(429, "Too many attempts. Try again in a minute.")
+    email = (body.email or "").strip().lower()
+    u = db.query(models.DBPortalUser).filter(sqlfunc.lower(models.DBPortalUser.email) == email).first()
+    if not u or not u.password_hash or not verify_password(body.password, u.password_hash):
+        log_login(db, u.client_id if u else None, email, "partner", "password", request, "failed")
+        db.commit()
+        raise HTTPException(401, "That email and password do not match.")
+    if not u.is_active:
+        raise HTTPException(403, "Your access has been removed. Ask the office if you need it back.")
+    # The company and the party must both still be live before a session exists.
+    client = db.query(models.DBClient).filter(models.DBClient.id == u.client_id).first()
+    party, _ = portal_party(db, u.client_id, u.party_type, u.party_id)
+    if not client or not client.is_active or not party or party.is_active is False:
+        raise HTTPException(403, "This login is no longer open. Ask the office.")
+    _portal_signed_in(request, db, u)
+    return {"ok": True}
+
+
+@app.post("/api/portal/logout")
+def portal_logout(request: Request):
+    request.session.pop("portal_user_id", None)
+    return {"ok": True}
+
+
+# --- What they see ---------------------------------------------------------------
+
+def _portal_ledger(db, u, party_name):
+    key = norm_name(party_name)
+    rows = [r for r in _ledger_rows(db, u.client_id)
+            if r["party_type"] == u.party_type and norm_name(r["party"]) == key]
+    rows.sort(key=lambda r: (r["date"] or "", 0 if r["billed"] else 1, r["number"] or ""))
+    return rows
+
+
+def _portal_payments(db, u, party, party_name):
+    key = norm_name(party_name)
+    out = []
+    for e in db.query(models.DBMoneyEntry).filter(
+            models.DBMoneyEntry.client_id == u.client_id,
+            models.DBMoneyEntry.direction == "OUT",
+            models.DBMoneyEntry.party_type == u.party_type,
+            models.DBMoneyEntry.voided.is_(False)).order_by(
+                models.DBMoneyEntry.paid_on.desc(), models.DBMoneyEntry.id.desc()).all():
+        if e.party_id == party.id or norm_name(e.party_name) == key:
+            out.append({"number": e.number or "", "paid_on": e.paid_on or "", "amount": money(e.amount),
+                        "mode": e.mode or "", "reference": e.reference or "",
+                        "against": e.doc_number or ("on account" if e.doc_type == "on_account" else "")})
+    return out
+
+
+def _portal_orders(db, u, party, party_name):
+    if u.party_type == "contractor":
+        jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == u.client_id).all()}
+        return [{"id": o.id, "number": o.wo_number or "", "status": o.status or "",
+                 "project": jobs[o.job_id].name if o.job_id in jobs else "",
+                 "subject": o.subject or "", "value": money(o.net_order_value or o.gross_amount),
+                 "from": o.commencement_date or "", "to": o.completion_date or "",
+                 "retention_percent": o.retention_percent or 0, "superseded": o.status == "AMENDED"}
+                for o in db.query(models.DBSubcontractOrder).filter(
+                    models.DBSubcontractOrder.client_id == u.client_id,
+                    models.DBSubcontractOrder.contractor_id == party.id,
+                    models.DBSubcontractOrder.status.in_(("APPROVED", "EXECUTED", "AMENDED"))).order_by(
+                        models.DBSubcontractOrder.id.desc()).all()]
+    key = norm_name(party_name)
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == u.client_id).all()}
+    return [{"id": p.id, "number": p.number or "", "status": p.status or "",
+             "project": jobs[p.job_id].name if p.job_id in jobs else "",
+             "subject": p.reference or p.category or "", "value": money(p.total),
+             "from": p.issue_date or "", "to": p.needed_by or "", "superseded": False}
+            for p in db.query(models.DBPurchaseOrder).filter(
+                models.DBPurchaseOrder.client_id == u.client_id,
+                models.DBPurchaseOrder.status.in_(("Approved", "Closed"))).order_by(
+                    models.DBPurchaseOrder.id.desc()).all()
+            if norm_name(p.supplier_name) == key]
+
+
+def _portal_bills(db, u, party, party_name):
+    settled = settled_amounts(db, u.client_id)
+    if u.party_type == "contractor":
+        out = []
+        for b in db.query(models.DBSubBill).filter(
+                models.DBSubBill.client_id == u.client_id,
+                models.DBSubBill.contractor_id == party.id,
+                models.DBSubBill.status.in_(("SUBMITTED", "CERTIFIED", "PAID"))).order_by(
+                    models.DBSubBill.id.desc()).all():
+            got = settled.get(("sub_bill", b.id), 0.0)
+            if b.status == "PAID" and not got:
+                got = money(b.net_payable)
+            out.append({"id": b.id, "number": b.number or "", "status": b.status,
+                        "where": {"SUBMITTED": "with the engineer to certify", "CERTIFIED": "passed for payment",
+                                  "PAID": "paid"}[b.status],
+                        "date": (b.certified_at or b.created_at or "")[:10],
+                        "claimed": money(b.this_bill), "retention": money(b.retention_amount),
+                        "deductions": money((b.advance_recovery or 0) + (b.other_deductions or 0)),
+                        "tds": money(b.tds_amount), "gst": money(b.gst_amount),
+                        "net": money(b.net_payable), "paid": money(got),
+                        "left": money(max(0.0, (b.net_payable or 0) - got)) if b.status != "SUBMITTED" else 0.0})
+        # Their retention, once released, is a sum passed for payment like a bill.
+        for r in db.query(models.DBRetentionRelease).filter(
+                models.DBRetentionRelease.client_id == u.client_id,
+                models.DBRetentionRelease.side == "contractor",
+                models.DBRetentionRelease.contractor_id == party.id,
+                models.DBRetentionRelease.status.in_(("CERTIFIED", "PAID"))).order_by(
+                    models.DBRetentionRelease.id.desc()).all():
+            got = settled.get(("retention_release", r.id), 0.0)
+            out.append({"id": r.id, "number": r.number or "", "status": r.status,
+                        "where": "paid" if r.status == "PAID" else "retention released - passed for payment",
+                        "date": r.release_on or "", "claimed": money(r.amount), "retention": 0.0,
+                        "deductions": 0.0, "tds": 0.0, "gst": money(r.gst_amount),
+                        "net": money(r.net_amount), "paid": money(got),
+                        "left": money(max(0.0, (r.net_amount or 0) - got))})
+        return out
+    key = norm_name(party_name)
+    out = []
+    for b in db.query(models.DBBill).filter(models.DBBill.client_id == u.client_id).order_by(
+            models.DBBill.id.desc()).all():
+        if norm_name(b.vendor_name) != key or (b.status or "") in ("Cancelled",):
+            continue
+        rejected = (b.status or "") == "Rejected" or (b.approval_status or "") == "rejected"
+        where = ("sent back" if rejected else "received - being checked" if (b.status or "") == "Draft"
+                 else "waiting for approval" if (b.approval_status or "") == "pending"
+                 else "paid" if (b.status or "") == "Paid" else "accepted for payment")
+        paid = money(max(b.amount_paid or 0, settled.get(("supplier_bill", b.id), 0.0)))
+        out.append({"id": b.id, "number": b.number or "", "status": b.status or "", "where": where,
+                    "date": b.issue_date or "", "due": b.due_date or "",
+                    "claimed": money(b.amount), "gst": money(b.tax_amount), "net": money(b.total or b.amount),
+                    "paid": paid, "left": 0.0 if rejected or (b.status or "") == "Draft"
+                    else money(max(0.0, (b.total or b.amount or 0) - paid)),
+                    "note": (b.rejection_reason or "") if rejected else ""})
+    return out
+
+
+@app.get("/api/portal/me")
+def portal_me(request: Request, db: Session = Depends(get_db)):
+    u, client, party, name = get_portal_user(request, db)
+    return {"name": u.name or "", "email": u.email, "party_type": u.party_type, "party": name,
+            "company": client.company_name or "", "company_logo": client.logo_url or "",
+            "company_phone": client.phone_number or "", "company_email": client.email or ""}
+
+
+@app.get("/api/portal/summary")
+def portal_summary(request: Request, db: Session = Depends(get_db)):
+    u, client, party, name = get_portal_user(request, db)
+    orders = _portal_orders(db, u, party, name)
+    bills = _portal_bills(db, u, party, name)
+    payments = _portal_payments(db, u, party, name)
+    rows = _portal_ledger(db, u, name)
+    balance = money(sum(r["billed"] - r["moved"] for r in rows))
+    out = {
+        "orders": len([o for o in orders if not o["superseded"]]),
+        "order_value": money(sum(o["value"] for o in orders if not o["superseded"])),
+        "bills_waiting": len([b for b in bills if b["status"] in ("SUBMITTED", "Draft")]),
+        "passed_unpaid": money(sum(b["left"] for b in bills)),
+        "paid_total": money(sum(p["amount"] for p in payments)),
+        "last_payment": payments[0] if payments else None,
+        "balance": balance,
+    }
+    if u.party_type == "contractor":
+        mine = [p for p in retention_positions(db, u.client_id)
+                if p["side"] == "contractor" and p.get("contractor_id") == party.id]
+        out["retention_held"] = money(sum(p["balance"] for p in mine))
+        out["retention"] = [{"order_number": p["order_number"], "held": p["held"], "released": p["released"],
+                             "balance": p["balance"], "dlp_ends": p["dlp_ends"]} for p in mine]
+    return out
+
+
+@app.get("/api/portal/orders")
+def portal_orders(request: Request, db: Session = Depends(get_db)):
+    u, client, party, name = get_portal_user(request, db)
+    return {"orders": _portal_orders(db, u, party, name)}
+
+
+@app.get("/api/portal/orders/{order_id}")
+def portal_order(order_id: int, request: Request, db: Session = Depends(get_db)):
+    u, client, party, name = get_portal_user(request, db)
+    o = next((x for x in _portal_orders(db, u, party, name) if x["id"] == order_id), None)
+    if not o:
+        raise HTTPException(404, "Order not found")
+    if u.party_type == "contractor":
+        lines = [{"code": i.item_code or i.activity_no or "", "description": i.item_description or "",
+                  "uom": i.uom or "", "qty": i.quantity or 0, "rate": money(i.unit_rate),
+                  "amount": money(i.total_amount)}
+                 for i in db.query(models.DBSubcontractItem).filter(
+                     models.DBSubcontractItem.order_id == order_id).order_by(models.DBSubcontractItem.id).all()]
+    else:
+        lines = [{"code": i.item_code or "", "description": i.description or "", "uom": i.uom or "",
+                  "qty": i.qty or 0, "rate": money(i.price), "amount": money((i.qty or 0) * (i.price or 0))}
+                 for i in db.query(models.DBPurchaseOrderLineItem).filter(
+                     models.DBPurchaseOrderLineItem.order_id == order_id).order_by(
+                         models.DBPurchaseOrderLineItem.id).all()]
+    return {"order": o, "lines": lines}
+
+
+@app.get("/api/portal/bills")
+def portal_bills(request: Request, db: Session = Depends(get_db)):
+    u, client, party, name = get_portal_user(request, db)
+    return {"bills": _portal_bills(db, u, party, name)}
+
+
+@app.get("/api/portal/payments")
+def portal_payments(request: Request, db: Session = Depends(get_db)):
+    u, client, party, name = get_portal_user(request, db)
+    return {"payments": _portal_payments(db, u, party, name)}
+
+
+def _portal_statement(db, u, name, date_from="", date_to=""):
+    opening, balance, out = 0.0, 0.0, []
+    for r in _portal_ledger(db, u, name):
+        change = money(r["billed"] - r["moved"])
+        if date_from and (r["date"] or "") < date_from:
+            opening = balance = money(opening + change)
+            continue
+        if date_to and (r["date"] or "") > date_to:
+            continue
+        balance = money(balance + change)
+        out.append({"date": r["date"] or "", "kind": r["kind"], "number": r["number"] or "",
+                    "against": r.get("against", ""), "reference": r.get("reference", ""),
+                    "billed": money(r["billed"]), "paid": money(r["moved"]), "balance": balance})
+    return {"opening": opening, "rows": out, "closing": balance}
+
+
+@app.get("/api/portal/statement")
+def portal_statement(request: Request, date_from: str = "", date_to: str = "",
+                     db: Session = Depends(get_db)):
+    """Their account with us: each bill, each payment, and the balance -
+    positive is what we owe them."""
+    u, client, party, name = get_portal_user(request, db)
+    return _portal_statement(db, u, name, date_from, date_to)
+
+
+@app.get("/api/portal/statement.xlsx")
+def portal_statement_export(request: Request, date_from: str = "", date_to: str = "",
+                            db: Session = Depends(get_db)):
+    u, client, party, name = get_portal_user(request, db)
+    s = _portal_statement(db, u, name, date_from, date_to)
+    return sheet_response(
+        ("Date", "Entry", "Number", "Against", "Reference", "Billed", "Paid", "Balance"),
+        [(r["date"], r["kind"], r["number"], r["against"], r["reference"], r["billed"], r["paid"],
+          r["balance"]) for r in s["rows"]],
+        "statement.xlsx",
+        preamble=[("STATEMENT OF ACCOUNT", name), ("With", client.company_name or ""),
+                  ("Period", "%s to %s" % (date_from or "the start", date_to or date.today().isoformat())),
+                  ("Opening balance", s["opening"]), ()],
+        closing=[(), ("Balance due to you" if s["closing"] >= 0 else "Balance due from you",
+                      "", "", "", "", "", "", abs(s["closing"]))])
+
+
+@app.post("/api/portal/invoices")
+def portal_send_invoice(request: Request, file: UploadFile = File(...),
+                        number: str = Form(...), issue_date: str = Form(""),
+                        amount: float = Form(...), tax_amount: float = Form(0),
+                        po_number: str = Form(""), note: str = Form(""),
+                        db: Session = Depends(get_db)):
+    """A supplier sends an invoice in. It lands in Supplier Bills as a draft,
+    with the invoice attached, for the office to check against the goods
+    received and accept - nothing is payable until somebody here has."""
+    u, client, party, name = get_portal_user(request, db)
+    if u.party_type != "supplier":
+        raise HTTPException(403, "Your bills are drawn from the measurement book on site; the office raises them.")
+    number = (number or "").strip()[:60]
+    if not number:
+        raise HTTPException(400, "Your invoice number.")
+    if (amount or 0) <= 0 or (tax_amount or 0) < 0:
+        raise HTTPException(400, "The invoice value before tax, and the GST on it.")
+    on = (issue_date or date.today().isoformat())[:10]
+    if not _parse_date(on):
+        raise HTTPException(400, "Invoice date should be YYYY-MM-DD.")
+    key = norm_name(name)
+    if any(norm_name(b.vendor_name) == key and (b.number or "").strip().lower() == number.lower()
+           for b in db.query(models.DBBill).filter(models.DBBill.client_id == u.client_id).all()
+           if (b.status or "") != "Cancelled"):
+        raise HTTPException(409, "Invoice %s is already with us." % number)
+    ctype = (file.content_type or "").lower()
+    if ctype not in PORTAL_INVOICE_TYPES:
+        raise HTTPException(400, "Send the invoice as a PDF or a photo.")
+    data = file.file.read()
+    po = None
+    if po_number.strip():
+        po = next((p for p in db.query(models.DBPurchaseOrder).filter(
+            models.DBPurchaseOrder.client_id == u.client_id,
+            models.DBPurchaseOrder.number == po_number.strip()).all()
+            if norm_name(p.supplier_name) == key), None)
+        if not po:
+            raise HTTPException(404, "%s is not one of your orders." % po_number.strip())
+    amount, tax = money(amount), money(tax_amount or 0)
+    b = models.DBBill(client_id=u.client_id, number=number, vendor_name=name, vendor_email=u.email,
+                      issue_date=on, due_date=days_after(on, party.payment_days or 30),
+                      amount=amount, tax_amount=tax, total=money(amount + tax), amount_paid=0.0,
+                      status="Draft", category="Materials", reference=po.number if po else "",
+                      notes=("Sent through the partner portal by %s on %s. %s" % (
+                          u.name or u.email, date.today().isoformat(), (note or "").strip()[:300])).strip(),
+                      job_id=po.job_id if po else None, purchase_order_id=po.id if po else None)
+    db.add(b)
+    db.flush()
+    store_file(db, u.client_id, file, data, job_id=b.job_id, attached_type="bill", attached_id=b.id,
+               kind="document", caption="Invoice %s from %s" % (number, name), by="%s (portal)" % (u.name or u.email))
+    log_audit(db, u.client_id, "portal_invoice", "supplier_bill", b.id, number,
+              "%s %s" % (name, inr(b.total)), request, user_type="partner", user_name=u.email)
+    db.commit()
+    notify(db, u.client_id, "portal_invoice", "%s sent invoice %s" % (name, number),
+           "%s%s, through the partner portal. Check it and accept it in Supplier Bills." % (
+               inr(b.total), (" against " + po.number) if po else ""),
+           view="bills-view", ref_type="supplier_bill", ref_id=b.id, severity="action")
+    return {"ok": True, "message": "Invoice %s received. The office will check it against the delivery." % number}
 
 
 # Serve frontend
