@@ -281,3 +281,53 @@ function resetTermsLibrary() {
     if (confirm('Go back to the standard conditions? Your own will be replaced.')) saveTermsLibrary(true);
 }
 window.resetTermsLibrary = resetTermsLibrary;
+
+/* --- A supplier's particulars, from the purchase order ------------------- */
+
+async function openSupplierEditor(name, after) {
+    var res = await fetch('/api/suppliers', { credentials: 'include' });
+    var data = res.ok ? await res.json() : {};
+    var list = data.suppliers || data || [];
+    var key = String(name || '').trim().toLowerCase();
+    var s = (Array.isArray(list) ? list : []).filter(function (x) {
+        return String(x.name || '').trim().toLowerCase() === key;
+    })[0] || { name: name || '', payment_days: 30, is_active: true };
+    LH = { kind: 'supplier', id: s.id || null, after: after, keep: s };
+    lhModal((s.id ? 'Supplier - ' : 'New supplier - ') + (s.name || ''),
+        '<p style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:12px;">Printed on the purchase order: the ' +
+        'supplier\'s PAN, GSTIN, address and contact.' + (s.id ? '' : ' Not on the supplier list yet - saving adds it.') + '</p>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 14px;">' +
+        lhInput('lh-sname', 'Supplier name *', s.name, { full: true }) +
+        lhInput('lh-scontact', 'Contact person', s.contact_person) +
+        lhInput('lh-sphone', 'Mobile', s.phone) +
+        lhInput('lh-semail', 'Email', s.email, { full: true }) +
+        lhInput('lh-sgstin', 'GSTIN', s.gstin, { upper: true }) +
+        lhInput('lh-span', 'PAN', s.pan, { upper: true, hint: 'Filled from the GSTIN if left blank.' }) +
+        lhInput('lh-saddress', 'Address', s.address, { area: true, full: true }) +
+        lhInput('lh-sbank', 'Bank', s.bank_name) +
+        lhInput('lh-sifsc', 'IFSC', s.bank_ifsc, { upper: true }) +
+        lhInput('lh-saccount', 'Account number', s.bank_account, { full: true }) +
+        '</div>');
+}
+window.openSupplierEditor = openSupplierEditor;
+
+var _lhSaveBase = lhSave;
+lhSave = async function () {
+    if (LH.kind !== 'supplier') return _lhSaveBase();
+    var k = LH.keep || {};
+    var body = { name: lhVal('lh-sname'), contact_person: lhVal('lh-scontact'), phone: lhVal('lh-sphone'),
+                 email: lhVal('lh-semail'), gstin: lhVal('lh-sgstin'), pan: lhVal('lh-span'),
+                 address: lhVal('lh-saddress'), bank_name: lhVal('lh-sbank'), bank_ifsc: lhVal('lh-sifsc'),
+                 bank_account: lhVal('lh-saccount'), payment_days: k.payment_days || 30,
+                 supplies: k.supplies || '', is_active: k.is_active !== false };
+    if (!body.name) { showToast('The supplier needs a name', 'error'); return; }
+    var res = await fetch('/api/suppliers' + (LH.id ? '/' + LH.id : ''), {
+        method: LH.id ? 'PUT' : 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    var out = await res.json();
+    if (!res.ok) { showToast(out.detail || 'Not saved', 'error'); return; }
+    showToast(out.message || 'Saved', 'success');
+    lhClose();
+    if (typeof LH.after === 'function') LH.after(out);
+};
+window.lhSave = lhSave;

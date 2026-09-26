@@ -22,8 +22,9 @@ def test_the_work_order_prints_in_the_ruled_form_with_its_conditions(tenant):
     pages, text = pdf_text(tenant.get("/api/wo/orders/%d/document.pdf" % order["id"]))
     assert pages >= 2
     for words in ("WORK ORDER", "Sub Contractor Name", "TOTAL AMOUNT", "TAXES AND DUTIES",
-                  "Payment Terms", "FSD (Retention)", "GENERAL CONTRACT CONDITIONS", "Authorized Signatory",
-                  order["wo_number"]):
+                  "Payment Terms", "3. FSD", "5% of bill value", "GENERAL CONTRACT CONDITIONS", "Authorized Signatory",
+                  "Contact Person", "Mobile No.", "6. Contact Person", "GCC as per Annexure-1",
+                  "All the statutory payments", order["wo_number"]):
         assert words in text, words
     assert "₹" not in text, "the rupee sign does not print in the built-in font"
 

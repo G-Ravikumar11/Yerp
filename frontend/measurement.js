@@ -242,6 +242,9 @@ async function loadRaBills(woId) {
                 'title="The bill as it prints">View bill</button>' +
                 ' <a class="btn btn-sm btn-outline" href="/api/ra-bills/' + b.id +
                 '/document.pdf" target="_blank" rel="noopener" title="The bill in the ruled form it is signed on">PDF</a>' +
+                (can('customers.manage') && b.customer ? ' <button class="btn btn-sm btn-outline" title="The customer&#39;s PAN, GSTIN, ' +
+                    'address and contact, as they print on the bill" onclick="editCustomerByName(' +
+                    esc(JSON.stringify(b.customer)) + ')">Customer</button>' : '') +
                 ' <a class="btn btn-sm btn-outline" href="/api/ra-bills/' + b.id +
                 '/export.xlsx" title="As a workbook">Excel</a>' +
                 ((b.status === 'CERTIFIED' || b.status === 'PAID') && can('accounts.manage')

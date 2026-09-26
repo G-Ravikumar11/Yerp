@@ -7,12 +7,17 @@ def certified_bill(tenant, site):
     tenant.put("/api/gst/settings", json={"gstin": "36AABCY1234H1ZX"})
     job = tenant.post("/api/jobs", json={"name": "Vanya City STP", "customer_name": "Arabtec",
                                          "site_address": site}).json()
-    fg = tenant.post("/api/erp/items/bulk", json={"items": [
-        {"kind": "FG", "item_name": "RCC M25", "units_of_measure": "cum"}]}).json()["codes"][0]
+    fg, rm = tenant.post("/api/erp/items/bulk", json={"items": [
+        {"kind": "FG", "item_name": "RCC M25", "units_of_measure": "cum"},
+        {"kind": "RM", "item_name": "READY MIX M25", "units_of_measure": "cum"}]}).json()["codes"]
     wo = tenant.post("/api/erp/work-orders/build", json={
         "job_id": job["id"], "reference": "LOA-1",
         "lines": [{"code": fg, "qty": 100, "rate": 5000}]}).json()["work_order"]
+    tenant.post("/api/erp/bom/build", json={"work_order_id": wo["id"],
+                                            "lines": [{"fg_code": fg, "rm_code": rm, "qty": 100, "rate": 3800}]})
     tenant.post("/api/erp/work-orders/%d/place-order" % wo["id"])
+    # Only an approved order is billed; the owner sending it approves it.
+    assert tenant.post("/api/erp/work-orders/%d/submit" % wo["id"]).json()["status"] == "approved"
     measure(tenant, wo["id"], book(tenant, wo["id"])["lines"][0]["line_id"], 10)
     b = tenant.post("/api/ra-bills", json={"work_order_id": wo["id"]}).json()["bill"]
     return tenant.get("/api/ra-bills/%d" % b["id"]).json()["bill"]

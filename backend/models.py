@@ -642,6 +642,7 @@ class DBContact(Base):
     code = Column(String, default="", index=True)
     contact_person = Column(String, default="")
     gstin = Column(String, default="")
+    pan = Column(String, default="")
     address = Column(String, default="")
     city = Column(String, default="")
     state = Column(String, default="")

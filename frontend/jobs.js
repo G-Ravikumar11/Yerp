@@ -372,7 +372,11 @@ async function loadOrders() {
                 '<a class="btn btn-sm btn-outline" href="/api/purchase-orders/' + o.id +
                 '/document.pdf" target="_blank" rel="noopener" title="The order in the ruled form it is signed on">PDF</a> ' +
                 '<a class="btn btn-sm btn-outline" href="/api/purchase-orders/' + o.id +
-                '/export.xlsx" title="This order as a workbook">Excel</a></td>' +
+                '/export.xlsx" title="This order as a workbook">Excel</a>' +
+                (can('purchase.manage') ? ' <button class="btn btn-sm btn-outline" title="The supplier&#39;s PAN, GSTIN, ' +
+                    'address and contact, as they print on the order" onclick="openSupplierEditor(' +
+                    esc(JSON.stringify(o.supplier_name || '')) + ', loadOrders)">Supplier</button>' : '') +
+                '</td>' +
             '</tr>';
     }).join('');
 }

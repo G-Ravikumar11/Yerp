@@ -1406,6 +1406,7 @@ def ensure_columns():
                     ("contacts", "code", "VARCHAR DEFAULT ''"),
                     ("contacts", "contact_person", "VARCHAR DEFAULT ''"),
                     ("contacts", "gstin", "VARCHAR DEFAULT ''"),
+                    ("contacts", "pan", "VARCHAR DEFAULT ''"),
                     ("contacts", "address", "VARCHAR DEFAULT ''"),
                     ("contacts", "city", "VARCHAR DEFAULT ''"),
                     ("contacts", "state", "VARCHAR DEFAULT ''"),
@@ -1569,7 +1570,7 @@ def migrate_sqlite():
             add_col("jobs", "retention_percent", "FLOAT DEFAULT 0")
 
             # Customer detail, for the contracts side.
-            for column in ("code", "contact_person", "gstin", "address",
+            for column in ("code", "contact_person", "gstin", "pan", "address",
                            "city", "state", "pincode", "notes", "created_at"):
                 add_col("contacts", column, "VARCHAR DEFAULT ''")
             for column in ("extra_permissions", "denied_permissions"):

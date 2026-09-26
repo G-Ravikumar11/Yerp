@@ -6092,6 +6092,7 @@ class CustomerIn(BaseModel):
     email: Optional[str] = ""
     phone_number: Optional[str] = ""
     gstin: Optional[str] = ""
+    pan: Optional[str] = ""
     address: Optional[str] = ""
     city: Optional[str] = ""
     state: Optional[str] = ""
@@ -6114,6 +6115,7 @@ def customer_to_dict(db, contact, with_counts=False):
         "id": contact.id, "code": contact.code or "", "name": contact.name or "",
         "contact_person": contact.contact_person or "", "email": contact.email or "",
         "phone_number": contact.phone_number or "", "gstin": contact.gstin or "",
+        "pan": getattr(contact, "pan", "") or "",
         "address": contact.address or "", "city": contact.city or "",
         "state": contact.state or "", "pincode": contact.pincode or "",
         "notes": contact.notes or "",
@@ -6204,12 +6206,13 @@ def create_customer(body: CustomerIn, request: Request, db: Session = Depends(ge
     if clash:
         raise HTTPException(409, "'" + name + "' is already on the customer list")
 
+    gstin, pan = clean_tax_ids(body.gstin, body.pan)
     contact = models.DBContact(
-        client_id=client.id, code=next_customer_code(db, client.id), name=name,
+        client_id=client.id, code=next_customer_code(db, client.id), name=name, pan=pan,
         contact_person=(body.contact_person or "").strip(),
         email=(body.email or "").strip(), phone_number=(body.phone_number or "").strip(),
-        gstin=(body.gstin or "").strip().upper(), address=(body.address or "").strip(),
-        city=(body.city or "").strip(), state=(body.state or "").strip(),
+        gstin=gstin, address=(body.address or "").strip(),
+        city=(body.city or "").strip(), state=(body.state or "").strip() or state_name_of(gstin),
         pincode=(body.pincode or "").strip(), notes=(body.notes or "").strip(),
         is_active=True)
     db.add(contact)
@@ -6235,7 +6238,9 @@ def update_customer(customer_id: int, body: CustomerIn, request: Request,
     for field in ("contact_person", "email", "phone_number", "address",
                   "city", "state", "pincode", "notes"):
         setattr(contact, field, (getattr(body, field) or "").strip())
-    contact.gstin = (body.gstin or "").strip().upper()
+    contact.gstin, contact.pan = clean_tax_ids(body.gstin, body.pan)
+    if not contact.state:
+        contact.state = state_name_of(contact.gstin)
     db.commit()
     return dict(customer_to_dict(db, contact), message="Customer updated.")
 
@@ -18163,61 +18168,78 @@ WO_CLAUSE_CATEGORIES = (
     "Electricity and Water Supply", "Labour Hutment and Welfare",
     "Materials and Wastage", "Safety and Statutory Compliance",
     "Programme and Liquidated Damages", "Defect Liability",
-    "Termination", "Arbitration and Jurisdiction",
+    "Termination", "Arbitration and Jurisdiction", "General",
 )
 
 # Sensible openings, not policy. Every one is edited on the order it goes out
 # on; what they save is somebody retyping the measurement mode from memory
 # and getting it subtly wrong on a document that is legally binding.
 WO_STANDARD_TERMS = [
-    {"clause_category": "Mode of Measurement",
-     "clause_text": "All work shall be measured in accordance with IS 1200 and the "
-                    "relevant clauses of the main contract. Only executed and "
-                    "jointly recorded quantities entered in the Measurement Book "
-                    "shall be certified for payment."},
-    {"clause_category": "Rates and Taxes",
-     "clause_text": "Rates are inclusive of all labour, supervision, tools, tackles, "
-                    "scaffolding, lifts, leads and wastage, and exclusive of GST. "
-                    "GST shall be charged at the prevailing rate. Statutory TDS and "
-                    "any labour cess shall be deducted at source."},
-    {"clause_category": "Payment Milestones",
-     "clause_text": "Running Account bills shall be submitted monthly against "
-                    "jointly measured quantities. Certified bills shall be paid "
-                    "within 30 days of certification, subject to deductions herein."},
-    {"clause_category": "Mobilization Advance",
-     "clause_text": "Any mobilization advance shall be interest bearing, secured by "
-                    "an equivalent bank guarantee, and recovered pro rata from each "
-                    "Running Account bill."},
-    {"clause_category": "Retention and Security",
-     "clause_text": "Retention shall be deducted at 5% of each certified bill, half "
-                    "released on virtual completion and the balance on expiry of the "
-                    "defect liability period."},
-    {"clause_category": "Electricity and Water Supply",
-     "clause_text": "Electricity and water at a single point shall be provided free "
-                    "of charge by the Owner. Onward distribution, and all cabling, "
-                    "storage and consumption beyond that point, is in the "
-                    "Contractor's scope."},
-    {"clause_category": "Labour Hutment and Welfare",
-     "clause_text": "Space for labour hutment shall be allotted by the Owner where "
-                    "available. Construction, maintenance, sanitation, and the "
-                    "welfare and statutory registration of all deployed labour "
-                    "remain the Contractor's responsibility."},
-    {"clause_category": "Safety and Statutory Compliance",
-     "clause_text": "The Contractor shall comply with all applicable safety, labour, "
-                    "EPF, ESI and environmental legislation, and shall indemnify the "
-                    "Owner against any claim arising from non-compliance."},
-    {"clause_category": "Programme and Liquidated Damages",
-     "clause_text": "Time is of the essence. Delay attributable to the Contractor "
-                    "shall attract liquidated damages at 0.5% of the order value per "
-                    "completed week, capped at 5% of the order value."},
-    {"clause_category": "Defect Liability",
-     "clause_text": "The Contractor shall make good, at their own cost, any defect "
-                    "notified during the defect liability period stated overleaf."},
-    {"clause_category": "Arbitration and Jurisdiction",
-     "clause_text": "Any dispute shall first be referred to the Project Head. Failing "
-                    "settlement, it shall be referred to arbitration under the "
-                    "Arbitration and Conciliation Act, 1996, subject to the "
-                    "jurisdiction of the courts at the Owner's registered office."},
+    # The general contract conditions of the order form the firm works to.
+    # {company} is the issuing company's short name and {city} the town its
+    # letterhead gives, filled in when the order prints.
+    {"clause_category": "Retention and Security", "clause_text":
+        "The FSD shall be released to the contractor after completion of the defects liability period. The defects "
+        "liability period shall be 12/24 months, or as per the Employer's agreement terms as the case may be, from "
+        "the date of completion of the entire work and handing over to the Employer."},
+    {"clause_category": "Payment Milestones", "clause_text":
+        "The contractor has to submit bills in a standard GST format periodically to {company}. {company} will make "
+        "payment to the contractor for all bills within 15 days after receiving payment from the \"EMPLOYER\", "
+        "subject to deductions as applicable."},
+    {"clause_category": "Scope of Work", "clause_text":
+        "The contractor shall assume overall responsibility for execution of the work. It shall ensure the quality "
+        "of work and maintain the specification standards as per the \"EMPLOYER'S\" BOQ."},
+    {"clause_category": "Mode of Measurement", "clause_text":
+        "All work shall be measured jointly at site in accordance with IS 1200 and the main contract and recorded "
+        "in the measurement book. Only work so measured and certified is billed."},
+    {"clause_category": "Defect Liability", "clause_text":
+        "The contractor shall attend to the defects, if any, noticed by the \"EMPLOYER\" as per the agreement terms."},
+    {"clause_category": "Programme and Liquidated Damages", "clause_text":
+        "The time frame for execution of the work order is stipulated by the \"EMPLOYER\". The Employer may at its "
+        "discretion levy LD/penalty for any delay in execution or bad quality. {company} will deduct the same from "
+        "the contractor wherever applicable."},
+    {"clause_category": "Electricity and Water Supply", "clause_text":
+        "{company} will provide electricity and water for the execution of work. However, the contractor shall make "
+        "his own arrangements for storage and safe custody of all resources."},
+    {"clause_category": "General", "clause_text":
+        "The contractor shall not be entitled to utilise the reputation of {company} for any other work."},
+    {"clause_category": "Labour Hutment and Welfare", "clause_text":
+        "Labour accommodation shall be provided as per company policy."},
+    {"clause_category": "General", "clause_text":
+        "{company} is not responsible for any internal issues pertaining to the contractor."},
+    {"clause_category": "Termination", "clause_text":
+        "Notwithstanding anything mentioned elsewhere in this work order, {company} reserves the right to terminate "
+        "the work order whenever the EMPLOYER / {company} expresses dissatisfaction with the quality of work or time "
+        "delays, or for any other reason affecting the work order from the \"EMPLOYER\" to {company}; {company} may "
+        "further at its discretion confiscate all deposits, bills and work in progress, and the contractor will be "
+        "responsible to pay any additional expenses incurred by {company} for completion of the work as per agreement."},
+    {"clause_category": "Safety and Statutory Compliance", "clause_text":
+        "The contractor shall comply with the regulations of insurance which are mandatory as per the agreement "
+        "terms of the \"EMPLOYER\", and the insurance premium shall be borne by the contractor only."},
+    {"clause_category": "Labour Hutment and Welfare", "clause_text":
+        "The contractor shall not deploy child labour in the execution of the work."},
+    {"clause_category": "Safety and Statutory Compliance", "clause_text":
+        "The contractor has to comply with all labour laws as per the main contract terms with the Employer."},
+    {"clause_category": "Safety and Statutory Compliance", "clause_text":
+        "The contractor has to indemnify {company} against any issues related to labour and associated laws."},
+    {"clause_category": "Safety and Statutory Compliance", "clause_text":
+        "The contractor has to follow all safety precautions and shall be responsible for all such safety measures, "
+        "such as caps, harnesses etc., to safeguard labour against accidents as per norms."},
+    {"clause_category": "Safety and Statutory Compliance", "clause_text":
+        "The contractor shall be responsible for all accidents and incidents during execution of the \"WORK\"."},
+    {"clause_category": "Safety and Statutory Compliance", "clause_text":
+        "The contractor shall have statutory registrations such as labour licence, EPF, ESI and GST etc. and should "
+        "furnish copies of the same to {company}."},
+    {"clause_category": "Programme and Liquidated Damages", "clause_text":
+        "To ensure the quality and progress of work, {company} shall review the progress of work from time to time "
+        "and may depute its own manpower and other resources as per the requirement to meet the agreed milestones, "
+        "in case the contractor fails to meet the targets. All such costs incurred shall be debited to the "
+        "contractor's account."},
+    {"clause_category": "Defect Liability", "clause_text":
+        "The contractor has to provide the required guarantees/warranties as applicable."},
+    {"clause_category": "Arbitration and Jurisdiction", "clause_text":
+        "All disputes and legalities pertaining to this work order shall fall within the jurisdiction of the City "
+        "Civil Court, {city}."},
 ]
 
 
@@ -19520,7 +19542,9 @@ def wo_terms_library(request: Request, db: Session = Depends(get_db)):
     """
     client = require_erp_read(request, db)
     own = company_terms(db, client.id, fallback=False)
-    return {"library": own or WO_STANDARD_TERMS, "custom": bool(own), "standard": WO_STANDARD_TERMS}
+    head = letterhead(db, client)
+    mine = [dict(t, clause_text=fill_terms(t.get("clause_text"), head)) for t in (own or WO_STANDARD_TERMS)]
+    return {"library": mine, "custom": bool(own), "standard": WO_STANDARD_TERMS}
 
 
 @app.put("/api/wo/terms/library")
@@ -20774,6 +20798,7 @@ def ra_bill_dict(db, bill, detail=False):
         "work_order_id": bill.work_order_id,
         "work_order": wo.number if wo else "",
         "job_id": bill.job_id, "project": ("%s %s" % (job.number, job.name)).strip() if job else "",
+        "customer": (job.customer_name or "") if job else "",
         "status": bill.status or "DRAFT",
         "period_from": bill.period_from or "", "period_to": bill.period_to or "",
         "gross_to_date": money(bill.gross_to_date),
@@ -33280,15 +33305,114 @@ def _words(value):
     return re.sub(r"^Rupees\s+", "", text)
 
 
+def letterhead(db, client, unit_id=None):
+    """The company block at the top of every document: the issuing business
+    unit's letterhead where one is named, else the company's own unit, with
+    anything left blank on it taken from the company's settings. The PAN is
+    read out of the GSTIN when it was not typed separately."""
+    units = db.query(models.DBBusinessUnit).filter(models.DBBusinessUnit.client_id == client.id).all()
+    unit = next((u for u in units if unit_id and u.id == unit_id), None) or \
+        next((u for u in units if norm_name(u.name) == norm_name(client.company_name or "")), None) or \
+        (units[0] if len(units) == 1 else None)
+    gstin = ((unit.gstin if unit else "") or client.gstin or "").strip().upper()
+    pan = ((unit.pan if unit else "") or "").strip().upper() or (gstin[2:12] if len(gstin) == 15 else "")
+    return {"name": (unit.name if unit else "") or client.company_name or "",
+            "code": (unit.code if unit else "") or "",
+            "address": (unit.address if unit else "") or company_address(db, client),
+            "gstin": gstin, "pan": pan, "state": _state_line(gstin),
+            "logo_url": (unit.logo_url if unit else "") or client.logo_url or ""}
+
+
+def party_facts(gstin, pan, state=""):
+    """PAN, GSTIN and state for a party box, the PAN read from the GSTIN
+    when it is not on file separately."""
+    gstin = (gstin or "").strip().upper()
+    pan = (pan or "").strip().upper() or (gstin[2:12] if len(gstin) == 15 else "")
+    code = state_from_gstin(gstin) if gstin else ""
+    state = ("%s - %s" % (code, GST_STATES.get(code, ""))).strip(" -") if code else (state or "")
+    return [("PAN No", pan), ("GSTIN No.", gstin), ("State", state)]
+
+
+def party_card(db, client_id, name):
+    """Whoever a statement is for, looked up by name among the gangs, the
+    suppliers and the customers, with what is on file about them."""
+    key = norm_name(name or "")
+    for con in db.query(models.DBContractor).filter(models.DBContractor.client_id == client_id).all():
+        if norm_name(con.company_name) == key:
+            return {"address": con.address or "", "gstin": con.gst_number or "", "pan": con.pan or "",
+                    "contact": con.contact_person or "", "phone": con.phone_number or ""}
+    for sup in db.query(models.DBSupplier).filter(models.DBSupplier.client_id == client_id).all():
+        if norm_name(sup.name) == key:
+            return {"address": sup.address or "", "gstin": sup.gstin or "", "pan": sup.pan or "",
+                    "contact": sup.contact_person or "", "phone": sup.phone or ""}
+    for c in db.query(models.DBContact).filter(models.DBContact.client_id == client_id).all():
+        if norm_name(c.name) == key:
+            return customer_card(c)
+    return {}
+
+
+def customer_card(c):
+    if not c:
+        return {}
+    address = "\n".join(x for x in ((c.address or "").strip(),
+                                    ", ".join(y for y in ((c.city or "").strip(), (c.pincode or "").strip()) if y)) if x)
+    return {"name": c.name or "", "address": address, "gstin": c.gstin or "", "pan": getattr(c, "pan", "") or "",
+            "state": c.state or "", "contact": c.contact_person or "", "phone": c.phone_number or "",
+            "email": c.email or ""}
+
+
+def jurisdiction_city(address, gstin=""):
+    """The town the courts are in, read from the letterhead: the place named
+    on the line with the PIN code, else the state from the GSTIN."""
+    states = {v.lower() for v in GST_STATES.values()}
+    for line in (address or "").splitlines()[::-1] + [(address or "").replace("\n", ", ")]:
+        m = re.search(r"^(.*?)[\s,\-]*\b\d{3}\s?\d{3}\b", line)
+        if not m:
+            continue
+        # The last place named before the PIN: the town, not the street.
+        for part in [p.strip(" .-") for p in m.group(1).split(",")][::-1]:
+            if part and part.lower() not in states and not re.search(r"\d", part):
+                return part
+    code = state_from_gstin(gstin or "")
+    return GST_STATES.get(code, "") if code else ""
+
+
+def state_name_of(gstin):
+    code = state_from_gstin(gstin or "")
+    return GST_STATES.get(code, "") if code else ""
+
+
+def fill_terms(text, company):
+    """A condition written for any company, made this company's."""
+    short = company.get("code") or company.get("name") or "the Company"
+    city = jurisdiction_city(company.get("address"), company.get("gstin")) or "the registered office of the Company"
+    return (text or "").replace("{company}", short).replace("{city}", city)
+
+
+def wo_special_conditions(doc):
+    """The numbered line of special conditions the trade writes on an order."""
+    parts = ["TDS applicable" if doc.get("tds_rate") else "TDS not applicable",
+             "GST applicable" if doc.get("gst_rate") else "GST not applicable",
+             "Payment shall be made on %s RA bills" % (doc.get("billing_cycle") or "monthly").lower()]
+    if doc.get("retention_percent"):
+        parts.append("FSD %g%% applicable on each bill value" % doc["retention_percent"])
+    if doc.get("labour_cess_percent"):
+        parts.append("Labour welfare cess %g%% deducted from each bill" % doc["labour_cess_percent"])
+    parts.append("GCC as per Annexure-1")
+    return " ".join("%d) %s." % (i, p) for i, p in enumerate(parts, 1))
+
+
 def wo_form_spec(db, client, order):
-    """The subcontract work order in the trade's form: order, schedule,
-    taxes, payment terms, signatures; the conditions on the page after."""
+    """The subcontract work order in the trade's own form, line for line as
+    the sample the firm works to: the company and the order box, the gang with
+    its PAN and GSTIN, the schedule, the value in words, taxes, the payment
+    terms and the signatures; the general conditions on the page after."""
     doc = wo_document_payload(db, client, order)
     sig = doc_signatories(db, client.id)
-    unit = doc.get("business_unit_detail") or {}
     con = doc.get("contractor_detail") or {}
     job = db.query(models.DBJob).filter(models.DBJob.id == order.job_id).first()
     history_prepared = next((s["name"] for s in doc.get("signatures", []) if s["role"] == "Prepared by"), "")
+    company = letterhead(db, client, order.business_unit_id)
 
     rows = []
     for i, it in enumerate(doc.get("items") or [], 1):
@@ -33311,9 +33435,8 @@ def wo_form_spec(db, client, order):
     gst_text = ("%g%% (CGST %g%% + SGST %g%%) - Rs. %s" % (gst_rate, gst_rate / 2, gst_rate / 2, form_pdf.inr(doc.get("gst_amount")))
                 if sched.get("intra_state") else "%g%% IGST - Rs. %s" % (gst_rate, form_pdf.inr(doc.get("gst_amount")))) \
         if gst_rate else "Not applicable"
-    tds_text = ("%g%% u/s 194C, deducted from each bill" % doc["tds_rate"]) if doc.get("tds_rate") else "Not applicable"
-    others = ("Labour welfare cess (BOCW) %g%%, deducted from each bill" % doc["labour_cess_percent"]) \
-        if doc.get("labour_cess_percent") else "-"
+    tds_text = ("Applicable - %g%% u/s 194C" % doc["tds_rate"]) if doc.get("tds_rate") else "Not applicable"
+    others = ("Labour cess %g%%" % doc["labour_cess_percent"]) if doc.get("labour_cess_percent") else ""
 
     advance = "-"
     if doc.get("mobilization_advance_percent"):
@@ -33323,25 +33446,25 @@ def wo_form_spec(db, client, order):
     ra = (doc.get("billing_cycle") or "Monthly")
     if doc.get("payment_days"):
         ra += ", paid within %d days of certification" % doc["payment_days"]
-    fsd = ("%g%% of bill value, released after the defects liability period%s" % (
-        doc["retention_percent"],
-        (" of %d months" % doc["defect_liability_months"]) if doc.get("defect_liability_months") else "")) \
-        if doc.get("retention_percent") else "-"
-    terms = [("1. Mobilisation Advance", advance), ("2. RA Bills", ra), ("3. FSD (Retention)", fsd),
-             ("4. Special Conditions", doc.get("payment_terms") or doc.get("scope_of_work") or
-              "TDS applicable. GST applicable. Payment on RA bills. FSD as above. GCC as per Annexure."),
-             ("5. Work Address", (job.site_address if job else "") or doc.get("project") or "-")]
+    fsd = ("%g%% of bill value" % doc["retention_percent"]) if doc.get("retention_percent") else "-"
+    site = ", ".join(x for x in ((job.number if job else "") or "", (job.name if job else "") or "",
+                                 (job.site_address if job else "") or "") if x) or doc.get("project") or "-"
+    manager = db.query(models.DBEmployee).filter(models.DBEmployee.id == job.manager_id).first() \
+        if job and job.manager_id else None
+    site_contact = "-".join(x for x in (employee_name(manager) if manager else "", (manager.phone or "") if manager else "") if x) or "-"
+    terms = [("1. Mobilisation Advance", advance), ("2. RA Bills", ra), ("3. FSD", fsd),
+             ("4. Special Conditions", doc.get("payment_terms") or wo_special_conditions(doc)),
+             ("5. Work Address", site), ("6. Contact Person", site_contact)]
 
     signatures = [("Contractor Signature", doc.get("contractor") or ""),
                   ("Prepared By", _sig_line(dict(sig["prepared"], name=sig["prepared"]["name"] or history_prepared))),
                   ("Proposed By", _sig_line(sig["proposed"])),
                   ("Recommended By", _sig_line(sig["recommended"])),
                   ("Authorized Signatory", _sig_line(sig["authorised"]))]
-    clauses = [("%s: %s" % (t.get("clause_category"), t.get("clause_text")) if t.get("clause_category") else t.get("clause_text"))
-               for t in (doc.get("terms") or [])] or \
-              [("%s: %s" % (t["clause_category"], t["clause_text"]) if t.get("clause_category") else t["clause_text"])
-               for t in company_terms(db, client.id)]
-    company = _company_box(db, unit, client)
+    # The conditions print as the sample prints them: numbered, without the
+    # headings they are filed under.
+    clauses = [fill_terms(t.get("clause_text"), company) for t in (doc.get("terms") or []) if t.get("clause_text")] or \
+              [fill_terms(t["clause_text"], company) for t in company_terms(db, client.id)]
     stage = {"PROVISIONAL": "submitted", "APPROVED": "approved", "EXECUTED": "approved"}.get(order.status or "")
     signatures, seal = sign_boxes(db, client.id, signatures, stage)
     blocks = [
@@ -33352,44 +33475,48 @@ def wo_form_spec(db, client, order):
                    ("Order No", doc.get("wo_number") or "")]},
         {"type": "party", "label": "Sub Contractor Name", "name": doc.get("contractor") or "",
          "address": con.get("address") or "",
-         "facts": [("PAN No", con.get("pan") or ""), ("GSTIN No.", con.get("gst_number") or "")]},
-        {"type": "pairs", "cols": 2, "rows": [("Contact Person", con.get("contact_person") or doc.get("contractor") or ""),
-                                              ("Mobile No.", con.get("phone_number") or "")]},
+         "facts": party_facts(con.get("gst_number"), con.get("pan"))[:2]},
+        {"type": "pairs", "aside": True, "label_width": 34,
+         "rows": [("Contact Person", con.get("contact_person") or doc.get("contractor") or ""),
+                  ("Mobile No.", con.get("phone_number") or "")]},
     ]
     if doc.get("subject"):
-        blocks.append({"type": "pairs", "rows": [("Subject", doc["subject"])], "label_width": 30})
+        blocks.append({"type": "pairs", "rows": [("Subject", doc["subject"])], "label_width": 34})
     blocks += [
         {"type": "table", "columns": [("#", 6, "C"), ("BOQ", 26, "L"), ("Description", 70, "L"), ("UoM", 13, "C"),
                                       ("Qty", 19, "R"), ("Rate", 21, "R"), ("Total Amt", 27, "R")],
          "rows": rows, "totals": [("TOTAL AMOUNT", form_pdf.plain_number(doc.get("gross_amount")), True)]},
         {"type": "words", "label": "Rupees", "text": _words(doc.get("gross_amount"))},
-        {"type": "text", "text": "The above agreed rates are firm till completion of the entire work, including "
-                                 "variation in scope and extension of time."},
-        {"type": "pairs", "rows": [("Contract Period", period or "-")], "label_width": 42},
-        {"type": "band", "text": "TAXES AND DUTIES (As Applicable)"},
-        {"type": "pairs", "rows": [("GST", gst_text), ("TDS", tds_text), ("Others", others)], "label_width": 42},
-        {"type": "text", "style": "bold", "text": "All statutory payments, enactments and adjustments are to be borne by "
-                                                  "the Sub Contractor only."},
+        {"type": "text", "text": "The above agreed rates are firm till completion of the entire work including "
+                                 "variation in scope and extension of time"},
+        {"type": "pairs", "rows": [("Contract Period", period or "-")], "label_width": 34},
+        {"type": "heading", "text": "TAXES AND DUTIES (As Applicable)"},
+        {"type": "pairs", "rows": [("GST", gst_text)], "label_width": 34},
+        {"type": "pairs", "cols": 2, "rows": [("TDS", tds_text), ("Others", others)]},
+        {"type": "text", "style": "bold", "text": "All the statutory payments, enactments and adjustments to be borne "
+                                                  "by Sub Contractor only."},
         {"type": "text", "style": "small", "text":
-            "We are pleased to award this work order subject to the terms and conditions set out herein. Please quote "
-            "our order reference in all correspondence and acknowledge this order as your acceptance. The contract "
-            "value is built from the unit rates you offered; payment is for the work actually done, as certified by "
-            "the company's authorised representatives."},
+            "We are pleased to award the work order subject to Terms & Conditions specified herein. Quote our Order "
+            "reference in all your future correspondence. Kindly acknowledge the order as token of acceptance. The "
+            "contract prices stipulated here are derived based on the unit rates as offered by you. However the payment "
+            "is based on the actual work done. The authorized representatives of the company shall certify the same."},
         {"type": "band", "text": "Payment Terms & Conditions"},
-        {"type": "terms", "rows": terms, "label_width": 58},
+        {"type": "terms", "rows": terms, "label_width": 58, "bold_rows": ["5. Work Address"]},
         {"type": "signatures", "boxes": signatures, "seal": seal},
         {"type": "page_break"},
         {"type": "band", "text": "GENERAL CONTRACT CONDITIONS (GCC)"},
         {"type": "numbered", "items": clauses, "closing": [
-            "Where a special condition is stated in this order, it supersedes the related condition above.",
-            "Please return the duplicate copy duly signed and stamped as your receipt and acceptance of this order.",
-            "If the acceptance is not received within one week, the order shall be taken as accepted."]},
+            "If any special condition is mentioned, the related conditions in the GCC will be superseded.",
+            "We request you to return the duplicate copy duly signed and stamped indicating your receipt of the work "
+            "order and its acceptance.",
+            "If we do not receive the acceptance within one week, it is considered that the order is accepted by you."]},
         {"type": "signatures", "boxes": signatures, "seal": seal},
     ]
     return {"title": "Work Order %s" % (doc.get("wo_number") or ""), "author": company["name"],
             "watermark": doc.get("watermark") or "", "blocks": blocks,
             "footer": "%s  |  %s  |  Printed %s" % (doc.get("wo_number") or "", company["name"],
                                                     datetime.now().strftime("%d/%m/%Y %H:%M"))}
+
 
 
 def ra_form_spec(db, client, bill):
@@ -33402,9 +33529,8 @@ def ra_form_spec(db, client, bill):
     wo = b.get("work_order_detail") or {}
     buyer = einvoice_buyer(db, client.id, job) if job else None
     our = b.get("our") or {}
-    company = {"name": our.get("name") or client.company_name or "", "address": our.get("address") or "",
-               "gstin": our.get("gstin") or client.gstin or "", "pan": "",
-               "state": _state_line(our.get("gstin") or client.gstin), "logo_url": our.get("logo_url") or ""}
+    company = letterhead(db, client)
+    card = customer_card(buyer)
     b_addr = ", ".join(x for x in ((buyer.address if buyer else "") or "", (getattr(buyer, "city", "") or "") if buyer else "",
                                    (getattr(buyer, "pincode", "") or "") if buyer else "") if x)
     rows = [[str(i), l.get("fg_code") or "", l.get("description") or "", l.get("uom") or "",
@@ -33448,10 +33574,12 @@ def ra_form_spec(db, client, bill):
                    ("Bill Date", form_pdf.date_text((b.get("certified_at") or b.get("created_at") or "")[:10])),
                    ("Period", period or "-")]},
         {"type": "party", "label": "Bill To", "name": (buyer.name if buyer else "") or (job.customer_name if job else ""),
-         "address": b_addr,
-         "facts": [("GSTIN No.", (buyer.gstin if buyer else "") or ""),
-                   ("Place of Supply", ("%s (%s)" % (b.get("place_of_supply_name"), b.get("place_of_supply")))
-                    if b.get("place_of_supply") else "")]},
+         "address": card.get("address") or b_addr,
+         "facts": party_facts(card.get("gstin"), card.get("pan"), card.get("state")) + [
+             ("Place of Supply", ("%s (%s)" % (b.get("place_of_supply_name"), b.get("place_of_supply")))
+              if b.get("place_of_supply") else "")]},
+        {"type": "pairs", "aside": True, "label_width": 34,
+         "rows": [("Contact Person", card.get("contact") or ""), ("Mobile No.", card.get("phone") or "")]},
         {"type": "pairs", "cols": 2, "rows": [("Project", b.get("project") or ""), ("Work Order", "%s%s" % (
             wo.get("number") or b.get("work_order") or "", (" dt. " + form_pdf.date_text(wo.get("date"))) if wo.get("date") else "")),
             ("Site", (job.site_address if job else "") or "-"), ("Your Reference", wo.get("reference") or "-")]},
@@ -33718,9 +33846,7 @@ def po_form_spec(db, client, order):
     sup = next((s for s in db.query(models.DBSupplier).filter(models.DBSupplier.client_id == client.id).all()
                 if norm_name(s.name) == norm_name(order.supplier_name)), None)
     our = d.get("our") or our_party(db, client.id)
-    company = {"name": our.get("name") or client.company_name or "", "address": our.get("address") or "",
-               "gstin": our.get("gstin") or client.gstin or "", "pan": "",
-               "state": _state_line(our.get("gstin") or client.gstin), "logo_url": our.get("logo_url") or ""}
+    company = letterhead(db, client)
     job = db.query(models.DBJob).filter(models.DBJob.id == order.job_id).first() if order.job_id else None
     rows, sub = [], 0.0
     for i, l in enumerate(d.get("line_items") or [], 1):
@@ -33729,6 +33855,12 @@ def po_form_spec(db, client, order):
         rows.append([str(i), l.get("item_code") or "", l.get("description") or "", l.get("uom") or "",
                      form_pdf.qty_text(l.get("qty")), form_pdf.plain_number(l.get("price")),
                      str(l.get("tax_rate") or "").replace("GST", "").strip(), form_pdf.plain_number(amt)])
+    if not rows:
+        # An order agreed as a lump sum, with no schedule: one line carrying
+        # the figure, so the sub total is the order's and not a nought.
+        sub = money(d.get("amount") or 0)
+        rows.append(["1", "", d.get("notes") or d.get("category") or "As agreed", "", "", "", "",
+                     form_pdf.plain_number(sub)])
     days = (sup.payment_days if sup and sup.payment_days else 30)
     deliver = d.get("deliver_to") or (job.site_address if job else "") or "As instructed"
     signatures = [("Supplier Acceptance", order.supplier_name or ""),
@@ -33741,7 +33873,7 @@ def po_form_spec(db, client, order):
                    ("Project", (job.number if job else "") or "General")]},
         {"type": "party", "label": "Supplier Name", "name": order.supplier_name or "",
          "address": (sup.address if sup else "") or "",
-         "facts": [("GSTIN No.", (sup.gstin if sup else "") or ""), ("PAN No", (sup.pan if sup else "") or "")]},
+         "facts": party_facts((sup.gstin if sup else "") or "", (sup.pan if sup else "") or "")},
         {"type": "pairs", "cols": 2, "rows": [("Contact Person", (sup.contact_person if sup else "") or ""),
                                               ("Mobile No.", (sup.phone if sup else "") or ""),
                                               ("Email", order.supplier_email or (sup.email if sup else "") or ""),
@@ -33780,9 +33912,8 @@ def sub_bill_form_spec(db, client, bill):
     sig = doc_signatories(db, client.id)
     our = b.get("our") or our_party(db, client.id)
     con = b.get("contractor_detail") or {}
-    company = {"name": our.get("name") or client.company_name or "", "address": our.get("address") or "",
-               "gstin": our.get("gstin") or client.gstin or "", "pan": "",
-               "state": _state_line(our.get("gstin") or client.gstin), "logo_url": our.get("logo_url") or ""}
+    company = letterhead(db, client, db.query(models.DBSubcontractOrder.business_unit_id).filter(
+        models.DBSubcontractOrder.id == bill.order_id).scalar())
     rows = [[str(i), l.get("activity_no") or "", l.get("description") or "", l.get("uom") or "",
              form_pdf.qty_text(l.get("ordered_qty")), form_pdf.qty_text(l.get("previously_billed_qty")),
              form_pdf.qty_text(l.get("this_bill_qty")), form_pdf.qty_text(l.get("measured_to_date")),
@@ -33827,7 +33958,9 @@ def sub_bill_form_spec(db, client, bill):
                    ("Period", period)]},
         {"type": "party", "label": "Sub Contractor Name", "name": b.get("contractor") or "",
          "address": con.get("address") or "",
-         "facts": [("PAN No", con.get("pan") or ""), ("GSTIN No.", con.get("gst_number") or "")]},
+         "facts": party_facts(con.get("gst_number"), con.get("pan"))},
+        {"type": "pairs", "aside": True, "label_width": 34,
+         "rows": [("Contact Person", con.get("contact_person") or ""), ("Mobile No.", con.get("phone_number") or "")]},
         {"type": "pairs", "cols": 2, "rows": [("Project", b.get("project") or ""),
                                               ("Work Order", od.get("wo_number") or b.get("order") or ""),
                                               ("Site", b.get("site") or "-"),
@@ -33851,10 +33984,15 @@ def sub_bill_form_spec(db, client, bill):
                                                                       datetime.now().strftime("%d/%m/%Y %H:%M"))}
 
 
-def statement_form_spec(client, party_name, party_label, s, date_from="", date_to=""):
+def statement_form_spec(client, party_name, party_label, s, date_from="", date_to="", db=None):
     """A party's statement of account, in the same form."""
-    company = {"name": client.company_name or "", "address": client.address or "", "gstin": client.gstin or "",
-               "pan": "", "state": _state_line(client.gstin), "logo_url": client.logo_url or ""}
+    card = {}
+    if db is not None:
+        company = letterhead(db, client)
+        card = party_card(db, client.id, party_name)
+    else:
+        company = {"name": client.company_name or "", "address": client.address or "", "gstin": client.gstin or "",
+                   "pan": "", "state": _state_line(client.gstin), "logo_url": client.logo_url or ""}
     fi = form_pdf.inr
     rows = [[form_pdf.date_text(r.get("date")), r.get("kind") or "", r.get("number") or "",
              r.get("against") or r.get("reference") or "", fi(r["billed"]) if r.get("billed") else "",
@@ -33866,8 +34004,9 @@ def statement_form_spec(client, party_name, party_label, s, date_from="", date_t
          "facts": [("Party", party_name), ("From", form_pdf.date_text(date_from) or "Beginning"),
                    ("To", form_pdf.date_text(date_to) or datetime.now().strftime("%d/%m/%Y")),
                    ("Printed", datetime.now().strftime("%d/%m/%Y"))]},
-        {"type": "pairs", "rows": [(party_label, party_name), ("Opening balance", fi(s.get("opening") or 0))],
-         "label_width": 42},
+        {"type": "party", "label": party_label, "name": party_name, "address": card.get("address") or "",
+         "facts": party_facts(card.get("gstin"), card.get("pan"), card.get("state"))},
+        {"type": "pairs", "rows": [("Opening balance", fi(s.get("opening") or 0))], "label_width": 42},
         {"type": "table", "columns": [("Date", 18, "C"), ("Entry", 34, "L"), ("Number", 30, "L"), ("Against / Ref", 30, "L"),
                                       ("Billed", 23, "R"), ("Paid", 23, "R"), ("Balance", 24, "R")],
          "rows": rows, "totals": [("CLOSING BALANCE %s" % ("DUE TO YOU" if closing >= 0 else "DUE FROM YOU"),
@@ -33928,7 +34067,7 @@ def portal_statement_pdf(request: Request, date_from: str = "", date_to: str = "
     u, client, party, name = get_portal_user(request, db)
     s = _portal_statement(db, u, name, date_from, date_to)
     return form_pdf_response(statement_form_spec(client, name, "Sub Contractor" if u.party_type == "contractor"
-                                                 else "Supplier", s, date_from, date_to), "statement")
+                                                 else "Supplier", s, date_from, date_to, db=db), "statement")
 
 
 @app.get("/api/ledger/statement.pdf")
@@ -33938,7 +34077,7 @@ def ledger_statement_pdf(request: Request, party_type: str, party: str, date_fro
     client = require_items_access(request, db, "bills.view_all")
     s = ledger_statement(request, party_type, party, date_from, date_to, db)
     label = {"client": "Client", "contractor": "Sub Contractor", "supplier": "Supplier"}.get(party_type, "Party")
-    return form_pdf_response(statement_form_spec(client, party, label, s, date_from, date_to), "statement_" + party)
+    return form_pdf_response(statement_form_spec(client, party, label, s, date_from, date_to, db=db), "statement_" + party)
 
 
 # ============================================================================
@@ -34006,8 +34145,8 @@ def sheet_report_spec(headers, rows, filename, preamble=None, closing=None, clie
             foot.append([_cell_text(c) for c in list(r)[:n]] + [""] * max(0, n - len(r)))
     company = {}
     if client is not None:
-        company = {"name": client.company_name or "", "address": client.address or "", "gstin": client.gstin or "",
-                   "pan": "", "state": _state_line(client.gstin), "logo_url": client.logo_url or ""}
+        with SessionLocal() as own:
+            company = letterhead(own, client)
     head = {"type": "header", "company": company, "title": title[:40],
             "facts": (facts[:5] or [("Printed", datetime.now().strftime("%d/%m/%Y"))])}
     blocks = [head]
@@ -34250,8 +34389,7 @@ def rfq_comparison_export(rfq_id: int, request: Request, db: Session = Depends(g
 # --- Field documents: signed on site, filed in the site office ---------------------------
 
 def _company_of(db, client):
-    return {"name": client.company_name or "", "address": company_address(db, client), "gstin": client.gstin or "",
-            "pan": "", "state": _state_line(client.gstin), "logo_url": client.logo_url or ""}
+    return letterhead(db, client)
 
 
 def _job_line(db, job_id):

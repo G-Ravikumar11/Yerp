@@ -90,6 +90,8 @@ def _styles():
                                                 leading=12.5, alignment=TA_CENTER)),
         "company": ParagraphStyle("company", **dict(base, fontName="Helvetica-Bold", fontSize=10.5,
                                                       leading=13)),
+        "heading": ParagraphStyle("heading", **dict(base, fontName="Helvetica-Bold", fontSize=9.6,
+                                                      leading=12)),
     }
 
 
@@ -105,9 +107,9 @@ def _box(data, widths, extra=None, pad=3):
     return t
 
 
-def _pairs_table(rows, st, label_w, value_w, shade_labels=False):
+def _pairs_table(rows, st, label_w, value_w, shade_labels=False, bold_rows=()):
     data = [[Paragraph(_esc(k) + (" :" if k and not str(k).endswith(":") else ""), st["label"]),
-             Paragraph(_br(v), st["body"])] for k, v in rows]
+             Paragraph(_br(v), st["bold"] if k in bold_rows else st["body"])] for k, v in rows]
     extra = [("BACKGROUND", (0, 0), (0, -1), colors.HexColor(SHADE))] if shade_labels else []
     return _box(data, [label_w, value_w], extra)
 
@@ -173,6 +175,12 @@ def _pairs(block, st):
         half = (_W() - 60 * mm) / 2.0
         return _box(data, [30 * mm, half, 30 * mm, half])
     lw = (block.get("label_width") or 42) * mm
+    if block.get("aside"):
+        # Label and value on the left, the right-hand column left open - the
+        # contact rows under the party box, as the order form rules them.
+        data = [[Paragraph(_esc(k) + " :", st["label"]), Paragraph(_br(v), st["body"]), ""] for k, v in rows]
+        return _box(data or [["", "", ""]], [lw, _W() - lw - 66 * mm, 66 * mm],
+                    [("SPAN", (2, 0), (2, -1))])
     return _pairs_table(rows, st, lw, _W() - lw)
 
 
@@ -290,7 +298,14 @@ def _numbered(block, st):
     data = [[Paragraph("%d. %s" % (i, _br(item)), st["body"])] for i, item in enumerate(block.get("items") or [], 1)]
     for extra in block.get("closing") or []:
         data.append([Paragraph(_br(extra), st["body"])])
-    return _box(data or [[""]], [_W()], [("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)])
+    # One ruled box with the conditions as paragraphs inside it, no lines
+    # between them - as the order form sets its general conditions.
+    t = Table(data or [[""]], colWidths=[_W()])
+    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), GRID, colors.black),
+                           ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                           ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                           ("TOPPADDING", (0, 0), (-1, -1), 3.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5)]))
+    return t
 
 
 def _flow(blocks, st):
@@ -316,7 +331,10 @@ def _flow(blocks, st):
                                         st.get(b.get("style") or "body", st["body"]))]], [_W()]))
         elif kind == "terms":
             lw = (b.get("label_width") or 62) * mm
-            out.append(_pairs_table(b.get("rows") or [], st, lw, _W() - lw))
+            out.append(_pairs_table(b.get("rows") or [], st, lw, _W() - lw, bold_rows=b.get("bold_rows") or ()))
+        elif kind == "heading":
+            # A section heading set left, bold and underlined, not shaded.
+            out.append(_box([[Paragraph("<u>%s</u>" % _esc(b.get("text", "")), st["heading"])]], [_W()]))
         elif kind == "sums":
             out.append(_sums(b, st))
         elif kind == "qr" and b.get("data"):

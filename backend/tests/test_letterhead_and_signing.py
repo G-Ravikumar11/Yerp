@@ -30,7 +30,8 @@ def pdf_of(res):
 
 
 def text(reader):
-    return " ".join((p.extract_text() or "") for p in reader.pages)
+    # Words, not lines: a phrase that wraps in the PDF is still the phrase.
+    return " ".join(" ".join((p.extract_text() or "").split()) for p in reader.pages)
 
 
 def pictures(reader, page=0):
@@ -177,3 +178,74 @@ def test_another_company_cannot_edit_our_letterhead_or_gangs(tenant, second_tena
     _, unit, con = an_order(tenant)
     assert second_tenant.put("/api/wo/business-units/%d" % unit["id"], json={"name": "X"}).status_code == 404
     assert second_tenant.put("/api/wo/contractors/%d" % con["id"], json={"company_name": "X"}).status_code == 404
+
+
+# --- The other party's particulars, on every document ------------------------------
+
+def test_a_customer_has_a_pan_and_a_checked_gstin(tenant):
+    res = tenant.post("/api/customers", json={"name": "Aparna Constructions", "gstin": "36aaeca1234k1z2"})
+    assert res.status_code == 200, res.text
+    assert res.json()["pan"] == "AAECA1234K" and res.json()["state"] == "Telangana"
+    bad = tenant.post("/api/customers", json={"name": "Bad One", "gstin": "36XYZ"})
+    assert bad.status_code == 400
+
+
+def test_the_client_bill_names_the_client_with_pan_gstin_and_contact(tenant):
+    from test_measurement_and_ra_bills import placed_order, measure, line_of, raise_bill
+    wo = placed_order(tenant)
+    # The project named the client, which put them on the customer list;
+    # their particulars are filled in on that entry.
+    cust = [c for c in tenant.get("/api/customers").json()["customers"] if c["name"] == "L&T"][0]
+    res = tenant.put("/api/customers/%d" % cust["id"], json={
+        "name": "L&T", "gstin": "36AAACL1234H1Z5", "contact_person": "R. Menon", "phone_number": "9876500000",
+        "address": "Manapakkam", "city": "Chennai", "pincode": "600089"})
+    assert res.status_code == 200, res.text
+    measure(tenant, wo["id"], line_of(tenant, wo["id"]), 100)
+    bill = raise_bill(tenant, wo["id"]).json()["bill"]
+    body = text(pdf_of(tenant.get("/api/ra-bills/%d/document.pdf" % bill["id"])))
+    for words in ("AAACL1234H", "36AAACL1234H1Z5", "R. Menon", "9876500000", "Manapakkam", "Telangana"):
+        assert words in body, words
+
+
+def test_the_purchase_order_names_the_supplier_with_pan_gstin_and_state(tenant):
+    tenant.post("/api/suppliers", json={"name": "Sri Sai Steels", "gstin": "37AABCS1234E1Z9",
+                                        "contact_person": "M. Rao", "phone": "9440012345", "address": "Autonagar, Vijayawada"})
+    order = tenant.post("/api/purchase-orders", json={"supplier_name": "Sri Sai Steels", "amount": 50000.0,
+                                                      "tax_amount": 9000.0}).json()
+    body = text(pdf_of(tenant.get("/api/purchase-orders/%d/document.pdf" % order["id"])))
+    for words in ("AABCS1234E", "37AABCS1234E1Z9", "Andhra Pradesh", "M. Rao", "9440012345", "Autonagar"):
+        assert words in body, words
+    assert "50,000" in body                     # a lump-sum order prints its figure, not a nought
+
+
+def test_a_statement_names_the_party_with_its_particulars(tenant):
+    order, _, con = an_order(tenant)
+    tenant.put("/api/wo/contractors/%d" % con["id"], json={
+        "company_name": "Rani Labour Contractors", "gst_number": "36AAAPR1234C1Z5", "address": "Kukatpally"})
+    res = tenant.get("/api/ledger/statement.pdf?party_type=contractor&party=Rani%20Labour%20Contractors")
+    body = text(pdf_of(res))
+    assert "AAAPR1234C" in body and "36AAAPR1234C1Z5" in body and "Kukatpally" in body
+
+
+# --- The work order, as the sample reads ----------------------------------------------
+
+def test_the_general_conditions_are_written_for_this_company(tenant):
+    order, unit, _ = an_order(tenant)
+    tenant.put("/api/wo/business-units/%d" % unit["id"], json={
+        "name": "Yalavarti Projects Pvt Ltd", "code": "YPPL", "gstin": "36AABCY1234H1ZX",
+        "address": "Plot 12, Madhapur\nHyderabad, Telangana 500081"})
+    body = text(pdf_of(tenant.get("/api/wo/orders/%d/document.pdf" % order["id"])))
+    assert "{company}" not in body and "{city}" not in body
+    assert "payment to the contractor for all bills" in body and "YPPL" in body
+    assert "City Civil Court, Hyderabad" in body
+    assert "child labour" in body
+    lib = tenant.get("/api/wo/terms/library").json()["library"]
+    assert not any("{company}" in t["clause_text"] for t in lib)
+
+
+def test_the_town_for_the_courts_is_read_off_the_letterhead():
+    import main
+    assert main.jurisdiction_city("31-15-29, Katuri vari Street,\nMachavaram Down,\nVijayawada - 520004.") == "Vijayawada"
+    assert main.jurisdiction_city("Plot 12, Madhapur, Hyderabad 500081") == "Hyderabad"
+    assert main.jurisdiction_city("Plot 12, Madhapur\nHyderabad, Telangana 500081") == "Hyderabad"
+    assert main.jurisdiction_city("", "36AABCY1234H1ZX") == "Telangana"

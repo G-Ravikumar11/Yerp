@@ -1346,9 +1346,12 @@ async function woLoadStandardTerms() {
         { credentials: 'include' })).json()).library || [];
     // Appended, not substituted: anything already written on this order was
     // written deliberately.
-    var have = WO.terms.map(function (t) { return t.clause_category; });
+    // Matched on the wording, not the heading: several conditions share a
+    // heading, and matching on it kept only the first of each.
+    var norm = function (x) { return String(x || '').replace(/\s+/g, ' ').trim().toLowerCase(); };
+    var have = WO.terms.map(function (t) { return norm(t.clause_text); });
     lib.forEach(function (t) {
-        if (have.indexOf(t.clause_category) < 0) WO.terms.push(Object.assign({}, t));
+        if (have.indexOf(norm(t.clause_text)) < 0) WO.terms.push(Object.assign({}, t));
     });
     renderWizard();
 }

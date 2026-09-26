@@ -13,7 +13,7 @@
 /* --- Customers ----------------------------------------------------------- */
 
 var CUSTOMERS = [];
-var CUSTOMER_FIELDS = ['name', 'contact_person', 'email', 'phone_number', 'gstin',
+var CUSTOMER_FIELDS = ['name', 'contact_person', 'email', 'phone_number', 'gstin', 'pan',
                        'address', 'city', 'state', 'pincode', 'notes'];
 
 async function loadCustomers(query) {
@@ -56,6 +56,7 @@ function renderCustomers() {
             '<td>' + (esc(c.email) || '&mdash;') +
                 (c.phone_number ? '<br><small>' + esc(c.phone_number) + '</small>' : '') + '</td>' +
             '<td>' + (esc(c.gstin) || '&mdash;') +
+                (c.pan ? '<br><small>PAN ' + esc(c.pan) + '</small>' : '') +
                 (place ? '<br><small>' + esc(place) + '</small>' : '') + '</td>' +
             '<td class="text-right">' + (c.projects || 0) + '</td>' +
             '<td class="text-right"><button class="btn btn-sm btn-outline" ' +
@@ -78,6 +79,24 @@ function showCustomerModal(id) {
     if (first) first.focus();
 }
 window.showCustomerModal = showCustomerModal;
+
+/* The customer a bill is made out to, opened for correcting from the bill
+   itself: their PAN, GSTIN, address and contact print on it. */
+async function editCustomerByName(name) {
+    name = (name || '').trim();
+    if (!name) { showToast('This project has no customer named on it', 'error'); return; }
+    var res = await fetch('/api/customers?q=' + encodeURIComponent(name), { credentials: 'include' });
+    var list = res.ok ? ((await res.json()).customers || []) : [];
+    var c = list.filter(function (x) { return (x.name || '').trim().toLowerCase() === name.toLowerCase(); })[0];
+    if (c) {
+        CUSTOMERS = list;
+        showCustomerModal(c.id);
+    } else {
+        showCustomerModal(null);
+        document.getElementById('cust-name').value = name;
+    }
+}
+window.editCustomerByName = editCustomerByName;
 
 function closeCustomerModal() {
     document.getElementById('customer-modal').style.display = 'none';
@@ -102,7 +121,7 @@ async function saveCustomer() {
     if (!res.ok) { showToast(out.detail || 'Could not save the customer', 'error'); return; }
     closeCustomerModal();
     showToast(out.message || 'Saved', 'success');
-    searchCustomers();
+    if (document.getElementById('customers-body')) searchCustomers();
 }
 window.saveCustomer = saveCustomer;
 
