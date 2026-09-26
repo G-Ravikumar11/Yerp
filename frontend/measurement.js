@@ -241,7 +241,9 @@ async function loadRaBills(woId) {
                 ' <button class="btn btn-sm btn-outline" onclick="openDocument(\'ra-bill\',' + b.id + ')" ' +
                 'title="The bill as it prints">View bill</button>' +
                 ' <a class="btn btn-sm btn-outline" href="/api/ra-bills/' + b.id +
-                '/export.xlsx" title="As a workbook">Download</a>' +
+                '/document.pdf" target="_blank" rel="noopener" title="The bill in the ruled form it is signed on">PDF</a>' +
+                ' <a class="btn btn-sm btn-outline" href="/api/ra-bills/' + b.id +
+                '/export.xlsx" title="As a workbook">Excel</a>' +
                 ((b.status === 'CERTIFIED' || b.status === 'PAID') && can('workorders.manage')
                     ? ' <button class="btn btn-sm btn-outline" onclick="raEinvoice(' + b.id + ')" ' +
                       'title="The file for the GST Invoice Registration Portal">e-Invoice</button>' : '') +

@@ -80,17 +80,12 @@ def test_the_front_door_is_the_sign_in():
     assert "Super Admin" not in read("login.html")
 
 
-def test_no_button_sends_anybody_to_excel():
-    """The app exists to replace the spreadsheets. A button that says Excel
-    is the whole workflow's tell: it says the real work happens there.
-    Downloads are outputs, like the print button, and are labelled as such."""
-    for name in os.listdir(FRONTEND):
-        if not name.endswith((".html", ".js")) or name in ("index.html", "login.html"):
-            continue
-        text = read(name)
-        for label in re.findall(r">([^<>]{0,40}Excel[^<>]{0,40})<", text):
-            assert False, "%s labels a control with Excel: %r" % (name, label)
-        assert "(Excel)" not in text, name
+def test_a_bill_downloads_as_pdf_and_as_excel():
+    """The owner asked for both, everywhere (2026-09-27): the signed copy as a
+    PDF in the trade's ruled form, and the figures as a workbook to work in."""
+    js = read("measurement.js")
+    assert "/document.pdf" in js and "/export.xlsx" in js
+    assert ">PDF</a>" in js and ">Excel</a>" in js
 
 
 def test_the_measurement_modal_is_a_dimension_sheet():

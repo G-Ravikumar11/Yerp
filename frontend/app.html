@@ -1982,6 +1982,12 @@
                         <div><h1>Settings</h1><p class="subtitle">Manage your account and preferences</p></div>
                     </div>
 
+                    <div class="glass-widget" style="margin-bottom:24px;">
+                        <div class="widget-header"><div><h3>Signatures on documents</h3>
+                            <p style="font-size:0.8rem;color:var(--text-secondary);margin:2px 0 0;">The names printed in the signature row of every work order, RA bill and other document.</p></div></div>
+                        <div style="padding:14px 18px;" id="signatories-form"></div>
+                    </div>
+
                     <div class="glass-widget" id="backup-widget" style="margin-bottom:24px;display:none;">
                         <div class="widget-header"><div><h3>Backup</h3>
                             <p style="font-size:0.8rem;color:var(--text-secondary);margin:2px 0 0;">Everything the business has put in, as one file for you to keep.</p></div></div>
@@ -4911,7 +4917,8 @@
                         <div><h1 id="document-title">Document</h1><p class="subtitle">As it prints, as it is sent, as it is argued over</p></div>
                         <div class="invoices-actions">
                             <button class="btn btn-outline" onclick="docBack()">Back</button>
-                            <button class="btn btn-primary" onclick="window.print()">Print / Save as PDF</button>
+                            <a class="btn btn-primary" id="doc-pdf" href="#" target="_blank" rel="noopener" style="display:none;">Download PDF</a>
+                            <button class="btn btn-outline" onclick="window.print()">Print</button>
                         </div>
                     </div>
                     <div id="document-body" style="padding:16px 0;"></div>
@@ -5602,7 +5609,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=132"></script>
+    <script src="app.js?v=133"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=67"></script>
@@ -5621,9 +5628,9 @@
     <script src="subcontracts.js?v=105"></script>
     <script src="costs.js?v=65"></script>
     <script src="sheet.js?v=83"></script>
-    <script src="documents.js?v=90"></script>
+    <script src="documents.js?v=91"></script>
     <script src="mbdims.js?v=81"></script>
-    <script src="measurement.js?v=116"></script>
+    <script src="measurement.js?v=117"></script>
     <script src="stock.js?v=113"></script>
     <script src="diary.js?v=117"></script>
     <script src="money.js?v=95"></script>

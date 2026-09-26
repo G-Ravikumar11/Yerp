@@ -18222,6 +18222,10 @@ def wo_document_pdf(order_id: int, request: Request, db: Session = Depends(get_d
     """
     client = require_erp_read(request, db)
     order = wo_or_404(db, client.id, order_id)
+    # The trade's ruled form is the default; the letter-style layout it
+    # replaced stays one parameter away for anybody who preferred it.
+    if request.query_params.get("style") != "letter":
+        return form_pdf_response(wo_form_spec(db, client, order), order.wo_number or "work_order")
     doc = wo_document_payload(db, client, order)
 
     import wo_pdf
@@ -32976,6 +32980,294 @@ def download_backup(request: Request, files: int = 0, db: Session = Depends(get_
     return StreamingResponse(chunks(), media_type="application/zip",
                              headers={"Content-Disposition": 'attachment; filename="%s"' % name,
                                       "Content-Length": str(size)})
+
+
+# ============================================================================
+# DOCUMENTS IN THE TRADE'S OWN FORM
+#
+# The work order, the RA bill - laid out as the ruled, boxed form contractors
+# and clients already sign (form_pdf.py draws it). Each document here is only
+# a description: which boxes, in which order, filled with what. The names in
+# the signature row are the company's, set once in Settings.
+# ============================================================================
+
+import form_pdf
+
+DOC_SIGNATORIES = (("prepared", "Prepared By", "QS"), ("proposed", "Proposed By", "GM"),
+                   ("recommended", "Recommended By", "Project Coordinator"),
+                   ("authorised", "Authorized Signatory", ""))
+
+
+def doc_signatories(db, client_id):
+    """{key: {"role", "name", "title"}} - who signs the company's documents."""
+    got = {s.key: s.value or "" for s in db.query(models.DBSettings).filter(
+        models.DBSettings.client_id == client_id,
+        models.DBSettings.key.like("sig_%")).all()}
+    return {key: {"role": role, "name": got.get("sig_%s_name" % key, ""),
+                  "title": got.get("sig_%s_title" % key, title)}
+            for key, role, title in DOC_SIGNATORIES}
+
+
+@app.get("/api/documents/signatories")
+def get_doc_signatories(request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return {"signatories": doc_signatories(db, client.id)}
+
+
+@app.put("/api/documents/signatories")
+def save_doc_signatories(request: Request, body: dict = None, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    for key, _, _ in DOC_SIGNATORIES:
+        item = (body or {}).get(key) or {}
+        for field in ("name", "title"):
+            if field not in item:
+                continue
+            k = "sig_%s_%s" % (key, field)
+            row = db.query(models.DBSettings).filter(models.DBSettings.client_id == client.id,
+                                                     models.DBSettings.key == k).first()
+            value = str(item.get(field) or "").strip()[:80]
+            if row:
+                row.value = value
+            else:
+                db.add(models.DBSettings(client_id=client.id, key=k, value=value))
+    db.commit()
+    return {"signatories": doc_signatories(db, client.id), "message": "Saved. Every document signs with these."}
+
+
+def _sig_line(s):
+    return " ".join(x for x in (s.get("name", ""), "(%s)" % s["title"] if s.get("title") else "") if x)
+
+
+def _state_line(gstin):
+    code = state_from_gstin(gstin or "")
+    return ("%s - %s" % (code, GST_STATES.get(code, ""))).strip(" -") if code else ""
+
+
+def _company_box(db, unit, client):
+    return {"name": unit.get("name") or client.company_name or "",
+            "address": unit.get("address") or company_address(db, client),
+            "gstin": unit.get("gstin") or client.gstin or "",
+            "pan": unit.get("pan") or "", "state": _state_line(unit.get("gstin") or client.gstin),
+            "logo_url": unit.get("logo_url") or client.logo_url or ""}
+
+
+def _words(value):
+    text = amount_in_words(value)
+    return re.sub(r"^Rupees\s+", "", text)
+
+
+def wo_form_spec(db, client, order):
+    """The subcontract work order in the trade's form: order, schedule,
+    taxes, payment terms, signatures; the conditions on the page after."""
+    doc = wo_document_payload(db, client, order)
+    sig = doc_signatories(db, client.id)
+    unit = doc.get("business_unit_detail") or {}
+    con = doc.get("contractor_detail") or {}
+    job = db.query(models.DBJob).filter(models.DBJob.id == order.job_id).first()
+    history_prepared = next((s["name"] for s in doc.get("signatures", []) if s["role"] == "Prepared by"), "")
+
+    rows = []
+    for i, it in enumerate(doc.get("items") or [], 1):
+        boq = " ".join(x for x in (it.get("activity_no") or "", it.get("item_code") or "") if x)
+        desc = it.get("item_description") or ""
+        if it.get("technical_spec"):
+            desc += "\n" + it["technical_spec"]
+        rows.append([str(i), boq, desc, it.get("uom") or "", form_pdf.qty_text(it.get("quantity")),
+                     form_pdf.plain_number(it.get("unit_rate")), form_pdf.plain_number(it.get("total_amount"))])
+
+    months = doc.get("duration_months")
+    period = ""
+    if doc.get("commencement_date") or doc.get("completion_date"):
+        period = "%s to %s" % (form_pdf.date_text(doc.get("commencement_date")) or "-",
+                               form_pdf.date_text(doc.get("completion_date")) or "-")
+        if months:
+            period += " (%g months)" % months
+    sched = doc.get("billing_schedule") or {}
+    gst_rate = doc.get("gst_rate") or 0
+    gst_text = ("%g%% (CGST %g%% + SGST %g%%) - Rs. %s" % (gst_rate, gst_rate / 2, gst_rate / 2, form_pdf.inr(doc.get("gst_amount")))
+                if sched.get("intra_state") else "%g%% IGST - Rs. %s" % (gst_rate, form_pdf.inr(doc.get("gst_amount")))) \
+        if gst_rate else "Not applicable"
+    tds_text = ("%g%% u/s 194C, deducted from each bill" % doc["tds_rate"]) if doc.get("tds_rate") else "Not applicable"
+    others = ("Labour welfare cess (BOCW) %g%%, deducted from each bill" % doc["labour_cess_percent"]) \
+        if doc.get("labour_cess_percent") else "-"
+
+    advance = "-"
+    if doc.get("mobilization_advance_percent"):
+        advance = "%g%% (Rs. %s) against an equal bank guarantee, recovered at %g%% of each RA bill" % (
+            doc["mobilization_advance_percent"], form_pdf.inr(doc.get("mobilization_advance_amount")),
+            doc.get("advance_recovery_percent") or doc["mobilization_advance_percent"])
+    ra = (doc.get("billing_cycle") or "Monthly")
+    if doc.get("payment_days"):
+        ra += ", paid within %d days of certification" % doc["payment_days"]
+    fsd = ("%g%% of bill value, released after the defects liability period%s" % (
+        doc["retention_percent"],
+        (" of %d months" % doc["defect_liability_months"]) if doc.get("defect_liability_months") else "")) \
+        if doc.get("retention_percent") else "-"
+    terms = [("1. Mobilisation Advance", advance), ("2. RA Bills", ra), ("3. FSD (Retention)", fsd),
+             ("4. Special Conditions", doc.get("payment_terms") or doc.get("scope_of_work") or
+              "TDS applicable. GST applicable. Payment on RA bills. FSD as above. GCC as per Annexure."),
+             ("5. Work Address", (job.site_address if job else "") or doc.get("project") or "-")]
+
+    signatures = [("Contractor Signature", doc.get("contractor") or ""),
+                  ("Prepared By", _sig_line(dict(sig["prepared"], name=sig["prepared"]["name"] or history_prepared))),
+                  ("Proposed By", _sig_line(sig["proposed"])),
+                  ("Recommended By", _sig_line(sig["recommended"])),
+                  ("Authorized Signatory", _sig_line(sig["authorised"]))]
+    clauses = [("%s: %s" % (t.get("clause_category"), t.get("clause_text")) if t.get("clause_category") else t.get("clause_text"))
+               for t in (doc.get("terms") or [])] or \
+              ["%s: %s" % (t["clause_category"], t["clause_text"]) for t in WO_STANDARD_TERMS]
+    company = _company_box(db, unit, client)
+    blocks = [
+        {"type": "header", "company": company, "title": "WORK ORDER",
+         "facts": [("Project", (job.number if job else "") or doc.get("project") or ""),
+                   ("Date", form_pdf.date_text((doc.get("approved_at") or doc.get("created_at") or "")[:10])),
+                   ("Expiry Dt", form_pdf.date_text(doc.get("completion_date"))),
+                   ("Order No", doc.get("wo_number") or "")]},
+        {"type": "party", "label": "Sub Contractor Name", "name": doc.get("contractor") or "",
+         "address": con.get("address") or "",
+         "facts": [("PAN No", con.get("pan") or ""), ("GSTIN No.", con.get("gst_number") or "")]},
+        {"type": "pairs", "cols": 2, "rows": [("Contact Person", con.get("contact_person") or doc.get("contractor") or ""),
+                                              ("Mobile No.", con.get("phone_number") or "")]},
+    ]
+    if doc.get("subject"):
+        blocks.append({"type": "pairs", "rows": [("Subject", doc["subject"])], "label_width": 30})
+    blocks += [
+        {"type": "table", "columns": [("#", 6, "C"), ("BOQ", 26, "L"), ("Description", 70, "L"), ("UoM", 13, "C"),
+                                      ("Qty", 19, "R"), ("Rate", 21, "R"), ("Total Amt", 27, "R")],
+         "rows": rows, "totals": [("TOTAL AMOUNT", form_pdf.plain_number(doc.get("gross_amount")), True)]},
+        {"type": "words", "label": "Rupees", "text": _words(doc.get("gross_amount"))},
+        {"type": "text", "text": "The above agreed rates are firm till completion of the entire work, including "
+                                 "variation in scope and extension of time."},
+        {"type": "pairs", "rows": [("Contract Period", period or "-")], "label_width": 42},
+        {"type": "band", "text": "TAXES AND DUTIES (As Applicable)"},
+        {"type": "pairs", "rows": [("GST", gst_text), ("TDS", tds_text), ("Others", others)], "label_width": 42},
+        {"type": "text", "style": "bold", "text": "All statutory payments, enactments and adjustments are to be borne by "
+                                                  "the Sub Contractor only."},
+        {"type": "text", "style": "small", "text":
+            "We are pleased to award this work order subject to the terms and conditions set out herein. Please quote "
+            "our order reference in all correspondence and acknowledge this order as your acceptance. The contract "
+            "value is built from the unit rates you offered; payment is for the work actually done, as certified by "
+            "the company's authorised representatives."},
+        {"type": "band", "text": "Payment Terms & Conditions"},
+        {"type": "terms", "rows": terms, "label_width": 58},
+        {"type": "signatures", "boxes": signatures},
+        {"type": "page_break"},
+        {"type": "band", "text": "GENERAL CONTRACT CONDITIONS (GCC)"},
+        {"type": "numbered", "items": clauses, "closing": [
+            "Where a special condition is stated in this order, it supersedes the related condition above.",
+            "Please return the duplicate copy duly signed and stamped as your receipt and acceptance of this order.",
+            "If the acceptance is not received within one week, the order shall be taken as accepted."]},
+        {"type": "signatures", "boxes": signatures},
+    ]
+    return {"title": "Work Order %s" % (doc.get("wo_number") or ""), "author": company["name"],
+            "watermark": doc.get("watermark") or "", "blocks": blocks,
+            "footer": "%s  |  %s  |  Printed %s" % (doc.get("wo_number") or "", company["name"],
+                                                    datetime.now().strftime("%d/%m/%Y %H:%M"))}
+
+
+def ra_form_spec(db, client, bill):
+    """The client RA bill in the same form: the bill's own box, the client's,
+    the abstract of work, the deductions and tax down the right, the figure in
+    words, the e-invoice registration, and the signatures."""
+    b = ra_bill_dict(db, bill, detail=True)
+    sig = doc_signatories(db, client.id)
+    job = db.query(models.DBJob).filter(models.DBJob.id == bill.job_id).first()
+    wo = b.get("work_order_detail") or {}
+    buyer = einvoice_buyer(db, client.id, job) if job else None
+    our = b.get("our") or {}
+    company = {"name": our.get("name") or client.company_name or "", "address": our.get("address") or "",
+               "gstin": our.get("gstin") or client.gstin or "", "pan": "",
+               "state": _state_line(our.get("gstin") or client.gstin), "logo_url": our.get("logo_url") or ""}
+    b_addr = ", ".join(x for x in ((buyer.address if buyer else "") or "", (getattr(buyer, "city", "") or "") if buyer else "",
+                                   (getattr(buyer, "pincode", "") or "") if buyer else "") if x)
+    rows = [[str(i), l.get("fg_code") or "", l.get("description") or "", l.get("uom") or "",
+             form_pdf.qty_text(l.get("ordered_qty")), form_pdf.qty_text(l.get("previously_billed_qty")),
+             form_pdf.qty_text(l.get("this_bill_qty")), form_pdf.qty_text(l.get("measured_to_date")),
+             form_pdf.plain_number(l.get("rate")), form_pdf.plain_number(l.get("amount"))]
+            for i, l in enumerate(b.get("lines") or [], 1)]
+    taxable = money(b["this_bill"] - b["retention_amount"] - b["advance_recovery"] - b["other_deductions"])
+    rate = b.get("tax_percent") or 0
+    sums = [("Value of work done up to date", form_pdf.inr(b["gross_to_date"]), False),
+            ("Less: claimed in earlier bills", form_pdf.inr(-b["previously_billed"]), False),
+            ("Value of work in this bill", form_pdf.inr(b["this_bill"]), True)]
+    if b["retention_amount"]:
+        sums.append(("Less: retention @ %g%%" % b["retention_percent"], form_pdf.inr(-b["retention_amount"]), False))
+    if b["advance_recovery"]:
+        sums.append(("Less: mobilisation advance recovered", form_pdf.inr(-b["advance_recovery"]), False))
+    if b["other_deductions"]:
+        sums.append(("Less: other deductions%s" % ((" (%s)" % b["deduction_notes"]) if b["deduction_notes"] else ""),
+                     form_pdf.inr(-b["other_deductions"]), False))
+    sums.append(("Taxable value", form_pdf.inr(taxable), True))
+    if b["cgst_amount"] or b["sgst_amount"]:
+        sums += [("Add: CGST @ %g%%" % (rate / 2), form_pdf.inr(b["cgst_amount"]), False),
+                 ("Add: SGST @ %g%%" % (rate / 2), form_pdf.inr(b["sgst_amount"]), False)]
+    elif b["igst_amount"]:
+        sums.append(("Add: IGST @ %g%%" % rate, form_pdf.inr(b["igst_amount"]), False))
+    if b["tds_amount"]:
+        sums.append(("Less: TDS @ %g%% (deducted by the client)" % b["tds_percent"], form_pdf.inr(-b["tds_amount"]), False))
+    sums.append(("NET AMOUNT PAYABLE", form_pdf.inr(b["net_payable"]), True))
+
+    irn = active_irn(db, client.id, "ra_bill", bill.id)
+    certified = b.get("certified_by_name") or ""
+    signatures = [("Prepared By", _sig_line(sig["prepared"])),
+                  ("Checked By", _sig_line(sig["recommended"])),
+                  ("Certified By", (certified + " (Client's Engineer)") if certified else "Client's Engineer"),
+                  ("Authorized Signatory", _sig_line(sig["authorised"]))]
+    period = ("%s to %s" % (form_pdf.date_text(b.get("period_from")), form_pdf.date_text(b.get("period_to")))
+              if b.get("period_from") else ("Up to %s" % form_pdf.date_text(b.get("period_to")) if b.get("period_to") else ""))
+    blocks = [
+        {"type": "header", "company": company, "title": "RA BILL",
+         "facts": [("Bill No", b["number"]), ("RA No", str(b.get("sequence") or 1)),
+                   ("Bill Date", form_pdf.date_text((b.get("certified_at") or b.get("created_at") or "")[:10])),
+                   ("Period", period or "-")]},
+        {"type": "party", "label": "Bill To", "name": (buyer.name if buyer else "") or (job.customer_name if job else ""),
+         "address": b_addr,
+         "facts": [("GSTIN No.", (buyer.gstin if buyer else "") or ""),
+                   ("Place of Supply", ("%s (%s)" % (b.get("place_of_supply_name"), b.get("place_of_supply")))
+                    if b.get("place_of_supply") else "")]},
+        {"type": "pairs", "cols": 2, "rows": [("Project", b.get("project") or ""), ("Work Order", "%s%s" % (
+            wo.get("number") or b.get("work_order") or "", (" dt. " + form_pdf.date_text(wo.get("date"))) if wo.get("date") else "")),
+            ("Site", (job.site_address if job else "") or "-"), ("Your Reference", wo.get("reference") or "-")]},
+        {"type": "table", "columns": [("#", 5, "C"), ("Item", 16, "L"), ("Description", 50, "L"), ("UoM", 11, "C"),
+                                      ("Order Qty", 16, "R"), ("Previous", 16, "R"), ("This Bill", 16, "R"),
+                                      ("Up to Date", 16, "R"), ("Rate", 16, "R"), ("Amount", 20, "R")],
+         "rows": rows, "totals": [("VALUE OF WORK IN THIS BILL", form_pdf.plain_number(b["this_bill"]), True)]},
+        {"type": "sums", "rows": sums},
+        {"type": "words", "label": "Rupees", "text": _words(b["net_payable"])},
+        {"type": "pairs", "rows": [("SAC", WORKS_CONTRACT_SAC + " - works contract services")], "label_width": 42},
+    ]
+    if irn:
+        blocks.append({"type": "qr", "data": irn.signed_qr, "lines": [
+            "e-Invoice registered with the GST Invoice Registration Portal",
+            "IRN: " + irn.irn, "Ack No: %s     Ack Date: %s" % (irn.ack_no, irn.ack_date)]})
+    blocks += [
+        {"type": "text", "style": "small", "text": "Quantities are as recorded in the measurement book and jointly "
+                                                   "verified. Retention is held as per the contract and released on "
+                                                   "completion of the defects liability period."},
+        {"type": "signatures", "boxes": signatures},
+    ]
+    watermark = {"DRAFT": "DRAFT - NOT A CLAIM", "SUBMITTED": "SUBMITTED - NOT YET CERTIFIED",
+                 "CANCELLED": "CANCELLED"}.get(b["status"], "")
+    return {"title": "RA Bill %s" % b["number"], "author": company["name"], "watermark": watermark,
+            "blocks": blocks, "footer": "%s  |  %s  |  Printed %s" % (b["number"], company["name"],
+                                                                      datetime.now().strftime("%d/%m/%Y %H:%M"))}
+
+
+def form_pdf_response(spec, name):
+    if not form_pdf.PDF_AVAILABLE:
+        raise HTTPException(503, "The PDF library is not installed on this server; the workbook is still available.")
+    pdf = form_pdf.build_form_pdf(spec)
+    safe = re.sub(r"[^A-Za-z0-9]+", "_", name or "document").strip("_") or "document"
+    return StreamingResponse(io.BytesIO(pdf), media_type="application/pdf",
+                             headers={"Content-Disposition": 'inline; filename="%s.pdf"' % safe,
+                                      "Content-Length": str(len(pdf))})
+
+
+@app.get("/api/ra-bills/{bill_id}/document.pdf")
+def ra_bill_pdf(bill_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    bill = ra_bill_or_404(db, client.id, bill_id)
+    return form_pdf_response(ra_form_spec(db, client, bill), bill.number)
 
 
 # Serve frontend

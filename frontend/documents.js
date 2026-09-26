@@ -15,7 +15,7 @@
 var DOC = { kind: null, id: null, data: null, back: null };
 
 var DOC_SOURCES = {
-    'ra-bill':  { url: function (id) { return '/api/ra-bills/' + id; },  pick: 'bill',  render: function (d) { return docRaBill(d); },       title: 'Running Account Bill' },
+    'ra-bill':  { url: function (id) { return '/api/ra-bills/' + id; },  pdf: function (id) { return '/api/ra-bills/' + id + '/document.pdf'; }, pick: 'bill',  render: function (d) { return docRaBill(d); },       title: 'Running Account Bill' },
     'sub-bill': { url: function (id) { return '/api/sub-bills/' + id; }, pick: null,    render: function (d) { return docSubBill(d); },      title: 'Subcontractor RA Bill' },
     'po':       { url: function (id) { return '/api/purchase-orders/' + id; }, pick: null, render: function (d) { return docPurchaseOrder(d); }, title: 'Purchase Order' },
     'grn':      { url: function (id) { return '/api/grn/' + id; },       pick: null,    render: function (d) { return docGrn(d); },          title: 'Goods Receipt' },
@@ -35,10 +35,44 @@ async function openDocument(kind, id) {
     var out = await res.json();
     DOC.data = src.pick ? out[src.pick] : out;
     document.getElementById('document-title').textContent = src.title;
+    // The signed copy is the server's PDF, in the trade's ruled form, where there is one.
+    var pdf = document.getElementById('doc-pdf');
+    if (pdf) { pdf.style.display = src.pdf ? '' : 'none'; if (src.pdf) pdf.href = src.pdf(id); }
     host.innerHTML = src.render(DOC.data);
     window.scrollTo(0, 0);
 }
 window.openDocument = openDocument;
+
+/* --- Who signs the company's documents (Settings) ------------------------- */
+
+async function loadSignatories() {
+    var host = document.getElementById('signatories-form');
+    if (!host) return;
+    var res = await fetch('/api/documents/signatories', { credentials: 'include' });
+    if (!res.ok) return;
+    var s = (await res.json()).signatories;
+    host.innerHTML = Object.keys(s).map(function (k) {
+        return '<div class="form-row" style="align-items:end;">' +
+            '<div class="form-group" style="flex:0 0 170px;"><label>' + esc(s[k].role) + '</label>' +
+                '<input class="form-control" data-sig="' + k + '" data-f="name" value="' + esc(s[k].name) + '" placeholder="Name"></div>' +
+            '<div class="form-group"><label>&nbsp;</label><input class="form-control" data-sig="' + k + '" data-f="title" value="' +
+                esc(s[k].title) + '" placeholder="Designation"></div></div>';
+    }).join('') + '<button class="btn btn-primary" onclick="saveSignatories()">Save</button>';
+}
+window.loadSignatories = loadSignatories;
+
+async function saveSignatories() {
+    var body = {};
+    document.querySelectorAll('#signatories-form [data-sig]').forEach(function (el) {
+        body[el.dataset.sig] = body[el.dataset.sig] || {};
+        body[el.dataset.sig][el.dataset.f] = el.value;
+    });
+    var res = await fetch('/api/documents/signatories', { method: 'PUT', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    var out = await res.json();
+    showToast(res.ok ? out.message : (out.detail || 'Not saved'), res.ok ? 'success' : 'error');
+}
+window.saveSignatories = saveSignatories;
 
 function docBack() {
     showView(DOC.back || 'dashboard-view');
