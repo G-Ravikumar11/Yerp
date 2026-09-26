@@ -38,6 +38,7 @@ window.paintUserChip = paintUserChip;
 
 /* Signing out has to end whichever kind of session this is. */
 async function handleStaffLogout() {
+    if (typeof forgetOfflineCopy === 'function') forgetOfflineCopy();
     try { await fetch('/api/employee/auth/logout', { method: 'POST' }); } catch (e) {}
     window.location.href = '/login.html';
 }

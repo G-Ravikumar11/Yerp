@@ -36,6 +36,7 @@ function diaryJobChanged() {
 window.diaryJobChanged = diaryJobChanged;
 
 async function refreshDiary() {
+    if (typeof paintOutbox === 'function') paintOutbox();
     if (!DIARY.job) return;
     var d = await (await fetch('/api/diary?job_id=' + DIARY.job,
                                { credentials: 'include' })).json();
@@ -141,6 +142,8 @@ function plantRow(p, i) {
 
 function renderDiaryForm(d) {
     DIARY.current = d;
+    DIARY.photos = [];
+    diaryPhotosPaint();
     var locked = d.id && d.status !== 'DRAFT';
     document.getElementById('diary-form-title').textContent =
         d.id ? ('Day of ' + d.diary_date) : 'New day';
@@ -254,13 +257,33 @@ window.diaryTotals = diaryTotals;
 async function saveDiary(andSubmit) {
     var body = collectDiary();
     var editing = DIARY.current && DIARY.current.id;
-    var res = await fetch('/api/diary' + (editing ? '/' + DIARY.current.id : ''), {
-        method: editing ? 'PUT' : 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    });
+    var url = '/api/diary' + (editing ? '/' + DIARY.current.id : '');
+    var method = editing ? 'PUT' : 'POST';
+    var res;
+    try {
+        if (!navigator.onLine) throw new TypeError('offline');
+        res = await fetch(url, {
+            method: method, credentials: 'include',
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+    } catch (e) {
+        // No signal on site. The day is kept on the phone and goes up by
+        // itself when there is - a diary not written today is not written.
+        if (typeof outboxKeepDiary !== 'function') { showToast('No connection - try again when there is signal.', 'error'); return; }
+        var pick = document.getElementById('diary-job');
+        var site = pick && pick.selectedIndex >= 0 ? pick.options[pick.selectedIndex].textContent : '';
+        await outboxKeepDiary(url, method, body, andSubmit, DIARY.photos.slice(), body.diary_date + ' · ' + site);
+        showToast('No signal. The day is kept on this phone and goes up by itself when you are back online.', 'info');
+        closeDiaryForm();
+        return;
+    }
     var out = await res.json();
     if (!res.ok) { showToast(out.detail || 'Could not save the day', 'error'); return; }
     var id = out.diary.id;
+    if (DIARY.photos.length && typeof uploadFiles === 'function') {
+        try { await uploadFiles(DIARY.photos, 'diary', id); } catch (e) {}
+        DIARY.photos = [];
+    }
     if (andSubmit) {
         var sub = await fetch('/api/diary/' + id + '/submit',
                               { method: 'POST', credentials: 'include' });
@@ -278,6 +301,34 @@ async function saveDiary(andSubmit) {
     refreshDiary();
 }
 window.saveDiary = saveDiary;
+
+/* Photos of the day, taken with the form open - kept on the phone with the
+   rest of the day if there is no signal. */
+async function diaryPhotosPicked(input) {
+    var list = Array.prototype.slice.call(input.files || []);
+    input.value = '';
+    for (var i = 0; i < list.length; i++) {
+        var f = list[i];
+        var small = typeof shrinkImage === 'function' ? await shrinkImage(f, 1600, 0.82) : null;
+        DIARY.photos.push(small ? new File([small], f.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' }) : f);
+    }
+    diaryPhotosPaint();
+}
+window.diaryPhotosPicked = diaryPhotosPicked;
+
+function diaryPhotosPaint() {
+    var host = document.getElementById('diary-photos');
+    if (!host) return;
+    host.innerHTML = (DIARY.photos || []).map(function (f, i) {
+        var url = URL.createObjectURL(f);
+        return '<span style="position:relative;display:inline-block;margin:0 6px 6px 0;">' +
+            '<img src="' + url + '" style="width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid var(--border-color);">' +
+            '<a href="#" onclick="event.preventDefault();DIARY.photos.splice(' + i + ',1);diaryPhotosPaint()" ' +
+            'style="position:absolute;top:-6px;right:-6px;background:#0f172a;color:#fff;border-radius:50%;width:18px;height:18px;' +
+            'font-size:12px;line-height:18px;text-align:center;text-decoration:none;">&times;</a></span>';
+    }).join('');
+}
+window.diaryPhotosPaint = diaryPhotosPaint;
 
 /* --- Project profit ------------------------------------------------------- */
 

@@ -631,6 +631,7 @@ async function checkAuthStatus() {
 }
 
 function handleLogout() {
+    if (typeof forgetOfflineCopy === 'function') forgetOfflineCopy();
     fetch('/api/client/logout', { method: 'POST' }).finally(function() {
         window.location.href = '/login.html';
     });
