@@ -66,8 +66,8 @@ async function loadSubcontracts() {
             '<td class="text-right" style="white-space:nowrap;">' +
                 '<button class="btn btn-sm btn-outline" onclick="woPreview(' + o.id + ')" ' +
                     'title="The printed document">Document</button> ' +
-                '<button class="btn btn-sm btn-outline" onclick="woCopy(' + o.id + ')" ' +
-                    'title="A new draft that starts as this one did">Copy</button> ' +
+                (can('workorders.manage') ? '<button class="btn btn-sm btn-outline" onclick="woCopy(' + o.id + ')" ' +
+                    'title="A new draft that starts as this one did">Copy</button> ' : '') +
                 '<button class="btn btn-sm btn-outline" onclick="openSubcontract(' + o.id + ')">' +
                 (o.editable ? 'Continue' : 'Open') + '</button></td>' +
             '</tr>';

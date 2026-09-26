@@ -47,8 +47,9 @@ async function loadStock() {
             '<td class="text-right">' +
                 '<button class="btn btn-sm btn-outline" onclick="showLedger(\'' +
                 esc(r.item_code) + '\')">Ledger</button> ' +
-                '<button class="btn btn-sm btn-outline" onclick="countStock(\'' +
-                esc(r.item_code) + '\',' + r.on_hand + ')">Count</button></td>' +
+                // A count adjusts the books; that is the office's to do.
+                (can('workorders.manage') ? '<button class="btn btn-sm btn-outline" onclick="countStock(\'' +
+                esc(r.item_code) + '\',' + r.on_hand + ')">Count</button>' : '') + '</td>' +
             '</tr>';
     }).join('') : '<tr><td colspan="7" style="text-align:center;padding:30px;' +
         'color:var(--text-secondary);">Nothing in the store yet. Material arrives ' +
@@ -144,7 +145,7 @@ async function loadIssues() {
             '<td class="text-right">' + (i.status === 'DRAFT'
                 ? '<button class="btn btn-sm btn-primary" onclick="postIssue(' + i.id +
                   ')">Post it</button> '
-                : '') + (i.status !== 'CANCELLED'
+                : '') + (i.status !== 'CANCELLED' && can('workorders.manage')
                 ? '<button class="btn btn-sm btn-outline" onclick="cancelIssue(' + i.id +
                   ')">Cancel</button>' : '') + '</td>' +
             '</tr>';

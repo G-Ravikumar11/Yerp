@@ -218,12 +218,13 @@ async function loadRaBills(woId) {
     body.innerHTML = RA.bills.length ? RA.bills.map(function (b) {
         // Only the move the bill can actually make next.
         var act = '';
-        if (b.actions.indexOf('SUBMIT') >= 0)
+        // Each step only for whoever may take it - a button the server refuses is a dead end.
+        if (b.actions.indexOf('SUBMIT') >= 0 && can('workorders.manage'))
             act = '<button class="btn btn-sm btn-primary" onclick="raAct(' + b.id + ',\'submit\')">Submit</button>';
-        else if (b.actions.indexOf('CERTIFY') >= 0)
+        else if (b.actions.indexOf('CERTIFY') >= 0 && can('subcontracts.approve'))
             act = '<button class="btn btn-sm btn-primary" onclick="raAct(' + b.id + ',\'certify\')">Certify</button> ' +
                   '<button class="btn btn-sm btn-outline" onclick="raAct(' + b.id + ',\'reject\',true)">Send back</button>';
-        else if (b.actions.indexOf('PAY') >= 0)
+        else if (b.actions.indexOf('PAY') >= 0 && can('bills.pay'))
             act = '<button class="btn btn-sm btn-primary" onclick="openPayBox(\'ra_bill\',' + b.id + ',function(){loadRaBills(MB.wo && MB.wo.id)})">Receive</button>';
         return '<tr>' +
             '<td style="font-family:monospace;font-weight:600;">' + esc(b.number) + '</td>' +
@@ -241,7 +242,7 @@ async function loadRaBills(woId) {
                 'title="The bill as it prints">View bill</button>' +
                 ' <a class="btn btn-sm btn-outline" href="/api/ra-bills/' + b.id +
                 '/export.xlsx" title="As a workbook">Download</a>' +
-                (b.status === 'CERTIFIED' || b.status === 'PAID'
+                ((b.status === 'CERTIFIED' || b.status === 'PAID') && can('workorders.manage')
                     ? ' <button class="btn btn-sm btn-outline" onclick="raEinvoice(' + b.id + ')" ' +
                       'title="The file for the GST Invoice Registration Portal">e-Invoice</button>' : '') +
                 '</td>' +
