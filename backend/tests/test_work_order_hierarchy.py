@@ -113,6 +113,26 @@ def test_a_client_work_order_climbs_the_same_way(tenant, portal):
     assert decide(tenant, item).json()["status"] == "approved"
 
 
+def test_placing_a_client_order_on_site_waits_for_its_approvals(tenant, portal):
+    """Placing is not a way round the route: the order is sent for approval,
+    says whose desk it is on, and is not measured until the last signature."""
+    from test_erp_contracts import order_with_budget
+    pm = person(tenant, "project_manager")
+    qs = person(tenant, "planning_billing")
+    job, wo = order_with_budget(tenant)
+    sign_in(portal, qs)
+    res = portal.post("/api/erp/work-orders/%d/place-order" % wo["id"])
+    assert res.status_code == 200, res.text
+    placed = res.json()["work_order"]
+    assert placed["approval_status"] == "pending" and placed["status"] == "Awaiting Approval"
+    assert placed["waiting_on"].startswith(pm["first_name"])
+    assert "sent for approval" in res.json()["message"]
+    listed = next(w for w in portal.get("/api/erp/work-orders").json()["work_orders"] if w["id"] == wo["id"])
+    assert listed["waiting_on"].startswith(pm["first_name"])
+    # Placing again while it waits is refused.
+    assert portal.post("/api/erp/work-orders/%d/place-order" % wo["id"]).status_code == 409
+
+
 # --- Who may see a draft -------------------------------------------------------------
 
 def test_a_draft_is_seen_by_its_maker_and_those_above_not_below(tenant, portal):
