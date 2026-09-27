@@ -89,11 +89,20 @@ def test_one_tenant_cannot_edit_another_tenants_customer(tenant, second_tenant):
 # --- placing the order -----------------------------------------------------
 
 def test_placing_an_order_takes_it_out_of_draft(tenant):
+    """Placing sends it for approval; the owner's own is approved as placed."""
     wo = build_order(tenant, place=False)
     assert wo["status"] == "Draft"
     res = tenant.post("/api/erp/work-orders/%d/place-order" % wo["id"])
     assert res.status_code == 200
-    assert res.json()["work_order"]["status"] == "Placed"
+    assert res.json()["work_order"]["status"] == "Approved"
+    assert res.json()["work_order"]["approval_status"] == "approved"
+
+
+def test_an_order_is_not_placed_without_its_budget(tenant):
+    """Placing is approving a margin, and there is none without a budget."""
+    wo = build_order(tenant, place=False, budget=False)
+    res = tenant.post("/api/erp/work-orders/%d/place-order" % wo["id"])
+    assert res.status_code == 409 and "budget" in res.json()["detail"]
 
 
 def test_an_order_is_not_placed_twice(tenant):
@@ -104,13 +113,13 @@ def test_an_order_is_not_placed_twice(tenant):
 # --- the managing director's approval --------------------------------------
 
 def test_the_inquiry_screen_shows_where_every_order_stands(tenant):
-    build_order(tenant)
+    build_order(tenant, place=False)
     body = tenant.get("/api/erp/inquiry").json()
     row = body["rows"][0]
     assert row["bom_status"] == "Allocated"
     assert row["md_approval"] == "Not sent"
     assert row["can_approve"] is True
-    assert row["can_place"] is False
+    assert row["can_place"] is True
     assert body["summary"]["orders"] == 1
     assert body["summary"]["total_value"] == 6000.0
 
@@ -140,10 +149,13 @@ def test_the_decision_is_written_to_the_same_history_as_the_staff_route(tenant):
     assert any(h["approver_level"] == "MD" and h["status"] == "approved" for h in history)
 
 
-def test_nothing_is_approved_before_it_is_placed(tenant):
+def test_the_md_signing_a_draft_places_it(tenant):
+    """Approval comes first: the managing director's signature is what
+    commits the prices, so a budgeted draft can be signed off directly."""
     wo = build_order(tenant, place=False)
     res = tenant.post("/api/erp/inquiry/%d/md-approval" % wo["id"], json={"approve": True})
-    assert res.status_code == 409
+    assert res.status_code == 200
+    assert res.json()["work_order"]["status"] == "Approved"
 
 
 def test_nothing_is_approved_before_its_budget_is_allocated(tenant):

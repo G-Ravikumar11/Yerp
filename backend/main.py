@@ -4546,7 +4546,19 @@ def work_order_to_dict(db, wo, detail=False, pre=None):
         "current_step": wo.current_approval_step or 0,
         "rejection_reason": wo.rejection_reason or "",
         "line_count": line_count,
+        "waiting_on": "",
     }
+    if (wo.approval_status or "") == "pending":
+        step = db.query(models.DBApprovalChain).filter(
+            models.DBApprovalChain.entity_type == "work_order", models.DBApprovalChain.entity_id == wo.id,
+            models.DBApprovalChain.step == (wo.current_approval_step or 0)).first()
+        total = db.query(models.DBApprovalChain).filter(
+            models.DBApprovalChain.entity_type == "work_order",
+            models.DBApprovalChain.entity_id == wo.id).count()
+        if step is not None:
+            row["waiting_on"] = (owner_label(db, wo.client_id) if step.approver_id is None
+                                 else _person(db, step.approver_id))
+            row["waiting_step"] = "%d of %d" % (step.step, total) if total > 1 else ""
     if detail:
         row["lines"] = [{"id": l.id, "fg_code": l.fg_code, "item_name": l.item_name,
                          "description": l.description, "qty": l.qty, "uom": l.uom,
@@ -4930,6 +4942,8 @@ def erp_wo_submit(wo_id: int, request: Request, body: dict = None,
     """
     client = require_workorder_access(request, db)
     wo = work_order_or_404(db, client.id, wo_id)
+    if (wo.approval_status or "") == "approved":
+        return {"ok": True, "status": "approved", "chain": [], "message": wo.number + " is already approved."}
     if not db.query(models.DBBomLine).filter(
             models.DBBomLine.work_order_id == wo.id).count():
         raise HTTPException(
@@ -6309,18 +6323,26 @@ def erp_place_order(wo_id: int, request: Request, db: Session = Depends(get_db))
     """
     client = require_workorder_access(request, db)
     wo = work_order_or_404(db, client.id, wo_id)
-    if wo.status != "Draft":
+    if wo.status not in ("Draft", WO_REJECTED):
         raise HTTPException(409, wo.number + " is already " + (wo.status or "").lower())
     if not db.query(models.DBWorkOrderLine).filter(
             models.DBWorkOrderLine.work_order_id == wo.id).count():
         raise HTTPException(409, "There is nothing on this order to place.")
-    wo.status = "Placed"
-    log_audit(db, client.id, "work_order_placed", "work_order", wo.id, wo.number,
-              "Order placed, value %s" % wo.total_value, request)
-    db.commit()
+    # Committing prices to a client is signed off like every other order:
+    # placing it sends it up the approval route, and it is placed when the
+    # last signature is on. The owner placing their own is approved as placed.
+    result = erp_wo_submit(wo_id, request, None, db)
     db.refresh(wo)
-    return {"ok": True, "work_order": work_order_to_dict(db, wo),
-            "message": wo.number + " placed."}
+    if (wo.approval_status or "") == "approved":
+        log_audit(db, client.id, "work_order_placed", "work_order", wo.id, wo.number,
+                  "Order placed, value %s" % wo.total_value, request)
+        db.commit()
+        message = wo.number + " placed."
+    else:
+        message = "%s sent for approval%s. It is placed once approved." % (
+            wo.number, (" - with " + work_order_to_dict(db, wo)["waiting_on"]) if work_order_to_dict(db, wo)["waiting_on"] else "")
+    return {"ok": True, "work_order": work_order_to_dict(db, wo), "message": message,
+            "approval": result if isinstance(result, dict) else {}}
 
 
 @app.get("/api/erp/inquiry")
@@ -6377,9 +6399,7 @@ def erp_md_approval(wo_id: int, body: MDDecision, request: Request,
             models.DBBomLine.work_order_id == wo.id).count():
         raise HTTPException(
             409, "Allocate the budget first - there is no cost to approve against.")
-    if wo.status == "Draft":
-        raise HTTPException(409, "Place the order before approving it.")
-
+    # Approving is what places an order, so a draft may be signed off directly.
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     wo.approval_status = "approved" if body.approve else "rejected"
     wo.current_approval_step = 0

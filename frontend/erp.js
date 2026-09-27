@@ -425,27 +425,34 @@ async function loadWorkOrders() {
            nothing to measure. Placing is the step that makes it real, and
            it belongs where the order is. Budget and approval stay as the
            governance path for anyone who wants it, not as a gate. */
-        var action;
-        if (w.status === 'Draft') {
-            action = '<button class="btn btn-sm btn-primary" onclick="placeWorkOrder(' + w.id +
-                ')" title="Commit these prices. The order can then be measured and billed.">Place order</button>';
-            action += ' <button class="btn btn-sm btn-outline" onclick="startBomBuilder(' + w.id + ')">' +
-                (w.budgeted ? 'Budget' : 'Allocate budget') + '</button>';
-        } else {
+        /* The one thing this order needs next. A client order is committed
+           only once it is approved: placing it sends it up the route, the
+           row says whose desk it is on, and it is measured after that. */
+        var action = '', budgetBtn = '<button class="btn btn-sm btn-outline" onclick="startBomBuilder(' + w.id + ')">' +
+            (w.budgeted ? 'Budget' : 'Allocate budget') + '</button>';
+        var ap = w.approval_status || 'none';
+        if (ap === 'approved') {
             action = '<button class="btn btn-sm btn-primary" onclick="showView(&quot;measurement-view&quot;)" ' +
-                'title="Record what has been built against this order">Measure</button>';
-            action += ' <button class="btn btn-sm btn-outline" onclick="startBomBuilder(' + w.id + ')">' +
-                (w.budgeted ? 'Budget' : 'Allocate budget') + '</button>';
-        }
-        if (w.budgeted && (w.approval_status === 'none' || w.approval_status === 'rejected')) {
-            action += ' <button class="btn btn-sm btn-outline" onclick="submitWorkOrder(' + w.id +
-                ')" title="Send the priced order and its budget up for sign-off">Send for approval</button>';
-        }
-        // Once it has a budget, the budget already says what has to be bought.
-        if (w.budgeted) {
-            action += ' <button class="btn btn-sm btn-outline" onclick="showRequisition(' +
+                'title="Record what has been built against this order">Measure</button>' + budgetBtn;
+            if (w.budgeted) action += '<button class="btn btn-sm btn-outline" onclick="showRequisition(' +
                 w.id + ')" title="What still has to be bought for this order">Material</button>';
+        } else if (ap === 'pending') {
+            action = '<button class="btn btn-sm btn-outline" onclick="showView(&quot;approvals-view&quot;)" ' +
+                'title="Approve or send it back from Approvals">Open in Approvals</button>' + budgetBtn;
+        } else if (!w.budgeted) {
+            action = '<button class="btn btn-sm btn-primary" onclick="startBomBuilder(' + w.id + ')" ' +
+                'title="Its cost has to be known before it can be approved">Allocate budget</button>';
+        } else {
+            action = '<button class="btn btn-sm btn-primary" onclick="placeWorkOrder(' + w.id +
+                ')" title="Sends it for approval. It is placed once approved.">' +
+                (ap === 'rejected' ? 'Send again' : 'Place order') + '</button>' + budgetBtn;
         }
+        var stage = ap === 'approved' ? '<div style="font-size:0.72rem;color:var(--success-color);margin-top:3px;">Approved - placed</div>'
+            : ap === 'pending' ? '<div style="font-size:0.72rem;color:var(--text-secondary);margin-top:3px;">With <strong>' +
+                esc(w.waiting_on || 'the approver') + '</strong>' + (w.waiting_step ? ' (step ' + esc(w.waiting_step) + ')' : '') + '</div>'
+            : ap === 'rejected' ? ''
+            : '<div style="font-size:0.72rem;color:var(--text-secondary);margin-top:3px;">' +
+                (w.budgeted ? 'Not sent for approval' : 'Budget, then approval') + '</div>';
         // The papers belong with the order's number; the buttons are for what happens next.
         var f = w.files || {};
         var papers = '<div style="font-size:0.75rem;margin-top:4px;white-space:nowrap;">' +
@@ -466,11 +473,11 @@ async function loadWorkOrders() {
                 (w.budgeted ? formatCurrency(w.margin) +
                     '<div style="font-size:0.72rem;font-weight:400;color:var(--text-secondary);">' +
                     w.margin_percent + '%</div>' : '—') + '</td>' +
-            '<td>' + statusPill(w.status, workOrderTone(w)) +
+            '<td>' + statusPill(w.status, workOrderTone(w)) + stage +
                 (w.rejection_reason ? '<div style="font-size:0.72rem;color:var(--text-secondary);">' +
                     esc(w.rejection_reason) + '</div>' : '') + '</td>' +
             '<td><div style="display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end;max-width:240px;margin-left:auto;">' +
-                action.replace(/> </g, '><') + '</div></td></tr>';
+                action + '</div></td></tr>';
     }).join('') : '<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text-secondary);">' +
         'No work orders yet.</td></tr>';
 }
@@ -661,7 +668,9 @@ async function placeWorkOrder(id) {
     });
     var out = await res.json();
     if (!res.ok) { showToast(out.detail || 'Could not place it', 'error'); return; }
-    showToast(out.message + ' It can now be measured and billed.', 'success');
+    var approved = out.work_order && out.work_order.approval_status === 'approved';
+    showToast(out.message + (approved ? ' It can now be measured and billed.' : ''), 'success');
     loadWorkOrders();
+    if (typeof refreshApprovalBadge === 'function') refreshApprovalBadge();
 }
 window.placeWorkOrder = placeWorkOrder;
