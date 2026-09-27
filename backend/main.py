@@ -5430,7 +5430,15 @@ def start_approval(db, client_id, doc, entity_type, submitted_by, request, actor
             return finish_approval(db, client_id, doc, entity_type, submitted_by, request, actor,
                                    "Approved: raised by the owner.")
     else:
-        chain = build_approval_chain(submitted_by, client_id, db)
+        # Bills and purchase orders climb the hierarchy too: the manager set
+        # for the raiser, then one approver at each rank above that may
+        # approve them. The owner is asked only when nobody on the staff is
+        # above - not as a shortcut past the people who are.
+        if raised_by_owner(db, client_id, submitted_by):
+            return finish_approval(db, client_id, doc, entity_type, submitted_by, request, actor,
+                                   "Approved: raised by the owner.")
+        chain = hierarchy_chain(db, client_id, submitted_by, APPROVE_RIGHT.get(entity_type, "bills.approve"),
+                                getattr(doc, "job_id", None), owner_signs=False)
     if not chain:
         # Nobody set as this person's manager - which is most people, since
         # nobody fills that field in. Rather than wave the paper through, it

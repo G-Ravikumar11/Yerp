@@ -137,3 +137,18 @@ def test_a_draft_is_seen_by_its_maker_and_those_above_not_below(tenant, portal):
     assert tenant.post("/api/wo/orders/%d/submit" % owners["id"], json={}).status_code == 200
     sign_in(portal, qs)
     assert portal.get("/api/wo/orders/%d" % owners["id"]).status_code == 200
+
+
+def test_a_bill_climbs_every_rank_before_it_is_approved(tenant, portal):
+    cm = person(tenant, "construction")
+    pm = person(tenant, "project_manager")
+    head = person(tenant, "head_projects")
+    hand = person(tenant, "staff")
+    sign_in(portal, hand)
+    res = portal.post("/api/employee/bills", json={"vendor_name": "Hardware shop", "amount": 5000.0})
+    assert res.json()["status"] == "pending" and res.json()["chain_length"] == 3
+    for who in (cm, pm, head):
+        sign_in(portal, who)
+        item = [i for i in inbox(portal) if i["kind"] == "step"][0]
+        out = decide(portal, item).json()
+    assert out["status"] == "approved"
