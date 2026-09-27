@@ -656,7 +656,7 @@ function woBudgetBar(b) {
     var tone = b.over ? 'var(--danger-color)' : 'var(--primary-color)';
     return '<div style="padding:10px 0;border-bottom:1px solid var(--border-color);">' +
         '<div style="display:flex;justify-content:space-between;gap:10px;font-size:0.82rem;">' +
-            '<span style="font-weight:600;">' + esc(b.name || b.code || 'Cost centre') +
+            '<span style="font-weight:600;">' + esc(b.name || b.code || 'Budget head') +
             (b.code && b.name ? ' <span style="font-family:monospace;font-weight:400;' +
                 'color:var(--text-secondary);">' + esc(b.code) + '</span>' : '') + '</span>' +
             '<span style="color:' + (b.over ? 'var(--danger-color)' : 'var(--text-secondary)') + ';">' +
@@ -698,7 +698,7 @@ window.woEditLetterhead = woEditLetterhead;
 function woChargeAll() {
     var sel = document.getElementById('wo-charge-all');
     var id = sel ? parseInt(sel.value) : 0;
-    if (!id) { showToast('Choose the cost centre', 'error'); return; }
+    if (!id) { showToast('Choose the budget head', 'error'); return; }
     var n = 0;
     WO.boq.forEach(function (l) {
         if (!l.is_header && !l.budget_id) { l.budget_id = id; n++; }
@@ -722,42 +722,113 @@ function woBudgetPanel() {
     var rows = woBudgetRows();
     if (!rows.length) {
         return '<p style="font-size:0.8rem;color:var(--warning-color);padding:8px 0;">' +
-            'Nothing allocated on this project yet. Every work order spends a budget: add a cost ' +
-            'centre with the amount allocated, then charge the schedule to it.</p>' +
-            '<button class="btn btn-sm btn-outline" onclick="woAddBudget()">+ Cost centre</button>';
+            'No budget set on this project yet. Every work order is charged to a budget head - the amount ' +
+            'set aside for that part of the work - so the approver can see what it uses and what is left.</p>' +
+            '<button class="btn btn-sm btn-primary" onclick="woAddBudget()">Set the budget</button>';
     }
     var loose = woUncharged();
     return rows.map(woBudgetBar).join('') +
         (loose ? '<div style="margin-top:10px;padding:8px 10px;border-radius:6px;background:rgba(217,119,6,0.08);' +
-            'font-size:0.8rem;">' + loose + ' line' + (loose === 1 ? ' is' : 's are') + ' not charged to a cost centre. ' +
+            'font-size:0.8rem;">' + loose + ' line' + (loose === 1 ? ' is' : 's are') + ' not charged to a budget head. ' +
             'Every line has to be before the order can go for approval.' +
             '<div style="display:flex;gap:6px;margin-top:6px;"><select id="wo-charge-all" class="form-control" style="flex:1;">' +
             rows.map(function (b) { return '<option value="' + b.id + '">' + esc(b.name || b.code) + '</option>'; }).join('') +
             '</select><button class="btn btn-sm btn-primary" onclick="woChargeAll()">Charge them</button></div></div>' : '') +
         '<div style="margin-top:10px;"><button class="btn btn-sm btn-outline" ' +
-        'onclick="woAddBudget()">+ Cost centre</button></div>';
+        'onclick="woAddBudget()">+ Another budget head</button></div>';
 }
 
-async function woAddBudget() {
+/* A budget head, set up in a form that says what it is - not two bare
+   browser prompts asking for "a cost centre", which nobody could answer. */
+function woAddBudget() {
     var o = WO.order || {};
-    if (!o.job_id) { showToast('Choose a project first', 'error'); return; }
-    var name = prompt('What is the cost centre called? (e.g. Civil - substructure)');
-    if (name === null || !name.trim()) return;
-    var amount = prompt('How much is allocated to it?');
-    if (amount === null) return;
-    var res = await fetch('/api/wo/projects/' + o.job_id + '/budgets', {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(),
-                               allocated_amount: parseFloat(amount) || 0,
-                               department: o.department || '' }),
-    });
-    var out = await res.json();
-    if (!res.ok) { showToast(out.detail || 'Could not add it', 'error'); return; }
-    showToast(out.message, 'success');
-    await woReload();
+    if (!o.job_id) { showToast('Choose the project on step 1 first', 'error'); return; }
+    var loose = woUncharged();
+    var value = WO.boq.reduce(function (t, l) { return t + (l.is_header ? 0 : woLineAmount(l)); }, 0);
+    var modal = document.getElementById('wo-budget-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'wo-budget-modal';
+        modal.className = 'modal-overlay';
+        modal.style.cssText = 'display:none;z-index:10040;';
+        document.body.appendChild(modal);
+    }
+    modal.innerHTML = '<div class="modal" style="max-width:560px;width:96%;">' +
+        '<div class="modal-header"><h3>Set a budget for this project</h3>' +
+        '<button class="modal-close" onclick="woBudgetClose()">&times;</button></div>' +
+        '<div class="modal-body">' +
+        '<p style="font-size:0.84rem;margin-bottom:10px;">A <b>budget head</b> is an amount of money set aside on the ' +
+        'project for one part of the work - for example <i>Civil works - Rs. 25,00,000</i> or <i>Shuttering labour - ' +
+        'Rs. 8,00,000</i>. Every work order is charged to one, so whoever approves it can see how much of that money the ' +
+        'order uses and how much is left.</p>' +
+        '<p style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:14px;">Set it once per project; later ' +
+        'work orders on the same project just pick it.</p>' +
+        '<div class="form-group"><label>What is it for? *</label>' +
+        '<input class="form-control" id="wo-bh-name" value="' + esc((o.department || o.work_type || 'Civil') + ' works') + '"></div>' +
+        '<div class="form-group"><label>How much is set aside for it (Rs.)? *</label>' +
+        '<input class="form-control" id="wo-bh-amount" type="number" min="0" step="1000" placeholder="e.g. 2500000">' +
+        '<p style="font-size:0.75rem;color:var(--text-secondary);margin-top:4px;">The total you plan to spend on this part ' +
+        'of the project - not just this order. This order alone is ' + formatCurrency(value) + '.</p></div>' +
+        (loose ? '<label style="display:flex;gap:8px;align-items:center;font-size:0.84rem;">' +
+            '<input type="checkbox" id="wo-bh-charge" checked> Charge this order&#39;s ' + loose + ' line' +
+            (loose === 1 ? '' : 's') + ' to it</label>' : '') +
+        '</div><div class="modal-footer"><button class="btn btn-outline" onclick="woBudgetClose()">Cancel</button>' +
+        '<button class="btn btn-primary" id="wo-bh-save" onclick="woBudgetSave()">Save budget head</button></div></div>';
+    modal.style.display = 'flex';
+    var amount = document.getElementById('wo-bh-amount');
+    if (amount) amount.focus();
 }
 window.woAddBudget = woAddBudget;
+
+function woBudgetClose() {
+    var modal = document.getElementById('wo-budget-modal');
+    if (modal) modal.style.display = 'none';
+}
+window.woBudgetClose = woBudgetClose;
+
+async function woBudgetSave() {
+    var o = WO.order || {};
+    var name = (document.getElementById('wo-bh-name').value || '').trim();
+    var amount = parseFloat(document.getElementById('wo-bh-amount').value) || 0;
+    if (!name) { showToast('Say what the budget is for', 'error'); return; }
+    if (amount <= 0) { showToast('Enter the amount set aside for it', 'error'); return; }
+    var charge = document.getElementById('wo-bh-charge');
+    var btn = document.getElementById('wo-bh-save');
+    btn.disabled = true;
+    try {
+        var res = await fetch('/api/wo/projects/' + o.job_id + '/budgets', {
+            method: 'POST', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name, allocated_amount: amount, department: o.department || '' }),
+        });
+        var out = await res.json();
+        if (!res.ok) { showToast(out.detail || 'Could not save it', 'error'); return; }
+        woBudgetClose();
+        if (charge && charge.checked && WO.id) {
+            // Charge the lines and save the schedule as it stands on screen.
+            WO.boq.forEach(function (l) { if (!l.is_header && !l.budget_id) l.budget_id = out.id; });
+            var saved = await fetch('/api/wo/orders/' + WO.id + '/boq', {
+                method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lines: WO.boq.map(function (l) {
+                    return { activity_no: l.activity_no, item_code: l.item_code, item_description: l.item_description,
+                             technical_spec: l.technical_spec || '', uom: l.uom,
+                             quantity: parseFloat(l.quantity) || 0, unit_rate: parseFloat(l.unit_rate) || 0,
+                             is_header: !!l.is_header, tolerance_percent: parseFloat(l.tolerance_percent) || 0,
+                             budget_id: l.budget_id || null }; }) }),
+            });
+            var so = await saved.json();
+            if (saved.ok) { WO.order = so.order; WO.boq = so.order.items.slice(); }
+            showToast(name + ' set up, and this order is charged to it', 'success');
+            renderWizard();
+            return;
+        }
+        showToast(out.message || 'Saved', 'success');
+        await woReload();
+    } finally {
+        btn.disabled = false;
+    }
+}
+window.woBudgetSave = woBudgetSave;
 
 async function woReload() {
     if (!WO.id) { renderWizard(); return; }
@@ -837,7 +908,7 @@ function stepBoq() {
             (showCc ? '<td><select class="form-control" style="min-width:130px;" ' +
                 'onchange="woBoqSet(' + i + ',\'budget_id\',this.value)"' + dis + '>' +
                 options(budgets, l.budget_id, 'id', function (b) {
-                    return b.name || b.code || 'Cost centre'; }) + '</select></td>' : '') +
+                    return b.name || b.code || 'Budget head'; }) + '</select></td>' : '') +
             '<td id="wo-amt-' + i + '" class="text-right" style="font-weight:600;white-space:nowrap;">' +
                 formatCurrency(woLineAmount(l)) + '</td>' +
             '<td class="text-right" style="white-space:nowrap;">' + (locked ? '' :
@@ -855,7 +926,7 @@ function stepBoq() {
         '<div>' + (locked ? '' : woImportPanel()) +
         '<div class="table-responsive"><table class="data-table">' +
         '<thead><tr><th>Activity</th><th>Item code</th><th>Description</th><th>UOM</th>' +
-        '<th class="text-right">Qty</th><th class="text-right">Rate</th>' + (showCc ? '<th>Cost centre</th>' : '') +
+        '<th class="text-right">Qty</th><th class="text-right">Rate</th>' + (showCc ? '<th>Budget head</th>' : '') +
         '<th class="text-right">Amount</th><th></th></tr></thead>' +
         '<tbody>' + (rows || '<tr><td colspan="' + (span + 2) + '" style="text-align:center;padding:24px;' +
             'color:var(--text-secondary);">Nothing scheduled yet.</td></tr>') + '</tbody>' +

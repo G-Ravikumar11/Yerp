@@ -19653,14 +19653,14 @@ def wo_budget_missing(db, order):
         models.DBProjectBudget.job_id == order.job_id,
         models.DBProjectBudget.is_active == True).all()}  # noqa: E712
     if not heads:
-        return ["a budget on the project - add a cost centre with the amount allocated to it"]
+        return ["a budget on the project - press Set the budget on the schedule step and say how much is set aside"]
     lines = [i for i in db.query(models.DBSubcontractItem).filter(
         models.DBSubcontractItem.order_id == order.id).all()
         if not i.is_header and money(i.total_amount or 0) > 0]
     uncharged = [i for i in lines if not i.budget_id or i.budget_id not in heads]
     out = []
     if uncharged:
-        out.append("a cost centre on %d line%s of the schedule" % (
+        out.append("a budget head on %d line%s of the schedule - charge them on the schedule step" % (
             len(uncharged), "" if len(uncharged) == 1 else "s"))
     unset = sorted({heads[i.budget_id].name or heads[i.budget_id].code or "a cost centre"
                     for i in lines if i.budget_id in heads and money(heads[i.budget_id].allocated_amount or 0) <= 0})
