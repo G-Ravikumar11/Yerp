@@ -18535,6 +18535,28 @@ class ContractorIn(BaseModel):
     bank_account: Optional[str] = ""
     bank_ifsc: Optional[str] = ""
     address: Optional[str] = ""
+    # The rest of the Sub Contractor Registration Form. None on an update
+    # means "not on this form" - the quick-add from a work order sends only
+    # the name and tax numbers, and must not blank the rest.
+    registered_project: Optional[str] = None
+    joining_date: Optional[str] = None
+    pin_code: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    nature_of_work: Optional[str] = None
+    entity_type: Optional[str] = None
+    aadhaar: Optional[str] = None
+    bank_branch: Optional[str] = None
+    documents: Optional[List[str]] = None
+    declaration_signed: Optional[bool] = None
+
+
+# The documents the registration form asks for, in its order.
+REGISTRATION_DOCUMENTS = (("gst", "A) GST Certificate"), ("pan", "B) PAN Card"), ("aadhaar", "C) Aadhar Card"),
+                          ("photos", "D) PassPort Size Photos 2Nos"), ("cheque", "E) Cancelled Cheque"),
+                          ("esi_pf", "F) ESI & PF Reg (if any)"))
+REGISTRATION_FIELDS = ("registered_project", "joining_date", "pin_code", "city", "state", "nature_of_work",
+                       "entity_type", "aadhaar", "bank_branch")
 
 
 def ensure_company_unit(db, client):
@@ -18598,8 +18620,27 @@ def wo_create_business_unit(body: BusinessUnitIn, request: Request,
     return {"id": unit.id, "name": unit.name, "message": name + " added."}
 
 
+def contractor_dict(c):
+    docs = [d for d in (c.documents or "").split(",") if d]
+    return {"id": c.id, "company_name": c.company_name or "",
+            "vendor_code": c.vendor_code or "", "contact_person": c.contact_person or "",
+            "email": c.email or "", "phone_number": c.phone_number or "",
+            "pan": c.pan or "", "gst_number": c.gst_number or "",
+            "bank_name": c.bank_name or "", "bank_account": c.bank_account or "",
+            "bank_ifsc": c.bank_ifsc or "", "address": c.address or "",
+            "registered_project": c.registered_project or "", "joining_date": c.joining_date or "",
+            "pin_code": c.pin_code or "", "city": c.city or "", "state": c.state or "",
+            "nature_of_work": c.nature_of_work or "", "entity_type": c.entity_type or "",
+            "aadhaar": c.aadhaar or "", "bank_branch": c.bank_branch or "",
+            "documents": docs, "declaration_signed": bool(c.declaration_signed),
+            "registration_status": c.registration_status or "APPROVED",
+            "registered_by_name": c.registered_by_name or "", "approved_by_name": c.approved_by_name or "",
+            "approved_at": c.approved_at or "", "rejection_reason": c.rejection_reason or "",
+            "created_at": c.created_at or "", "is_active": c.is_active is not False}
+
+
 @app.get("/api/wo/contractors")
-def wo_list_contractors(request: Request, q: str = "", db: Session = Depends(get_db)):
+def wo_list_contractors(request: Request, q: str = "", status: str = "", db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     query = db.query(models.DBContractor).filter(
         models.DBContractor.client_id == client.id)
@@ -18607,22 +18648,65 @@ def wo_list_contractors(request: Request, q: str = "", db: Session = Depends(get
         query = query.filter(or_(
             models.DBContractor.company_name.ilike("%" + q + "%"),
             models.DBContractor.vendor_code.ilike("%" + q + "%"),
+            models.DBContractor.nature_of_work.ilike("%" + q + "%"),
             models.DBContractor.gst_number.ilike("%" + q + "%")))
-    rows = query.order_by(models.DBContractor.company_name).limit(500).all()
-    return {"contractors": [
-        {"id": c.id, "company_name": c.company_name or "",
-         "vendor_code": c.vendor_code or "", "contact_person": c.contact_person or "",
-         "email": c.email or "", "phone_number": c.phone_number or "",
-         "pan": c.pan or "", "gst_number": c.gst_number or "",
-         "bank_name": c.bank_name or "", "bank_account": c.bank_account or "",
-         "bank_ifsc": c.bank_ifsc or "", "address": c.address or ""}
-        for c in rows]}
+    if status:
+        query = query.filter(models.DBContractor.registration_status == status.upper())
+    rows = query.order_by(models.DBContractor.company_name).limit(1000).all()
+    return {"contractors": [contractor_dict(c) for c in rows],
+            "summary": {"registered": len([c for c in rows if (c.registration_status or "APPROVED") == "APPROVED"]),
+                        "pending": len([c for c in rows if c.registration_status == "PENDING"]),
+                        "sent_back": len([c for c in rows if c.registration_status == "REJECTED"])}}
+
+
+def next_vendor_code(db, client_id):
+    """The next number in the series the vendor codes already run in - IV0001,
+    IV0002 as the registration forms are numbered - or the prefix set in
+    Settings. A code can be referred to on a site instruction without anybody
+    having to look the name up."""
+    codes = [(c or "").strip().upper() for (c,) in db.query(models.DBContractor.vendor_code).filter(
+        models.DBContractor.client_id == client_id).all() if c]
+    prefix = (tenant_setting(db, client_id, "vendor_code_prefix", "") or "").strip().upper()
+    if not prefix:
+        counts = {}
+        for code in codes:
+            m = re.match(r"^([A-Z]+-?)0*(\d+)$", code)
+            if m:
+                counts[m.group(1)] = counts.get(m.group(1), 0) + 1
+        prefix = max(sorted(counts), key=lambda k: counts[k]) if counts else "IV"
+    highest = 0
+    for code in codes:
+        m = re.match(r"^%s0*(\d+)$" % re.escape(prefix), code)
+        if m:
+            highest = max(highest, int(m.group(1)))
+    return "%s%04d" % (prefix, highest + 1)
+
+
+def contractor_form_fields(con, body, fill_blanks_only=False):
+    """The registration form's own boxes from a request onto the record."""
+    for key in REGISTRATION_FIELDS:
+        v = getattr(body, key, None)
+        if v is None:
+            continue
+        v = str(v).strip()
+        if key == "aadhaar":
+            v = re.sub(r"\s", "", v)
+            if v and not re.match(r"^\d{12}$", v):
+                raise HTTPException(400, "An Aadhaar number is twelve digits.")
+        if key == "pin_code" and v and not re.match(r"^\d{6}$", v):
+            raise HTTPException(400, "A PIN code is six digits.")
+        setattr(con, key, v[:300])
+    if body.documents is not None:
+        known = [k for k, _ in REGISTRATION_DOCUMENTS]
+        con.documents = ",".join(k for k in known if k in set(body.documents or []))
+    if body.declaration_signed is not None:
+        con.declaration_signed = bool(body.declaration_signed)
 
 
 @app.post("/api/wo/contractors")
 def wo_create_contractor(body: ContractorIn, request: Request,
                          db: Session = Depends(get_db)):
-    client = require_items_access(request, db, "workorders.manage")
+    client, actor_id, actor_name = wo_actor(request, db, ("workorders.manage", "billing.manage"))
     name = (body.company_name or "").strip()
     if not name:
         raise HTTPException(400, "The contractor needs a company name")
@@ -18633,17 +18717,16 @@ def wo_create_contractor(body: ContractorIn, request: Request,
         raise HTTPException(409, "'" + name + "' is already on the contractor list")
 
     code = (body.vendor_code or "").strip().upper()
-    if not code:
-        # Numbered in one series so a contractor can be referred to by code on
-        # a site instruction without anybody having to look the name up.
-        highest = 0
-        for (existing,) in db.query(models.DBContractor.vendor_code).filter(
-                models.DBContractor.client_id == client.id).all():
-            match = re.match(r"^SC-0*(\d+)$", (existing or "").upper())
-            if match:
-                highest = max(highest, int(match.group(1)))
-        code = "SC-%04d" % (highest + 1)
+    if code and db.query(models.DBContractor).filter(
+            models.DBContractor.client_id == client.id,
+            sqlfunc.upper(models.DBContractor.vendor_code) == code).first():
+        raise HTTPException(409, "Vendor code %s is already taken." % code)
+    code = code or next_vendor_code(db, client.id)
 
+    # Registered by the owner, it is signed off as it is made. Registered by
+    # somebody on site, it waits for someone with the right to approve it.
+    owner = actor_id is None or raised_by_owner(db, client.id, actor_id)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     con = models.DBContractor(
         client_id=client.id, company_name=name, vendor_code=code,
         contact_person=(body.contact_person or "").strip(),
@@ -18651,15 +18734,26 @@ def wo_create_contractor(body: ContractorIn, request: Request,
         pan=(body.pan or "").strip().upper(),
         gst_number=(body.gst_number or "").strip().upper(),
         bank_name=(body.bank_name or "").strip(),
-        bank_account=(body.bank_account or "").strip(),
+        bank_account=re.sub(r"\s", "", body.bank_account or ""),
         bank_ifsc=(body.bank_ifsc or "").strip().upper(),
-        address=(body.address or "").strip())
+        address=(body.address or "").strip(),
+        registration_status="APPROVED" if owner else "PENDING",
+        registered_by=actor_id, registered_by_name=actor_name,
+        approved_by_name=(owner_label(db, client.id) if actor_id is None else actor_name) if owner else "",
+        approved_at=now if owner else "")
+    contractor_form_fields(con, body)
     db.add(con)
-    log_audit(db, client.id, "contractor_created", "contractor", None, name, "", request)
+    log_audit(db, client.id, "contractor_created", "contractor", None, name, code, request)
+    db.flush()
+    if not owner:
+        notify(db, client.id, "contractor_registered", "%s (%s) registered - waiting for approval" % (name, code),
+               "Registered by %s. Approve the registration form before an order is issued to them." % actor_name,
+               view="approvals-view", ref_type="contractor", ref_id=con.id, severity="action")
     db.commit()
     db.refresh(con)
-    return {"id": con.id, "vendor_code": con.vendor_code,
-            "company_name": con.company_name, "message": con.vendor_code + " added."}
+    return {"id": con.id, "vendor_code": con.vendor_code, "company_name": con.company_name,
+            "registration_status": con.registration_status,
+            "message": con.vendor_code + (" added." if owner else " registered - it now waits for approval.")}
 
 
 # --- The kinds of work an order can be raised for --------------------------
@@ -19801,6 +19895,17 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
                 403, "You raised this order, so somebody else has to approve it. "
                      "It is waiting with: " + ", ".join(
                          wo_pending_with(db, client.id, actor_id)) + ".")
+        # An order is issued only to a sub contractor whose registration form
+        # has been signed off - otherwise the gang is taken on by whoever
+        # typed their name, PAN and bank account.
+        con = db.query(models.DBContractor).filter(models.DBContractor.id == order.contractor_id).first() \
+            if order.contractor_id else None
+        if con is not None and (con.registration_status or "APPROVED") != "APPROVED":
+            raise HTTPException(
+                409, "%s (%s) is not yet a registered sub contractor - the registration form is %s. "
+                     "Approve it in Approvals first." % (
+                         con.company_name, con.vendor_code or "no code",
+                         "waiting for approval" if con.registration_status == "PENDING" else "sent back"))
         # The budget is checked here and nowhere earlier. A draft may be priced
         # at any figure - finding out it is too big is what pricing it is for -
         # but approving it is the moment the business is committed, so it is
@@ -20980,10 +21085,14 @@ class DimensionIn(BaseModel):
     """One line of the book: what, how many, how long, how wide, how deep."""
     particulars: Optional[str] = ""
     nos: Optional[float] = None
+    nom: Optional[float] = None
     length: Optional[float] = None
     breadth: Optional[float] = None
     depth: Optional[float] = None
     deduct: Optional[bool] = False
+    # A heading line - "Living Room", "Deductions" - that groups the lines
+    # under it and measures nothing.
+    is_heading: Optional[bool] = False
 
 
 class MeasurementIn(BaseModel):
@@ -21007,7 +21116,9 @@ def dimension_quantity(d):
     a line that measures nothing, and it is refused below rather than
     silently multiplied away.
     """
-    given = [v for v in (d.length, d.breadth, d.depth) if v is not None]
+    if getattr(d, "is_heading", False):
+        return 0.0
+    given = [v for v in (getattr(d, "nom", None), d.length, d.breadth, d.depth) if v is not None]
     qty = float(d.nos) if d.nos is not None else 1.0
     for v in given:
         qty *= float(v)
@@ -21023,9 +21134,13 @@ def dimension_total(dims):
     """
     total = 0.0
     for index, d in enumerate(dims or []):
-        if all(v is None for v in (d.nos, d.length, d.breadth, d.depth)):
+        if getattr(d, "is_heading", False):
+            if not (d.particulars or "").strip():
+                raise HTTPException(400, "Heading line %d has no words on it." % (index + 1))
+            continue
+        if all(v is None for v in (d.nos, getattr(d, "nom", None), d.length, d.breadth, d.depth)):
             raise HTTPException(400, "Dimension line %d has no figures on it." % (index + 1))
-        for name, v in (("nos", d.nos), ("length", d.length),
+        for name, v in (("nos", d.nos), ("NoM", getattr(d, "nom", None)), ("length", d.length),
                         ("breadth", d.breadth), ("depth", d.depth)):
             if v is not None and v < 0:
                 raise HTTPException(400, "Dimension line %d: %s cannot be negative. "
@@ -21042,12 +21157,16 @@ def write_dimensions(db, client_id, dims, measurement_id=None, sub_measurement_i
     """The dimension lines, written against the entry they belong to."""
     for index, d in enumerate(dims or []):
         qty = dimension_quantity(d)
+        heading = bool(getattr(d, "is_heading", False))
         db.add(models.DBMeasurementDimension(
             client_id=client_id, measurement_id=measurement_id,
             sub_measurement_id=sub_measurement_id,
-            particulars=(d.particulars or "").strip(), nos=d.nos, length=d.length,
-            breadth=d.breadth, depth=d.depth, deduct=bool(d.deduct),
-            quantity=-qty if d.deduct else qty, display_order=index))
+            particulars=(d.particulars or "").strip(),
+            nos=None if heading else d.nos, nom=None if heading else getattr(d, "nom", None),
+            length=None if heading else d.length, breadth=None if heading else d.breadth,
+            depth=None if heading else d.depth, deduct=bool(d.deduct) and not heading,
+            is_heading=heading, quantity=-qty if (d.deduct and not heading) else qty,
+            display_order=index))
 
 
 def dimensions_for(db, entry_ids, column):
@@ -21060,9 +21179,9 @@ def dimensions_for(db, entry_ids, column):
                 models.DBMeasurementDimension.display_order,
                 models.DBMeasurementDimension.id).all():
         out.setdefault(getattr(d, column.key), []).append({
-            "particulars": d.particulars or "", "nos": d.nos, "length": d.length,
-            "breadth": d.breadth, "depth": d.depth, "deduct": bool(d.deduct),
-            "quantity": d.quantity or 0,
+            "particulars": d.particulars or "", "nos": d.nos, "nom": getattr(d, "nom", None),
+            "length": d.length, "breadth": d.breadth, "depth": d.depth, "deduct": bool(d.deduct),
+            "is_heading": bool(getattr(d, "is_heading", False)), "quantity": d.quantity or 0,
         })
     return out
 
@@ -24971,35 +25090,63 @@ def sub_bill_or_404(db, client_id, bill_id):
     return row
 
 
-def recost_sub_bill(db, bill):
-    """Retention off the work, GST on the remainder, TDS off the lot.
+def rupees(val) -> float:
+    """Whole rupees, a half rounded up - Excel's ROUND(x, 0), which is how the
+    certificate of payment has always rounded its figures."""
+    try:
+        d = Decimal(str(val or 0))
+    except (InvalidOperation, ValueError):
+        return 0.0
+    return float(d.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
-    Same order as the client side and for the same reason - it is the order
-    the deductions are actually made in, and getting it wrong is real money
-    on a large bill.
+
+def recost_sub_bill(db, bill):
+    """The Certificate of Payment's arithmetic, row for row.
+
+    4.01 is the work measured in this bill. Recoveries in debit notes (4.04)
+    come off it to give the gross total, and GST is charged on that gross
+    (4.05 to 4.08) - the gang's invoice is for the whole of the work; what we
+    hold back is not a discount on it. Then the deductions: the advance and
+    the material or other recoveries (5.01, 5.02), retention (5.03) and TDS
+    (5.04), both on the value of the work, and the labour cess where the
+    order carries one. Every figure after the work itself is in whole
+    rupees, as the certificate rounds them.
     """
     lines = db.query(models.DBSubBillLine).filter(
         models.DBSubBillLine.sub_bill_id == bill.id).all()
     this_bill = money(sum(l.amount or 0 for l in lines))
     bill.this_bill = this_bill
     bill.gross_to_date = money((bill.previously_billed or 0) + this_bill)
-    bill.retention_amount = money(this_bill * (bill.retention_percent or 0) / 100.0)
-    after = money(this_bill - bill.retention_amount -
-                  (bill.advance_recovery or 0) - (bill.other_deductions or 0))
+    bill.debit_notes = money(getattr(bill, "debit_notes", 0) or 0)
+    gross = rupees(this_bill - bill.debit_notes)
     supply = supply_state_for_job(db, bill.job_id)
     # It is the gang's supply, so it is their registration against the site
     # that decides the split - ours only when they have none on file.
     origin = contractor_state(db, bill.contractor_id) or our_state(db, bill.client_id)
-    gst = split_gst(after, bill.gst_percent or 0, origin, supply)
-    bill.gst_amount = gst["total"]
-    bill.cgst_amount, bill.sgst_amount, bill.igst_amount = gst["cgst"], gst["sgst"], gst["igst"]
+    gst = split_gst(gross, bill.gst_percent or 0, origin, supply)
+    bill.cgst_amount, bill.sgst_amount, bill.igst_amount = (
+        rupees(gst["cgst"]), rupees(gst["sgst"]), rupees(gst["igst"]))
+    bill.gst_amount = money(bill.cgst_amount + bill.sgst_amount + bill.igst_amount)
     bill.place_of_supply = supply
-    bill.tds_amount = money(this_bill * (bill.tds_percent or 0) / 100.0)
-    bill.labour_cess_amount = money(this_bill * (bill.labour_cess_percent or 0) / 100.0)
-    bill.net_payable = money(after + bill.gst_amount - bill.tds_amount
-                             - bill.labour_cess_amount)
+    bill.retention_amount = rupees(this_bill * (bill.retention_percent or 0) / 100.0)
+    bill.tds_amount = rupees(this_bill * (bill.tds_percent or 0) / 100.0)
+    bill.labour_cess_amount = rupees(this_bill * (bill.labour_cess_percent or 0) / 100.0)
+    deductions = ((bill.advance_recovery or 0) + (bill.other_deductions or 0) + bill.retention_amount
+                  + bill.tds_amount + bill.labour_cess_amount)
+    bill.net_payable = rupees(gross + bill.gst_amount - deductions)
     bill.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return bill
+
+
+def sub_bill_room(bill):
+    """What more this bill can have taken off it: the gross, less everything
+    already deducted. The GST on top is left alone - it is the gang's to pay
+    over to the government, and recovering an advance out of it leaves them
+    owing tax on money they never received."""
+    return money(rupees((bill.this_bill or 0) - (bill.debit_notes or 0))
+                 - (bill.advance_recovery or 0) - (bill.other_deductions or 0)
+                 - (bill.retention_amount or 0) - (bill.tds_amount or 0)
+                 - (bill.labour_cess_amount or 0))
 
 
 def sub_bill_dict(db, bill, detail=False):
@@ -25037,7 +25184,25 @@ def sub_bill_dict(db, bill, detail=False):
         "editable": (bill.status or "DRAFT") == "DRAFT",
         "actions": sorted(SUB_TRANSITIONS.get(bill.status or "DRAFT", {}).keys()),
         "created_at": bill.created_at or "",
+        "vendor_code": (con.vendor_code or "") if con else "",
+        "bill_date": getattr(bill, "bill_date", "") or (bill.created_at or "")[:10],
+        "work_type": getattr(bill, "work_type", "") or "",
+        "work_name": getattr(bill, "work_name", "") or "",
+        "hsn_sac": getattr(bill, "hsn_sac", "") or "",
+        "debit_notes": money(getattr(bill, "debit_notes", 0)),
+        "gross_value": rupees((bill.this_bill or 0) - (getattr(bill, "debit_notes", 0) or 0)),
+        "submitted_by_name": getattr(bill, "submitted_by_name", "") or "",
+        "submitted_at": getattr(bill, "submitted_at", "") or "",
+        "approved_by_name": getattr(bill, "approved_by_name", "") or "",
+        "accepted_by_name": getattr(bill, "accepted_by_name", "") or "",
+        "accepted_at": getattr(bill, "accepted_at", "") or "",
     }
+    if (bill.status or "") == "SUBMITTED":
+        ensure_sub_bill_chain(db, bill)
+    route = sub_bill_route(db, bill)
+    row["route"] = route
+    row["waiting_on"] = next((r["name"] for r in route if r["status"] == "waiting"), "")
+    row["waiting_on_id"] = next((r["approver_id"] for r in route if r["status"] == "waiting"), None)
     if detail:
         row["lines"] = [{
             "id": l.id, "item_id": l.item_id, "activity_no": l.activity_no or "",
@@ -25057,6 +25222,9 @@ def sub_bill_dict(db, bill, detail=False):
         row["site"] = job.site_address if job else ""
         row["place_of_supply_name"] = GST_STATES.get(bill.place_of_supply or "", "")
         row["amount_in_words"] = amount_in_words(bill.net_payable)
+        row["material_recovered"] = money(sum(r.amount or 0 for r in db.query(models.DBMaterialRecovery).filter(
+            models.DBMaterialRecovery.client_id == bill.client_id,
+            models.DBMaterialRecovery.sub_bill_id == bill.id).all()))
         row["order_detail"] = ({"number": order.wo_number, "subject": order.subject or "",
                                 "value": money(order.net_order_value),
                                 "retention_percent": order.retention_percent or 0,
@@ -25071,6 +25239,8 @@ class SubMeasurementIn(BaseModel):
     item_id: int
     quantity: Optional[float] = 0
     dimensions: Optional[List[DimensionIn]] = None
+    # Blocks built alike: the dimensions are of one, the entry is this many.
+    multiplier: Optional[float] = 1
     measured_on: Optional[str] = ""
     mb_ref: Optional[str] = ""
     location: Optional[str] = ""
@@ -25115,6 +25285,7 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
     entries = [{
         "id": m.id, "item_id": m.item_id, "activity_no": m.activity_no or "",
         "measured_on": m.measured_on or "", "quantity": money(m.quantity),
+        "multiplier": getattr(m, "multiplier", None) or 1,
         "mb_ref": m.mb_ref or "", "location": getattr(m, "location", "") or "", "remarks": m.remarks or "",
         "recorded_by_name": m.recorded_by_name or "", "billed": bool(m.sub_bill_id),
         "dimensions": sub_dims.get(m.id, []),
@@ -25133,25 +25304,26 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
     }
 
 
-@app.post("/api/sub-mb/{order_id}/entries")
-def record_sub_measurement(order_id: int, body: SubMeasurementIn, request: Request,
-                           db: Session = Depends(get_db)):
-    client, actor_id, actor_name = wo_actor(request, db, "site.record")
-    order = wo_or_404(db, client.id, order_id)
-    if (order.status or "") not in ("APPROVED", "EXECUTED"):
-        raise HTTPException(
-            409, "Nothing is measured against an order that has not been approved.")
-    item = db.query(models.DBSubcontractItem).filter(
-        models.DBSubcontractItem.id == body.item_id,
-        models.DBSubcontractItem.order_id == order.id).first()
-    if not item:
-        raise HTTPException(404, "That item is not on this order")
+def sub_measure_multiplier(value):
+    try:
+        m = float(value if value not in (None, "") else 1)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "The number of blocks has to be a number.")
+    if m <= 0:
+        raise HTTPException(400, "The number of blocks has to be one or more.")
+    return m
+
+
+def add_sub_measurement(db, client, order, item, body, actor_id, actor_name):
+    """One entry in the gang's book, checked and written."""
     if item.is_header:
         raise HTTPException(400, "%s is a heading, not a measurable item."
                                  % (item.activity_no or "That line"))
+    multiplier = sub_measure_multiplier(getattr(body, "multiplier", 1))
     quantity = money(body.quantity or 0)
     if body.dimensions:
         quantity = money(dimension_total(body.dimensions))
+    quantity = money(quantity * multiplier)
     if not quantity:
         raise HTTPException(400, "A measurement of nothing is not a measurement")
     # The order plus its tolerance is the ceiling. Past it the order is amended
@@ -25171,7 +25343,7 @@ def record_sub_measurement(order_id: int, body: SubMeasurementIn, request: Reque
                         if item.tolerance_percent else ""))
     entry = models.DBSubMeasurement(
         client_id=client.id, order_id=order.id, item_id=item.id,
-        activity_no=item.activity_no or "", quantity=quantity,
+        activity_no=item.activity_no or "", quantity=quantity, multiplier=multiplier,
         measured_on=(body.measured_on or datetime.now().strftime("%Y-%m-%d")),
         mb_ref=(body.mb_ref or "").strip(), location=(body.location or "").strip()[:200],
         remarks=(body.remarks or "").strip(),
@@ -25179,6 +25351,24 @@ def record_sub_measurement(order_id: int, body: SubMeasurementIn, request: Reque
     db.add(entry)
     db.flush()
     write_dimensions(db, client.id, body.dimensions, sub_measurement_id=entry.id)
+    return entry
+
+
+@app.post("/api/sub-mb/{order_id}/entries")
+def record_sub_measurement(order_id: int, body: SubMeasurementIn, request: Request,
+                           db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db, "site.record")
+    order = wo_or_404(db, client.id, order_id)
+    if (order.status or "") not in ("APPROVED", "EXECUTED"):
+        raise HTTPException(
+            409, "Nothing is measured against an order that has not been approved.")
+    item = db.query(models.DBSubcontractItem).filter(
+        models.DBSubcontractItem.id == body.item_id,
+        models.DBSubcontractItem.order_id == order.id).first()
+    if not item:
+        raise HTTPException(404, "That item is not on this order")
+    entry = add_sub_measurement(db, client, order, item, body, actor_id, actor_name)
+    quantity = entry.quantity
     log_audit(db, client.id, "sub_measurement_recorded", "subcontract_order", order.id,
               order.wo_number or "", "%s %s %s" % (item.activity_no, quantity,
                                                    item.uom or ""), request)
@@ -25191,6 +25381,129 @@ def record_sub_measurement(order_id: int, body: SubMeasurementIn, request: Reque
             "message": "Recorded. %s measured against %s of %s ordered."
                        % (qty_text(measured), ("activity " + item.activity_no) if item.activity_no
                           else "the item", qty_text(ordered))}
+
+
+def mb_match_item(items, description):
+    """The order's item a section of the book is for, by its description:
+    the same words first, then one inside the other, then the most words in
+    common. None when nothing is close enough to say."""
+    want = re.sub(r"[^a-z0-9]+", " ", (description or "").lower()).strip()
+    if not want:
+        return None
+    def words(t):
+        return set(re.sub(r"[^a-z0-9]+", " ", (t or "").lower()).split())
+    plain = [(it, re.sub(r"[^a-z0-9]+", " ", (it.item_description or "").split("\n")[0].lower()).strip())
+             for it in items]
+    same = [it for it, d in plain if d == want]
+    if len(same) == 1:
+        return same[0]
+    inside = [it for it, d in plain if d and (want in d or d in want)]
+    if len(inside) == 1:
+        return inside[0]
+    best, score = None, 0.0
+    w = words(want)
+    for it, d in plain:
+        common = len(w & words(d)) / float(len(w | words(d)) or 1)
+        if common > score:
+            best, score = it, common
+    return best if score >= 0.5 else None
+
+
+@app.post("/api/sub-mb/{order_id}/import")
+async def import_sub_measurement_book(order_id: int, request: Request, file: UploadFile = File(...),
+                                      commit: str = Form("0"), mapping: str = Form(""),
+                                      sheet: str = Form(""), measured_on: str = Form(""),
+                                      db: Session = Depends(get_db)):
+    """The measurement book as the site keeps it in Excel - S.No, Description,
+    UoM, No's, NoM, Length, Width, Height, Total Quantity - read into the
+    gang's book. Each section of the sheet is matched to an item on the order
+    by its description; the first call shows what would go in, and a second
+    with commit=1 (and any corrected matches) records it. All of it goes in
+    or none of it does."""
+    client, actor_id, actor_name = wo_actor(request, db, "site.record")
+    order = wo_or_404(db, client.id, order_id)
+    if (order.status or "") not in ("APPROVED", "EXECUTED"):
+        raise HTTPException(409, "Nothing is measured against an order that has not been approved.")
+    raw = await file.read()
+    try:
+        import openpyxl
+        values = openpyxl.load_workbook(io.BytesIO(raw), data_only=True)
+        formulas = openpyxl.load_workbook(io.BytesIO(raw))
+    except Exception:
+        raise HTTPException(400, "That file could not be read as an Excel workbook (.xlsx).")
+    names = values.sheetnames
+    pick = sheet if sheet in names else next((n for n in names if n.strip().upper().startswith("MB")), None)
+    tried = [pick] if pick else names
+    book, errors = None, []
+    for n in tried:
+        try:
+            book = sheet_forms.read_measurement_book(values[n], formulas[n])
+            if book["items"]:
+                break
+        except ValueError as exc:
+            errors.append(str(exc))
+            book = None
+    if not book or not book["items"]:
+        raise HTTPException(400, "No measurement book was found in that workbook. " + " ".join(errors[:2]))
+    items = [it for it in db.query(models.DBSubcontractItem).filter(
+        models.DBSubcontractItem.order_id == order.id).order_by(
+            models.DBSubcontractItem.display_order, models.DBSubcontractItem.id).all() if not it.is_header]
+    by_id = {it.id: it for it in items}
+    try:
+        chosen = {int(k): int(v) for k, v in (json.loads(mapping) if mapping else {}).items() if v}
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(400, "The item matches could not be read.")
+    sections, missing = [], []
+    for i, sec in enumerate(book["items"]):
+        item = by_id.get(chosen[i]) if i in chosen else mb_match_item(items, sec["description"])
+        if item is None:
+            missing.append(sec["description"])
+        sections.append({"index": i, "description": sec["description"], "sno": sec["sno"],
+                         "item_id": item.id if item else None,
+                         "item": ("%s %s" % (item.activity_no or "", (item.item_description or "").split("\n")[0])).strip()
+                                 if item else "",
+                         "uom": item.uom if item else "", "quantity": sec["quantity"],
+                         "entries": [{"location": e["location"], "multiplier": e["multiplier"],
+                                      "lines": len([d for d in e["dims"] if not d["is_heading"]]),
+                                      "one_block": e["one"], "quantity": e["quantity"],
+                                      "stated": e.get("stated_total")} for e in sec["entries"]]})
+    preview = {"sheet": book["sheet"], "meta": book["meta"], "sections": sections,
+               "warnings": book["warnings"],
+               "items": [{"id": it.id, "label": ("%s %s" % (it.activity_no or "", (it.item_description or "").split("\n")[0])).strip(),
+                          "uom": it.uom or ""} for it in items]}
+    if (commit or "0") not in ("1", "true", "yes"):
+        return dict(preview, ok=True, committed=False)
+    if missing:
+        raise HTTPException(400, "Say which item on the order these are for: " + "; ".join(missing[:5]))
+    when = (measured_on or book["meta"].get("date") or datetime.now().strftime("%Y-%m-%d"))[:10]
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", when):
+        when = datetime.now().strftime("%Y-%m-%d")
+    written = 0
+    source = os.path.basename(file.filename or "workbook")
+    for sec, row in zip(book["items"], sections):
+        item = by_id[row["item_id"]]
+        for e in sec["entries"]:
+            dims = [DimensionIn(particulars=d["particulars"][:200], is_heading=d["is_heading"],
+                                nos=d.get("nos"), nom=d.get("nom"), length=d.get("length"),
+                                breadth=d.get("breadth"), depth=d.get("depth"), deduct=d.get("deduct", False))
+                    for d in e["dims"]]
+            body = SubMeasurementIn(item_id=item.id, dimensions=dims, multiplier=e["multiplier"],
+                                    measured_on=when, mb_ref=("%s / %s" % (source, book["sheet"]))[:120],
+                                    location=e["location"], remarks="Imported from the measurement book")
+            try:
+                # Each entry is flushed as it is written, so the ceiling check
+                # on the next one already counts it.
+                add_sub_measurement(db, client, order, item, body, actor_id, actor_name)
+            except HTTPException as exc:
+                db.rollback()
+                raise HTTPException(exc.status_code, "%s - nothing was imported. %s" % (
+                    e["location"] or sec["description"], exc.detail))
+            written += 1
+    log_audit(db, client.id, "sub_mb_imported", "subcontract_order", order.id, order.wo_number or "",
+              "%s: %d entries" % (source, written), request)
+    db.commit()
+    return dict(preview, ok=True, committed=True, entries=written,
+                message="%d measurement%s recorded from %s." % (written, "" if written == 1 else "s", book["sheet"]))
 
 
 @app.delete("/api/sub-mb/entries/{entry_id}")
@@ -25220,6 +25533,25 @@ class SubBillIn(BaseModel):
     advance_recovery: Optional[float] = None
     other_deductions: Optional[float] = None
     deduction_notes: Optional[str] = ""
+    bill_date: Optional[str] = ""
+    work_type: Optional[str] = ""
+    work_name: Optional[str] = ""
+    hsn_sac: Optional[str] = ""
+    debit_notes: Optional[float] = None
+
+
+class SubBillEditIn(BaseModel):
+    """The certificate's own boxes, while the bill is still a draft."""
+    period_from: Optional[str] = None
+    period_to: Optional[str] = None
+    bill_date: Optional[str] = None
+    work_type: Optional[str] = None
+    work_name: Optional[str] = None
+    hsn_sac: Optional[str] = None
+    debit_notes: Optional[float] = None
+    advance_recovery: Optional[float] = None
+    other_deductions: Optional[float] = None      # besides material recovered, which stays
+    deduction_notes: Optional[str] = None
 
 
 def sub_claimable_lines(db, order, exclude_bill_id=None):
@@ -25305,12 +25637,25 @@ def create_sub_bill(body: SubBillIn, request: Request, db: Session = Depends(get
     prior = money(sum(b.this_bill or 0 for b in db.query(models.DBSubBill).filter(
         models.DBSubBill.order_id == order.id,
         models.DBSubBill.status != "CANCELLED").all()))
+    con = db.query(models.DBContractor).filter(models.DBContractor.id == order.contractor_id).first() \
+        if order.contractor_id else None
+    debit = money(body.debit_notes or 0)
+    if debit < 0:
+        raise HTTPException(400, "Recoveries in debit notes cannot be negative.")
     bill = models.DBSubBill(
         client_id=client.id, order_id=order.id, job_id=order.job_id,
         contractor_id=order.contractor_id,
         number="%s/RA-%02d" % (order.wo_number or "SC", seq), sequence=seq,
         period_from=(body.period_from or ""), period_to=(body.period_to or
                                                           datetime.now().strftime("%Y-%m-%d")),
+        bill_date=(body.bill_date or datetime.now().strftime("%Y-%m-%d"))[:10],
+        # What the certificate calls the type of work: what the gang was
+        # registered to do, else the order's trade.
+        work_type=((body.work_type or "").strip() or (con.nature_of_work if con else "") or
+                   order.work_type or "")[:200],
+        work_name=((body.work_name or "").strip() or (order.subject or "").split("\n")[0])[:300],
+        hsn_sac=(body.hsn_sac or "").strip()[:20],
+        debit_notes=debit,
         status="DRAFT", previously_billed=prior,
         retention_percent=order.retention_percent or 0,
         advance_recovery=0.0,
@@ -25357,16 +25702,11 @@ def sub_advance_recovery(db, order, bill, asked=None):
     balance = max(0.0, money(advance - recovered))
     instalment = (money(asked) if asked is not None
                   else money(advance * (order.advance_recovery_percent or 0) / 100.0))
-    # What the bill can bear: after retention and the other deductions, less
-    # what TDS and cess will take off the whole bill regardless - grossed
-    # down by the GST that is added on the remainder - so the net is never
-    # below nought.
-    withheld = ((bill.this_bill or 0) * ((bill.tds_percent or 0) + (bill.labour_cess_percent or 0))
-                / 100.0)
-    bearable = ((bill.this_bill or 0) - (bill.retention_amount or 0)
-                - (bill.other_deductions or 0)
-                - withheld / (1.0 + (bill.gst_percent or 0) / 100.0))
-    bearable = max(0.0, money(bearable - 0.005))
+    # What the bill can bear: its gross less retention, TDS, cess and the
+    # other deductions, so the net is never below its GST. Whatever
+    # this bill was already taking back is counted as room, since it is the
+    # figure being decided.
+    bearable = max(0.0, money(sub_bill_room(bill) + (bill.advance_recovery or 0) - 0.5))
     return money(max(0.0, min(instalment, balance, bearable)))
 
 
@@ -25376,6 +25716,194 @@ def get_sub_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
     return sub_bill_dict(db, sub_bill_or_404(db, client.id, bill_id), detail=True)
 
 
+# --- Certifying climbs the hierarchy -------------------------------------------
+#
+# The certificate of payment is signed in a row: Prepared By (the QS or site
+# engineer who drew it up), Certified By (the Head QS), Approved By (the site
+# incharge). So certifying is not one click by anybody allowed to: the bill
+# climbs the same route a work order does - the manager set for whoever sent
+# it, then one person at each rank above, someone on the same site first -
+# and is certified only when the last of them signs. The owner may sign at
+# any point, and that is the last word; whether the owner must also sign
+# every gang bill is a setting, off unless switched on.
+
+SUB_BILL_OWNER_SIGNS_KEY = "sub_bill_owner_signs"
+
+
+def sub_bill_owner_signs(db, client_id):
+    return (tenant_setting(db, client_id, SUB_BILL_OWNER_SIGNS_KEY, "0") or "0") == "1"
+
+
+def sub_bill_chain_rows(db, bill_id):
+    return db.query(models.DBApprovalChain).filter(
+        models.DBApprovalChain.entity_type == "sub_bill",
+        models.DBApprovalChain.entity_id == bill_id).order_by(models.DBApprovalChain.step).all()
+
+
+def sub_bill_start_chain(db, client_id, bill, submitter_id):
+    db.query(models.DBApprovalChain).filter(
+        models.DBApprovalChain.entity_type == "sub_bill",
+        models.DBApprovalChain.entity_id == bill.id).delete(synchronize_session=False)
+    if submitter_id and not raised_by_owner(db, client_id, submitter_id):
+        rungs = hierarchy_chain(db, client_id, submitter_id, "subcontracts.approve", bill.job_id,
+                                owner_signs=sub_bill_owner_signs(db, client_id))
+    else:
+        rungs = []
+    rungs = rungs or [chain_rung(None, db, client_id)]
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for i, rung in enumerate(rungs, 1):
+        db.add(models.DBApprovalChain(
+            client_id=client_id, entity_type="sub_bill", entity_id=bill.id,
+            employee_id=submitter_id, approver_id=rung["employee_id"], level=rung["level"],
+            step=i, status="pending", created_at=now))
+    db.flush()
+    return rungs
+
+
+def ensure_sub_bill_chain(db, bill):
+    """A bill sent before routes existed gets one the first time it is looked for."""
+    if (bill.status or "") == "SUBMITTED" and not sub_bill_chain_rows(db, bill.id):
+        sub_bill_start_chain(db, bill.client_id, bill, bill.submitted_by)
+
+
+def sub_bill_current_step(db, bill):
+    """The step the bill waits at. An approver who has left, or no longer
+    holds the right, is passed over rather than left to block it."""
+    for row in sub_bill_chain_rows(db, bill.id):
+        if row.status != "pending":
+            continue
+        if row.approver_id is None:
+            return row
+        emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == row.approver_id).first()
+        if emp and (emp.status or "active") not in GONE_STATUSES and employee_can(emp, "subcontracts.approve"):
+            return row
+        row.status, row.notes = "skipped", "No longer able to certify bills"
+        row.decided_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return None
+
+
+def sub_bill_step_name(db, row):
+    if row is None:
+        return ""
+    return owner_label(db, row.client_id) if row.approver_id is None else _person(db, row.approver_id)
+
+
+def sub_bill_route(db, bill):
+    rows = sub_bill_chain_rows(db, bill.id)
+    current = sub_bill_current_step(db, bill) if (bill.status or "") == "SUBMITTED" else None
+    return [{"step": r.step, "name": sub_bill_step_name(db, r), "owner": r.approver_id is None,
+             "approver_id": r.approver_id,
+             "status": "waiting" if current is not None and r.id == current.id else r.status,
+             "notes": r.notes or "", "decided_at": r.decided_at or ""} for r in rows]
+
+
+def sub_bill_signed(db, bill):
+    """Who signed the certificate, as its signature row reads: the steps
+    signed before the last are Certified By, the last is Approved By."""
+    rows = [r for r in sub_bill_chain_rows(db, bill.id) if r.status == "approved"]
+    if (bill.status or "") not in ("CERTIFIED", "PAID"):
+        return {"certified": [sub_bill_step_name(db, r) for r in rows], "approved": ""}
+    if not rows:
+        return {"certified": [], "approved": bill.approved_by_name or bill.certified_by_name or ""}
+    return {"certified": [sub_bill_step_name(db, r) for r in rows[:-1]],
+            "approved": bill.approved_by_name or sub_bill_step_name(db, rows[-1])}
+
+
+def sub_bill_decide(db, client, bill, actor_id, actor_name, approve, comments=""):
+    """One signature on a bill climbing its route. Returns True when that
+    signature certified it."""
+    ensure_sub_bill_chain(db, bill)
+    step = sub_bill_current_step(db, bill)
+    owner = actor_id is None
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if not owner and approve and bill.submitted_by and bill.submitted_by == actor_id:
+        raise HTTPException(403, "You prepared this bill, so somebody else has to certify it. It is waiting with %s."
+                                 % (sub_bill_step_name(db, step) or "the owner"))
+    if not owner and (step is None or step.approver_id != actor_id):
+        later = any(r.approver_id == actor_id and r.status == "pending" for r in sub_bill_chain_rows(db, bill.id))
+        raise HTTPException(403, "%s is waiting with %s.%s" % (
+            bill.number, sub_bill_step_name(db, step) or "the owner",
+            " It comes to you after that." if later else " It is not on your list to certify."))
+    if not approve:
+        if step is not None:
+            step.status, step.notes, step.decided_at = "rejected", (comments or "").strip(), now
+        return False
+    if owner:
+        for row in sub_bill_chain_rows(db, bill.id):
+            if row.status == "pending":
+                if row.approver_id is None:
+                    row.status, row.notes, row.decided_at = "approved", (comments or "").strip(), now
+                else:
+                    row.status, row.notes, row.decided_at = "skipped", "Signed over by the owner", now
+        if not any(r.approver_id is None and r.status == "approved" for r in sub_bill_chain_rows(db, bill.id)):
+            # The owner signing a bill whose route never reached them: their
+            # signature goes on it as the last word all the same.
+            last = max([r.step for r in sub_bill_chain_rows(db, bill.id)] or [0])
+            db.add(models.DBApprovalChain(
+                client_id=client.id, entity_type="sub_bill", entity_id=bill.id,
+                employee_id=bill.submitted_by, approver_id=None, level="owner", step=last + 1,
+                status="approved", notes=(comments or "").strip(), decided_at=now, created_at=now))
+    elif step is not None:
+        step.status, step.notes, step.decided_at = "approved", (comments or "").strip(), now
+    db.flush()
+    nxt = None if owner else sub_bill_current_step(db, bill)
+    if nxt is not None:
+        log_audit(db, client.id, "sub_bill_recommended", "sub_bill", bill.id, bill.number or "",
+                  "%s signed, passed to %s" % (actor_name, sub_bill_step_name(db, nxt)), None)
+        if nxt.approver_id:
+            notify_employee(db, client.id, nxt.approver_id, "Subcontractor bill awaiting your certification",
+                            "%s - %s of work, net %s. Signed by %s and now with you." % (
+                                bill.number, format_money_plain(bill.this_bill),
+                                format_money_plain(bill.net_payable), actor_name),
+                            link="/app.html#approvals")
+        return False
+    return True
+
+
+@app.put("/api/sub-bills/{bill_id}")
+def edit_sub_bill(bill_id: int, body: SubBillEditIn, request: Request, db: Session = Depends(get_db)):
+    """The certificate's boxes - the dates, the type of work, the SAC, the
+    recoveries - put right on a draft before it is sent."""
+    client, _, _ = wo_actor(request, db, "billing.manage")
+    bill = sub_bill_or_404(db, client.id, bill_id)
+    if (bill.status or "DRAFT") != "DRAFT":
+        raise HTTPException(409, "Only a draft bill can be changed. Send it back to draft first.")
+    order = wo_or_404(db, client.id, bill.order_id)
+    for key in ("period_from", "period_to", "bill_date"):
+        v = getattr(body, key)
+        if v is not None:
+            setattr(bill, key, (v or "").strip()[:10])
+    for key, size in (("work_type", 200), ("work_name", 300), ("hsn_sac", 20), ("deduction_notes", 500)):
+        v = getattr(body, key)
+        if v is not None:
+            setattr(bill, key, (v or "").strip()[:size])
+    for key in ("debit_notes", "advance_recovery", "other_deductions"):
+        v = getattr(body, key)
+        if v is not None and money(v) < 0:
+            raise HTTPException(400, "Deductions and recoveries cannot be negative.")
+    if body.debit_notes is not None:
+        bill.debit_notes = money(body.debit_notes)
+        if bill.debit_notes > (bill.this_bill or 0):
+            raise HTTPException(400, "Recoveries in debit notes cannot be more than the work in the bill.")
+    if body.other_deductions is not None:
+        material = money(sum(r.amount or 0 for r in db.query(models.DBMaterialRecovery).filter(
+            models.DBMaterialRecovery.client_id == client.id,
+            models.DBMaterialRecovery.sub_bill_id == bill.id).all()))
+        bill.other_deductions = money(material + money(body.other_deductions))
+    recost_sub_bill(db, bill)
+    if body.advance_recovery is not None:
+        bill.advance_recovery = 0.0
+        recost_sub_bill(db, bill)
+        bill.advance_recovery = sub_advance_recovery(db, order, bill, body.advance_recovery)
+        recost_sub_bill(db, bill)
+    if (bill.net_payable or 0) < 0:
+        raise HTTPException(400, "Those deductions take the bill below nothing (%s)." % inr(bill.net_payable))
+    log_audit(db, client.id, "sub_bill_edited", "sub_bill", bill.id, bill.number or "", "", request)
+    db.commit()
+    db.refresh(bill)
+    return {"ok": True, "bill": sub_bill_dict(db, bill, detail=True), "message": "%s saved." % bill.number}
+
+
 @app.post("/api/sub-bills/{bill_id}/{action}")
 def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = None,
                     db: Session = Depends(get_db)):
@@ -25383,13 +25911,33 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
         request, db, ("billing.manage", "subcontracts.approve", "bills.pay"))
     bill = sub_bill_or_404(db, client.id, bill_id)
     move = (action or "").upper()
+    body = body or {}
+    comments = (body.get("comments") or "").strip()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if move == "ACCEPT":
+        # "Accepted for Sub Contractor": the gang signed the certificate -
+        # recorded by the office from the signed copy, or by the gang itself
+        # from the portal.
+        require_items_access(request, db, "billing.manage")
+        if (bill.status or "") not in ("SUBMITTED", "CERTIFIED", "PAID"):
+            raise HTTPException(409, "A bill is accepted by the sub contractor once it has been sent.")
+        con = db.query(models.DBContractor).filter(models.DBContractor.id == bill.contractor_id).first() \
+            if bill.contractor_id else None
+        bill.accepted_by_name = ((body.get("name") or "").strip() or (con.contact_person if con else "")
+                                 or (con.company_name if con else "") or "Sub contractor")[:120]
+        bill.accepted_at = ((body.get("date") or "").strip()[:10] or now)
+        log_audit(db, client.id, "sub_bill_accepted", "sub_bill", bill.id, bill.number or "",
+                  "Accepted for the sub contractor by %s" % bill.accepted_by_name, request)
+        db.commit()
+        db.refresh(bill)
+        return {"ok": True, "bill": sub_bill_dict(db, bill, detail=True),
+                "message": "%s marked as accepted by %s." % (bill.number, bill.accepted_by_name)}
+
     allowed = SUB_TRANSITIONS.get(bill.status or "DRAFT", {})
     if move not in allowed:
         raise HTTPException(409, "A %s bill cannot be %sed."
                                  % ((bill.status or "draft").lower(), move.lower()))
-    body = body or {}
-    comments = (body.get("comments") or "").strip()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     order = wo_or_404(db, client.id, bill.order_id)
 
     # Drawing up and sending is billing's; certifying or sending back is the
@@ -25404,12 +25952,27 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
         recost_sub_bill(db, bill)
         if not bill.this_bill:
             raise HTTPException(409, "There is nothing on this bill to submit.")
+        # The owner signs as themselves, not as the company.
+        bill.submitted_by, bill.submitted_at = actor_id, now
+        bill.submitted_by_name = actor_name if actor_id else ((client.contact_name or "").strip() or actor_name)
+        bill.approved_by_name, bill.remarks = "", ""
+        sub_bill_start_chain(db, client.id, bill, actor_id)
     elif move == "CERTIFY":
-        # Certifying a subcontractor's bill is agreeing to pay it.
+        # Certifying a subcontractor's bill is agreeing to pay it - once the
+        # last signature on its route is on.
+        if not sub_bill_decide(db, client, bill, actor_id, actor_name, True, comments):
+            bill.updated_at = now
+            db.commit()
+            db.refresh(bill)
+            step = sub_bill_current_step(db, bill)
+            return {"ok": True, "bill": sub_bill_dict(db, bill, detail=True),
+                    "message": "Signed. %s now waits with %s." % (bill.number, sub_bill_step_name(db, step))}
         bill.certified_by, bill.certified_by_name, bill.certified_at = actor_id, actor_name, now
+        bill.approved_by_name = actor_name if actor_id else (owner_label(db, client.id))
     elif move == "REJECT":
         if not comments:
             raise HTTPException(400, "Say why it is going back.")
+        sub_bill_decide(db, client, bill, actor_id, actor_name, False, comments)
         bill.remarks = comments
         db.query(models.DBSubMeasurement).filter(
             models.DBSubMeasurement.sub_bill_id == bill.id).update(
@@ -25439,9 +26002,17 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
             if bill.contractor_id else None
         gang = (con.company_name if con else "") or "the gang"
         if move == "SUBMIT":
+            step = sub_bill_current_step(db, bill)
             notify(db, client.id, "sub_bill_submitted", "%s from %s is waiting to be certified" % (bill.number, gang),
-                   "%s of work billed." % inr(bill.this_bill), view="subbills-view",
-                   ref_type="sub_bill", ref_id=bill.id, severity="action")
+                   "%s of work billed - with %s." % (inr(bill.this_bill), sub_bill_step_name(db, step) or "the owner"),
+                   view="subbills-view", ref_type="sub_bill", ref_id=bill.id, severity="action")
+            if step is not None and step.approver_id:
+                notify_employee(db, client.id, step.approver_id, "Subcontractor bill awaiting your certification",
+                                "%s from %s - %s of work, net %s." % (
+                                    bill.number, gang, format_money_plain(bill.this_bill),
+                                    format_money_plain(bill.net_payable)),
+                                link="/app.html#approvals")
+            db.commit()
         else:
             notify(db, client.id, "sub_bill_certified", "%s certified - %s to pay %s" % (
                 bill.number, inr(bill.net_payable), gang), "Pay it from Subcontractor Bills.",
@@ -25473,28 +26044,17 @@ def sub_bills_register_xlsx(request: Request, order_id: int = 0, db: Session = D
 
 @app.get("/api/sub-bills/{bill_id}/export.xlsx")
 def export_sub_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
+    """The bill as the workbook it was always sent as - Top Sheet, AB-1 and
+    MB-1 - drawn from the same description as its PDF."""
     client = require_erp_read(request, db)
-    b = sub_bill_dict(db, sub_bill_or_404(db, client.id, bill_id), detail=True)
-    preamble = [("Subcontractor RA Bill", client.company_name or ""),
-                ("No: %s   (%s)" % (b["number"], b["status"])),
-                ("Subcontractor: %s" % b["contractor"]),
-                ("Order: %s" % b["order"]), ("Project: %s" % b["project"]),
-                ("Period to: %s" % b["period_to"]), ()]
-    headers = ("Activity", "Description", "UOM", "Ordered", "Measured to date",
-               "Previously billed", "This bill", "Rate", "Amount")
-    rows = [(l["activity_no"], l["description"], l["uom"], l["ordered_qty"],
-             l["measured_to_date"], l["previously_billed_qty"], l["this_bill_qty"],
-             l["rate"], l["amount"]) for l in b["lines"]]
-    closing = [(), ("This bill", b["this_bill"]),
-               ("Retention held @ %s%%" % b["retention_percent"], -b["retention_amount"]),
-               ("Advance recovery", -b["advance_recovery"]),
-               ("Other deductions", -b["other_deductions"]),
-               ("GST @ %s%%" % b["gst_percent"], b["gst_amount"]),
-               ("TDS @ %s%%" % b["tds_percent"], -b["tds_amount"]),
-               ("Net payable", b["net_payable"])]
-    return sheet_response(headers, rows,
-                          "sub_bill_%s.xlsx" % b["number"].replace("/", "-"),
-                          preamble=preamble, closing=closing)
+    bill = sub_bill_or_404(db, client.id, bill_id)
+    if SHEET_AS_PDF.get() is not None:
+        return form_pdf_response(sub_bill_form_spec(db, client, bill), bill.number)
+    data = sheet_forms.ra_bill_workbook(sub_bill_certificate(db, client, bill))
+    return Response(content=data,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": 'attachment; filename="sub_bill_%s.xlsx"'
+                                                    % re.sub(r"[^A-Za-z0-9]+", "-", bill.number or str(bill.id))})
 
 
 
@@ -27558,10 +28118,7 @@ def apply_material_recovery(db, client_id, order, bill):
             models.DBMaterialRecovery.id).all()
     if not waiting:
         return 0.0
-    withheld = ((bill.this_bill or 0) * ((bill.tds_percent or 0) + (bill.labour_cess_percent or 0))
-                / 100.0) / (1.0 + (bill.gst_percent or 0) / 100.0)
-    room = money((bill.this_bill or 0) - (bill.retention_amount or 0)
-                 - (bill.advance_recovery or 0) - (bill.other_deductions or 0) - withheld - 0.01)
+    room = money(sub_bill_room(bill) - 0.5)
     taken, notes = 0.0, []
     for r in waiting:
         if room <= 0.009:
@@ -32350,6 +32907,9 @@ def _portal_bills(db, u, party, party_name):
                 got = money(b.net_payable)
             out.append({"id": b.id, "number": b.number or "", "status": b.status,
                         "pdf": "/api/portal/bills/%d/document.pdf" % b.id,
+                        "accepted_by": getattr(b, "accepted_by_name", "") or "",
+                        "accepted_at": (getattr(b, "accepted_at", "") or "")[:10],
+                        "can_accept": not (getattr(b, "accepted_by_name", "") or ""),
                         "where": {"SUBMITTED": "with the engineer to certify", "CERTIFIED": "passed for payment",
                                   "PAID": "paid"}[b.status],
                         "date": (b.certified_at or b.created_at or "")[:10],
@@ -32458,6 +33018,29 @@ def portal_order(order_id: int, request: Request, db: Session = Depends(get_db))
 def portal_bills(request: Request, db: Session = Depends(get_db)):
     u, client, party, name = get_portal_user(request, db)
     return {"bills": _portal_bills(db, u, party, name)}
+
+
+@app.post("/api/portal/bills/{bill_id}/accept")
+def portal_accept_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
+    """The gang signs the certificate of payment from their own login -
+    "Accepted for Sub Contractor" - once it has been sent to them."""
+    u, client, party, name = get_portal_user(request, db)
+    if u.party_type != "contractor":
+        raise HTTPException(404, "Bill not found")
+    bill = db.query(models.DBSubBill).filter(models.DBSubBill.id == bill_id, models.DBSubBill.client_id == u.client_id,
+                                             models.DBSubBill.contractor_id == party.id,
+                                             models.DBSubBill.status.in_(("SUBMITTED", "CERTIFIED", "PAID"))).first()
+    if not bill:
+        raise HTTPException(404, "Bill not found")
+    if bill.accepted_by_name:
+        raise HTTPException(409, "%s was already accepted by %s." % (bill.number, bill.accepted_by_name))
+    bill.accepted_by_name = ((getattr(u, "name", "") or "").strip() or name or "Sub contractor")[:120]
+    bill.accepted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_audit(db, client.id, "sub_bill_accepted", "sub_bill", bill.id, bill.number or "",
+              "Accepted from the partner portal by %s" % bill.accepted_by_name, request, user_type="portal",
+              user_name=bill.accepted_by_name)
+    db.commit()
+    return {"ok": True, "message": "%s accepted. Thank you." % bill.number}
 
 
 @app.get("/api/portal/payments")
@@ -34055,83 +34638,374 @@ def po_form_spec(db, client, order):
                                                                       datetime.now().strftime("%d/%m/%Y %H:%M"))}
 
 
-def sub_bill_form_spec(db, client, bill):
-    """The gang's RA bill: measured work, retention held, advance recovered,
-    TDS and labour cess withheld, and what is paid."""
+def _cert_person(db, emp_id, fallback_name, default_title):
+    """A name on the signature row, with the designation HR gave them - else
+    the one the certificate prints under that box."""
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id).first() if emp_id else None
+    name = employee_name(emp) if emp else (fallback_name or "")
+    title = ((emp.job_title or "").strip() if emp else "") or default_title
+    return name, title
+
+
+def _bill_figures(bill):
+    """One bill's figures as the certificate's rows name them."""
+    work = money(bill.this_bill)
+    debit = money(getattr(bill, "debit_notes", 0) or 0)
+    gross = rupees(work - debit)
+    gst = money(bill.gst_amount)
+    adv, other = money(bill.advance_recovery), money(bill.other_deductions)
+    ret, tds, cess = money(bill.retention_amount), money(bill.tds_amount), money(bill.labour_cess_amount)
+    return {"work": work, "mob": 0.0, "mat": 0.0, "debit": debit, "gross": gross,
+            "sgst": money(bill.sgst_amount), "cgst": money(bill.cgst_amount), "igst": money(bill.igst_amount),
+            "gst": gst, "total": money(gross + gst), "adv": adv, "other": other, "ret": ret, "tds": tds,
+            "cess": cess, "ded": money(adv + other + ret + tds + cess), "net": money(bill.net_payable)}
+
+
+def sub_bill_certificate(db, client, bill):
+    """The gang's RA bill as the three sheets it is signed on - the Top Sheet
+    (certificate of payment), AB-1 (abstract) and MB-1 (measurement book) -
+    as one description the PDF and the workbook are both drawn from."""
     b = sub_bill_dict(db, bill, detail=True)
-    sig = doc_signatories(db, client.id)
-    our = b.get("our") or our_party(db, client.id)
-    con = b.get("contractor_detail") or {}
-    company = letterhead(db, client, db.query(models.DBSubcontractOrder.business_unit_id).filter(
-        models.DBSubcontractOrder.id == bill.order_id).scalar())
-    rows = [[str(i), l.get("activity_no") or "", l.get("description") or "", l.get("uom") or "",
-             form_pdf.qty_text(l.get("ordered_qty")), form_pdf.qty_text(l.get("previously_billed_qty")),
-             form_pdf.qty_text(l.get("this_bill_qty")), form_pdf.qty_text(l.get("measured_to_date")),
-             form_pdf.plain_number(l.get("rate")), form_pdf.plain_number(l.get("amount"))]
-            for i, l in enumerate(b.get("lines") or [], 1)]
-    fi = form_pdf.inr
-    taxable = money(b["this_bill"] - b["retention_amount"] - b["advance_recovery"] - b["other_deductions"])
-    rate = b.get("gst_percent") or 0
-    sums = [("Value of work done up to date", fi(b["gross_to_date"]), False),
-            ("Less: claimed in earlier bills", fi(-b["previously_billed"]), False),
-            ("Value of work in this bill", fi(b["this_bill"]), True)]
-    if b["retention_amount"]:
-        sums.append(("Less: retention (FSD) @ %g%%" % b["retention_percent"], fi(-b["retention_amount"]), False))
-    if b["advance_recovery"]:
-        sums.append(("Less: mobilisation advance recovered", fi(-b["advance_recovery"]), False))
-    if b["other_deductions"]:
-        sums.append(("Less: other deductions%s" % ((" (%s)" % b["deduction_notes"]) if b["deduction_notes"] else ""),
-                     fi(-b["other_deductions"]), False))
-    sums.append(("Taxable value", fi(taxable), True))
-    if b["cgst_amount"] or b["sgst_amount"]:
-        sums += [("Add: CGST @ %g%%" % (rate / 2), fi(b["cgst_amount"]), False),
-                 ("Add: SGST @ %g%%" % (rate / 2), fi(b["sgst_amount"]), False)]
-    elif b["igst_amount"]:
-        sums.append(("Add: IGST @ %g%%" % rate, fi(b["igst_amount"]), False))
-    if b["tds_amount"]:
-        sums.append(("Less: TDS @ %g%% u/s 194C" % b["tds_percent"], fi(-b["tds_amount"]), False))
-    if b.get("labour_cess_amount"):
-        sums.append(("Less: labour welfare cess @ %g%%" % b["labour_cess_percent"], fi(-b["labour_cess_amount"]), False))
-    sums.append(("NET AMOUNT PAYABLE", fi(b["net_payable"]), True))
-    od = b.get("order_detail") or {}
-    certified = b.get("certified_by_name") or ""
-    signatures = [("Contractor Signature", b.get("contractor") or ""),
-                  ("Prepared By", _sig_line(sig["prepared"])), ("Checked By", _sig_line(sig["recommended"])),
-                  ("Certified By", certified or _sig_line(sig["proposed"])),
-                  ("Authorized Signatory", _sig_line(sig["authorised"]))]
-    period = ("%s to %s" % (form_pdf.date_text(b.get("period_from")), form_pdf.date_text(b.get("period_to")))
-              if b.get("period_from") else (form_pdf.date_text(b.get("period_to")) or "-"))
-    blocks = [
-        {"type": "header", "company": company, "title": "SUB CONTRACTOR BILL",
-         "facts": [("Bill No", b["number"]), ("RA No", str(b.get("sequence") or 1)),
-                   ("Bill Date", form_pdf.date_text((b.get("certified_at") or b.get("created_at") or "")[:10])),
-                   ("Period", period)]},
-        {"type": "party", "label": "Sub Contractor Name", "name": b.get("contractor") or "",
-         "address": con.get("address") or "",
-         "facts": party_facts(con.get("gst_number"), con.get("pan"))},
-        {"type": "pairs", "aside": True, "label_width": 34,
-         "rows": [("Contact Person", con.get("contact_person") or ""), ("Mobile No.", con.get("phone_number") or "")]},
-        {"type": "pairs", "cols": 2, "rows": [("Project", b.get("project") or ""),
-                                              ("Work Order", od.get("wo_number") or b.get("order") or ""),
-                                              ("Site", b.get("site") or "-"),
-                                              ("Place of Supply", b.get("place_of_supply_name") or "-")]},
-        {"type": "table", "columns": [("#", 5, "C"), ("Act.", 12, "L"), ("Description", 54, "L"), ("UoM", 11, "C"),
-                                      ("Order Qty", 16, "R"), ("Previous", 16, "R"), ("This Bill", 16, "R"),
-                                      ("Up to Date", 16, "R"), ("Rate", 16, "R"), ("Amount", 20, "R")],
-         "rows": rows, "totals": [("VALUE OF WORK IN THIS BILL", form_pdf.plain_number(b["this_bill"]), True)]},
-        {"type": "sums", "rows": sums},
-        {"type": "words", "label": "Rupees", "text": _words(b["net_payable"])},
-        {"type": "text", "style": "small", "text": "Quantities are as jointly measured and recorded in the measurement "
-                                                   "book. Retention (FSD) is released after the defects liability period."},
+    order = db.query(models.DBSubcontractOrder).filter(models.DBSubcontractOrder.id == bill.order_id).first()
+    con = db.query(models.DBContractor).filter(models.DBContractor.id == bill.contractor_id).first() \
+        if bill.contractor_id else None
+    job = db.query(models.DBJob).filter(models.DBJob.id == bill.job_id).first() if bill.job_id else None
+    company = letterhead(db, client, order.business_unit_id if order else None)
+    d = form_pdf.date_text
+    seq = bill.sequence or 1
+    previous = db.query(models.DBSubBill).filter(
+        models.DBSubBill.order_id == bill.order_id, models.DBSubBill.id != bill.id,
+        models.DBSubBill.sequence < seq, models.DBSubBill.status != "CANCELLED").all()
+    this = _bill_figures(bill)
+    prev = {k: money(sum(_bill_figures(p)[k] for p in previous)) for k in this}
+    rate = bill.gst_percent or 0
+    con_name = (con.company_name if con else b.get("contractor")) or ""
+    project = (job.name if job else "") or b.get("project") or ""
+
+    # --- Top Sheet: the certificate of payment ---
+    amount = form_pdf.inr(order.gross_amount if order else 0)
+    if order and order.amendment_no and order.supersedes_id:
+        first = db.query(models.DBSubcontractOrder).filter(models.DBSubcontractOrder.id == order.supersedes_id).first()
+        if first:
+            amount = "%s (original) & %s (amended)" % (form_pdf.inr(first.gross_amount), amount)
+    info = [
+        ("1.1", "Work Order No. & Date (original)", [order.wo_number if order else "", None, "Date :",
+                                                      d(((order.approved_at or order.created_at) if order else "")[:10])]),
+        ("1.2", "Work Order Amendment No. & Date", [("Amendment %d" % order.amendment_no) if order and order.amendment_no else "-",
+                                                     None, "Date :", d((order.updated_at or "")[:10]) if order and order.amendment_no else "-"]),
+        ("1.3", "Work Order Amount (original & amended)", [amount]),
+        ("1.4", "SC Work Period - From and To", [d(order.commencement_date) if order else "", None, "to",
+                                                 d(order.completion_date) if order else ""]),
+        ("2.1", "Name of the Sub Contractor", [con_name]),
+        ("2.2", "Address of the Sub Contractor", [", ".join(x for x in ((con.address or "").replace("\n", ", ") if con else "",
+                                                                          (con.city or "") if con else "",
+                                                                          (con.state or "") if con else "",
+                                                                          (con.pin_code or "") if con else "") if x)]),
+        ("2.3", "PAN # of Sub Contractor", [(con.pan or "") if con else ""]),
+        ("2.4", "GST # of Sub Contractor", [(con.gst_number or "") if con else ""]),
+        ("2.5", "PRW's Bill Detail :", ["RA Bill No.", str(seq), "Bill Date", d(b["bill_date"])]),
+        ("3.1", "Bill Period :", ["From", d(b["period_from"]) or "-", "To", d(b["period_to"]) or "-"]),
+        ("3.2", "HSN/SAC CODE", ["HSN/SAC", b["hsn_sac"] or "", "STATE CODE", b.get("place_of_supply") or ""]),
+        ("3.3", "Typ of Work", [b["work_type"] or ""]),
     ]
-    signatures, seal = sign_boxes(db, client.id, signatures, {"SUBMITTED": "submitted", "CERTIFIED": "approved",
-                                                              "PAID": "approved"}.get(b["status"]))
-    blocks.append({"type": "signatures", "boxes": signatures, "seal": seal})
+
+    def fig(sl, label, key, ref="", bold=False):
+        return {"sl": sl, "label": label, "ref": ref, "bold": bold,
+                "upto": money(prev[key] + this[key]), "prev": prev[key], "this": this[key]}
+
+    cess_on = bool(this["cess"] or prev["cess"] or (bill.labour_cess_percent or 0))
+    money_rows = [
+        {"section": "EARNINGS/GROSS BILL"},
+        fig("4.01", "Value of Sub Contract Work Measured (Type of Work: %s) / SAC Code: %s"
+            % (b["work_type"] or "", b["hsn_sac"] or ""), "work", "Bill Detail"),
+        fig("4.02", "Mobilization Advance ", "mob"),
+        fig("4.03", "Material / Work Advance", "mat"),
+        fig("4.04", "Recoveries in Debit Notes", "debit"),
+        fig("4.04", "Gross Total Value ", "gross", bold=True),
+        {"section": "ADD GST CHARGE "},
+        fig("4.05", "SGST @  %g %%" % (rate / 2.0), "sgst", "Accounts"),
+        fig("4.06", "CGST @ %g %%" % (rate / 2.0), "cgst", "Accounts"),
+        fig("4.07", "IGST @ %g%%" % rate, "igst", "Accounts"),
+        fig("4.08", "GST Total Value ", "gst", bold=True),
+        fig("4.09", "Total Gross Value including GST", "total", bold=True),
+        {"section": "DEDUCTION & RECOVERYS"},
+        fig("5.01", "Recovery of Mobilization Advance", "adv"),
+        fig("5.02", "Recovery of Material / Work Advance/Others", "other"),
+        fig("5.03", "Recovery of Retention @ %g %% " % (bill.retention_percent or 0), "ret"),
+        fig("5.04", "Tax Deduction at Source @ %.2f%% " % (bill.tds_percent or 0), "tds", "Accounts"),
+    ]
+    if cess_on:
+        money_rows.append(fig("5.05", "Labour Welfare Cess @ %g%%" % (bill.labour_cess_percent or 0), "cess", "Accounts"))
+    money_rows.append(fig("5.06" if cess_on else "5.05", "Total Deduction ", "ded", bold=True))
+    net_row = fig("", "Net Amount for Payment ", "net", bold=True)
+    net_row["span_label"] = True
+    money_rows.append(net_row)
+
+    # Who signed: prepared by whoever sent it, measured by whoever wrote the
+    # book, certified by the route's signatures before the last, approved by the last.
+    entries = db.query(models.DBSubMeasurement).filter(
+        models.DBSubMeasurement.sub_bill_id == bill.id).order_by(models.DBSubMeasurement.id).all()
+    measurers, seen = [], set()
+    for m in entries:
+        key = m.recorded_by or m.recorded_by_name
+        if key in seen:
+            continue
+        seen.add(key)
+        measurers.append(_cert_person(db, m.recorded_by, m.recorded_by_name, "Site Engineer"))
+    signed = sub_bill_signed(db, bill)
+    prep = _cert_person(db, getattr(bill, "submitted_by", None), b.get("submitted_by_name"), "QS") \
+        if b.get("submitted_by_name") else ("", "QS")
+    chain = [r for r in sub_bill_chain_rows(db, bill.id) if r.status == "approved"]
+    final = (bill.status or "") in ("CERTIFIED", "PAID")
+    certifiers = [_cert_person(db, r.approver_id, sub_bill_step_name(db, r), "Head QS")
+                  for r in (chain[:-1] if final else chain)]
+    approver = _cert_person(db, chain[-1].approver_id, sub_bill_step_name(db, chain[-1]), "Site Incharge") \
+        if (final and chain) else ((signed["approved"], "Site Incharge") if final else ("", "Site Incharge"))
+    accepted = b.get("accepted_by_name") or ""
+    top_sign = [
+        ("Accepted for Sub Contractor", ("%s\n%s" % (con_name, ("Accepted by %s, %s" % (accepted, d(b["accepted_at"][:10])))
+                                                      if accepted else "")).strip(), "Authorized Signatory"),
+        ("Prepared By", prep[0], prep[1]),
+        ("Site Engineer", ", ".join(n for n, _ in measurers), (measurers[0][1] if measurers else "Site Engineer")),
+        ("Certified by", ", ".join(n for n, _ in certifiers), certifiers[0][1] if certifiers else "Head QS"),
+        ("Approved By", approver[0], approver[1]),
+    ]
+    top = {"banner": [(company["name"].upper(), "banner"),
+                      (company["address"].replace("\n", ", "), "centre"),
+                      ("GSTIN NO: %s" % company["gstin"], "centrebold") if company.get("gstin") else ("", "centre"),
+                      ("PROJECT : %s" % project, "centrebold"),
+                      ("CERTIFICATE OF PAYMENT", "band")],
+           "info": info, "money": money_rows, "words": amount_in_words(this["net"]),
+           "signatures": top_sign}
+
+    # --- AB-1: the abstract ---
+    lines = {l["item_id"]: l for l in b.get("lines") or []}
+    prev_qty = {}
+    if previous:
+        for l in db.query(models.DBSubBillLine).filter(
+                models.DBSubBillLine.sub_bill_id.in_([p.id for p in previous])).all():
+            prev_qty[l.item_id] = prev_qty.get(l.item_id, 0.0) + (l.this_bill_qty or 0.0)
+    rows, pending_header, n = [], None, 0
+    items = db.query(models.DBSubcontractItem).filter(
+        models.DBSubcontractItem.order_id == bill.order_id).order_by(
+            models.DBSubcontractItem.display_order, models.DBSubcontractItem.id).all()
+    for it in items:
+        if it.is_header:
+            pending_header = {"header": True, "description": (it.item_description or "").split("\n")[0]}
+            continue
+        pq = money(prev_qty.get(it.id, 0.0))
+        line = lines.get(it.id)
+        tq = money(line["this_bill_qty"]) if line else 0.0
+        if not pq and not tq:
+            continue
+        if pending_header:
+            rows.append(pending_header)
+            pending_header = None
+        n += 1
+        r8 = unit_rate(line["rate"] if line else it.unit_rate)
+        rows.append({"sl": n, "description": (it.item_description or "").split("\n")[0], "unit": it.uom or "",
+                     "prev_qty": pq or None, "prev_rate": r8 if pq else None, "prev_amount": money(pq * r8) if pq else None,
+                     "this_qty": tq or None, "this_rate": r8 if tq else None, "this_amount": money(tq * r8) if tq else None,
+                     "upto_qty": money(pq + tq), "upto_amount": money((pq + tq) * r8), "remarks": ""})
+    totals = {"prev": money(sum(r.get("prev_amount") or 0 for r in rows if not r.get("header"))),
+              "this": money(sum(r.get("this_amount") or 0 for r in rows if not r.get("header")))}
+    totals["upto"] = money(totals["prev"] + totals["this"])
+    period = "%s to %s" % (d(b["period_from"]) or "-", d(b["period_to"]) or "-")
+    site = ((job.site_address or "").split("\n")[0] if job else "") or project
+    abstract = {
+        "banner": [(company["name"].upper(), "banner"), ("ABSTRACT SHEET", "band")],
+        "meta": [("Name of the Project : %s" % project, "Vendor Code : %s" % ((con.vendor_code or "") if con else ""),
+                  "Bill.No. %02d" % seq),
+                 ("Name of the Contractor: %s" % con_name, "WO.No: %s" % (order.wo_number if order else ""),
+                  "Bill Period: %s" % period),
+                 ("Name of the Work: %s" % (b["work_name"] or ""), "Name of the site: %s" % site,
+                  "To be paid vide Bill.No: %02d   Date: %s" % (seq, d(b["bill_date"])))],
+        "rows": rows, "totals": totals,
+        "signatures": [("CONTRACTOR", con_name, ""), ("CHECKED BY", prep[0], prep[1]),
+                       ("PROJECT MANAGER", ", ".join(n for n, _ in certifiers), certifiers[0][1] if certifiers else ""),
+                       ("PROJECT INCHARGE", approver[0], approver[1] if approver[0] else "")],
+    }
+
+    # --- MB-1: the measurement book ---
+    dims = dimensions_for(db, [m.id for m in entries], models.DBMeasurementDimension.sub_measurement_id)
+    order_of = {it.id: i for i, it in enumerate(items)}
+    by_item = {}
+    for m in entries:
+        by_item.setdefault(m.item_id, []).append(m)
+    mb_rows, k = [], 0
+    for it in sorted((it for it in items if it.id in by_item), key=lambda x: order_of[x.id]):
+        k += 1
+        uom = it.uom or ""
+        mb_rows.append({"kind": "item", "sno": str(k), "description": (it.item_description or "").split("\n")[0].upper()})
+        item_total = 0.0
+        for j, m in enumerate(by_item[it.id]):
+            mult = getattr(m, "multiplier", None) or 1.0
+            letter = chr(ord("a") + j) if j < 26 else str(j + 1)
+            place = (m.location or "").strip() or (m.mb_ref or "").strip() or ("Measured on %s" % d(m.measured_on))
+            mb_rows.append({"kind": "entry", "sno": letter, "description": place})
+            lines_ = dims.get(m.id) or []
+            if not lines_:
+                mb_rows.append({"kind": "dim", "description": m.remarks or "As measured", "uom": uom,
+                                "quantity": money(money(m.quantity) / mult)})
+            for dl in lines_:
+                if dl.get("is_heading"):
+                    mb_rows.append({"kind": "heading", "description": dl["particulars"]})
+                    continue
+                nos = dl.get("nos")
+                mb_rows.append({"kind": "dim", "description": dl["particulars"], "uom": uom,
+                                "nos": (-nos if (dl["deduct"] and nos is not None) else nos),
+                                "nom": dl.get("nom"), "length": dl.get("length"), "width": dl.get("breadth"),
+                                "height": dl.get("depth"), "quantity": round(dl["quantity"], 3)})
+            one = round(sum(x["quantity"] for x in lines_ if not x.get("is_heading")), 3) if lines_ \
+                else money(money(m.quantity) / mult)
+            if mult != 1:
+                mb_rows.append({"kind": "subtotal", "description": "Total Quantity for one Block",
+                                "label": "Total Quantity", "quantity": one, "uom": uom})
+                mb_rows.append({"kind": "total", "description": "Total Quantity for Block No. - %s" % place,
+                                "label": "Total Quantity for %g Blocks" % mult, "quantity": money(m.quantity), "uom": uom})
+            else:
+                mb_rows.append({"kind": "total", "description": "Total Quantity for %s" % place,
+                                "label": "Total Quantity", "quantity": money(m.quantity), "uom": uom})
+            item_total += m.quantity or 0
+        if len(by_item[it.id]) > 1:
+            mb_rows.append({"kind": "total", "description": "Total - %s" % (it.item_description or "").split("\n")[0],
+                            "label": "Total Quantity", "quantity": money(item_total), "uom": uom})
+    mb = {"banner": [(company["name"].upper(), "banner")],
+          "meta": [("Name of the Work :- %s" % (b["work_name"] or "").upper(), ""),
+                   ("Name of the contractor :- %s" % con_name, "Bill Period: %s" % period),
+                   ("Bill no :- %02d (Measurements)" % seq, "Date :- %s" % d(b["bill_date"]))],
+          "rows": mb_rows,
+          "signatures": [("CONTRACTOR", con_name, ""),
+                         ("MEASURED BY", ", ".join(n for n, _ in measurers), "Site Engineer"),
+                         ("CHECKED BY", prep[0], prep[1])]}
+    return {"bill": b, "company": company, "top": top, "abstract": abstract, "mb": mb}
+
+
+def _dash(v, places=2):
+    """A figure on the certificate: a dash for nothing, as the form is filled in."""
+    if v is None or v == "":
+        return ""
+    return form_pdf.inr(v, places) if abs(v) >= 0.005 else "-"
+
+
+def _q(v):
+    """A quantity as the book writes it - a deduction's count as -6, not (6)."""
+    if v is None:
+        return ""
+    return ("-" if v < 0 else "") + form_pdf.qty_text(abs(v))
+
+
+def sub_bill_form_spec(db, client, bill):
+    """The gang's RA bill in its three sheets: Top Sheet, AB-1 and MB-1."""
+    c = sub_bill_certificate(db, client, bill)
+    b = c["bill"]
+    stage = {"SUBMITTED": "submitted", "CERTIFIED": "approved", "PAID": "approved"}.get(b["status"])
+
+    def sigs(boxes):
+        out, seal = sign_boxes(db, client.id, [(role, ("%s\n(%s)" % (name, cap)) if name and cap else
+                                                (name or (cap and "(%s)" % cap) or ""))
+                                               for role, name, cap in boxes], stage)
+        return {"type": "signatures", "boxes": out, "seal": seal}
+
+    top = c["top"]
+    W6 = [10, 64, 20, 30, 29, 29]
+    info_rows, info_spans = [], []
+    for i, (sl, label, cells) in enumerate(top["info"]):
+        cc, dd, ee, ff = (list(cells) + [None] * 4)[:4]
+        info_rows.append([{"t": sl, "a": "C"}, label, cc or "", dd or "", ee or "", ff or ""])
+        if ee is None and ff is None:
+            info_spans.append((2, i, 5, i))
+        elif dd is None:
+            info_spans.append((2, i, 3, i))
+    head = [["Sl\nNo", "Description", "Reference", "Upto This\nBill Amount", "Upto Previous\nBill Amount",
+             "For This\nBill Amount"]]
+    m_rows, m_spans, m_shade = list(head), [], []
+    for row in top["money"]:
+        r = len(m_rows)
+        if row.get("section"):
+            m_rows.append([{"t": row["section"], "b": True}])
+            m_spans.append((0, r, 5, r))
+            m_shade.append(r)
+            continue
+        bold = row.get("bold", False)
+        cells = [{"t": row["sl"], "a": "C", "b": bold}, {"t": row["label"], "b": bold}, row.get("ref") or ""]
+        cells += [{"t": _dash(row[k]), "a": "R", "b": bold} for k in ("upto", "prev", "this")]
+        if row.get("span_label"):
+            cells[0] = {"t": row["label"], "b": True}
+            m_spans.append((0, r, 2, r))
+        m_rows.append(cells)
+    blocks = [{"type": "banner", "lines": [x for x in top["banner"] if x[0]]},
+              {"type": "grid", "widths": W6, "rows": info_rows, "spans": info_spans},
+              {"type": "grid", "widths": W6, "rows": m_rows, "spans": m_spans, "shade": m_shade, "head": 1},
+              {"type": "words", "label": "AMOUNT IN WORDS:", "text": top["words"]},
+              sigs(top["signatures"]),
+              {"type": "page_break"}]
+
+    a = c["abstract"]
+    W12 = [9, 35, 10, 14, 11, 17, 14, 11, 17, 14, 17, 13]
+    a_rows = [["SI.No", "Description", "Unit", "Up To Previous Bill", "", "", "In This Bill Claimed", "", "",
+               "Up to This Bill", "", "Remarks"],
+              ["", "", "", "Qty", "Rate", "Amount", "Qty", "Rate", "Amount", "Qty", "Amount", ""]]
+    a_spans = [(0, 0, 0, 1), (1, 0, 1, 1), (2, 0, 2, 1), (3, 0, 5, 0), (6, 0, 8, 0), (9, 0, 10, 0), (11, 0, 11, 1)]
+    for row in a["rows"]:
+        if row.get("header"):
+            a_rows.append(["", {"t": row["description"], "b": True}])
+            continue
+        a_rows.append([{"t": str(row["sl"]), "a": "C"}, row["description"], {"t": row["unit"], "a": "C"},
+                       {"t": _q(row["prev_qty"]), "a": "R"}, {"t": _dash(row["prev_rate"]) if row["prev_qty"] else "", "a": "R"},
+                       {"t": _dash(row["prev_amount"]) if row["prev_qty"] else "", "a": "R"},
+                       {"t": _q(row["this_qty"]), "a": "R"}, {"t": _dash(row["this_rate"]) if row["this_qty"] else "", "a": "R"},
+                       {"t": _dash(row["this_amount"]) if row["this_qty"] else "", "a": "R"},
+                       {"t": _q(row["upto_qty"]), "a": "R"}, {"t": _dash(row["upto_amount"]), "a": "R"},
+                       row.get("remarks") or ""])
+    r = len(a_rows)
+    t = a["totals"]
+    a_rows.append([{"t": "A)", "b": True, "a": "C"}, {"t": "Total Invoice Amount", "b": True},
+                   {"t": "Up to Previous Bill Amount :-", "b": True}, "", "", {"t": _dash(t["prev"]), "b": True, "a": "R"},
+                   {"t": "In this Bill", "b": True}, "", {"t": _dash(t["this"]), "b": True, "a": "R"}, "",
+                   {"t": _dash(t["upto"]), "b": True, "a": "R"}, ""])
+    a_spans += [(2, r, 4, r), (6, r, 7, r)]
+    blocks += [{"type": "banner", "lines": a["banner"]},
+               {"type": "grid", "widths": [72, 56, 54], "rows": [list(x) for x in a["meta"]], "size": "small"},
+               {"type": "grid", "widths": W12, "rows": a_rows, "spans": a_spans, "head": 2, "size": "small"},
+               sigs(a["signatures"]),
+               {"type": "page_break"}]
+
+    m = c["mb"]
+    W10 = [9, 62, 11, 11, 11, 14, 14, 14, 20, 16]
+    mb_rows, mb_spans = [["S.No", "Description", "UoM", "No's", "NoM", "Length", "Width", "Height",
+                          "Total Quantity", "Remarks"]], []
+    for row in m["rows"]:
+        kind = row["kind"]
+        r = len(mb_rows)
+        if kind in ("item", "entry"):
+            mb_rows.append([{"t": row.get("sno") or "", "a": "C", "b": True}, {"t": row["description"], "b": True}])
+        elif kind == "heading":
+            mb_rows.append(["", {"t": row["description"], "b": True, "i": True}])
+        elif kind in ("subtotal", "total"):
+            mb_rows.append(["", {"t": row["description"], "b": True}, "", "", "",
+                            {"t": row["label"], "b": True}, "", "", {"t": _q(row["quantity"]), "b": True, "a": "R"},
+                            {"t": row.get("uom") or "", "b": True}])
+            mb_spans.append((5, r, 7, r))
+        else:
+            mb_rows.append(["", row["description"], {"t": row.get("uom") or "", "a": "C"},
+                            {"t": _q(row.get("nos")), "a": "R"}, {"t": _q(row.get("nom")), "a": "R"},
+                            {"t": _q(row.get("length")), "a": "R"}, {"t": _q(row.get("width")), "a": "R"},
+                            {"t": _q(row.get("height")), "a": "R"},
+                            {"t": ("-" if row["quantity"] < 0 else "") + form_pdf.inr(abs(row["quantity"]), 3), "a": "R"},
+                            row.get("remarks") or ""])
+    if len(mb_rows) == 1:
+        mb_rows.append(["", "Nothing measured is pinned to this bill."])
+    blocks += [{"type": "banner", "lines": m["banner"]},
+               {"type": "grid", "widths": [110, 72], "rows": [list(x) for x in m["meta"]], "size": "small"},
+               {"type": "grid", "widths": W10, "rows": mb_rows, "spans": mb_spans, "head": 1, "size": "small"},
+               sigs(m["signatures"])]
     watermark = {"DRAFT": "DRAFT - NOT CERTIFIED", "SUBMITTED": "SUBMITTED - NOT YET CERTIFIED",
                  "CANCELLED": "CANCELLED"}.get(b["status"], "")
+    company = c["company"]
     return {"title": "Sub Contractor Bill %s" % b["number"], "author": company["name"], "watermark": watermark,
-            "blocks": blocks, "footer": "%s  |  %s  |  Printed %s" % (b["number"], company["name"],
-                                                                      datetime.now().strftime("%d/%m/%Y %H:%M"))}
+            "blocks": blocks, "footer": "%s  |  %s  |  RA Bill %02d  |  Printed %s" % (
+                b["number"], company["name"], b.get("sequence") or 1, datetime.now().strftime("%d/%m/%Y %H:%M"))}
 
 
 def statement_form_spec(client, party_name, party_label, s, date_from="", date_to="", db=None):
@@ -34949,11 +35823,16 @@ def approval_inbox(db, client, emp):
                 what="Work claimed this bill.", view="measurement-view",
                 pdf="/api/ra-bills/%d/document.pdf" % b.id, approve_label="Certify"))
 
-    # 4. Subcontractor bills, waiting to be certified.
+    # 4. Subcontractor bills, climbing their route to be certified.
     if can("subcontracts.approve"):
         for b in db.query(models.DBSubBill).filter(
                 models.DBSubBill.client_id == client.id,
                 models.DBSubBill.status == "SUBMITTED").order_by(models.DBSubBill.id).all():
+            ensure_sub_bill_chain(db, b)
+            step = sub_bill_current_step(db, b)
+            if emp is not None and (step is None or step.approver_id != emp.id):
+                continue
+            route = sub_bill_chain_rows(db, b.id)
             con = db.query(models.DBContractor).filter(models.DBContractor.id == b.contractor_id).first() \
                 if b.contractor_id else None
             job = _job_of(db, b.job_id)
@@ -34961,10 +35840,30 @@ def approval_inbox(db, client, emp):
                 "sub_bill", "Subcontractor bill", b.id, b.number, b.this_bill,
                 party=(con.company_name if con else ""),
                 project=(("%s %s" % (job.number or "", job.name or "")).strip() if job else ""),
-                since=getattr(b, "updated_at", "") or "",
-                what="Net payable %s after deductions." % inr(b.net_payable or 0),
+                raised_by=getattr(b, "submitted_by_name", "") or "",
+                since=getattr(b, "submitted_at", "") or getattr(b, "updated_at", "") or "",
+                what=("Net payable %s after deductions." % inr(b.net_payable or 0)) +
+                     (" Step %d of %d." % (step.step, len(route)) if step is not None and len(route) > 1 else ""),
                 view="subbills-view", pdf="/api/sub-bills/%d/document.pdf" % b.id,
-                approve_label="Certify"))
+                mine=emp is not None or step is None or step.approver_id is None,
+                waiting_on=sub_bill_step_name(db, step),
+                approve_label="Certify" if step is None or step.step == len(route) else "Sign and pass on"))
+
+    # 4b. Sub contractors registered on site, waiting to be taken on.
+    if can("subcontracts.approve"):
+        for c in db.query(models.DBContractor).filter(
+                models.DBContractor.client_id == client.id,
+                models.DBContractor.registration_status == "PENDING").order_by(models.DBContractor.id).all():
+            if emp is not None and c.registered_by == emp.id:
+                continue
+            items.append(_row(
+                "contractor", "Sub contractor registration", c.id, c.vendor_code or c.company_name, 0,
+                party=c.company_name or "", project=c.registered_project or "",
+                raised_by=c.registered_by_name or "", since=c.created_at or "",
+                what=", ".join(x for x in (c.nature_of_work or "", ("PAN " + c.pan) if c.pan else "PAN not given",
+                                           ("GST " + c.gst_number) if c.gst_number else "") if x),
+                view="vendors-view", pdf="/api/wo/contractors/%d/registration.pdf" % c.id,
+                warnings=[w for w in (("No bank account on the form" if not c.bank_account else ""),) if w]))
 
     # 5. Variations waiting to be agreed.
     if can("subcontracts.approve"):
@@ -35055,6 +35954,9 @@ def approvals_decide(body: ApprovalDecisionIn, request: Request, db: Session = D
     if kind == "sub_bill":
         return act_on_sub_bill(body.id, "certify" if decision == "approve" else "reject",
                                request, {"comments": note}, db)
+    if kind == "contractor":
+        return decide_contractor_registration(body.id, "approve" if decision == "approve" else "reject",
+                                              request, {"comments": note}, db)
     if kind == "variation":
         return act_on_variation(body.id, decision, request, {"comments": note}, db)
     if kind == "leave":
@@ -35305,9 +36207,300 @@ def wo_update_contractor(con_id: int, body: ContractorIn, request: Request,
     con.bank_account = re.sub(r"\s", "", body.bank_account or "")
     con.bank_ifsc = ifsc
     con.address = (body.address or "").strip()
+    code = (body.vendor_code or "").strip().upper()
+    if code and code != (con.vendor_code or "").upper():
+        if db.query(models.DBContractor).filter(
+                models.DBContractor.client_id == client.id, models.DBContractor.id != con.id,
+                sqlfunc.upper(models.DBContractor.vendor_code) == code).first():
+            raise HTTPException(409, "Vendor code %s is already taken." % code)
+        con.vendor_code = code
+    contractor_form_fields(con, body)
+    # A form that was sent back and has been put right goes back for approval.
+    if (con.registration_status or "") == "REJECTED":
+        con.registration_status = "PENDING"
     log_audit(db, client.id, "contractor_updated", "contractor", con.id, name, pan, request)
     db.commit()
-    return {"id": con.id, "company_name": con.company_name, "message": "%s saved." % name}
+    return {"id": con.id, "company_name": con.company_name, "registration_status": con.registration_status,
+            "message": "%s saved." % name}
+
+
+# --- The Sub Contractor Registration Form, as paper and as a workbook ----------
+
+import sheet_forms
+
+REGISTRATION_DECLARATION = (
+    "I declare that the information I have provided is correct to the best of my knowledge. "
+    "I understand and agree to the terms of the \u2018Contract for Services\u2019.",
+    "I agree to follow the Health & Safety guidance given overleaf (a full copy of the guide is "
+    "available from %s upon request).",
+    "I agree to inform immediately if i change any personal details such as bank details or address "
+    "or contact numbers.",
+    "I have provided the required documentation & Photo ID (See below)")
+
+
+def registration_form_data(db, client, con):
+    """The form's boxes, filled - one description for the PDF and the workbook."""
+    company = letterhead(db, client)["name"] or client.company_name or ""
+    docs = set((con.documents or "").split(","))
+    return {
+        "company": company.upper(), "project": con.registered_project or "",
+        "vendor_code": con.vendor_code or "", "name": con.company_name or "",
+        "personal": [("Name of the Sub Contractor:", con.company_name or ""),
+                     ("Residential Address:", con.address or ""),
+                     ("Date of Joining :", form_pdf.date_text(con.joining_date) if re.match(
+                         r"^\d{4}-\d{2}-\d{2}", con.joining_date or "") else (con.joining_date or "")),
+                     ("Pin Code :", con.pin_code or ""), ("City :", con.city or ""), ("State :", con.state or ""),
+                     ("Nature of Work :", con.nature_of_work or ""), ("Tel no. :", con.phone_number or ""),
+                     ("E - mail Id :", con.email or ""), ("Name of Contact Person :", con.contact_person or ""),
+                     ("Type of Entity : ", con.entity_type or ""), ("PAN no. :", con.pan or ""),
+                     ("GST Reg No :", con.gst_number or ""), ("Aadhar Card :", con.aadhaar or "")],
+        "bank": [("Bank Name :", con.bank_name or ""), ("Account no :", con.bank_account or ""),
+                 ("IFSC Code :", con.bank_ifsc or ""), ("Branch :", con.bank_branch or "")],
+        "documents": [(label, key in docs) for key, label in REGISTRATION_DOCUMENTS],
+        "declaration": [line % company if "%s" in line else line for line in REGISTRATION_DECLARATION],
+        "declaration_signed": bool(con.declaration_signed),
+        "status": con.registration_status or "APPROVED",
+        "approved_by": con.approved_by_name or "", "approved_at": con.approved_at or "",
+    }
+
+
+def registration_form_spec(db, client, con):
+    f = registration_form_data(db, client, con)
+    rows, spans, shade = [], [], []
+
+    def band(text):
+        rows.append([{"t": text, "b": True}, ""])
+        spans.append((0, len(rows) - 1, 1, len(rows) - 1))
+        shade.append(len(rows) - 1)
+
+    rows.append([{"t": "VENDOR CODE:", "b": True}, {"t": f["vendor_code"], "b": True}])
+    band("1. Subcontractor Personal Details")
+    rows += [[{"t": k, "b": True}, v] for k, v in f["personal"]]
+    band("2. Bank details")
+    rows += [[{"t": k, "b": True}, v] for k, v in f["bank"]]
+    band("3.Documents Required")
+    rows += [[label, {"t": "Received" if got else "", "a": "C"}] for label, got in f["documents"]]
+    decl = [{"type": "text", "text": "Declaration:", "style": "bold"}] + \
+        [{"type": "text", "text": line} for line in f["declaration"]]
+    if f["declaration_signed"]:
+        decl.append({"type": "text", "style": "small", "text": "Declaration signed by the sub contractor."})
+    approved = "APPROVED" == f["status"]
+    boxes = [("Authorized Signature", ("%s%s" % (f["approved_by"], (" - " + form_pdf.date_text(f["approved_at"][:10]))
+                                               if f["approved_at"] else "")) if approved else ""),
+             ("Contractor Signature", f["name"])]
+    return {"title": "Sub Contractor Registration %s" % f["vendor_code"], "author": f["company"],
+            "watermark": {"PENDING": "AWAITING APPROVAL", "REJECTED": "SENT BACK"}.get(f["status"], ""),
+            "blocks": [{"type": "banner", "lines": [(f["company"], "banner"),
+                                                    ("SUB CONTRACTOR REGISTRATION FORM", "band"),
+                                                    ("PROJECT: %s" % f["project"], "centrebold")]},
+                       {"type": "grid", "widths": [70, 112], "rows": rows, "spans": spans, "shade": shade}]
+                      + decl + [{"type": "signatures", "boxes": boxes}],
+            "footer": "%s  |  Sub Contractor Registration Form  |  Printed %s" % (
+                f["vendor_code"], datetime.now().strftime("%d/%m/%Y %H:%M"))}
+
+
+def contractor_or_404(db, client_id, con_id):
+    con = db.query(models.DBContractor).filter(models.DBContractor.id == con_id,
+                                               models.DBContractor.client_id == client_id).first()
+    if not con:
+        raise HTTPException(404, "Contractor not found")
+    return con
+
+
+@app.get("/api/wo/contractors/{con_id}/registration.pdf")
+def contractor_registration_pdf(con_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    con = contractor_or_404(db, client.id, con_id)
+    return form_pdf_response(registration_form_spec(db, client, con), "registration_%s" % (con.vendor_code or con.id))
+
+
+@app.get("/api/wo/contractors/{con_id}/registration.xlsx")
+def contractor_registration_xlsx(con_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    con = contractor_or_404(db, client.id, con_id)
+    data = sheet_forms.registration_workbook(registration_form_data(db, client, con))
+    name = re.sub(r"[^A-Za-z0-9]+", "_", "registration_%s" % (con.vendor_code or con.id)).strip("_")
+    return Response(content=data,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": 'attachment; filename="%s.xlsx"' % name})
+
+
+@app.get("/api/wo/contractors.xlsx")
+def contractors_register_xlsx(request: Request, db: Session = Depends(get_db)):
+    """Every sub contractor on the books with their vendor code, as the office's
+    vendor list - its PDF twin beside it."""
+    client = require_erp_read(request, db)
+    rows = [contractor_dict(c) for c in db.query(models.DBContractor).filter(
+        models.DBContractor.client_id == client.id).order_by(models.DBContractor.vendor_code).all()]
+    labels = dict(REGISTRATION_DOCUMENTS)
+    headers = ("Vendor Code", "Name of the Sub Contractor", "Project", "Nature of Work", "Contact Person", "Tel no.",
+               "E-mail", "PAN", "GST Reg No", "Aadhaar", "Address", "City", "State", "Pin Code", "Bank",
+               "Account no", "IFSC", "Branch", "Date of Joining", "Documents", "Status")
+    body = [(r["vendor_code"], r["company_name"], r["registered_project"], r["nature_of_work"], r["contact_person"],
+             r["phone_number"], r["email"], r["pan"], r["gst_number"], r["aadhaar"], r["address"], r["city"],
+             r["state"], r["pin_code"], r["bank_name"], r["bank_account"], r["bank_ifsc"], r["bank_branch"],
+             r["joining_date"], ", ".join(labels[d].split(") ", 1)[-1] for d in r["documents"] if d in labels),
+             {"APPROVED": "Registered", "PENDING": "Awaiting approval", "REJECTED": "Sent back"}.get(
+                 r["registration_status"], r["registration_status"])) for r in rows]
+    return sheet_response(headers, body, "sub_contractors.xlsx",
+                          preamble=[("SUB CONTRACTOR REGISTER", client.company_name or ""),
+                                    ("As at", date.today().isoformat()), ()])
+
+
+@app.post("/api/wo/contractors/import")
+async def import_registration_forms(request: Request, file: UploadFile = File(...),
+                                    db: Session = Depends(get_db)):
+    """The vendor-codes workbook the office kept - one Sub Contractor
+    Registration Form per sheet - brought in once. Each form becomes a
+    registered sub contractor under the code written on it; one already on
+    the books (by code, else by name) has its form filled in from the sheet.
+
+    Nothing that would be wrong is stored: a PAN, GSTIN or IFSC that is not
+    the right shape is left blank and listed back, and a code already taken
+    by somebody else is not reused - the code in the sheet's own name is used
+    when it is free, which is how a copied form that kept its original's
+    code is usually put right."""
+    client, actor_id, actor_name = wo_actor(request, db, ("workorders.manage", "billing.manage"))
+    raw = await file.read()
+    try:
+        import openpyxl
+        book = openpyxl.load_workbook(io.BytesIO(raw), data_only=True)
+    except Exception:
+        raise HTTPException(400, "That file could not be read as an Excel workbook (.xlsx).")
+    forms = sheet_forms.read_registration_forms(book)
+    if not forms:
+        raise HTTPException(400, "No Sub Contractor Registration Form was found in that workbook - "
+                                 "each form needs a VENDOR CODE and the Name of the Sub Contractor.")
+    existing = db.query(models.DBContractor).filter(models.DBContractor.client_id == client.id).all()
+    by_code = {(c.vendor_code or "").strip().upper(): c for c in existing if c.vendor_code}
+    by_name = {norm_name(c.company_name): c for c in existing if c.company_name}
+    created, updated, skipped, warnings = [], [], [], []
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    source = os.path.basename(file.filename or "workbook")
+    for f in forms:
+        name = (f.get("company_name") or "").strip()
+        code = re.sub(r"\s", "", f.get("vendor_code") or "").upper()
+        where = "%s (sheet '%s')" % (code or name, f["sheet"])
+        if not name:
+            skipped.append("%s: no name of the sub contractor." % where)
+            continue
+        con = by_code.get(code) if code else None
+        if con is not None and norm_name(con.company_name) != norm_name(name) \
+                and by_name.get(norm_name(name)) is not None:
+            # Already on the books under a code of its own - brought up to date there.
+            con, code = by_name[norm_name(name)], ""
+        elif con is not None and norm_name(con.company_name) != norm_name(name):
+            # The code is somebody else's. The sheet's own name often carries the right one.
+            m = re.match(r"^\s*([A-Za-z]+\d+)", f["sheet"])
+            alt = m.group(1).upper() if m else ""
+            if alt and alt != code and alt not in by_code:
+                warnings.append("%s: %s is already %s, so %s was registered as %s, the code in the sheet's name."
+                                % (where, code, con.company_name, name, alt))
+                code, con = alt, None
+            else:
+                skipped.append("%s: %s is already %s. Give %s its own code and import again, or add it by hand."
+                               % (where, code, con.company_name, name))
+                continue
+        if con is None:
+            con = by_name.get(norm_name(name))
+        if con is None:
+            con = models.DBContractor(client_id=client.id, company_name=name[:200],
+                                      vendor_code=code or next_vendor_code(db, client.id),
+                                      registration_status="APPROVED", registered_by=actor_id,
+                                      registered_by_name="Imported from %s" % source,
+                                      approved_by_name="Registration form on file", approved_at=now)
+            db.add(con)
+            created.append(con)
+        elif con not in created:
+            updated.append(con)
+        if code and not con.vendor_code:
+            con.vendor_code = code
+        # Tax and bank identifiers go in only when they are the right shape.
+        pan = re.sub(r"\s", "", f.get("pan") or "").upper()
+        gstin = re.sub(r"\s", "", f.get("gst_number") or "").upper()
+        ifsc = re.sub(r"\s", "", f.get("bank_ifsc") or "").upper()
+        aadhaar = re.sub(r"\s", "", f.get("aadhaar") or "")
+        if gstin and not (len(gstin) == 15 and state_from_gstin(gstin) and
+                          re.match(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$", gstin)):
+            warnings.append("%s: GST Reg No '%s' is not a GSTIN - left blank." % (where, f.get("gst_number")))
+            gstin = ""
+        if pan and not re.match(r"^[A-Z]{5}[0-9]{4}[A-Z]$", pan):
+            warnings.append("%s: PAN '%s' is not a PAN - left blank." % (where, f.get("pan")))
+            pan = ""
+        if not pan and gstin:
+            pan = gstin[2:12]
+        if ifsc and not re.match(r"^[A-Z]{4}0[A-Z0-9]{6}$", ifsc):
+            warnings.append("%s: IFSC '%s' is not an IFSC - left blank." % (where, f.get("bank_ifsc")))
+            ifsc = ""
+        if aadhaar and not re.match(r"^\d{12}$", aadhaar):
+            warnings.append("%s: Aadhaar '%s' is not twelve digits - left blank." % (where, f.get("aadhaar")))
+            aadhaar = ""
+        values = {"contact_person": f.get("contact_person"), "email": f.get("email"),
+                  "phone_number": f.get("phone_number"), "address": f.get("address"),
+                  "bank_name": f.get("bank_name"), "bank_account": re.sub(r"\s", "", f.get("bank_account") or ""),
+                  "bank_branch": f.get("bank_branch"), "registered_project": f.get("registered_project"),
+                  "joining_date": f.get("joining_date"), "pin_code": f.get("pin_code"), "city": f.get("city"),
+                  "state": f.get("state"), "nature_of_work": f.get("nature_of_work"),
+                  "entity_type": f.get("entity_type"), "pan": pan, "gst_number": gstin, "bank_ifsc": ifsc,
+                  "aadhaar": aadhaar}
+        for key, value in values.items():
+            value = (value or "").strip() if isinstance(value, str) else value
+            if value:
+                setattr(con, key, str(value)[:300])
+        con.declaration_signed = True
+        if code:
+            by_code[code] = con
+        by_name[norm_name(name)] = con
+        db.flush()
+    log_audit(db, client.id, "contractors_imported", "contractor", None, source,
+              "%d new, %d updated, %d skipped" % (len(created), len(updated), len(skipped)), request)
+    db.commit()
+    return {"ok": True, "created": len(created), "updated": len(set(c.id for c in updated)),
+            "skipped": skipped, "warnings": warnings,
+            "message": "%d sub contractor%s registered from the workbook, %d brought up to date%s." % (
+                len(created), "" if len(created) == 1 else "s", len(set(c.id for c in updated)),
+                (", %d not imported" % len(skipped)) if skipped else "")}
+
+
+@app.post("/api/wo/contractors/{con_id}/{action}")
+def decide_contractor_registration(con_id: int, action: str, request: Request, body: dict = None,
+                                   db: Session = Depends(get_db)):
+    """Taking a sub contractor on: the registration form approved, or sent
+    back with what is wrong on it. Not by the person who filled it in."""
+    client, actor_id, actor_name = wo_actor(request, db, "subcontracts.approve")
+    con = db.query(models.DBContractor).filter(models.DBContractor.id == con_id,
+                                               models.DBContractor.client_id == client.id).first()
+    if not con:
+        raise HTTPException(404, "Contractor not found")
+    move = (action or "").lower()
+    if move not in ("approve", "reject"):
+        raise HTTPException(404, "Unknown action")
+    comments = ((body or {}).get("comments") or "").strip()
+    if (con.registration_status or "APPROVED") != "PENDING":
+        raise HTTPException(409, "%s is not waiting for approval." % (con.vendor_code or con.company_name))
+    if actor_id and con.registered_by == actor_id:
+        raise HTTPException(403, "You registered %s, so somebody else has to approve it." % con.company_name)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    who = actor_name if actor_id else owner_label(db, client.id)
+    if move == "approve":
+        con.registration_status, con.approved_by_name, con.approved_at = "APPROVED", who, now
+        con.rejection_reason = ""
+    else:
+        if not comments:
+            raise HTTPException(400, "Say what is wrong with the form, so it can be put right.")
+        con.registration_status, con.rejection_reason = "REJECTED", comments
+    log_audit(db, client.id, "contractor_%s" % ("approved" if move == "approve" else "sent_back"), "contractor",
+              con.id, con.company_name or "", comments, request)
+    if con.registered_by:
+        notify_employee(db, client.id, con.registered_by,
+                        "Registration %s: %s" % ("approved" if move == "approve" else "sent back", con.company_name),
+                        ("%s is now a registered sub contractor." % con.vendor_code) if move == "approve"
+                        else "Put right: " + comments, link="/app.html#vendors")
+    db.commit()
+    return {"ok": True, "contractor": contractor_dict(con),
+            "message": "%s %s." % (con.vendor_code or con.company_name,
+                                   "approved - an order can now be issued to them" if move == "approve"
+                                   else "sent back")}
 
 
 class ChargeBudgetIn(BaseModel):

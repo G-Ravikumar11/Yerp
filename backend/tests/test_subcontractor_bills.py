@@ -109,7 +109,8 @@ def test_the_bill_draws_itself_from_the_book(tenant):
 
 
 def test_the_deductions_are_made_in_the_right_order(tenant):
-    """Retention off the work, GST on the remainder, TDS off the lot.
+    """As the Certificate of Payment reads: GST on the gross value of the
+    work, then retention and TDS both taken off the value of the work.
 
     The order has 18% GST and 1% TDS from the fixture; retention is set here
     so the arithmetic is checkable by hand.
@@ -118,12 +119,12 @@ def test_the_deductions_are_made_in_the_right_order(tenant):
     item = book(tenant, order["id"])["lines"][0]["item_id"]
     measure(tenant, order["id"], item, 100)           # 6,80,000 of work
     bill = raise_bill(tenant, order["id"]).json()["bill"]
-    # 5% of 6,80,000 held back. 18% GST on the 6,46,000 that remains.
-    # 1% TDS on the whole 6,80,000 claim.
+    # 18% GST on the 6,80,000 gross - retention is money held back, not a
+    # discount on the gang's invoice. 5% retention and 1% TDS off the work.
+    assert bill["gst_amount"] == 122400
     assert bill["retention_amount"] == 34000
-    assert bill["gst_amount"] == round(646000 * 0.18, 2)
     assert bill["tds_amount"] == 6800
-    assert bill["net_payable"] == round(646000 + 646000 * 0.18 - 6800, 2)
+    assert bill["net_payable"] == 680000 + 122400 - 34000 - 6800
 
 
 def test_the_second_bill_claims_only_what_is_new(tenant):

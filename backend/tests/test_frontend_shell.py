@@ -119,3 +119,17 @@ def test_the_front_door_says_what_this_is():
     assert "Civil contracting ERP" in h
     assert "Measurement book" in h and "RA bills" in h
     assert "/api/public/brand" in h
+
+
+def test_the_sub_contractor_papers_are_on_screen():
+    """The registration form, the MB sheet and the three-sheet bill (2026-09-27):
+    each has its screen, and each downloads as PDF and Excel."""
+    h = read("app.html")
+    assert 'id="vendors-view"' in h and "vendors.js" in h
+    assert 'id="sub-mb-import-modal"' in h and 'id="sub-bill-edit-modal"' in h
+    assert 'id="sub-measure-multiplier"' in h, "a block measured once, counted for every block"
+    v = read("vendors.js")
+    assert "/registration.pdf" in v and "/registration.xlsx" in v and "/api/wo/contractors/import" in v
+    s = read("subbills.js")
+    assert "/document.pdf" in s and "/export.xlsx" in s and "/import" in s
+    assert "NoM" in read("mbdims.js")

@@ -174,11 +174,28 @@ def test_the_owner_raising_their_own_paper_needs_nobody(tenant):
 
 # --- Work orders to subcontractors ---------------------------------------------
 
+def take_on(con):
+    """A gang registered by somebody on site waits for its registration form
+    to be signed off before an order can be issued to it. These tests are
+    about the order's route, so the owner signs the form off - in a browser of
+    their own, as they would from the inbox."""
+    if con.get("registration_status") != "PENDING":
+        return
+    from fastapi.testclient import TestClient
+    from conftest import _OWNER
+    import main
+    with TestClient(main.app) as owner:
+        assert owner.post("/api/client/login", json=dict(_OWNER)).status_code == 200
+        res = owner.post("/api/wo/contractors/%d/approve" % con["id"], json={})
+        assert res.status_code == 200, res.text
+
+
 def priced_order(client):
     unit = client.post("/api/wo/business-units", json={"name": "Yalavarti Projects", "code": "YP",
                                                        "gstin": "36AABCY1234H1ZX"}).json()
     con = client.post("/api/wo/contractors", json={"company_name": "Rani Labour %s" % id(client),
                                                    "pan": "AAAPR1234C"}).json()
+    take_on(con)
     job = client.post("/api/jobs", json={"name": "295 KLD STP", "customer_name": "L&T"}).json()
     order = client.post("/api/wo/orders", json={
         "business_unit_id": unit["id"], "contractor_id": con["id"], "job_id": job["id"],

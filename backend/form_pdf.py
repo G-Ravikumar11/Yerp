@@ -26,6 +26,9 @@ new drawing code.
     {"type": "qr", "data": ..., "lines": [...]}        e-invoice registration
     {"type": "signatures", "boxes": [(role, name)]}
     {"type": "numbered", "items": [...]}               conditions, numbered
+    {"type": "banner", "lines": [(text, style)]}       centred title lines, as a sheet's head
+    {"type": "grid", "widths": [mm], "rows": [[cell]], "head": n, "spans": [(c0, r0, c1, r1)],
+                     "size": "small"}                  any ruled sheet, cell for cell
     {"type": "page_break"}
 
 The page is A4, the grid black, the type Helvetica - it prints the same on the
@@ -90,6 +93,8 @@ def _styles():
                                                 leading=12.5, alignment=TA_CENTER)),
         "company": ParagraphStyle("company", **dict(base, fontName="Helvetica-Bold", fontSize=10.5,
                                                       leading=13)),
+        "banner": ParagraphStyle("banner", **dict(base, fontName="Helvetica-Bold", fontSize=12.5,
+                                                    leading=15, alignment=TA_CENTER)),
         "heading": ParagraphStyle("heading", **dict(base, fontName="Helvetica-Bold", fontSize=9.6,
                                                       leading=12)),
     }
@@ -290,7 +295,7 @@ def _signatures(block, st):
         else:
             middle = [Paragraph("&nbsp;", st["body"]), Paragraph("&nbsp;", st["body"])]
         cells.append([Paragraph(_esc(role), st["centrebold"])] + middle +
-                     [Paragraph(_esc(name or ""), st["centre"])])
+                     [Paragraph(_br(name or ""), st["centre"])])
     return _box([cells], [w] * len(boxes), [("VALIGN", (0, 0), (-1, -1), "TOP"),
                                             ("TOPPADDING", (0, 0), (-1, -1), 4),
                                             ("BOTTOMPADDING", (0, 0), (-1, -1), 4)])
@@ -310,11 +315,81 @@ def _numbered(block, st):
     return t
 
 
+def _banner(block, st):
+    """The head of a sheet as the office's workbooks set it: the company in
+    capitals, its address and GSTIN, the project, centred one under another,
+    and the sheet's own title in a shaded band beneath."""
+    rows, extra = [], []
+    for text, style in block.get("lines") or []:
+        rows.append([Paragraph(_esc(text), st.get(style) or st["centre"])])
+        if style == "band":
+            extra.append(("BACKGROUND", (0, len(rows) - 1), (0, len(rows) - 1), colors.HexColor(SHADE)))
+            extra.append(("LINEABOVE", (0, len(rows) - 1), (0, len(rows) - 1), GRID, colors.black))
+    t = Table(rows or [[""]], colWidths=[_W()])
+    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), GRID, colors.black),
+                           ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                           ("TOPPADDING", (0, 0), (-1, -1), 1.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)] + extra))
+    return t
+
+
+def _grid(block, st):
+    """A ruled sheet laid out cell for cell - the certificate of payment, the
+    abstract, the measurement book - where the form is not a list of rows
+    under one heading but boxes of different widths joined across.
+
+    A cell is text, or {"t": text, "b": bold, "a": "L"|"C"|"R", "i": italic}.
+    The first `head` rows are the heading: shaded, and repeated on every page
+    the sheet runs to."""
+    small = block.get("size") == "small"
+    base = st["small"] if small else st["body"]
+    styles = {}
+
+    def style(bold, align, italic):
+        key = (bold, align, italic)
+        if key not in styles:
+            font = "Helvetica-BoldOblique" if bold and italic else \
+                "Helvetica-Bold" if bold else "Helvetica-Oblique" if italic else "Helvetica"
+            styles[key] = ParagraphStyle("g%d" % len(styles), parent=base, fontName=font,
+                                         alignment={"C": TA_CENTER, "R": TA_RIGHT}.get(align, 0))
+        return styles[key]
+
+    widths = [w * mm for w in block["widths"]]
+    scale = _W() / float(sum(widths))
+    widths = [w * scale for w in widths]
+    head = int(block.get("head") or 0)
+    data = []
+    for r, row in enumerate(block.get("rows") or []):
+        cells = []
+        for cell in list(row) + [""] * (len(widths) - len(row)):
+            if isinstance(cell, dict):
+                text, bold, align, italic = cell.get("t", ""), cell.get("b", False), cell.get("a", "L"), cell.get("i", False)
+            else:
+                text, bold, align, italic = cell, r < head, "C" if r < head else "L", False
+            cells.append(Paragraph(_br(text), style(bool(bold), align, bool(italic))) if str(text or "") != "" else "")
+        data.append(cells[:len(widths)])
+    extra = [("SPAN", (c0, r0), (c1, r1)) for c0, r0, c1, r1 in block.get("spans") or []]
+    if head:
+        extra.append(("BACKGROUND", (0, 0), (-1, head - 1), colors.HexColor(SHADE)))
+    for r in block.get("shade") or []:
+        extra.append(("BACKGROUND", (0, r), (-1, r), colors.HexColor(SHADE)))
+    pad = 2 if small else 3
+    t = _box(data or [[""] * len(widths)], widths, extra, pad=pad)
+    if small:
+        t.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 1.2), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.6)]))
+    if head:
+        t.repeatRows = head
+    return t
+
+
 def _flow(blocks, st):
     out = []
     for b in blocks:
         kind = b.get("type")
-        if kind == "header":
+        if kind == "banner":
+            out.append(_banner(b, st))
+        elif kind == "grid":
+            out.append(_grid(b, st))
+        elif kind == "header":
             out.append(_header(b, st))
         elif kind == "party":
             out.append(_party(b, st))
@@ -326,8 +401,10 @@ def _flow(blocks, st):
         elif kind == "table":
             out.append(_table(b, st))
         elif kind == "words":
-            out.append(_box([[Paragraph(_esc(b.get("label", "Rupees")), st["body"]),
-                              Paragraph(_esc(b.get("text", "")), st["bold"])]], [24 * mm, _W() - 24 * mm]))
+            label = b.get("label", "Rupees")
+            lw = (40 if len(label) > 10 else 24) * mm
+            out.append(_box([[Paragraph(_esc(label), st["label"] if len(label) > 10 else st["body"]),
+                              Paragraph(_esc(b.get("text", "")), st["bold"])]], [lw, _W() - lw]))
         elif kind == "text":
             out.append(_box([[Paragraph(_br(b.get("text", "")) if b.get("plain", True) else b.get("text", ""),
                                         st.get(b.get("style") or "body", st["body"]))]], [_W()]))

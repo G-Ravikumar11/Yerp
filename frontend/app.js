@@ -425,6 +425,7 @@ function showView(viewId) {
         'pnl-view': 'nav-pnl',
         'money-view': 'nav-money',
         'subbills-view': 'nav-subbills',
+        'vendors-view': 'nav-vendors',
         'estimates-view': 'nav-estimates',
         'gst-view': 'nav-gst',
         'registers-view': 'nav-registers',
@@ -505,6 +506,7 @@ function showView(viewId) {
     if (viewId === 'pnl-view' && typeof loadPortfolio === 'function') loadPortfolio();
     if (viewId === 'money-view' && typeof loadMoney === 'function') loadMoney();
     if (viewId === 'subbills-view' && typeof loadSubBills === 'function') loadSubBills();
+    if (viewId === 'vendors-view' && typeof loadVendors === 'function') loadVendors();
     if (viewId === 'estimates-view' && typeof loadEstimates === 'function') loadEstimates();
     if (viewId === 'gst-view' && typeof loadGst === 'function') loadGst();
     if (viewId === 'registers-view' && typeof loadRegisters === 'function') loadRegisters();

@@ -332,10 +332,18 @@ def test_a_superseded_order_prints_as_superseded(tenant):
 # --- Masters ----------------------------------------------------------------
 
 def test_a_contractor_is_numbered_in_one_series(tenant):
+    """IV0001, IV0002 - the series the registration forms are numbered in."""
     first = tenant.post("/api/wo/contractors", json={"company_name": "One"}).json()
     second = tenant.post("/api/wo/contractors", json={"company_name": "Two"}).json()
-    assert first["vendor_code"] == "SC-0001"
-    assert second["vendor_code"] == "SC-0002"
+    assert first["vendor_code"] == "IV0001"
+    assert second["vendor_code"] == "IV0002"
+
+
+def test_a_series_already_in_use_carries_on(tenant):
+    """A book of contractors numbered SC-0001 onwards before the IV series
+    keeps its own numbering rather than starting a second one."""
+    tenant.post("/api/wo/contractors", json={"company_name": "Old", "vendor_code": "SC-0007"})
+    assert tenant.post("/api/wo/contractors", json={"company_name": "New"}).json()["vendor_code"] == "SC-0008"
 
 
 def test_the_same_contractor_is_not_added_twice(tenant):

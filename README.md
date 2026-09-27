@@ -83,6 +83,23 @@ for a code offered beside the cell, and every edit to the head written into the
 history. Their measurement book and RA bills follow the client-side shape,
 with the retention held by us.
 
+**Subcontractor register** — every gang with its vendor code (IV0001 onwards)
+and its Sub Contractor Registration Form, box for box: personal details, PAN,
+GST, Aadhaar, bank, the documents collected and the declaration. A gang
+registered by somebody on site waits in Approvals, and no order is approved for
+a gang whose form has not been signed off. The form prints and downloads in the
+office's layout; the old vendor-codes workbook (a form per sheet) imports once.
+
+**The gang's bill is the three sheets it was always signed on** — the Top
+Sheet (certificate of payment), AB-1 (abstract: up to previous, this bill, up to
+this bill) and MB-1 (the book: No's × NoM × Length × Width × Height, headings,
+deductions, a block measured once and counted for every block built). GST is
+charged on the gross; retention and TDS come off the value of the work; every
+figure after the work is whole rupees. The MB sheet imports from Excel, or its
+lines paste straight into the book. Certifying climbs the hierarchy — prepared
+by the QS, certified by the Head QS, approved by the site incharge — and the
+gang signs "Accepted for Sub Contractor" from the partner portal.
+
 **Purchase orders and goods receipt** — what was ordered against what arrived.
 Received and accepted are separate numbers, so material that turns up broken is
 recorded, returned and credited rather than quietly absorbed.

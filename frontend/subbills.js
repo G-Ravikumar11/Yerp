@@ -7,7 +7,7 @@
    the retention. Here it is us.
    =========================================================================== */
 
-var SUB = { order: null, lines: [], entries: [], summary: {} };
+var SUB = { order: null, lines: [], entries: [], summary: {}, bills: [], mbImport: null };
 var SUB_TONE = { DRAFT: 'calm', SUBMITTED: 'wait', CERTIFIED: 'good',
                  PAID: 'good', CANCELLED: 'bad' };
 
@@ -64,6 +64,9 @@ function renderSubBook() {
         statCard('Items over the order', String(s.lines_over_measured || 0));
 
     document.getElementById('sub-mb-body').innerHTML = SUB.lines.length ? SUB.lines.map(function (l) {
+        // A heading on the schedule ("Painting Works") groups the items under it and is never measured.
+        if (l.is_header) return '<tr><td colspan="8" style="font-weight:700;padding-top:14px;">' +
+            esc(l.activity_no ? l.activity_no + ' ' : '') + esc(l.description) + '</td></tr>';
         var pc = Math.max(0, Math.min(100, l.percent_measured));
         return '<tr>' +
             '<td style="font-family:monospace;font-weight:600;">' + esc(l.activity_no) +
@@ -89,7 +92,9 @@ function renderSubBook() {
     document.getElementById('sub-entries').innerHTML = SUB.entries.length ? SUB.entries.slice(0, 60).map(function (e) {
         return '<tr><td style="white-space:nowrap;">' + esc(e.measured_on) + '</td>' +
             '<td style="font-family:monospace;">' + esc(e.activity_no) + '</td>' +
-            '<td>' + (dimsSummary(e.dimensions) ||
+            '<td>' + (e.location ? '<div style="font-weight:600;font-size:0.8rem;">' + esc(e.location) + '</div>' : '') +
+                (e.multiplier && e.multiplier !== 1 ? '<div style="font-size:0.72rem;font-weight:600;">× ' + e.multiplier + ' blocks alike</div>' : '') +
+                (dimsSummary(e.dimensions) ||
                 '<span style="font-size:0.72rem;color:var(--text-secondary);">total only</span>') + '</td>' +
             '<td class="text-right" style="font-weight:600;' + (e.quantity < 0 ? 'color:var(--warning-color);' : '') +
                 '">' + e.quantity + '</td>' +
@@ -112,9 +117,13 @@ function showSubMeasure(itemId) {
         'Ordered ' + l.ordered_qty + ' ' + l.uom + ' · measured ' + l.measured_to_date + ' · ' +
         (l.balance_to_measure >= 0 ? l.balance_to_measure + ' still to do'
                                    : l.over_measured + ' already over the order');
-    ['sub-measure-dims-total', 'sub-measure-ref', 'sub-measure-remarks'].forEach(function (id) {
-        document.getElementById(id).value = '';
+    ['sub-measure-dims-total', 'sub-measure-ref', 'sub-measure-remarks', 'sub-measure-location'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.value = '';
     });
+    var mult = document.getElementById('sub-measure-multiplier');
+    if (mult) mult.value = '1';
+    subMeasureTotalHint();
     document.getElementById('sub-measure-date').value = localDate(new Date());
     dimsInit('sub-measure-dims', l.uom);
     openModal('sub-measure-modal');
@@ -122,6 +131,28 @@ function showSubMeasure(itemId) {
     if (first) first.focus();
 }
 window.showSubMeasure = showSubMeasure;
+
+function subMeasureBlocks() {
+    var el = document.getElementById('sub-measure-multiplier');
+    var n = el ? parseFloat(el.value) : 1;
+    return n > 0 ? n : 1;
+}
+
+/* One block measured, several built alike: the book's "Total Quantity for 4
+   Blocks", shown as the lines are typed. */
+function subMeasureTotalHint() {
+    var hint = document.getElementById('sub-measure-blocks');
+    if (!hint) return;
+    var n = subMeasureBlocks();
+    var one = parseFloat((document.getElementById('sub-measure-dims-total') || {}).value);
+    hint.textContent = n !== 1 && !isNaN(one)
+        ? 'Total Quantity for ' + n + ' Blocks: ' + (Math.round(one * n * 1000) / 1000) + ' (' + one + ' for one block)'
+        : '';
+}
+window.subMeasureTotalHint = subMeasureTotalHint;
+document.addEventListener('input', function (e) {
+    if (e.target && e.target.closest && e.target.closest('#sub-measure-dims')) setTimeout(subMeasureTotalHint, 0);
+});
 
 function closeSubMeasure() { closeModal('sub-measure-modal'); }
 window.closeSubMeasure = closeSubMeasure;
@@ -136,6 +167,8 @@ async function saveSubMeasure() {
         body: JSON.stringify({
             item_id: parseInt(document.getElementById('sub-measure-item').value),
             quantity: dims.length ? 0 : qty, dimensions: dims.length ? dims : null,
+            multiplier: subMeasureBlocks(),
+            location: (document.getElementById('sub-measure-location') || {}).value || '',
             measured_on: document.getElementById('sub-measure-date').value,
             mb_ref: document.getElementById('sub-measure-ref').value,
             remarks: document.getElementById('sub-measure-remarks').value,
@@ -168,33 +201,42 @@ function renderSubBillList(bills, summary) {
         statCard('Retention we hold', formatCurrency(s.retention_held || 0)) +
         statCard('Paid out', formatCurrency(s.paid || 0));
 
+    SUB.bills = bills;
     document.getElementById('sub-bill-body').innerHTML = bills.length ? bills.map(function (b) {
         var act = '';
+        var route = b.route || [];
+        var waiting = route.filter(function (r) { return r.status === 'waiting'; })[0];
+        var lastStep = !waiting || waiting.step === route.length;
         if (b.actions.indexOf('SUBMIT') >= 0 && can('billing.manage'))
-            act = '<button class="btn btn-sm btn-primary" onclick="subBillAct(' + b.id + ',\'submit\')">Submit</button>';
+            act = '<button class="btn btn-sm btn-outline" onclick="openSubBillEdit(' + b.id + ')" title="Bill date, period, type of work, SAC, recoveries">Edit</button> ' +
+                  '<button class="btn btn-sm btn-primary" onclick="subBillAct(' + b.id + ',\'submit\')">Submit</button>';
         else if (b.actions.indexOf('CERTIFY') >= 0 && can('subcontracts.approve'))
-            act = '<button class="btn btn-sm btn-primary" onclick="subBillAct(' + b.id + ',\'certify\')">Certify</button> ' +
+            act = '<button class="btn btn-sm btn-primary" onclick="subBillAct(' + b.id + ',\'certify\')">' +
+                  (lastStep ? 'Certify' : 'Sign and pass on') + '</button> ' +
                   '<button class="btn btn-sm btn-outline" onclick="subBillAct(' + b.id + ',\'reject\',true)">Send back</button>';
         else if (b.actions.indexOf('PAY') >= 0 && can('bills.pay'))
             act = '<button class="btn btn-sm btn-primary" onclick="openPayBox(\'sub_bill\',' + b.id + ',function(){if(typeof loadSubBills===\'function\')loadSubBills();})">Pay</button>';
         return '<tr>' +
-            '<td style="font-family:monospace;font-weight:600;">' + esc(b.number) + '</td>' +
+            '<td><div style="font-family:monospace;font-weight:600;">' + esc(b.number) + '</div>' +
+                '<div style="font-size:0.75rem;margin-top:4px;white-space:nowrap;">' +
+                '<a href="#" onclick="event.preventDefault();openDocument(\'sub-bill\',' + b.id + ')" title="The bill as it prints">View</a> · ' +
+                '<a href="/api/sub-bills/' + b.id + '/document.pdf" target="_blank" rel="noopener" ' +
+                'title="Certificate of payment, abstract and measurement book, as they are signed">PDF</a> · ' +
+                '<a href="/api/sub-bills/' + b.id + '/export.xlsx" title="Top Sheet, AB-1 and MB-1 as a workbook">Excel</a></div></td>' +
             '<td>' + esc(b.contractor) + '<div style="font-size:0.75rem;color:var(--text-secondary);">' +
                 esc(b.project) + '</div></td>' +
             '<td class="text-right">' + formatCurrency(b.this_bill) + '</td>' +
             '<td class="text-right">' + formatCurrency(b.retention_amount) + '</td>' +
             '<td class="text-right">' + formatCurrency(b.tds_amount) + '</td>' +
             '<td class="text-right" style="font-weight:700;">' + formatCurrency(b.net_payable) + '</td>' +
-            '<td>' + statusPill(b.status, SUB_TONE[b.status] || 'calm') +
+            '<td>' + statusPill(b.status, SUB_TONE[b.status] || 'calm') + subBillSignatures(b) +
                 (b.paid_reference ? '<div style="font-size:0.72rem;color:var(--text-secondary);">' +
                  esc(b.paid_reference) + '</div>' : '') + '</td>' +
-            '<td class="text-right" style="white-space:nowrap;">' + act +
-                ' <button class="btn btn-sm btn-outline" onclick="openDocument(\'sub-bill\',' + b.id + ')" ' +
-                'title="The bill as it prints">View bill</button>' +
-                ' <a class="btn btn-sm btn-outline" href="/api/sub-bills/' + b.id +
-                '/document.pdf" target="_blank" rel="noopener" title="The bill in the ruled form it is signed on">PDF</a>' +
-                ' <a class="btn btn-sm btn-outline" href="/api/sub-bills/' +
-                b.id + '/export.xlsx" title="As a workbook">Excel</a></td></tr>';
+            '<td class="text-right"><div style="display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end;min-width:170px;">' + act +
+                (b.status !== 'DRAFT' && b.status !== 'CANCELLED' && !b.accepted_by_name && can('billing.manage')
+                    ? ' <button class="btn btn-sm btn-outline" onclick="subBillAccept(' + b.id + ')" ' +
+                      'title="Accepted for Sub Contractor - the gang has signed the certificate">Gang accepted</button>' : '') +
+                '</div></td></tr>';
     }).join('') : '<tr><td colspan="8" style="text-align:center;padding:24px;' +
         'color:var(--text-secondary);">No bills yet. Measure the gang\'s work, then draw one up.</td></tr>';
 }
@@ -209,9 +251,160 @@ async function newSubBill() {
     var out = await res.json();
     if (!res.ok) { showToast(out.detail || 'Could not draw up a bill', 'error'); return; }
     showToast(out.message, 'success');
-    openSubBook(SUB.order.id);
+    await openSubBook(SUB.order.id);
+    // The certificate's own boxes are filled in next: the dates, the SAC, the recoveries.
+    if (out.bill) openSubBillEdit(out.bill.id, out.bill);
 }
 window.newSubBill = newSubBill;
+
+/* Who has signed the certificate, and whose desk it is on. */
+function subBillSignatures(b) {
+    var lines = [];
+    if (b.submitted_by_name) lines.push('Prepared by ' + esc(b.submitted_by_name));
+    (b.route || []).forEach(function (r) {
+        if (r.status === 'approved') lines.push('Signed: ' + esc(r.name));
+        else if (r.status === 'waiting') lines.push('<strong>With ' + esc(r.name) +
+            ((b.route || []).length > 1 ? ' (step ' + r.step + ' of ' + b.route.length + ')' : '') + '</strong>');
+    });
+    if (b.accepted_by_name) lines.push('Accepted by ' + esc(b.accepted_by_name));
+    if (b.status === 'DRAFT' && b.remarks) lines.push('<span style="color:var(--warning-color);">Sent back: ' + esc(b.remarks) + '</span>');
+    return lines.length ? '<div style="font-size:0.72rem;color:var(--text-secondary);margin-top:3px;line-height:1.35;">' +
+        lines.join('<br>') + '</div>' : '';
+}
+
+async function openSubBillEdit(id, given) {
+    // The full bill, which says how much of its recoveries is material issued.
+    var b = given && given.material_recovered !== undefined ? given : null;
+    if (!b) {
+        var res = await fetch('/api/sub-bills/' + id, { credentials: 'include' });
+        if (!res.ok) { showToast('Could not open that bill', 'error'); return; }
+        b = await res.json();
+    }
+    var set = function (k, v) { var el = document.getElementById(k); if (el) el.value = v === null || v === undefined ? '' : v; };
+    document.getElementById('sub-bill-edit-title').textContent = 'Certificate of payment - ' + b.number;
+    set('sbe-id', b.id);
+    set('sbe-date', b.bill_date);
+    set('sbe-from', b.period_from);
+    set('sbe-to', b.period_to);
+    set('sbe-type', b.work_type);
+    set('sbe-sac', b.hsn_sac);
+    set('sbe-work', b.work_name);
+    set('sbe-debit', b.debit_notes || '');
+    set('sbe-advance', b.advance_recovery || '');
+    var material = b.material_recovered || 0;
+    set('sbe-other', Math.max(0, Math.round(((b.other_deductions || 0) - material) * 100) / 100) || '');
+    set('sbe-notes', b.deduction_notes);
+    document.getElementById('sbe-material').textContent = material
+        ? 'Material issued to the gang, ' + formatCurrency(material) + ', is recovered on this bill as well and stays.' : '';
+    openModal('sub-bill-edit-modal');
+}
+window.openSubBillEdit = openSubBillEdit;
+
+async function saveSubBillEdit() {
+    var v = function (id) { return document.getElementById(id).value; };
+    var n = function (id) { var x = parseFloat(v(id)); return isNaN(x) ? 0 : x; };
+    var id = parseInt(v('sbe-id'));
+    var res = await fetch('/api/sub-bills/' + id, {
+        method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bill_date: v('sbe-date'), period_from: v('sbe-from'), period_to: v('sbe-to'),
+                               work_type: v('sbe-type'), hsn_sac: v('sbe-sac'), work_name: v('sbe-work'),
+                               debit_notes: n('sbe-debit'), advance_recovery: n('sbe-advance'),
+                               other_deductions: n('sbe-other'), deduction_notes: v('sbe-notes') }),
+    });
+    var out = await res.json();
+    if (!res.ok) { showToast(out.detail || 'Not saved', 'error'); return; }
+    closeModal('sub-bill-edit-modal');
+    showToast(out.message + ' Net payable ' + formatCurrency(out.bill.net_payable) + '.', 'success');
+    if (SUB.order) openSubBook(SUB.order.id);
+}
+window.saveSubBillEdit = saveSubBillEdit;
+
+async function subBillAccept(id) {
+    var who = prompt('Who signed the certificate for the sub contractor?');
+    if (who === null) return;
+    var res = await fetch('/api/sub-bills/' + id + '/accept', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: who.trim() }) });
+    var out = await res.json();
+    showToast(res.ok ? out.message : (out.detail || 'Could not record it'), res.ok ? 'success' : 'error');
+    if (SUB.order) openSubBook(SUB.order.id);
+}
+window.subBillAccept = subBillAccept;
+
+/* --- The measurement book from its Excel sheet ------------------------------- */
+
+function openSubMbImport() {
+    if (!SUB.order) { showToast('Choose an order first', 'error'); return; }
+    SUB.mbImport = null;
+    document.getElementById('sub-mb-file').value = '';
+    document.getElementById('sub-mb-date').value = '';
+    document.getElementById('sub-mb-preview').innerHTML = '';
+    document.getElementById('sub-mb-confirm').disabled = true;
+    openModal('sub-mb-import-modal');
+}
+window.openSubMbImport = openSubMbImport;
+
+function subMbForm(commit) {
+    var fd = new FormData();
+    fd.append('file', document.getElementById('sub-mb-file').files[0]);
+    fd.append('commit', commit ? '1' : '0');
+    var when = document.getElementById('sub-mb-date').value;
+    if (when) fd.append('measured_on', when);
+    var mapping = {};
+    document.querySelectorAll('.sub-mb-map').forEach(function (sel) { if (sel.value) mapping[sel.dataset.i] = parseInt(sel.value); });
+    fd.append('mapping', JSON.stringify(mapping));
+    return fd;
+}
+
+async function previewSubMbImport() {
+    var file = document.getElementById('sub-mb-file').files[0];
+    var host = document.getElementById('sub-mb-preview');
+    document.getElementById('sub-mb-confirm').disabled = true;
+    if (!file) { host.innerHTML = ''; return; }
+    host.innerHTML = '<p style="color:var(--text-secondary);">Reading the book...</p>';
+    var res = await fetch('/api/sub-mb/' + SUB.order.id + '/import', { method: 'POST', credentials: 'include', body: subMbForm(false) });
+    var out = await res.json();
+    if (!res.ok) { host.innerHTML = '<p style="color:var(--danger-color);">' + esc(out.detail || 'Could not read it') + '</p>'; return; }
+    SUB.mbImport = out;
+    if (out.meta && out.meta.date && !document.getElementById('sub-mb-date').value)
+        document.getElementById('sub-mb-date').value = out.meta.date;
+    host.innerHTML = '<p style="font-size:0.82rem;margin-bottom:8px;">Sheet <strong>' + esc(out.sheet) + '</strong>' +
+        (out.meta && out.meta.work_name ? ' - ' + esc(out.meta.work_name) : '') + '</p>' +
+        '<div class="table-responsive"><table class="data-table"><thead><tr><th>In the book</th><th>Blocks and quantity</th><th>Item on the order</th></tr></thead><tbody>' +
+        out.sections.map(function (s) {
+            return '<tr><td><strong>' + esc(s.sno ? s.sno + '. ' : '') + esc(s.description) + '</strong></td>' +
+                '<td style="font-size:0.8rem;">' + s.entries.map(function (e) {
+                    return esc(e.location || 'Unheaded') + ': ' + e.lines + ' lines, ' +
+                        (e.multiplier !== 1 ? e.one_block + ' × ' + e.multiplier + ' blocks = ' : '') + '<strong>' + e.quantity + '</strong>';
+                }).join('<br>') + '<div style="font-weight:700;margin-top:3px;">' + s.quantity + ' ' + esc(s.uom || '') + '</div></td>' +
+                '<td><select class="form-control sub-mb-map" data-i="' + s.index + '" onchange="subMbMapped()">' +
+                    '<option value="">- which item? -</option>' + out.items.map(function (it) {
+                        return '<option value="' + it.id + '"' + (it.id === s.item_id ? ' selected' : '') + '>' + esc(it.label) + '</option>';
+                    }).join('') + '</select></td></tr>';
+        }).join('') + '</tbody></table></div>' +
+        (out.warnings && out.warnings.length ? '<ul style="font-size:0.78rem;color:var(--warning-color);margin:8px 0 0 18px;">' +
+            out.warnings.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul>' : '');
+    subMbMapped();
+}
+window.previewSubMbImport = previewSubMbImport;
+
+function subMbMapped() {
+    var all = Array.prototype.every.call(document.querySelectorAll('.sub-mb-map'), function (s) { return !!s.value; });
+    document.getElementById('sub-mb-confirm').disabled = !all || !SUB.mbImport;
+}
+window.subMbMapped = subMbMapped;
+
+async function commitSubMbImport() {
+    var btn = document.getElementById('sub-mb-confirm');
+    btn.disabled = true;
+    var res = await fetch('/api/sub-mb/' + SUB.order.id + '/import', { method: 'POST', credentials: 'include', body: subMbForm(true) });
+    var out = await res.json();
+    if (!res.ok) { showToast(out.detail || 'Nothing was recorded', 'error'); btn.disabled = false; return; }
+    closeModal('sub-mb-import-modal');
+    showToast(out.message, 'success');
+    openSubBook(SUB.order.id);
+}
+window.commitSubMbImport = commitSubMbImport;
 
 async function subBillAct(id, action, needsReason) {
     var body = {};
