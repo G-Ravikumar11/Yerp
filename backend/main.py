@@ -34716,10 +34716,14 @@ def holders_of(db, client_id, permission, exclude=()):
     was withheld. Asked of the person rather than of the preset: a right
     granted to one project manager is as real as one that came with a title."""
     skip = {e for e in (exclude or ()) if e}
+    # Anybody who can sign in counts - staff added and never moved off
+    # "onboarding" were left off every route, so approvals skipped them.
     return [e for e in db.query(models.DBEmployee).filter(
-                models.DBEmployee.client_id == client_id,
-                models.DBEmployee.status == "active").order_by(models.DBEmployee.id).all()
-            if e.id not in skip and employee_can(e, permission)]
+                models.DBEmployee.client_id == client_id).order_by(models.DBEmployee.id).all()
+            if (e.status or "active") not in GONE_STATUSES and e.id not in skip and employee_can(e, permission)]
+
+
+GONE_STATUSES = ("terminated", "inactive", "resigned", "left")
 
 
 def raised_by_owner(db, client_id, employee_id):
@@ -35390,7 +35394,7 @@ def wo_current_step(db, order):
         if row.approver_id is None:
             return row
         emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == row.approver_id).first()
-        if emp and (emp.status or "") == "active" and employee_can(emp, "subcontracts.approve"):
+        if emp and (emp.status or "active") not in GONE_STATUSES and employee_can(emp, "subcontracts.approve"):
             return row
         row.status, row.notes = "skipped", "No longer able to approve work orders"
         row.decided_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

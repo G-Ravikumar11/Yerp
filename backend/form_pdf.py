@@ -123,7 +123,9 @@ def _header(block, st):
     for label, key in (("GSTIN No.", "gstin"), ("PAN No.", "pan"), ("STATE", "state")):
         if c.get(key):
             lines.append(Paragraph("%s : %s" % (label, _esc(c[key])), st["body"]))
-    logo = _logo(c.get("logo_url"), max_height=20 * mm)
+    # Fitted inside its own 38 mm column, so a wide logo cannot run into the
+    # title box beside it.
+    logo = _picture(c.get("logo_url"), 34 * mm, 20 * mm)
     facts = [[Paragraph(_esc(block.get("title", "")), st["title"]), ""]]
     for k, v in block.get("facts") or []:
         facts.append([Paragraph(_esc(k) + " :", st["label"]), Paragraph(_esc(v), st["body"])])
