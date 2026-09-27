@@ -138,7 +138,8 @@ def test_the_sub_contractor_papers_are_on_screen():
 def test_work_orders_carry_their_drawings_and_photos():
     """Both kinds of work order open their drawings and photos, filtered by
     type, words, dates and who added them (2026-09-28)."""
-    assert "woFilesButton" in read("subcontracts.js") and "'work_order'" in read("erp.js")
+    erp = read("erp.js")
+    assert "woFilesButton" in read("subcontracts.js") and "openFiles(" in erp and "work_order" in erp
     f = read("files.js")
     assert "fileFilterBar" in f and "date_from" in f and "storageLine" in f
     assert 'id="files-kind"' in read("app.html")

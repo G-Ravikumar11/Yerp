@@ -446,11 +446,16 @@ async function loadWorkOrders() {
             action += ' <button class="btn btn-sm btn-outline" onclick="showRequisition(' +
                 w.id + ')" title="What still has to be bought for this order">Material</button>';
         }
-        action += ' <a class="btn btn-sm btn-outline" href="/api/erp/work-orders/' +
-            w.id + '/export.xlsx" title="This order as a workbook">Download</a>';
-        if (typeof woFilesButton === 'function') action += ' ' + woFilesButton(w.id, w.number, w.files, 'work_order');
-        return '<tr><td style="font-family:monospace;font-weight:600;">' + esc(w.number) + '</td>' +
-            '<td>' + esc(w.job_name) +
+        // The papers belong with the order's number; the buttons are for what happens next.
+        var f = w.files || {};
+        var papers = '<div style="font-size:0.75rem;margin-top:4px;white-space:nowrap;">' +
+            '<a href="/api/erp/work-orders/' + w.id + '/export.xlsx" title="This order as a workbook">Excel</a> · ' +
+            '<a href="/api/erp/work-orders/' + w.id + '/export.pdf" target="_blank" rel="noopener">PDF</a> · ' +
+            '<a href="#" onclick="event.preventDefault();openFiles(\'work_order\',' + w.id + ',\'' +
+                esc(String(w.number || '')).replace(/'/g, '') + '\')" title="Drawings and photos kept against this order">' +
+                'Drawings &amp; Photos' + (f.files ? ' (' + f.files + ')' : '') + '</a></div>';
+        return '<tr><td style="white-space:nowrap;"><span style="font-family:monospace;font-weight:600;">' + esc(w.number) + '</span>' + papers + '</td>' +
+            '<td style="min-width:190px;">' + esc(w.job_name) +
                 '<div style="font-size:0.75rem;color:var(--text-secondary);">' + esc(w.customer_name) + '</div></td>' +
             '<td>' + w.line_count + '</td>' +
             '<td class="text-right">' + formatCurrency(w.total_value) + '</td>' +
@@ -464,7 +469,8 @@ async function loadWorkOrders() {
             '<td>' + statusPill(w.status, workOrderTone(w)) +
                 (w.rejection_reason ? '<div style="font-size:0.72rem;color:var(--text-secondary);">' +
                     esc(w.rejection_reason) + '</div>' : '') + '</td>' +
-            '<td class="text-right">' + action + '</td></tr>';
+            '<td><div style="display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end;max-width:240px;margin-left:auto;">' +
+                action.replace(/> </g, '><') + '</div></td></tr>';
     }).join('') : '<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text-secondary);">' +
         'No work orders yet.</td></tr>';
 }
