@@ -709,6 +709,8 @@ async function loadApprovalRules() {
         var data = await res.json();
         auto.value = data.auto_below || 0;
         document.getElementById('rule-finance-above').value = data.finance_above || 0;
+        var signs = document.getElementById('rule-owner-signs');
+        if (signs) signs.checked = data.owner_signs_work_orders !== false;
         var note = document.getElementById('rule-finance-note');
         if (note) {
             /* A limit that names nobody does nothing, and silently. Say so. */
@@ -736,9 +738,10 @@ async function loadApprovalRouting() {
         var data = await res.json();
         host.innerHTML = '<h4 style="font-size:0.9rem;margin-bottom:4px;">Who approves what</h4>' +
             '<p style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:10px;">' +
-            'Paper goes to the manager set for whoever raised it. With no manager set, it goes to the ' +
-            'nearest rank above them that holds the right below - someone on the same site first - ' +
-            'and from the top of the staff to ' + esc(data.owner) + '. Change who holds a right under People.</p>' +
+            '<b>Work orders</b> (client and subcontract) climb the whole hierarchy: the manager set for whoever ' +
+            'raised it, then one person at each rank above - someone on the same site first - and ' + esc(data.owner) +
+            ' last, if ticked above. <b>Bills and purchase orders</b> go to the manager set, else the nearest rank ' +
+            'above that holds the right below. Change who holds a right under People.</p>' +
             '<div class="table-responsive"><table class="data-table"><tbody>' +
             data.routes.map(function (r) {
                 var people = r.people.length
@@ -758,7 +761,8 @@ async function saveApprovalRules() {
             method: 'PUT', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 auto_below: parseFloat(document.getElementById('rule-auto-below').value) || 0,
-                finance_above: parseFloat(document.getElementById('rule-finance-above').value) || 0
+                finance_above: parseFloat(document.getElementById('rule-finance-above').value) || 0,
+                owner_signs_work_orders: !!(document.getElementById('rule-owner-signs') || {}).checked
             })
         });
         var data = await res.json();

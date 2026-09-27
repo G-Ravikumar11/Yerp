@@ -259,9 +259,9 @@ def test_a_save_that_changes_nothing_writes_nothing(tenant):
 
 
 def test_a_provisional_order_says_whose_desk_it_is_on(tenant):
+    manager = staff(tenant, "manager")
     order = priced(tenant)
     tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
-    manager = staff(tenant, "manager")
     out = tenant.get("/api/wo/orders/%d" % order["id"]).json()["order"]
     assert out["provisional"] is True
     assert any(manager["first_name"] in n for n in out["pending_with"])

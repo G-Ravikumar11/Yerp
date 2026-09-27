@@ -5421,7 +5421,16 @@ def start_approval(db, client_id, doc, entity_type, submitted_by, request, actor
             f"Approved automatically: under the {formatted_money(db, client_id, auto_below)} "
             "sign-off limit.")
 
-    chain = build_approval_chain(submitted_by, client_id, db)
+    if entity_type == "work_order":
+        # A work order climbs the whole hierarchy, as a subcontract order does:
+        # the manager set for the raiser, each rank above, then the owner.
+        chain = hierarchy_chain(db, client_id, submitted_by, APPROVE_RIGHT["work_order"],
+                                getattr(doc, "job_id", None), owner_signs=wo_owner_signs(db, client_id))
+        if not chain:
+            return finish_approval(db, client_id, doc, entity_type, submitted_by, request, actor,
+                                   "Approved: raised by the owner.")
+    else:
+        chain = build_approval_chain(submitted_by, client_id, db)
     if not chain:
         # Nobody set as this person's manager - which is most people, since
         # nobody fills that field in. Rather than wave the paper through, it
@@ -5441,7 +5450,11 @@ def start_approval(db, client_id, doc, entity_type, submitted_by, request, actor
         already = {step["employee_id"] for step in chain} | {submitted_by}
         purse = finance_approver_for(db, client_id, already)
         if purse:
-            chain.append(chain_rung(purse))
+            # Before the owner's final signature, where the owner signs last.
+            if chain and chain[-1]["employee_id"] is None:
+                chain.insert(len(chain) - 1, chain_rung(purse))
+            else:
+                chain.append(chain_rung(purse))
 
     if not chain:
         # Nobody on the staff above them: the owner signs.
@@ -10407,6 +10420,7 @@ def get_approval_rules(request: Request, db: Session = Depends(get_db)):
     return {
         "auto_below": auto_below,
         "finance_above": finance_above,
+        "owner_signs_work_orders": wo_owner_signs(db, client.id),
         "currency": client.currency or DEFAULT_CURRENCY,
         # Naming who would be added makes the rule checkable rather than
         # something that quietly does nothing because nobody holds the access.
@@ -10444,6 +10458,8 @@ def set_approval_rules(request: Request, body: dict = None, db: Session = Depend
             detail="The finance limit has to be above the sign-off limit, or every "
                    "cost would be caught by both rules at once.")
 
+    if "owner_signs_work_orders" in body:
+        put_setting(db, client.id, WO_OWNER_SIGNS_KEY, "1" if body.get("owner_signs_work_orders") else "0")
     for key, value in ((AUTO_BELOW_KEY, auto_below), (FINANCE_ABOVE_KEY, finance_above)):
         setting = db.query(models.DBSettings).filter(
             models.DBSettings.client_id == client.id,
@@ -18163,8 +18179,9 @@ def wo_dict(db, order, detail=False):
         # looking at is the one the approval will actually be checked against.
         row["billing_schedule"] = wo_billing_schedule(db, order)
         row["advance_paid"] = advance_paid(db, order.client_id, order.id)
-        row["pending_with"] = (wo_pending_with(db, order.client_id, order.submitted_by)
-                               if order.status == "PROVISIONAL" else [])
+        owner_client = db.query(models.DBClient).filter(models.DBClient.id == order.client_id).first()
+        row["pending_with"] = wo_waiting_names(db, owner_client, order)
+        row["approval_route"] = wo_route(db, order)
         if order.copied_from_id:
             src = db.query(models.DBSubcontractOrder.wo_number).filter(
                 models.DBSubcontractOrder.id == order.copied_from_id).first()
@@ -19672,10 +19689,11 @@ def wo_notify(db, client, order, action, actor_id, actor_name, comments=""):
     """
     try:
         if action == "SUBMIT":
-            for emp in holders_of(db, client.id, "subcontracts.approve"):
-                # Not the person who just sent it. Being told about your own
-                # submission is the noise that gets notifications turned off.
-                if emp.id == actor_id:
+            # The first person on its route, and nobody else yet.
+            first = wo_current_step(db, order)
+            for emp in [db.query(models.DBEmployee).filter(models.DBEmployee.id == first.approver_id).first()] \
+                    if first is not None and first.approver_id else []:
+                if not emp or emp.id == actor_id:
                     continue
                 notify_employee(
                     db, client.id, emp.id, "Work order awaiting approval",
@@ -19767,6 +19785,14 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
 
     order.status = allowed[action]
     order.updated_at = now
+    if action == "SUBMIT":
+        wo_start_chain(db, client, order, actor_id)
+    elif action in ("APPROVE", "REJECT", "CANCEL"):
+        # Whoever had not yet signed does not need to now.
+        for row in wo_chain_rows(db, order.id):
+            if row.status == "pending":
+                row.status = "skipped" if action == "APPROVE" else "cancelled"
+                row.decided_at = now
     record_wo_action(db, client, order, actor_id, actor_name, action, was, comments)
     if not quiet:
         wo_notify(db, client, order, action, actor_id, actor_name, comments)
@@ -19826,14 +19852,15 @@ def wo_approve(order_id: int, body: WoActionIn, request: Request,
     priced it is not the person who commits the business to it."""
     client, actor_id, actor_name = wo_actor(request, db, "subcontracts.approve")
     order = wo_or_404(db, client.id, order_id)
-    wo_apply(db, client, order, "APPROVE", actor_id, actor_name, body.comments,
-             override=bool(body.override))
-    log_audit(db, client.id, "subcontract_approved", "subcontract_order", order.id,
-              order.wo_number, "", request)
+    nxt = wo_decide_step(db, client, order, actor_id, actor_name, True, body.comments,
+                         override=bool(body.override))
+    log_audit(db, client.id, "subcontract_approved" if nxt is None else "subcontract_step_approved",
+              "subcontract_order", order.id, order.wo_number, "", request)
     db.commit()
     db.refresh(order)
     return {"order": wo_dict(db, order, detail=True),
-            "message": order.wo_number + " approved."}
+            "message": (order.wo_number + " approved.") if nxt is None else
+                       ("%s approved by you and passed to %s." % (order.wo_number, wo_step_name(db, nxt)))}
 
 
 @app.post("/api/wo/orders/{order_id}/reject")
@@ -19841,7 +19868,7 @@ def wo_reject(order_id: int, body: WoActionIn, request: Request,
               db: Session = Depends(get_db)):
     client, actor_id, actor_name = wo_actor(request, db, "subcontracts.approve")
     order = wo_or_404(db, client.id, order_id)
-    wo_apply(db, client, order, "REJECT", actor_id, actor_name, body.comments)
+    wo_decide_step(db, client, order, actor_id, actor_name, False, body.comments)
     db.commit()
     db.refresh(order)
     return {"order": wo_dict(db, order, detail=True),
@@ -34702,7 +34729,7 @@ def ladder_approver(db, client_id, submitted_by, entity_type, job_id=None):
 
 def owner_label(db, client_id):
     client = db.query(models.DBClient).filter(models.DBClient.id == client_id).first()
-    name = (client.contact_name or "").strip() if client else ""
+    name = ((client.contact_name or "").strip() or (client.email or "").strip()) if client else ""
     return "%s (owner)" % name if name else "the owner"
 
 
@@ -34808,8 +34835,11 @@ def approval_inbox(db, client, emp):
         for o in db.query(models.DBSubcontractOrder).filter(
                 models.DBSubcontractOrder.client_id == client.id,
                 models.DBSubcontractOrder.status == "PROVISIONAL").order_by(models.DBSubcontractOrder.id).all():
-            if emp is not None and o.submitted_by == emp.id:
+            ensure_wo_chain(db, client, o)
+            step = wo_current_step(db, o)
+            if emp is not None and (step is None or step.approver_id != emp.id):
                 continue
+            route = wo_chain_rows(db, o.id)
             con = db.query(models.DBContractor).filter(models.DBContractor.id == o.contractor_id).first() \
                 if o.contractor_id else None
             job = _job_of(db, o.job_id)
@@ -34827,9 +34857,12 @@ def approval_inbox(db, client, emp):
                 project=(("%s %s" % (job.number or "", job.name or "")).strip() if job else ""),
                 raised_by=_person(db, o.submitted_by) or (sent.actor_name if sent else ""),
                 since=(sent.created_at if sent else o.updated_at) or "",
-                what=(o.subject or "")[:200], view="subcontracts-view",
+                what=((o.subject or "")[:200] + (" - Step %d of %d." % (step.step, len(route))
+                                                    if step is not None and len(route) > 1 else "")).strip(" -"),
+                view="subcontracts-view",
                 pdf="/api/wo/orders/%d/document.pdf" % o.id,
-                waiting_on=", ".join(wo_pending_with(db, client.id, o.submitted_by)),
+                mine=emp is not None or step is None or step.approver_id is None,
+                waiting_on=wo_step_name(db, step),
                 warnings=["Over the project allocation: " + "; ".join(over)] if over else [],
                 overrun=bool(over), budget=wo_budget_summary(db, o)))
 
@@ -35019,7 +35052,7 @@ def approvals_sent(request: Request, db: Session = Depends(get_db)):
         status = {"PROVISIONAL": "pending", "DRAFT": "rejected"}.get(o.status, "approved")
         rows.append({"kind_label": "Subcontract work order", "number": o.wo_number or "", "party": con.company_name if con else "",
                      "amount": money(o.net_order_value or o.gross_amount or 0), "status": status,
-                     "waiting_on": ", ".join(wo_pending_with(db, client.id, o.submitted_by)) if status == "pending" else "",
+                     "waiting_on": ", ".join(wo_waiting_names(db, client, o)) if status == "pending" else "",
                      "raised_by": _person(db, o.submitted_by), "reason": o.rejection_reason or "",
                      "view": "subcontracts-view", "when": o.updated_at or o.created_at or ""})
     rows.sort(key=lambda r: (r["status"] != "pending", "" if not r["when"] else r["when"]), reverse=False)
@@ -35237,6 +35270,179 @@ def wo_charge_budget(order_id: int, body: ChargeBudgetIn, request: Request,
     db.refresh(order)
     return {"order": wo_dict(db, order, detail=True),
             "message": "%d line%s charged." % (n, "" if n == 1 else "s")}
+
+
+# --- Work orders climb the hierarchy -------------------------------------------
+#
+# A work order is signed at every level above the person who raised it - the
+# order form's own signature row: prepared, proposed, recommended, authorised.
+# The route is fixed when the order is sent: the manager set for the raiser
+# first, then one person at each rank above (someone on the same site first),
+# and the owner last unless the owner has chosen not to sign every order.
+
+WO_OWNER_SIGNS_KEY = "wo_owner_signs"
+
+
+def wo_owner_signs(db, client_id):
+    return (tenant_setting(db, client_id, WO_OWNER_SIGNS_KEY, "1") or "1") != "0"
+
+
+def hierarchy_chain(db, client_id, submitter_id, right, job_id=None, owner_signs=True):
+    """The approvers a work order passes through, lowest rank first."""
+    me = db.query(models.DBEmployee).filter(models.DBEmployee.id == submitter_id).first() \
+        if submitter_id else None
+    chain, seen = [], {submitter_id} if submitter_id else set()
+    if me:
+        for rung in build_approval_chain(me.id, client_id, db):
+            boss = db.query(models.DBEmployee).filter(models.DBEmployee.id == rung["employee_id"]).first()
+            if boss and boss.id not in seen and employee_can(boss, right):
+                chain.append(boss)
+                seen.add(boss.id)
+    floor = max([role_rank(me) if me else 0] + [role_rank(e) for e in chain])
+    sites = (employee_site_ids(db, me) if me else None) or set()
+    if job_id:
+        sites = set(sites) | {job_id}
+    by_rank = {}
+    for emp in holders_of(db, client_id, right, exclude=seen):
+        rank = role_rank(emp)
+        if rank <= floor:
+            continue
+        theirs = employee_site_ids(db, emp)
+        same = theirs is None or not sites or bool(theirs & sites)
+        key = (0 if same else 1, emp.id)
+        if rank not in by_rank or key < by_rank[rank][0]:
+            by_rank[rank] = (key, emp)
+    chain += [by_rank[r][1] for r in sorted(by_rank)]
+    rungs = [chain_rung(e) for e in chain]
+    if owner_signs and not (submitter_id and raised_by_owner(db, client_id, submitter_id)):
+        rungs.append(chain_rung(None, db, client_id))
+    return rungs
+
+
+def wo_chain_rows(db, order_id):
+    return db.query(models.DBApprovalChain).filter(
+        models.DBApprovalChain.entity_type == "subcontract_order",
+        models.DBApprovalChain.entity_id == order_id).order_by(models.DBApprovalChain.step).all()
+
+
+def wo_start_chain(db, client, order, submitter_id):
+    db.query(models.DBApprovalChain).filter(
+        models.DBApprovalChain.entity_type == "subcontract_order",
+        models.DBApprovalChain.entity_id == order.id).delete(synchronize_session=False)
+    rungs = hierarchy_chain(db, client.id, submitter_id, "subcontracts.approve", order.job_id,
+                            owner_signs=wo_owner_signs(db, client.id)) or [chain_rung(None, db, client.id)]
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for i, rung in enumerate(rungs, 1):
+        db.add(models.DBApprovalChain(
+            client_id=client.id, entity_type="subcontract_order", entity_id=order.id,
+            employee_id=submitter_id, approver_id=rung["employee_id"], level=rung["level"],
+            step=i, status="pending", created_at=now))
+    db.flush()
+    return rungs
+
+
+def ensure_wo_chain(db, client, order):
+    """An order sent before routes existed gets its route the first time
+    anybody looks for it."""
+    if (order.status or "") == "PROVISIONAL" and not wo_chain_rows(db, order.id):
+        wo_start_chain(db, client, order, order.submitted_by)
+
+
+def wo_current_step(db, order):
+    """The step the order waits at. A step whose approver has left, or no
+    longer holds the right, is passed over rather than left to block it."""
+    for row in wo_chain_rows(db, order.id):
+        if row.status != "pending":
+            continue
+        if row.approver_id is None:
+            return row
+        emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == row.approver_id).first()
+        if emp and (emp.status or "") == "active" and employee_can(emp, "subcontracts.approve"):
+            return row
+        row.status, row.notes = "skipped", "No longer able to approve work orders"
+        row.decided_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return None
+
+
+def wo_step_name(db, row):
+    if row is None:
+        return ""
+    return owner_label(db, row.client_id) if row.approver_id is None else _person(db, row.approver_id)
+
+
+def wo_route(db, order):
+    """The route as the order screen shows it: who, in what order, and where it is."""
+    rows = wo_chain_rows(db, order.id)
+    current = wo_current_step(db, order) if (order.status or "") == "PROVISIONAL" else None
+    return [{"step": r.step, "name": wo_step_name(db, r), "owner": r.approver_id is None,
+             "status": "waiting" if current is not None and r.id == current.id else r.status,
+             "notes": r.notes or "", "decided_at": r.decided_at or ""} for r in rows]
+
+
+def wo_waiting_names(db, client, order):
+    if (order.status or "") != "PROVISIONAL":
+        return []
+    ensure_wo_chain(db, client, order)
+    step = wo_current_step(db, order)
+    return [wo_step_name(db, step)] if step is not None else []
+
+
+def wo_decide_step(db, client, order, actor_id, actor_name, approve, comments="", override=False):
+    """One approver's decision on a work order that is climbing its route.
+
+    Each approver signs in turn. The owner may sign at any point, and their
+    signature is the last word. The final signature is the approval, and it
+    is there - not earlier - that an overrun has to be explained. Sending it
+    back at any step returns it to the person who raised it.
+    """
+    if (order.status or "") != "PROVISIONAL":
+        wo_apply(db, client, order, "APPROVE" if approve else "REJECT", actor_id, actor_name,
+                 comments, override=override)
+        return None
+    ensure_wo_chain(db, client, order)
+    step = wo_current_step(db, order)
+    owner = actor_id is None
+    if not owner and approve and order.submitted_by == actor_id:
+        raise HTTPException(403, "You raised this order, so somebody else has to approve it. "
+                                 "It is waiting with " + (wo_step_name(db, step) or "the owner") + ".")
+    if not owner and (step is None or step.approver_id != actor_id):
+        later = any(r.approver_id == actor_id and r.status == "pending" for r in wo_chain_rows(db, order.id))
+        raise HTTPException(403, "%s is waiting with %s.%s" % (
+            order.wo_number, wo_step_name(db, step) or "the owner",
+            " It comes to you after that." if later else " It is not on your list to approve."))
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if not approve:
+        if not (comments or "").strip():
+            raise HTTPException(400, "Say why it is going back, so it can be corrected.")
+        if step is not None:
+            step.status, step.notes, step.decided_at = "rejected", comments.strip(), now
+        wo_apply(db, client, order, "REJECT", actor_id, actor_name, comments)
+        return None
+    if owner:
+        # The owner's signature is the last word: their own step is signed,
+        # and anybody still to sign before it is recorded as passed over.
+        for row in wo_chain_rows(db, order.id):
+            if row.status == "pending":
+                if row.approver_id is None:
+                    row.status, row.notes, row.decided_at = "approved", (comments or "").strip(), now
+                else:
+                    row.status, row.notes, row.decided_at = "skipped", "Signed over by the owner", now
+    elif step is not None:
+        step.status, step.notes, step.decided_at = "approved", (comments or "").strip(), now
+    db.flush()
+    nxt = None if owner else wo_current_step(db, order)
+    if nxt is None:
+        wo_apply(db, client, order, "APPROVE", actor_id, actor_name, comments, override=override)
+        return None
+    record_wo_action(db, client, order, actor_id, actor_name, "RECOMMEND", "PROVISIONAL",
+                     (comments or "").strip() or ("Approved and passed to " + wo_step_name(db, nxt)))
+    if nxt.approver_id:
+        notify_employee(db, client.id, nxt.approver_id, "Work order awaiting your approval",
+                        "%s to %s, %s - approved by %s and now with you." % (
+                            order.wo_number, wo_dict(db, order).get("contractor") or "a contractor",
+                            format_money_plain(order.net_order_value), actor_name),
+                        link="/app.html#approvals")
+    return nxt
 
 
 # Serve frontend

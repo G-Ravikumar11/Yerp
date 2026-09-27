@@ -2051,6 +2051,12 @@
                             <p style="font-size:0.8rem;color:var(--text-secondary);margin:4px 0 12px;">
                                 A bill that comes in higher than the order it settles always goes for approval, whatever these say.
                             </p>
+                            <label style="display:flex;gap:10px;align-items:flex-start;font-size:0.86rem;margin-bottom:14px;cursor:pointer;">
+                                <input type="checkbox" id="rule-owner-signs" style="margin-top:3px;">
+                                <span><b>I sign every work order last.</b> Work orders climb the hierarchy - the manager of whoever
+                                raised it, then each rank above (project manager, head of projects) - and finish with you as the
+                                authorised signatory. Untick to let the highest rank finish it.</span>
+                            </label>
                             <button class="btn btn-primary" onclick="saveApprovalRules()">Save approval rules</button>
                             <div id="rule-routing" style="margin-top:20px;"></div>
                         </div>
@@ -5664,7 +5670,7 @@
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=69"></script>
     <!-- Jobs, job costing and purchase orders. -->
-    <script src="jobs.js?v=121"></script>
+    <script src="jobs.js?v=122"></script>
     <!-- Item master, work orders and budget allocation. -->
     <script src="erp.js?v=90"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
@@ -5675,7 +5681,7 @@
     <script src="erp-preview.js?v=102"></script>
     <script src="contracts.js?v=67"></script>
     <script src="sheet-viewer.js?v=65"></script>
-    <script src="subcontracts.js?v=109"></script>
+    <script src="subcontracts.js?v=110"></script>
     <script src="costs.js?v=65"></script>
     <script src="sheet.js?v=83"></script>
     <script src="documents.js?v=94"></script>

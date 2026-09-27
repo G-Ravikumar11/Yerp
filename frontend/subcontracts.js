@@ -1390,7 +1390,8 @@ function stepReview() {
     if (!o) return '<p>Nothing to review yet.</p>';
 
     var history = (o.history || []).map(function (h) {
-        var what = h.action === 'EDIT' ? 'Changed' : h.action === 'COPY' ? 'Copied' : esc(h.action);
+        var what = h.action === 'EDIT' ? 'Changed' : h.action === 'COPY' ? 'Copied'
+            : h.action === 'RECOMMEND' ? 'Approved, passed up' : esc(h.action);
         // An edit lists what moved, one change per line, so "who changed the
         // completion date and when" reads off the table.
         var said = h.action === 'EDIT'
@@ -1400,12 +1401,35 @@ function stepReview() {
             '<td style="white-space:nowrap;">' + esc(h.at) + '</td><td>' + said + '</td></tr>';
     }).join('');
 
+    /* The approval route: everybody the order passes through, in order, and
+       where it has got to - so "who has it now" and "who signed" read off one
+       line instead of being asked around the office. */
+    var route = (o.approval_route || []);
+    var tones = { approved: 'var(--success-color)', waiting: 'var(--primary-color)', rejected: 'var(--danger-color)',
+                  skipped: 'var(--text-secondary)', cancelled: 'var(--text-secondary)', pending: 'var(--text-secondary)' };
+    var words = { approved: 'signed', waiting: 'with them now', rejected: 'sent back', skipped: 'passed over',
+                  cancelled: 'not needed', pending: 'next' };
+    var routeHtml = route.length
+        ? '<div style="margin-top:16px;padding:12px 14px;border-radius:8px;border:1px solid var(--border-color);">' +
+          '<div style="font-weight:700;font-size:0.86rem;margin-bottom:8px;">Approval route</div>' +
+          '<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">' +
+          route.map(function (s, i) {
+              var c = tones[s.status] || 'var(--text-secondary)';
+              return (i ? '<span style="color:var(--text-secondary);">&rarr;</span>' : '') +
+                  '<span title="' + esc(s.notes || '') + '" style="display:inline-flex;flex-direction:column;padding:6px 10px;' +
+                  'border-radius:8px;border:1.5px solid ' + c + ';font-size:0.8rem;' +
+                  (s.status === 'waiting' ? 'background:rgba(79,70,229,0.07);' : '') + '">' +
+                  '<b>' + (i + 1) + '. ' + esc(s.name) + '</b>' +
+                  '<span style="color:' + c + ';font-size:0.72rem;">' + esc(words[s.status] || s.status) +
+                  (s.decided_at ? ' &middot; ' + esc(String(s.decided_at).slice(0, 16)) : '') + '</span></span>';
+          }).join('') + '</div></div>'
+        : '';
     var pending = (o.pending_with || []).length
-        ? '<div style="margin-top:16px;padding:12px 14px;border-radius:8px;' +
+        ? routeHtml + '<div style="margin-top:10px;padding:12px 14px;border-radius:8px;' +
           'border:1px solid var(--border-color);font-size:0.84rem;">' +
           '<strong>Awaiting approval</strong> &mdash; on the desk of ' +
           o.pending_with.map(esc).join(', ') + '.</div>'
-        : (o.provisional
+        : routeHtml ? routeHtml : (o.provisional
             ? '<div style="margin-top:16px;padding:12px 14px;border-radius:8px;' +
               'border:1px solid var(--warning-color);font-size:0.84rem;">' +
               '<strong>Awaiting approval</strong>, but nobody active holds the right to ' +

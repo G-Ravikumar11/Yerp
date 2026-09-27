@@ -208,9 +208,15 @@ def test_a_work_order_reaches_the_project_manager_and_is_approved_from_the_inbox
     assert any(order["wo_number"] in (n.get("message") or "") for n in notes)
     item = [i for i in inbox(portal) if i["kind"] == "subcontract_order"][0]
     assert item["number"] == order["wo_number"] and item["pdf"].endswith("document.pdf")
+    assert "Step 1 of 2" in item["what"]
     res = decide(portal, item, note="")
     assert res.status_code == 200, res.text
-    assert res.json()["order"]["status"] == "APPROVED"
+    # Signed by the project manager, it goes up to the owner.
+    assert res.json()["order"]["status"] == "PROVISIONAL"
+    assert not [i for i in inbox(portal) if i["kind"] == "subcontract_order"]
+    item = [i for i in inbox(tenant) if i["kind"] == "subcontract_order"][0]
+    assert item["mine"] is True
+    assert decide(tenant, item, note="").json()["order"]["status"] == "APPROVED"
 
 
 def test_nobody_approves_the_work_order_they_raised(tenant, portal):

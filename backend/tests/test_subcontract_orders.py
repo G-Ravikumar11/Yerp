@@ -205,10 +205,27 @@ def test_the_engineer_who_priced_it_cannot_approve_it(tenant):
     tenant.post("/api/employee/auth/logout")
 
 
-def test_a_manager_may_approve(tenant):
+def test_a_manager_approves_and_it_goes_up_to_the_owner(tenant):
+    """The order climbs the hierarchy: the manager signs, then the owner."""
+    head = staff(tenant, "manager")
     order = priced(tenant)
     tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    sign_in(tenant, head)
+    res = tenant.post("/api/wo/orders/%d/approve" % order["id"],
+                      json={"comments": "Rates checked against budget"})
+    assert res.status_code == 200, res.text
+    assert res.json()["order"]["status"] == "PROVISIONAL"
+    assert "owner" in " ".join(res.json()["order"]["pending_with"])
+    as_owner(tenant)
+    res = tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
+    assert res.json()["order"]["status"] == "APPROVED"
+
+
+def test_a_manager_may_approve_when_the_owner_does_not_sign_every_order(tenant):
+    tenant.put("/api/approval-rules", json={"owner_signs_work_orders": False})
     head = staff(tenant, "manager")
+    order = priced(tenant)
+    tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
     sign_in(tenant, head)
     res = tenant.post("/api/wo/orders/%d/approve" % order["id"],
                       json={"comments": "Rates checked against budget"})
@@ -407,9 +424,10 @@ def test_the_document_names_who_approved_it(tenant, client):
     """A signature block printed with the approver's name already on it is the
     difference between recording who committed the business and leaving a
     blank anybody could fill in."""
+    tenant.put("/api/approval-rules", json={"owner_signs_work_orders": False})
+    head = staff(tenant, "manager")
     order = priced(tenant)
     tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
-    head = staff(tenant, "manager")
     sign_in(client, head)
     assert client.post("/api/wo/orders/%d/approve" % order["id"],
                        json={}).status_code == 200
