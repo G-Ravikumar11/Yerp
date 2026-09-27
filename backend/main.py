@@ -25443,6 +25443,26 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
             "message": "%s %s." % (bill.number, bill.status.lower())}
 
 
+@app.get("/api/sub-bills.xlsx")
+def sub_bills_register_xlsx(request: Request, order_id: int = 0, db: Session = Depends(get_db)):
+    """Every gang bill as the register the office reconciles - with its PDF
+    twin beside it, like every other register. The screen only offered to
+    print the page."""
+    bills = list_sub_bills(request, order_id, db)["bills"]
+    headers = ["Bill No", "Status", "Sub Contractor", "Work Order", "Project", "Period To", "This Bill",
+               "Retention", "Advance Recovered", "GST", "TDS", "Labour Cess", "Net Payable",
+               "Certified By", "Paid On", "Paid Ref"]
+    money_cols = ("this_bill", "retention_amount", "advance_recovery", "gst_amount", "tds_amount",
+                  "labour_cess_amount", "net_payable")
+    rows = [[b["number"], b["status"], b["contractor"], b["order"], b["project"], b["period_to"]] +
+            [b[k] for k in money_cols] +
+            [b["certified_by_name"], (b["paid_at"] or "")[:10], b["paid_reference"]] for b in bills]
+    live = [b for b in bills if b["status"] != "CANCELLED"]
+    rows.append(["TOTAL (excluding cancelled)", "", "", "", "", ""] +
+                [money(sum(b[k] or 0 for b in live)) for k in money_cols] + ["", "", ""])
+    return sheet_response(headers, rows, "subcontractor_bills.xlsx")
+
+
 @app.get("/api/sub-bills/{bill_id}/export.xlsx")
 def export_sub_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)

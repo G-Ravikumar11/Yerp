@@ -37,7 +37,8 @@ def test_the_registers_that_had_no_workbook_have_one(tenant):
     for path in ("/api/money/payables.xlsx", "/api/gst/inward.xlsx", "/api/registers/tds.xlsx",
                  "/api/registers/advances.xlsx", "/api/registers/guarantees.xlsx", "/api/money/entries.xlsx",
                  "/api/qc/inspections.xlsx", "/api/qc/cubes.xlsx", "/api/qc/ncrs.xlsx",
-                 "/api/safety/incidents.xlsx", "/api/safety/permits.xlsx", "/api/safety/talks.xlsx"):
+                 "/api/safety/incidents.xlsx", "/api/safety/permits.xlsx", "/api/safety/talks.xlsx",
+                 "/api/sub-bills.xlsx"):
         res = tenant.get(path)
         assert res.status_code == 200, (path, res.text[:200])
         assert "spreadsheetml" in res.headers["content-type"], path
