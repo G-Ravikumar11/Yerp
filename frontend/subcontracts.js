@@ -1445,12 +1445,8 @@ async function woLoadInlineDocument() {
        are the same document by construction - the watermark, the signatory
        names and the printed date are all decided on the server. */
     if (!WO.id) return;
-    var res = await fetch('/api/wo/orders/' + WO.id + '/document',
-                          { credentials: 'include' });
-    if (!res.ok) return;
-    WO.doc = await res.json();
     var host = document.getElementById('wo-inline-doc');
-    if (host && WO.step === 4) host.innerHTML = woDocumentHtml(WO.doc);
+    if (host && WO.step === 4) host.innerHTML = pdfFrame('/api/wo/orders/' + WO.id + '/document.pdf', '1100px');
 }
 
 function woBudgetNotice(o) {
@@ -1474,8 +1470,17 @@ function woActions(o) {
     // a refusal is worse than no button.
     var can = o.actions || [];
     var buttons = [];
-    if (can.indexOf('SUBMIT') >= 0)
-        buttons.push('<button class="btn btn-primary" onclick="woAct(\'submit\')">Submit for approval</button>');
+    if (can.indexOf('SUBMIT') >= 0) {
+        if (typeof isEmployee === 'function' && !isEmployee()) {
+            // The owner's own order needs nobody else's signature.
+            buttons.push('<button class="btn btn-primary" onclick="woAct(\'self-approve\')" ' +
+                'title="Approved as you issue it - it does not wait in anybody\'s queue">Approve and issue</button>');
+            buttons.push('<button class="btn btn-outline" onclick="woAct(\'submit\')" ' +
+                'title="Send it to the project manager or head of projects to approve">Send for approval instead</button>');
+        } else {
+            buttons.push('<button class="btn btn-primary" onclick="woAct(\'submit\')">Submit for approval</button>');
+        }
+    }
     if (can.indexOf('APPROVE') >= 0)
         buttons.push('<button class="btn btn-primary" onclick="woAct(\'approve\')">Approve</button>');
     if (can.indexOf('REJECT') >= 0)
@@ -1515,7 +1520,7 @@ async function woAct(action, needsReason) {
     // overrun is named, and the reason is what gets written into the history
     // beside the figures it overran.
     var warnings = (WO.order || {}).budget_warnings || [];
-    if (action === 'approve' && warnings.length) {
+    if ((action === 'approve' || action === 'self-approve') && warnings.length) {
         comments = prompt('This order overruns the project allocation:\n\n' +
             warnings.join('\n') + '\n\nApprove it anyway? Say why:');
         if (comments === null) return;
@@ -1754,20 +1759,12 @@ async function woPreview(id) {
     if (!orderId) { showToast('Save the order first', 'error'); return; }
     var host = document.getElementById('sc-document');
     showView('subcontract-document-view');
-    host.innerHTML = '<p style="text-align:center;padding:40px;color:var(--text-secondary);">' +
-        'Laying out the document...</p>';
-    var res = await fetch('/api/wo/orders/' + orderId + '/document',
-        { credentials: 'include' });
-    if (!res.ok) {
-        host.innerHTML = '<p style="text-align:center;padding:40px;color:var(--text-secondary);">' +
-            'Could not load the document.</p>';
-        return;
-    }
-    var doc = await res.json();
     WO.id = orderId;
+    var url = '/api/wo/orders/' + orderId + '/document.pdf';
     var pdf = document.getElementById('sc-doc-pdf');
-    if (pdf) pdf.href = '/api/wo/orders/' + orderId + '/document.pdf';
-    host.innerHTML = woDocumentHtml(doc);
+    if (pdf) pdf.href = url;
+    // The work order form itself, as it prints and is signed.
+    host.innerHTML = pdfFrame(url);
 }
 window.woPreview = woPreview;
 

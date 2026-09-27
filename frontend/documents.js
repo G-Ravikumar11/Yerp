@@ -14,6 +14,20 @@
 
 var DOC = { kind: null, id: null, data: null, back: null };
 
+/* The document as it prints: the server's PDF itself, shown in the page.
+   The screens used to draw their own lookalike, which was not the form the
+   firm works to - so what was checked on screen was not what went out. A
+   phone that will not show a PDF in a page gets the link to open it. */
+function pdfFrame(url, height) {
+    var src = url + (url.indexOf('?') < 0 ? '?' : '&') + 't=' + Date.now();
+    return '<p class="no-print" style="font-size:0.8rem;color:var(--text-secondary);margin:0 0 8px;">' +
+        'This is the PDF itself - exactly what prints and what is sent. Not showing here? ' +
+        '<a href="' + src + '" target="_blank" rel="noopener">Open the PDF</a>.</p>' +
+        '<iframe src="' + src + '#view=FitH" title="The document" style="width:100%;height:' + (height || '82vh') +
+        ';border:1px solid var(--border-color);border-radius:8px;background:#fff;"></iframe>';
+}
+window.pdfFrame = pdfFrame;
+
 var DOC_SOURCES = {
     'ra-bill':  { url: function (id) { return '/api/ra-bills/' + id; },  pdf: function (id) { return '/api/ra-bills/' + id + '/document.pdf'; }, pick: 'bill',  render: function (d) { return docRaBill(d); },       title: 'Running Account Bill' },
     'sub-bill': { url: function (id) { return '/api/sub-bills/' + id; }, pdf: function (id) { return '/api/sub-bills/' + id + '/document.pdf'; }, pick: null,    render: function (d) { return docSubBill(d); },      title: 'Subcontractor RA Bill' },
@@ -38,7 +52,7 @@ async function openDocument(kind, id) {
     // The signed copy is the server's PDF, in the trade's ruled form, where there is one.
     var pdf = document.getElementById('doc-pdf');
     if (pdf) { pdf.style.display = src.pdf ? '' : 'none'; if (src.pdf) pdf.href = src.pdf(id); }
-    host.innerHTML = src.render(DOC.data);
+    host.innerHTML = src.pdf ? pdfFrame(src.pdf(id)) : src.render(DOC.data);
     window.scrollTo(0, 0);
 }
 window.openDocument = openDocument;
@@ -91,6 +105,15 @@ async function saveSignatories() {
     showToast(res.ok ? out.message : (out.detail || 'Not saved'), res.ok ? 'success' : 'error');
 }
 window.saveSignatories = saveSignatories;
+
+/* Print the PDF where there is one - the browser's own PDF viewer prints it
+   as it is - and the page where there is not. */
+function docPrint() {
+    var src = DOC_SOURCES[DOC.kind];
+    if (src && src.pdf) window.open(src.pdf(DOC.id), '_blank', 'noopener');
+    else window.print();
+}
+window.docPrint = docPrint;
 
 function docBack() {
     showView(DOC.back || 'dashboard-view');

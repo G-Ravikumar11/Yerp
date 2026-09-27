@@ -649,7 +649,10 @@ async def security_middleware(request: Request, call_next):
         # looking at. One conditional request is a cheap price for that.
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
+    # A PDF may be shown inside the app's own pages - so what is on screen is
+    # the document that prints - but never framed by anybody else's site.
+    response.headers["X-Frame-Options"] = (
+        "SAMEORIGIN" if response.headers.get("content-type", "").startswith("application/pdf") else "DENY")
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     if request.url.scheme == "https":
@@ -19708,7 +19711,7 @@ WO_ACTION_PAST = {
 
 
 def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
-             override=False):
+             override=False, quiet=False):
     """One door for every state change, so the rules cannot disagree."""
     was = order.status
     allowed = WO_TRANSITIONS.get(was, {})
@@ -19765,7 +19768,8 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
     order.status = allowed[action]
     order.updated_at = now
     record_wo_action(db, client, order, actor_id, actor_name, action, was, comments)
-    wo_notify(db, client, order, action, actor_id, actor_name, comments)
+    if not quiet:
+        wo_notify(db, client, order, action, actor_id, actor_name, comments)
     return order
 
 
@@ -19785,6 +19789,33 @@ def wo_submit(order_id: int, body: WoActionIn, request: Request,
     db.refresh(order)
     return {"order": wo_dict(db, order, detail=True),
             "message": order.wo_number + " submitted for approval."}
+
+
+@app.post("/api/wo/orders/{order_id}/self-approve")
+def wo_self_approve(order_id: int, body: WoActionIn, request: Request,
+                    db: Session = Depends(get_db)):
+    """The owner's own order, approved as it is issued.
+
+    The owner answers to nobody, so sending their own order into a queue to
+    wait for their own signature is a step with no one on the other end. It
+    is still checked as any order is - complete, on a budget, and any overrun
+    explained - and the history says the owner raised and approved it.
+    Staff cannot do this: the person who prices an order is not the person
+    who commits the business to it.
+    """
+    client = get_client_user(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    actor_name = client.contact_name or client.company_name or "Owner"
+    if order.status == "DRAFT":
+        wo_apply(db, client, order, "SUBMIT", None, actor_name, "Raised by the owner", quiet=True)
+    wo_apply(db, client, order, "APPROVE", None, actor_name,
+             (body.comments or "").strip() or "Approved by the owner", override=bool(body.override), quiet=True)
+    log_audit(db, client.id, "subcontract_self_approved", "subcontract_order", order.id,
+              order.wo_number, "approved by the owner as issued", request)
+    db.commit()
+    db.refresh(order)
+    return {"order": wo_dict(db, order, detail=True),
+            "message": order.wo_number + " approved and ready to issue."}
 
 
 @app.post("/api/wo/orders/{order_id}/approve")
@@ -34791,7 +34822,7 @@ def approval_inbox(db, client, emp):
             except Exception:
                 over = []
             items.append(_row(
-                "subcontract_order", "Work order", o.id, o.wo_number, o.net_order_value or o.gross_amount,
+                "subcontract_order", "Subcontract work order", o.id, o.wo_number, o.net_order_value or o.gross_amount,
                 party=(con.company_name if con else ""),
                 project=(("%s %s" % (job.number or "", job.name or "")).strip() if job else ""),
                 raised_by=_person(db, o.submitted_by) or (sent.actor_name if sent else ""),
@@ -34986,7 +35017,7 @@ def approvals_sent(request: Request, db: Session = Depends(get_db)):
         con = db.query(models.DBContractor).filter(models.DBContractor.id == o.contractor_id).first() \
             if o.contractor_id else None
         status = {"PROVISIONAL": "pending", "DRAFT": "rejected"}.get(o.status, "approved")
-        rows.append({"kind_label": "Work order", "number": o.wo_number or "", "party": con.company_name if con else "",
+        rows.append({"kind_label": "Subcontract work order", "number": o.wo_number or "", "party": con.company_name if con else "",
                      "amount": money(o.net_order_value or o.gross_amount or 0), "status": status,
                      "waiting_on": ", ".join(wo_pending_with(db, client.id, o.submitted_by)) if status == "pending" else "",
                      "raised_by": _person(db, o.submitted_by), "reason": o.rejection_reason or "",
@@ -35003,7 +35034,7 @@ def approvals_who(request: Request, db: Session = Depends(get_db)):
     raiser has no manager set. For the owner to check the set-up against."""
     client = get_client_user(request, db)
     out = []
-    for right, label in (("subcontracts.approve", "Work orders, RA bills, subcontractor bills and variations"),
+    for right, label in (("subcontracts.approve", "Client and subcontract work orders, RA bills, subcontractor bills and variations"),
                          ("bills.approve", "Bills and purchase orders"),
                          ("bills.pay", "Paying approved bills"),
                          ("leave.approve", "Leave")):

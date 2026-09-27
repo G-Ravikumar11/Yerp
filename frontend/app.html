@@ -134,12 +134,12 @@
 
                     <div class="nav-group" id="nav-group-contracts">
                         <button type="button" class="nav-item nav-group-toggle" aria-expanded="false" aria-controls="nav-items-contracts" onclick="toggleNavGroup(event,'contracts')">
-                            Contract <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
+                            Clients <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
                         <div class="nav-group-items" id="nav-items-contracts">
                             <a href="#" class="nav-item" id="nav-leads" data-perm="billing.manage" onclick="event.preventDefault();showView('leads-view')">Tender Pipeline</a>
                             <a href="#" class="nav-item" id="nav-estimates" data-perm="billing.manage" onclick="event.preventDefault();showView('estimates-view')">Tenders &amp; Estimates</a>
-                            <a href="#" class="nav-item" id="nav-workorders" data-perm="workorders.manage" onclick="event.preventDefault();showView('workorders-view')">Work Orders</a>
+                            <a href="#" class="nav-item" id="nav-workorders" data-perm="workorders.manage" onclick="event.preventDefault();showView('workorders-view')">Client Work Orders</a>
                             <a href="#" class="nav-item" id="nav-measurement" data-perm="site.record|billing.manage" onclick="event.preventDefault();showView('measurement-view')">Measurement &amp; RA Bills</a>
                             <a href="#" class="nav-item" id="nav-customers" data-perm="customers.manage" onclick="event.preventDefault();showView('customers-view')">Customers</a>
                         </div>
@@ -147,10 +147,10 @@
 
                     <div class="nav-group" id="nav-group-subcontracts">
                         <button type="button" class="nav-item nav-group-toggle" aria-expanded="false" aria-controls="nav-items-subcontracts" onclick="toggleNavGroup(event,'subcontracts')">
-                            Subcontracts <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
+                            Subcontractors <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
                         <div class="nav-group-items" id="nav-items-subcontracts">
-                            <a href="#" class="nav-item" id="nav-subcontracts" onclick="event.preventDefault();showView('subcontracts-view')">Subcontract Orders</a>
+                            <a href="#" class="nav-item" id="nav-subcontracts" onclick="event.preventDefault();showView('subcontracts-view')">Subcontract Work Orders</a>
                             <a href="#" class="nav-item" id="nav-subbills" onclick="event.preventDefault();showView('subbills-view')">Subcontractor Bills</a>
                         </div>
                     </div>
@@ -3792,9 +3792,10 @@
 
                 <div id="workorders-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
-                        <div><h1>Work Orders</h1><p class="subtitle">Priced scope sold on a job, and what it is budgeted to cost</p></div>
+                        <div><h1>Client Work Orders</h1><p class="subtitle">Orders <b>received from clients</b> - the work we are paid for. Its budget, measurement and RA bills to the client hang off it.
+                            Orders we give to gangs are under <a href="#" onclick="event.preventDefault();showView('subcontracts-view')">Subcontract Work Orders</a>.</p></div>
                         <div class="invoices-actions">
-                            <button class="btn btn-primary" onclick="openWorkOrderBuilder()">+ New work order</button>
+                            <button class="btn btn-primary" onclick="openWorkOrderBuilder()">+ New client work order</button>
                             <button class="btn btn-outline" onclick="showWorkOrderModal()" title="Bring in an order that already exists as a sheet">From a file</button>
                             <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
                         </div>
@@ -4899,9 +4900,10 @@
 
                 <div id="subcontracts-view" class="view-section dashboard" style="display:none;">
                     <div class="invoices-header-area">
-                        <div><h1>Subcontract Work Orders</h1><p class="subtitle">Work issued out to a subcontractor, priced, signed off and amended</p></div>
+                        <div><h1>Subcontract Work Orders</h1><p class="subtitle">Orders <b>we give to gangs and subcontractors</b> - the work we pay for, printed in the work order form.
+                            Orders from clients are under <a href="#" onclick="event.preventDefault();showView('workorders-view')">Client Work Orders</a>.</p></div>
                         <div class="invoices-actions">
-                            <button class="btn btn-primary" onclick="newSubcontract()">+ New work order</button>
+                            <button class="btn btn-primary" onclick="newSubcontract()">+ New subcontract work order</button>
                             <a class="btn btn-outline" id="sc-export" href="/api/wo/orders.xlsx" title="The register as a workbook">Download register</a>
                             <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
                         </div>
@@ -4942,7 +4944,7 @@
                         <div class="invoices-actions">
                             <button class="btn btn-outline" onclick="docBack()">Back</button>
                             <a class="btn btn-primary" id="doc-pdf" href="#" target="_blank" rel="noopener" style="display:none;">Download PDF</a>
-                            <button class="btn btn-outline" onclick="window.print()">Print</button>
+                            <button class="btn btn-outline" onclick="docPrint()">Print</button>
                         </div>
                     </div>
                     <div id="document-body" style="padding:16px 0;"></div>
@@ -4953,8 +4955,7 @@
                         <div><h1>The document</h1><p class="subtitle">What actually gets printed, signed and argued over</p></div>
                         <div class="invoices-actions">
                             <button class="btn btn-outline" onclick="showView('subcontract-wizard-view');renderWizard()">Back to the order</button>
-                            <a class="btn btn-outline" id="sc-doc-pdf" href="#" target="_blank" rel="noopener">Download PDF</a>
-                            <button class="btn btn-primary" onclick="window.print()">Print</button>
+                            <a class="btn btn-primary" id="sc-doc-pdf" href="#" target="_blank" rel="noopener">Open / print PDF</a>
                         </div>
                     </div>
                     <div id="sc-document"></div>
@@ -5674,10 +5675,10 @@
     <script src="erp-preview.js?v=102"></script>
     <script src="contracts.js?v=67"></script>
     <script src="sheet-viewer.js?v=65"></script>
-    <script src="subcontracts.js?v=108"></script>
+    <script src="subcontracts.js?v=109"></script>
     <script src="costs.js?v=65"></script>
     <script src="sheet.js?v=83"></script>
-    <script src="documents.js?v=93"></script>
+    <script src="documents.js?v=94"></script>
     <script src="approvals.js?v=2"></script>
     <script src="letterhead.js?v=3"></script>
     <script src="mbdims.js?v=81"></script>
