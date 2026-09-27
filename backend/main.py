@@ -4559,6 +4559,7 @@ def work_order_to_dict(db, wo, detail=False, pre=None):
             row["waiting_on"] = (owner_label(db, wo.client_id) if step.approver_id is None
                                  else _person(db, step.approver_id))
             row["waiting_step"] = "%d of %d" % (step.step, total) if total > 1 else ""
+            row["waiting_owner"] = step.approver_id is None
     if detail:
         row["lines"] = [{"id": l.id, "fg_code": l.fg_code, "item_name": l.item_name,
                          "description": l.description, "qty": l.qty, "uom": l.uom,
@@ -4958,10 +4959,42 @@ def erp_wo_submit(wo_id: int, request: Request, body: dict = None,
         submitted_by = emp.id if emp else None
     actor = employee_name(staff) if staff else (client.contact_name or client.email)
     if not submitted_by:
-        # The owner, with no staff record of their own: theirs is the last
-        # word anyway, so there is nobody further to send it to.
-        return owner_signs_own(db, client.id, wo, "work_order", request, actor)
+        # The owner, with no staff record of their own: it waits for the
+        # owner's own sign-off rather than approving itself.
+        return owner_confirms_own(db, client.id, wo, "work_order", request, actor)
     return start_approval(db, client.id, wo, "work_order", submitted_by, request, actor=actor)
+
+
+class WoDecisionIn(BaseModel):
+    decision: str
+    note: Optional[str] = ""
+
+
+@app.post("/api/erp/work-orders/{wo_id}/decide")
+def erp_wo_decide(wo_id: int, body: WoDecisionIn, request: Request, db: Session = Depends(get_db)):
+    """Approve or send back a client work order from its own row - the step
+    it is waiting at, by the person it is waiting with (or the owner)."""
+    client, emp = session_person(request, db)
+    wo = work_order_or_404(db, client.id, wo_id)
+    if (wo.approval_status or "") != "pending":
+        raise HTTPException(409, wo.number + " is not waiting for approval.")
+    step = db.query(models.DBApprovalChain).filter(
+        models.DBApprovalChain.entity_type == "work_order", models.DBApprovalChain.entity_id == wo.id,
+        models.DBApprovalChain.step == (wo.current_approval_step or 0),
+        models.DBApprovalChain.status == "pending").first()
+    if step is None:
+        raise HTTPException(409, "No step is waiting on this order.")
+    if emp is not None and step.approver_id != emp.id:
+        raise HTTPException(403, "%s is waiting with %s." % (
+            wo.number, owner_label(db, client.id) if step.approver_id is None else _person(db, step.approver_id)))
+    decision = (body.decision or "").strip().lower()
+    note = (body.note or "").strip()
+    if decision == "approve" and not note:
+        note = "Approved"
+    actor = employee_name(emp) if emp else (client.contact_name or client.email)
+    out = decide_approval_step(db, step, decision, note, request, client.id, actor=actor)
+    db.refresh(wo)
+    return dict(out, work_order=work_order_to_dict(db, wo))
 
 
 @app.delete("/api/erp/work-orders/{wo_id}")
@@ -5410,6 +5443,33 @@ def finish_approval(db, client_id, doc, entity_type, submitted_by, request, acto
     return {"ok": True, "status": "approved", "chain": [], "message": reason}
 
 
+def owner_confirms_own(db, client_id, doc, entity_type, request, actor=""):
+    """The owner's own client work order is not waved through: it waits in
+    the owner's Approvals as one step, and is placed when the owner signs it -
+    a deliberate second look at prices about to be committed to a client."""
+    if doc.approval_status == "pending":
+        raise HTTPException(status_code=409, detail="Already pending approval")
+    if doc.approval_status == "approved":
+        raise HTTPException(status_code=409, detail="Already approved")
+    db.query(models.DBApprovalChain).filter(
+        models.DBApprovalChain.entity_type == entity_type,
+        models.DBApprovalChain.entity_id == doc.id).delete()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    db.add(models.DBApprovalChain(client_id=client_id, entity_type=entity_type, entity_id=doc.id,
+                                  employee_id=doc.submitted_by, approver_id=None, level="owner",
+                                  step=1, status="pending", created_at=now))
+    doc.approval_status = "pending"
+    doc.current_approval_step = 1
+    set_approval_display_status(doc, entity_type, "pending")
+    log_audit(db, client_id, f"{entity_type}_submitted_for_approval", entity_type, doc.id,
+              getattr(doc, "number", str(doc.id)), "Raised by the owner - waits for the owner's own sign-off",
+              request, user_name=actor)
+    db.commit()
+    # No bell for it: the owner has just sent it, and it is in their Approvals.
+    return {"ok": True, "status": "pending", "chain_length": 1, "next_approver": owner_label(db, client_id),
+            "message": "Waiting for your own approval - approve it on the order or in Approvals to place it."}
+
+
 def start_approval(db, client_id, doc, entity_type, submitted_by, request, actor=""):
     """Put a document into the workflow and return what happened.
 
@@ -5444,8 +5504,7 @@ def start_approval(db, client_id, doc, entity_type, submitted_by, request, actor
         chain = hierarchy_chain(db, client_id, submitted_by, APPROVE_RIGHT["work_order"],
                                 getattr(doc, "job_id", None), owner_signs=wo_owner_signs(db, client_id))
         if not chain:
-            return finish_approval(db, client_id, doc, entity_type, submitted_by, request, actor,
-                                   "Approved: raised by the owner.")
+            return owner_confirms_own(db, client_id, doc, entity_type, request, actor)
     else:
         # Bills and purchase orders climb the hierarchy too: the manager set
         # for the raiser, then one approver at each rank above that may

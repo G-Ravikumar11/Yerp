@@ -252,11 +252,13 @@ def test_the_job_shows_what_was_sold_and_what_it_should_cost(tenant):
 
 def test_an_approved_order_cannot_be_deleted(tenant):
     job, wo = order_with_budget(tenant)
-    # No reporting line, so submitting approves it outright.
+    # Raised by the owner, it waits for the owner's own sign-off.
     me = make_employee(tenant, password=PASSWORD,
                        email=tenant.get("/api/client/me").json()["email"])
     tenant.put(f"/api/employees/{me['id']}", json={"status": "active"})
     tenant.post(f"/api/erp/work-orders/{wo['id']}/submit")
+    assert tenant.post(f"/api/erp/work-orders/{wo['id']}/decide",
+                       json={"decision": "approve"}).json()["status"] == "approved"
     assert tenant.delete(f"/api/erp/work-orders/{wo['id']}").status_code == 409
 
 

@@ -17,7 +17,8 @@ def certified_bill(tenant, site):
                                             "lines": [{"fg_code": fg, "rm_code": rm, "qty": 100, "rate": 3800}]})
     tenant.post("/api/erp/work-orders/%d/place-order" % wo["id"])
     # Only an approved order is billed; the owner sending it approves it.
-    assert tenant.post("/api/erp/work-orders/%d/submit" % wo["id"]).json()["status"] == "approved"
+    assert tenant.post("/api/erp/work-orders/%d/decide" % wo["id"],
+                       json={"decision": "approve"}).json()["status"] == "approved"
     measure(tenant, wo["id"], book(tenant, wo["id"])["lines"][0]["line_id"], 10)
     b = tenant.post("/api/ra-bills", json={"work_order_id": wo["id"]}).json()["bill"]
     return tenant.get("/api/ra-bills/%d" % b["id"]).json()["bill"]

@@ -169,7 +169,9 @@ def test_a_client_order_is_billed_only_once_approved(tenant):
     assert res.status_code == 409 and "approved" in res.json()["detail"]
     res = tenant.post("/api/mb/%d/entries" % wo["id"], json={"line_id": line_of(tenant, wo["id"]), "quantity": 5})
     assert res.status_code == 409
-    assert tenant.post("/api/erp/work-orders/%d/submit" % wo["id"]).json()["status"] == "approved"
+    # Placed by the owner, it waits for the owner's own sign-off.
+    assert tenant.post("/api/erp/work-orders/%d/decide" % wo["id"],
+                       json={"decision": "approve"}).json()["status"] == "approved"
     res = tenant.post("/api/mb/%d/entries" % wo["id"], json={"line_id": line_of(tenant, wo["id"]), "quantity": 5})
     assert res.status_code == 200, res.text
 
