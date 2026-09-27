@@ -6323,8 +6323,11 @@ def erp_place_order(wo_id: int, request: Request, db: Session = Depends(get_db))
     """
     client = require_workorder_access(request, db)
     wo = work_order_or_404(db, client.id, wo_id)
-    if wo.status not in ("Draft", WO_REJECTED):
-        raise HTTPException(409, wo.number + " is already " + (wo.status or "").lower())
+    # An order placed before placing needed approval ("Placed", never
+    # signed) is sent now; only one approved or already waiting is refused.
+    if (wo.approval_status or "none") in ("approved", "pending"):
+        raise HTTPException(409, wo.number + " is already " + (
+            "approved" if wo.approval_status == "approved" else "waiting for approval") + ".")
     if not db.query(models.DBWorkOrderLine).filter(
             models.DBWorkOrderLine.work_order_id == wo.id).count():
         raise HTTPException(409, "There is nothing on this order to place.")

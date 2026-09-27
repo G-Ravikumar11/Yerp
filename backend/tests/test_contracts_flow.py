@@ -316,3 +316,19 @@ def test_the_owner_needs_no_grant(tenant):
     wo = build_order(tenant)
     assert tenant.post("/api/erp/inquiry/%d/md-approval" % wo["id"],
                        json={"approve": True}).status_code == 200
+
+
+def test_an_order_placed_before_approvals_is_sent_now(tenant):
+    """Orders placed under the old rule sit as "Placed" with no signature;
+    they are sent for approval rather than refused as already placed."""
+    import database, models
+    wo = build_order(tenant, place=False)
+    db = database.SessionLocal()
+    row = db.query(models.DBWorkOrder).filter(models.DBWorkOrder.id == wo["id"]).first()
+    row.status, row.approval_status = "Placed", "none"
+    db.commit()
+    db.close()
+    res = tenant.post("/api/erp/work-orders/%d/place-order" % wo["id"])
+    assert res.status_code == 200, res.text
+    assert res.json()["work_order"]["approval_status"] == "approved"
+    assert tenant.post("/api/erp/work-orders/%d/place-order" % wo["id"]).status_code == 409

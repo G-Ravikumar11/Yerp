@@ -445,7 +445,7 @@ async function loadWorkOrders() {
         } else {
             action = '<button class="btn btn-sm btn-primary" onclick="placeWorkOrder(' + w.id +
                 ')" title="Sends it for approval. It is placed once approved.">' +
-                (ap === 'rejected' ? 'Send again' : 'Place order') + '</button>' + budgetBtn;
+                (ap === 'rejected' ? 'Send again' : w.status === 'Placed' ? 'Send for approval' : 'Place order') + '</button>' + budgetBtn;
         }
         var stage = ap === 'approved' ? '<div style="font-size:0.72rem;color:var(--success-color);margin-top:3px;">Approved - placed</div>'
             : ap === 'pending' ? '<div style="font-size:0.72rem;color:var(--text-secondary);margin-top:3px;">With <strong>' +
