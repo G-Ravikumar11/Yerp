@@ -1464,6 +1464,39 @@ def ensure_columns():
                     ("subcontract_orders", "copied_from_id", "INTEGER"),
                     ("sub_bills", "labour_cess_percent", "DOUBLE PRECISION DEFAULT 0"),
                     ("sub_bills", "labour_cess_amount", "DOUBLE PRECISION DEFAULT 0"),
+                    # The registration form, the book's NoM and blocks, and the
+                    # certificate of payment with its signatures.
+                    ("contractors", "registered_project", "TEXT DEFAULT ''"),
+                    ("contractors", "joining_date", "TEXT DEFAULT ''"),
+                    ("contractors", "pin_code", "TEXT DEFAULT ''"),
+                    ("contractors", "city", "TEXT DEFAULT ''"),
+                    ("contractors", "state", "TEXT DEFAULT ''"),
+                    ("contractors", "nature_of_work", "TEXT DEFAULT ''"),
+                    ("contractors", "entity_type", "TEXT DEFAULT ''"),
+                    ("contractors", "aadhaar", "TEXT DEFAULT ''"),
+                    ("contractors", "bank_branch", "TEXT DEFAULT ''"),
+                    ("contractors", "documents", "TEXT DEFAULT ''"),
+                    ("contractors", "declaration_signed", "BOOLEAN DEFAULT FALSE"),
+                    ("contractors", "registration_status", "TEXT DEFAULT 'APPROVED'"),
+                    ("contractors", "registered_by", "INTEGER"),
+                    ("contractors", "registered_by_name", "TEXT DEFAULT ''"),
+                    ("contractors", "approved_by_name", "TEXT DEFAULT ''"),
+                    ("contractors", "approved_at", "TEXT DEFAULT ''"),
+                    ("contractors", "rejection_reason", "TEXT DEFAULT ''"),
+                    ("sub_measurements", "multiplier", "DOUBLE PRECISION DEFAULT 1"),
+                    ("measurement_dimensions", "nom", "DOUBLE PRECISION"),
+                    ("measurement_dimensions", "is_heading", "BOOLEAN DEFAULT FALSE"),
+                    ("sub_bills", "bill_date", "TEXT DEFAULT ''"),
+                    ("sub_bills", "work_type", "TEXT DEFAULT ''"),
+                    ("sub_bills", "work_name", "TEXT DEFAULT ''"),
+                    ("sub_bills", "hsn_sac", "TEXT DEFAULT ''"),
+                    ("sub_bills", "debit_notes", "DOUBLE PRECISION DEFAULT 0"),
+                    ("sub_bills", "submitted_by", "INTEGER"),
+                    ("sub_bills", "submitted_by_name", "TEXT DEFAULT ''"),
+                    ("sub_bills", "submitted_at", "TEXT DEFAULT ''"),
+                    ("sub_bills", "approved_by_name", "TEXT DEFAULT ''"),
+                    ("sub_bills", "accepted_by_name", "TEXT DEFAULT ''"),
+                    ("sub_bills", "accepted_at", "TEXT DEFAULT ''"),
                 ):
                     conn.execute(text(
                         f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
@@ -1622,6 +1655,38 @@ def migrate_sqlite():
             add_col("subcontract_orders", "copied_from_id", "INTEGER")
             add_col("sub_bills", "labour_cess_percent", "FLOAT DEFAULT 0")
             add_col("sub_bills", "labour_cess_amount", "FLOAT DEFAULT 0")
+            # Registration form, NoM and blocks, certificate of payment.
+            add_col("contractors", "registered_project", "TEXT DEFAULT ''")
+            add_col("contractors", "joining_date", "TEXT DEFAULT ''")
+            add_col("contractors", "pin_code", "TEXT DEFAULT ''")
+            add_col("contractors", "city", "TEXT DEFAULT ''")
+            add_col("contractors", "state", "TEXT DEFAULT ''")
+            add_col("contractors", "nature_of_work", "TEXT DEFAULT ''")
+            add_col("contractors", "entity_type", "TEXT DEFAULT ''")
+            add_col("contractors", "aadhaar", "TEXT DEFAULT ''")
+            add_col("contractors", "bank_branch", "TEXT DEFAULT ''")
+            add_col("contractors", "documents", "TEXT DEFAULT ''")
+            add_col("contractors", "declaration_signed", "BOOLEAN DEFAULT 0")
+            add_col("contractors", "registration_status", "TEXT DEFAULT 'APPROVED'")
+            add_col("contractors", "registered_by", "INTEGER")
+            add_col("contractors", "registered_by_name", "TEXT DEFAULT ''")
+            add_col("contractors", "approved_by_name", "TEXT DEFAULT ''")
+            add_col("contractors", "approved_at", "TEXT DEFAULT ''")
+            add_col("contractors", "rejection_reason", "TEXT DEFAULT ''")
+            add_col("sub_measurements", "multiplier", "FLOAT DEFAULT 1")
+            add_col("measurement_dimensions", "nom", "FLOAT")
+            add_col("measurement_dimensions", "is_heading", "BOOLEAN DEFAULT 0")
+            add_col("sub_bills", "bill_date", "TEXT DEFAULT ''")
+            add_col("sub_bills", "work_type", "TEXT DEFAULT ''")
+            add_col("sub_bills", "work_name", "TEXT DEFAULT ''")
+            add_col("sub_bills", "hsn_sac", "TEXT DEFAULT ''")
+            add_col("sub_bills", "debit_notes", "FLOAT DEFAULT 0")
+            add_col("sub_bills", "submitted_by", "INTEGER")
+            add_col("sub_bills", "submitted_by_name", "TEXT DEFAULT ''")
+            add_col("sub_bills", "submitted_at", "TEXT DEFAULT ''")
+            add_col("sub_bills", "approved_by_name", "TEXT DEFAULT ''")
+            add_col("sub_bills", "accepted_by_name", "TEXT DEFAULT ''")
+            add_col("sub_bills", "accepted_at", "TEXT DEFAULT ''")
 
             # Create approval_chains table
             conn.execute(text("""

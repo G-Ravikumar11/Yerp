@@ -150,8 +150,10 @@
                             Subcontractors <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
                         <div class="nav-group-items" id="nav-items-subcontracts">
-                            <a href="#" class="nav-item" id="nav-subcontracts" onclick="event.preventDefault();showView('subcontracts-view')">Subcontract Work Orders</a>
-                            <a href="#" class="nav-item" id="nav-subbills" onclick="event.preventDefault();showView('subbills-view')">Subcontractor Bills</a>
+                            <a href="#" class="nav-item" id="nav-vendors" onclick="event.preventDefault();showView('vendors-view')">1. Vendor Register</a>
+                            <a href="#" class="nav-item" id="nav-subcontracts" onclick="event.preventDefault();showView('subcontracts-view')">2. Work Orders</a>
+                            <a href="#" class="nav-item" id="nav-submb" onclick="event.preventDefault();openSubTab('mb')">3. Measurement Book</a>
+                            <a href="#" class="nav-item" id="nav-subbills" onclick="event.preventDefault();showView('subbills-view')">4. RA Bills</a>
                         </div>
                     </div>
 
@@ -1862,8 +1864,79 @@
                     </div>
                 </div>
 
-                <div id="sub-measure-modal" class="modal-overlay" style="display:none;">
+                <div id="vendor-form-modal" class="modal-overlay" style="display:none;">
                     <div class="modal" style="max-width:760px;">
+                        <div class="modal-header">
+                            <h3 id="vendor-form-title">Sub Contractor Registration Form</h3>
+                            <button class="modal-close" onclick="closeModal('vendor-form-modal')">&times;</button>
+                        </div>
+                        <div class="modal-body" id="vendor-form-body"></div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeModal('vendor-form-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="saveVendorForm()">Save the form</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="sub-bill-edit-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:640px;">
+                        <div class="modal-header">
+                            <h3 id="sub-bill-edit-title">Certificate of payment</h3>
+                            <button class="modal-close" onclick="closeModal('sub-bill-edit-modal')">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <input type="hidden" id="sbe-id">
+                            <div class="form-row">
+                                <div class="form-group"><label>Bill date</label><input type="date" id="sbe-date" class="form-control"></div>
+                                <div class="form-group"><label>Bill period from</label><input type="date" id="sbe-from" class="form-control"></div>
+                                <div class="form-group"><label>To</label><input type="date" id="sbe-to" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Type of work <span style="font-weight:400;color:var(--text-secondary);">(3.3)</span></label><input type="text" id="sbe-type" class="form-control" placeholder="Putty and Painting works"></div>
+                                <div class="form-group" style="max-width:160px;"><label>HSN/SAC <span style="font-weight:400;color:var(--text-secondary);">(3.2)</span></label><input type="text" id="sbe-sac" class="form-control" placeholder="995414"></div>
+                            </div>
+                            <div class="form-group"><label>Name of the work <span style="font-weight:400;color:var(--text-secondary);">(on the abstract and the book)</span></label><input type="text" id="sbe-work" class="form-control"></div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Recoveries in debit notes <span style="font-weight:400;color:var(--text-secondary);">(4.04, before GST)</span></label><input type="number" step="any" min="0" id="sbe-debit" class="form-control"></div>
+                                <div class="form-group"><label>Recovery of mobilisation advance <span style="font-weight:400;color:var(--text-secondary);">(5.01)</span></label><input type="number" step="any" min="0" id="sbe-advance" class="form-control"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Other recoveries <span style="font-weight:400;color:var(--text-secondary);">(5.02, besides material issued)</span></label><input type="number" step="any" min="0" id="sbe-other" class="form-control"></div>
+                                <div class="form-group"><label>What for</label><input type="text" id="sbe-notes" class="form-control"></div>
+                            </div>
+                            <p id="sbe-material" style="font-size:0.78rem;color:var(--text-secondary);"></p>
+                            <p style="font-size:0.78rem;color:var(--text-secondary);">GST is charged on the gross (the work less debit notes); retention and TDS come off the value of the work, at the order's rates. Figures are rounded to whole rupees as the certificate rounds them.</p>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeModal('sub-bill-edit-modal')">Cancel</button>
+                            <button class="btn btn-primary" onclick="saveSubBillEdit()">Save</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="sub-mb-import-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:820px;">
+                        <div class="modal-header">
+                            <h3>Measurement book from Excel</h3>
+                            <button class="modal-close" onclick="closeModal('sub-mb-import-modal')">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:10px;">The MB sheet as the site keeps it - S.No, Description, UoM, No's, NoM, Length, Width, Height, Total Quantity. Each numbered section is matched to an item on the order; each lettered block under it becomes an entry, and "Total Quantity for 4 Blocks" is counted four times. Nothing is recorded until you confirm.</p>
+                            <div class="form-row">
+                                <div class="form-group"><label>The workbook</label><input type="file" id="sub-mb-file" class="form-control" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onchange="previewSubMbImport()"></div>
+                                <div class="form-group" style="max-width:200px;"><label>Measured on</label><input type="date" id="sub-mb-date" class="form-control"></div>
+                            </div>
+                            <div id="sub-mb-preview"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-outline" onclick="closeModal('sub-mb-import-modal')">Cancel</button>
+                            <button class="btn btn-primary" id="sub-mb-confirm" onclick="commitSubMbImport()" disabled>Record it in the book</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="sub-measure-modal" class="modal-overlay" style="display:none;">
+                    <div class="modal" style="max-width:900px;">
                         <div class="modal-header">
                             <h3 id="sub-measure-title">Record a measurement</h3>
                             <button class="modal-close" onclick="closeSubMeasure()">&times;</button>
@@ -1871,13 +1944,18 @@
                         <div class="modal-body">
                             <input type="hidden" id="sub-measure-item">
                             <p id="sub-measure-context" style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:14px;"></p>
+                            <div class="form-group"><label>Where <span style="font-weight:400;color:var(--text-secondary);">(block, floor, flats - as the book heads it)</span></label>
+                                <input type="text" id="sub-measure-location" class="form-control" placeholder="300 SFT-Block A-25,24,16,18"></div>
                             <div id="sub-measure-dims" style="margin-bottom:12px;"></div>
                             <div class="form-row">
                                 <div class="form-group"><label>Quantity <span style="font-weight:400;color:var(--text-secondary);">(from the lines above, or type a total)</span></label>
                                     <input type="number" step="any" id="sub-measure-dims-total" class="form-control"></div>
+                                <div class="form-group"><label>Blocks alike <span style="font-weight:400;color:var(--text-secondary);">(the lines are for one)</span></label>
+                                    <input type="number" step="1" min="1" id="sub-measure-multiplier" class="form-control" value="1" oninput="subMeasureTotalHint()"></div>
                                 <div class="form-group"><label>Measured on</label>
                                     <input type="date" id="sub-measure-date" class="form-control"></div>
                             </div>
+                            <p id="sub-measure-blocks" style="font-size:0.8rem;font-weight:600;margin:-4px 0 10px;"></p>
                             <div class="form-group"><label>Reference <span style="font-weight:400;color:var(--text-secondary);">(drawing, RFI, sheet)</span></label>
                                 <input type="text" id="sub-measure-ref" class="form-control" placeholder="Dwg. STR-04 rev B"></div>
                             <div class="form-group"><label>Remarks</label>
@@ -1892,7 +1970,7 @@
                 </div>
 
                 <div id="measure-modal" class="modal-overlay" style="display:none;">
-                    <div class="modal" style="max-width:760px;">
+                    <div class="modal" style="max-width:900px;">
                         <div class="modal-header">
                             <h3 id="measure-title">Record a measurement</h3>
                             <button class="modal-close" onclick="closeMeasureModal()">&times;</button>
@@ -4792,52 +4870,85 @@
                     </div>
                 </div>
 
-                <div id="subbills-view" class="view-section dashboard" style="display:none;">
+                <div id="vendors-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-tabs sc-flow" data-sc="vendors"></div>
                     <div class="invoices-header-area">
-                        <div><h1>Subcontractor Bills</h1><p class="subtitle">What the gangs have built, and what we pay them for it</p></div>
+                        <div><h1>Subcontractor Register</h1><p class="subtitle">Every gang with its vendor code and its registration form - signed off before an order is issued to them</p></div>
                         <div class="invoices-actions">
-                            <button class="btn btn-primary" data-perm="billing.manage" onclick="newSubBill()">Draw up a bill</button>
-                            <a class="btn btn-outline" href="/api/sub-bills.xlsx" title="Every gang bill as a workbook">Register</a>
+                            <button class="btn btn-primary" data-perm="workorders.manage|billing.manage" onclick="openVendorForm(null)">Register a sub contractor</button>
+                            <label class="btn btn-outline" data-perm="workorders.manage|billing.manage" style="cursor:pointer;margin:0;" title="The vendor codes workbook - one registration form per sheet">Import forms
+                                <input type="file" accept=".xlsx" style="display:none;" onchange="importVendorForms(this)"></label>
+                            <a class="btn btn-outline" href="/api/wo/contractors.xlsx" title="Every sub contractor as a workbook">Excel</a>
+                            <a class="btn btn-outline" href="/api/wo/contractors.pdf" target="_blank" rel="noopener">PDF</a>
+                        </div>
+                    </div>
+                    <div id="vendor-import-result"></div>
+                    <div class="widget">
+                        <div class="widget-content" style="padding:14px 18px;display:flex;gap:10px;flex-wrap:wrap;">
+                            <input class="form-control" id="vendors-q" style="max-width:340px;" placeholder="Search by name, vendor code, work, GSTIN" oninput="vendorSearch()">
+                        </div>
+                        <div class="invoices-tabs" id="vendors-tabs" style="margin:0 18px 0;"></div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead><tr><th>Vendor code</th><th>Sub contractor</th><th>Project</th><th>PAN / GST</th><th>Bank</th><th>Registration</th><th></th></tr></thead>
+                                <tbody id="vendors-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="subbills-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-tabs sc-flow" data-sc="bills"></div>
+                    <div class="invoices-header-area">
+                        <div><h1 id="sub-title">RA Bills</h1><p class="subtitle" id="sub-subtitle"></p></div>
+                        <div class="invoices-actions">
+                            <button class="btn btn-primary sub-only-mb" data-perm="site.record" onclick="openSubMbImport()" title="The MB sheet as the site keeps it in Excel">Import MB from Excel</button>
+                            <button class="btn btn-primary sub-only-bills" data-perm="billing.manage" onclick="newSubBill()">Draw up a bill</button>
+                            <a class="btn btn-outline sub-only-bills" href="/api/sub-bills.xlsx" title="Every gang bill as a workbook">Register (Excel)</a>
                         </div>
                     </div>
 
                     <div class="widget" style="margin-bottom:18px;">
                         <div class="widget-content" style="padding:16px 20px;">
-                            <label style="display:block;font-size:0.85rem;font-weight:600;margin-bottom:6px;">Subcontract order</label>
-                            <select id="sub-order" class="form-control" style="max-width:520px;" onchange="subOrderChanged()"></select>
+                            <label style="display:block;font-size:0.85rem;font-weight:600;margin-bottom:6px;">Work order</label>
+                            <select id="sub-order" class="form-control" style="max-width:560px;" onchange="subOrderChanged()"></select>
                         </div>
                     </div>
 
-                    <div class="stats-grid" id="sub-stats"></div>
+                    <div id="sub-pane-mb">
+                        <div class="stats-grid" id="sub-stats"></div>
 
-                    <div class="widget" style="margin-top:18px;">
-                        <div class="widget-header"><h3>The gang's measurement book</h3></div>
-                        <div class="table-responsive">
-                            <table class="data-table">
-                                <thead><tr><th>Activity</th><th class="text-right">Ordered</th><th class="text-right">Measured</th><th class="text-right">Still to do</th><th class="text-right">Billed</th><th class="text-right">Unbilled</th><th class="text-right">Value</th><th></th></tr></thead>
-                                <tbody id="sub-mb-body"></tbody>
-                            </table>
+                        <div class="widget" style="margin-top:18px;">
+                            <div class="widget-header"><h3>Items on the order - measure each one</h3></div>
+                            <div class="table-responsive">
+                                <table class="data-table">
+                                    <thead><tr><th>Activity</th><th class="text-right">Ordered</th><th class="text-right">Measured</th><th class="text-right">Still to do</th><th class="text-right">Billed</th><th class="text-right">Unbilled</th><th class="text-right">Value</th><th></th></tr></thead>
+                                    <tbody id="sub-mb-body"></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="widget" style="margin-top:18px;">
+                            <div class="widget-header"><h3>Measurement entries</h3></div>
+                            <div class="table-responsive">
+                                <table class="data-table">
+                                    <thead><tr><th>Date</th><th>Activity</th><th>Particulars &amp; dimensions</th><th class="text-right">Quantity</th><th>Ref</th><th>Recorded by</th><th>Remarks</th><th class="no-print"></th></tr></thead>
+                                    <tbody id="sub-entries"></tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
 
-                    <div class="widget" style="margin-top:18px;">
-                        <div class="widget-header"><h3>Entries</h3></div>
-                        <div class="table-responsive">
-                            <table class="data-table">
-                                <thead><tr><th>Date</th><th>Activity</th><th>Particulars &amp; dimensions</th><th class="text-right">Quantity</th><th>Ref</th><th>Recorded by</th><th>Remarks</th><th class="no-print"></th></tr></thead>
-                                <tbody id="sub-entries"></tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    <div class="stats-grid" id="sub-bill-stats" style="margin-top:24px;"></div>
-                    <div class="widget" style="margin-top:18px;">
-                        <div class="widget-header"><h3>Bills we pay</h3></div>
-                        <div class="table-responsive">
-                            <table class="data-table">
-                                <thead><tr><th>Bill</th><th>Gang</th><th class="text-right">This bill</th><th class="text-right">Retention held</th><th class="text-right">TDS</th><th class="text-right">Net payable</th><th>Status</th><th></th></tr></thead>
-                                <tbody id="sub-bill-body"></tbody>
-                            </table>
+                    <div id="sub-pane-bills" style="display:none;">
+                        <div class="stats-grid" id="sub-bill-stats"></div>
+                        <div class="widget" style="margin-top:18px;">
+                            <div class="widget-header"><h3>RA bills on this work order</h3></div>
+                            <div class="table-responsive">
+                                <table class="data-table">
+                                    <thead><tr><th>Bill</th><th>Gang</th><th class="text-right">This bill</th><th class="text-right">Retention held</th><th class="text-right">TDS</th><th class="text-right">Net payable</th><th>Status &amp; signatures</th><th></th></tr></thead>
+                                    <tbody id="sub-bill-body"></tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -4906,6 +5017,7 @@
                 </div>
 
                 <div id="subcontracts-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-tabs sc-flow" data-sc="orders"></div>
                     <div class="invoices-header-area">
                         <div><h1>Subcontract Work Orders</h1><p class="subtitle">Orders <b>we give to gangs and subcontractors</b> - the work we pay for, printed in the work order form.
                             Orders from clients are under <a href="#" onclick="event.preventDefault();showView('workorders-view')">Client Work Orders</a>.</p></div>
@@ -5666,7 +5778,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=137"></script>
+    <script src="app.js?v=139"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=69"></script>
@@ -5686,14 +5798,15 @@
     <script src="costs.js?v=65"></script>
     <script src="sheet.js?v=83"></script>
     <script src="documents.js?v=94"></script>
-    <script src="approvals.js?v=2"></script>
+    <script src="approvals.js?v=3"></script>
     <script src="letterhead.js?v=3"></script>
-    <script src="mbdims.js?v=81"></script>
+    <script src="mbdims.js?v=82"></script>
     <script src="measurement.js?v=120"></script>
     <script src="stock.js?v=115"></script>
     <script src="diary.js?v=117"></script>
     <script src="money.js?v=96"></script>
-    <script src="subbills.js?v=93"></script>
+    <script src="subbills.js?v=98"></script>
+    <script src="vendors.js?v=3"></script>
     <script src="estimate.js?v=81"></script>
     <script src="gst.js?v=80"></script>
     <script src="registers.js?v=84"></script>

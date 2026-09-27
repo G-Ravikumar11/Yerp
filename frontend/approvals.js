@@ -71,7 +71,7 @@ function apPill(text, colour) {
 
 var AP_COLOURS = {
     subcontract_order: '#7c3aed', ra_bill: '#0891b2', sub_bill: '#d97706', variation: '#db2777',
-    step: '#2563eb', leave: '#059669'
+    step: '#2563eb', leave: '#059669', contractor: '#0d9488'
 };
 
 function apWhen(v) {
@@ -159,6 +159,7 @@ function apOpen(key) {
     if (!i) return;
     if (i.kind === 'ra_bill' && typeof openDocument === 'function') return openDocument('ra-bill', i.id);
     if (i.kind === 'sub_bill' && typeof openDocument === 'function') return openDocument('sub-bill', i.id);
+    if (i.kind === 'contractor' && i.pdf) return window.open(i.pdf, '_blank', 'noopener');
     if (i.kind === 'step' && i.doc_type === 'purchase_order' && typeof openDocument === 'function') return openDocument('po', i.doc_id);
     if (i.kind === 'subcontract_order' && typeof openSubcontract === 'function') {
         showView('subcontracts-view');

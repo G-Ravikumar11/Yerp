@@ -185,9 +185,21 @@ async function pBills() {
                 '<td class="r"><div>' + rs(b.claimed) + deduct + '</div></td><td class="r"><b>' + rs(b.net) + '</b></td>' +
                 '<td class="r">' + rs(b.paid) + '</td><td class="r">' + rs(b.left) +
                 (b.pdf ? '<div><a class="btn" style="padding:4px 10px;margin-top:4px;" href="' + b.pdf + '" target="_blank" rel="noopener">PDF</a></div>' : '') +
+                // "Accepted for Sub Contractor" - the gang's own signature on the certificate.
+                (gang && b.pdf ? (b.can_accept
+                    ? '<div><button class="btn" style="padding:4px 10px;margin-top:4px;" onclick="pAcceptBill(' + b.id + ')">Accept</button></div>'
+                    : '<div class="sub">Accepted by ' + esc(b.accepted_by) + (b.accepted_at ? ', ' + esc(b.accepted_at) : '') + '</div>') : '') +
                 '</td></tr>';
         }).join(''), 'No bills yet.', 6));
 }
+
+async function pAcceptBill(id) {
+    if (!confirm('Accept this certificate of payment for your firm? It records that you agree with the measurements and the deductions.')) return;
+    var r = await post('/api/portal/bills/' + id + '/accept');
+    if (!r.ok) { alert(r.body.detail || 'Could not accept it.'); return; }
+    pBills();
+}
+window.pAcceptBill = pAcceptBill;
 
 async function pPayments() {
     main('<p class="sub">Loading...</p>');

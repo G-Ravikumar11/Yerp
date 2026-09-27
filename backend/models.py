@@ -1599,6 +1599,31 @@ class DBContractor(Base):
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
+    # The rest of the Sub Contractor Registration Form, box for box: the
+    # project they were taken on for, where they are from, what they do, and
+    # the documents collected. A gang is paid on what this form says, so it is
+    # held here rather than in a folder of printouts.
+    registered_project = Column(String, default="")
+    joining_date = Column(String, default="")
+    pin_code = Column(String, default="")
+    city = Column(String, default="")
+    state = Column(String, default="")
+    nature_of_work = Column(String, default="")
+    entity_type = Column(String, default="")
+    aadhaar = Column(String, default="")
+    bank_branch = Column(String, default="")
+    documents = Column(String, default="")          # comma separated keys of what was collected
+    declaration_signed = Column(Boolean, default=False)
+    # PENDING | APPROVED | REJECTED. Somebody on site can register a gang; it
+    # is signed off before an order is issued to them. Rows from before the
+    # form existed were never questioned and read as approved.
+    registration_status = Column(String, default="APPROVED", index=True)
+    registered_by = Column(Integer, nullable=True)
+    registered_by_name = Column(String, default="")
+    approved_by_name = Column(String, default="")
+    approved_at = Column(String, default="")
+    rejection_reason = Column(Text, default="")
+
 
 class DBSubcontractOrder(Base):
     """A work order issued to a subcontractor."""
@@ -2237,6 +2262,9 @@ class DBSubMeasurement(Base):
     recorded_by_name = Column(String, default="")
     sub_bill_id = Column(Integer, ForeignKey("sub_bills.id"), nullable=True, index=True)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    # One block measured, several built alike: "Total Quantity for 4 Blocks".
+    # The dimensions are of one; the entry is that many times what they come to.
+    multiplier = Column(Float, default=1.0)
 
 
 class DBMeasurementDimension(Base):
@@ -2263,6 +2291,11 @@ class DBMeasurementDimension(Base):
     deduct = Column(Boolean, default=False)
     quantity = Column(Float, default=0.0)          # the product, signed
     display_order = Column(Integer, default=0)
+    # No's x NoM: how many flats, and how many of the member in each - the
+    # book's second count. And a heading ("Living Room", "Deductions") that
+    # groups the lines under it and measures nothing itself.
+    nom = Column(Float, nullable=True)
+    is_heading = Column(Boolean, default=False)
 
 
 class DBSubBill(Base):
@@ -2313,6 +2346,22 @@ class DBSubBill(Base):
     remarks = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     updated_at = Column(String, default="")
+
+    # The Certificate of Payment's own boxes.
+    bill_date = Column(String, default="")
+    work_type = Column(String, default="")           # 3.3 Type of Work
+    work_name = Column(String, default="")           # Name of the Work, on the abstract and the book
+    hsn_sac = Column(String, default="")             # 3.2 HSN/SAC
+    debit_notes = Column(Float, default=0.0)         # 4.04 Recoveries in Debit Notes, before GST
+    # Who prepared it and when it was sent. Certifying then climbs the
+    # hierarchy one signature at a time (approval_chains, "sub_bill").
+    submitted_by = Column(Integer, nullable=True)
+    submitted_by_name = Column(String, default="")
+    submitted_at = Column(String, default="")
+    approved_by_name = Column(String, default="")    # the last signature - Approved By
+    # "Accepted for Sub Contractor": the gang's own signature on the certificate.
+    accepted_by_name = Column(String, default="")
+    accepted_at = Column(String, default="")
 
 
 class DBSubBillLine(Base):
