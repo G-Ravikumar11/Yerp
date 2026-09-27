@@ -114,7 +114,8 @@ function renderMeasurementBook() {
             '<td class="text-right" style="font-weight:600;"' +
                 (e.quantity < 0 ? ' style="color:var(--warning-color);font-weight:600;"' : '') +
                 '>' + e.quantity + '</td>' +
-            '<td>' + esc(e.mb_ref || '—') + '</td>' +
+            '<td>' + esc(e.mb_ref || '—') + (e.location ? '<div style="font-size:0.75rem;color:var(--text-secondary);">' +
+                esc(e.location) + '</div>' : '') + '</td>' +
             '<td>' + esc(e.recorded_by_name || '') +
                 (e.witnessed_by ? '<div style="font-size:0.72rem;color:var(--text-secondary);">' +
                  'witnessed: ' + esc(e.witnessed_by) + '</div>' : '') + '</td>' +
@@ -172,6 +173,7 @@ async function saveMeasurement() {
             dimensions: dims.length ? dims : null,
             measured_on: document.getElementById('measure-date').value,
             mb_ref: document.getElementById('measure-ref').value,
+            location: (document.getElementById('measure-location') || {}).value || '',
             witnessed_by: document.getElementById('measure-witness').value,
             remarks: document.getElementById('measure-remarks').value,
         }),

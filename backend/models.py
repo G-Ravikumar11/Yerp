@@ -1788,6 +1788,7 @@ class DBMeasurement(Base):
     fg_code = Column(String, default="", index=True)
 
     mb_ref = Column(String, default="")          # the page it is written on
+    location = Column(String, default="")        # where on site: grid, floor, element
     measured_on = Column(String, default="")
     quantity = Column(Float, default=0.0)        # may be negative, to correct
     remarks = Column(Text, default="")
@@ -2228,6 +2229,7 @@ class DBSubMeasurement(Base):
     item_id = Column(Integer, ForeignKey("subcontract_items.id"), nullable=False, index=True)
     activity_no = Column(String, default="")
     mb_ref = Column(String, default="")
+    location = Column(String, default="")        # where on site: grid, floor, element
     measured_on = Column(String, default="")
     quantity = Column(Float, default=0.0)          # may be negative: a correction
     remarks = Column(String, default="")

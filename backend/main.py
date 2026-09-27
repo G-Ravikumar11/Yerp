@@ -20986,6 +20986,7 @@ class MeasurementIn(BaseModel):
     dimensions: Optional[List[DimensionIn]] = None
     measured_on: Optional[str] = ""
     mb_ref: Optional[str] = ""
+    location: Optional[str] = ""
     remarks: Optional[str] = ""
     witnessed_by: Optional[str] = ""
 
@@ -21096,7 +21097,7 @@ def measurement_book(work_order_id: int, request: Request,
     entries = [{
         "id": m.id, "line_id": m.line_id, "fg_code": m.fg_code or "",
         "measured_on": m.measured_on or "", "quantity": money(m.quantity),
-        "mb_ref": m.mb_ref or "", "remarks": m.remarks or "",
+        "mb_ref": m.mb_ref or "", "location": getattr(m, "location", "") or "", "remarks": m.remarks or "",
         "recorded_by_name": m.recorded_by_name or "",
         "witnessed_by": m.witnessed_by or "",
         "billed": bool(m.ra_bill_id), "created_at": m.created_at or "",
@@ -21143,7 +21144,8 @@ def record_measurement(work_order_id: int, body: MeasurementIn, request: Request
         client_id=client.id, work_order_id=wo.id, line_id=line.id,
         fg_code=line.fg_code or "", quantity=quantity,
         measured_on=(body.measured_on or datetime.now().strftime("%Y-%m-%d")),
-        mb_ref=(body.mb_ref or "").strip(), remarks=(body.remarks or "").strip(),
+        mb_ref=(body.mb_ref or "").strip(), location=(body.location or "").strip()[:200],
+        remarks=(body.remarks or "").strip(),
         witnessed_by=(body.witnessed_by or "").strip(),
         recorded_by=actor_id, recorded_by_name=actor_name)
     db.add(entry)
@@ -25063,6 +25065,7 @@ class SubMeasurementIn(BaseModel):
     dimensions: Optional[List[DimensionIn]] = None
     measured_on: Optional[str] = ""
     mb_ref: Optional[str] = ""
+    location: Optional[str] = ""
     remarks: Optional[str] = ""
 
 
@@ -25104,7 +25107,7 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
     entries = [{
         "id": m.id, "item_id": m.item_id, "activity_no": m.activity_no or "",
         "measured_on": m.measured_on or "", "quantity": money(m.quantity),
-        "mb_ref": m.mb_ref or "", "remarks": m.remarks or "",
+        "mb_ref": m.mb_ref or "", "location": getattr(m, "location", "") or "", "remarks": m.remarks or "",
         "recorded_by_name": m.recorded_by_name or "", "billed": bool(m.sub_bill_id),
         "dimensions": sub_dims.get(m.id, []),
     } for m in sub_rows]
@@ -25162,7 +25165,8 @@ def record_sub_measurement(order_id: int, body: SubMeasurementIn, request: Reque
         client_id=client.id, order_id=order.id, item_id=item.id,
         activity_no=item.activity_no or "", quantity=quantity,
         measured_on=(body.measured_on or datetime.now().strftime("%Y-%m-%d")),
-        mb_ref=(body.mb_ref or "").strip(), remarks=(body.remarks or "").strip(),
+        mb_ref=(body.mb_ref or "").strip(), location=(body.location or "").strip()[:200],
+        remarks=(body.remarks or "").strip(),
         recorded_by=actor_id, recorded_by_name=actor_name)
     db.add(entry)
     db.flush()
