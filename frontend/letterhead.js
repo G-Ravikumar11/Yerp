@@ -243,10 +243,13 @@ function drawTerms() {
         ' They print as the General Contract Conditions on every work order that has none of its own, and are offered ' +
         'when an order\'s terms are written.</p>' +
         TERMS.list.map(function (t, i) {
-            return '<div style="display:grid;grid-template-columns:28px 180px 1fr auto;gap:8px;align-items:start;margin-bottom:8px;">' +
+            // Number, then the heading over its text, then the buttons: the text
+            // keeps the width on a phone instead of being squeezed beside a heading.
+            return '<div style="display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:8px;align-items:start;margin-bottom:10px;">' +
                 '<span style="padding-top:8px;font-weight:700;color:var(--text-secondary);">' + (i + 1) + '.</span>' +
-                '<input class="form-control" value="' + esc(t.clause_category) + '" placeholder="Heading" oninput="TERMS.list[' + i + '].clause_category=this.value">' +
-                '<textarea class="form-control" rows="2" oninput="TERMS.list[' + i + '].clause_text=this.value">' + esc(t.clause_text) + '</textarea>' +
+                '<div><input class="form-control" style="margin-bottom:4px;font-size:0.8rem;" value="' + esc(t.clause_category) +
+                    '" placeholder="Heading (for filing - not printed)" oninput="TERMS.list[' + i + '].clause_category=this.value">' +
+                '<textarea class="form-control" rows="3" oninput="TERMS.list[' + i + '].clause_text=this.value">' + esc(t.clause_text) + '</textarea></div>' +
                 '<div style="display:flex;flex-direction:column;gap:4px;">' +
                     '<button class="btn btn-sm btn-outline" title="Move up" onclick="termMove(' + i + ',-1)">&uarr;</button>' +
                     '<button class="btn btn-sm btn-outline" title="Remove" onclick="termRemove(' + i + ')">&times;</button></div></div>';

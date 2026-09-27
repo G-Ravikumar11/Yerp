@@ -148,20 +148,42 @@ if not SECRET_KEY or SECRET_KEY == "generate_a_random_secret_string":
         " and written to .env" if persisted else "",
     )
 
+ADMIN_PANEL_MIN_LENGTH = 10
+
+
+def admin_panel_password():
+    """The /admin panel's password - from the environment and nowhere else.
+
+    The panel edits every company's rows directly. It used to fall back to
+    "admin", which on a server nobody had set ADMIN_PASSWORD on was a door
+    anyone could walk through. Unset, short or "admin" now means the panel
+    stays shut.
+    """
+    pwd = os.getenv("ADMIN_PASSWORD", "") or ""
+    if len(pwd) < ADMIN_PANEL_MIN_LENGTH or pwd.strip().lower() == "admin":
+        return ""
+    return pwd
+
+
 def ensure_admin_user():
     try:
         with SessionLocal() as db:
             existing_admin = db.query(models.DBAdminUser).first()
+            wanted = admin_panel_password()
             if not existing_admin:
-                admin_pwd = os.getenv("ADMIN_PASSWORD", "admin")
-                hashed = hash_password(admin_pwd)
-                db.add(models.DBAdminUser(username="admin", password=hashed))
+                # With no password set, the row exists with one nobody knows.
+                db.add(models.DBAdminUser(username="admin",
+                                          password=hash_password(wanted or secrets.token_urlsafe(32))))
                 db.commit()
-                logger.info("Created default admin user (username=admin)")
-            elif existing_admin.password and ':' not in existing_admin.password:
-                existing_admin.password = hash_password(existing_admin.password)
+                logger.info("Created the admin panel user (username=admin)")
+            elif wanted and not verify_password(wanted, existing_admin.password or ""):
+                # The environment is the one place the password is set.
+                existing_admin.password = hash_password(wanted)
                 db.commit()
-                logger.info("Upgraded admin password to hashed format")
+                logger.info("Admin panel password taken from ADMIN_PASSWORD")
+            if not wanted:
+                logger.warning("The /admin panel is closed: set ADMIN_PASSWORD (at least %d characters) "
+                               "to open it.", ADMIN_PANEL_MIN_LENGTH)
     except Exception as e:
         logger.error(f"Admin user init failed: {e}")
 
@@ -482,7 +504,12 @@ app = FastAPI(title="Y ERP", lifespan=lifespan)
 class AdminAuth(AuthenticationBackend):
     async def login(self, request: Request) -> bool:
         form = await request.form()
-        username, password = form["username"], form["password"]
+        username, password = form.get("username", ""), form.get("password", "")
+        ip = request.client.host if request.client else "unknown"
+        if rate_limiter.is_rate_limited(f"admin_panel_login:{ip}", max_requests=5, window=60):
+            return False
+        if not admin_panel_password():
+            return False            # the panel is shut until ADMIN_PASSWORD is set properly
         with SessionLocal() as db:
             user = db.query(models.DBAdminUser).filter_by(username=username).first()
             if user and verify_password(password, user.password):

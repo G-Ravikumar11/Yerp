@@ -342,8 +342,12 @@ async function dashErp() {
         return fetch(url, { credentials: 'include' }).then(function (r) { return r.ok ? r.json() : {}; })
             .catch(function () { return {}; });
     };
-    var out = await Promise.all([get('/api/money/receivables'), get('/api/money/payables'),
-                                 get('/api/money/retention'), get('/api/jobs-pnl'),
+    // The money totals are for whoever may see the money. Asking anyway
+    // drew three zeros on a planner's dashboard that read as "nothing owed".
+    var money = typeof can !== 'function' || can('bills.view_all');
+    var none = function () { return Promise.resolve({}); };
+    var out = await Promise.all([money ? get('/api/money/receivables') : none(), money ? get('/api/money/payables') : none(),
+                                 money ? get('/api/money/retention') : none(), get('/api/jobs-pnl'),
                                  get('/api/stock?low_only=true')]);
     var rec = out[0].summary || {}, pay = out[1].summary || {}, ret = out[2].summary || {};
     var pnl = out[3], stock = out[4].summary || {};
@@ -370,11 +374,13 @@ async function dashErp() {
     }).join('');
 
     host.innerHTML =
-        '<h3 style="font-size:0.95rem;margin:18px 0 10px;">Money, both ways</h3>' +
+        '<h3 style="font-size:0.95rem;margin:18px 0 10px;">' + (money ? 'Money, both ways' : 'The store') + '</h3>' +
         '<div class="grid-4 mb-24">' +
-        tile('Owed to us', formatCurrency(rec.owed || 0), (rec.overdue ? formatCurrency(rec.overdue) + ' overdue' : 'nothing overdue'), 'money-view', rec.overdue ? 'warning' : '') +
-        tile('We owe', formatCurrency(pay.owed || 0), (pay.overdue ? formatCurrency(pay.overdue) + ' overdue' : 'nothing overdue'), 'money-view', pay.overdue ? 'danger' : '') +
-        tile('Retention held on us', formatCurrency(ret.held || 0), (ret.on_finished_jobs ? formatCurrency(ret.on_finished_jobs) + ' on finished jobs' : ''), 'money-view') +
+        (money
+            ? tile('Owed to us', formatCurrency(rec.owed || 0), (rec.overdue ? formatCurrency(rec.overdue) + ' overdue' : 'nothing overdue'), 'money-view', rec.overdue ? 'warning' : '') +
+              tile('We owe', formatCurrency(pay.owed || 0), (pay.overdue ? formatCurrency(pay.overdue) + ' overdue' : 'nothing overdue'), 'money-view', pay.overdue ? 'danger' : '') +
+              tile('Retention held on us', formatCurrency(ret.held || 0), (ret.on_finished_jobs ? formatCurrency(ret.on_finished_jobs) + ' on finished jobs' : ''), 'money-view')
+            : '') +
         tile('Store below reorder', String(stock.below_reorder || 0) + ' item' + (stock.below_reorder === 1 ? '' : 's'),
              (stock.value_on_hand ? formatCurrency(stock.value_on_hand) + ' on hand' : ''), 'stock-view', stock.below_reorder ? 'warning' : '') +
         '</div>' +
