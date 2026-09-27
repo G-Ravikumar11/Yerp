@@ -13,8 +13,8 @@ def test_the_route_climbs_every_rank_to_the_owner(tenant, portal):
     pm = person(tenant, "project_manager")
     head = person(tenant, "head_projects")
     qs = person(tenant, "planning_billing")
-    order = priced_order(tenant)
     sign_in(portal, qs)
+    order = priced_order(portal)          # raised by the planner, as it is on site
     assert portal.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 200
     steps = route(tenant, order["id"])
     assert [s["name"].split()[0] for s in steps[:2]] == [pm["first_name"], head["first_name"]]
@@ -47,8 +47,8 @@ def test_sent_back_midway_it_returns_to_draft_and_the_route_closes(tenant, porta
     pm = person(tenant, "project_manager")
     person(tenant, "head_projects")
     qs = person(tenant, "planning_billing")
-    order = priced_order(tenant)
     sign_in(portal, qs)
+    order = priced_order(portal)          # raised by the planner, as it is on site
     portal.post("/api/wo/orders/%d/submit" % order["id"], json={})
     sign_in(portal, pm)
     res = portal.post("/api/wo/orders/%d/reject" % order["id"], json={"comments": "Rate for shuttering too high"})
@@ -59,8 +59,8 @@ def test_sent_back_midway_it_returns_to_draft_and_the_route_closes(tenant, porta
 def test_the_owner_may_sign_at_any_point_and_it_is_the_last_word(tenant, portal):
     person(tenant, "project_manager")
     qs = person(tenant, "planning_billing")
-    order = priced_order(tenant)
     sign_in(portal, qs)
+    order = priced_order(portal)          # raised by the planner, as it is on site
     portal.post("/api/wo/orders/%d/submit" % order["id"], json={})
     res = tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
     assert res.json()["order"]["status"] == "APPROVED"
@@ -71,8 +71,8 @@ def test_somebody_who_has_left_is_passed_over(tenant, portal):
     pm = person(tenant, "project_manager")
     head = person(tenant, "head_projects")
     qs = person(tenant, "planning_billing")
-    order = priced_order(tenant)
     sign_in(portal, qs)
+    order = priced_order(portal)          # raised by the planner, as it is on site
     portal.post("/api/wo/orders/%d/submit" % order["id"], json={})
     tenant.put("/api/employees/%d" % pm["id"], json={"status": "terminated"})
     pending = tenant.get("/api/wo/orders/%d" % order["id"]).json()["order"]["pending_with"]
@@ -84,8 +84,8 @@ def test_the_owner_can_leave_the_last_signature_to_the_heads(tenant, portal):
     assert tenant.get("/api/approval-rules").json()["owner_signs_work_orders"] is False
     pm = person(tenant, "project_manager")
     qs = person(tenant, "planning_billing")
-    order = priced_order(tenant)
     sign_in(portal, qs)
+    order = priced_order(portal)          # raised by the planner, as it is on site
     portal.post("/api/wo/orders/%d/submit" % order["id"], json={})
     assert len(route(tenant, order["id"])) == 1
     sign_in(portal, pm)
@@ -111,3 +111,29 @@ def test_a_client_work_order_climbs_the_same_way(tenant, portal):
     assert decide(portal, item).json()["status"] == "pending"
     item = [i for i in inbox(tenant) if i["kind"] == "step" and i["mine"]][0]
     assert decide(tenant, item).json()["status"] == "approved"
+
+
+# --- Who may see a draft -------------------------------------------------------------
+
+def test_a_draft_is_seen_by_its_maker_and_those_above_not_below(tenant, portal):
+    pm = person(tenant, "project_manager")
+    qs = person(tenant, "planning_billing")
+    site = person(tenant, "staff")
+    # The owner's own draft is the owner's alone.
+    owners = priced_order(tenant)
+    sign_in(portal, qs)
+    assert portal.get("/api/wo/orders/%d" % owners["id"]).status_code == 404
+    assert owners["id"] not in [o["id"] for o in portal.get("/api/wo/orders").json()["orders"]]
+    assert portal.get("/api/wo/orders/%d/document.pdf" % owners["id"]).status_code == 404
+    # The planner's draft: theirs, and the project manager's to see - not the site's.
+    mine = priced_order(portal)
+    assert portal.get("/api/wo/orders/%d" % mine["id"]).status_code == 200
+    sign_in(portal, pm)
+    assert portal.get("/api/wo/orders/%d" % mine["id"]).status_code == 200
+    sign_in(portal, site)
+    assert portal.get("/api/wo/orders/%d" % mine["id"]).status_code == 404
+    assert tenant.get("/api/wo/orders/%d" % mine["id"]).status_code == 200      # the owner sees all
+    # Once it is sent for approval it is the business's.
+    assert tenant.post("/api/wo/orders/%d/submit" % owners["id"], json={}).status_code == 200
+    sign_in(portal, qs)
+    assert portal.get("/api/wo/orders/%d" % owners["id"]).status_code == 200

@@ -642,9 +642,9 @@ def test_submitting_tells_the_people_who_can_approve(tenant, client):
 
 def test_the_engineer_hears_back_when_it_is_decided(tenant, client):
     engineer = staff(tenant, "manager")
-    order = priced(tenant)
-    # Submitted by the engineer, so the decision comes back to them.
+    # Raised and submitted by the engineer, so the decision comes back to them.
     sign_in(client, engineer)
+    order = priced(client)
     assert client.post("/api/wo/orders/%d/submit" % order["id"],
                        json={}).status_code == 200
 

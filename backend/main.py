@@ -11833,7 +11833,14 @@ def get_employee_user(request: Request, db: Session):
     client = db.query(models.DBClient).filter(models.DBClient.id == emp.client_id).first()
     if not client or not client.is_active:
         raise HTTPException(status_code=403, detail="Account disabled")
+    STAFF_VIEWER.set(emp.id)
     return emp
+
+
+# The member of staff this request is for, once it has been worked out - so a
+# lookup deep inside a route can ask "may this person see it" without every
+# route passing the person down. Unset for the owner. One per request.
+STAFF_VIEWER = contextvars.ContextVar("staff_viewer", default=None)
 
 
 def require_employee_permission(request: Request, db: Session, permission: str):
@@ -18010,9 +18017,33 @@ def wo_or_404(db, client_id, order_id):
     row = db.query(models.DBSubcontractOrder).filter(
         models.DBSubcontractOrder.id == order_id,
         models.DBSubcontractOrder.client_id == client_id).first()
-    if not row:
+    if not row or not wo_visible_to(db, row, STAFF_VIEWER.get()):
         raise HTTPException(404, "Work order not found")
     return row
+
+
+def wo_visible_to(db, order, emp_id):
+    """Whether a member of staff may see this order.
+
+    A draft is its maker's work in progress: seen by them and by those above
+    them - a higher rank, or their manager up the reporting line - and not by
+    anybody below. The owner's own drafts are the owner's alone. Once it is
+    sent for approval it is the business's, and visible as any order is.
+    """
+    if not emp_id or (order.status or "") != "DRAFT":
+        return True
+    maker = order.submitted_by
+    if maker == emp_id:
+        return True
+    if not maker:
+        return False
+    me = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id).first()
+    them = db.query(models.DBEmployee).filter(models.DBEmployee.id == maker).first()
+    if not me or not them:
+        return False
+    if role_rank(me) > role_rank(them):
+        return True
+    return any(r["employee_id"] == emp_id for r in build_approval_chain(maker, order.client_id, db))
 
 
 def record_wo_action(db, client, order, actor_id, actor_name, action, was, comments=""):
@@ -19106,6 +19137,8 @@ def wo_list_orders(request: Request, status: str = "", q: str = "",
     if job_id:
         query = query.filter(models.DBSubcontractOrder.job_id == job_id)
     rows = query.order_by(models.DBSubcontractOrder.id.desc()).limit(300).all()
+    viewer = STAFF_VIEWER.get()
+    rows = [o for o in rows if wo_visible_to(db, o, viewer)]
     orders = [d for d in (wo_dict(db, o) for o in rows) if wo_matches(d, q)]
     return {
         "orders": orders,
