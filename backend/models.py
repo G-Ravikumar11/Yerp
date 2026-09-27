@@ -2988,6 +2988,11 @@ class DBFile(Base):
     taken_on = Column(String, default="")
     uploaded_by_name = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    # What came in, before it was made smaller - so the saving is known.
+    original_size = Column(Integer, default=0)
+    # The same file kept against a second record is not stored twice: this
+    # row carries no bytes of its own and reads them from the one named here.
+    blob_of = Column(Integer, nullable=True, index=True)
 
 
 class DBDrawing(Base):

@@ -448,6 +448,7 @@ async function loadWorkOrders() {
         }
         action += ' <a class="btn btn-sm btn-outline" href="/api/erp/work-orders/' +
             w.id + '/export.xlsx" title="This order as a workbook">Download</a>';
+        if (typeof woFilesButton === 'function') action += ' ' + woFilesButton(w.id, w.number, w.files, 'work_order');
         return '<tr><td style="font-family:monospace;font-weight:600;">' + esc(w.number) + '</td>' +
             '<td>' + esc(w.job_name) +
                 '<div style="font-size:0.75rem;color:var(--text-secondary);">' + esc(w.customer_name) + '</div></td>' +
