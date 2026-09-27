@@ -437,8 +437,12 @@ async function loadWorkOrders() {
             if (w.budgeted) action += '<button class="btn btn-sm btn-outline" onclick="showRequisition(' +
                 w.id + ')" title="What still has to be bought for this order">Material</button>';
         } else if (ap === 'pending') {
-            action = '<button class="btn btn-sm btn-outline" onclick="showView(&quot;approvals-view&quot;)" ' +
-                'title="Approve or send it back from Approvals">Open in Approvals</button>' + budgetBtn;
+            // Whoever it waits with - the owner, for their own orders - signs it here.
+            action = (can('subcontracts.approve')
+                ? '<button class="btn btn-sm btn-primary" onclick="decideWorkOrder(' + w.id + ',\'approve\')" ' +
+                  'title="Sign it off - it is placed once the last signature is on">Approve</button>' +
+                  '<button class="btn btn-sm btn-outline" onclick="decideWorkOrder(' + w.id + ',\'reject\')">Send back</button>'
+                : '<button class="btn btn-sm btn-outline" onclick="showView(&quot;approvals-view&quot;)">Open in Approvals</button>') + budgetBtn;
         } else if (!w.budgeted) {
             action = '<button class="btn btn-sm btn-primary" onclick="startBomBuilder(' + w.id + ')" ' +
                 'title="Its cost has to be known before it can be approved">Allocate budget</button>';
@@ -674,3 +678,27 @@ async function placeWorkOrder(id) {
     if (typeof refreshApprovalBadge === 'function') refreshApprovalBadge();
 }
 window.placeWorkOrder = placeWorkOrder;
+
+async function decideWorkOrder(id, decision) {
+    var note = '';
+    if (decision === 'reject') {
+        note = prompt('What needs putting right before it is placed?');
+        if (note === null) return;
+        if (!note.trim()) { showToast('Say why it is going back', 'error'); return; }
+    } else {
+        note = prompt('Approve this order and commit its prices to the client? Add a note if you like.', 'Approved');
+        if (note === null) return;
+    }
+    var res = await fetch('/api/erp/work-orders/' + id + '/decide', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision: decision, note: note }) });
+    var out = await res.json();
+    if (!res.ok) { showToast(out.detail || 'Could not record it', 'error'); return; }
+    var st = out.work_order ? out.work_order.approval_status : out.status;
+    showToast(st === 'approved' ? out.work_order.number + ' approved and placed. It can now be measured.'
+        : st === 'rejected' ? 'Sent back.' : 'Signed - it now goes to ' + ((out.work_order || {}).waiting_on || 'the next approver') + '.',
+        st === 'rejected' ? 'warning' : 'success');
+    loadWorkOrders();
+    if (typeof refreshApprovalBadge === 'function') refreshApprovalBadge();
+}
+window.decideWorkOrder = decideWorkOrder;

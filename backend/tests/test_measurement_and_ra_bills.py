@@ -27,11 +27,11 @@ def placed_order(tenant, qty=1000, rate=60):
     tenant.post("/api/erp/bom/build", json={
         "work_order_id": wo["id"],
         "lines": [{"fg_code": fg, "rm_code": rm, "qty": qty, "rate": 40}]})
-    tenant.post("/api/erp/work-orders/%d/place-order" % wo["id"])
-    # Only an approved order is measured and billed. The owner raising it with
-    # no staff record of their own approves it as they send it.
-    res = tenant.post("/api/erp/work-orders/%d/submit" % wo["id"])
-    assert res.status_code == 200 and res.json()["status"] == "approved", res.text
+    # Only an approved order is measured and billed. The owner raising it
+    # sends it and signs it off in their own Approvals.
+    from conftest import owner_places
+    res = owner_places(tenant, wo["id"])
+    assert res["work_order"]["approval_status"] == "approved", res
     return wo
 
 

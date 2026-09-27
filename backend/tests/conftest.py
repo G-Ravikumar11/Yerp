@@ -209,3 +209,16 @@ def fund_order(tenant, order, amount=100_000_000.0, name="Works"):
                       json={"budget_id": budget.json()["id"]})
     assert res.status_code == 200, res.text
     return res.json()["order"]
+
+
+def owner_places(tenant, wo_id, note="Approved"):
+    """The owner placing their own client work order: it is sent, waits in
+    the owner's Approvals, and the owner signs it off - two deliberate steps,
+    not one click that approves itself."""
+    sent = tenant.post("/api/erp/work-orders/%d/place-order" % wo_id)
+    assert sent.status_code == 200, sent.text
+    if sent.json()["work_order"]["approval_status"] == "approved":
+        return sent.json()
+    res = tenant.post("/api/erp/work-orders/%d/decide" % wo_id, json={"decision": "approve", "note": note})
+    assert res.status_code == 200, res.text
+    return res.json()

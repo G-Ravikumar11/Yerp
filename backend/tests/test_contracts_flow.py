@@ -30,7 +30,11 @@ def build_order(tenant, place=True, budget=True):
             "work_order_id": wo["id"],
             "lines": [{"fg_code": fg, "rm_code": rm, "qty": 105, "rate": 40}]})
     if place:
-        tenant.post("/api/erp/work-orders/%d/place-order" % wo["id"])
+        from conftest import owner_places
+        if budget:
+            owner_places(tenant, wo["id"])
+        else:
+            tenant.post("/api/erp/work-orders/%d/place-order" % wo["id"])
     return wo
 
 
@@ -89,13 +93,28 @@ def test_one_tenant_cannot_edit_another_tenants_customer(tenant, second_tenant):
 # --- placing the order -----------------------------------------------------
 
 def test_placing_an_order_takes_it_out_of_draft(tenant):
-    """Placing sends it for approval; the owner's own is approved as placed."""
+    """Placing sends it for approval. The owner's own waits for the owner's
+    own sign-off - it does not approve itself - and is placed when signed."""
     wo = build_order(tenant, place=False)
     assert wo["status"] == "Draft"
     res = tenant.post("/api/erp/work-orders/%d/place-order" % wo["id"])
     assert res.status_code == 200
+    sent = res.json()["work_order"]
+    assert sent["approval_status"] == "pending" and sent["waiting_owner"] is True
+    assert [i for i in tenant.get("/api/approvals/inbox").json()["items"]
+            if i["kind"] == "step" and i["mine"] and i["number"] == wo["number"]]
+    res = tenant.post("/api/erp/work-orders/%d/decide" % wo["id"], json={"decision": "approve"})
+    assert res.status_code == 200, res.text
     assert res.json()["work_order"]["status"] == "Approved"
-    assert res.json()["work_order"]["approval_status"] == "approved"
+
+
+def test_the_owner_can_send_their_own_back(tenant):
+    wo = build_order(tenant, place=False)
+    tenant.post("/api/erp/work-orders/%d/place-order" % wo["id"])
+    assert tenant.post("/api/erp/work-orders/%d/decide" % wo["id"], json={"decision": "reject"}).status_code == 400
+    res = tenant.post("/api/erp/work-orders/%d/decide" % wo["id"], json={"decision": "reject", "note": "Rate for item 2 is wrong"})
+    assert res.status_code == 200 and res.json()["work_order"]["status"] == "Rejected"
+    assert res.json()["work_order"]["rejection_reason"] == "Rate for item 2 is wrong"
 
 
 def test_an_order_is_not_placed_without_its_budget(tenant):
@@ -330,5 +349,5 @@ def test_an_order_placed_before_approvals_is_sent_now(tenant):
     db.close()
     res = tenant.post("/api/erp/work-orders/%d/place-order" % wo["id"])
     assert res.status_code == 200, res.text
-    assert res.json()["work_order"]["approval_status"] == "approved"
+    assert res.json()["work_order"]["approval_status"] == "pending"
     assert tenant.post("/api/erp/work-orders/%d/place-order" % wo["id"]).status_code == 409
