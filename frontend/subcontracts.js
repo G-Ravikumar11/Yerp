@@ -64,6 +64,7 @@ async function loadSubcontracts() {
             '<td class="text-right">' + formatCurrency(o.net_order_value) + '</td>' +
             '<td>' + statusPill(o.status, WO_STATUS_TONE[o.status] || 'calm') + '</td>' +
             '<td class="text-right" style="white-space:nowrap;">' +
+                woFilesButton(o.id, o.wo_number, o.files) +
                 '<button class="btn btn-sm btn-outline" onclick="woPreview(' + o.id + ')" ' +
                     'title="The printed document">Document</button> ' +
                 (can('workorders.manage') ? '<button class="btn btn-sm btn-outline" onclick="woCopy(' + o.id + ')" ' +
@@ -118,6 +119,19 @@ async function newSubcontract() {
     renderWizard();
 }
 window.newSubcontract = newSubcontract;
+
+function woFilesButton(id, number, counts, label) {
+    /* Drawings & photos kept against the order - the count says what is there. */
+    var c = counts || {};
+    var n = c.files || 0;
+    return '<button class="btn btn-sm btn-outline" onclick="openFiles(\'' + (label || 'subcontract_order') + '\',' + id + ',\'' +
+        esc(String(number || '')).replace(/'/g, '') + '\')" title="' +
+        (n ? (c.drawings || 0) + ' drawing(s), ' + (c.photos || 0) + ' photo(s), ' + (n - (c.drawings || 0) - (c.photos || 0)) + ' other'
+           : 'Attach drawings and photos') + '">Drawings &amp; Photos' +
+        (n ? ' <span style="font-size:0.72rem;background:var(--primary-color);color:#fff;border-radius:9px;padding:0 6px;">' + n + '</span>' : '') +
+        '</button> ';
+}
+window.woFilesButton = woFilesButton;
 
 async function openSubcontract(id) {
     await woVocab();
@@ -1522,6 +1536,7 @@ function stepReview() {
             '/document.pdf" target="_blank" rel="noopener">Download PDF</a>' +
         '<a class="btn btn-sm btn-outline" href="/api/wo/orders/' + o.id +
             '/boq.xlsx" title="The schedule as a workbook">Download schedule</a>' +
+        woFilesButton(o.id, o.wo_number, null) +
         '<button class="btn btn-sm btn-outline" onclick="woPreview()">Full page</button>' +
         '</div></div>' +
         '<div style="padding:16px;background:rgba(0,0,0,0.18);" id="wo-inline-doc">' +

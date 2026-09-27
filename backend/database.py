@@ -1497,6 +1497,9 @@ def ensure_columns():
                     ("sub_bills", "approved_by_name", "TEXT DEFAULT ''"),
                     ("sub_bills", "accepted_by_name", "TEXT DEFAULT ''"),
                     ("sub_bills", "accepted_at", "TEXT DEFAULT ''"),
+                    # Files made smaller, and a file kept twice stored once.
+                    ("project_files", "original_size", "INTEGER DEFAULT 0"),
+                    ("project_files", "blob_of", "INTEGER"),
                 ):
                     conn.execute(text(
                         f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
@@ -1687,6 +1690,8 @@ def migrate_sqlite():
             add_col("sub_bills", "approved_by_name", "TEXT DEFAULT ''")
             add_col("sub_bills", "accepted_by_name", "TEXT DEFAULT ''")
             add_col("sub_bills", "accepted_at", "TEXT DEFAULT ''")
+            add_col("project_files", "original_size", "INTEGER DEFAULT 0")
+            add_col("project_files", "blob_of", "INTEGER")
 
             # Create approval_chains table
             conn.execute(text("""

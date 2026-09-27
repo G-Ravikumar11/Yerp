@@ -4903,6 +4903,9 @@ def erp_list_work_orders(request: Request, job_id: int = 0,
     orders = query.order_by(models.DBWorkOrder.id.desc()).limit(300).all()
     pre = preload_work_orders(db, client.id, orders)
     rows = [work_order_to_dict(db, w, pre=pre) for w in orders]
+    counts = file_counts(db, client.id, "work_order", [r["id"] for r in rows])
+    for r in rows:
+        r["files"] = counts.get(r["id"], {"files": 0, "drawings": 0, "photos": 0})
     return {"work_orders": rows, "summary": {
         "count": len(rows),
         "awaiting_approval": len([r for r in rows if r["approval_status"] == "pending"]),
@@ -19243,6 +19246,9 @@ def wo_list_orders(request: Request, status: str = "", q: str = "",
     viewer = STAFF_VIEWER.get()
     rows = [o for o in rows if wo_visible_to(db, o, viewer)]
     orders = [d for d in (wo_dict(db, o) for o in rows) if wo_matches(d, q)]
+    counts = file_counts(db, client.id, "subcontract_order", [o["id"] for o in orders])
+    for o in orders:
+        o["files"] = counts.get(o["id"], {"files": 0, "drawings": 0, "photos": 0})
     return {
         "orders": orders,
         "summary": {
@@ -30169,6 +30175,7 @@ def eway_cancel(eid: int, body: EwayCancelIn, request: Request, db: Session = De
 # ============================================================================
 
 FILE_MAX_BYTES = 15 * 1024 * 1024
+FILE_IMAGE_IN_MAX_BYTES = 40 * 1024 * 1024      # a photo as the camera took it, before it is made smaller
 FILE_TYPES = ("image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf",
               "image/vnd.dwg", "application/acad", "application/dxf", "image/vnd.dxf",
               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -30252,8 +30259,73 @@ def attachment_target(db, client_id, attached_type, attached_id):
         if not b:
             raise HTTPException(404, "Bill not found")
         return b.job_id, (b.status or "") not in ("Draft",)
-    raise HTTPException(400, "Files are kept against a project, a diary day, a measurement, "
+    if t == "subcontract_order":
+        o = db.query(models.DBSubcontractOrder).filter(models.DBSubcontractOrder.id == attached_id,
+                                                       models.DBSubcontractOrder.client_id == client_id).first()
+        if not o:
+            raise HTTPException(404, "Work order not found")
+        return o.job_id, False
+    if t == "work_order":
+        w = db.query(models.DBWorkOrder).filter(models.DBWorkOrder.id == attached_id,
+                                                models.DBWorkOrder.client_id == client_id).first()
+        if not w:
+            raise HTTPException(404, "Work order not found")
+        return w.job_id, False
+    raise HTTPException(400, "Files are kept against a project, a work order, a diary day, a measurement, "
                              "a variation, a drawing, an inspection or an NCR.")
+
+
+# How far a picture is made smaller. A site photo reads at 1600 pixels; a
+# photographed or scanned drawing keeps more, so its dimensions stay legible.
+SLIM_PHOTO_PX, SLIM_PHOTO_QUALITY = 1600, 72
+SLIM_DRAWING_PX, SLIM_DRAWING_QUALITY = 2400, 80
+THUMB_PX, THUMB_QUALITY = 320, 60
+
+
+def slim_image(data, ctype, kind):
+    """A photo made as small as it can be and still do its job: turned the
+    right way up, the camera's metadata dropped, at most 1600 pixels on its
+    long side (2400 for a drawing) as a JPEG - kept only when that is smaller
+    than what came in. Returns (data, content_type, thumbnail)."""
+    if ctype not in ("image/jpeg", "image/png", "image/webp"):
+        return data, ctype, None
+    try:
+        from PIL import Image, ImageOps
+        im = Image.open(io.BytesIO(data))
+        im = ImageOps.exif_transpose(im)
+        if im.mode in ("RGBA", "LA", "P"):
+            im = im.convert("RGBA")
+            flat = Image.new("RGB", im.size, (255, 255, 255))
+            flat.paste(im, mask=im.split()[-1])
+            im = flat
+        else:
+            im = im.convert("RGB")
+        # A drawing or a document (a scanned invoice) has to stay legible.
+        px, quality = (SLIM_DRAWING_PX, SLIM_DRAWING_QUALITY) if kind in ("drawing", "document") \
+            else (SLIM_PHOTO_PX, SLIM_PHOTO_QUALITY)
+        big = im.copy()
+        big.thumbnail((px, px))
+        out = io.BytesIO()
+        big.save(out, "JPEG", quality=quality, optimize=True, progressive=True)
+        small = im.copy()
+        small.thumbnail((THUMB_PX, THUMB_PX))
+        t = io.BytesIO()
+        small.save(t, "JPEG", quality=THUMB_QUALITY, optimize=True)
+        slim = out.getvalue()
+        if len(slim) < len(data):
+            return slim, "image/jpeg", t.getvalue()
+        return data, ctype, t.getvalue()
+    except Exception:
+        return data, ctype, None
+
+
+def file_bytes(db, f, thumb=False):
+    """A file's bytes - its own, or those of the copy it shares."""
+    own = f.thumb if thumb else f.data
+    if own or not getattr(f, "blob_of", None):
+        return own
+    origin = db.query(models.DBFile).filter(models.DBFile.id == f.blob_of).first()
+    return (origin.thumb if thumb else origin.data) if origin else None
 
 
 def store_file(db, client_id, upload, data, *, job_id, attached_type, attached_id, kind,
@@ -30265,13 +30337,29 @@ def store_file(db, client_id, upload, data, *, job_id, attached_type, attached_i
         raise HTTPException(400, "A photo, a PDF, a drawing (DWG/DXF) or an Excel or Word file.")
     if not data:
         raise HTTPException(400, "The file is empty.")
+    original = len(data)
+    # A camera's original may be large; it is made smaller first, and the
+    # limit is on what is kept.
+    if ctype.startswith("image/") and original <= FILE_IMAGE_IN_MAX_BYTES:
+        data, ctype, made_thumb = slim_image(data, ctype, kind)
+    else:
+        made_thumb = None
     if len(data) > FILE_MAX_BYTES:
         raise HTTPException(413, "That file is over 15 MB. Save the drawing as a PDF, or send the "
                                  "photo from the camera - it is made smaller on the way up.")
+    if ctype == "image/jpeg" and ext not in (".jpg", ".jpeg"):
+        name = (os.path.splitext(name)[0] or "photo")[:195] + ".jpg"
+    thumb = made_thumb or thumb
+    sha = hashlib.sha256(data).hexdigest()
+    same = db.query(models.DBFile).filter(models.DBFile.client_id == client_id, models.DBFile.sha256 == sha,
+                                          models.DBFile.blob_of.is_(None)).first()
     f = models.DBFile(client_id=client_id, job_id=job_id, kind=kind, attached_type=attached_type,
                       attached_id=attached_id, name=name, content_type=ctype, size=len(data),
-                      sha256=hashlib.sha256(data).hexdigest(), data=data,
-                      thumb=(thumb if thumb and len(thumb) < 400 * 1024 else None),
+                      original_size=original, sha256=sha,
+                      # Kept once: a second record holding the same file reads the first one's bytes.
+                      data=None if same is not None else data,
+                      blob_of=same.id if same is not None else None,
+                      thumb=None if same is not None else (thumb if thumb and len(thumb) < 400 * 1024 else None),
                       caption=(caption or "").strip()[:300], taken_on=(taken_on or "")[:10],
                       uploaded_by_name=by)
     db.add(f)
@@ -30303,37 +30391,78 @@ def upload_file(request: Request, file: UploadFile = File(...), thumb: Optional[
 
 @app.get("/api/files")
 def list_files(request: Request, attached_type: str = "", attached_id: int = 0, job_id: int = 0,
-               kind: str = "", db: Session = Depends(get_db)):
+               kind: str = "", q: str = "", date_from: str = "", date_to: str = "", by: str = "",
+               db: Session = Depends(get_db)):
+    """The files kept against something, filtered the way they are looked
+    for: drawings or photos, words in the name or caption, when they were
+    taken, who added them."""
     client = require_erp_read(request, db)
-    q = db.query(models.DBFile.id, models.DBFile.job_id, models.DBFile.kind, models.DBFile.attached_type,
-                 models.DBFile.attached_id, models.DBFile.name, models.DBFile.content_type,
-                 models.DBFile.size, models.DBFile.caption, models.DBFile.taken_on,
-                 models.DBFile.uploaded_by_name, models.DBFile.created_at,
-                 (models.DBFile.thumb.isnot(None)).label("has_thumb")).filter(
+    query = db.query(models.DBFile.id, models.DBFile.job_id, models.DBFile.kind, models.DBFile.attached_type,
+                     models.DBFile.attached_id, models.DBFile.name, models.DBFile.content_type,
+                     models.DBFile.size, models.DBFile.original_size, models.DBFile.blob_of,
+                     models.DBFile.caption, models.DBFile.taken_on,
+                     models.DBFile.uploaded_by_name, models.DBFile.created_at).filter(
         models.DBFile.client_id == client.id)
     if attached_type:
-        q = q.filter(models.DBFile.attached_type == attached_type)
+        types = [t for t in attached_type.split(",") if t]
+        query = query.filter(models.DBFile.attached_type.in_(types))
     if attached_id:
-        q = q.filter(models.DBFile.attached_id == attached_id)
+        query = query.filter(models.DBFile.attached_id == attached_id)
     if job_id:
-        q = q.filter(models.DBFile.job_id == job_id)
+        query = query.filter(models.DBFile.job_id == job_id)
     if kind:
-        q = q.filter(models.DBFile.kind == kind)
+        query = query.filter(models.DBFile.kind.in_([k for k in kind.split(",") if k]))
+    if q.strip():
+        like = "%" + q.strip() + "%"
+        query = query.filter(or_(models.DBFile.name.ilike(like), models.DBFile.caption.ilike(like)))
+    if date_from:
+        query = query.filter(models.DBFile.taken_on >= date_from[:10])
+    if date_to:
+        query = query.filter(models.DBFile.taken_on <= date_to[:10])
+    if by.strip():
+        query = query.filter(models.DBFile.uploaded_by_name.ilike("%" + by.strip() + "%"))
     out = []
-    for r in q.order_by(models.DBFile.id.desc()).limit(1000).all():
+    for r in query.order_by(models.DBFile.id.desc()).limit(1000).all():
         is_image = (r.content_type or "").startswith("image/")
         out.append({"id": r.id, "job_id": r.job_id, "kind": r.kind, "attached_type": r.attached_type,
                     "attached_id": r.attached_id, "name": r.name or "", "content_type": r.content_type or "",
-                    "size": r.size or 0, "caption": r.caption or "", "taken_on": r.taken_on or "",
+                    "size": r.size or 0, "original_size": r.original_size or r.size or 0,
+                    "shared": bool(r.blob_of),
+                    "caption": r.caption or "", "taken_on": r.taken_on or "",
                     "uploaded_by_name": r.uploaded_by_name or "", "created_at": r.created_at or "",
                     "is_image": is_image, "url": "/api/files/%d" % r.id,
                     "thumb_url": "/api/files/%d/thumb" % r.id if is_image else ""})
     # Whether what they are kept against is closed - a signed-off day keeps
     # its photographs, so the window does not offer to remove them.
     locked = False
-    if attached_type and attached_id:
+    if attached_type and attached_id and "," not in attached_type:
         _, locked = attachment_target(db, client.id, attached_type, attached_id)
-    return {"files": out, "locked": locked}
+    stored = sum(0 if f["shared"] else f["size"] for f in out)
+    came_in = sum(f["original_size"] for f in out)
+    return {"files": out, "locked": locked,
+            "summary": {"count": len(out),
+                        "drawings": len([f for f in out if f["kind"] == "drawing"]),
+                        "photos": len([f for f in out if f["kind"] == "photo"]),
+                        "documents": len([f for f in out if f["kind"] == "document"]),
+                        "stored_bytes": stored, "saved_bytes": max(0, came_in - stored),
+                        "uploaders": sorted({f["uploaded_by_name"] for f in out if f["uploaded_by_name"]})}}
+
+
+def file_counts(db, client_id, attached_type, ids):
+    """How many drawings and photos each record holds, in one query."""
+    if not ids:
+        return {}
+    out = {}
+    for aid, kind, n in db.query(models.DBFile.attached_id, models.DBFile.kind, sqlfunc.count(models.DBFile.id)).filter(
+            models.DBFile.client_id == client_id, models.DBFile.attached_type == attached_type,
+            models.DBFile.attached_id.in_(ids)).group_by(models.DBFile.attached_id, models.DBFile.kind).all():
+        c = out.setdefault(aid, {"files": 0, "drawings": 0, "photos": 0})
+        c["files"] += n
+        if kind == "drawing":
+            c["drawings"] += n
+        elif kind == "photo":
+            c["photos"] += n
+    return out
 
 
 def _file_or_404(db, client_id, fid):
@@ -30350,7 +30479,7 @@ def get_file(fid: int, request: Request, download: int = 0, db: Session = Depend
     inline = not download and ((f.content_type or "").startswith("image/") or f.content_type == "application/pdf")
     disp = '%s; filename="%s"' % ("inline" if inline else "attachment",
                                   re.sub(r'[^A-Za-z0-9._ -]', "_", f.name or "file"))
-    return StreamingResponse(io.BytesIO(f.data or b""), media_type=f.content_type or "application/octet-stream",
+    return StreamingResponse(io.BytesIO(file_bytes(db, f) or b""), media_type=f.content_type or "application/octet-stream",
                              headers={"Content-Disposition": disp, "Cache-Control": "private, max-age=86400"})
 
 
@@ -30358,8 +30487,9 @@ def get_file(fid: int, request: Request, download: int = 0, db: Session = Depend
 def get_file_thumb(fid: int, request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     f = _file_or_404(db, client.id, fid)
-    body = f.thumb or (f.data if (f.content_type or "").startswith("image/") else b"")
-    return StreamingResponse(io.BytesIO(body or b""), media_type="image/jpeg" if f.thumb else (f.content_type or "image/jpeg"),
+    small = file_bytes(db, f, thumb=True)
+    body = small or (file_bytes(db, f) if (f.content_type or "").startswith("image/") else b"")
+    return StreamingResponse(io.BytesIO(body or b""), media_type="image/jpeg" if small else (f.content_type or "image/jpeg"),
                              headers={"Cache-Control": "private, max-age=86400"})
 
 
@@ -30375,26 +30505,44 @@ def delete_file(fid: int, request: Request, db: Session = Depends(get_db)):
     if db.query(models.DBDrawingRevision).filter(models.DBDrawingRevision.file_id == f.id).first():
         raise HTTPException(409, "That file is a drawing revision on the register; it stays as issued.")
     log_audit(db, client.id, "file_removed", f.attached_type, f.attached_id or 0, f.name, "", request)
+    readers = db.query(models.DBFile).filter(models.DBFile.blob_of == f.id).order_by(models.DBFile.id).all()
+    if readers:
+        # Another record keeps the same file: it becomes the stored copy.
+        heir = readers[0]
+        heir.data, heir.thumb, heir.blob_of = f.data, f.thumb, None
+        for r in readers[1:]:
+            r.blob_of = heir.id
     db.delete(f)
     db.commit()
     return {"ok": True}
 
 
 @app.get("/api/jobs/{job_id}/photos")
-def job_photos(job_id: int, request: Request, db: Session = Depends(get_db)):
-    """Every photograph taken on a project, newest first, with what it was of."""
+def job_photos(job_id: int, request: Request, kind: str = "photo", q: str = "", date_from: str = "",
+               date_to: str = "", by: str = "", source: str = "", db: Session = Depends(get_db)):
+    """Every photograph taken on a project - and, asked for, its drawings and
+    documents too - newest first, with what each was of: a diary day, a
+    variation, a work order. Filtered by type, words, dates, who added them
+    and where they were kept."""
     client = require_erp_read(request, db)
     job = job_or_404(db, client.id, job_id)
-    files = list_files(request, job_id=job.id, kind="photo", db=db)["files"]
+    got = list_files(request, job_id=job.id, kind=kind, q=q, date_from=date_from, date_to=date_to,
+                     by=by, attached_type=source, db=db)
+    files = got["files"]
     labels = {}
     for d in db.query(models.DBSiteDiary).filter(models.DBSiteDiary.job_id == job.id).all():
         labels[("diary", d.id)] = "Diary %s" % (d.diary_date or "")
     for v in db.query(models.DBVariationOrder).filter(models.DBVariationOrder.job_id == job.id).all():
         labels[("variation", v.id)] = "Variation %s" % (v.number or "")
+    for o in db.query(models.DBSubcontractOrder).filter(models.DBSubcontractOrder.job_id == job.id).all():
+        labels[("subcontract_order", o.id)] = "Work order %s" % (o.wo_number or "")
+    for w in db.query(models.DBWorkOrder).filter(models.DBWorkOrder.job_id == job.id).all():
+        labels[("work_order", w.id)] = "Client WO %s" % (getattr(w, "number", "") or "")
     for f in files:
         f["of"] = labels.get((f["attached_type"], f["attached_id"]),
                              "Measurement" if f["attached_type"] == "measurement" else "Project")
-    return {"photos": files, "job": {"id": job.id, "number": job.number, "name": job.name}}
+    return {"photos": files, "summary": got["summary"],
+            "job": {"id": job.id, "number": job.number, "name": job.name}}
 
 
 # --- The drawings register ---------------------------------------------------
@@ -33907,6 +34055,9 @@ def download_backup(request: Request, files: int = 0, db: Session = Depends(get_
             for f in db.query(models.DBFile.id, models.DBFile.name).filter(
                     models.DBFile.client_id == client.id).order_by(models.DBFile.id).all():
                 blob = db.query(models.DBFile.data).filter(models.DBFile.id == f.id).scalar()
+                if not blob:
+                    row = db.query(models.DBFile).filter(models.DBFile.id == f.id).first()
+                    blob = file_bytes(db, row) if row else None
                 if blob:
                     z.writestr("files/%d-%s" % (f.id, re.sub(r"[^\w.\-]+", "_", f.name or "file")), bytes(blob))
                     file_count += 1

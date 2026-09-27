@@ -4275,7 +4275,7 @@
                     <div class="stats-grid" id="drw-stats"></div>
                     <div class="invoices-tabs" id="drw-tabs" style="margin:16px 0;">
                         <button class="tab active" data-tab="drawings" onclick="drawingsTab('drawings')">Drawings register</button>
-                        <button class="tab" data-tab="photos" onclick="drawingsTab('photos')">Site photos</button>
+                        <button class="tab" data-tab="photos" onclick="drawingsTab('photos')">Photos &amp; files</button>
                     </div>
                     <div id="drw-body"></div>
                 </div>
@@ -4285,13 +4285,19 @@
                         <div class="modal-header"><h3 id="files-title">Photos &amp; files</h3>
                             <button class="modal-close" onclick="closeModal('files-modal')">&times;</button></div>
                         <div class="modal-body">
-                            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
-                                <input id="files-caption" class="form-control" style="flex:1;min-width:200px;" placeholder="What it shows (optional)">
+                            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+                                <select id="files-kind" class="form-control" style="width:auto;" title="What these are">
+                                    <option value="">Type: by the file</option><option value="drawing">Drawing</option>
+                                    <option value="photo">Photo</option><option value="document">Document</option>
+                                </select>
+                                <input id="files-caption" class="form-control" style="flex:1;min-width:180px;" placeholder="What it shows (optional)">
                                 <label class="btn btn-primary" style="cursor:pointer;margin:0;">Take a photo
                                     <input type="file" accept="image/*" capture="environment" style="display:none;" onchange="filesPicked(this)"></label>
-                                <label class="btn btn-outline" style="cursor:pointer;margin:0;">Photos or files
+                                <label class="btn btn-outline" style="cursor:pointer;margin:0;">Drawings, photos or files
                                     <input type="file" accept=".pdf,.dwg,.dxf,.xlsx,.docx,image/*" multiple style="display:none;" onchange="filesPicked(this)"></label>
                             </div>
+                            <div id="files-filters" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;"></div>
+                            <p id="files-summary" style="font-size:0.78rem;color:var(--text-secondary);margin:0 0 10px;"></p>
                             <div id="files-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;"></div>
                         </div>
                         <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('files-modal')">Close</button></div>
@@ -5785,7 +5791,7 @@
     <!-- Jobs, job costing and purchase orders. -->
     <script src="jobs.js?v=122"></script>
     <!-- Item master, work orders and budget allocation. -->
-    <script src="erp.js?v=90"></script>
+    <script src="erp.js?v=91"></script>
     <!-- Direct entry: forms and pickers instead of spreadsheets. -->
     <script src="erp-build.js?v=103"></script>
     <!-- The spreadsheet grid the item master is entered through. -->
@@ -5794,7 +5800,7 @@
     <script src="erp-preview.js?v=102"></script>
     <script src="contracts.js?v=67"></script>
     <script src="sheet-viewer.js?v=65"></script>
-    <script src="subcontracts.js?v=111"></script>
+    <script src="subcontracts.js?v=112"></script>
     <script src="costs.js?v=65"></script>
     <script src="sheet.js?v=83"></script>
     <script src="documents.js?v=94"></script>
@@ -5814,7 +5820,7 @@
     <script src="equipment.js?v=114"></script>
     <script src="rfq.js?v=98"></script>
     <script src="ewaybill.js?v=113"></script>
-    <script src="files.js?v=115"></script>
+    <script src="files.js?v=116"></script>
     <script src="alerts.js?v=117"></script>
     <script src="quality.js?v=120"></script>
     <script src="safety.js?v=122"></script>
