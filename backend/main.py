@@ -18650,13 +18650,14 @@ def wo_list_contractors(request: Request, q: str = "", status: str = "", db: Ses
             models.DBContractor.vendor_code.ilike("%" + q + "%"),
             models.DBContractor.nature_of_work.ilike("%" + q + "%"),
             models.DBContractor.gst_number.ilike("%" + q + "%")))
-    if status:
-        query = query.filter(models.DBContractor.registration_status == status.upper())
-    rows = query.order_by(models.DBContractor.company_name).limit(1000).all()
+    every = query.order_by(models.DBContractor.company_name).limit(2000).all()
+    # The counts are of everybody, so each status tab shows its number
+    # whichever tab is open.
+    rows = [c for c in every if not status or (c.registration_status or "APPROVED") == status.upper()]
     return {"contractors": [contractor_dict(c) for c in rows],
-            "summary": {"registered": len([c for c in rows if (c.registration_status or "APPROVED") == "APPROVED"]),
-                        "pending": len([c for c in rows if c.registration_status == "PENDING"]),
-                        "sent_back": len([c for c in rows if c.registration_status == "REJECTED"])}}
+            "summary": {"registered": len([c for c in every if (c.registration_status or "APPROVED") == "APPROVED"]),
+                        "pending": len([c for c in every if c.registration_status == "PENDING"]),
+                        "sent_back": len([c for c in every if c.registration_status == "REJECTED"])}}
 
 
 def next_vendor_code(db, client_id):

@@ -7,13 +7,48 @@
    the retention. Here it is us.
    =========================================================================== */
 
-var SUB = { order: null, lines: [], entries: [], summary: {}, bills: [], mbImport: null };
+var SUB = { order: null, lines: [], entries: [], summary: {}, bills: [], mbImport: null, tab: 'bills', nextTab: null };
 var SUB_TONE = { DRAFT: 'calm', SUBMITTED: 'wait', CERTIFIED: 'good',
                  PAID: 'good', CANCELLED: 'bad' };
+
+/* One screen, two tabs: the gang's measurement book, and the RA bills drawn
+   from it. The menu and the strip across the top open either. */
+function openSubTab(tab) {
+    SUB.nextTab = tab;
+    if ((typeof currentView === 'string' && currentView === 'subbills-view') ||
+        (document.getElementById('subbills-view') || {}).style.display === 'block') {
+        SUB.tab = tab;
+        SUB.nextTab = null;
+        applySubTab();
+        return;
+    }
+    showView('subbills-view');
+}
+window.openSubTab = openSubTab;
+
+function applySubTab() {
+    var mb = SUB.tab === 'mb';
+    document.getElementById('sub-pane-mb').style.display = mb ? '' : 'none';
+    document.getElementById('sub-pane-bills').style.display = mb ? 'none' : '';
+    document.querySelectorAll('#subbills-view .sub-only-mb').forEach(function (el) { el.style.display = mb ? '' : 'none'; });
+    document.querySelectorAll('#subbills-view .sub-only-bills').forEach(function (el) { el.style.display = mb ? 'none' : ''; });
+    document.getElementById('sub-title').textContent = mb ? 'Measurement Book' : 'RA Bills';
+    document.getElementById('sub-subtitle').textContent = mb
+        ? 'What the gang has built, measured line by line - No\'s × NoM × L × W × H, blocks alike counted once'
+        : 'Certificate of payment, abstract and MB for each bill - prepared, certified, approved, paid';
+    var mbNav = document.getElementById('nav-submb'), billNav = document.getElementById('nav-subbills');
+    if (mbNav) mbNav.classList.toggle('active', mb);
+    if (billNav) billNav.classList.toggle('active', !mb);
+    if (typeof renderScFlow === 'function') renderScFlow(SUB.tab);
+}
+window.applySubTab = applySubTab;
 
 async function loadSubBills() {
     var pick = document.getElementById('sub-order');
     if (!pick) return;
+    SUB.tab = SUB.nextTab || 'bills';
+    SUB.nextTab = null;
+    applySubTab();
     var d = await (await fetch('/api/wo/orders', { credentials: 'include' })).json();
     // Only an approved order has anything a gang can be paid for.
     var live = (d.orders || []).filter(function (o) {
@@ -61,7 +96,13 @@ function renderSubBook() {
         statCard('Order value', formatCurrency(s.ordered_value || 0)) +
         statCard('Work measured', formatCurrency(s.measured_value || 0)) +
         statCard('Measured, not billed', formatCurrency(s.unbilled_value || 0)) +
-        statCard('Items over the order', String(s.lines_over_measured || 0));
+        statCard('Items over the order', String(s.lines_over_measured || 0)) +
+        (s.unbilled_value > 0 && can('billing.manage')
+            ? '<div style="grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;gap:12px;' +
+              'padding:12px 16px;border:1px solid var(--primary-color);border-radius:10px;">' +
+              '<span>' + formatCurrency(s.unbilled_value) + ' measured and not yet billed.</span>' +
+              '<button class="btn btn-sm btn-primary" onclick="openSubTab(\'bills\');newSubBill()">Draw up the RA bill</button></div>'
+            : '');
 
     document.getElementById('sub-mb-body').innerHTML = SUB.lines.length ? SUB.lines.map(function (l) {
         // A heading on the schedule ("Painting Works") groups the items under it and is never measured.

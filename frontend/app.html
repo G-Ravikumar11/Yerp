@@ -150,9 +150,10 @@
                             Subcontractors <svg class="nav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
                         <div class="nav-group-items" id="nav-items-subcontracts">
-                            <a href="#" class="nav-item" id="nav-vendors" onclick="event.preventDefault();showView('vendors-view')">Subcontractor Register</a>
-                            <a href="#" class="nav-item" id="nav-subcontracts" onclick="event.preventDefault();showView('subcontracts-view')">Subcontract Work Orders</a>
-                            <a href="#" class="nav-item" id="nav-subbills" onclick="event.preventDefault();showView('subbills-view')">Subcontractor Bills</a>
+                            <a href="#" class="nav-item" id="nav-vendors" onclick="event.preventDefault();showView('vendors-view')">1. Vendor Register</a>
+                            <a href="#" class="nav-item" id="nav-subcontracts" onclick="event.preventDefault();showView('subcontracts-view')">2. Work Orders</a>
+                            <a href="#" class="nav-item" id="nav-submb" onclick="event.preventDefault();openSubTab('mb')">3. Measurement Book</a>
+                            <a href="#" class="nav-item" id="nav-subbills" onclick="event.preventDefault();showView('subbills-view')">4. RA Bills</a>
                         </div>
                     </div>
 
@@ -4870,6 +4871,7 @@
                 </div>
 
                 <div id="vendors-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-tabs sc-flow" data-sc="vendors"></div>
                     <div class="invoices-header-area">
                         <div><h1>Subcontractor Register</h1><p class="subtitle">Every gang with its vendor code and its registration form - signed off before an order is issued to them</p></div>
                         <div class="invoices-actions">
@@ -4881,15 +4883,11 @@
                         </div>
                     </div>
                     <div id="vendor-import-result"></div>
-                    <div class="stats-grid" id="vendors-stats"></div>
-                    <div class="widget" style="margin-top:18px;">
+                    <div class="widget">
                         <div class="widget-content" style="padding:14px 18px;display:flex;gap:10px;flex-wrap:wrap;">
                             <input class="form-control" id="vendors-q" style="max-width:340px;" placeholder="Search by name, vendor code, work, GSTIN" oninput="vendorSearch()">
-                            <select class="form-control" id="vendors-status" style="max-width:220px;" onchange="loadVendors()">
-                                <option value="">Everybody</option><option value="APPROVED">Registered</option>
-                                <option value="PENDING">Awaiting approval</option><option value="REJECTED">Sent back</option>
-                            </select>
                         </div>
+                        <div class="invoices-tabs" id="vendors-tabs" style="margin:0 18px 0;"></div>
                         <div class="table-responsive">
                             <table class="data-table">
                                 <thead><tr><th>Vendor code</th><th>Sub contractor</th><th>Project</th><th>PAN / GST</th><th>Bank</th><th>Registration</th><th></th></tr></thead>
@@ -4900,52 +4898,57 @@
                 </div>
 
                 <div id="subbills-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-tabs sc-flow" data-sc="bills"></div>
                     <div class="invoices-header-area">
-                        <div><h1>Subcontractor Bills</h1><p class="subtitle">What the gangs have built, and what we pay them for it</p></div>
+                        <div><h1 id="sub-title">RA Bills</h1><p class="subtitle" id="sub-subtitle"></p></div>
                         <div class="invoices-actions">
-                            <button class="btn btn-primary" data-perm="billing.manage" onclick="newSubBill()">Draw up a bill</button>
-                            <a class="btn btn-outline" href="/api/sub-bills.xlsx" title="Every gang bill as a workbook">Register</a>
+                            <button class="btn btn-primary sub-only-mb" data-perm="site.record" onclick="openSubMbImport()" title="The MB sheet as the site keeps it in Excel">Import MB from Excel</button>
+                            <button class="btn btn-primary sub-only-bills" data-perm="billing.manage" onclick="newSubBill()">Draw up a bill</button>
+                            <a class="btn btn-outline sub-only-bills" href="/api/sub-bills.xlsx" title="Every gang bill as a workbook">Register (Excel)</a>
                         </div>
                     </div>
 
                     <div class="widget" style="margin-bottom:18px;">
                         <div class="widget-content" style="padding:16px 20px;">
-                            <label style="display:block;font-size:0.85rem;font-weight:600;margin-bottom:6px;">Subcontract order</label>
-                            <select id="sub-order" class="form-control" style="max-width:520px;" onchange="subOrderChanged()"></select>
+                            <label style="display:block;font-size:0.85rem;font-weight:600;margin-bottom:6px;">Work order</label>
+                            <select id="sub-order" class="form-control" style="max-width:560px;" onchange="subOrderChanged()"></select>
                         </div>
                     </div>
 
-                    <div class="stats-grid" id="sub-stats"></div>
+                    <div id="sub-pane-mb">
+                        <div class="stats-grid" id="sub-stats"></div>
 
-                    <div class="widget" style="margin-top:18px;">
-                        <div class="widget-header" style="display:flex;justify-content:space-between;align-items:center;"><h3>The gang's measurement book</h3>
-                            <button class="btn btn-sm btn-outline" data-perm="site.record" onclick="openSubMbImport()" title="The MB sheet as the site keeps it in Excel">Import MB from Excel</button></div>
-                        <div class="table-responsive">
-                            <table class="data-table">
-                                <thead><tr><th>Activity</th><th class="text-right">Ordered</th><th class="text-right">Measured</th><th class="text-right">Still to do</th><th class="text-right">Billed</th><th class="text-right">Unbilled</th><th class="text-right">Value</th><th></th></tr></thead>
-                                <tbody id="sub-mb-body"></tbody>
-                            </table>
+                        <div class="widget" style="margin-top:18px;">
+                            <div class="widget-header"><h3>Items on the order - measure each one</h3></div>
+                            <div class="table-responsive">
+                                <table class="data-table">
+                                    <thead><tr><th>Activity</th><th class="text-right">Ordered</th><th class="text-right">Measured</th><th class="text-right">Still to do</th><th class="text-right">Billed</th><th class="text-right">Unbilled</th><th class="text-right">Value</th><th></th></tr></thead>
+                                    <tbody id="sub-mb-body"></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="widget" style="margin-top:18px;">
+                            <div class="widget-header"><h3>Measurement entries</h3></div>
+                            <div class="table-responsive">
+                                <table class="data-table">
+                                    <thead><tr><th>Date</th><th>Activity</th><th>Particulars &amp; dimensions</th><th class="text-right">Quantity</th><th>Ref</th><th>Recorded by</th><th>Remarks</th><th class="no-print"></th></tr></thead>
+                                    <tbody id="sub-entries"></tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
 
-                    <div class="widget" style="margin-top:18px;">
-                        <div class="widget-header"><h3>Entries</h3></div>
-                        <div class="table-responsive">
-                            <table class="data-table">
-                                <thead><tr><th>Date</th><th>Activity</th><th>Particulars &amp; dimensions</th><th class="text-right">Quantity</th><th>Ref</th><th>Recorded by</th><th>Remarks</th><th class="no-print"></th></tr></thead>
-                                <tbody id="sub-entries"></tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    <div class="stats-grid" id="sub-bill-stats" style="margin-top:24px;"></div>
-                    <div class="widget" style="margin-top:18px;">
-                        <div class="widget-header"><h3>Bills we pay</h3></div>
-                        <div class="table-responsive">
-                            <table class="data-table">
-                                <thead><tr><th>Bill</th><th>Gang</th><th class="text-right">This bill</th><th class="text-right">Retention held</th><th class="text-right">TDS</th><th class="text-right">Net payable</th><th>Status &amp; signatures</th><th></th></tr></thead>
-                                <tbody id="sub-bill-body"></tbody>
-                            </table>
+                    <div id="sub-pane-bills" style="display:none;">
+                        <div class="stats-grid" id="sub-bill-stats"></div>
+                        <div class="widget" style="margin-top:18px;">
+                            <div class="widget-header"><h3>RA bills on this work order</h3></div>
+                            <div class="table-responsive">
+                                <table class="data-table">
+                                    <thead><tr><th>Bill</th><th>Gang</th><th class="text-right">This bill</th><th class="text-right">Retention held</th><th class="text-right">TDS</th><th class="text-right">Net payable</th><th>Status &amp; signatures</th><th></th></tr></thead>
+                                    <tbody id="sub-bill-body"></tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -5014,6 +5017,7 @@
                 </div>
 
                 <div id="subcontracts-view" class="view-section dashboard" style="display:none;">
+                    <div class="invoices-tabs sc-flow" data-sc="orders"></div>
                     <div class="invoices-header-area">
                         <div><h1>Subcontract Work Orders</h1><p class="subtitle">Orders <b>we give to gangs and subcontractors</b> - the work we pay for, printed in the work order form.
                             Orders from clients are under <a href="#" onclick="event.preventDefault();showView('workorders-view')">Client Work Orders</a>.</p></div>
@@ -5774,7 +5778,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=138"></script>
+    <script src="app.js?v=139"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=69"></script>
@@ -5801,8 +5805,8 @@
     <script src="stock.js?v=115"></script>
     <script src="diary.js?v=117"></script>
     <script src="money.js?v=96"></script>
-    <script src="subbills.js?v=97"></script>
-    <script src="vendors.js?v=2"></script>
+    <script src="subbills.js?v=98"></script>
+    <script src="vendors.js?v=3"></script>
     <script src="estimate.js?v=81"></script>
     <script src="gst.js?v=80"></script>
     <script src="registers.js?v=84"></script>

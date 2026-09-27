@@ -9,7 +9,7 @@
    takes them on. The old workbook imports once.
    =========================================================================== */
 
-var VENDORS = { list: [], editing: null };
+var VENDORS = { list: [], editing: null, status: '' };
 var VENDOR_TONE = { APPROVED: 'good', PENDING: 'wait', REJECTED: 'bad' };
 var VENDOR_WORD = { APPROVED: 'Registered', PENDING: 'Awaiting approval', REJECTED: 'Sent back' };
 var VENDOR_DOCS = [['gst', 'A) GST Certificate'], ['pan', 'B) PAN Card'], ['aadhaar', 'C) Aadhar Card'],
@@ -20,17 +20,22 @@ async function loadVendors() {
     var body = document.getElementById('vendors-body');
     if (!body) return;
     var q = (document.getElementById('vendors-q') || {}).value || '';
-    var status = (document.getElementById('vendors-status') || {}).value || '';
+    var status = VENDORS.status || '';
     var res = await fetch('/api/wo/contractors?q=' + encodeURIComponent(q) + '&status=' + encodeURIComponent(status),
                           { credentials: 'include' });
     if (!res.ok) { body.innerHTML = '<tr><td colspan="7">Could not load the register.</td></tr>'; return; }
     var d = await res.json();
     VENDORS.list = d.contractors || [];
     var s = d.summary || {};
-    document.getElementById('vendors-stats').innerHTML =
-        statCard('Registered', String(s.registered || 0)) +
-        statCard('Awaiting approval', String(s.pending || 0)) +
-        statCard('Sent back', String(s.sent_back || 0));
+    var tabs = [['', 'All vendors', (s.registered || 0) + (s.pending || 0) + (s.sent_back || 0)],
+                ['APPROVED', 'Registered', s.registered || 0], ['PENDING', 'Awaiting approval', s.pending || 0],
+                ['REJECTED', 'Sent back', s.sent_back || 0]];
+    document.getElementById('vendors-tabs').innerHTML = tabs.map(function (t) {
+        return '<button class="tab' + (t[0] === status ? ' active' : '') + '" onclick="vendorTab(\'' + t[0] + '\')">' +
+            esc(t[1]) + ' <span style="font-size:0.75rem;padding:1px 7px;border-radius:9px;margin-left:4px;' +
+            (t[0] === 'PENDING' && t[2] ? 'background:var(--warning-color);color:#fff;' : 'background:var(--border-light);') +
+            '">' + t[2] + '</span></button>';
+    }).join('');
     body.innerHTML = VENDORS.list.length ? VENDORS.list.map(vendorRow).join('') :
         '<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text-secondary);">' +
         (q || status ? 'Nobody matches that.' : 'No sub contractors yet. Register one, or import the registration forms workbook.') +
@@ -70,6 +75,12 @@ function vendorRow(c) {
             '<a class="btn btn-sm btn-outline" href="/api/wo/contractors/' + c.id + '/registration.xlsx" title="As a workbook">Excel</a>' +
         '</div></td></tr>';
 }
+
+function vendorTab(status) {
+    VENDORS.status = status;
+    loadVendors();
+}
+window.vendorTab = vendorTab;
 
 var vendorSearchTimer = null;
 function vendorSearch() {
@@ -215,3 +226,26 @@ async function importVendorForms(input) {
     loadVendors();
 }
 window.importVendorForms = importVendorForms;
+
+
+/* --- The four steps of subcontract work, across the top of each of its screens ---
+   Register the vendor, issue the work order, measure in the book, bill it.
+   The same strip on every one of those screens, so it is always plain which
+   step this is and where the next one is. */
+
+var SC_STEPS = [['vendors', '1. Vendor Register', "showView('vendors-view')"],
+                ['orders', '2. Work Orders', "showView('subcontracts-view')"],
+                ['mb', '3. Measurement Book', "openSubTab('mb')"],
+                ['bills', '4. RA Bills', "openSubTab('bills')"]];
+
+function renderScFlow(active) {
+    document.querySelectorAll('.sc-flow').forEach(function (host) {
+        var here = host.dataset.sc === 'bills' ? (active || host.dataset.active || 'bills') : host.dataset.sc;
+        host.dataset.active = here;
+        host.innerHTML = SC_STEPS.map(function (st) {
+            return '<button class="tab' + (st[0] === here ? ' active' : '') + '" onclick="' + st[2] + '">' + esc(st[1]) + '</button>';
+        }).join('');
+    });
+}
+window.renderScFlow = renderScFlow;
+renderScFlow();
