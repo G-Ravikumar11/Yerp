@@ -280,6 +280,35 @@ MB_HEADINGS = {
 }
 
 
+def build_mb_template():
+    """A worked example of the measurement book layout this reads: the
+    heading row it looks for, one item with a block entry, two dimension
+    lines and the closing total - so a blank sheet started from this reads
+    back exactly as it prints."""
+    book = openpyxl.Workbook()
+    ws = book.active
+    ws.title = "MB"
+    bold = Font(bold=True)
+    ws.append(["Name of the Work:", "295 KLD STP, Vanya City"])
+    ws.append(["Name of the Contractor:", "Rani Labour Contractors"])
+    ws.append(["Date:", "01-10-2026"])
+    ws.append([])
+    header = ["S.No", "Description", "UoM", "No's", "NoM", "Length", "Width", "Height", "Total Quantity", "Remarks"]
+    ws.append(header)
+    for c in range(1, len(header) + 1):
+        ws.cell(row=5, column=c).font = bold
+    ws.append(["1", "Shuttering for slabs and beams", "sqm", "", "", "", "", "", "", ""])
+    ws.append(["a", "Block C-3, First Floor", "", "", "", "", "", "", "", ""])
+    ws.append(["", "Slab", "", 1, 1, 12.5, 8, "", "", ""])
+    ws.append(["", "Beam", "", 4, 1, 6, 0.6, "", "", "Deduct openings separately"])
+    ws.append(["", "Total Quantity for 1 Block", "", "", "", "", "", "", 114.4, ""])
+    for col, width in zip("ABCDEFGHIJ", (7, 34, 8, 6, 6, 8, 8, 8, 14, 24)):
+        ws.column_dimensions[col].width = width
+    stream = io.BytesIO()
+    book.save(stream)
+    return stream.getvalue()
+
+
 def _mb_columns(values, formulas, max_scan=30):
     """Where the book's heading row is and which column is which."""
     for r in range(1, min(values.max_row, max_scan) + 1):

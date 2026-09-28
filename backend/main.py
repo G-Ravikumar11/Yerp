@@ -25501,6 +25501,18 @@ def mb_match_item(items, description):
     return best if score >= 0.5 else None
 
 
+@app.get("/api/sub-mb/template.xlsx")
+def sub_mb_template(request: Request, db: Session = Depends(get_db)):
+    """A worked example of the measurement book layout the import reads."""
+    require_erp_read(request, db)
+    if not sheet_forms.XLSX_AVAILABLE:
+        raise HTTPException(503, "The workbook library is not installed on this server.")
+    data = sheet_forms.build_mb_template()
+    return StreamingResponse(io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="measurement_book_template.xlsx"'})
+
+
 @app.post("/api/sub-mb/{order_id}/import")
 async def import_sub_measurement_book(order_id: int, request: Request, file: UploadFile = File(...),
                                       commit: str = Form("0"), mapping: str = Form(""),
