@@ -1868,6 +1868,7 @@ class DBRABill(Base):
     tds_amount = Column(Float, default=0.0)
     net_payable = Column(Float, default=0.0)
 
+    submitted_by = Column(Integer, ForeignKey("employees.id"), nullable=True)
     certified_by = Column(Integer, nullable=True)
     certified_by_name = Column(String, default="")
     certified_at = Column(String, default="")

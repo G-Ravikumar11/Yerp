@@ -1444,6 +1444,8 @@ def ensure_columns():
                     ("jobs", "state_code", "TEXT DEFAULT ''"),
                     ("measurements", "location", "TEXT DEFAULT ''"),
                     ("sub_measurements", "location", "TEXT DEFAULT ''"),
+                    ("ra_bills", "submitted_by", "INTEGER"),
+                    ("sub_bills", "submitted_by", "INTEGER"),
                     ("ra_bills", "cgst_amount", "DOUBLE PRECISION DEFAULT 0"),
                     ("ra_bills", "sgst_amount", "DOUBLE PRECISION DEFAULT 0"),
                     ("ra_bills", "igst_amount", "DOUBLE PRECISION DEFAULT 0"),
@@ -1616,6 +1618,8 @@ def migrate_sqlite():
             add_col("contacts", "is_active", "BOOLEAN DEFAULT 1")
             add_col("measurements", "location", "TEXT DEFAULT ''")
             add_col("sub_measurements", "location", "TEXT DEFAULT ''")
+            add_col("ra_bills", "submitted_by", "INTEGER")
+            add_col("sub_bills", "submitted_by", "INTEGER")
 
             # Which project allocation a subcontract BOQ line spends.
             add_col("subcontract_items", "budget_id", "INTEGER")

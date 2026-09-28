@@ -21565,6 +21565,7 @@ def ra_apply(db, client, bill, action, actor_id, actor_name, comments=""):
         if wo:
             write_ra_bill_lines(db, bill, claimable_lines(
                 db, wo, exclude_bill_id=bill.id))
+        bill.submitted_by = actor_id
         if money(bill.this_bill) <= 0:
             raise HTTPException(
                 400, "There is nothing left to claim - the measurements behind "
@@ -21619,6 +21620,8 @@ def refuse_cancel_with_money(db, client_id, doc_type, bill, verb):
 def _ra_action(bill_id, action, body, request, db, permission="billing.manage"):
     client, actor_id, actor_name = wo_actor(request, db, permission)
     bill = ra_bill_or_404(db, client.id, bill_id)
+    if action == "CERTIFY" and actor_id is not None and bill.submitted_by == actor_id:
+        raise HTTPException(403, "You raised this bill, so somebody else has to certify it.")
     if action == "CANCEL":
         refuse_cancel_with_money(db, client.id, "ra_bill", bill, "received")
         refuse_cancel_with_irn(db, client.id, "ra_bill", bill)
@@ -36048,11 +36051,14 @@ def approval_inbox(db, client, emp):
         for b in db.query(models.DBRABill).filter(
                 models.DBRABill.client_id == client.id,
                 models.DBRABill.status == "SUBMITTED").order_by(models.DBRABill.id).all():
+            if emp is not None and b.submitted_by == emp.id:
+                continue
             job = _job_of(db, b.job_id)
             items.append(_row(
                 "ra_bill", "RA bill", b.id, b.number, b.this_bill,
                 party=(job.customer_name if job else "") or "",
                 project=(("%s %s" % (job.number or "", job.name or "")).strip() if job else ""),
+                raised_by=_person(db, b.submitted_by),
                 since=getattr(b, "submitted_at", "") or getattr(b, "updated_at", "") or "",
                 what="Work claimed this bill.", view="measurement-view",
                 pdf="/api/ra-bills/%d/document.pdf" % b.id, approve_label="Certify"))
