@@ -958,6 +958,7 @@
                         <div><h1>Bills</h1><p class="subtitle">Track vendor bills and expenses</p></div>
                         <div class="invoices-actions">
                             <button class="btn btn-primary" onclick="showAddBillModal()">+ New Bill</button>
+                            <button class="btn btn-outline" onclick="importBills()" title="Any workbook with a vendor, an amount and a date - the columns can be named and ordered however the supplier or your accountant has them">From Excel</button>
                         </div>
                     </div>
                     <div class="invoices-tabs">
@@ -5784,7 +5785,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="app.js?v=139"></script>
+    <script src="app.js?v=140"></script>
     <!-- The staff side of the same shell. Loaded after app.js, which it takes
          its shared helpers and the resolved identity from. -->
     <script src="staff-portal.js?v=69"></script>

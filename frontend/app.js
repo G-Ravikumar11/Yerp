@@ -6420,6 +6420,24 @@ window.useAiEmail = useAiEmail;
 var allBills = [];
 var currentBillFilter = '';
 
+function importBills() {
+    openSheetGrid({
+        kind: 'bills', title: 'Bills from Excel', confirmLabel: 'Bring these in as drafts',
+        intro: 'Any workbook works - a vendor, an amount, a tax figure and a date, in whatever ' +
+               'columns and order they already come in. Each row is brought in as a draft bill to check before sending up.',
+        onConfirm: async function (rows) {
+            var res = await fetch('/api/sheets/bills/import', { method: 'POST', credentials: 'include',
+                headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: rows }) });
+            var out = await res.json();
+            if (!res.ok) { showToast(out.detail || 'Could not bring them in', 'error'); return false; }
+            showToast(out.message, 'success');
+            loadBills();
+            return true;
+        }
+    });
+}
+window.importBills = importBills;
+
 async function loadBills() {
     try {
         var res = await fetch('/api/bills', { credentials: 'same-origin' });

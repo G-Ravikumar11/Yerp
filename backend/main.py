@@ -34627,6 +34627,27 @@ IMPORT_SHEETS = {
         "numbers": ("qty", "price"),
         "example": ["", "OPC 53 grade cement", "Bags", "400", "385"],
     },
+    "bills": {
+        "title": "Supplier bills",
+        # Deliberately loose: whatever a supplier's own statement or an
+        # accountant's own workbook happens to call these columns, in
+        # whatever order, is read the same way - not one fixed template.
+        "columns": [("vendor_name", "Vendor"), ("amount", "Amount"), ("tax_amount", "Tax"),
+                    ("issue_date", "Bill Date"), ("due_date", "Due Date"), ("reference", "Reference")],
+        "aliases": {
+            "vendor_name": ["vendor", "vendorname", "supplier", "suppliername", "party", "partyname",
+                            "payee", "billedby", "from", "company"],
+            "amount": ["amount", "basic", "basicamount", "value", "billamount", "billamt", "subtotal",
+                      "taxable", "taxablevalue", "grossamount", "invoiceamount", "invoiceamt", "netamount"],
+            "tax_amount": ["tax", "taxamount", "gst", "gstamount", "vat", "igst"],
+            "issue_date": ["date", "billdate", "issuedate", "invoicedate", "billeddate"],
+            "due_date": ["duedate", "paymentdue", "payby", "duedt"],
+            "reference": ["reference", "ref", "invoiceno", "billno", "invoicenumber",
+                         "billnumber", "description", "notes", "particulars"],
+        },
+        "numbers": ("amount", "tax_amount"),
+        "example": ["Sri Sai Steels", "50000", "9000", "2026-09-01", "2026-09-30", "INV-1145"],
+    },
 }
 
 
@@ -34665,6 +34686,11 @@ def _check_sheet_rows(db, client_id, kind, rows):
                 p.append("quantity must be more than nought")
             if (r.get("price") or 0) < 0:
                 p.append("rate cannot be negative")
+        if kind == "bills":
+            if not (r.get("vendor_name") or "").strip():
+                p.append("who is this owed to?")
+            if (r.get("amount") or 0) <= 0:
+                p.append("amount must be more than nought")
         if p:
             problems[i] = p
     return problems
@@ -34725,6 +34751,37 @@ def check_sheet_rows(kind: str, request: Request, body: dict = None, db: Session
             row[k] = sheet_number(r.get(k))
         rows.append(row)
     return {"problems": {str(k): v for k, v in _check_sheet_rows(db, client.id, kind, rows).items()}}
+
+
+@app.post("/api/sheets/bills/import")
+def import_bills(body: dict, request: Request, db: Session = Depends(get_db)):
+    """Every row of a bills sheet, as edited in the grid, raised as a Draft
+    bill each. Not sent for approval here - each is checked and submitted
+    like any other bill, from the Bills screen."""
+    client, actor_id, actor_name = wo_actor(request, db, ("accounts.manage", "bills.pay"))
+    made = []
+    for r in (body or {}).get("rows") or []:
+        vendor = str(r.get("vendor_name") or "").strip()
+        amount = sheet_number(r.get("amount"))
+        if not vendor or amount <= 0:
+            continue
+        tax = sheet_number(r.get("tax_amount"))
+        bill = models.DBBill(
+            client_id=client.id, number=allocate_bill_number(db, client.id),
+            vendor_name=vendor, issue_date=str(r.get("issue_date") or "").strip() or
+            datetime.now().strftime("%Y-%m-%d"), due_date=str(r.get("due_date") or "").strip(),
+            amount=money(amount), tax_amount=money(tax), total=money(amount + tax),
+            status="Draft", category="general", reference=str(r.get("reference") or "").strip(),
+            submitted_by=actor_id, approval_status="none")
+        db.add(bill)
+        made.append(bill)
+    db.flush()
+    for bill in made:
+        log_audit(db, client.id, "bill_imported", "bill", bill.id, bill.number,
+                  "%s, %s" % (bill.vendor_name, bill.total), request, user_name=actor_name)
+    db.commit()
+    return {"count": len(made), "message": "%d bill%s brought in as drafts - check each before sending it up."
+            % (len(made), "" if len(made) == 1 else "s")}
 
 
 # ============================================================================
