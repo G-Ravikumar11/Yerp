@@ -34648,6 +34648,24 @@ IMPORT_SHEETS = {
         "numbers": ("amount", "tax_amount"),
         "example": ["Sri Sai Steels", "50000", "9000", "2026-09-01", "2026-09-30", "INV-1145"],
     },
+    "subcontract_orders": {
+        "title": "Subcontract work orders",
+        "columns": [("contractor", "Contractor"), ("project", "Project"), ("department", "Department"),
+                    ("subject", "Subject"), ("commencement_date", "Start Date"), ("completion_date", "End Date")],
+        "aliases": {
+            "contractor": ["contractor", "subcontractor", "vendor", "vendorname", "gang", "party",
+                          "company", "contractorname", "agency"],
+            "project": ["project", "job", "site", "projectname", "jobname", "sitename"],
+            "department": ["department", "dept", "trade", "discipline"],
+            "subject": ["subject", "scope", "description", "workdescription", "particulars", "title",
+                       "scopeofwork"],
+            "commencement_date": ["startdate", "commencementdate", "fromdate", "start", "commencement"],
+            "completion_date": ["enddate", "completiondate", "todate", "end", "duedate", "completion"],
+        },
+        "numbers": (),
+        "example": ["Rani Labour Contractors", "Kokapet Towers", "Civil", "Shuttering, tower C",
+                    "2026-11-01", "2027-03-31"],
+    },
 }
 
 
@@ -34691,6 +34709,11 @@ def _check_sheet_rows(db, client_id, kind, rows):
                 p.append("who is this owed to?")
             if (r.get("amount") or 0) <= 0:
                 p.append("amount must be more than nought")
+        if kind == "subcontract_orders":
+            if not (r.get("subject") or "").strip():
+                p.append("what is the work?")
+            if not (r.get("contractor") or "").strip():
+                p.append("which contractor is this for?")
         if p:
             problems[i] = p
     return problems
@@ -34782,6 +34805,50 @@ def import_bills(body: dict, request: Request, db: Session = Depends(get_db)):
     db.commit()
     return {"count": len(made), "message": "%d bill%s brought in as drafts - check each before sending it up."
             % (len(made), "" if len(made) == 1 else "s")}
+
+
+@app.post("/api/sheets/subcontract_orders/import")
+def import_subcontract_orders(body: dict, request: Request, db: Session = Depends(get_db)):
+    """A register of gangs and dates, brought in as one draft order each - the
+    contractor and project matched by name where they are already on file,
+    left blank to be picked when they are not, so a mistyped name never
+    silently attaches an order to the wrong gang."""
+    client, actor_id, actor_name = wo_actor(request, db)
+    contractors = {norm_name(c.company_name): c for c in db.query(models.DBContractor).filter(
+        models.DBContractor.client_id == client.id).all()}
+    jobs = {norm_name(j.name): j for j in db.query(models.DBJob).filter(
+        models.DBJob.client_id == client.id).all()}
+    made, unmatched = [], []
+    for r in (body or {}).get("rows") or []:
+        subject = str(r.get("subject") or "").strip()
+        contractor_name = str(r.get("contractor") or "").strip()
+        if not subject or not contractor_name:
+            continue
+        con = contractors.get(norm_name(contractor_name))
+        job = jobs.get(norm_name(str(r.get("project") or "").strip()))
+        if not con:
+            unmatched.append(contractor_name)
+        dept = str(r.get("department") or "").strip()
+        order = models.DBSubcontractOrder(
+            client_id=client.id, status="DRAFT",
+            wo_number=next_wo_number(db, client.id, dept, r.get("commencement_date")),
+            contractor_id=con.id if con else None, job_id=job.id if job else None,
+            department=dept, subject=subject,
+            commencement_date=str(r.get("commencement_date") or "").strip(),
+            completion_date=str(r.get("completion_date") or "").strip(),
+            gst_rate=18.0, tds_rate=1.0, submitted_by=actor_id)
+        db.add(order)
+        made.append(order)
+    db.flush()
+    for order in made:
+        log_audit(db, client.id, "subcontract_imported", "subcontract_order", order.id,
+                  order.wo_number, subject, request, user_name=actor_name)
+    db.commit()
+    note = (" %d contractor name%s not on file yet - pick one on each before pricing it: %s."
+            % (len(unmatched), "" if len(unmatched) == 1 else "s", ", ".join(sorted(set(unmatched))[:5]))) \
+        if unmatched else ""
+    return {"count": len(made), "message": ("%d order%s brought in as drafts." %
+            (len(made), "" if len(made) == 1 else "s")) + note}
 
 
 # ============================================================================

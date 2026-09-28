@@ -111,6 +111,24 @@ async function woVocab() {
     return WO.vocab;
 }
 
+function importSubcontractOrders() {
+    openSheetGrid({
+        kind: 'subcontract_orders', title: 'Subcontract work orders from Excel', confirmLabel: 'Bring these in as drafts',
+        intro: 'A register of contractors, projects and dates - named and ordered however it already is. ' +
+               'Each row is brought in as a draft order to price and complete.',
+        onConfirm: async function (rows) {
+            var res = await fetch('/api/sheets/subcontract_orders/import', { method: 'POST', credentials: 'include',
+                headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: rows }) });
+            var out = await res.json();
+            if (!res.ok) { showToast(out.detail || 'Could not bring them in', 'error'); return false; }
+            showToast(out.message, 'success');
+            if (typeof loadSubcontracts === 'function') loadSubcontracts();
+            return true;
+        }
+    });
+}
+window.importSubcontractOrders = importSubcontractOrders;
+
 async function newSubcontract() {
     WO = { id: null, step: 1, order: null, vocab: WO.vocab, boq: [], terms: [],
            imported: null, doc: null };

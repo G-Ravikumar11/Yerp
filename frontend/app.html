@@ -5030,6 +5030,7 @@
                             Orders from clients are under <a href="#" onclick="event.preventDefault();showView('workorders-view')">Client Work Orders</a>.</p></div>
                         <div class="invoices-actions">
                             <button class="btn btn-primary" onclick="newSubcontract()">+ New subcontract work order</button>
+                            <button class="btn btn-outline" onclick="importSubcontractOrders()" title="A register of contractors, projects and dates - named and ordered however it already is">From Excel</button>
                             <a class="btn btn-outline" id="sc-export" href="/api/wo/orders.xlsx" title="The register as a workbook">Download register</a>
                             <button class="btn btn-outline" onclick="window.print()">Print / PDF</button>
                         </div>
@@ -5801,7 +5802,7 @@
     <script src="erp-preview.js?v=102"></script>
     <script src="contracts.js?v=67"></script>
     <script src="sheet-viewer.js?v=65"></script>
-    <script src="subcontracts.js?v=112"></script>
+    <script src="subcontracts.js?v=113"></script>
     <script src="costs.js?v=65"></script>
     <script src="sheet.js?v=83"></script>
     <script src="documents.js?v=94"></script>
