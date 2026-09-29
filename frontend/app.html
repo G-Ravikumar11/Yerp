@@ -4910,6 +4910,7 @@
                     <div class="invoices-header-area">
                         <div><h1 id="sub-title">RA Bills</h1><p class="subtitle" id="sub-subtitle"></p></div>
                         <div class="invoices-actions">
+                            <a class="btn btn-outline sub-only-mb" href="/api/sub-mb/template.xlsx" title="A blank MB laid out the way the import reads it, with one worked example">MB template (Excel)</a>
                             <button class="btn btn-primary sub-only-mb" data-perm="site.record" onclick="openSubMbImport()" title="The MB sheet as the site keeps it in Excel">Import MB from Excel</button>
                             <button class="btn btn-primary sub-only-bills" data-perm="billing.manage" onclick="newSubBill()">Draw up a bill</button>
                             <a class="btn btn-outline sub-only-bills" href="/api/sub-bills.xlsx" title="Every gang bill as a workbook">Register (Excel)</a>
@@ -4953,7 +4954,7 @@
                             <div class="widget-header"><h3>RA bills on this work order</h3></div>
                             <div class="table-responsive">
                                 <table class="data-table">
-                                    <thead><tr><th>Bill</th><th>Gang</th><th class="text-right">This bill</th><th class="text-right">Retention held</th><th class="text-right">TDS</th><th class="text-right">Net payable</th><th>Status &amp; signatures</th><th></th></tr></thead>
+                                    <thead><tr><th>Bill</th><th>Gang</th><th class="text-right" title="Value of work billed in the bills before this one">Previous</th><th class="text-right">This bill</th><th class="text-right" title="Previous plus this bill - the value of work billed up to date">Up to date</th><th class="text-right">Retention held</th><th class="text-right">TDS</th><th class="text-right">Net payable</th><th class="text-right" title="Net payable of this bill and every bill before it">Cumulative net</th><th>Status &amp; signatures</th><th></th></tr></thead>
                                     <tbody id="sub-bill-body"></tbody>
                                 </table>
                             </div>
@@ -5814,7 +5815,7 @@
     <script src="stock.js?v=115"></script>
     <script src="diary.js?v=117"></script>
     <script src="money.js?v=96"></script>
-    <script src="subbills.js?v=98"></script>
+    <script src="subbills.js?v=99"></script>
     <script src="vendors.js?v=5"></script>
     <script src="estimate.js?v=81"></script>
     <script src="gst.js?v=80"></script>

@@ -235,7 +235,10 @@ window.removeSubEntry = removeSubEntry;
 
 function renderSubBillList(bills, summary) {
     var s = summary || {};
+    var uptoDate = bills.filter(function (b) { return b.status !== 'CANCELLED'; })
+        .reduce(function (m, b) { return Math.max(m, b.gross_to_date || 0); }, 0);
     document.getElementById('sub-bill-stats').innerHTML =
+        statCard('Billed up to date', formatCurrency(uptoDate)) +
         statCard('Claimed by the gang', formatCurrency(s.claimed || 0)) +
         statCard('Awaiting certification', String(s.awaiting_certification || 0)) +
         statCard('Certified, unpaid', formatCurrency(s.certified_unpaid || 0)) +
@@ -243,6 +246,13 @@ function renderSubBillList(bills, summary) {
         statCard('Paid out', formatCurrency(s.paid || 0));
 
     SUB.bills = bills;
+    var cumulative = {};
+    var running = 0;
+    bills.slice().sort(function (a, b) { return (a.sequence || 0) - (b.sequence || 0) || a.id - b.id; })
+        .forEach(function (b) {
+            if (b.status !== 'CANCELLED') running += b.net_payable || 0;
+            cumulative[b.id] = running;
+        });
     document.getElementById('sub-bill-body').innerHTML = bills.length ? bills.map(function (b) {
         var act = '';
         var route = b.route || [];
@@ -266,10 +276,13 @@ function renderSubBillList(bills, summary) {
                 '<a href="/api/sub-bills/' + b.id + '/export.xlsx" title="Top Sheet, AB-1 and MB-1 as a workbook">Excel</a></div></td>' +
             '<td>' + esc(b.contractor) + '<div style="font-size:0.75rem;color:var(--text-secondary);">' +
                 esc(b.project) + '</div></td>' +
+            '<td class="text-right" style="color:var(--text-secondary);">' + formatCurrency(b.previously_billed) + '</td>' +
             '<td class="text-right">' + formatCurrency(b.this_bill) + '</td>' +
+            '<td class="text-right" style="font-weight:600;">' + formatCurrency(b.gross_to_date) + '</td>' +
             '<td class="text-right">' + formatCurrency(b.retention_amount) + '</td>' +
             '<td class="text-right">' + formatCurrency(b.tds_amount) + '</td>' +
             '<td class="text-right" style="font-weight:700;">' + formatCurrency(b.net_payable) + '</td>' +
+            '<td class="text-right" style="font-weight:600;">' + formatCurrency(cumulative[b.id]) + '</td>' +
             '<td>' + statusPill(b.status, SUB_TONE[b.status] || 'calm') + subBillSignatures(b) +
                 (b.paid_reference ? '<div style="font-size:0.72rem;color:var(--text-secondary);">' +
                  esc(b.paid_reference) + '</div>' : '') + '</td>' +
@@ -278,7 +291,7 @@ function renderSubBillList(bills, summary) {
                     ? ' <button class="btn btn-sm btn-outline" onclick="subBillAccept(' + b.id + ')" ' +
                       'title="Accepted for Sub Contractor - the gang has signed the certificate">Gang accepted</button>' : '') +
                 '</div></td></tr>';
-    }).join('') : '<tr><td colspan="8" style="text-align:center;padding:24px;' +
+    }).join('') : '<tr><td colspan="11" style="text-align:center;padding:24px;' +
         'color:var(--text-secondary);">No bills yet. Measure the gang\'s work, then draw one up.</td></tr>';
 }
 
