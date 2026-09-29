@@ -21,7 +21,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime, timedelta, date
 import os
 import base64
@@ -18633,6 +18633,7 @@ class ContractorIn(BaseModel):
     aadhaar: Optional[str] = None
     bank_branch: Optional[str] = None
     documents: Optional[List[str]] = None
+    document_files: Optional[Dict[str, Optional[Dict[str, str]]]] = None
     declaration_signed: Optional[bool] = None
 
 
@@ -18707,7 +18708,13 @@ def wo_create_business_unit(body: BusinessUnitIn, request: Request,
 
 def contractor_dict(c):
     docs = [d for d in (c.documents or "").split(",") if d]
+    try:
+        files = json.loads(c.document_files or "{}")
+    except Exception:
+        files = {}
+    doc_files = {k: (v.get("name") or "") for k, v in files.items() if isinstance(v, dict) and v.get("data")}
     return {"id": c.id, "company_name": c.company_name or "",
+            "document_files": doc_files,
             "vendor_code": c.vendor_code or "", "contact_person": c.contact_person or "",
             "email": c.email or "", "phone_number": c.phone_number or "",
             "pan": c.pan or "", "gst_number": c.gst_number or "",
@@ -18722,6 +18729,30 @@ def contractor_dict(c):
             "registered_by_name": c.registered_by_name or "", "approved_by_name": c.approved_by_name or "",
             "approved_at": c.approved_at or "", "rejection_reason": c.rejection_reason or "",
             "created_at": c.created_at or "", "is_active": c.is_active is not False}
+
+
+@app.get("/api/wo/contractors/{con_id}/documents/{key}")
+def wo_contractor_document(con_id: int, key: str, request: Request, db: Session = Depends(get_db)):
+    """One of the registration form's uploaded documents, as the file it was given."""
+    client = require_erp_read(request, db)
+    con = db.query(models.DBContractor).filter(models.DBContractor.id == con_id,
+                                                models.DBContractor.client_id == client.id).first()
+    if not con:
+        raise HTTPException(404, "Contractor not found")
+    try:
+        files = json.loads(con.document_files or "{}")
+    except Exception:
+        files = {}
+    entry = files.get(key)
+    if not entry or not entry.get("data"):
+        raise HTTPException(404, "No file has been uploaded for that document.")
+    m = re.match(r"^data:([^;]+);base64,(.+)$", entry["data"], re.DOTALL)
+    if not m:
+        raise HTTPException(500, "That file could not be read back.")
+    mime, raw = m.group(1), base64.b64decode(m.group(2))
+    name = entry.get("name") or (key + ".bin")
+    return StreamingResponse(io.BytesIO(raw), media_type=mime,
+        headers={"Content-Disposition": 'inline; filename="%s"' % name})
 
 
 @app.get("/api/wo/contractors")
@@ -18785,6 +18816,25 @@ def contractor_form_fields(con, body, fill_blanks_only=False):
     if body.documents is not None:
         known = [k for k, _ in REGISTRATION_DOCUMENTS]
         con.documents = ",".join(k for k in known if k in set(body.documents or []))
+    if body.document_files is not None:
+        known = {k for k, _ in REGISTRATION_DOCUMENTS}
+        try:
+            cur = json.loads(con.document_files or "{}")
+        except Exception:
+            cur = {}
+        for k, v in (body.document_files or {}).items():
+            if k not in known:
+                continue
+            if not v or not v.get("data"):
+                cur.pop(k, None)
+                continue
+            data = v["data"]
+            if not re.match(r"^data:[\w./+-]+;base64,", data):
+                raise HTTPException(400, "That does not look like an uploaded file.")
+            if len(data) > 7_000_000:
+                raise HTTPException(400, "That file is too large - keep it under 5 MB.")
+            cur[k] = {"name": (v.get("name") or "")[:200], "data": data}
+        con.document_files = json.dumps(cur)
     if body.declaration_signed is not None:
         con.declaration_signed = bool(body.declaration_signed)
 
@@ -25339,6 +25389,18 @@ class SubMeasurementIn(BaseModel):
     remarks: Optional[str] = ""
 
 
+@app.get("/api/sub-mb/template.xlsx")
+def sub_mb_template(request: Request, db: Session = Depends(get_db)):
+    """A worked example of the measurement book layout the import reads."""
+    require_erp_read(request, db)
+    if not sheet_forms.XLSX_AVAILABLE:
+        raise HTTPException(503, "The workbook library is not installed on this server.")
+    data = sheet_forms.build_mb_template()
+    return StreamingResponse(io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="measurement_book_template.xlsx"'})
+
+
 @app.get("/api/sub-mb/{order_id}")
 def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
@@ -25499,18 +25561,6 @@ def mb_match_item(items, description):
         if common > score:
             best, score = it, common
     return best if score >= 0.5 else None
-
-
-@app.get("/api/sub-mb/template.xlsx")
-def sub_mb_template(request: Request, db: Session = Depends(get_db)):
-    """A worked example of the measurement book layout the import reads."""
-    require_erp_read(request, db)
-    if not sheet_forms.XLSX_AVAILABLE:
-        raise HTTPException(503, "The workbook library is not installed on this server.")
-    data = sheet_forms.build_mb_template()
-    return StreamingResponse(io.BytesIO(data),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="measurement_book_template.xlsx"'})
 
 
 @app.post("/api/sub-mb/{order_id}/import")

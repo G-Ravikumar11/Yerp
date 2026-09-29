@@ -108,7 +108,9 @@ function vfVal(id) {
 function openVendorForm(id) {
     var c = VENDORS.list.filter(function (x) { return x.id === id; })[0] || {};
     VENDORS.editing = c.id || null;
+    VENDORS.pendingFiles = {};
     var docs = c.documents || [];
+    var files = c.document_files || {};
     var section = function (t) {
         return '<div style="grid-column:1/-1;font-weight:700;font-size:0.85rem;background:var(--bg-secondary,#f1f5f9);' +
             'padding:6px 10px;border-radius:6px;margin:10px 0 6px;">' + esc(t) + '</div>';
@@ -140,10 +142,20 @@ function openVendorForm(id) {
         vfInput('vf-account', 'Account no', c.bank_account) +
         vfInput('vf-ifsc', 'IFSC code', c.bank_ifsc, { upper: true }) +
         section('3. Documents Required') +
-        '<div style="grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;font-size:0.85rem;">' +
+        '<div style="grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;font-size:0.85rem;">' +
         VENDOR_DOCS.map(function (d) {
-            return '<label style="display:flex;gap:8px;align-items:center;font-weight:400;"><input type="checkbox" class="vf-doc" value="' +
-                d[0] + '"' + (docs.indexOf(d[0]) >= 0 ? ' checked' : '') + '> ' + esc(d[1]) + '</label>';
+            var fname = files[d[0]] || '';
+            var viewLink = c.id && fname
+                ? ' <a href="/api/wo/contractors/' + c.id + '/documents/' + d[0] + '" target="_blank" rel="noopener" style="font-size:0.78rem;">' + esc(fname) + '</a>'
+                : '';
+            return '<div>' +
+                '<label style="display:flex;gap:8px;align-items:center;font-weight:400;"><input type="checkbox" class="vf-doc" value="' +
+                d[0] + '"' + (docs.indexOf(d[0]) >= 0 ? ' checked' : '') + '> ' + esc(d[1]) + '</label>' +
+                '<div style="display:flex;gap:8px;align-items:center;margin:2px 0 0 24px;">' +
+                '<input type="file" accept=".pdf,image/*" id="vf-doc-file-' + d[0] + '" style="font-size:0.78rem;max-width:180px;" ' +
+                'onchange="vendorDocFileChosen(\'' + d[0] + '\', this)">' +
+                '<span id="vf-doc-file-name-' + d[0] + '" style="font-size:0.78rem;color:var(--text-secondary);">' + viewLink + '</span>' +
+                '</div></div>';
         }).join('') + '</div>' +
         section('Declaration') +
         '<label style="grid-column:1/-1;display:flex;gap:8px;align-items:flex-start;font-weight:400;font-size:0.82rem;">' +
@@ -159,6 +171,28 @@ function openVendorForm(id) {
 }
 window.openVendorForm = openVendorForm;
 
+function vendorDocFileChosen(key, input) {
+    var file = input.files && input.files[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+        showToast('That file is too large - keep it under 5 MB.', 'error');
+        input.value = '';
+        return;
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+        VENDORS.pendingFiles = VENDORS.pendingFiles || {};
+        VENDORS.pendingFiles[key] = { name: file.name, data: reader.result };
+        var box = document.querySelector('.vf-doc[value="' + key + '"]');
+        if (box) box.checked = true;
+        var label = document.getElementById('vf-doc-file-name-' + key);
+        if (label) label.textContent = file.name;
+    };
+    reader.onerror = function () { showToast('Could not read that file', 'error'); };
+    reader.readAsDataURL(file);
+}
+window.vendorDocFileChosen = vendorDocFileChosen;
+
 async function saveVendorForm() {
     var body = {
         company_name: vfVal('vf-name'), vendor_code: vfVal('vf-code'), registered_project: vfVal('vf-project'),
@@ -171,6 +205,9 @@ async function saveVendorForm() {
         documents: Array.prototype.map.call(document.querySelectorAll('.vf-doc:checked'), function (x) { return x.value; }),
         declaration_signed: !!(document.getElementById('vf-declared') || {}).checked,
     };
+    if (VENDORS.pendingFiles && Object.keys(VENDORS.pendingFiles).length) {
+        body.document_files = VENDORS.pendingFiles;
+    }
     if (!body.company_name) { showToast('The form needs the name of the sub contractor', 'error'); return; }
     var id = VENDORS.editing;
     var res = await fetch('/api/wo/contractors' + (id ? '/' + id : ''), {

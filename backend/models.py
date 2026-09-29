@@ -1613,6 +1613,7 @@ class DBContractor(Base):
     aadhaar = Column(String, default="")
     bank_branch = Column(String, default="")
     documents = Column(String, default="")          # comma separated keys of what was collected
+    document_files = Column(Text, default="{}")    # {key: {"name": ..., "data": "data:...;base64,..."}} - the files themselves
     declaration_signed = Column(Boolean, default=False)
     # PENDING | APPROVED | REJECTED. Somebody on site can register a gang; it
     # is signed off before an order is issued to them. Rows from before the
