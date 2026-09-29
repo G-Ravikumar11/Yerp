@@ -20002,10 +20002,108 @@ WO_ACTION_PAST = {
 }
 
 
+def wo_item_key(item):
+    return ((item.activity_no or "").strip().lower(),
+            re.sub(r"[^a-z0-9]+", " ", (item.item_description or "").split("\n")[0].lower()).strip())
+
+
+def wo_map_items(old_items, new_items):
+    """Each line of an order to the same line on its revision: by number and
+    description, then number alone, then description alone - and only where
+    exactly one line answers, so nothing is carried to a guess."""
+    new = [i for i in new_items if not i.is_header]
+    out = {}
+    for old in old_items:
+        if old.is_header:
+            continue
+        num, desc = wo_item_key(old)
+        tests = (lambda n: wo_item_key(n) == (num, desc),
+                 lambda n: bool(num) and wo_item_key(n)[0] == num,
+                 lambda n: bool(desc) and wo_item_key(n)[1] == desc)
+        for test in tests:
+            hits = [n for n in new if test(n)]
+            if len(hits) == 1:
+                out[old.id] = hits[0]
+                break
+    return out
+
+
+def wo_take_over_history(db, client, revision):
+    """A revision, on approval, carries on from the order it replaces.
+
+    The measurement book, the RA bills and their numbering, material
+    recovered, retention released and the advance paid all move across line
+    for line. Left behind, the revision started again at nothing: its first
+    bill had nothing previously billed, and work already paid for could be
+    measured and paid a second time. Returns the order being replaced."""
+    old = db.query(models.DBSubcontractOrder).filter(
+        models.DBSubcontractOrder.id == revision.supersedes_id,
+        models.DBSubcontractOrder.client_id == client.id).first()
+    if not old:
+        return None
+    entries = db.query(models.DBSubMeasurement).filter(
+        models.DBSubMeasurement.order_id == old.id).all()
+    bills = db.query(models.DBSubBill).filter(models.DBSubBill.order_id == old.id).all()
+    advances = db.query(models.DBMoneyEntry).filter(
+        models.DBMoneyEntry.client_id == client.id, models.DBMoneyEntry.doc_type == "sub_advance",
+        models.DBMoneyEntry.doc_id == old.id).all()
+    if not entries and not bills and not advances:
+        return old
+
+    open_bill = next((b for b in bills if (b.status or "") in ("DRAFT", "SUBMITTED")), None)
+    if open_bill:
+        raise HTTPException(409, "%s is still open on %s. Certify or cancel it before approving the revision."
+                                 % (open_bill.number, old.wo_number))
+    if (old.contractor_id or None) != (revision.contractor_id or None):
+        raise HTTPException(409, "%s already has work measured or billed for its sub contractor. A revision "
+                                 "keeps the same sub contractor - raise a new order for a different one."
+                                 % old.wo_number)
+
+    old_items = db.query(models.DBSubcontractItem).filter(models.DBSubcontractItem.order_id == old.id).all()
+    new_items = db.query(models.DBSubcontractItem).filter(models.DBSubcontractItem.order_id == revision.id).all()
+    mapping = wo_map_items(old_items, new_items)
+    live_ids = [b.id for b in bills if (b.status or "") != "CANCELLED"]
+    lines = db.query(models.DBSubBillLine).filter(
+        models.DBSubBillLine.sub_bill_id.in_([b.id for b in bills] or [0])).all()
+    used = {e.item_id for e in entries} | {l.item_id for l in lines if l.sub_bill_id in live_ids and l.item_id}
+    missing = [i for i in old_items if i.id in used and i.id not in mapping]
+    if missing:
+        raise HTTPException(409, "These lines are measured or billed on %s but not on the revision: %s. Keep them "
+                                 "on it - the quantity can come down to what is done, not below."
+                                 % (old.wo_number, ", ".join((i.activity_no or (i.item_description or "")[:40])
+                                                             for i in missing)))
+    measured = sub_measured_to_date(db, old.id)
+    short = [(i, mapping[i.id]) for i in old_items
+             if i.id in mapping and money(measured.get(i.id, 0.0)) > item_ceiling(mapping[i.id]) + 0.0001]
+    if short:
+        raise HTTPException(409, "The revision orders less than is already measured: %s."
+                                 % "; ".join("%s %s measured, %s on the revision" % (
+                                     o.activity_no or "item", qty_text(measured.get(o.id, 0.0)),
+                                     qty_text(n.quantity)) for o, n in short))
+
+    for e in entries:
+        e.order_id = revision.id
+        e.item_id = mapping[e.item_id].id
+    for b in bills:
+        b.order_id = revision.id
+    for l in lines:
+        if l.item_id in mapping:
+            l.item_id = mapping[l.item_id].id
+    for r in db.query(models.DBMaterialRecovery).filter(models.DBMaterialRecovery.order_id == old.id).all():
+        r.order_id = revision.id
+    for r in db.query(models.DBRetentionRelease).filter(models.DBRetentionRelease.sub_order_id == old.id).all():
+        r.sub_order_id = revision.id
+    for m in advances:
+        m.doc_id = revision.id
+    db.flush()
+    return old
+
+
 def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
              override=False, quiet=False):
     """One door for every state change, so the rules cannot disagree."""
     was = order.status
+    predecessor = None
     allowed = WO_TRANSITIONS.get(was, {})
     if action not in allowed:
         raise HTTPException(
@@ -20062,14 +20160,39 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
                          "allocation is being exceeded.")
             comments = "Budget override - " + comments.strip() + \
                        " (" + "; ".join(breaches) + ")"
+        if order.supersedes_id:
+            predecessor = wo_take_over_history(db, client, order)
         order.approved_by = actor_id
         order.approved_at = now
         order.rejection_reason = ""
     elif action == "EXECUTE":
         order.executed_at = now
+    elif action == "CANCEL":
+        # Work measured, billed or advanced against an order is a running
+        # account with the gang; cancelling the order left it pointing at
+        # nothing, with bills still certifiable against it.
+        billed = [b.number for b in db.query(models.DBSubBill).filter(
+            models.DBSubBill.order_id == order.id, models.DBSubBill.status != "CANCELLED").all()]
+        if billed:
+            raise HTTPException(409, "%s has RA bills against it (%s). Cancel any still open; work already "
+                                     "certified is closed by amending the order down to it, not by cancelling."
+                                     % (order.wo_number, ", ".join(billed)))
+        if db.query(models.DBSubMeasurement).filter(models.DBSubMeasurement.order_id == order.id).count():
+            raise HTTPException(409, "%s has work measured against it. Remove those entries from the "
+                                     "measurement book first, or amend the order down to what was done."
+                                     % order.wo_number)
+        if advance_paid(db, client.id, order.id) > 0:
+            raise HTTPException(409, "An advance of %s has been paid on %s. Void it under Payments & Ledgers "
+                                     "before cancelling." % (inr(advance_paid(db, client.id, order.id)), order.wo_number))
 
     order.status = allowed[action]
     order.updated_at = now
+    if predecessor is not None and "AMEND" in WO_TRANSITIONS.get(predecessor.status or "", {}):
+        before = predecessor.status
+        predecessor.status = "AMENDED"
+        predecessor.updated_at = now
+        record_wo_action(db, client, predecessor, actor_id, actor_name, "AMEND", before,
+                         "Superseded by " + (order.wo_number or ""))
     if action == "SUBMIT":
         wo_start_chain(db, client, order, actor_id)
     elif action in ("APPROVE", "REJECT", "CANCEL"):
@@ -20198,6 +20321,14 @@ def wo_amend(order_id: int, body: WoActionIn, request: Request,
     """
     client, actor_id, actor_name = wo_actor(request, db)
     order = wo_or_404(db, client.id, order_id)
+    if "AMEND" not in WO_TRANSITIONS.get(order.status or "", {}):
+        raise HTTPException(409, "%s is %s, so it cannot be amended." % (order.wo_number, (order.status or "").lower()))
+    pending = db.query(models.DBSubcontractOrder).filter(
+        models.DBSubcontractOrder.supersedes_id == order.id,
+        models.DBSubcontractOrder.status.in_(("DRAFT", "PROVISIONAL"))).first()
+    if pending:
+        raise HTTPException(409, "%s is already amending %s. Finish or cancel it first."
+                                 % (pending.wo_number, order.wo_number))
 
     revision = models.DBSubcontractOrder(
         client_id=client.id, status="DRAFT",
@@ -20225,8 +20356,10 @@ def wo_amend(order_id: int, body: WoActionIn, request: Request,
     wo_copy_lines(db, order, revision)
     db.flush()
     recost_order(db, revision)
-    wo_apply(db, client, order, "AMEND", actor_id, actor_name,
-             "Superseded by " + revision.wo_number)
+    # The original stays live - measured and billed as before - until the
+    # revision is approved and takes its history over.
+    record_wo_action(db, client, order, actor_id, actor_name, "REVISE", order.status,
+                     revision.wo_number + " drawn up to amend it")
     record_wo_action(db, client, revision, actor_id, actor_name, "CREATE", "",
                      "Amends " + (order.wo_number or ""))
     log_audit(db, client.id, "subcontract_amended", "subcontract_order", revision.id,
@@ -20234,7 +20367,8 @@ def wo_amend(order_id: int, body: WoActionIn, request: Request,
     db.commit()
     db.refresh(revision)
     return {"order": wo_dict(db, revision, detail=True),
-            "message": revision.wo_number + " opened, amending " + order.wo_number + "."}
+            "message": revision.wo_number + " opened to amend " + order.wo_number +
+                       ". The original stays open for measuring and billing until the revision is approved."}
 
 
 # ============================================================================
@@ -26093,6 +26227,9 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
         raise HTTPException(409, "A %s bill cannot be %sed."
                                  % ((bill.status or "draft").lower(), move.lower()))
     order = wo_or_404(db, client.id, bill.order_id)
+    if move in ("SUBMIT", "CERTIFY") and (order.status or "") not in ("APPROVED", "EXECUTED"):
+        raise HTTPException(409, "%s is %s - nothing more is billed or certified against it."
+                                 % (order.wo_number, (order.status or "").lower()))
 
     # Drawing up and sending is billing's; certifying or sending back is the
     # approver's; paying is the accounts department's.
@@ -36217,6 +36354,19 @@ def approval_inbox(db, client, emp):
                 over = wo_budget_breaches(db, client, o)
             except Exception:
                 over = []
+            notes = ["Over the project allocation: " + "; ".join(over)] if over else []
+            if o.supersedes_id:
+                prev = db.query(models.DBSubcontractOrder).filter(
+                    models.DBSubcontractOrder.id == o.supersedes_id).first()
+                n_bills = db.query(models.DBSubBill).filter(
+                    models.DBSubBill.order_id == o.supersedes_id,
+                    models.DBSubBill.status != "CANCELLED").count()
+                n_mb = db.query(models.DBSubMeasurement).filter(
+                    models.DBSubMeasurement.order_id == o.supersedes_id).count()
+                if prev and (n_bills or n_mb):
+                    notes.append("Amends %s - its %d measurement%s and %d RA bill%s move to this order on approval"
+                                 % (prev.wo_number, n_mb, "" if n_mb == 1 else "s",
+                                    n_bills, "" if n_bills == 1 else "s"))
             items.append(_row(
                 "subcontract_order", "Subcontract work order", o.id, o.wo_number, o.net_order_value or o.gross_amount,
                 party=(con.company_name if con else ""),
@@ -36229,7 +36379,7 @@ def approval_inbox(db, client, emp):
                 pdf="/api/wo/orders/%d/document.pdf" % o.id,
                 mine=emp is not None or step is None or step.approver_id is None,
                 waiting_on=wo_step_name(db, step),
-                warnings=["Over the project allocation: " + "; ".join(over)] if over else [],
+                warnings=notes,
                 overrun=bool(over), budget=wo_budget_summary(db, o)))
 
     # 3. RA bills to the client, waiting to be certified.
@@ -36240,8 +36390,13 @@ def approval_inbox(db, client, emp):
             if emp is not None and b.submitted_by == emp.id:
                 continue
             job = _job_of(db, b.job_id)
+            past = [l.fg_code or "a line" for l in db.query(models.DBRABillLine).filter(
+                models.DBRABillLine.ra_bill_id == b.id).all()
+                    if money(l.measured_to_date) > money(l.ordered_qty) + 0.0001]
             items.append(_row(
                 "ra_bill", "RA bill", b.id, b.number, b.this_bill,
+                warnings=(["Claims past the ordered quantity on %s - no variation agreed for it yet"
+                           % ", ".join(past[:5])] if past else []),
                 party=(job.customer_name if job else "") or "",
                 project=(("%s %s" % (job.number or "", job.name or "")).strip() if job else ""),
                 raised_by=_person(db, b.submitted_by),

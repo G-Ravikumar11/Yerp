@@ -315,6 +315,14 @@ def test_an_amendment_supersedes_rather_than_edits(tenant):
     assert revision["gross_amount"] == order["gross_amount"]
     assert len(revision["items"]) == 2
 
+    # Live until the revision is approved - the site keeps measuring meanwhile.
+    original = tenant.get("/api/wo/orders/%d" % order["id"]).json()["order"]
+    assert original["status"] == "APPROVED"
+    assert tenant.post("/api/wo/orders/%d/amend" % order["id"], json={}).status_code == 409, \
+        "one revision at a time"
+
+    tenant.post("/api/wo/orders/%d/submit" % revision["id"], json={})
+    tenant.post("/api/wo/orders/%d/approve" % revision["id"], json={})
     original = tenant.get("/api/wo/orders/%d" % order["id"]).json()["order"]
     assert original["status"] == "AMENDED"
     assert original["gross_amount"] == 2958000.0, "the signed figures are untouched"
@@ -324,7 +332,9 @@ def test_a_superseded_order_prints_as_superseded(tenant):
     order = priced(tenant)
     tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
     tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
-    tenant.post("/api/wo/orders/%d/amend" % order["id"], json={})
+    rev = tenant.post("/api/wo/orders/%d/amend" % order["id"], json={}).json()["order"]
+    tenant.post("/api/wo/orders/%d/submit" % rev["id"], json={})
+    tenant.post("/api/wo/orders/%d/approve" % rev["id"], json={})
     doc = tenant.get("/api/wo/orders/%d/document" % order["id"]).json()
     assert doc["watermark"] == "SUPERSEDED"
 
