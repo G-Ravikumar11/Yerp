@@ -146,7 +146,7 @@ function openVendorForm(id) {
         VENDOR_DOCS.map(function (d) {
             var fname = files[d[0]] || '';
             var viewLink = c.id && fname
-                ? ' <a href="/api/wo/contractors/' + c.id + '/documents/' + d[0] + '" target="_blank" rel="noopener" style="font-size:0.78rem;">' + esc(fname) + '</a>'
+                ? ' <a href="/api/wo/contractors/' + c.id + '/documents/' + d[0] + '" target="_blank" rel="noopener" style="font-size:0.78rem;color:var(--primary-color);text-decoration:underline;">' + esc(fname) + '</a>'
                 : '';
             return '<div>' +
                 '<label style="display:flex;gap:8px;align-items:center;font-weight:400;"><input type="checkbox" class="vf-doc" value="' +
