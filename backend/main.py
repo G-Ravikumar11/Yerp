@@ -37349,6 +37349,29 @@ def wo_decide_step(db, client, order, actor_id, actor_name, approve, comments=""
 frontend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
 # Last of all, with every route in place: a .pdf beside each .xlsx.
 PDF_TWINS = add_pdf_twins()
+
+
+class SinglePageApp(StaticFiles):
+    """The React app: any address that is not a file is the app's own route.
+
+    /next/subcontractors/work-orders is a page inside the app, not a file, so
+    reloading it (or opening a link to it) has to serve the app and let its
+    router draw the page. A missing file with an extension is a real 404."""
+
+    async def get_response(self, path, scope):
+        try:
+            return await super().get_response(path, scope)
+        except Exception as exc:  # starlette's HTTPException for a missing file
+            if getattr(exc, "status_code", None) == 404 and "." not in os.path.basename(path):
+                return await super().get_response("index.html", scope)
+            raise
+
+
+next_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend-next")
+if os.path.isdir(next_path):
+    # Before the "/" mount below, which would otherwise answer /next itself.
+    app.mount("/next", SinglePageApp(directory=next_path, html=True), name="frontend-next")
+
 if os.path.exists(frontend_path):
     app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
 else:
