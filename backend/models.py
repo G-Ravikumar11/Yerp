@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, UniqueConstraint, Text, LargeBinary
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, deferred
 from database import Base
 from datetime import datetime
 import uuid
@@ -1613,7 +1613,11 @@ class DBContractor(Base):
     aadhaar = Column(String, default="")
     bank_branch = Column(String, default="")
     documents = Column(String, default="")          # comma separated keys of what was collected
-    document_files = Column(Text, default="{}")    # {key: {"name": ..., "data": "data:...;base64,..."}} - the files themselves
+    # The uploaded files themselves, {key: {"name", "data": data URL}} - loaded
+    # only when one is opened, never with the register. Their names are kept
+    # beside them for the list to show.
+    document_files = deferred(Column(Text, default="{}"))
+    document_names = Column(Text, default="{}")
     declaration_signed = Column(Boolean, default=False)
     # PENDING | APPROVED | REJECTED. Somebody on site can register a gang; it
     # is signed off before an order is issued to them. Rows from before the

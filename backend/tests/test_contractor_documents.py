@@ -43,3 +43,14 @@ def test_an_oversized_upload_is_refused(tenant):
         "document_files": {"pan": {"name": "big.png", "data": huge}},
     })
     assert res.status_code == 400
+
+
+def test_a_garbage_pan_or_gstin_is_refused_at_registration(tenant):
+    bad_pan = tenant.post("/api/wo/contractors", json={"company_name": "vvaa", "pan": "SDFGHJK%^&*"})
+    assert bad_pan.status_code == 400
+    bad_gst = tenant.post("/api/wo/contractors", json={"company_name": "vvaa", "gst_number": "!@#$%^&*()_123456789"})
+    assert bad_gst.status_code == 400
+    ok = tenant.post("/api/wo/contractors", json={"company_name": "vvaa", "gst_number": "36bnqpa8703a1za"})
+    assert ok.status_code == 200, ok.text
+    listed = next(c for c in tenant.get("/api/wo/contractors").json()["contractors"] if c["company_name"] == "vvaa")
+    assert listed["pan"] == "BNQPA8703A", "the PAN is read out of the GSTIN"

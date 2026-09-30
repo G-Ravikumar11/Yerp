@@ -29,6 +29,8 @@ def test_a_certified_bill_nobody_has_paid(tenant):
         s.commit()
     finally:
         s.close()
+    import main
+    main._READ_CACHE.clear()      # changed behind the API's back, as no request would
     item = kinds(tenant)["ra_receivable"]
     assert item["count"] == 1 and item["view"] == "ledger-view"
     # A part-payment takes off what came in.

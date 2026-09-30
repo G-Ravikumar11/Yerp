@@ -1479,6 +1479,7 @@ def ensure_columns():
                     ("contractors", "bank_branch", "TEXT DEFAULT ''"),
                     ("contractors", "documents", "TEXT DEFAULT ''"),
                     ("contractors", "document_files", "TEXT DEFAULT '{}'"),
+                    ("contractors", "document_names", "TEXT DEFAULT '{}'"),
                     ("contractors", "declaration_signed", "BOOLEAN DEFAULT FALSE"),
                     ("contractors", "registration_status", "TEXT DEFAULT 'APPROVED'"),
                     ("contractors", "registered_by", "INTEGER"),
@@ -1675,6 +1676,7 @@ def migrate_sqlite():
             add_col("contractors", "bank_branch", "TEXT DEFAULT ''")
             add_col("contractors", "documents", "TEXT DEFAULT ''")
             add_col("contractors", "document_files", "TEXT DEFAULT '{}'")
+            add_col("contractors", "document_names", "TEXT DEFAULT '{}'")
             add_col("contractors", "declaration_signed", "BOOLEAN DEFAULT 0")
             add_col("contractors", "registration_status", "TEXT DEFAULT 'APPROVED'")
             add_col("contractors", "registered_by", "INTEGER")

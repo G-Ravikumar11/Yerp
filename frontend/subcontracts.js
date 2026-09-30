@@ -58,6 +58,7 @@ async function loadSubcontracts() {
             '<td style="font-family:monospace;font-weight:600;">' + esc(o.wo_number) +
                 (o.amendment_no ? '<div style="font-size:0.72rem;font-weight:400;color:var(--text-secondary);">rev ' + o.amendment_no + '</div>' : '') + '</td>' +
             '<td>' + esc(o.contractor || '—') +
+                (o.vendor_code ? ' <span style="font-family:monospace;font-size:0.75rem;color:var(--text-secondary);">' + esc(o.vendor_code) + '</span>' : '') +
                 '<div style="font-size:0.75rem;color:var(--text-secondary);">' + esc(o.project || '') + '</div></td>' +
             '<td>' + esc(o.department || '—') + '</td>' +
             '<td class="text-right">' + o.item_count + '</td>' +

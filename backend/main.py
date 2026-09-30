@@ -473,6 +473,26 @@ def _boot_step(label, fn):
         return False
 
 
+def fill_document_names():
+    """Names for documents uploaded before the names were kept beside them."""
+    db = SessionLocal()
+    try:
+        rows = db.query(models.DBContractor).filter(
+            or_(models.DBContractor.document_names.is_(None), models.DBContractor.document_names == "{}"),
+            models.DBContractor.document_files.isnot(None), models.DBContractor.document_files != "{}",
+            models.DBContractor.document_files != "").all()
+        for c in rows:
+            try:
+                files = json.loads(c.document_files or "{}")
+            except Exception:
+                continue
+            c.document_names = json.dumps({k: v.get("name") or "" for k, v in files.items()
+                                           if isinstance(v, dict) and v.get("data")})
+        db.commit()
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ok = True
@@ -480,6 +500,7 @@ async def lifespan(app: FastAPI):
                       ("add missing columns", ensure_columns),
                       ("migrate sqlite", migrate_sqlite),
                       ("admin user", ensure_admin_user),
+                      ("vendor document names", fill_document_names),
                       ("super admin", ensure_super_admin)):
         ok = _boot_step(label, fn) and ok
     DB_READY["ok"] = ok
@@ -634,10 +655,33 @@ async def unhandled_error_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"detail": "An unexpected error occurred."})
 
 
+# Heavy read-only panels are remembered between visits until anything is
+# written. Every request that can change data moves this on once it has
+# finished, which throws every remembered answer away; a time limit covers
+# changes nobody requested (the scheduler, the date rolling over).
+_WRITE_VERSION = [0]
+_READ_CACHE = {}
+
+
+def cached_read(key, build, ttl=60):
+    now = time.time()
+    version = _WRITE_VERSION[0]
+    hit = _READ_CACHE.get(key)
+    if hit and hit[0] == version and hit[1] > now:
+        return hit[2]
+    value = build()
+    if len(_READ_CACHE) > 2000:
+        _READ_CACHE.clear()
+    _READ_CACHE[key] = (version, now + ttl, value)
+    return value
+
+
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
     response = await call_next(request)
     path = request.url.path
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        _WRITE_VERSION[0] += 1
     if path.endswith(".html") or path == "/":
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
@@ -12495,10 +12539,17 @@ def bill_money_from(body) -> tuple:
     return money(amount), money(tax), money(amount + tax)
 
 
+def by_id(db, model, ident):
+    """One row by its key. The session's own copy when this request has
+    already loaded it - a list of forty bills on three orders asks for three
+    orders, not forty - and one query when it has not."""
+    return db.get(model, ident) if ident else None
+
+
 def job_label_for(db, job_id):
     if not job_id:
         return ""
-    job = db.query(models.DBJob).filter(models.DBJob.id == job_id).first()
+    job = by_id(db, models.DBJob, job_id)
     return f"{job.number} {job.name}" if job else ""
 
 
@@ -18236,16 +18287,15 @@ def wo_pending_with(db, client_id, raised_by=None):
 
 
 def wo_dict(db, order, detail=False):
-    bu = db.query(models.DBBusinessUnit).filter(
-        models.DBBusinessUnit.id == order.business_unit_id).first()
-    con = db.query(models.DBContractor).filter(
-        models.DBContractor.id == order.contractor_id).first()
-    job = db.query(models.DBJob).filter(models.DBJob.id == order.job_id).first()
+    bu = by_id(db, models.DBBusinessUnit, order.business_unit_id)
+    con = by_id(db, models.DBContractor, order.contractor_id)
+    job = by_id(db, models.DBJob, order.job_id)
     row = {
         "id": order.id, "wo_number": order.wo_number or "", "status": order.status,
         "amendment_no": order.amendment_no or 0, "supersedes_id": order.supersedes_id,
         "business_unit_id": order.business_unit_id, "business_unit": bu.name if bu else "",
         "contractor_id": order.contractor_id, "contractor": con.company_name if con else "",
+        "vendor_code": (con.vendor_code or "") if con else "",
         "job_id": order.job_id,
         "project": ("%s %s" % (job.number, job.name)).strip() if job else "",
         "work_type": order.work_type or "", "department": order.department or "",
@@ -18709,10 +18759,9 @@ def wo_create_business_unit(body: BusinessUnitIn, request: Request,
 def contractor_dict(c):
     docs = [d for d in (c.documents or "").split(",") if d]
     try:
-        files = json.loads(c.document_files or "{}")
+        doc_files = json.loads(c.document_names or "{}")
     except Exception:
-        files = {}
-    doc_files = {k: (v.get("name") or "") for k, v in files.items() if isinstance(v, dict) and v.get("data")}
+        doc_files = {}
     return {"id": c.id, "company_name": c.company_name or "",
             "document_files": doc_files,
             "vendor_code": c.vendor_code or "", "contact_person": c.contact_person or "",
@@ -18835,6 +18884,7 @@ def contractor_form_fields(con, body, fill_blanks_only=False):
                 raise HTTPException(400, "That file is too large - keep it under 5 MB.")
             cur[k] = {"name": (v.get("name") or "")[:200], "data": data}
         con.document_files = json.dumps(cur)
+        con.document_names = json.dumps({k: v.get("name") or "" for k, v in cur.items()})
     if body.declaration_signed is not None:
         con.declaration_signed = bool(body.declaration_signed)
 
@@ -18858,6 +18908,12 @@ def wo_create_contractor(body: ContractorIn, request: Request,
             sqlfunc.upper(models.DBContractor.vendor_code) == code).first():
         raise HTTPException(409, "Vendor code %s is already taken." % code)
     code = code or next_vendor_code(db, client.id)
+    # The same checks an edit makes: a PAN or GSTIN typed wrong at
+    # registration went straight onto work orders, bills and the TDS return.
+    gstin, pan = clean_tax_ids(body.gst_number, body.pan)
+    ifsc = (body.bank_ifsc or "").strip().upper()
+    if ifsc and not re.match(r"^[A-Z]{4}0[A-Z0-9]{6}$", ifsc):
+        raise HTTPException(400, "An IFSC is eleven characters: four letters, a zero, then six (for example SBIN0001234).")
 
     # Registered by the owner, it is signed off as it is made. Registered by
     # somebody on site, it waits for someone with the right to approve it.
@@ -18867,11 +18923,10 @@ def wo_create_contractor(body: ContractorIn, request: Request,
         client_id=client.id, company_name=name, vendor_code=code,
         contact_person=(body.contact_person or "").strip(),
         email=(body.email or "").strip(), phone_number=(body.phone_number or "").strip(),
-        pan=(body.pan or "").strip().upper(),
-        gst_number=(body.gst_number or "").strip().upper(),
+        pan=pan, gst_number=gstin,
         bank_name=(body.bank_name or "").strip(),
         bank_account=re.sub(r"\s", "", body.bank_account or ""),
-        bank_ifsc=(body.bank_ifsc or "").strip().upper(),
+        bank_ifsc=ifsc,
         address=(body.address or "").strip(),
         registration_status="APPROVED" if owner else "PENDING",
         registered_by=actor_id, registered_by_name=actor_name,
@@ -25034,10 +25089,14 @@ def setup_progress(db, client_id):
 @app.get("/api/attention")
 def whats_worth_a_look(request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
-    items = attention_items(db, client.id)
+    return cached_read(("attention", client.id), lambda: attention_payload(db, client.id))
+
+
+def attention_payload(db, client_id):
+    items = attention_items(db, client_id)
     return {
         "items": items,
-        "setup": setup_progress(db, client.id),
+        "setup": setup_progress(db, client_id),
         "summary": {
             "items": len(items),
             "money_at_stake": money(sum(i["value"] for i in items
@@ -25426,11 +25485,9 @@ def sub_bill_room(bill):
 
 
 def sub_bill_dict(db, bill, detail=False):
-    order = db.query(models.DBSubcontractOrder).filter(
-        models.DBSubcontractOrder.id == bill.order_id).first()
-    con = db.query(models.DBContractor).filter(
-        models.DBContractor.id == bill.contractor_id).first() if bill.contractor_id else None
-    job = db.query(models.DBJob).filter(models.DBJob.id == bill.job_id).first()
+    order = by_id(db, models.DBSubcontractOrder, bill.order_id)
+    con = by_id(db, models.DBContractor, bill.contractor_id)
+    job = by_id(db, models.DBJob, bill.job_id)
     row = {
         "id": bill.id, "number": bill.number or "", "sequence": bill.sequence or 1,
         "order_id": bill.order_id, "order": order.wo_number if order else "",
@@ -26054,15 +26111,15 @@ def ensure_sub_bill_chain(db, bill):
         sub_bill_start_chain(db, bill.client_id, bill, bill.submitted_by)
 
 
-def sub_bill_current_step(db, bill):
+def sub_bill_current_step(db, bill, rows=None):
     """The step the bill waits at. An approver who has left, or no longer
     holds the right, is passed over rather than left to block it."""
-    for row in sub_bill_chain_rows(db, bill.id):
+    for row in (rows if rows is not None else sub_bill_chain_rows(db, bill.id)):
         if row.status != "pending":
             continue
         if row.approver_id is None:
             return row
-        emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == row.approver_id).first()
+        emp = by_id(db, models.DBEmployee, row.approver_id)
         if emp and (emp.status or "active") not in GONE_STATUSES and employee_can(emp, "subcontracts.approve"):
             return row
         row.status, row.notes = "skipped", "No longer able to certify bills"
@@ -26078,7 +26135,7 @@ def sub_bill_step_name(db, row):
 
 def sub_bill_route(db, bill):
     rows = sub_bill_chain_rows(db, bill.id)
-    current = sub_bill_current_step(db, bill) if (bill.status or "") == "SUBMITTED" else None
+    current = sub_bill_current_step(db, bill, rows) if (bill.status or "") == "SUBMITTED" else None
     return [{"step": r.step, "name": sub_bill_step_name(db, r), "owner": r.approver_id is None,
              "approver_id": r.approver_id,
              "status": "waiting" if current is not None and r.id == current.id else r.status,
@@ -36231,7 +36288,7 @@ def ladder_approver(db, client_id, submitted_by, entity_type, job_id=None):
 
 
 def owner_label(db, client_id):
-    client = db.query(models.DBClient).filter(models.DBClient.id == client_id).first()
+    client = by_id(db, models.DBClient, client_id)
     name = ((client.contact_name or "").strip() or (client.email or "").strip()) if client else ""
     return "%s (owner)" % name if name else "the owner"
 
@@ -36281,12 +36338,12 @@ def _party_of(doc):
 def _person(db, emp_id):
     if not emp_id:
         return ""
-    e = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id).first()
+    e = by_id(db, models.DBEmployee, emp_id)
     return employee_name(e) if e else ""
 
 
 def _job_of(db, job_id):
-    return db.query(models.DBJob).filter(models.DBJob.id == job_id).first() if job_id else None
+    return by_id(db, models.DBJob, job_id)
 
 
 def _row(kind, label, id, number, amount, **more):
@@ -36369,7 +36426,7 @@ def approval_inbox(db, client, emp):
                                     n_bills, "" if n_bills == 1 else "s"))
             items.append(_row(
                 "subcontract_order", "Subcontract work order", o.id, o.wo_number, o.net_order_value or o.gross_amount,
-                party=(con.company_name if con else ""),
+                party=(("%s (%s)" % (con.company_name, con.vendor_code) if con.vendor_code else con.company_name) if con else ""),
                 project=(("%s %s" % (job.number or "", job.name or "")).strip() if job else ""),
                 raised_by=_person(db, o.submitted_by) or (sent.actor_name if sent else ""),
                 since=(sent.created_at if sent else o.updated_at) or "",
@@ -36419,7 +36476,7 @@ def approval_inbox(db, client, emp):
             job = _job_of(db, b.job_id)
             items.append(_row(
                 "sub_bill", "Subcontractor bill", b.id, b.number, b.this_bill,
-                party=(con.company_name if con else ""),
+                party=(("%s (%s)" % (con.company_name, con.vendor_code) if con.vendor_code else con.company_name) if con else ""),
                 project=(("%s %s" % (job.number or "", job.name or "")).strip() if job else ""),
                 raised_by=getattr(b, "submitted_by_name", "") or "",
                 since=getattr(b, "submitted_at", "") or getattr(b, "updated_at", "") or "",

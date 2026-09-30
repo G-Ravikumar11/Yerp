@@ -57,7 +57,8 @@ async function loadSubBills() {
     pick.innerHTML = live.length
         ? live.map(function (o) {
             return '<option value="' + o.id + '">' + esc(o.wo_number) + ' — ' +
-                esc(o.contractor || '') + (o.project ? ' · ' + esc(o.project) : '') + '</option>';
+                esc(o.contractor || '') + (o.vendor_code ? ' (' + esc(o.vendor_code) + ')' : '') +
+                (o.project ? ' · ' + esc(o.project) : '') + '</option>';
           }).join('')
         : '<option value="">No approved subcontract orders yet</option>';
     if (live.length) openSubBook(live[0].id);
@@ -274,7 +275,9 @@ function renderSubBillList(bills, summary) {
                 '<a href="/api/sub-bills/' + b.id + '/document.pdf" target="_blank" rel="noopener" ' +
                 'title="Certificate of payment, abstract and measurement book, as they are signed">PDF</a> · ' +
                 '<a href="/api/sub-bills/' + b.id + '/export.xlsx" title="Top Sheet, AB-1 and MB-1 as a workbook">Excel</a></div></td>' +
-            '<td>' + esc(b.contractor) + '<div style="font-size:0.75rem;color:var(--text-secondary);">' +
+            '<td>' + esc(b.contractor) +
+                (b.vendor_code ? ' <span style="font-family:monospace;font-size:0.75rem;color:var(--text-secondary);">' + esc(b.vendor_code) + '</span>' : '') +
+                '<div style="font-size:0.75rem;color:var(--text-secondary);">' +
                 esc(b.project) + '</div></td>' +
             '<td class="text-right" style="color:var(--text-secondary);">' + formatCurrency(b.previously_billed) + '</td>' +
             '<td class="text-right">' + formatCurrency(b.this_bill) + '</td>' +

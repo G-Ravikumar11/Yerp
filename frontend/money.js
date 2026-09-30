@@ -392,3 +392,19 @@ async function dashErp() {
         '</tbody></table></div></div>';
 }
 window.dashErp = dashErp;
+
+// Boot and the dashboard's own view switch both ask for these on a cold
+// load; a second call while the first is still out joins it instead of
+// sending every request twice.
+function oneAtATime(fn) {
+    var running = null;
+    return function () {
+        if (running) return running;
+        running = Promise.resolve(fn.apply(this, arguments)).finally(function () { running = null; });
+        return running;
+    };
+}
+loadAttention = oneAtATime(loadAttention);
+dashErp = oneAtATime(dashErp);
+window.loadAttention = loadAttention;
+window.dashErp = dashErp;

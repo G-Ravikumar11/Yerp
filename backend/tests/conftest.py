@@ -52,6 +52,7 @@ def _reset_rate_limiter():
     from the same testserver address, so clear the window between tests instead
     of weakening the limit itself."""
     main.rate_limiter._hits.clear()
+    main._READ_CACHE.clear()
     yield
 
 
