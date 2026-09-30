@@ -78,4 +78,14 @@ await page.waitForFunction((id) => document.getElementById('sub-order').value ==
 await page.waitForSelector('#sub-mb-body button')
 check('one click opens the revision, which can be measured', true)
 
+
+// --- A draft is listed too ----------------------------------------------------------------------------------------
+const draft = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: made.unit?.id ?? (await api(page, 'GET', '/api/wo/business-units')).data.business_units[0].id, contractor_id: made.gang.id, job_id: made.job.id, department: 'Civil', subject: 'E2E still a draft', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
+await page.evaluate(() => loadSubBills())
+await sleep(1200)
+await page.evaluate((id) => subWoChoose(id), draft.id)
+await page.waitForSelector('#sub-amend-note .sub-amend-note')
+check('a draft is in the list too, and says it is still a draft', (await text('#sub-amend-note')).includes('still a draft'))
+check('and it takes no measurements', await page.$eval('#sub-code', (e) => e.disabled))
+
 await done()

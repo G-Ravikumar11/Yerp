@@ -42,28 +42,37 @@ function Progress({ percent, over }: { percent: number; over: boolean }) {
   )
 }
 
+/** Why an order in the list cannot take a measurement. */
+const WHY: Record<string, string> = {
+  AMENDED: 'was amended. Its record is shown for reference and cannot take new measurements.',
+  PROVISIONAL: 'is waiting for approval. It can be measured once it is approved.',
+  DRAFT: 'is still a draft. It can be measured once it is submitted and approved.',
+  CANCELLED: 'was cancelled. Nothing can be measured against it.',
+}
+
 export default function MeasurementBookPage() {
   const { can } = useSession()
   const [params, setParams] = useSearchParams()
   const orders = useOrders()
   const all = orders.data?.orders ?? []
   const isLive = (o: Order) => o.status === 'APPROVED' || o.status === 'EXECUTED'
-  // An amended order stays in the list, read-only: its record is worth looking at, and it
-  // is where the work was measured before the revision took over.
-  const live = all.filter((o) => isLive(o) || o.status === 'AMENDED').sort((a, b) => Number(isLive(b)) - Number(isLive(a)))
+  // Every work order is in the list, so none can go missing: the ones that can be measured come first,
+  // the rest show what state they are in and say why they cannot take a measurement yet.
+  const order_of: Record<string, number> = { APPROVED: 0, EXECUTED: 0, PROVISIONAL: 1, DRAFT: 2, AMENDED: 3, CANCELLED: 4 }
+  const live = [...all].sort((a, b) => (order_of[a.status] ?? 5) - (order_of[b.status] ?? 5))
   const vocab = useOrderVocabulary()
   const jobCode = (o: Order) => vocab.data?.jobs.find((j) => j.id === o.job_id)?.number ?? ''
   const last = remembered()
   const chosen = Number(params.get('order')) || (live.some((o) => o.id === last) ? last : 0) || live[0]?.id || 0
   const order = all.find((o) => o.id === chosen)
-  const amended = order?.status === 'AMENDED'
-  const replacement = amended ? all.find((o) => o.supersedes_id === chosen && isLive(o)) : undefined
+  const measurable = !!order && isLive(order)
+  const replacement = order?.status === 'AMENDED' ? all.find((o) => o.supersedes_id === chosen && isLive(o)) : undefined
   const quick = useRef<QuickMeasureHandle>(null)
   const book = useMeasurementBook(chosen)
   const [measuring, setMeasuring] = useState<MbLine | null>(null)
   const [importing, setImporting] = useState(false)
   const [removing, setRemoving] = useState<MbEntry | null>(null)
-  const record = can('site.record') && !amended
+  const record = can('site.record') && measurable
 
   const remove = useAction((e: MbEntry) => deleteEntry(e.id), { invalidate: [mbKeys.all, ['subbills']], onSuccess: () => setRemoving(null), onError: () => setRemoving(null) })
 
@@ -214,17 +223,16 @@ export default function MeasurementBookPage() {
         </div>
       </div>
 
-      {amended && order && (
+      {order && !measurable && (
         <div role="status" className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
           <p>
-            <span className="font-mono font-semibold">{order.wo_number}</span> was amended
+            <span className="font-mono font-semibold">{order.wo_number}</span>{' '}
             {replacement ? (
               <>
-                {' '}
-                and replaced by <span className="font-mono font-semibold">{replacement.wo_number}</span>. Measure against the revision; what was measured and billed here carried across to it.
+                was amended and replaced by <span className="font-mono font-semibold">{replacement.wo_number}</span>. Measure against the revision; what was measured and billed here carried across to it.
               </>
             ) : (
-              '. Its record is shown for reference and cannot take new measurements.'
+              (WHY[order.status] ?? `is ${order.status.toLowerCase()} and cannot be measured.`)
             )}
           </p>
           {replacement && (

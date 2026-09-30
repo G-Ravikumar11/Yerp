@@ -214,4 +214,12 @@ await page.waitForFunction((id) => location.search.includes('order=' + id), {}, 
 await page.waitForSelector('table[aria-label="Items on the order"] tbody tr')
 check('one click opens the revision, which can be measured', (await page.$('table[aria-label="Items on the order"] tbody button')) !== null)
 
+
+// --- A draft is listed too, and says why it cannot be measured yet -----------------------------------------
+const draft = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: gang.id, job_id: job.id, department: 'Civil', subject: 'E2E still a draft', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
+await open(page, `/subcontractors/measurement-book?order=${draft.id}`)
+await page.waitForSelector('[role=status]')
+check('a draft is in the list too, and says it is still a draft', (await page.$eval('[role=status]', (e) => e.textContent)).includes('still a draft'))
+check('and it takes no measurements', (await page.$('input[aria-label="Item code"]')) === null)
+
 await done()

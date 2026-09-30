@@ -2,8 +2,11 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Check, ChevronsUpDown, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Order } from '@/api/orders'
-
 export type JobCodeOf = (o: Order) => string
+
+/** What to say beside an order that is not approved: why it cannot take a measurement. */
+const TAGS: Record<string, string> = { AMENDED: 'amended', PROVISIONAL: 'awaiting approval', DRAFT: 'draft', CANCELLED: 'cancelled' }
+const tagOf = (o: Order) => TAGS[o.status] ?? ''
 
 /** Everything a person might type to find an order: its number, job code, project, gang or subject. */
 const haystack = (o: Order, jobCode: JobCodeOf) => [o.wo_number, jobCode(o), o.project, o.contractor, o.vendor_code, o.subject, o.work_type].join(' ').toLowerCase()
@@ -74,7 +77,7 @@ export function WorkOrderPicker({ orders, value, onChange, jobCode, loading }: {
             <span className="shrink-0 whitespace-nowrap font-mono text-[13px] font-semibold">{current.wo_number}</span>
             {jobCode(current) && <span className="shrink-0 rounded bg-primary-soft px-1.5 py-0.5 font-mono text-[11px] text-primary">{jobCode(current)}</span>}
             <span className="truncate text-muted-foreground">{current.contractor || 'no gang'}</span>
-            {current.status === 'AMENDED' && <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">amended</span>}
+            {tagOf(current) && <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{tagOf(current)}</span>}
           </span>
         ) : (
           <span className="flex-1 text-subtle">{loading ? 'Loading...' : 'No approved work orders yet'}</span>
@@ -135,7 +138,7 @@ export function WorkOrderPicker({ orders, value, onChange, jobCode, loading }: {
                   <span className="flex items-baseline gap-2">
                     <span className="shrink-0 whitespace-nowrap font-mono text-[13px] font-semibold">{o.wo_number}</span>
                     {jobCode(o) && <span className="shrink-0 rounded bg-primary-soft px-1.5 py-0.5 font-mono text-[11px] text-primary">{jobCode(o)}</span>}
-                    {o.status === 'AMENDED' && <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">amended</span>}
+                    {tagOf(o) && <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{tagOf(o)}</span>}
                     <span className="truncate text-[13px]">{o.contractor || 'no gang'}</span>
                   </span>
                   <span className="block truncate text-xs text-muted-foreground">

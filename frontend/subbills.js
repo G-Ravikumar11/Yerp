@@ -65,10 +65,10 @@ async function loadSubBills() {
     ]);
     SUBWO.jobs = {};
     (got[1].jobs || []).forEach(function (j) { SUBWO.jobs[j.id] = j.number; });
-    // Only an approved order can be measured. An amended one stays in the list, read-only:
-    // it is where the work was measured before its revision took over.
-    var live = (got[0].orders || []).filter(function (o) { return subIsLive(o) || o.status === 'AMENDED'; })
-        .sort(function (a, b) { return (subIsLive(b) ? 1 : 0) - (subIsLive(a) ? 1 : 0); });
+    // Every order is listed, so none can go missing. Only an approved one can be measured; the rest say why not.
+    var rank = { APPROVED: 0, EXECUTED: 0, PROVISIONAL: 1, DRAFT: 2, AMENDED: 3, CANCELLED: 4 };
+    var rankOf = function (o) { return rank[o.status] === undefined ? 5 : rank[o.status]; };
+    var live = (got[0].orders || []).slice().sort(function (a, b) { return rankOf(a) - rankOf(b); });
     SUBWO.orders = live;
     pick.innerHTML = live.length
         ? live.map(function (o) {
@@ -165,7 +165,7 @@ function subWoRender() {
             'onmousedown="event.preventDefault();subWoChoose(' + o.id + ')">' +
             '<div class="wo-opt-top"><span class="wo-opt-no">' + esc(o.wo_number) + '</span>' +
             (subJobCode(o) ? '<span class="wo-opt-job">' + esc(subJobCode(o)) + '</span>' : '') +
-            (o.status === 'AMENDED' ? '<span class="wo-opt-tag">amended</span>' : '') +
+            (subTag(o) ? '<span class="wo-opt-tag">' + subTag(o) + '</span>' : '') +
             '<span class="wo-opt-gang">' + esc(o.contractor || 'no gang') + '</span></div>' +
             '<div class="wo-opt-sub">' + esc(o.project || '') + (o.subject ? ' · ' + esc(o.subject) : '') + '</div></div>';
     }).join('') : '<div class="wo-none">No work order matches that.</div>') +
@@ -265,25 +265,37 @@ function subCodeReset(focus) {
     if (focus !== false && !input.disabled && input.offsetParent !== null) input.focus();
 }
 
-/* An amended order is kept for reference. Its revision is where new work is measured. */
+/* An order that cannot be measured is still in the list, so none goes missing. Say why,
+   and for an amended one, where new work is measured instead. */
+var SUBTAGS = { AMENDED: 'amended', PROVISIONAL: 'awaiting approval', DRAFT: 'draft', CANCELLED: 'cancelled' };
+var SUBWHY = {
+    AMENDED: 'was amended. Its record is shown for reference and cannot take new measurements.',
+    PROVISIONAL: 'is waiting for approval. It can be measured once it is approved.',
+    DRAFT: 'is still a draft. It can be measured once it is submitted and approved.',
+    CANCELLED: 'was cancelled. Nothing can be measured against it.',
+};
+function subTag(o) { return SUBTAGS[o.status] || ''; }
+
 function subAmendNote() {
     var host = document.getElementById('sub-amend-note');
     var input = document.getElementById('sub-code');
     var o = SUB.order;
-    var amended = !!o && o.status === 'AMENDED';
+    var blocked = !!o && !subIsLive(o);
     if (input) {
-        input.disabled = amended;
-        input.placeholder = amended ? 'Amended - measure against the revision'
+        input.disabled = blocked;
+        input.placeholder = blocked ? 'This work order cannot take measurements yet'
             : 'Type an item code to measure it (e.g. 1.2)';
     }
     if (!host) return;
-    if (!amended) { host.innerHTML = ''; return; }
-    var rev = SUBWO.orders.filter(function (x) { return x.supersedes_id === o.id && subIsLive(x); })[0];
+    if (!blocked) { host.innerHTML = ''; return; }
+    var rev = o.status === 'AMENDED'
+        ? SUBWO.orders.filter(function (x) { return x.supersedes_id === o.id && subIsLive(x); })[0] : null;
+    var why = rev
+        ? 'was amended and replaced by <strong style="font-family:monospace;">' + esc(rev.wo_number) +
+          '</strong>. Measure against the revision; what was measured and billed here carried across to it.'
+        : (SUBWHY[o.status] || 'is ' + esc(String(o.status || '').toLowerCase()) + ' and cannot be measured.');
     host.innerHTML = '<div class="sub-amend-note" role="status"><span><strong style="font-family:monospace;">' +
-        esc(o.wo_number) + '</strong> was amended' +
-        (rev ? ' and replaced by <strong style="font-family:monospace;">' + esc(rev.wo_number) +
-            '</strong>. Measure against the revision; what was measured and billed here carried across to it.'
-            : '. Its record is shown for reference and cannot take new measurements.') + '</span>' +
+        esc(o.wo_number) + '</strong> ' + why + '</span>' +
         (rev ? '<button class="btn btn-sm btn-primary" onclick="subWoChoose(' + rev.id + ')">Open ' + esc(rev.wo_number) + '</button>' : '') +
         '</div>';
 }
@@ -310,7 +322,7 @@ window.openSubBook = openSubBook;
 
 function renderSubBook() {
     var s = SUB.summary;
-    var amended = !!SUB.order && SUB.order.status === 'AMENDED';
+    var amended = !!SUB.order && !subIsLive(SUB.order);
     subAmendNote();
     document.getElementById('sub-stats').innerHTML =
         statCard('Order value', formatCurrency(s.ordered_value || 0)) +
