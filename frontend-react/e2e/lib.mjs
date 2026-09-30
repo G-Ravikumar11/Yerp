@@ -18,14 +18,25 @@ const [OWNER_EMAIL, OWNER_PASSWORD] = (process.env.OWNER || 'owner@yprojects.co.
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-export async function launch({ width = 1440, height = 1000 } = {}) {
+export async function launch({ width = 1440, height = 1000, allow = [] } = {}) {
   const browser = await puppeteer.launch({ executablePath: BROWSER, headless: 'new', args: ['--no-sandbox', '--disable-gpu'], defaultViewport: { width, height } })
   const page = await browser.newPage()
   const problems = []
   page.on('pageerror', (e) => problems.push('page error: ' + e.message))
   page.on('console', (m) => {
     // A 401 before sign-in is expected; anything else in the console is not.
-    if (m.type() === 'error' && !/401|Unauthorized/.test(m.text())) problems.push('console: ' + m.text())
+    if (m.type() === 'error' && !/Failed to load resource|401|Unauthorized/.test(m.text())) problems.push('console: ' + m.text())
+  })
+  // The server's own words for every refusal, so a failing check can be read.
+  page.on('response', async (res) => {
+    if (res.status() < 400 || res.status() === 401) return
+    let body = ''
+    try {
+      body = (await res.text()).slice(0, 160)
+    } catch {
+      // The page moved on before the body was read.
+    }
+    problems.push(`${res.status()} ${res.request().method()} ${res.url().replace(BASE, '')} ${body}`)
   })
   const results = []
   const check = (name, ok, extra = '') => {
@@ -34,11 +45,13 @@ export async function launch({ width = 1440, height = 1000 } = {}) {
     return ok
   }
   const done = async () => {
-    console.log('\nbrowser problems:', problems.length ? problems : 'none')
+    // Refusals a test provokes on purpose are listed in `allow`; anything else is a problem.
+    const unexpected = problems.filter((p) => !allow.some((re) => re.test(p)))
+    console.log('\nbrowser problems:', unexpected.length ? unexpected : 'none')
     const failed = results.filter((r) => !r.ok).length
     console.log(`${results.length - failed}/${results.length} checks passed`)
     await browser.close()
-    process.exit(failed || problems.length ? 1 : 0)
+    process.exit(failed || unexpected.length ? 1 : 0)
   }
   return { browser, page, check, done, problems }
 }
@@ -160,6 +173,22 @@ export async function fill(page, selector, value) {
   if (value) await page.keyboard.type(value)
   else await page.keyboard.press('Backspace')
 }
+
+/** Set a field the way React notices (date inputs cannot be typed into reliably in a headless browser). */
+export async function setValue(page, selector, value) {
+  await page.$eval(
+    selector,
+    (el, value) => {
+      const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value)
+      el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }))
+    },
+    value,
+  )
+}
+
+/** Wait for every toast to leave - they sit bottom-right and can cover what a test is about to click. */
+export const toastsGone = (page, timeout = 12000) => page.waitForFunction(() => !document.querySelector('[aria-live=polite] [role=status], [aria-live=polite] [role=alert]'), { timeout })
 
 /** The body text of the first toast on screen. */
 export const toastText = (page) => page.evaluate(() => document.querySelector('[aria-live=polite] [role=status], [aria-live=polite] [role=alert]')?.textContent.trim() ?? '')

@@ -49,6 +49,41 @@ export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLab
   return <label className={cn('text-[13px] font-medium text-foreground', className)} {...props} />
 }
 
+/**
+ * A number the person is typing. It keeps their own text while they type, so
+ * "0." and "0.5" survive on the way, and hands over a real number only when
+ * the text is one - a plain controlled number input cannot do both.
+ */
+export function NumField({
+  value,
+  onValue,
+  className,
+  ...props
+}: Omit<InputProps, 'value' | 'onChange' | 'type'> & { value: number | null | undefined; onValue: (n: number) => void }) {
+  const [text, setText] = React.useState(value ? String(value) : '')
+  // Follow the outside value when it was changed from elsewhere (a reload, a reset).
+  const shown = Number(text || 0)
+  React.useEffect(() => {
+    if ((value ?? 0) !== shown) setText(value ? String(value) : '')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value])
+  return (
+    <Input
+      {...props}
+      inputMode="decimal"
+      className={cn('tabular text-right', className)}
+      value={text}
+      onChange={(e) => {
+        const t = e.target.value
+        if (t !== '' && !/^-?\d*\.?\d*$/.test(t)) return
+        setText(t)
+        const n = t === '' || t === '-' || t === '.' ? 0 : Number(t)
+        if (Number.isFinite(n)) onValue(n)
+      }}
+    />
+  )
+}
+
 /** A label, its control and the reason it is wrong - the unit forms are built from. */
 export function Field({
   label,

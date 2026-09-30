@@ -107,8 +107,47 @@ export function watchConnection() {
   window.addEventListener('online', on)
   window.addEventListener('offline', off)
   if (navigator.onLine) void useOffline.getState().flush()
+
+  // A request can fail while the browser still believes it is online (a
+  // dropped mobile signal, a server restarting). Ask the server itself now
+  // and then, so a queue never waits on an event that will not come.
+  const probe = window.setInterval(async () => {
+    const s = useOffline.getState()
+    if (s.online && !s.queue.length) return
+    try {
+      const res = await fetch('/api/health', { cache: 'no-store' })
+      if (res.ok && !s.online) s.setOnline(true)
+      else if (res.ok && s.queue.some((q) => q.status === 'waiting')) void s.flush()
+    } catch {
+      if (s.online) s.setOnline(false)
+    }
+  }, 15_000)
+
   return () => {
     window.removeEventListener('online', on)
     window.removeEventListener('offline', off)
+    window.clearInterval(probe)
+  }
+}
+
+/**
+ * Send a change now, or keep it for later. With no connection - known
+ * (the browser says offline) or discovered (the request could not leave) -
+ * the change goes on the queue and the caller is told so. A refusal from the
+ * server is never queued: that is an answer, not an absence.
+ */
+export async function sendOrQueue<T>(req: Pick<QueuedRequest, 'method' | 'url' | 'body' | 'label'>): Promise<{ queued: true } | { queued: false; result: T }> {
+  const state = useOffline.getState()
+  if (!state.online) {
+    state.enqueue(req)
+    return { queued: true }
+  }
+  try {
+    return { queued: false, result: await api<T>(req.url, { method: req.method, body: req.body }) }
+  } catch (e) {
+    if (e instanceof ApiError) throw e
+    useOffline.getState().setOnline(false)
+    useOffline.getState().enqueue(req)
+    return { queued: true }
   }
 }

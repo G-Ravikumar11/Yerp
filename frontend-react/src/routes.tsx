@@ -12,4 +12,7 @@ export interface PortedRoute {
 
 export const PORTED: PortedRoute[] = [
   { path: '/store/items', Component: lazy(() => import('@/features/items/ItemMasterPage')) },
+  { path: '/subcontractors/work-orders', Component: lazy(() => import('@/features/orders/OrdersPage')) },
+  { path: '/subcontractors/measurement-book', Component: lazy(() => import('@/features/measurement/MeasurementBookPage')) },
+  { path: '/subcontractors/work-orders/:id', Component: lazy(() => import('@/features/orders/OrderPage')) },
 ]

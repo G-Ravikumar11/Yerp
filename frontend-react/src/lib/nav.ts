@@ -125,6 +125,12 @@ export function trailFor(pathname: string): Trail {
       if (hit) return [...home, { label: e.label }, { label: hit.label }]
     }
   }
+  // A page inside a section: /subcontractors/work-orders/12 sits under Work Orders.
+  for (const e of NAV) {
+    if (e.kind !== 'group') continue
+    const parent = e.items.find((i) => pathname.startsWith(i.path + '/'))
+    if (parent) return [...home, { label: e.label }, { label: parent.label, path: parent.path }, { label: 'Details' }]
+  }
   return [...home, { label: 'Not found' }]
 }
 
@@ -138,7 +144,7 @@ export function visibleNav(can: (perm: string) => boolean): NavEntry[] {
 }
 
 export function groupFor(pathname: string): string | null {
-  for (const e of NAV) if (e.kind === 'group' && e.items.some((i) => i.path === pathname)) return e.id
+  for (const e of NAV) if (e.kind === 'group' && e.items.some((i) => i.path === pathname || pathname.startsWith(i.path + '/'))) return e.id
   return null
 }
 

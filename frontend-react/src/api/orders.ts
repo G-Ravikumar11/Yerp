@@ -63,7 +63,15 @@ export interface BillingHead {
   head: string
   rate: number | null
   amount: number
-  kind: 'base' | 'add' | 'less' | 'net' | string
+  kind: 'base' | 'add' | 'total' | 'info' | 'hold' | 'less' | 'net' | string
+  note?: string
+}
+
+export interface BillingSchedule {
+  rows: BillingHead[]
+  intra_state: boolean
+  place_of_supply: string
+  contractor_state: string
 }
 
 export interface Order {
@@ -119,7 +127,7 @@ export interface Order {
   items?: OrderItem[]
   terms?: OrderTerm[]
   history?: OrderHistory[]
-  billing_schedule?: BillingHead[]
+  billing_schedule?: BillingSchedule
   advance_paid?: number
   pending_with?: string[]
   approval_route?: RouteStep[]

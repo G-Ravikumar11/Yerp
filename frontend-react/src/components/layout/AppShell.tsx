@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import { useSession } from '@/lib/session'
 import { useUI } from '@/stores/ui'
 import { Button, Skeleton } from '@/components/ui'
+import { PageErrorBoundary } from './PageErrorBoundary'
 import { Sidebar, SIDEBAR_COLLAPSED, SIDEBAR_WIDTH } from './Sidebar'
 import { Topbar } from './Topbar'
 
@@ -69,6 +70,7 @@ export function AppShell() {
                 </Button>
               </div>
             ) : (
+              <PageErrorBoundary resetKey={pathname}>
               <Suspense
                 fallback={
                   <div className="space-y-4" role="status" aria-label="Loading">
@@ -79,6 +81,7 @@ export function AppShell() {
               >
                 <Outlet />
               </Suspense>
+              </PageErrorBoundary>
             )}
           </motion.div>
         </main>

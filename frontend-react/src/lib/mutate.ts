@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query'
 import { ApiError } from './api'
+import { useOffline } from '@/stores/offline'
 import { toast } from '@/stores/toast'
 
 interface Options<TVars, TRes> {
@@ -24,7 +25,10 @@ export function useAction<TVars = void, TRes extends object | void = { message?:
   return useMutation({
     mutationFn: run,
     onSuccess: async (res, vars) => {
-      await Promise.all(invalidate.map((key) => qc.invalidateQueries({ queryKey: key })))
+      const refresh = Promise.all(invalidate.map((key) => qc.invalidateQueries({ queryKey: key })))
+      // A refresh cannot finish without a connection; waiting on it would hold
+      // the screen open on a change that was, correctly, only kept for later.
+      if (useOffline.getState().online) await refresh
       const r = res as NonNullable<TRes>
       if (success !== false) {
         const text = typeof success === 'function' ? success(r, vars) : (success ?? (r as { message?: string })?.message)
