@@ -21,6 +21,8 @@ export interface Column<T> {
   align?: 'left' | 'right' | 'center'
   /** For `select` columns: the only answers there are. */
   options?: readonly Option[]
+  /** A `select` that also takes what is typed when nothing in the list matches - a unit nobody listed. */
+  freeText?: boolean
   /** A computed column is `readOnly` with a `get`. May depend on the row. */
   readOnly?: boolean | ((row: T, index: number) => boolean)
   get?: (row: T, index: number) => CellValue

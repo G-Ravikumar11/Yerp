@@ -115,6 +115,7 @@ export function CellEditor<T>({
     const pick = options[hi]
     if (pick) return finish(optionLabel(pick), move)
     if (!text.trim()) return finish(currentLabel ?? '', move)
+    if (column.freeText) return finish(text.trim(), move)
     setError('Not one of the choices')
   }
 
@@ -148,7 +149,15 @@ export function CellEditor<T>({
   const numeric = column.type === 'number'
 
   return (
-    <div ref={boxRef} data-cell-editor className="absolute inset-0 z-30">
+    <div
+      ref={boxRef}
+      data-cell-editor
+      // The box and its list of choices sit inside the cell in the page's tree: a click on either must not
+      // reach the cell and close the editor before the click lands.
+      onMouseDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      className="absolute inset-0 z-30"
+    >
       <input
         ref={inputRef}
         value={text}

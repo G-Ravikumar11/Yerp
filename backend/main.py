@@ -18042,6 +18042,23 @@ WO_EDITABLE = ("DRAFT",)
 WO_DEPARTMENTS = ("Civil", "STP", "Electrical", "Mechanical", "Plumbing", "Finishing")
 
 
+def wo_department_choices(db, client_id):
+    """The departments an order can be raised for: the ones the owner has created.
+
+    A business that has not created any yet gets the six trades it would have had, so the
+    picker is never empty. Any department already on an order stays in the list, so an
+    old order can still be opened and saved after a department has been renamed or removed."""
+    made = [d.name for d in db.query(models.DBDepartment).filter(
+        models.DBDepartment.client_id == client_id).order_by(models.DBDepartment.name).all() if (d.name or "").strip()]
+    names = made or list(WO_DEPARTMENTS)
+    used = db.query(models.DBSubcontractOrder.department).filter(
+        models.DBSubcontractOrder.client_id == client_id).distinct().all()
+    for (dept,) in used:
+        if dept and dept not in names:
+            names.append(dept)
+    return names
+
+
 def wo_actor(request, db, permission="workorders.manage"):
     """The tenant, plus who is doing this, for the approval history."""
     client = require_items_access(request, db, permission)
@@ -19364,7 +19381,7 @@ def wo_vocabulary(request: Request, db: Session = Depends(get_db)):
         models.DBWorkType.status == "active").order_by(
             models.DBWorkType.department, models.DBWorkType.name).all()
     return {
-        "departments": list(WO_DEPARTMENTS),
+        "departments": wo_department_choices(db, client.id),
         "uoms": list(UNITS_OF_MEASURE),
         "clause_categories": list(WO_CLAUSE_CATEGORIES),
         "statuses": list(WO_TRANSITIONS.keys()),

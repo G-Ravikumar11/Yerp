@@ -157,3 +157,16 @@ describe('validation', () => {
     expect(rangeNumbers(columns, [line({ qty: 2, rate: 3 }), line({ qty: 4 })], { r0: 0, r1: 1, c0: 3, c1: 4 })).toEqual([2, 3, 4])
   })
 })
+
+describe('a pick column that also takes what is typed', () => {
+  const col = { id: 'uom', header: 'Unit', type: 'select' as const, options: ['cum', 'sqm'], freeText: true }
+  it('keeps a unit nobody listed, tidied', () => {
+    expect(coerce(col, '  Lump sum ')).toEqual({ ok: true, value: 'Lump sum' })
+  })
+  it('still matches a listed unit whatever its case', () => {
+    expect(coerce(col, 'SQM')).toEqual({ ok: true, value: 'sqm' })
+  })
+  it('refuses an unlisted one when the column is not free', () => {
+    expect(coerce({ ...col, freeText: false }, 'Lump sum')).toEqual({ ok: false, error: 'Not one of the choices' })
+  })
+})

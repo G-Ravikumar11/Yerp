@@ -1,0 +1,1 @@
+import{I as e,L as t,R as n,Z as r}from"./index-DYLbSKiI.js";var i={all:[`customers`],list:e=>[`customers`,`list`,e]},a=t=>r({queryKey:i.list(t),queryFn:async()=>(await e(`/api/customers?q=${encodeURIComponent(t)}`)).customers??[],placeholderData:e=>e}),o=e=>t(`/api/customers`,e),s=(e,t)=>n(`/api/customers/${e}`,t);export{a as i,i as n,s as r,o as t};

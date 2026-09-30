@@ -108,7 +108,7 @@ export function coerce<T>(col: Column<T>, raw: string): Parsed<CellValue> {
     case 'select': {
       if (!raw.trim()) return { ok: true, value: emptyFor(col) }
       const o = matchOption(col.options, raw)
-      return o ? { ok: true, value: optionValue(o) } : { ok: false, error: 'Not one of the choices' }
+      return o ? { ok: true, value: optionValue(o) } : col.freeText && raw.trim() ? { ok: true, value: raw.trim() } : { ok: false, error: 'Not one of the choices' }
     }
     default:
       return { ok: true, value: raw.trim() }
