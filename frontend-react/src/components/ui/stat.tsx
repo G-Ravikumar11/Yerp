@@ -20,12 +20,12 @@ export function Stat({
   className?: string
 }) {
   return (
-    <div className={cn('rounded-xl border border-border bg-card p-4 shadow-card', className)}>
+    <div className={cn('min-w-0 rounded-xl border border-border bg-card p-4 shadow-card', className)}>
       <p className="text-[12.5px] text-muted-foreground">{label}</p>
       {loading ? (
         <Skeleton className="mt-2.5 h-7 w-28" />
       ) : (
-        <p className={cn('tabular mt-1.5 font-display text-2xl font-semibold leading-tight', tone && toneClass[tone])}>{value}</p>
+        <p className={cn('tabular mt-1.5 break-words font-display text-xl font-semibold leading-tight sm:text-2xl', tone && toneClass[tone])}>{value}</p>
       )}
       {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
     </div>

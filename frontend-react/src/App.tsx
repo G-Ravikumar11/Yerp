@@ -1,10 +1,11 @@
 import { lazy, Suspense, useEffect } from 'react'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
-import { QueryClientProvider } from '@tanstack/react-query'
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
+import { MotionConfig } from 'framer-motion'
 import { AppShell } from '@/components/layout/AppShell'
 import { Toaster, TooltipProvider } from '@/components/ui'
 import { allRoutes } from '@/lib/nav'
-import { queryClient } from '@/lib/query'
+import { persistOptions, queryClient } from '@/lib/query'
 import { watchConnection } from '@/stores/offline'
 import { applyTheme, useUI } from '@/stores/ui'
 import { PORTED } from '@/routes'
@@ -31,8 +32,17 @@ export default function App() {
 
   useEffect(() => watchConnection(), [])
 
+  // Any request answered "not signed in" means the session ended: ask who is signed in
+  // again, and the app goes to the sign-in page rather than draw failures.
+  useEffect(() => {
+    const on = () => void queryClient.invalidateQueries({ queryKey: ['session'] })
+    window.addEventListener('yerp:unauthorised', on)
+    return () => window.removeEventListener('yerp:unauthorised', on)
+  }, [])
+
   return (
-    <QueryClientProvider client={queryClient}>
+    <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
+      <MotionConfig reducedMotion="user">
       <TooltipProvider>
         <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
           <Routes>
@@ -68,6 +78,7 @@ export default function App() {
         </BrowserRouter>
         <Toaster />
       </TooltipProvider>
-    </QueryClientProvider>
+      </MotionConfig>
+    </PersistQueryClientProvider>
   )
 }

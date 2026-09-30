@@ -174,7 +174,7 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
       </StatGrid>
 
       <div className="grid gap-5 lg:grid-cols-3">
-        <div className="space-y-5 lg:col-span-2">
+        <div className="min-w-0 space-y-5 lg:col-span-2">
           <div>
             <h2 className="mb-3 text-lg font-semibold">What is being claimed</h2>
             <DataTable
@@ -232,7 +232,7 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
           </Card>
         </div>
 
-        <div className="space-y-5">
+        <div className="min-w-0 space-y-5">
           <Card>
             <CardHeader>
               <CardTitle>Certificate of payment</CardTitle>

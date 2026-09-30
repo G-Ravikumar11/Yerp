@@ -18,7 +18,7 @@ const pnl = (await api(page, 'GET', '/api/jobs-pnl')).data
 await open(page, '/')
 await page.waitForFunction(() => document.querySelectorAll('figure svg').length >= 3, { timeout: 15000 })
 await sleep(1500) // let the figures finish counting up
-const tiles = await page.$$eval('main .font-display.text-2xl', (els) => els.map((e) => e.textContent.trim()))
+const tiles = await page.$$eval('main p.font-display', (els) => els.map((e) => e.textContent.trim()))
 check('the Owed to us tile matches the ledger', tiles.includes(compact(rec.owed)), `${compact(rec.owed)} in ${JSON.stringify(tiles)}`)
 check('the We owe tile matches the payables', tiles.includes(compact(pay.owed)), compact(pay.owed))
 check('the order book tile matches the project P&L', tiles.includes(compact(pnl.summary.order_value)), compact(pnl.summary.order_value))

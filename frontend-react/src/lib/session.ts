@@ -76,9 +76,12 @@ export function useSession() {
     user,
     can,
     isLoading: q.isPending,
-    isAnonymous: !q.isPending && !user,
+    // Only an answer of "nobody" is signed out. No answer at all (no signal) is not.
+    isAnonymous: q.isSuccess && !user,
     isOwner: user?.type === 'owner',
-    error: q.error,
+    // A failed refresh with a person already known (offline, or the server restarting) is not
+    // "could not reach the server" - the person is still there, and so is their data.
+    error: user ? null : q.error,
   }
 }
 

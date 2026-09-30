@@ -1,4 +1,5 @@
 import { useReducedMotion } from 'framer-motion'
+import { useMinWidth } from '@/lib/hooks'
 import { Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { ProjectPnl } from '@/api/dashboard'
 import { ageing, type MonthFlow } from '@/lib/cashflow'
@@ -46,6 +47,7 @@ const legend = (value: string) => <span className="text-xs text-muted-foreground
 /** Revenue against cost for each project, the biggest first. Margin is in the tooltip - and red when it is a loss. */
 export function ProfitChart({ projects }: { projects: ProjectPnl[] }) {
   const calm = useReducedMotion()
+  const wide = useMinWidth(640)
   const data = projects
     .slice()
     .sort((a, b) => b.order_value - a.order_value)
@@ -77,7 +79,7 @@ export function ProfitChart({ projects }: { projects: ProjectPnl[] }) {
               )
             }}
           />
-          <Legend verticalAlign="top" align="right" iconType="circle" iconSize={8} formatter={legend} />
+          <Legend verticalAlign="top" align={wide ? 'right' : 'left'} iconType="circle" iconSize={8} formatter={legend} />
           <Bar name="Revenue" dataKey="revenue" fill={ACCENT} radius={[0, 6, 6, 0]} maxBarSize={22} isAnimationActive={!calm} />
           <Bar name="Cost" dataKey="incurred" fill={PAID} radius={[0, 6, 6, 0]} maxBarSize={22} isAnimationActive={!calm} />
         </BarChart>
@@ -89,6 +91,7 @@ export function ProfitChart({ projects }: { projects: ProjectPnl[] }) {
 /** Money in and out by month, with the running balance drawn over it. */
 export function CashFlowChart({ months }: { months: MonthFlow[] }) {
   const calm = useReducedMotion()
+  const wide = useMinWidth(640)
   return (
     <figure aria-label="Cash flow by month" className="m-0 h-full min-h-[300px]">
       <ResponsiveContainer width="100%" height="100%">
@@ -115,7 +118,7 @@ export function CashFlowChart({ months }: { months: MonthFlow[] }) {
               )
             }}
           />
-          <Legend verticalAlign="top" align="right" iconType="circle" iconSize={8} formatter={legend} />
+          <Legend verticalAlign="top" align={wide ? 'right' : 'left'} iconType="circle" iconSize={8} formatter={legend} />
           <Bar name="Received" dataKey="received" fill={RECEIVED} radius={[6, 6, 0, 0]} maxBarSize={26} isAnimationActive={!calm} />
           <Bar name="Paid out" dataKey="paid" fill={PAID} radius={[6, 6, 0, 0]} maxBarSize={26} isAnimationActive={!calm} />
           <Line name="Running balance" type="monotone" dataKey="running" stroke={ACCENT} strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} isAnimationActive={!calm} />
@@ -128,6 +131,7 @@ export function CashFlowChart({ months }: { months: MonthFlow[] }) {
 /** What is owed to us and what we owe, by how long it has been owing. */
 export function AgeingChart({ receivable, payable }: { receivable: Record<string, number> | undefined; payable: Record<string, number> | undefined }) {
   const calm = useReducedMotion()
+  const wide = useMinWidth(640)
   const rows = ageing(receivable, payable)
   return (
     <figure aria-label="Owed to us and owed by us, by age" className="m-0 h-full min-h-[260px]">
@@ -146,7 +150,7 @@ export function AgeingChart({ receivable, payable }: { receivable: Record<string
               />
             )}
           />
-          <Legend verticalAlign="top" align="right" iconType="circle" iconSize={8} formatter={legend} />
+          <Legend verticalAlign="top" align={wide ? 'right' : 'left'} iconType="circle" iconSize={8} formatter={legend} />
           <Bar name="Owed to us" dataKey="receivable" fill={RECEIVED} radius={[6, 6, 0, 0]} maxBarSize={30} isAnimationActive={!calm} />
           <Bar name="We owe" dataKey="payable" fill={PAID} radius={[6, 6, 0, 0]} maxBarSize={30} isAnimationActive={!calm} />
         </BarChart>

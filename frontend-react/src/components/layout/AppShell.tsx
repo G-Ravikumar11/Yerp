@@ -1,6 +1,7 @@
 import { Suspense, useEffect } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { trailFor } from '@/lib/nav'
 import { useSession } from '@/lib/session'
 import { useUI } from '@/stores/ui'
 import { Button, Skeleton } from '@/components/ui'
@@ -19,6 +20,12 @@ export function AppShell() {
   const { isLoading, isAnonymous, error } = useSession()
   // The design pages are open to anyone; everything else needs a signed-in person.
   const gated = !pathname.startsWith('/design')
+
+  // The tab and the history say where you are, and a screen reader hears the change.
+  useEffect(() => {
+    const trail = trailFor(pathname)
+    document.title = `${trail[trail.length - 1].label} - Y ERP`
+  }, [pathname])
 
   // Signed out: go to the sign-in page rather than draw a page full of failures.
   useEffect(() => {
@@ -46,7 +53,7 @@ export function AppShell() {
         className="max-lg:!pl-0"
       >
         <Topbar />
-        <main id="main" className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+        <main id="main" className="mx-auto w-full min-w-0 max-w-[1600px] overflow-x-clip px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
           <motion.div
             key={pathname}
             initial={{ opacity: 0, y: 10 }}

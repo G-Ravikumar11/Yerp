@@ -3,7 +3,7 @@ import { dimQty, dimTotal, type DimLine } from '@/lib/measure'
 
 /** The dimension sheet of a measurement book: what, how many, how big - and what it comes to. */
 export const dimColumns: Column<DimLine>[] = [
-  { id: 'particulars', header: 'Particulars', hint: 'Slab, Beam, Deductions...', width: 260, pin: true, placeholder: 'What was measured?' },
+  { id: 'particulars', header: 'Particulars', hint: 'Slab, Beam, Deductions...', width: 190, pin: true, placeholder: 'What was measured?' },
   { id: 'nos', header: "No's", type: 'number', width: 84 },
   { id: 'nom', header: 'NoM', hint: 'Times', type: 'number', width: 84 },
   { id: 'length', header: 'Length', hint: 'm', type: 'number', decimals: 3, width: 104 },

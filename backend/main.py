@@ -37369,6 +37369,9 @@ class SinglePageApp(StaticFiles):
 
 next_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend-next")
 if os.path.isdir(next_path):
+    # Not every platform's mime table knows the app manifest; without the right type a browser will not offer to install.
+    import mimetypes
+    mimetypes.add_type("application/manifest+json", ".webmanifest")
     # Before the "/" mount below, which would otherwise answer /next itself.
     app.mount("/next", SinglePageApp(directory=next_path, html=True), name="frontend-next")
 

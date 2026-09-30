@@ -1,13 +1,16 @@
 import { Fragment } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { useQueryClient } from '@tanstack/react-query'
-import { ChevronRight, LogOut, Menu, Monitor, Moon, Sun } from 'lucide-react'
+import { ChevronRight, Download, LogOut, Menu, Monitor, Moon, Sun } from 'lucide-react'
 import { post } from '@/lib/api'
+import { useInstall } from '@/lib/install'
+import { forgetLocalData } from '@/lib/query'
+import { useOffline } from '@/stores/offline'
 import { trailFor } from '@/lib/nav'
 import { initials, useSession } from '@/lib/session'
 import { cn } from '@/lib/utils'
 import { type Theme, useUI } from '@/stores/ui'
-import { Skeleton, Tooltip } from '@/components/ui'
+import { useState } from 'react'
+import { ConfirmDialog, Skeleton, Tooltip } from '@/components/ui'
 import { SyncIndicator } from './SyncIndicator'
 
 function Breadcrumbs() {
@@ -73,16 +76,19 @@ function ThemeSwitch() {
 
 function UserChip() {
   const { user, isLoading } = useSession()
-  const qc = useQueryClient()
+  const unsent = useOffline((s) => s.queue.length)
+  const [asking, setAsking] = useState(false)
   if (isLoading) return <Skeleton className="h-9 w-28 rounded-lg" />
 
   const signOut = async () => {
     try {
       await post(user?.type === 'employee' ? '/api/employee/auth/logout' : '/api/client/logout')
     } catch {
-      // Already signed out is the same as signed out.
+      // Already signed out - or no signal - either way this device is done with them.
     }
-    qc.clear()
+    // What this device kept for them - the data, and any change not yet sent - goes too.
+    useOffline.setState({ queue: [] })
+    await forgetLocalData()
     window.location.assign('/login.html')
   }
 
@@ -95,12 +101,34 @@ function UserChip() {
       </span>
       {user && (
         <Tooltip content="Sign out" side="bottom">
-          <button type="button" onClick={signOut} aria-label="Sign out" className="grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+          <button type="button" onClick={() => (unsent ? setAsking(true) : void signOut())} aria-label="Sign out" className="grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
             <LogOut className="size-4" />
           </button>
         </Tooltip>
       )}
+      <ConfirmDialog
+        open={asking}
+        onOpenChange={setAsking}
+        title="Sign out with changes unsent?"
+        description={`${unsent} change${unsent === 1 ? ' is' : 's are'} still on this device, waiting for a connection. Signing out throws ${unsent === 1 ? 'it' : 'them'} away. Stay signed in and they go up as soon as the signal returns.`}
+        confirmLabel="Discard and sign out"
+        tone="danger"
+        onConfirm={() => signOut()}
+      />
     </div>
+  )
+}
+
+/** Offered only when the browser says the app can be installed, and never once it has been. */
+function InstallButton() {
+  const { canInstall, install } = useInstall()
+  if (!canInstall) return null
+  return (
+    <Tooltip content="Put Y ERP on this device" side="bottom">
+      <button type="button" onClick={() => void install()} className="hidden items-center gap-1.5 rounded-full bg-primary-soft px-3 py-1.5 text-xs font-medium text-primary ring-1 ring-inset ring-primary/25 transition-colors hover:brightness-110 sm:inline-flex">
+        <Download className="size-3.5" /> Install
+      </button>
+    </Tooltip>
   )
 }
 
@@ -119,6 +147,7 @@ export function Topbar() {
         </button>
         <Breadcrumbs />
         <div className="ml-auto flex items-center gap-3">
+          <InstallButton />
           <SyncIndicator />
           <ThemeSwitch />
           <span className="hidden h-6 w-px bg-border sm:block" aria-hidden />

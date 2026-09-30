@@ -30,6 +30,18 @@ export function Toaster() {
             >
               <Icon className={cn('mt-0.5 size-[18px] shrink-0', tones[t.tone])} />
               <p className="min-w-0 flex-1 text-[13.5px] leading-snug">{t.message}</p>
+              {t.action && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    t.action!.onClick()
+                    dismiss(t.id)
+                  }}
+                  className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground hover:brightness-110"
+                >
+                  {t.action.label}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => dismiss(t.id)}

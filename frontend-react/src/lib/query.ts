@@ -24,3 +24,39 @@ export const queryClient = new QueryClient({
     mutations: { networkMode: 'offlineFirst' },
   },
 })
+
+/* --- Kept on the device ------------------------------------------------------
+   What was last read is written to IndexedDB, so a screen opened with no signal
+   still has something to show. It is cleared on sign-out, and each build has
+   its own stamp so data saved by an older one is never trusted by a newer.   */
+
+import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister'
+import { del, get as idbGet, set as idbSet } from 'idb-keyval'
+
+declare const __BUILD__: string
+
+export const persister = createAsyncStoragePersister({
+  key: 'yerp-query-cache',
+  throttleTime: 1500,
+  storage: {
+    getItem: (key) => idbGet(key),
+    setItem: (key, value) => idbSet(key, value),
+    removeItem: (key) => del(key),
+  },
+})
+
+export const persistOptions = {
+  persister,
+  maxAge: 24 * 60 * 60 * 1000,
+  buster: typeof __BUILD__ === 'undefined' ? 'dev' : __BUILD__,
+  dehydrateOptions: {
+    // Only what was read successfully; never a query still waiting or failed.
+    shouldDehydrateQuery: (q: { state: { status: string } }) => q.state.status === 'success',
+  },
+}
+
+/** Everything this device is holding for the signed-in person. Called on sign-out. */
+export async function forgetLocalData() {
+  queryClient.clear()
+  await persister.removeClient()
+}

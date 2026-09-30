@@ -156,7 +156,7 @@ export default function GridPlayground() {
               ['12.5*8 or =(4+2)*3.5', 'sums work in any number cell'],
               ['Space on a tick box', 'tick or untick'],
             ].map(([k, v]) => (
-              <div key={k} className="flex items-baseline gap-2">
+              <div key={k} className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                 <dt className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">{k}</dt>
                 <dd className="text-muted-foreground">{v}</dd>
               </div>
