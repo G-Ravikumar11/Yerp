@@ -1,1 +1,0 @@
-var e=[`Jan`,`Feb`,`Mar`,`Apr`,`May`,`Jun`,`Jul`,`Aug`,`Sep`,`Oct`,`Nov`,`Dec`];function t(t){let n=/^(\d{4})-(\d{2})-(\d{2})/.exec(t??``);return n?`${n[3]} ${e[n[2]-1]??n[2]} ${n[1]}`:t??``}function n(e,t=3){return e==null?``:e.toLocaleString(`en-IN`,{maximumFractionDigits:t})}var r=()=>new Date().toISOString().slice(0,10);export{n,r,t};

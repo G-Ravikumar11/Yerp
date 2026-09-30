@@ -4,6 +4,7 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, ConfirmDialog, Stat, StatGrid } from '@/components/ui'
 import { actOnRaBill, bookKeys, useRaBills, type RaBill } from '@/api/clientBook'
 import { PayModal } from '@/features/money/PayModal'
+import { EInvoiceModal } from '@/features/einvoice/EInvoiceModal'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { compactINR, formatINR } from '@/lib/utils'
@@ -17,6 +18,7 @@ export function BillsPanel({ workOrderId }: { workOrderId: number }) {
   const q = useRaBills(workOrderId)
   const [paying, setPaying] = useState<RaBill | null>(null)
   const [sendingBack, setSendingBack] = useState<RaBill | null>(null)
+  const [einvoice, setEinvoice] = useState<number | null>(null)
   const refresh = [bookKeys.all]
   const act = useAction((a: { b: RaBill; action: 'submit' | 'certify' | 'reject'; comments?: string }) => actOnRaBill(a.b.id, a.action, a.comments ?? ''), { invalidate: refresh, onSuccess: () => setSendingBack(null) })
 
@@ -94,9 +96,9 @@ export function BillsPanel({ workOrderId }: { workOrderId: number }) {
             Excel
           </a>
           {(b.status === 'CERTIFIED' || b.status === 'PAID') && can('accounts.manage') && (
-            <a className={`${link} text-xs`} href={`/api/ra-bills/${b.id}/einvoice.json`} title="The file for the GST Invoice Registration Portal">
+            <button type="button" className={`${link} text-xs`} onClick={() => setEinvoice(b.id)} title="The file for the GST Invoice Registration Portal">
               e-Invoice
-            </a>
+            </button>
           )}
         </div>
       ),
@@ -115,6 +117,7 @@ export function BillsPanel({ workOrderId }: { workOrderId: number }) {
       </StatGrid>
       <DataTable label="Running account bills" rows={bills} columns={columns} rowKey={(b) => b.id} loading={q.isPending} empty="No bills yet. Measure the work, then draw one up." />
 
+      <EInvoiceModal docType="ra_bill" docId={einvoice} onClose={() => setEinvoice(null)} />
       {paying && <PayModal docType="ra_bill" docId={paying.id} title={paying.number} verb="Receive" open onOpenChange={(o) => !o && setPaying(null)} invalidate={[bookKeys.all]} />}
       <ConfirmDialog
         open={!!sendingBack}

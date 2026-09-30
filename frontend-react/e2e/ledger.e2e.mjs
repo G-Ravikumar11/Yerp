@@ -1,0 +1,81 @@
+import { clickText, fill, launch, open, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
+
+// Money > Payments & Ledgers: parties and statements, money on account, voiding, the bank book, suppliers.
+const { page, check, done } = await launch()
+await signIn(page)
+await open(page, '/money/ledgers')
+await page.waitForSelector('table[aria-label=Parties]')
+const main = () => page.$eval('main', (e) => e.textContent.replace(/\s+/g, ' '))
+const dialog = () => page.$eval('[role=dialog]', (e) => e.textContent.replace(/\s+/g, ' '))
+const stamp = Date.now().toString().slice(-6)
+
+check('the parties show who owes whom', (await main()).includes('Owed to us') && (await page.$$eval('table[aria-label=Parties] tbody tr', (r) => r.length)) >= 1)
+await clickText(page, 'table[aria-label=Parties] button', 'Statement')
+await page.waitForSelector('[role=dialog] table')
+check('a statement lists the bills and the money with a running balance and a closing line', (await dialog()).includes('Totals') && /Balance (payable|due)|Settled|Advance|Paid in advance/.test(await dialog()))
+await page.keyboard.press('Escape')
+await page.waitForFunction(() => !document.querySelector('[role=dialog]'))
+
+// Money in on account
+const payer = `QA Payer ${stamp}`
+await clickText(page, 'button', 'Money in on account')
+await page.waitForSelector('#oa-party')
+await fill(page, '#oa-party', payer)
+await fill(page, '#oa-amount', '12345')
+await fill(page, '#oa-ref', `UTR-${stamp}`)
+await clickText(page, 'button', 'Record the receipt')
+await waitForToast(page, 'RCT-')
+await page.waitForFunction(() => !document.querySelector('[role=dialog]'))
+await toastsGone(page)
+await sleep(500)
+check('money on account appears as a party with the balance the other way (paid ahead)', await page.evaluate((p) => [...document.querySelectorAll('table[aria-label=Parties] tbody tr')].some((r) => r.textContent.includes(p) && r.textContent.includes('12,345') && r.textContent.includes('paid ahead')), payer))
+
+await clickText(page, 'button[role=tab]', 'Receipts')
+await page.waitForSelector('table[aria-label="Receipts and payments"]')
+await fill(page, 'input[aria-label=Search]', payer)
+await sleep(400)
+check('it is in the receipts, against nothing, with its reference', await page.$eval('table[aria-label="Receipts and payments"] tbody', (e) => e.textContent.includes('on account') && e.textContent.includes('12,345')))
+await clickText(page, 'table[aria-label="Receipts and payments"] button', 'Void')
+await page.waitForSelector('[role=dialog] textarea, [role=dialog] input[type=text]')
+await fill(page, '[role=dialog] textarea, [role=dialog] input[type=text]', 'Entered twice')
+await clickText(page, '[role=dialog] button', 'Void it')
+await sleep(900)
+check('voiding it keeps the entry, struck through, with the reason to hand', await page.$eval('table[aria-label="Receipts and payments"] tbody', (e) => e.textContent.includes('void')))
+
+// The bank book
+await clickText(page, 'button[role=tab]', 'Bank book')
+await page.waitForSelector('table[aria-label="Bank book"], #ac-name, main')
+await sleep(500)
+check('the bank book shows an account with opening, received, paid and balance', (await main()).includes('Opening') && (await main()).includes('Balance'))
+await clickText(page, 'button', 'Bank account or cash box')
+await page.waitForSelector('#ac-name')
+await fill(page, '#ac-name', `QA Petty cash ${stamp}`)
+await page.select('#ac-kind', 'Cash')
+await fill(page, '#ac-open', '5000')
+await clickText(page, 'button', 'Add the account')
+await waitForToast(page, 'added')
+await page.waitForFunction(() => !document.querySelector('[role=dialog]'))
+await sleep(700)
+check('a new cash box opens on its own book with its opening balance', /5(.0)? ?K|5,000/.test(await main()), (await main()).slice(150, 420))
+await toastsGone(page)
+
+// Suppliers
+await clickText(page, 'button[role=tab]', 'Suppliers')
+await page.waitForSelector('table[aria-label=Suppliers]')
+await page.evaluate(() => [...document.querySelectorAll('main button')].find((b) => b.textContent.trim() === 'Supplier').click())
+await page.waitForSelector('#sp-name')
+await fill(page, '#sp-name', `QA Cement Co ${stamp}`)
+await fill(page, '#sp-supplies', 'Cement')
+await clickText(page, 'button', 'Save supplier')
+await waitForToast(page, 'saved')
+await page.waitForFunction(() => !document.querySelector('[role=dialog]'))
+await sleep(600)
+check('a new supplier gets a code, and warns when it has no GSTIN', await page.$eval('table[aria-label=Suppliers] tbody', (e) => e.textContent.includes('Cement') && e.textContent.includes('input credit at risk')))
+const offered = await page.evaluate(() => document.querySelector('main')?.textContent.includes('not in the master yet'))
+if (offered) {
+  await clickText(page, 'button', 'Add them all')
+  await sleep(1200)
+  check('names used on orders and bills can be adopted into the master in one go', !(await main()).includes('not in the master yet'))
+}
+
+await done()

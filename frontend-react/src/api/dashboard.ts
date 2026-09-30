@@ -75,6 +75,16 @@ export function attentionHref(view: string): { to: string; external: boolean } {
     'approvals-view': '/approvals',
     'items-view': '/store/items',
     'measurement-view': '/clients/measurement',
+    'workorders-view': '/clients/work-orders',
+    'leads-view': '/clients/pipeline',
+    'estimates-view': '/clients/estimates',
+    'customers-view': '/clients/customers',
+    'money-view': '/money/owed',
+    'ledger-view': '/money/ledgers',
+    'bills-view': '/money/supplier-bills',
+    'gst-view': '/money/gst',
+    'fixedassets-view': '/money/assets',
+    'registers-view': '/money/registers',
   }
   return ported[view] ? { to: ported[view], external: false } : { to: '/app.html', external: true }
 }

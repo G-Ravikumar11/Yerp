@@ -25,4 +25,10 @@ export const PORTED: PortedRoute[] = [
   { path: '/clients/pipeline', Component: lazy(() => import('@/features/leads/LeadsPage')) },
   { path: '/clients/estimates', Component: lazy(() => import('@/features/estimates/EstimatesPage')) },
   { path: '/clients/estimates/:id', Component: lazy(() => import('@/features/estimates/EstimatePage')) },
+  { path: '/money/owed', Component: lazy(() => import('@/features/owed/OwedPage')) },
+  { path: '/money/ledgers', Component: lazy(() => import('@/features/ledger/LedgerPage')) },
+  { path: '/money/supplier-bills', Component: lazy(() => import('@/features/bills/BillsPage')) },
+  { path: '/money/gst', Component: lazy(() => import('@/features/gst/GstPage')) },
+  { path: '/money/assets', Component: lazy(() => import('@/features/assets/AssetsPage')) },
+  { path: '/money/registers', Component: lazy(() => import('@/features/registers/RegistersPage')) },
 ]

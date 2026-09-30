@@ -1,0 +1,47 @@
+import { clickText, fill, launch, open, setValue, signIn, sleep, toastsGone } from './lib.mjs'
+
+// Money > Fixed Assets: set up an owned machine's book, see its years, tax blocks, and sell it.
+const { page, check, done } = await launch({ allow: [/409 POST \/api\/fixed-assets/] })
+await signIn(page)
+await open(page, '/money/assets')
+await page.waitForSelector('table[aria-label="Asset register"]')
+const main = () => page.$eval('main', (e) => e.textContent.replace(/\s+/g, ' '))
+const dialog = () => page.$eval('[role=dialog]', (e) => e.textContent.replace(/\s+/g, ' '))
+
+check('the register lists the books, and owned machines with no book yet', (await main()).includes('Book value at 31 March') && (await main()).includes('Owned, but no book yet'))
+await clickText(page, 'table[aria-label="Assets with no book"] button', 'Set up')
+await page.waitForSelector('#ab-cost')
+check('the book opens with the life and tax block suggested for its category', Number(await page.$eval('#ab-life', (e) => e.value)) > 0)
+await fill(page, '#ab-cost', '2500000')
+await setValue(page, '#ab-put', '2026-04-01')
+await sleep(300)
+check('the yearly write-down is worked out as it is typed', /a year/.test(await dialog()) && /down to/.test(await dialog()), (await dialog()).slice(-200))
+await clickText(page, 'button', 'Save the book')
+await page.waitForFunction(() => !document.querySelector('[role=dialog]'), { timeout: 10000 })
+await toastsGone(page)
+await sleep(800)
+check('the machine moves into the register with its depreciation and closing value', await page.$eval('table[aria-label="Asset register"] tbody', (e) => /EQP-0001/.test(e.textContent)))
+
+await clickText(page, 'table[aria-label="Asset register"] button', 'Years')
+await page.waitForSelector('[role=dialog] table')
+check('Years shows it year by year, with what is accumulated', (await dialog()).includes('Accumulated') && (await dialog()).includes('2026-27'))
+await page.keyboard.press('Escape')
+await page.waitForFunction(() => !document.querySelector('[role=dialog]'))
+
+await clickText(page, 'button[role=tab]', 'Income-tax blocks')
+await page.waitForSelector('table[aria-label="Income-tax blocks"]')
+await sleep(400)
+check('the income-tax blocks show each block at its rate, with half-rate additions', (await main()).includes('Plant & machinery') && (await main()).includes('half the rate'))
+await clickText(page, 'button[role=tab]', 'Register')
+await page.waitForSelector('table[aria-label="Asset register"]')
+
+await clickText(page, 'table[aria-label="Asset register"] button', 'Sold')
+await page.waitForSelector('#ad-value')
+await fill(page, '#ad-value', '1200000')
+await clickText(page, 'button', 'Record it')
+await page.waitForFunction(() => document.querySelector('[role=dialog] [role=alert]')?.textContent.includes('still on a site'), { timeout: 8000 })
+check("a machine still on a site cannot be sold: the server's reason is shown in the dialog", true)
+await clickText(page, '[role=dialog] button', 'Cancel')
+await page.waitForFunction(() => !document.querySelector('[role=dialog]'))
+
+await done()

@@ -1,1 +1,0 @@
-import{I as e,J as t,L as n,R as r}from"./index-CILyZhG7.js";var i={all:[`customers`],list:e=>[`customers`,`list`,e]},a=n=>t({queryKey:i.list(n),queryFn:async()=>(await e(`/api/customers?q=${encodeURIComponent(n)}`)).customers??[],placeholderData:e=>e}),o=e=>n(`/api/customers`,e),s=(e,t)=>r(`/api/customers/${e}`,t);export{a as i,i as n,s as r,o as t};

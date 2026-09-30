@@ -90,7 +90,6 @@ export const NAV: NavEntry[] = [
       { label: 'Payments & Ledgers', path: '/money/ledgers', perm: 'bills.view_all' },
       { label: 'Owed & Retention', path: '/money/owed', perm: 'bills.view_all' },
       { label: 'Supplier Bills', path: '/money/supplier-bills', perm: 'bills.view_all' },
-      { label: 'Client Invoices', path: '/money/invoices', perm: 'invoices.manage' },
       { label: 'GST', path: '/money/gst', perm: 'bills.view_all' },
       { label: 'Fixed Assets', path: '/money/assets', perm: 'bills.view_all' },
       { label: 'TDS, Guarantees & Advances', path: '/money/registers', perm: 'bills.view_all' },

@@ -17,7 +17,11 @@ export function formatPercent(value: number | null | undefined): string {
   return value ? `${value}%` : '-'
 }
 
-export const today = () => new Date().toISOString().slice(0, 10)
+/** Today's date on this device's clock, as yyyy-mm-dd. (The UTC date is yesterday's for the first hours of an Indian morning.) */
+export const today = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 /** "1 item" / "3 items". */
 export function plural(n: number, one: string, many = one + 's'): string {

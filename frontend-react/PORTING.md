@@ -20,13 +20,13 @@ Status: `done` · `todo`
 ## Money
 | Screen | Old view | Status |
 | --- | --- | --- |
-| Payments & Ledgers | `ledger-view` | todo |
-| Owed & Retention | `money-view` | todo |
-| Supplier Bills | `bills-view` | todo |
-| Client Invoices | `orders-view`? / invoices | todo |
-| GST | `gst-view` | todo |
-| Fixed Assets | `fixedassets-view` | todo |
-| TDS, Guarantees & Advances | `registers-view` | todo |
+| Payments & Ledgers (parties, statements, receipts, bank book, suppliers) | `ledger-view` | done |
+| Owed & Retention (receivables, payables, retention releases) | `money-view` | done |
+| Supplier Bills (accept, pay, Excel import) | `bills-view` | done |
+| Client Invoices | legacy: hidden in the old app (`invoices-view`, `legacy-hidden`) - not ported, removed from the menu | n/a |
+| GST (outward, inward, GSTIN) | `gst-view` | done |
+| Fixed Assets (register, books, tax blocks) | `fixedassets-view` | done |
+| TDS, Guarantees & Advances | `registers-view` | done |
 
 ## Store
 | Screen | Old view | Status |
