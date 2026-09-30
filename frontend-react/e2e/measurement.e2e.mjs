@@ -32,6 +32,56 @@ await page.waitForSelector('table[aria-label="Items on the order"] tbody tr')
 const text = () => page.$eval('main', (e) => e.textContent.replace(/\s+/g, ' '))
 check('the book opens on the chosen order with its items', (await page.$$eval('table[aria-label="Items on the order"] tbody tr', (r) => r.length)) === 2)
 
+// --- Find any work order; keep it in sight; type a code and the rest fills in ---------------------
+const wo = (await api(page, 'GET', `/api/wo/orders/${created.id}`)).data.order
+const jobNo = vocab.jobs[0].number
+const picker = 'button[aria-label="Work order"]'
+const pickerText = () => page.$eval(picker, (e) => e.textContent)
+check('the picker names the work order, its job code and the gang', (await pickerText()).includes(wo.wo_number) && (await pickerText()).includes(jobNo) && (await pickerText()).includes(gang.company_name || gang.name || ''), await pickerText())
+await page.click(picker)
+await page.waitForSelector('[role=listbox] [role=option]')
+const allOrders = await page.$$eval('[role=listbox] [role=option]', (o) => o.length)
+check('it lists every approved work order', allOrders >= 1, String(allOrders))
+await page.keyboard.type(jobNo)
+await sleep(200)
+const byJob = await page.$$eval('[role=listbox] [role=option]', (o) => o.map((e) => e.textContent))
+check('typing a job code narrows the list to that job', byJob.length >= 1 && byJob.every((t) => t.includes(jobNo)), `${byJob.length}`)
+await fill(page, '[role=combobox]', 'zzz-nothing')
+await sleep(150)
+check('a search that matches nothing says so', (await page.$eval('[role=listbox]', (e) => e.textContent)).includes('No work order matches'))
+await fill(page, '[role=combobox]', wo.wo_number)
+await sleep(150)
+await page.keyboard.press('Enter')
+await page.waitForSelector('table[aria-label="Items on the order"] tbody tr')
+check('choosing by number opens that book', page.url().includes(`order=${created.id}`))
+
+await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+await page.evaluate(() => document.querySelector('main').scrollIntoView(false))
+const inView = await page.$eval(picker, (e) => {
+  const r = e.getBoundingClientRect()
+  return r.top >= 0 && r.bottom <= window.innerHeight
+})
+check('the work order stays in view while the page is scrolled', inView)
+
+await page.click('input[aria-label="Item code"]')
+await page.keyboard.type('2.0')
+await sleep(200)
+const facts = await page.$eval('[aria-live=polite]', (e) => e.textContent.replace(/\s+/g, ' '))
+check('typing an item code fills in its description from the order', facts.includes('Reinforcement steel'), facts)
+check('and its unit, quantity and rate', facts.includes('MT') && facts.includes('18') && /68,000/.test(facts), facts)
+await page.keyboard.press('Enter')
+await page.waitForSelector('[role=dialog]')
+const dialog = await page.$eval('[role=dialog]', (e) => e.textContent.replace(/\s+/g, ' '))
+check('Enter opens the measurement with the work order and the item shown', dialog.includes(wo.wo_number) && dialog.includes('Reinforcement steel') && dialog.includes('68,000'), dialog.slice(0, 200))
+await page.keyboard.press('Escape')
+await page.waitForFunction(() => !document.querySelector('[role=dialog]'))
+await sleep(200)
+check('closing it puts the cursor back in the code box', await page.evaluate(() => document.activeElement?.getAttribute('aria-label') === 'Item code'))
+await page.keyboard.type('nope-9')
+await sleep(150)
+check('a code that is not on the order is said plainly', (await text()).includes('No item with that code'))
+await page.keyboard.press('Escape')
+
 // --- Measure with dimensions --------------------------------------------------------------
 await page.click('table[aria-label="Items on the order"] tbody tr:first-child button')
 await page.waitForSelector('[role=dialog] [role=grid]')

@@ -2,12 +2,14 @@ import { useMemo, useState } from 'react'
 import { DataGrid } from '@/components/grid'
 import { Button, Field, Input, Modal, NumField, Tabs } from '@/components/ui'
 import { mbKeys, recordUrl, type MbLine, type MeasurementInput } from '@/api/mb'
+import type { Order } from '@/api/orders'
 import { blankDim, dimTotal, type DimLine } from '@/lib/measure'
 import { formatQty, today } from '@/lib/format'
 import { useAction } from '@/lib/mutate'
 import { sendOrQueue } from '@/stores/offline'
 import { toast } from '@/stores/toast'
 import { dimColumns } from './dimensions'
+import { ItemFacts } from './ItemFacts'
 
 type Mode = 'dims' | 'total'
 
@@ -16,10 +18,10 @@ type Mode = 'dims' | 'total'
  * the field book, worked out as they are typed, or - for a count - just a
  * total. With no signal it is kept on the device and sent when one returns.
  */
-export function MeasureModal({ orderId, line, onClose }: { orderId: number; line: MbLine | null; onClose: () => void }) {
+export function MeasureModal({ orderId, order, jobCode, line, onClose }: { orderId: number; order?: Order; jobCode?: string; line: MbLine | null; onClose: () => void }) {
   return (
     <Modal open={!!line} onOpenChange={(o) => !o && onClose()} size="xl" title={line ? `Measure ${line.activity_no} ${line.description}` : 'Measure'} description={line ? allowance(line) : undefined}>
-      {line && <MeasureForm key={line.item_id} orderId={orderId} line={line} onClose={onClose} />}
+      {line && <MeasureForm key={line.item_id} orderId={orderId} order={order} jobCode={jobCode} line={line} onClose={onClose} />}
     </Modal>
   )
 }
@@ -29,7 +31,7 @@ const allowance = (l: MbLine) =>
   (l.tolerance_percent ? `; up to ${formatQty(l.max_quantity)} allowed with ${l.tolerance_percent}% tolerance` : '') +
   '. Past that the order is amended.'
 
-function MeasureForm({ orderId, line, onClose }: { orderId: number; line: MbLine; onClose: () => void }) {
+function MeasureForm({ orderId, order, jobCode, line, onClose }: { orderId: number; order?: Order; jobCode?: string; line: MbLine; onClose: () => void }) {
   const [mode, setMode] = useState<Mode>('dims')
   const [dims, setDims] = useState<DimLine[]>([])
   const [total, setTotal] = useState(0)
@@ -80,6 +82,18 @@ function MeasureForm({ orderId, line, onClose }: { orderId: number; line: MbLine
 
   return (
     <div>
+      <div className="mb-4 rounded-lg border border-border bg-muted/40 p-3" aria-label="The work order being measured">
+        {order && (
+          <p className="mb-2 flex flex-wrap items-baseline gap-x-2 text-[13px]">
+            <span className="font-mono font-semibold">{order.wo_number}</span>
+            {jobCode && <span className="rounded bg-primary-soft px-1.5 py-0.5 font-mono text-[11px] text-primary">{jobCode}</span>}
+            <span className="text-muted-foreground">
+              {order.contractor || 'no gang'} · {order.project}
+            </span>
+          </p>
+        )}
+        <ItemFacts line={line} />
+      </div>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <Tabs
           label="How it is measured"

@@ -25612,6 +25612,7 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
         ordered = money(it.quantity)
         lines.append({
             "item_id": it.id, "activity_no": it.activity_no or "",
+            "item_code": it.item_code or "",
             "description": (it.item_description or "").split("\n")[0],
             "uom": it.uom or "", "ordered_qty": ordered, "rate": unit_rate(it.unit_rate),
             "tolerance_percent": it.tolerance_percent or 0,

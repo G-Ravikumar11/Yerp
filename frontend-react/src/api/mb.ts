@@ -5,6 +5,7 @@ import type { Order } from './orders'
 export interface MbLine {
   item_id: number
   activity_no: string
+  item_code?: string
   description: string
   is_header?: boolean
   uom?: string

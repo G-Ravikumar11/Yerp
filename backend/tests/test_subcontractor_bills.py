@@ -67,6 +67,15 @@ def test_the_book_opens_with_every_ordered_item(tenant):
     assert b["summary"]["measured_value"] == 0
 
 
+def test_the_book_carries_each_items_code_so_it_can_be_found_by_typing_it(tenant):
+    """The measurement screen fills in an item from the code typed, so the book
+    must say both codes a site person knows it by: the activity number and the
+    item code."""
+    order = live_order(tenant)
+    lines = book(tenant, order["id"])["lines"]
+    assert [(l["activity_no"], l["item_code"]) for l in lines] == [("1.0", "CIV-RMC-25"), ("2.0", "CIV-STL")]
+
+
 def test_a_draft_order_cannot_be_measured(tenant):
     order = priced(tenant)
     item = book(tenant, order["id"])["lines"][0]["item_id"]

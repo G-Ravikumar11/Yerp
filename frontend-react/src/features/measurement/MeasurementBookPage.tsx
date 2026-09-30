@@ -1,18 +1,37 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { FileDown, FileUp, Ruler, Trash2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
-import { Badge, Button, ConfirmDialog, Select, Stat, StatGrid } from '@/components/ui'
+import { Badge, Button, ConfirmDialog, Stat, StatGrid } from '@/components/ui'
 import { deleteEntry, mbKeys, useMeasurementBook, type MbEntry, type MbLine } from '@/api/mb'
-import { useOrders } from '@/api/orders'
+import { useOrderVocabulary, useOrders, type Order } from '@/api/orders'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { formatDate, formatQty } from '@/lib/format'
 import { cn, compactINR, formatINR } from '@/lib/utils'
 import { ImportBookModal } from './ImportBookModal'
 import { MeasureModal } from './MeasureModal'
+import { QuickMeasure, type QuickMeasureHandle } from './QuickMeasure'
+import { WorkOrderPicker } from './WorkOrderPicker'
+
+/** The work order the person was last measuring, so the book opens where they left off. */
+const LAST = 'yerp.mb.order'
+const remembered = () => {
+  try {
+    return Number(localStorage.getItem(LAST)) || 0
+  } catch {
+    return 0
+  }
+}
+const remember = (id: number) => {
+  try {
+    localStorage.setItem(LAST, String(id))
+  } catch {
+    // Private window: the book simply opens on the first order next time.
+  }
+}
 
 /** A thin bar showing how much of an item is measured. Red past what was ordered. */
 function Progress({ percent, over }: { percent: number; over: boolean }) {
@@ -28,7 +47,12 @@ export default function MeasurementBookPage() {
   const [params, setParams] = useSearchParams()
   const orders = useOrders()
   const live = (orders.data?.orders ?? []).filter((o) => o.status === 'APPROVED' || o.status === 'EXECUTED')
-  const chosen = Number(params.get('order')) || live[0]?.id || 0
+  const vocab = useOrderVocabulary()
+  const jobCode = (o: Order) => vocab.data?.jobs.find((j) => j.id === o.job_id)?.number ?? ''
+  const last = remembered()
+  const chosen = Number(params.get('order')) || (live.some((o) => o.id === last) ? last : 0) || live[0]?.id || 0
+  const order = (orders.data?.orders ?? []).find((o) => o.id === chosen)
+  const quick = useRef<QuickMeasureHandle>(null)
   const book = useMeasurementBook(chosen)
   const [measuring, setMeasuring] = useState<MbLine | null>(null)
   const [importing, setImporting] = useState(false)
@@ -160,14 +184,28 @@ export default function MeasurementBookPage() {
         }
       />
 
-      <div className="mb-6 max-w-2xl">
-        <Select
-          aria-label="Work order"
-          value={chosen || ''}
-          onChange={(e) => setParams(e.target.value ? { order: e.target.value } : {})}
-          placeholder={orders.isPending ? 'Loading...' : 'No approved work orders yet'}
-          options={live.map((o) => ({ value: o.id, label: `${o.wo_number} - ${o.contractor || 'no gang'} · ${o.project}` }))}
-        />
+      <div className="z-10 md:sticky md:top-[calc(4rem+env(safe-area-inset-top))] -mx-4 mb-6 border-b border-border bg-background/95 px-4 pb-3 pt-3 backdrop-blur sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+        <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
+          <div>
+            <WorkOrderPicker
+              orders={live}
+              value={chosen}
+              loading={orders.isPending}
+              jobCode={jobCode}
+              onChange={(id) => {
+                remember(id)
+                setParams({ order: String(id) })
+              }}
+            />
+            {order && (
+              <p className="mt-1.5 truncate text-xs text-muted-foreground" title={`${order.project} · ${order.subject}`}>
+                {order.project}
+                {order.subject ? ` · ${order.subject}` : ''}
+              </p>
+            )}
+          </div>
+          {record && chosen > 0 && <QuickMeasure ref={quick} lines={lines} onPick={setMeasuring} />}
+        </div>
       </div>
 
       {chosen > 0 && (
@@ -193,7 +231,17 @@ export default function MeasurementBookPage() {
             empty={filters.active ? 'Nothing matches those filters.' : 'Nothing measured yet.'}
           />
 
-          <MeasureModal orderId={chosen} line={measuring} onClose={() => setMeasuring(null)} />
+          <MeasureModal
+            orderId={chosen}
+            order={order}
+            jobCode={order ? jobCode(order) : ''}
+            line={measuring}
+            onClose={() => {
+              setMeasuring(null)
+              // Straight back to the code box for the next item.
+              setTimeout(() => quick.current?.focus(), 0)
+            }}
+          />
           <ImportBookModal orderId={chosen} open={importing} onOpenChange={setImporting} />
           <ConfirmDialog
             open={!!removing}
