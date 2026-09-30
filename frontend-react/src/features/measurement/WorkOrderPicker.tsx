@@ -74,6 +74,7 @@ export function WorkOrderPicker({ orders, value, onChange, jobCode, loading }: {
             <span className="shrink-0 whitespace-nowrap font-mono text-[13px] font-semibold">{current.wo_number}</span>
             {jobCode(current) && <span className="shrink-0 rounded bg-primary-soft px-1.5 py-0.5 font-mono text-[11px] text-primary">{jobCode(current)}</span>}
             <span className="truncate text-muted-foreground">{current.contractor || 'no gang'}</span>
+            {current.status === 'AMENDED' && <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">amended</span>}
           </span>
         ) : (
           <span className="flex-1 text-subtle">{loading ? 'Loading...' : 'No approved work orders yet'}</span>
@@ -134,6 +135,7 @@ export function WorkOrderPicker({ orders, value, onChange, jobCode, loading }: {
                   <span className="flex items-baseline gap-2">
                     <span className="shrink-0 whitespace-nowrap font-mono text-[13px] font-semibold">{o.wo_number}</span>
                     {jobCode(o) && <span className="shrink-0 rounded bg-primary-soft px-1.5 py-0.5 font-mono text-[11px] text-primary">{jobCode(o)}</span>}
+                    {o.status === 'AMENDED' && <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">amended</span>}
                     <span className="truncate text-[13px]">{o.contractor || 'no gang'}</span>
                   </span>
                   <span className="block truncate text-xs text-muted-foreground">
@@ -145,7 +147,7 @@ export function WorkOrderPicker({ orders, value, onChange, jobCode, loading }: {
             ))}
           </ul>
           <p className="border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground">
-            {shown.length} of {orders.length} approved work orders · Up and down to move, Enter to open, Esc to close
+            {shown.length} of {orders.length} work orders · Up and down to move, Enter to open, Esc to close
           </p>
         </div>
       )}

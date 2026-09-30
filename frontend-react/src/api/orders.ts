@@ -178,8 +178,9 @@ export const orderKeys = {
   budgets: (jobId: number, orderId: number) => ['orders', 'budgets', jobId, orderId] as const,
 }
 
+/** Screens that pick an order to work on ask for the list afresh each time: one approved or amended a minute ago must be there. */
 export function useOrders() {
-  return useQuery({ queryKey: orderKeys.list, queryFn: () => get<{ orders: Order[]; summary: OrderSummary }>('/api/wo/orders') })
+  return useQuery({ queryKey: orderKeys.list, queryFn: () => get<{ orders: Order[]; summary: OrderSummary }>('/api/wo/orders'), refetchOnMount: 'always' })
 }
 
 export function useOrder(id: number) {

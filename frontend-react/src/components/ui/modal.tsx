@@ -37,7 +37,14 @@ export function Modal({ open, onOpenChange, title, description, size = 'md', foo
               />
             </Dialog.Overlay>
             <div className="pointer-events-none fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-6">
-              <Dialog.Content asChild forceMount>
+              <Dialog.Content
+                asChild
+                forceMount
+                // Escape inside a sheet cell cancels that edit. It must not also close the window and lose the rest of the entry.
+                onEscapeKeyDown={(e) => {
+                  if ((e.target as HTMLElement | null)?.closest?.('[data-cell-editor]')) e.preventDefault()
+                }}
+              >
                 <motion.div
                   className={cn(
                     'pointer-events-auto flex max-h-[92dvh] w-full flex-col overflow-hidden border border-border bg-popover shadow-pop',

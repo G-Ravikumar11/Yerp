@@ -148,7 +148,7 @@ export function CellEditor<T>({
   const numeric = column.type === 'number'
 
   return (
-    <div ref={boxRef} className="absolute inset-0 z-30">
+    <div ref={boxRef} data-cell-editor className="absolute inset-0 z-30">
       <input
         ref={inputRef}
         value={text}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useImperativeHandle, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { cn } from '@/lib/utils'
 import { CellEditor, type Move } from './CellEditor'
@@ -462,10 +463,14 @@ export function DataGrid<T>({
       toggle(active.r, active.c)
     } else if (key === ' ' && columns[active.c]?.type === 'select') {
       startEdit('edit')
-    } else if (!mod && !e.altKey && (key.length === 1 || key === 'Process')) {
-      // Typing on a selected cell replaces what is in it. An input method
-      // (Telugu, Hindi) reports "Process": open the box and let it compose there.
-      startEdit('enter', key === 'Process' ? '' : key)
+    } else if (!mod && !e.altKey && Array.from(key).length === 1) {
+      // Typing on a selected cell replaces what is in it.
+      startEdit('enter', key)
+    } else if (!mod && !e.altKey && (key === 'Process' || key === 'Unidentified' || key === 'Dead')) {
+      // An input method (Telugu, Hindi) or a dead key starts composing on whatever has focus right now.
+      // Put the box there first, and leave the key alone so the letter lands in it rather than being lost.
+      flushSync(() => startEdit('enter', ''))
+      handled = false
     } else handled = false
 
     if (handled) e.preventDefault()

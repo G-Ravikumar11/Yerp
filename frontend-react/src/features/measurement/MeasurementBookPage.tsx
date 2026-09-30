@@ -46,18 +46,24 @@ export default function MeasurementBookPage() {
   const { can } = useSession()
   const [params, setParams] = useSearchParams()
   const orders = useOrders()
-  const live = (orders.data?.orders ?? []).filter((o) => o.status === 'APPROVED' || o.status === 'EXECUTED')
+  const all = orders.data?.orders ?? []
+  const isLive = (o: Order) => o.status === 'APPROVED' || o.status === 'EXECUTED'
+  // An amended order stays in the list, read-only: its record is worth looking at, and it
+  // is where the work was measured before the revision took over.
+  const live = all.filter((o) => isLive(o) || o.status === 'AMENDED').sort((a, b) => Number(isLive(b)) - Number(isLive(a)))
   const vocab = useOrderVocabulary()
   const jobCode = (o: Order) => vocab.data?.jobs.find((j) => j.id === o.job_id)?.number ?? ''
   const last = remembered()
   const chosen = Number(params.get('order')) || (live.some((o) => o.id === last) ? last : 0) || live[0]?.id || 0
-  const order = (orders.data?.orders ?? []).find((o) => o.id === chosen)
+  const order = all.find((o) => o.id === chosen)
+  const amended = order?.status === 'AMENDED'
+  const replacement = amended ? all.find((o) => o.supersedes_id === chosen && isLive(o)) : undefined
   const quick = useRef<QuickMeasureHandle>(null)
   const book = useMeasurementBook(chosen)
   const [measuring, setMeasuring] = useState<MbLine | null>(null)
   const [importing, setImporting] = useState(false)
   const [removing, setRemoving] = useState<MbEntry | null>(null)
-  const record = can('site.record')
+  const record = can('site.record') && !amended
 
   const remove = useAction((e: MbEntry) => deleteEntry(e.id), { invalidate: [mbKeys.all, ['subbills']], onSuccess: () => setRemoving(null), onError: () => setRemoving(null) })
 
@@ -207,6 +213,33 @@ export default function MeasurementBookPage() {
           {record && chosen > 0 && <QuickMeasure ref={quick} lines={lines} onPick={setMeasuring} />}
         </div>
       </div>
+
+      {amended && order && (
+        <div role="status" className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
+          <p>
+            <span className="font-mono font-semibold">{order.wo_number}</span> was amended
+            {replacement ? (
+              <>
+                {' '}
+                and replaced by <span className="font-mono font-semibold">{replacement.wo_number}</span>. Measure against the revision; what was measured and billed here carried across to it.
+              </>
+            ) : (
+              '. Its record is shown for reference and cannot take new measurements.'
+            )}
+          </p>
+          {replacement && (
+            <Button
+              size="sm"
+              onClick={() => {
+                remember(replacement.id)
+                setParams({ order: String(replacement.id) })
+              }}
+            >
+              Open {replacement.wo_number}
+            </Button>
+          )}
+        </div>
+      )}
 
       {chosen > 0 && (
         <>
