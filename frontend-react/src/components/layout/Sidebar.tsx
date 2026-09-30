@@ -5,6 +5,7 @@ import { ChevronDown, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { groupFor, visibleNav, type NavGroup } from '@/lib/nav'
 import { useSession } from '@/lib/session'
+import { useInbox } from '@/api/approvals'
 import { useUI } from '@/stores/ui'
 import { Tooltip } from '@/components/ui'
 
@@ -41,6 +42,9 @@ const itemBase =
   'group relative flex items-center gap-3 rounded-lg px-3 text-[13.5px] font-medium transition-colors duration-150'
 
 function LinkItem({ to, label, icon: Icon, collapsed }: { to: string; label: string; icon: NavGroup['icon']; collapsed: boolean }) {
+  const inbox = useInbox()
+  // Approvals says how many are waiting on this person.
+  const badge = to === '/approvals' ? (inbox.data?.mine ?? 0) : 0
   return (
     <Tooltip content={label} disabled={!collapsed}>
       <NavLink
@@ -61,6 +65,11 @@ function LinkItem({ to, label, icon: Icon, collapsed }: { to: string; label: str
             )}
             <Icon className={cn('relative size-[18px] shrink-0', isActive && 'text-primary')} />
             {!collapsed && <span className="relative truncate">{label}</span>}
+            {badge > 0 && (
+              <span className={cn('tabular relative grid min-w-5 place-items-center rounded-full bg-primary px-1.5 text-[11px] font-semibold text-primary-foreground', collapsed ? 'absolute right-1.5 top-1' : 'ml-auto')} aria-label={`${badge} waiting`}>
+                {badge}
+              </span>
+            )}
           </>
         )}
       </NavLink>

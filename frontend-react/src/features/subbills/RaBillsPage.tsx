@@ -1,0 +1,130 @@
+import { useMemo } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Download, FilePlus2 } from 'lucide-react'
+import { PageHeader } from '@/components/layout/PageHeader'
+import { DataTable, type TableColumn } from '@/components/data/DataTable'
+import { FilterBar, useListFilters } from '@/components/data/filters'
+import { Button, Select, Stat, StatGrid, StatusBadge } from '@/components/ui'
+import { billKeys, drawBill, useSubBills, withRunningTotals, type SubBill } from '@/api/subbills'
+import { useOrders } from '@/api/orders'
+import { useAction } from '@/lib/mutate'
+import { useSession } from '@/lib/session'
+import { formatDate } from '@/lib/format'
+import { compactINR, formatINR } from '@/lib/utils'
+
+export default function RaBillsPage() {
+  const nav = useNavigate()
+  const { can } = useSession()
+  const [params, setParams] = useSearchParams()
+  const orderId = Number(params.get('order')) || 0
+  const orders = useOrders()
+  const bills = useSubBills(orderId)
+  const usable = (orders.data?.orders ?? []).filter((o) => o.status !== 'DRAFT' && o.status !== 'PROVISIONAL')
+  const chosen = usable.find((o) => o.id === orderId)
+
+  const rows = bills.data?.bills ?? []
+  const running = useMemo(() => withRunningTotals(rows), [rows])
+  const filters = useListFilters(rows, {
+    search: (b) => [b.number, b.contractor, b.vendor_code, b.project, b.status, b.net_payable, b.work_name].join(' '),
+    status: (b) => b.status,
+    date: (b) => b.bill_date,
+  })
+
+  const s = bills.data?.summary
+  const upToDate = rows.filter((b) => b.status !== 'CANCELLED').reduce((m, b) => Math.max(m, b.gross_to_date), 0)
+
+  const draw = useAction(() => drawBill(orderId), {
+    invalidate: [billKeys.all],
+    onSuccess: (r) => nav(`/subcontractors/ra-bills/${r.bill.id}`),
+  })
+
+  const columns: TableColumn<SubBill>[] = [
+    { id: 'no', header: 'Bill', sort: (b) => b.number, cell: (b) => <span className="font-mono text-[13px] font-medium">{b.number}</span> },
+    {
+      id: 'who',
+      header: 'Gang',
+      cell: (b) => (
+        <div className="max-w-xs">
+          <div className="truncate font-medium">
+            {b.contractor}
+            {b.vendor_code && <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">{b.vendor_code}</span>}
+          </div>
+          <div className="truncate text-xs text-muted-foreground">{b.project}</div>
+        </div>
+      ),
+    },
+    { id: 'date', header: 'Dated', sort: (b) => b.bill_date, cell: (b) => formatDate(b.bill_date), hideBelow: 'xl' },
+    { id: 'prev', header: 'Previous', align: 'right', cell: (b) => <span className="text-muted-foreground">{formatINR(b.previously_billed)}</span>, hideBelow: 'md' },
+    { id: 'this', header: 'This bill', align: 'right', sort: (b) => b.this_bill, cell: (b) => formatINR(b.this_bill) },
+    { id: 'upto', header: 'Up to date', align: 'right', sort: (b) => b.gross_to_date, cell: (b) => <span className="font-semibold">{formatINR(b.gross_to_date)}</span>, hideBelow: 'md' },
+    { id: 'ret', header: 'Retention held', align: 'right', cell: (b) => formatINR(b.retention_amount), hideBelow: 'xl' },
+    { id: 'tds', header: 'TDS', align: 'right', cell: (b) => formatINR(b.tds_amount), hideBelow: 'xl' },
+    { id: 'net', header: 'Net payable', align: 'right', sort: (b) => b.net_payable, cell: (b) => <span className="font-semibold">{formatINR(b.net_payable)}</span> },
+    { id: 'cum', header: 'Cumulative net', align: 'right', cell: (b) => <span className="font-semibold">{formatINR(running.get(b.id) ?? 0)}</span>, hideBelow: 'lg' },
+    {
+      id: 'status',
+      header: 'Status',
+      sort: (b) => b.status,
+      cell: (b) => (
+        <div>
+          <StatusBadge status={b.status} />
+          {b.status === 'SUBMITTED' && b.waiting_on && <div className="mt-1 text-xs text-muted-foreground">with {b.waiting_on}</div>}
+        </div>
+      ),
+    },
+  ]
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="Subcontractors"
+        title="RA Bills"
+        description="Certificate of payment, abstract and MB for each bill - prepared, certified, approved, paid."
+        actions={
+          <>
+            <Button variant="outline" asChild>
+              <a href={`/api/sub-bills.xlsx${orderId ? `?order_id=${orderId}` : ''}`}>
+                <Download /> Register
+              </a>
+            </Button>
+            {can('billing.manage') && orderId > 0 && chosen && (chosen.status === 'APPROVED' || chosen.status === 'EXECUTED') && (
+              <Button loading={draw.isPending} onClick={() => draw.mutate()}>
+                <FilePlus2 /> Draw up a bill
+              </Button>
+            )}
+          </>
+        }
+      />
+
+      <div className="mb-6 max-w-2xl">
+        <Select
+          aria-label="Work order"
+          value={orderId || ''}
+          onChange={(e) => setParams(e.target.value ? { order: e.target.value } : {})}
+          placeholder="All work orders"
+          options={usable.map((o) => ({ value: o.id, label: `${o.wo_number} - ${o.contractor || 'no gang'} · ${o.project}` }))}
+        />
+      </div>
+
+      <StatGrid className="xl:grid-cols-6">
+        {orderId > 0 && <Stat label="Billed up to date" value={compactINR(upToDate)} loading={bills.isPending} />}
+        <Stat label="Claimed by the gang" value={compactINR(s?.claimed)} loading={bills.isPending} />
+        <Stat label="Awaiting certification" value={s?.awaiting_certification ?? 0} tone={s?.awaiting_certification ? 'warning' : undefined} loading={bills.isPending} />
+        <Stat label="Certified, unpaid" value={compactINR(s?.certified_unpaid)} loading={bills.isPending} />
+        <Stat label="Retention we hold" value={compactINR(s?.retention_held)} loading={bills.isPending} />
+        <Stat label="Paid out" value={compactINR(s?.paid)} loading={bills.isPending} />
+      </StatGrid>
+
+      <FilterBar filters={filters} placeholder="Search by bill, gang, project..." />
+      <DataTable
+        label="RA bills"
+        rows={filters.filtered}
+        columns={columns}
+        rowKey={(b) => b.id}
+        loading={bills.isPending}
+        onRowClick={(b) => nav(`/subcontractors/ra-bills/${b.id}`)}
+        empty={filters.active ? 'Nothing matches those filters.' : "No bills yet. Measure the gang's work, then draw one up."}
+      />
+    </>
+  )
+}
