@@ -1,0 +1,81 @@
+import { BASE, api, approvedOrder, fill, launch, signIn, sleep } from './lib.mjs'
+
+// The current app's Measurement Book (/app.html), which the team still works in.
+const { page, check, done } = await launch({ width: 1440, height: 900 })
+await signIn(page)
+const made = await approvedOrder(page, { subject: 'E2E old book' })
+
+await page.goto(BASE + '/app.html', { waitUntil: 'networkidle0' })
+await page.waitForFunction(() => typeof openSubTab === 'function')
+await page.evaluate(() => openSubTab('mb'))
+await page.waitForSelector('#sub-mb-body tr')
+await sleep(800)
+const find = '#sub-wo-find'
+const value = (sel) => page.$eval(sel, (e) => e.value)
+const text = (sel) => page.$eval(sel, (e) => e.textContent.replace(/\s+/g, ' '))
+
+// --- Find any work order -----------------------------------------------------------------
+await page.click(find)
+await page.waitForSelector('#sub-wo-list .wo-opt')
+const count = await page.$$eval('#sub-wo-list .wo-opt', (o) => o.length)
+check('clicking the box lists every work order', count >= 2, String(count))
+await fill(page, find, made.job.number)
+await sleep(150)
+const byJob = await page.$$eval('#sub-wo-list .wo-opt', (o) => o.map((e) => e.textContent))
+check('typing a job code narrows the list to that job', byJob.length >= 1 && byJob.every((t) => t.includes(made.job.number)), String(byJob.length))
+await fill(page, find, 'zzz-nothing')
+await sleep(150)
+check('a search that matches nothing says so', (await text('#sub-wo-list')).includes('No work order matches'))
+await fill(page, find, made.number)
+await sleep(150)
+await page.keyboard.press('Enter')
+await page.waitForFunction((n) => document.getElementById('sub-mb-body').textContent.includes('Reinforcement steel'), {}, made.number)
+check('Enter opens that work order', (await value('#sub-order')) === String(made.id))
+check('the box then shows its number, job code and gang', (await value(find)).includes(made.number) && (await value(find)).includes(made.job.number))
+
+// --- It stays in view ---------------------------------------------------------------------
+await page.evaluate(() => { const m = document.querySelector('.main-content'); m.scrollTop = m.scrollHeight })
+await sleep(200)
+const inView = await page.$eval('#sub-wo-strip', (e) => { const r = e.getBoundingClientRect(); return r.top >= -2 && r.bottom <= window.innerHeight })
+check('the work order stays in view while the page scrolls', inView)
+await page.evaluate(() => { document.querySelector('.main-content').scrollTop = 0 })
+
+// --- Type a code, the rest comes from the order -----------------------------------------------
+await page.click('#sub-code')
+await page.keyboard.type('2.0')
+await sleep(200)
+const card = await text('#sub-code-card')
+check('an item code fills in its description, unit, rate and quantities', card.includes('Reinforcement steel') && card.includes('MT') && /68,000/.test(card) && card.includes('20'), card)
+await page.keyboard.press('Enter')
+await page.waitForFunction(() => getComputedStyle(document.getElementById('sub-measure-modal')).display !== 'none')
+const ctx = await text('#sub-measure-context')
+check('Enter opens the measurement with the work order and the item shown', ctx.includes(made.number) && ctx.includes(made.job.number) && /68,000/.test(ctx), ctx)
+await page.evaluate(() => closeSubMeasure())
+await sleep(300)
+check('closing it returns to the code box', await page.evaluate(() => document.activeElement && document.activeElement.id === 'sub-code'))
+await page.keyboard.type('nope-9')
+await sleep(150)
+check('a code that is not on the order is said plainly', (await text('#sub-code-card')).includes('No item with that code'))
+
+// --- An amended order stays in the list ------------------------------------------------------------
+const rev = (await api(page, 'POST', `/api/wo/orders/${made.id}/amend`, {})).data.order
+await api(page, 'POST', `/api/wo/orders/${rev.id}/submit`, {})
+const ok = await api(page, 'POST', `/api/wo/orders/${rev.id}/approve`, {})
+if (ok.status !== 200) throw new Error('could not approve the revision: ' + JSON.stringify(ok.data))
+await page.evaluate(() => loadSubBills())
+await sleep(1200)
+await page.evaluate((id) => subWoChoose(id), made.id)
+await page.waitForSelector('#sub-amend-note .sub-amend-note')
+const note = await text('#sub-amend-note')
+check('an amended order opens and says it was replaced by its revision', note.includes('was amended') && note.includes(rev.wo_number), note)
+check('it cannot take new measurements', (await page.$('#sub-mb-body button')) === null && (await page.$eval('#sub-code', (e) => e.disabled)))
+await page.click(find)
+await page.waitForSelector('#sub-wo-list .wo-opt')
+check('the picker lists it, marked amended', (await text('#sub-wo-list')).includes('amended'))
+await page.keyboard.press('Escape')
+await page.evaluate(() => document.querySelector('#sub-amend-note button').click())
+await page.waitForFunction((id) => document.getElementById('sub-order').value === String(id), {}, rev.id)
+await page.waitForSelector('#sub-mb-body button')
+check('one click opens the revision, which can be measured', true)
+
+await done()

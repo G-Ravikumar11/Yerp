@@ -36,7 +36,7 @@
         }}
       };
     </script>
-    <link rel="stylesheet" href="styles.css?v=105">
+    <link rel="stylesheet" href="styles.css?v=106">
     <link rel="stylesheet" href="mobile.css?v=66">
 </head>
 <body>
@@ -204,13 +204,13 @@
                         </button>
                         <div class="nav-group-items" id="nav-items-more">
                             <a href="#" class="nav-item" id="nav-settings" onclick="event.preventDefault();showView('settings-view')">Settings</a>
+                            <a href="/next/" class="nav-item" id="nav-next" title="Try the new interface. The screens not moved yet link back here.">New interface</a>
                         </div>
                     </div>
 
                 </nav>
             </div>
             <div class="topbar-right">
-                <a class="btn btn-sm btn-outline" href="/next/" title="Try the new interface. The screens not moved yet link back here.">New interface</a>
                 <button class="btn btn-sm btn-outline install-app" style="display:none;" onclick="installApp()" title="Put Y ERP on this phone's home screen">Install app</button>
                 <div class="search-bar">
                     <span class="search-icon">
@@ -4918,14 +4918,29 @@
                         </div>
                     </div>
 
-                    <div class="widget" style="margin-bottom:18px;">
-                        <div class="widget-content" style="padding:16px 20px;">
-                            <label style="display:block;font-size:0.85rem;font-weight:600;margin-bottom:6px;">Work order</label>
-                            <select id="sub-order" class="form-control" style="max-width:560px;" onchange="subOrderChanged()"></select>
+                    <div class="widget sub-wo-strip" id="sub-wo-strip">
+                        <div class="widget-content" style="padding:14px 20px;">
+                            <div class="sub-wo-row">
+                                <div class="sub-wo-pick">
+                                    <label for="sub-wo-find" class="sub-wo-label">Work order</label>
+                                    <div class="wo-combo">
+                                        <input type="text" id="sub-wo-find" class="form-control" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="sub-wo-list" aria-label="Find a work order by number, job code, project or gang" placeholder="Find by work order no., job code, project or gang" onfocus="subWoOpen()" onclick="subWoOpen()" oninput="subWoFilter()" onkeydown="subWoKey(event)">
+                                        <div id="sub-wo-list" class="wo-list" role="listbox" aria-label="Work orders" style="display:none;"></div>
+                                    </div>
+                                    <select id="sub-order" style="display:none;" onchange="subOrderChanged()"></select>
+                                    <div id="sub-wo-current" class="sub-wo-current"></div>
+                                </div>
+                                <div class="sub-wo-code sub-only-mb" data-perm="site.record">
+                                    <label for="sub-code" class="sub-wo-label">Item code</label>
+                                    <input type="text" id="sub-code" class="form-control" autocomplete="off" aria-label="Item code" placeholder="Type an item code to measure it (e.g. 1.2)" oninput="subCodeInput()" onkeydown="subCodeKey(event)">
+                                    <div id="sub-code-card" aria-live="polite"></div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
                     <div id="sub-pane-mb">
+                        <div id="sub-amend-note"></div>
                         <div class="stats-grid" id="sub-stats"></div>
 
                         <div class="widget" style="margin-top:18px;">
@@ -5816,7 +5831,7 @@
     <script src="stock.js?v=115"></script>
     <script src="diary.js?v=117"></script>
     <script src="money.js?v=97"></script>
-    <script src="subbills.js?v=100"></script>
+    <script src="subbills.js?v=101"></script>
     <script src="vendors.js?v=5"></script>
     <script src="estimate.js?v=81"></script>
     <script src="gst.js?v=80"></script>

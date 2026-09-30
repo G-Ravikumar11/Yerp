@@ -43,17 +43,33 @@ function applySubTab() {
 }
 window.applySubTab = applySubTab;
 
+/* Every work order can be found by typing: its number, its job code, the project or the gang.
+   The hidden select below it stays the source of truth for the rest of the screen. */
+var SUBWO = { orders: [], jobs: {}, query: '', active: 0, shown: [] };
+var SUB_LAST = 'yerp.sub.order';
+
+function subIsLive(o) { return o.status === 'APPROVED' || o.status === 'EXECUTED'; }
+function subJobCode(o) { return SUBWO.jobs[o.job_id] || ''; }
+function subOrderById(id) { return SUBWO.orders.filter(function (o) { return o.id === id; })[0]; }
+
 async function loadSubBills() {
     var pick = document.getElementById('sub-order');
     if (!pick) return;
     SUB.tab = SUB.nextTab || 'bills';
     SUB.nextTab = null;
     applySubTab();
-    var d = await (await fetch('/api/wo/orders', { credentials: 'include' })).json();
-    // Only an approved order has anything a gang can be paid for.
-    var live = (d.orders || []).filter(function (o) {
-        return o.status === 'APPROVED' || o.status === 'EXECUTED';
-    });
+    var got = await Promise.all([
+        fetch('/api/wo/orders', { credentials: 'include' }).then(function (r) { return r.json(); }),
+        fetch('/api/wo/vocabulary', { credentials: 'include' })
+            .then(function (r) { return r.ok ? r.json() : {}; }).catch(function () { return {}; }),
+    ]);
+    SUBWO.jobs = {};
+    (got[1].jobs || []).forEach(function (j) { SUBWO.jobs[j.id] = j.number; });
+    // Only an approved order can be measured. An amended one stays in the list, read-only:
+    // it is where the work was measured before its revision took over.
+    var live = (got[0].orders || []).filter(function (o) { return subIsLive(o) || o.status === 'AMENDED'; })
+        .sort(function (a, b) { return (subIsLive(b) ? 1 : 0) - (subIsLive(a) ? 1 : 0); });
+    SUBWO.orders = live;
     pick.innerHTML = live.length
         ? live.map(function (o) {
             return '<option value="' + o.id + '">' + esc(o.wo_number) + ' — ' +
@@ -61,8 +77,13 @@ async function loadSubBills() {
                 (o.project ? ' · ' + esc(o.project) : '') + '</option>';
           }).join('')
         : '<option value="">No approved subcontract orders yet</option>';
-    if (live.length) openSubBook(live[0].id);
-    else {
+    if (live.length) {
+        var last = 0;
+        try { last = parseInt(localStorage.getItem(SUB_LAST)) || 0; } catch (e) { last = 0; }
+        var start = subOrderById(last) || live.filter(subIsLive)[0] || live[0];
+        subWoChoose(start.id);
+    } else {
+        subWoShow(null);
         document.getElementById('sub-mb-body').innerHTML =
             '<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text-secondary);">' +
             'Approve a subcontract order first. A gang is measured against work that has been agreed.</td></tr>';
@@ -70,6 +91,202 @@ async function loadSubBills() {
     }
 }
 window.loadSubBills = loadSubBills;
+
+/* --- The work order picker ------------------------------------------------ */
+
+function subWoLabel(o) {
+    return o.wo_number + (subJobCode(o) ? '  ' + subJobCode(o) : '') + '  ' + (o.contractor || 'no gang');
+}
+
+function subWoShow(o) {
+    var input = document.getElementById('sub-wo-find');
+    var cur = document.getElementById('sub-wo-current');
+    if (input) input.value = o ? subWoLabel(o) : '';
+    if (cur) cur.textContent = o ? (o.project || '') + (o.subject ? ' · ' + o.subject : '') : '';
+}
+
+function subWoChoose(id) {
+    var pick = document.getElementById('sub-order');
+    if (pick) pick.value = String(id);
+    subWoShow(subOrderById(id) || null);
+    subWoClose();
+    try { localStorage.setItem(SUB_LAST, String(id)); } catch (e) { /* private window */ }
+    openSubBook(id);
+}
+window.subWoChoose = subWoChoose;
+
+function subWoClose(restore) {
+    var list = document.getElementById('sub-wo-list');
+    if (!list) return;
+    var wasOpen = list.style.display !== 'none';
+    list.style.display = 'none';
+    var input = document.getElementById('sub-wo-find');
+    if (input) input.setAttribute('aria-expanded', 'false');
+    if (restore && wasOpen) {
+        var pick = document.getElementById('sub-order');
+        subWoShow(subOrderById(parseInt(pick && pick.value)) || null);
+    }
+}
+
+function subWoOpen() {
+    var list = document.getElementById('sub-wo-list');
+    if (!list || list.style.display !== 'none') return;
+    SUBWO.query = '';
+    SUBWO.active = Math.max(0, SUBWO.orders.map(function (o) { return String(o.id); })
+        .indexOf((document.getElementById('sub-order') || {}).value));
+    var input = document.getElementById('sub-wo-find');
+    input.select();
+    input.setAttribute('aria-expanded', 'true');
+    subWoRender();
+}
+window.subWoOpen = subWoOpen;
+
+function subWoFilter() {
+    SUBWO.query = document.getElementById('sub-wo-find').value;
+    SUBWO.active = 0;
+    subWoRender();
+}
+window.subWoFilter = subWoFilter;
+
+function subWoRender() {
+    var list = document.getElementById('sub-wo-list');
+    var words = SUBWO.query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    var first = SUBWO.query.trim().toLowerCase();
+    SUBWO.shown = SUBWO.orders.filter(function (o) {
+        var hay = [o.wo_number, subJobCode(o), o.project, o.contractor, o.vendor_code, o.subject, o.work_type]
+            .join(' ').toLowerCase();
+        return words.every(function (w) { return hay.indexOf(w) >= 0; });
+    }).sort(function (a, b) {
+        return (b.wo_number.toLowerCase().indexOf(first) === 0 ? 1 : 0) - (a.wo_number.toLowerCase().indexOf(first) === 0 ? 1 : 0);
+    });
+    list.style.display = '';
+    list.innerHTML = (SUBWO.shown.length ? SUBWO.shown.map(function (o, i) {
+        return '<div class="wo-opt' + (i === SUBWO.active ? ' active' : '') + '" role="option" data-i="' + i + '" ' +
+            'onmousedown="event.preventDefault();subWoChoose(' + o.id + ')">' +
+            '<div class="wo-opt-top"><span class="wo-opt-no">' + esc(o.wo_number) + '</span>' +
+            (subJobCode(o) ? '<span class="wo-opt-job">' + esc(subJobCode(o)) + '</span>' : '') +
+            (o.status === 'AMENDED' ? '<span class="wo-opt-tag">amended</span>' : '') +
+            '<span class="wo-opt-gang">' + esc(o.contractor || 'no gang') + '</span></div>' +
+            '<div class="wo-opt-sub">' + esc(o.project || '') + (o.subject ? ' · ' + esc(o.subject) : '') + '</div></div>';
+    }).join('') : '<div class="wo-none">No work order matches that.</div>') +
+        '<div class="wo-foot">' + SUBWO.shown.length + ' of ' + SUBWO.orders.length +
+        ' work orders · Up and down to move, Enter to open, Esc to close</div>';
+    var on = list.querySelector('.wo-opt.active');
+    if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest' });
+}
+
+function subWoKey(e) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (document.getElementById('sub-wo-list').style.display === 'none') { subWoOpen(); return; }
+        SUBWO.active = Math.max(0, Math.min(SUBWO.shown.length - 1, SUBWO.active + (e.key === 'ArrowDown' ? 1 : -1)));
+        subWoRender();
+    } else if (e.key === 'Enter') {
+        e.preventDefault();
+        var o = SUBWO.shown[SUBWO.active];
+        if (o) subWoChoose(o.id);
+    } else if (e.key === 'Escape' || e.key === 'Tab') {
+        subWoClose(true);
+    }
+}
+window.subWoKey = subWoKey;
+
+document.addEventListener('mousedown', function (e) {
+    if (!(e.target.closest && e.target.closest('.wo-combo'))) subWoClose(true);
+});
+
+/* --- Type an item code: the rest comes from the work order ------------------- */
+
+var SUBCODE = { matches: [], active: 0 };
+
+function subCodes(l) {
+    return [l.activity_no, l.item_code].filter(Boolean).map(function (c) { return String(c).toLowerCase(); });
+}
+
+function subCodeInput() { SUBCODE.active = 0; subCodeRender(); }
+window.subCodeInput = subCodeInput;
+
+function subCodeRender() {
+    var input = document.getElementById('sub-code');
+    var box = document.getElementById('sub-code-card');
+    if (!input || !box) return;
+    var q = input.value.trim().toLowerCase();
+    if (!q) { SUBCODE.matches = []; box.innerHTML = ''; return; }
+    var rank = function (l) {
+        var c = subCodes(l);
+        return c.indexOf(q) >= 0 ? 0 : c.some(function (x) { return x.indexOf(q) === 0; }) ? 1 : 2;
+    };
+    SUBCODE.matches = (SUB.lines || []).filter(function (l) { return !l.is_header; }).filter(function (l) {
+        return subCodes(l).some(function (c) { return c.indexOf(q) >= 0; }) ||
+            String(l.description || '').toLowerCase().indexOf(q) >= 0;
+    }).sort(function (a, b) { return rank(a) - rank(b); }).slice(0, 6);
+    SUBCODE.active = Math.min(SUBCODE.active, Math.max(0, SUBCODE.matches.length - 1));
+    var hit = SUBCODE.matches[SUBCODE.active];
+    if (!hit) { box.innerHTML = '<div class="code-none">No item with that code on this work order.</div>'; return; }
+    var left = Math.max(0, hit.balance_to_measure || 0);
+    var facts = [['Unit', esc(hit.uom || '-'), false], ['Ordered', hit.ordered_qty, false],
+        ['Measured', hit.measured_to_date, hit.over_measured > 0], ['Still to do', left, false],
+        ['Rate', formatCurrency(hit.rate || 0), false], ['Allowed up to', hit.max_quantity, false]];
+    box.innerHTML = '<div class="code-card"><div class="code-card-head"><span class="no">' + esc(hit.activity_no) + '</span>' +
+        (hit.item_code ? '<span class="ic">' + esc(hit.item_code) + '</span>' : '') +
+        '<span class="desc">' + esc(hit.description) + '</span><span class="hint">Enter to measure</span></div>' +
+        '<dl class="code-facts">' + facts.map(function (f) {
+            return '<div><dt>' + f[0] + '</dt><dd' + (f[2] ? ' class="bad"' : '') + '>' + f[1] + '</dd></div>';
+        }).join('') + '</dl>' +
+        (SUBCODE.matches.length > 1 ? '<div class="code-others">' + SUBCODE.matches.map(function (m, i) {
+            return '<button type="button" class="code-other' + (i === SUBCODE.active ? ' on' : '') +
+                '" onclick="showSubMeasure(' + m.item_id + ')">' + esc(m.activity_no) + ' ' +
+                esc(String(m.description || '').slice(0, 28)) + '</button>';
+        }).join('') + '</div>' : '') + '</div>';
+}
+
+function subCodeKey(e) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        SUBCODE.active = Math.max(0, Math.min(SUBCODE.matches.length - 1, SUBCODE.active + (e.key === 'ArrowDown' ? 1 : -1)));
+        subCodeRender();
+    } else if (e.key === 'Enter') {
+        e.preventDefault();
+        var hit = SUBCODE.matches[SUBCODE.active];
+        if (hit) showSubMeasure(hit.item_id);
+    } else if (e.key === 'Escape') {
+        subCodeReset(false);
+    }
+}
+window.subCodeKey = subCodeKey;
+
+/* Straight back to the code box for the next item. */
+function subCodeReset(focus) {
+    var input = document.getElementById('sub-code');
+    if (!input) return;
+    input.value = '';
+    SUBCODE.matches = [];
+    document.getElementById('sub-code-card').innerHTML = '';
+    if (focus !== false && !input.disabled && input.offsetParent !== null) input.focus();
+}
+
+/* An amended order is kept for reference. Its revision is where new work is measured. */
+function subAmendNote() {
+    var host = document.getElementById('sub-amend-note');
+    var input = document.getElementById('sub-code');
+    var o = SUB.order;
+    var amended = !!o && o.status === 'AMENDED';
+    if (input) {
+        input.disabled = amended;
+        input.placeholder = amended ? 'Amended - measure against the revision'
+            : 'Type an item code to measure it (e.g. 1.2)';
+    }
+    if (!host) return;
+    if (!amended) { host.innerHTML = ''; return; }
+    var rev = SUBWO.orders.filter(function (x) { return x.supersedes_id === o.id && subIsLive(x); })[0];
+    host.innerHTML = '<div class="sub-amend-note" role="status"><span><strong style="font-family:monospace;">' +
+        esc(o.wo_number) + '</strong> was amended' +
+        (rev ? ' and replaced by <strong style="font-family:monospace;">' + esc(rev.wo_number) +
+            '</strong>. Measure against the revision; what was measured and billed here carried across to it.'
+            : '. Its record is shown for reference and cannot take new measurements.') + '</span>' +
+        (rev ? '<button class="btn btn-sm btn-primary" onclick="subWoChoose(' + rev.id + ')">Open ' + esc(rev.wo_number) + '</button>' : '') +
+        '</div>';
+}
 
 function subOrderChanged() {
     var pick = document.getElementById('sub-order');
@@ -93,6 +310,8 @@ window.openSubBook = openSubBook;
 
 function renderSubBook() {
     var s = SUB.summary;
+    var amended = !!SUB.order && SUB.order.status === 'AMENDED';
+    subAmendNote();
     document.getElementById('sub-stats').innerHTML =
         statCard('Order value', formatCurrency(s.ordered_value || 0)) +
         statCard('Work measured', formatCurrency(s.measured_value || 0)) +
@@ -126,8 +345,8 @@ function renderSubBook() {
             '<td class="text-right">' + l.billed_to_date + '</td>' +
             '<td class="text-right" style="font-weight:600;">' + l.unbilled + '</td>' +
             '<td class="text-right">' + formatCurrency(l.unbilled * l.rate) + '</td>' +
-            '<td class="text-right"><button class="btn btn-sm btn-primary" onclick="showSubMeasure(' +
-                l.item_id + ')">Measure</button></td></tr>';
+            '<td class="text-right">' + (amended ? '' : '<button class="btn btn-sm btn-primary" onclick="showSubMeasure(' +
+                l.item_id + ')">Measure</button>') + '</td></tr>';
     }).join('') : '<tr><td colspan="8" style="text-align:center;padding:24px;' +
         'color:var(--text-secondary);">This order has no items.</td></tr>';
 
@@ -155,10 +374,17 @@ function showSubMeasure(itemId) {
     if (!l) return;
     document.getElementById('sub-measure-item').value = itemId;
     document.getElementById('sub-measure-title').textContent = l.activity_no + ' — ' + l.description;
-    document.getElementById('sub-measure-context').textContent =
-        'Ordered ' + l.ordered_qty + ' ' + l.uom + ' · measured ' + l.measured_to_date + ' · ' +
+    var wo = SUB.order || {};
+    var woJob = subJobCode(wo);
+    document.getElementById('sub-measure-context').innerHTML =
+        '<span class="sub-measure-wo"><strong style="font-family:monospace;">' + esc(wo.wo_number || '') + '</strong>' +
+        (woJob ? '<span class="job">' + esc(woJob) + '</span>' : '') + esc(wo.contractor || '') +
+        (wo.project ? ' · ' + esc(wo.project) : '') + '</span><br>' +
+        'Unit ' + esc(l.uom) + ' · rate ' + formatCurrency(l.rate || 0) + ' · ordered ' + l.ordered_qty +
+        ' · measured ' + l.measured_to_date + ' · ' +
         (l.balance_to_measure >= 0 ? l.balance_to_measure + ' still to do'
-                                   : l.over_measured + ' already over the order');
+                                   : l.over_measured + ' already over the order') +
+        ' · allowed up to ' + l.max_quantity;
     ['sub-measure-dims-total', 'sub-measure-ref', 'sub-measure-remarks', 'sub-measure-location'].forEach(function (id) {
         var el = document.getElementById(id);
         if (el) el.value = '';
@@ -196,7 +422,7 @@ document.addEventListener('input', function (e) {
     if (e.target && e.target.closest && e.target.closest('#sub-measure-dims')) setTimeout(subMeasureTotalHint, 0);
 });
 
-function closeSubMeasure() { closeModal('sub-measure-modal'); }
+function closeSubMeasure() { closeModal('sub-measure-modal'); setTimeout(subCodeReset, 0); }
 window.closeSubMeasure = closeSubMeasure;
 
 async function saveSubMeasure() {

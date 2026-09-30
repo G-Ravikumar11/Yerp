@@ -1830,3 +1830,42 @@ table.data-table thead th[data-sort] { color: var(--primary-color); }
 .tf-bar .tf-count { font-size: 0.78rem; color: var(--text-secondary); margin-left: auto; white-space: nowrap; }
 @media (max-width: 640px) { .tf-bar .form-control { flex: 1 1 100% !important; } .tf-bar .tf-dates { flex-basis: 100%; } }
 @media print { .tf-bar { display: none !important; } }
+
+/* ===== MEASUREMENT BOOK: WORK ORDER PICKER + ITEM CODE ===== */
+.sub-wo-strip { margin-bottom: 18px; overflow: visible; z-index: 30; }
+@media (min-width: 900px) { .sub-wo-strip { position: sticky; top: -1px; } }
+.sub-wo-row { display: grid; grid-template-columns: minmax(0, 26rem) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 899px) { .sub-wo-row { grid-template-columns: minmax(0, 1fr); } }
+.sub-wo-label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; }
+.sub-wo-current { margin-top: 6px; font-size: 0.75rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wo-combo { position: relative; }
+.wo-list { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 60; min-width: min(34rem, 92vw); max-height: 340px; overflow-y: auto; background: var(--surface-solid); border: 1px solid var(--border-color); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); }
+.wo-opt { display: block; padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--border-light); }
+.wo-opt:last-child { border-bottom: 0; }
+.wo-opt.active { background: var(--primary-soft); }
+.wo-opt-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.wo-opt-no { font-family: monospace; font-weight: 700; font-size: 0.82rem; white-space: nowrap; }
+.wo-opt-job { font-family: monospace; font-size: 0.7rem; color: var(--primary-color); background: var(--primary-soft); border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
+.wo-opt-tag { font-size: 0.7rem; color: var(--text-secondary); background: var(--surface-sunken); border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
+.wo-opt-gang { font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wo-opt-sub { font-size: 0.74rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wo-foot { padding: 6px 12px; font-size: 0.7rem; color: var(--text-secondary); background: var(--surface-sunken); position: sticky; bottom: 0; }
+.wo-none { padding: 18px 12px; text-align: center; font-size: 0.82rem; color: var(--text-secondary); }
+.code-card { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--surface-color); }
+.code-card-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; min-width: 0; }
+.code-card-head .no { font-family: monospace; font-weight: 700; font-size: 0.8rem; color: var(--primary-color); }
+.code-card-head .ic { font-family: monospace; font-size: 0.75rem; color: var(--text-secondary); }
+.code-card-head .desc { font-weight: 600; font-size: 0.88rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-card-head .hint { font-size: 0.72rem; color: var(--text-secondary); white-space: nowrap; }
+.code-facts { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px 14px; margin: 0; }
+@media (max-width: 640px) { .code-facts { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.code-facts dt { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); }
+.code-facts dd { margin: 0; font-size: 0.85rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-facts dd.bad { color: var(--danger-color); }
+.code-others { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-light); }
+.code-other { border: 1px solid var(--border-color); background: transparent; color: var(--text-secondary); border-radius: 999px; padding: 2px 10px; font-size: 0.74rem; cursor: pointer; }
+.code-other.on { border-color: var(--primary-color); background: var(--primary-soft); color: var(--primary-color); }
+.code-none { margin-top: 8px; font-size: 0.82rem; color: var(--text-secondary); }
+.sub-measure-wo { margin: 0 0 6px; font-size: 0.82rem; color: var(--text-primary); }
+.sub-measure-wo .job { font-family: monospace; font-size: 0.7rem; color: var(--primary-color); background: var(--primary-soft); border-radius: 4px; padding: 1px 6px; margin: 0 4px; }
+.sub-amend-note { margin-bottom: 18px; padding: 12px 16px; border: 1px solid var(--warning-color); background: var(--warning-soft); border-radius: var(--radius-md); display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; font-size: 0.88rem; }
