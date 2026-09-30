@@ -17,15 +17,15 @@ import { Topbar } from './Topbar'
 export function AppShell() {
   const { pathname } = useLocation()
   const collapsed = useUI((s) => s.sidebarCollapsed)
-  const { isLoading, isAnonymous, error } = useSession()
+  const { isLoading, isAnonymous, error, user } = useSession()
   // The design pages are open to anyone; everything else needs a signed-in person.
   const gated = !pathname.startsWith('/design')
 
   // The tab and the history say where you are, and a screen reader hears the change.
   useEffect(() => {
-    const trail = trailFor(pathname)
+    const trail = trailFor(pathname, user?.type === 'employee')
     document.title = `${trail[trail.length - 1].label} - Y ERP`
-  }, [pathname])
+  }, [pathname, user?.type])
 
   // Signed out: go to the sign-in page rather than draw a page full of failures.
   useEffect(() => {

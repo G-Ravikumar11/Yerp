@@ -65,11 +65,11 @@ Status: `done` · `todo`
 ## People
 | Screen | Old view | Status |
 | --- | --- | --- |
-| Employees (+ detail, payslip) | `employees-view`, `employee-detail-view`, `payslip-detail-view` | todo |
-| Attendance | `attendance-view` | todo |
-| Departments | `departments-view` | todo |
-| Leave | `leave-view` | todo |
-| Payroll | `payroll-view` | todo |
+| Employees (list, add, edit, access, password, start leaving) | `employees-view`, `employee-detail-view` | done; the detail's goals, documents and the leaving checklist are still todo |
+| Attendance (today, history, analytics, overtime, settings) | `attendance-view` | done; the AI alerts and AI summary are not ported |
+| Departments (the owner's own list, reflected on employees, work orders and staff) | `departments-view` | done |
+| Leave (decide requests) | `leave-view` | done |
+| Payroll (payslips, run for everyone, detail, pay, email, print) | `payroll-view`, `payslip-detail-view` | done; the PDF is the browser print of a plain payslip, not the old jsPDF one |
 
 ## Everything else
 | Screen | Old view | Status |
@@ -79,7 +79,7 @@ Status: `done` · `todo`
 | Settings (letterhead, company, users) | `settings-view` | todo |
 | Contacts | `contacts-view` | todo |
 | Document viewer | `document-view` | todo |
-| Staff self-service (overview, timesheet, costs, leave, payslips, documents) | `my-*-view` | todo |
+| Staff self-service (overview with clock, timesheet, costs, orders, leave, payslips, documents) | `my-*-view`, `employee-dashboard.html` | done; notifications, goals, team presence and profile of the old staff page are not ported |
 
 ## Pages outside `app.html`
 Sign-in (`login.html`, `employee-login.html`, `superadmin-login.html`), `portal.html`

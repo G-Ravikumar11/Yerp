@@ -111,9 +111,24 @@ await page.waitForFunction(() => !document.querySelector('[role=dialog]'))
 await sleep(400)
 check('the entry appears in the book, and the item shows it measured', (await text()).includes('Block C-3, first floor') && /60(?!\d)/.test(await text()))
 
+// Opening a measurement right after closing the last one can catch the old dialog on its way out:
+// wait for the new one's tabs, and try once more if they never come.
+async function openFirstItem() {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await page.evaluate(() => document.querySelector('table[aria-label="Items on the order"] tbody tr:first-child button')?.click())
+    try {
+      await page.waitForSelector('[role=dialog] button[role=tab]', { timeout: 4000 })
+      return
+    } catch {
+      await page.keyboard.press('Escape')
+      await sleep(400)
+    }
+  }
+  throw new Error('the measurement dialog did not open')
+}
+
 // --- A plain total ----------------------------------------------------------------------------
-await page.click('table[aria-label="Items on the order"] tbody tr:first-child button')
-await page.waitForSelector('[role=dialog]')
+await openFirstItem()
 await clickText(page, '[role=dialog] button[role=tab]', 'Just a total')
 await fill(page, '#m-total', '45')
 await clickText(page, '[role=dialog] button', 'Record it in the book')
@@ -121,11 +136,10 @@ await waitForToast(page, 'Recorded')
 await sleep(500)
 
 // --- Past the ceiling --------------------------------------------------------------------------
-await page.click('table[aria-label="Items on the order"] tbody tr:first-child button')
-await page.waitForSelector('[role=dialog]')
+await openFirstItem()
 await clickText(page, '[role=dialog] button[role=tab]', 'Just a total')
 await fill(page, '#m-total', '130')
-await sleep(150)
+await page.waitForFunction(() => /past the 220/.test(document.querySelector('[role=dialog]')?.textContent ?? ''), { timeout: 5000 }).catch(() => {}) // the allowance follows the refetched book, which can land a moment late
 const warn = await page.$eval('[role=dialog]', (e) => e.textContent)
 check('the dialog warns before saving that it goes past the allowance', /past the 220/.test(warn), (warn.match(/That takes.{0,70}/) || [''])[0])
 await clickText(page, '[role=dialog] button', 'Record it in the book')

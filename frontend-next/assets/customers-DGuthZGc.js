@@ -1,0 +1,1 @@
+import{$ as e,I as t,L as n,R as r}from"./index-pshNXH2U.js";var i={all:[`customers`],list:e=>[`customers`,`list`,e]},a=n=>e({queryKey:i.list(n),queryFn:async()=>(await t(`/api/customers?q=${encodeURIComponent(n)}`)).customers??[],placeholderData:e=>e}),o=e=>n(`/api/customers`,e),s=(e,t)=>r(`/api/customers/${e}`,t);export{a as i,i as n,s as r,o as t};

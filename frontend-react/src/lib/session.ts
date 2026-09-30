@@ -9,6 +9,8 @@ export type SessionUser = {
   permissions: string[]
   employeeId: number | null
   roleLabel: string
+  /** The department the owner has put this person in; staff see it on their own sign-in. */
+  department: string
 }
 
 type OwnerMe = { email: string; contact_name?: string; company_name?: string }
@@ -18,6 +20,7 @@ type StaffMe = {
   full_name?: string
   permissions?: string[]
   permission_role_label?: string
+  department?: string
 }
 
 /**
@@ -37,6 +40,7 @@ async function loadSession(): Promise<SessionUser | null> {
         permissions: [],
         employeeId: null,
         roleLabel: 'Owner',
+        department: '',
       }
     }
   } catch (e) {
@@ -53,6 +57,7 @@ async function loadSession(): Promise<SessionUser | null> {
         permissions: staff.permissions ?? [],
         employeeId: staff.id,
         roleLabel: staff.permission_role_label || 'Staff',
+        department: staff.department ?? '',
       }
     }
   } catch (e) {

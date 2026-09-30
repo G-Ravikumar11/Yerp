@@ -15,7 +15,8 @@ import { SyncIndicator } from './SyncIndicator'
 
 function Breadcrumbs() {
   const { pathname } = useLocation()
-  const trail = trailFor(pathname)
+  const { user } = useSession()
+  const trail = trailFor(pathname, user?.type === 'employee')
   return (
     <nav aria-label="Breadcrumb" className="min-w-0">
       <ol className="flex items-center gap-1.5 text-[13px]">
@@ -97,7 +98,7 @@ function UserChip() {
       <span className="grid size-8 place-items-center rounded-full bg-gradient-to-br from-steel-400 to-steel-600 text-[11px] font-semibold text-white">{initials(user?.name)}</span>
       <span className="hidden min-w-0 leading-tight sm:block">
         <span className="block max-w-36 truncate text-[13px] font-medium">{user?.name ?? 'Guest'}</span>
-        <span className="block text-[11px] text-muted-foreground">{user?.roleLabel ?? 'Not signed in'}</span>
+        <span className="block text-[11px] text-muted-foreground">{user ? [user.roleLabel, user.department].filter(Boolean).join(' · ') : 'Not signed in'}</span>
       </span>
       {user && (
         <Tooltip content="Sign out" side="bottom">

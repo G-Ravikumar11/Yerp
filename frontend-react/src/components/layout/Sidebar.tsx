@@ -170,7 +170,7 @@ function SidebarBody({ collapsed, showToggle }: { collapsed: boolean; showToggle
   const toggle = useUI((s) => s.toggleSidebar)
   const { user, can } = useSession()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const nav = useMemo(() => visibleNav(can), [user])
+  const nav = useMemo(() => visibleNav(can, user?.type === 'employee'), [user])
   return (
     <div className="flex h-full flex-col">
       <div className={cn('flex h-16 shrink-0 items-center px-4', collapsed && 'justify-center px-0')}>

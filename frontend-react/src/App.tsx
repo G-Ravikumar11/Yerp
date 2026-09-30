@@ -9,7 +9,7 @@ import { persistOptions, queryClient } from '@/lib/query'
 import { watchConnection } from '@/stores/offline'
 import { applyTheme, useUI } from '@/stores/ui'
 import { PORTED } from '@/routes'
-import Dashboard from '@/pages/Dashboard'
+import Home from '@/pages/Home'
 import ModulePlaceholder from '@/pages/ModulePlaceholder'
 import NotFound from '@/pages/NotFound'
 
@@ -47,7 +47,7 @@ export default function App() {
         <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
           <Routes>
             <Route element={<AppShell />}>
-              <Route index element={<Dashboard />} />
+              <Route index element={<Home />} />
               <Route
                 path="design"
                 element={

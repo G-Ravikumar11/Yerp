@@ -7,13 +7,15 @@ import {
   type LucideIcon,
   Package,
   Settings,
+  UserRound,
   Users,
   Wallet,
 } from 'lucide-react'
 
 export type NavItem = { label: string; path: string; perm?: string }
-export type NavGroup = { id: string; label: string; icon: LucideIcon; items: NavItem[] }
-export type NavEntry = { kind: 'link'; id: string; label: string; icon: LucideIcon; path: string; perm?: string } | ({ kind: 'group' } & NavGroup)
+/** staffOnly: the screens of a member of staff's own work (timesheet, payslips), which the account holder has no use for. */
+export type NavGroup = { id: string; label: string; icon: LucideIcon; items: NavItem[]; staffOnly?: boolean; ownerOnly?: boolean }
+export type NavEntry = { kind: 'link'; id: string; label: string; icon: LucideIcon; path: string; perm?: string; ownerOnly?: boolean } | ({ kind: 'group' } & NavGroup)
 
 /**
  * The same six groups the current app has, so nobody has to relearn where
@@ -21,7 +23,23 @@ export type NavEntry = { kind: 'link'; id: string; label: string; icon: LucideIc
  * yet ported render the migration placeholder.
  */
 export const NAV: NavEntry[] = [
-  { kind: 'link', id: 'dashboard', label: 'Command Center', icon: LayoutDashboard, path: '/' },
+  { kind: 'link', id: 'dashboard', label: 'Command Center', icon: LayoutDashboard, path: '/', ownerOnly: true },
+  {
+    kind: 'group',
+    id: 'me',
+    label: 'My work',
+    icon: UserRound,
+    staffOnly: true,
+    items: [
+      { label: 'Overview', path: '/' },
+      { label: 'Timesheet', path: '/me/timesheet' },
+      { label: 'My Costs', path: '/me/costs', perm: 'bills.submit' },
+      { label: 'My Orders', path: '/me/orders', perm: 'bills.submit' },
+      { label: 'My Leave', path: '/me/leave' },
+      { label: 'Payslips', path: '/me/payslips' },
+      { label: 'Documents', path: '/me/documents' },
+    ],
+  },
   { kind: 'link', id: 'approvals', label: 'Approvals', icon: CheckCheck, path: '/approvals' },
   {
     kind: 'group',
@@ -100,21 +118,24 @@ export const NAV: NavEntry[] = [
     id: 'people',
     label: 'People',
     icon: Users,
+    ownerOnly: true,
     items: [
-      { label: 'Employees', path: '/people/employees' },
+      { label: 'Employees', path: '/people/employees', perm: 'people.manage' },
+      { label: 'Departments', path: '/people/departments', perm: 'people.manage' },
+      { label: 'Attendance', path: '/people/attendance', perm: 'attendance.view_team|people.manage' },
       { label: 'Leave', path: '/people/leave', perm: 'leave.approve' },
       { label: 'Payroll', path: '/people/payroll', perm: 'payroll.manage' },
     ],
   },
-  { kind: 'link', id: 'settings', label: 'Settings', icon: Settings, path: '/settings' },
+  { kind: 'link', id: 'settings', label: 'Settings', icon: Settings, path: '/settings', ownerOnly: true },
 ]
 
 export type Trail = { label: string; path?: string }[]
 
 /** Home > Group > Page for whatever path is showing. */
-export function trailFor(pathname: string): Trail {
+export function trailFor(pathname: string, staff = false): Trail {
   const home: Trail = [{ label: 'Home', path: '/' }]
-  if (pathname === '/') return [{ label: 'Command Center' }]
+  if (pathname === '/') return [{ label: staff ? 'Overview' : 'Command Center' }]
   if (pathname === '/design') return [...home, { label: 'Design system' }]
   if (pathname === '/design/grid') return [...home, { label: 'Design system', path: '/design' }, { label: 'Data grid' }]
   for (const e of NAV) {
@@ -134,8 +155,11 @@ export function trailFor(pathname: string): Trail {
 }
 
 /** The menu as this person may see it: items they lack the right to are left out, and so are groups left empty. */
-export function visibleNav(can: (perm: string) => boolean): NavEntry[] {
+export function visibleNav(can: (perm: string) => boolean, staff = false): NavEntry[] {
   return NAV.flatMap((e): NavEntry[] => {
+    if (e.kind === 'group' && e.staffOnly && !staff) return []
+    if (e.kind === 'group' && e.ownerOnly && staff) return []
+    if (e.kind === 'link' && e.ownerOnly && staff) return []
     if (e.kind === 'link') return !e.perm || can(e.perm) ? [e] : []
     const items = e.items.filter((i) => !i.perm || can(i.perm))
     return items.length ? [{ ...e, items }] : []
