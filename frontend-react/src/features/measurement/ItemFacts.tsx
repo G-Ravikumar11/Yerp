@@ -11,7 +11,8 @@ export function ItemFacts({ line, className }: { line: MbLine; className?: strin
     ['Measured', formatQty(line.measured_to_date), !!line.over_measured],
     ['Still to do', formatQty(left)],
     ['Rate', formatINR(line.rate ?? 0)],
-    ['Allowed up to', formatQty(line.max_quantity)],
+    // A client order has no ceiling: past it the work becomes a variation.
+    ...(line.max_quantity != null ? ([['Allowed up to', formatQty(line.max_quantity)]] as [string, string][]) : []),
   ]
   return (
     <dl className={cn('grid grid-cols-3 gap-x-4 gap-y-2 sm:grid-cols-6', className)}>

@@ -1,8 +1,13 @@
 import { useMemo, useState } from 'react'
 import { DataGrid } from '@/components/grid'
 import { Button, Field, Input, Modal, NumField, Tabs } from '@/components/ui'
-import { mbKeys, recordUrl, type MbLine, type MeasurementInput } from '@/api/mb'
-import type { Order } from '@/api/orders'
+import { mbKeys, recordUrl, type MbLine } from '@/api/mb'
+/** The work order as the window shows it: its number, who it is with, and where. */
+export interface MeasureOrder {
+  wo_number: string
+  contractor: string
+  project: string
+}
 import { blankDim, dimTotal, type DimLine } from '@/lib/measure'
 import { formatQty, today } from '@/lib/format'
 import { useAction } from '@/lib/mutate'
@@ -15,24 +20,38 @@ import { SheetFill, toDimLine, type SheetEntry } from './SheetFill'
 type Mode = 'dims' | 'total'
 
 /**
+ * Where a measurement goes. The subcontract book is keyed by `item_id` and counts blocks built alike;
+ * the client book is keyed by `line_id`, has a witness, and takes the lines as they are.
+ */
+export interface MeasureTarget {
+  url: string
+  idKey: 'item_id' | 'line_id'
+  client?: boolean
+  /** Lists to refresh once it is recorded. */
+  invalidate?: readonly (readonly unknown[])[]
+}
+
+const subTarget = (orderId: number): MeasureTarget => ({ url: recordUrl(orderId), idKey: 'item_id' })
+
+/**
  * One measurement into the book: the dimension lines as they are written in
  * the field book, worked out as they are typed, or - for a count - just a
  * total. With no signal it is kept on the device and sent when one returns.
  */
-export function MeasureModal({ orderId, order, jobCode, line, onClose }: { orderId: number; order?: Order; jobCode?: string; line: MbLine | null; onClose: () => void }) {
+export function MeasureModal({ orderId, order, jobCode, line, onClose, target }: { orderId: number; order?: MeasureOrder; jobCode?: string; line: MbLine | null; onClose: () => void; target?: MeasureTarget }) {
   return (
-    <Modal open={!!line} onOpenChange={(o) => !o && onClose()} size="xl" title={line ? `Measure ${line.activity_no} ${line.description}` : 'Measure'} description={line ? allowance(line) : undefined}>
-      {line && <MeasureForm key={line.item_id} orderId={orderId} order={order} jobCode={jobCode} line={line} onClose={onClose} />}
+    <Modal open={!!line} onOpenChange={(o) => !o && onClose()} size="xl" title={line ? `Measure ${line.activity_no} ${line.description}` : 'Measure'} description={line ? allowance(line, !!target?.client) : undefined}>
+      {line && <MeasureForm key={line.item_id} orderId={orderId} order={order} jobCode={jobCode} line={line} onClose={onClose} target={target ?? subTarget(orderId)} />}
     </Modal>
   )
 }
 
-const allowance = (l: MbLine) =>
+const allowance = (l: MbLine, client: boolean) =>
   `${formatQty(l.measured_to_date)} of ${formatQty(l.ordered_qty)} ${l.uom ?? ''} measured` +
   (l.tolerance_percent ? `; up to ${formatQty(l.max_quantity)} allowed with ${l.tolerance_percent}% tolerance` : '') +
-  '. Past that the order is amended.'
+  (client ? '. Past that the work is a variation, raised from the book.' : '. Past that the order is amended.')
 
-function MeasureForm({ orderId, order, jobCode, line, onClose }: { orderId: number; order?: Order; jobCode?: string; line: MbLine; onClose: () => void }) {
+function MeasureForm({ orderId, order, jobCode, line, onClose, target }: { orderId: number; order?: MeasureOrder; jobCode?: string; line: MbLine; onClose: () => void; target: MeasureTarget }) {
   const [mode, setMode] = useState<Mode>('dims')
   const [dims, setDims] = useState<DimLine[]>([])
   const [total, setTotal] = useState(0)
@@ -41,6 +60,7 @@ function MeasureForm({ orderId, order, jobCode, line, onClose }: { orderId: numb
   const [ref, setRef] = useState('')
   const [where, setWhere] = useState('')
   const [remarks, setRemarks] = useState('')
+  const [witness, setWitness] = useState('')
 
   const one = mode === 'dims' ? dimTotal(dims) : total
   const quantity = Math.round(one * blocks * 1000) / 1000
@@ -49,13 +69,13 @@ function MeasureForm({ orderId, order, jobCode, line, onClose }: { orderId: numb
 
   const save = useAction(
     async () => {
-      const body: MeasurementInput = {
-        item_id: line.item_id,
+      const body: Record<string, unknown> = {
+        [target.idKey]: line.item_id,
         measured_on: on,
         mb_ref: ref,
         location: where,
         remarks,
-        multiplier: blocks,
+        ...(target.client ? { witnessed_by: witness } : { multiplier: blocks }),
         ...(mode === 'dims'
           ? {
               dimensions: dims
@@ -66,7 +86,7 @@ function MeasureForm({ orderId, order, jobCode, line, onClose }: { orderId: numb
       }
       const sent = await sendOrQueue<{ message: string }>({
         method: 'POST',
-        url: recordUrl(orderId),
+        url: target.url,
         body,
         label: `Measured ${formatQty(quantity)} ${line.uom ?? ''} against ${line.activity_no}`.trim(),
       })
@@ -76,7 +96,7 @@ function MeasureForm({ orderId, order, jobCode, line, onClose }: { orderId: numb
       }
       return sent.result
     },
-    { invalidate: [mbKeys.all, ['subbills']], onSuccess: onClose },
+    { invalidate: [...(target.invalidate ?? [mbKeys.all, ['subbills']])], onSuccess: onClose },
   )
 
   const columns = useMemo(() => dimColumns, [])
@@ -105,7 +125,7 @@ function MeasureForm({ orderId, order, jobCode, line, onClose }: { orderId: numb
         )}
         <ItemFacts line={line} />
       </div>
-      <SheetFill orderId={orderId} itemId={line.item_id} onUse={fromSheet} />
+      {!target.client && <SheetFill orderId={orderId} itemId={line.item_id} onUse={fromSheet} />}
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <Tabs
           label="How it is measured"
@@ -132,9 +152,15 @@ function MeasureForm({ orderId, order, jobCode, line, onClose }: { orderId: numb
       )}
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Field label="Blocks built alike" htmlFor="m-blocks" hint="The lines above are of one.">
-          <NumField id="m-blocks" value={blocks} onValue={(n) => setBlocks(n > 0 ? n : 1)} />
-        </Field>
+        {target.client ? (
+          <Field label="Witnessed by" htmlFor="m-witness" hint="Who saw it measured.">
+            <Input id="m-witness" value={witness} onChange={(e) => setWitness(e.target.value)} />
+          </Field>
+        ) : (
+          <Field label="Blocks built alike" htmlFor="m-blocks" hint="The lines above are of one.">
+            <NumField id="m-blocks" value={blocks} onValue={(n) => setBlocks(n > 0 ? n : 1)} />
+          </Field>
+        )}
         <Field label="Measured on" htmlFor="m-on">
           <Input id="m-on" type="date" value={on} onChange={(e) => setOn(e.target.value)} />
         </Field>

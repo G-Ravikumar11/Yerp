@@ -14,7 +14,7 @@ Status: `done` · `todo`
 | Tender Pipeline | `leads-view` | todo |
 | Tenders & Estimates | `estimates-view` | todo |
 | Client Work Orders (build, budget, place, approve, material, sheet import) | `workorders-view` | done |
-| Measurement & RA Bills (client side) | `measurement-view` | todo |
+| Measurement & RA Bills (client side: book, statement, variations, bills) | `measurement-view` | done |
 | Customers | `customers-view`, `customer-view` | todo |
 
 ## Money

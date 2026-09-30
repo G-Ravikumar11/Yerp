@@ -1,21 +1,31 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Check, ChevronsUpDown, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { Order } from '@/api/orders'
-export type JobCodeOf = (o: Order) => string
+/** What the picker needs of an order - any kind of work order that can be described this way. */
+export interface PickerOrder {
+  id: number
+  wo_number: string
+  status: string
+  project: string
+  contractor: string
+  vendor_code?: string
+  subject?: string
+  work_type?: string
+}
+export type JobCodeOf<T = PickerOrder> = (o: T) => string
 
 /** What to say beside an order that is not approved: why it cannot take a measurement. */
 const TAGS: Record<string, string> = { AMENDED: 'amended', PROVISIONAL: 'awaiting approval', DRAFT: 'draft', CANCELLED: 'cancelled' }
-const tagOf = (o: Order) => TAGS[o.status] ?? ''
+const tagOf = (o: PickerOrder) => TAGS[o.status] ?? ''
 
 /** Everything a person might type to find an order: its number, job code, project, gang or subject. */
-const haystack = (o: Order, jobCode: JobCodeOf) => [o.wo_number, jobCode(o), o.project, o.contractor, o.vendor_code, o.subject, o.work_type].join(' ').toLowerCase()
+const haystack = <T extends PickerOrder>(o: T, jobCode: JobCodeOf<T>) => [o.wo_number, jobCode(o), o.project, o.contractor, o.vendor_code, o.subject, o.work_type].join(' ').toLowerCase()
 
 /**
  * Pick from every work order by typing any part of its number, job code,
  * project or gang. Keyboard all the way: arrows move, Enter chooses, Esc closes.
  */
-export function WorkOrderPicker({ orders, value, onChange, jobCode, loading, selected }: { orders: Order[]; value: number; onChange: (id: number) => void; jobCode: JobCodeOf; loading?: boolean; selected?: Order }) {
+export function WorkOrderPicker<T extends PickerOrder>({ orders, value, onChange, jobCode, loading, selected }: { orders: T[]; value: number; onChange: (id: number) => void; jobCode: JobCodeOf<T>; loading?: boolean; selected?: T }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const [active, setActive] = useState(0)
@@ -52,7 +62,7 @@ export function WorkOrderPicker({ orders, value, onChange, jobCode, loading, sel
     setQ('')
     trigger.current?.focus()
   }
-  const choose = (o: Order | undefined) => {
+  const choose = (o: T | undefined) => {
     if (!o) return
     onChange(o.id)
     close()
