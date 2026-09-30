@@ -41,7 +41,7 @@ export default function App() {
   }, [])
 
   return (
-    <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
+    <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions} onSuccess={() => void queryClient.invalidateQueries({ queryKey: ['session'] })}>
       <MotionConfig reducedMotion="user">
       <TooltipProvider>
         <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>

@@ -50,8 +50,9 @@ export const persistOptions = {
   maxAge: 24 * 60 * 60 * 1000,
   buster: typeof __BUILD__ === 'undefined' ? 'dev' : __BUILD__,
   dehydrateOptions: {
-    // Only what was read successfully; never a query still waiting or failed.
-    shouldDehydrateQuery: (q: { state: { status: string } }) => q.state.status === 'success',
+    // What was read and is still held - including a query whose refresh has just failed for want of signal, which keeps its last answer.
+    // Never one with nothing to show.
+    shouldDehydrateQuery: (q: { state: { status: string; data: unknown } }) => q.state.data !== undefined && q.state.status !== 'pending',
   },
 }
 

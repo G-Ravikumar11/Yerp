@@ -7,14 +7,18 @@ export class ApiError extends Error {
   }
 }
 
-type Options = Omit<RequestInit, 'body'> & { body?: unknown }
+type Options = Omit<RequestInit, 'body'> & {
+  body?: unknown
+  /** A 401 is an expected answer here (asking who is signed in), not a session that has ended. */
+  quiet?: boolean
+}
 
 /**
  * The one door to the FastAPI backend. Sends the session cookie, speaks JSON,
  * and turns the backend's `{ detail }` errors into an ApiError so screens can
  * show the server's own plain-language reason.
  */
-export async function api<T = unknown>(path: string, { body, headers, ...init }: Options = {}): Promise<T> {
+export async function api<T = unknown>(path: string, { body, headers, quiet, ...init }: Options = {}): Promise<T> {
   const isForm = typeof FormData !== 'undefined' && body instanceof FormData
   const res = await fetch(path, {
     credentials: 'include',
@@ -35,7 +39,7 @@ export async function api<T = unknown>(path: string, { body, headers, ...init }:
     const detail = (data as { detail?: unknown } | null)?.detail
     const message =
       typeof detail === 'string' ? detail : Array.isArray(detail) ? 'Some of what was entered is not valid.' : res.statusText
-    if (res.status === 401 && !location.pathname.startsWith('/login')) {
+    if (res.status === 401 && !quiet && !location.pathname.startsWith('/login')) {
       // The session ended; the login page is still the current app's.
       window.dispatchEvent(new CustomEvent('yerp:unauthorised'))
     }

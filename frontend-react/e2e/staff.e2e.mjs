@@ -14,6 +14,10 @@ const d = await api(page, 'POST', '/api/departments', { name: dept, description:
 const made = await api(page, 'POST', '/api/employees', { first_name: 'Ravi', last_name: `Survey${stamp}`, email, password: 'Passw0rd-QA1', phone: '', job_title: 'Surveyor', department_id: d.data.id, reports_to: null, level: 'L1', role: 'employee', permission_role: 'staff', site_ids: [], employment_type: 'full_time', pay_frequency: 'monthly', salary: 30000, tax_rate: 0, start_date: '2026-01-01', emergency_contact: '', emergency_phone: '' })
 check('the owner has created the department and the employee', d.status === 200 && made.status === 200, JSON.stringify([d.status, made.status, made.data]).slice(0, 200))
 
+// The owner has the app open on this device; then somebody else signs in here. What was kept for the owner must not be theirs to see.
+await open(page, '/')
+let asked = 0
+page.on('request', (r) => { if (r.url().includes('/api/')) asked++ })
 // Sign out the owner; sign in as the member of staff
 await api(page, 'POST', '/api/client/logout')
 const login = await api(page, 'POST', '/api/employee/auth/login', { email, password: 'Passw0rd-QA1' })
@@ -25,6 +29,7 @@ check("the front page is the person's own day, not the owner's Command Center", 
 check("the department the owner chose is on the page and in the top bar", (await text('main')).includes(dept) && (await text('header')).includes(dept), await text('header'))
 
 const menu = await text('nav[aria-label="Main"], aside')
+check('switching person in the same browser settles at once (no request storm)', asked < 40, String(asked) + ' requests')
 check('the menu holds their own work', ['Overview', 'Timesheet', 'My Costs', 'My Leave', 'Payslips', 'Documents'].every((w) => menu.includes(w)), menu.slice(0, 200))
 check('and leaves out what they have no right to (Money, People, Command Center)', !/Money|Payments|Employees|Command Center|Settings/.test(menu), menu.slice(0, 300))
 

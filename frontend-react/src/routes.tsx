@@ -35,6 +35,7 @@ export const PORTED: PortedRoute[] = [
   { path: '/people/departments', Component: lazy(() => import('@/features/people/DepartmentsPage')) },
   { path: '/people/employees', Component: lazy(() => import('@/features/people/EmployeesPage')) },
   { path: '/people/employees/:id', Component: lazy(() => import('@/features/people/EmployeePage')) },
+  { path: '/projects/diary', Component: lazy(() => import('@/features/diary/DiaryPage')) },
   { path: '/people/attendance', Component: lazy(() => import('@/features/attendance/AttendancePage')) },
   { path: '/people/leave', Component: lazy(() => import('@/features/leave/LeavePage')) },
   { path: '/people/payroll', Component: lazy(() => import('@/features/payroll/PayrollPage')) },

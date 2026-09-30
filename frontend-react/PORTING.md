@@ -47,7 +47,7 @@ Status: `done` · `todo`
 | Drawings & Photos | `drawings-view` | todo |
 | Quality | `quality-view` | todo |
 | Safety | `safety-view` | todo |
-| Site Diary | `diary-view` | todo |
+| Site Diary (record a day, labour and plant, photos, sign off, DPR, who has been on site) | `diary-view` | done; works offline (kept on the device, goes up by itself) |
 | Project Chat | `chat-view` | todo |
 | Equipment & Plant | `equipment-view` | todo |
 | Project Profit | `pnl-view` | todo |

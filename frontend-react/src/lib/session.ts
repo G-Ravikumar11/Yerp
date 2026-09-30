@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-import { ApiError, get } from './api'
+import { ApiError, api } from './api'
+import { queryClient } from './query'
 
 export type SessionUser = {
   type: 'owner' | 'employee'
@@ -29,8 +30,16 @@ type StaffMe = {
  * simply "nobody", never an exception the screens have to handle.
  */
 async function loadSession(): Promise<SessionUser | null> {
+  const next = await resolveSession()
+  // A different person than the one this device was holding data for: what was kept for the last one is not theirs to see.
+  const before = queryClient.getQueryData<SessionUser | null>(['session'])
+  if (before && (!next || before.type !== next.type || before.email !== next.email)) queryClient.removeQueries({ predicate: (q) => q.queryKey[0] !== 'session' })
+  return next
+}
+
+async function resolveSession(): Promise<SessionUser | null> {
   try {
-    const owner = await get<OwnerMe>('/api/client/me')
+    const owner = await api<OwnerMe>('/api/client/me', { quiet: true })
     if (owner?.email) {
       return {
         type: 'owner',
@@ -47,7 +56,7 @@ async function loadSession(): Promise<SessionUser | null> {
     if (!(e instanceof ApiError) || e.status >= 500) throw e
   }
   try {
-    const staff = await get<StaffMe>('/api/employee/auth/me')
+    const staff = await api<StaffMe>('/api/employee/auth/me', { quiet: true })
     if (staff?.email) {
       return {
         type: 'employee',
