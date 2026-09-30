@@ -33,7 +33,7 @@ Status: `done` · `todo`
 | --- | --- | --- |
 | Item Master | `items-view` | done |
 | Enquiries & Comparison | `rfq-view`, `inquiry-view` | todo |
-| Purchase Orders | `orders-view`, `my-orders-view` | todo |
+| Purchase Orders (+ My Orders for staff) | `orders-view`, `my-orders-view` | done |
 | E-way Bills | `eway-view` | todo |
 | Goods Receipt & Match | `stores-view` | todo |
 | Stock & Issues | `stock-view` | todo |

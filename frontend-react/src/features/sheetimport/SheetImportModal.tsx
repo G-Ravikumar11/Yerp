@@ -10,15 +10,15 @@ import { useDebounced } from '@/lib/hooks'
  * Bring a list in from any workbook: the columns can be named and ordered however they already come.
  * Every row is shown to be corrected in place, with what is wrong beside it; nothing is saved until it is confirmed.
  */
-export function SheetImportModal({ open, onOpenChange, kind, title, intro, confirmLabel, invalidate }: { open: boolean; onOpenChange: (o: boolean) => void; kind: string; title: string; intro: string; confirmLabel: string; invalidate: readonly (readonly unknown[])[] }) {
+export function SheetImportModal({ open, onOpenChange, kind, title, intro, confirmLabel, invalidate, onRows }: { open: boolean; onOpenChange: (o: boolean) => void; kind: string; title: string; intro: string; confirmLabel: string; invalidate: readonly (readonly unknown[])[]; onRows?: (rows: SheetRow[]) => void }) {
   return (
     <Modal open={open} onOpenChange={onOpenChange} size="xl" title={title} description={intro}>
-      {open && <Body kind={kind} confirmLabel={confirmLabel} invalidate={invalidate} onClose={() => onOpenChange(false)} />}
+      {open && <Body kind={kind} confirmLabel={confirmLabel} invalidate={invalidate} onRows={onRows} onClose={() => onOpenChange(false)} />}
     </Modal>
   )
 }
 
-function Body({ kind, confirmLabel, invalidate, onClose }: { kind: string; confirmLabel: string; invalidate: readonly (readonly unknown[])[]; onClose: () => void }) {
+function Body({ kind, confirmLabel, invalidate, onRows, onClose }: { kind: string; confirmLabel: string; invalidate: readonly (readonly unknown[])[]; onRows?: (rows: SheetRow[]) => void; onClose: () => void }) {
   const file = useRef<HTMLInputElement>(null)
   const [read, setRead] = useState<SheetRead | null>(null)
   const [rows, setRows] = useState<SheetRow[]>([])
@@ -31,7 +31,7 @@ function Body({ kind, confirmLabel, invalidate, onClose }: { kind: string; confi
     onSuccess: (r) => { setRead(r); setRows(r.rows); setProblems(r.problems); setError('') },
     onError: (e) => setError(e.message),
   })
-  const bring = useAction(() => importSheet(kind, rows), { invalidate: [...invalidate], onSuccess: onClose })
+  const bring = useAction(async () => { if (onRows) { onRows(rows); return { count: rows.length, message: `${rows.length} line${rows.length === 1 ? '' : 's'} added. Check them and save.` } } return importSheet(kind, rows) }, { invalidate: [...invalidate], onSuccess: onClose })
 
   // The same checks, on the rows as edited.
   useEffect(() => {

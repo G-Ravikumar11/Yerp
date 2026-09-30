@@ -251,7 +251,8 @@
         // account holder or to a member of staff is the server's business, not
         // something anyone should have to know before they can sign in.
         fetch('/api/client/me').then(function(r) {
-            if (r.ok) { window.location.href = nextTarget('/app.html'); return; }
+            // The account holder lands on the new interface; staff stay on the current one until their screens move.
+            if (r.ok) { window.location.href = nextTarget('/next/'); return; }
             return fetch('/api/employee/auth/me');
         }).then(function(r) {
             if (r && r.ok) { window.location.href = nextTarget('/app.html'); return; }
@@ -300,7 +301,7 @@
                 if (owner) {
                     window.location.href = owner.is_onboarded === false
                         ? nextTarget('/onboard.html')
-                        : nextTarget('/app.html');
+                        : nextTarget('/next/');
                     return;
                 }
                 // Not the account holder - try them as a member of staff before

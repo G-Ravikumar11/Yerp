@@ -6,16 +6,16 @@ import { useAction } from '@/lib/mutate'
 const blank = (): SupplierInput => ({ name: '', contact_person: '', phone: '', email: '', gstin: '', pan: '', address: '', bank_name: '', bank_account: '', bank_ifsc: '', payment_days: 30, supplies: '' })
 
 /** A supplier in the master: who they are, what they supply, how they are paid, and the GSTIN input credit depends on. */
-export function SupplierModal({ open, supplier, onClose }: { open: boolean; supplier: Supplier | null; onClose: () => void }) {
+export function SupplierModal({ open, supplier, onClose, presetName }: { open: boolean; supplier: Supplier | null; onClose: () => void; presetName?: string }) {
   return (
     <Modal open={open} onOpenChange={(o) => !o && onClose()} size="lg" title={supplier ? `Edit ${supplier.name}` : 'New supplier'}>
-      {open && <Form key={supplier?.id ?? 'new'} supplier={supplier} onClose={onClose} />}
+      {open && <Form key={supplier?.id ?? `new-${presetName ?? ''}`} supplier={supplier} presetName={presetName} onClose={onClose} />}
     </Modal>
   )
 }
 
-function Form({ supplier, onClose }: { supplier: Supplier | null; onClose: () => void }) {
-  const [f, setF] = useState<SupplierInput>(() => (supplier ? { ...blank(), ...supplier } : blank()))
+function Form({ supplier, presetName, onClose }: { supplier: Supplier | null; presetName?: string; onClose: () => void }) {
+  const [f, setF] = useState<SupplierInput>(() => (supplier ? { ...blank(), ...supplier } : { ...blank(), name: presetName ?? '' }))
   const set = (k: keyof SupplierInput) => (e: React.ChangeEvent<HTMLInputElement>) => setF((s) => ({ ...s, [k]: e.target.value }))
   const up = (k: keyof SupplierInput) => (e: React.ChangeEvent<HTMLInputElement>) => setF((s) => ({ ...s, [k]: e.target.value.toUpperCase() }))
   const save = useAction(() => saveSupplier(supplier?.id ?? null, f), { invalidate: [ledgerKeys.all, ['suppliers']], success: (r) => `${r.code} ${r.name} saved`, onSuccess: onClose })

@@ -31,4 +31,5 @@ export const PORTED: PortedRoute[] = [
   { path: '/money/gst', Component: lazy(() => import('@/features/gst/GstPage')) },
   { path: '/money/assets', Component: lazy(() => import('@/features/assets/AssetsPage')) },
   { path: '/money/registers', Component: lazy(() => import('@/features/registers/RegistersPage')) },
+  { path: '/store/purchase-orders', Component: lazy(() => import('@/features/purchaseorders/PurchaseOrdersPage')) },
 ]

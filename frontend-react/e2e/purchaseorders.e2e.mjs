@@ -1,0 +1,55 @@
+import { clickCell, clickText, fill, launch, open, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
+
+// Store > Purchase Orders: raise an order line by line, agree it by approving it, correct it, open the supplier.
+const { page, check, done } = await launch()
+await signIn(page)
+await open(page, '/store/purchase-orders')
+await page.waitForSelector('table[aria-label="Purchase orders"]')
+const stamp = Date.now().toString().slice(-6)
+const supplier = `QA Suppliers ${stamp}`
+const rows = () => page.$$eval('table[aria-label="Purchase orders"] tbody tr', (r) => r.map((e) => e.textContent.replace(/\s+/g, ' ')))
+const dialog = () => page.$eval('[role=dialog]', (e) => e.textContent.replace(/\s+/g, ' '))
+const search = async (q) => { await fill(page, 'input[aria-label=Search]', q); await sleep(400) }
+const rm = (await (await import('./lib.mjs')).api(page, 'GET', '/api/erp/items?kind=RM')).data.items[0]
+
+check('the orders are listed with their totals and status', (await rows()).length >= 1, `${(await rows()).length} orders`)
+await clickText(page, 'button', 'New order')
+await page.waitForSelector('#po-supplier')
+await fill(page, '#po-supplier', supplier)
+await clickCell(page, 0, 0, 0, '[role=dialog]')
+await page.keyboard.type(rm.item_code)
+await page.keyboard.press('Enter')
+await sleep(200)
+check('choosing an item brings its name and unit from the master', (await dialog()).includes(rm.item_name))
+await clickCell(page, 0, 0, 2, '[role=dialog]')
+await page.keyboard.type('10')
+await page.keyboard.press('Tab'); await page.keyboard.press('Tab')
+await page.keyboard.type('200')
+await page.keyboard.press('Enter')
+await sleep(300)
+check('the amount, GST at 18% and the total are worked out as it is typed (2,000 + 360)', (await dialog()).includes('2,360'), (await dialog()).slice(-180))
+await clickText(page, '[role=dialog] button', 'Save')
+await page.waitForFunction(() => !document.querySelector('[role=dialog]'), { timeout: 10000 })
+await toastsGone(page)
+await search(supplier)
+check('it is saved as a draft with the next PO number', (await rows()).length === 1 && (await rows())[0].includes('Draft') && (await rows())[0].includes('PO-') && (await rows())[0].includes('2,360'), (await rows())[0])
+
+await clickText(page, 'table[aria-label="Purchase orders"] button', 'Approve')
+await page.waitForSelector('[role=dialog]')
+await clickText(page, '[role=dialog] button', 'Approve')
+await waitForToast(page, 'approved')
+await toastsGone(page)
+await sleep(600)
+check('approving it agrees the spend, so goods can be received', (await rows())[0].includes('Approved'), (await rows())[0])
+check('the order prints as a PDF and as a workbook', (await page.$('a[href$="/document.pdf"]')) !== null && (await page.$('a[href$="/export.xlsx"]')) !== null)
+
+await clickText(page, 'table[aria-label="Purchase orders"] button', 'Edit')
+await page.waitForSelector('#po-supplier')
+check('editing opens what was saved', (await page.$eval('#po-supplier', (e) => e.value)) === supplier)
+await page.keyboard.press('Escape')
+await page.waitForFunction(() => !document.querySelector('[role=dialog]'))
+await page.evaluate(() => [...document.querySelectorAll('table[aria-label="Purchase orders"] tbody button')].find((b) => b.textContent === 'Supplier').click())
+await page.waitForSelector('#sp-name')
+check("the supplier's own details open, for their GSTIN and address to go on the order", (await page.$eval('#sp-name', (e) => e.value)) === supplier)
+
+await done()
