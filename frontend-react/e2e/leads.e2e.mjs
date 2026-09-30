@@ -1,0 +1,75 @@
+import { clickText, fill, launch, open, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
+
+// Clients > Tender Pipeline: enter a tender, work it, record what happened, lose it, get the earnest money back.
+const { page, check, done } = await launch()
+await signIn(page)
+await open(page, '/clients/pipeline')
+await page.waitForSelector('section[aria-label=New]')
+const stamp = Date.now().toString().slice(-6)
+const title = `E2E Culvert ${stamp}`
+const dialogText = () => page.$eval('[role=dialog]', (e) => e.textContent.replace(/\s+/g, ' '))
+const column = (name) => page.$eval(`section[aria-label="${name}"]`, (e) => e.textContent.replace(/\s+/g, ' '))
+
+check('the board shows the four stages with live figures', (await page.$eval('main', (e) => e.textContent)).includes('Live tenders') && (await page.$$('section[aria-label]')).length >= 4)
+
+await clickText(page, 'button', 'New tender')
+await page.waitForSelector('#ld-title')
+await fill(page, '#ld-title', title)
+await fill(page, '#ld-customer', 'GHMC')
+await fill(page, '#ld-value', '2500000')
+await fill(page, '#ld-bid_due_on', '2026-12-01')
+await fill(page, '#ld-emd', '50000')
+await page.select('#ld-emd-mode', 'DD')
+await fill(page, '#ld-emd-paid', '2026-10-01')
+await clickText(page, 'button', 'Save tender')
+await waitForToast(page, 'entered')
+await page.waitForFunction((t) => document.querySelector('[role=dialog]')?.textContent.includes(t), {}, title)
+check('a saved tender opens at once, numbered, with its EMD', (await dialogText()).includes('TND-') && (await dialogText()).includes('50,000'), (await dialogText()).slice(0, 140))
+await toastsGone(page)
+
+await fill(page, 'input[aria-label="What happened"]', 'Site visit done, drawings received')
+await fill(page, 'input[aria-label="Next step"]', 'Send query on the abutment')
+await clickText(page, '[role=dialog] button', 'Add')
+await page.waitForFunction(() => document.querySelector('[role=dialog]')?.textContent.includes('Send query on the abutment'), { timeout: 8000 })
+check('what happened, and the next step, are kept against it', true)
+await toastsGone(page)
+
+await clickText(page, '[role=dialog] button', 'Qualified')
+await page.waitForFunction(() => document.querySelector('[role=dialog]')?.textContent.includes('Qualified'), { timeout: 8000 })
+await page.keyboard.press('Escape')
+await page.waitForFunction(() => !document.querySelector('[role=dialog]'))
+await sleep(500)
+check('it moves across the board to Qualified', (await column('Qualified')).includes(title) && !(await column('New')).includes(title))
+
+// Lose it: a reason is needed
+await page.evaluate((t) => [...document.querySelectorAll('section[aria-label="Qualified"] button')].find((b) => b.textContent.includes(t)).click(), title)
+await page.waitForSelector('[role=dialog]')
+await clickText(page, '[role=dialog] button', 'Lost')
+await page.waitForSelector('#lose-why')
+check('losing it asks why, who won and at what price', (await page.$('#lose-who')) !== null && (await page.$('#lose-at')) !== null)
+await fill(page, '#lose-why', 'Price')
+await fill(page, '#lose-who', 'Rival Infra')
+await clickText(page, 'button', 'Record the loss')
+await sleep(900)
+await page.keyboard.press('Escape')
+await sleep(300)
+await clickText(page, 'button[role=tab]', 'Decided')
+await page.waitForSelector('table[aria-label="Decided tenders"]')
+const closed = await page.$eval('table[aria-label="Decided tenders"]', (e) => e.textContent.replace(/\s+/g, ' '))
+check('it is in the decided list, with why and who won', closed.includes(title) && closed.includes('Price') && closed.includes('Rival Infra'), closed.slice(0, 120))
+
+// The earnest money is still out, and on a lost tender it is flagged
+await clickText(page, 'button[role=tab]', 'EMD register')
+await page.waitForSelector('table[aria-label="Earnest money out"]')
+await sleep(500)
+const emdRow = await page.$eval('table[aria-label="Earnest money out"]', (e) => e.textContent.replace(/\s+/g, ' '))
+check('the EMD register shows it, flagged to chase because the tender is lost', emdRow.includes(title) && emdRow.includes('chase it'), emdRow.slice(0, 160))
+await page.evaluate((t) => {
+  const row = [...document.querySelectorAll('table[aria-label="Earnest money out"] tbody tr')].find((r) => r.textContent.includes(t))
+  ;[...row.querySelectorAll('button')].find((b) => b.textContent.includes('Came back')).click()
+}, title)
+await waitForToast(page, 'EMD')
+await sleep(800)
+check('marking it came back takes it off the register', !(await page.$eval('table[aria-label="Earnest money out"]', (e) => e.textContent)).includes(title))
+
+await done()

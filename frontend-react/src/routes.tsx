@@ -21,4 +21,8 @@ export const PORTED: PortedRoute[] = [
   { path: '/subcontractors/work-orders/:id', Component: lazy(() => import('@/features/orders/OrderPage')) },
   { path: '/clients/work-orders', Component: lazy(() => import('@/features/clientorders/ClientOrdersPage')) },
   { path: '/clients/measurement', Component: lazy(() => import('@/features/clientbook/ClientBookPage')) },
+  { path: '/clients/customers', Component: lazy(() => import('@/features/customers/CustomersPage')) },
+  { path: '/clients/pipeline', Component: lazy(() => import('@/features/leads/LeadsPage')) },
+  { path: '/clients/estimates', Component: lazy(() => import('@/features/estimates/EstimatesPage')) },
+  { path: '/clients/estimates/:id', Component: lazy(() => import('@/features/estimates/EstimatePage')) },
 ]

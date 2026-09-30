@@ -8,8 +8,8 @@ const { page, check, done } = await launch({ allow: [/409 POST \/api\/erp/, /400
 await signIn(page)
 const stamp = Date.now().toString().slice(-6)
 const made = (await api(page, 'POST', '/api/erp/items/bulk', { items: [
-  { kind: 'FG', item_name: `E2E Panel ${stamp}`, units_of_measure: 'Nos', item_type: 'Service' },
-  { kind: 'RM', item_name: `E2E Steel ${stamp}`, units_of_measure: 'Kgs', item_type: 'Purchased' },
+  { kind: 'FG', item_name: `QA Panel ${stamp}`, units_of_measure: 'Nos', item_type: 'Service' },
+  { kind: 'RM', item_name: `QA Steel ${stamp}`, units_of_measure: 'Kgs', item_type: 'Purchased' },
 ] })).data
 const [fgCode, rmCode] = made.codes
 const jobs = (await api(page, 'GET', '/api/jobs?open_only=true')).data.jobs
@@ -25,7 +25,7 @@ await page.waitForSelector('[role=dialog] [role=grid]')
 await page.select('#co-job', String(jobs[0].id))
 await fill(page, '#co-ref', `PO/E2E/${stamp}`)
 await clickCell(page, 0, 0, 0, '[role=dialog]')
-await page.keyboard.type(`E2E Panel ${stamp}`)
+await page.keyboard.type(`QA Panel ${stamp}`)
 await page.keyboard.press('Enter')
 await sleep(200)
 await clickCell(page, 0, 0, 2, '[role=dialog]')
@@ -44,11 +44,11 @@ check('the budget is offered straight after, while the order is in front of you'
 // --- Budget it -----------------------------------------------------------------------------------------------------
 await toastsGone(page)
 await clickCell(page, 0, 0, 0, '[role=dialog]')
-await page.keyboard.type(`E2E Panel ${stamp}`)
+await page.keyboard.type(`QA Panel ${stamp}`)
 await page.keyboard.press('Enter')
 await sleep(200)
 await clickCell(page, 0, 0, 1, '[role=dialog]')
-await page.keyboard.type(`E2E Steel ${stamp}`)
+await page.keyboard.type(`QA Steel ${stamp}`)
 await page.keyboard.press('Enter')
 await sleep(200)
 await clickCell(page, 0, 0, 2, '[role=dialog]')

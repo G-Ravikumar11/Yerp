@@ -4,7 +4,7 @@ import { api, clickText, fill, launch, open, signIn, sleep, toastsGone, waitForT
 const { page, check, done } = await launch({ allow: [/409 POST \/api\//] })
 await signIn(page)
 const stamp = Date.now().toString().slice(-6)
-const [code, rm] = (await api(page, 'POST', '/api/erp/items/bulk', { items: [{ kind: 'FG', item_name: `E2E Slab ${stamp}`, units_of_measure: 'Cum', item_type: 'Service' }, { kind: 'RM', item_name: `E2E Cement ${stamp}`, units_of_measure: 'Bag', item_type: 'Purchased' }] })).data.codes
+const [code, rm] = (await api(page, 'POST', '/api/erp/items/bulk', { items: [{ kind: 'FG', item_name: `QA Slab ${stamp}`, units_of_measure: 'Cum', item_type: 'Service' }, { kind: 'RM', item_name: `QA Cement ${stamp}`, units_of_measure: 'Bag', item_type: 'Purchased' }] })).data.codes
 const job = (await api(page, 'GET', '/api/jobs?open_only=true')).data.jobs[0]
 const wo = (await api(page, 'POST', '/api/erp/work-orders/build', { job_id: job.id, reference: `PO/BOOK/${stamp}`, lines: [{ code, qty: 10, rate: 500 }] })).data.work_order
 await api(page, 'POST', '/api/erp/bom/build', { work_order_id: wo.id, lines: [{ fg_code: code, rm_code: rm, qty: 100, rate: 20 }] })

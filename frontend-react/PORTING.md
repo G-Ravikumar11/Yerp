@@ -11,11 +11,11 @@ Status: `done` · `todo`
 ## Clients
 | Screen | Old view | Status |
 | --- | --- | --- |
-| Tender Pipeline | `leads-view` | todo |
-| Tenders & Estimates | `estimates-view` | todo |
+| Tender Pipeline (board, EMD register, decided) | `leads-view` | done |
+| Tenders & Estimates (rate build-up, win to work order) | `estimates-view` | done |
 | Client Work Orders (build, budget, place, approve, material, sheet import) | `workorders-view` | done |
 | Measurement & RA Bills (client side: book, statement, variations, bills) | `measurement-view` | done |
-| Customers | `customers-view`, `customer-view` | todo |
+| Customers | `customers-view`, `customer-view` | done |
 
 ## Money
 | Screen | Old view | Status |
