@@ -13,7 +13,7 @@ export default function ModulePlaceholder({ title, group }: { title: string; gro
         description="This screen is still on the current app. It moves across module by module, keeping every rule it has now."
         actions={
           <Button asChild>
-            <a href="/app.html">
+            <a href="/app.html?old=1">
               Open in current app <ExternalLink />
             </a>
           </Button>

@@ -106,7 +106,7 @@ export default function Dashboard() {
               </Link>
             </Button>
             <Button variant="outline" asChild>
-              <a href="/app.html">
+              <a href="/app.html?old=1">
                 Current app <ExternalLink />
               </a>
             </Button>

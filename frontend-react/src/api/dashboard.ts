@@ -86,5 +86,5 @@ export function attentionHref(view: string): { to: string; external: boolean } {
     'fixedassets-view': '/money/assets',
     'registers-view': '/money/registers',
   }
-  return ported[view] ? { to: ported[view], external: false } : { to: '/app.html', external: true }
+  return ported[view] ? { to: ported[view], external: false } : { to: '/app.html?old=1', external: true }
 }

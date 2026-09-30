@@ -36,6 +36,34 @@
         }}
       };
     </script>
+    <script>
+    /* The account holder opens the new version. The previous one stays at app.html?old=1, with a notice
+       saying which it is. Staff, who have no new screens yet, go straight on to the previous one. */
+    (function () {
+        var q = new URLSearchParams(location.search);
+        var store = function (k, v) { try { if (v === undefined) return sessionStorage.getItem(k); sessionStorage.setItem(k, v); } catch (e) { return null; } };
+        if (q.get('old') === '1') store('yerp.old', '1');
+        if (store('yerp.old') === '1') {
+            document.addEventListener('DOMContentLoaded', function () {
+                var bar = document.createElement('div');
+                bar.setAttribute('role', 'status');
+                bar.style.cssText = 'background:#eef2ff;color:#312e81;font:500 13px/1.4 Inter,system-ui,sans-serif;padding:8px 16px;text-align:center;border-bottom:1px solid #c7d2fe;';
+                bar.innerHTML = 'You are on the <strong>previous version</strong> of Y ERP. ' +
+                    '<a href="/next/" style="color:#4338ca;font-weight:600;text-decoration:underline;">Open the new version</a>';
+                document.body.insertBefore(bar, document.body.firstChild);
+            });
+            return;
+        }
+        var here = { '#approvals': '/next/approvals', '#subcontracts': '/next/subcontractors/work-orders' };
+        var to = here[location.hash] || '/next/';
+        document.documentElement.style.visibility = 'hidden';
+        var show = function () { document.documentElement.style.visibility = ''; };
+        var slow = setTimeout(show, 2500);
+        fetch('/api/client/me', { credentials: 'include' }).then(function (r) {
+            if (r.ok) location.replace(to); else { clearTimeout(slow); show(); }
+        }).catch(function () { clearTimeout(slow); show(); });
+    })();
+    </script>
     <link rel="stylesheet" href="styles.css?v=107">
     <link rel="stylesheet" href="mobile.css?v=66">
 </head>

@@ -5,7 +5,7 @@ const { page, check, done } = await launch({ width: 1440, height: 900 })
 await signIn(page)
 const made = await approvedOrder(page, { subject: 'E2E old book' })
 
-await page.goto(BASE + '/app.html', { waitUntil: 'networkidle0' })
+await page.goto(BASE + '/app.html?old=1', { waitUntil: 'networkidle0' })
 await page.waitForFunction(() => typeof openSubTab === 'function')
 await page.evaluate(() => openSubTab('mb'))
 await page.waitForSelector('#sub-mb-body tr')
