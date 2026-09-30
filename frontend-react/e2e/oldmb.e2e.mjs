@@ -79,13 +79,42 @@ await page.waitForSelector('#sub-mb-body button')
 check('one click opens the revision, which can be measured', true)
 
 
-// --- A draft is listed too ----------------------------------------------------------------------------------------
-const draft = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: made.unit?.id ?? (await api(page, 'GET', '/api/wo/business-units')).data.business_units[0].id, contractor_id: made.gang.id, job_id: made.job.id, department: 'Civil', subject: 'E2E still a draft', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
+// --- Narrow the work orders to one site ----------------------------------------------------------------------------------
+const unit = (await api(page, 'GET', '/api/wo/business-units')).data.business_units[0]
+const other = (await api(page, 'GET', '/api/wo/vocabulary')).data.jobs[1]
+let otherBudgets = (await api(page, 'GET', `/api/wo/projects/${other.id}/budgets`)).data.budgets
+if (!otherBudgets.length) {
+  await api(page, 'POST', `/api/wo/projects/${other.id}/budgets`, { name: 'E2E other', code: 'E2E-2', allocated_amount: 90000000 })
+  otherBudgets = (await api(page, 'GET', `/api/wo/projects/${other.id}/budgets`)).data.budgets
+}
+const elsewhere = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: made.gang.id, job_id: other.id, department: 'Civil', subject: 'E2E other site', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
+await api(page, 'PUT', `/api/wo/orders/${elsewhere.id}/boq`, { lines: [{ activity_no: '1.0', item_description: 'Plastering', uom: 'sqm', quantity: 100, unit_rate: 200, budget_id: otherBudgets[0].id }] })
+await api(page, 'POST', `/api/wo/orders/${elsewhere.id}/self-approve`, { comments: 'e2e' })
+await page.evaluate(() => loadSubBills())
+await sleep(1500)
+const siteOpts = await page.$$eval('#sub-site option', (o) => o.map((e) => e.textContent))
+check('the sites of the work orders can be chosen from', siteOpts.length >= 3 && siteOpts[0].startsWith('All sites'), siteOpts.join(' | '))
+await page.select('#sub-site', String(other.id))
+await page.waitForFunction((id) => document.getElementById('sub-order').value === String(id), {}, elsewhere.id)
+await page.click(find)
+await page.waitForSelector('#sub-wo-list .wo-opt')
+const inSite = await page.$$eval('#sub-wo-list .wo-opt', (o) => o.map((e) => e.textContent))
+check('choosing a site lists only its work orders, and opens the first', inSite.length >= 1 && inSite.every((t) => t.includes(other.number)), `${inSite.length} listed`)
+await page.keyboard.press('Escape')
+await page.select('#sub-site', '')
+await page.click(find)
+await page.waitForSelector('#sub-wo-list .wo-opt')
+check('All sites brings the rest back', (await page.$$eval('#sub-wo-list .wo-opt', (o) => o.length)) > inSite.length)
+await page.keyboard.press('Escape')
+
+// --- A draft has nothing to measure, so the picker leaves it out ----------------------------------------------------
+const draft = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: (await api(page, 'GET', '/api/wo/business-units')).data.business_units[0].id, contractor_id: made.gang.id, job_id: made.job.id, department: 'Civil', subject: 'E2E still a draft', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
 await page.evaluate(() => loadSubBills())
 await sleep(1200)
-await page.evaluate((id) => subWoChoose(id), draft.id)
-await page.waitForSelector('#sub-amend-note .sub-amend-note')
-check('a draft is in the list too, and says it is still a draft', (await text('#sub-amend-note')).includes('still a draft'))
-check('and it takes no measurements', await page.$eval('#sub-code', (e) => e.disabled))
+await page.click(find)
+await page.waitForSelector('#sub-wo-list .wo-opt')
+const listedText = await text('#sub-wo-list')
+check('a draft is not in the picker', !listedText.includes(draft.wo_number))
+check('nor is anything else that is not approved or amended', !/draft|awaiting|cancelled/.test(listedText))
 
 await done()

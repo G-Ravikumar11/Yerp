@@ -10,6 +10,7 @@ import { sendOrQueue } from '@/stores/offline'
 import { toast } from '@/stores/toast'
 import { dimColumns } from './dimensions'
 import { ItemFacts } from './ItemFacts'
+import { SheetFill, toDimLine, type SheetEntry } from './SheetFill'
 
 type Mode = 'dims' | 'total'
 
@@ -80,6 +81,16 @@ function MeasureForm({ orderId, order, jobCode, line, onClose }: { orderId: numb
 
   const columns = useMemo(() => dimColumns, [])
 
+  /** Lines read from a sheet replace what is in the grid; nothing is recorded until the person says so. */
+  const fromSheet = (entry: SheetEntry, source: string) => {
+    setMode('dims')
+    setDims(entry.dims.map(toDimLine))
+    setBlocks(entry.multiplier > 0 ? entry.multiplier : 1)
+    if (entry.location) setWhere(entry.location)
+    if (!ref) setRef(source)
+    toast.success(`${entry.dims.filter((d) => !d.is_heading).length} lines loaded from the sheet. Check them, then record.`)
+  }
+
   return (
     <div>
       <div className="mb-4 rounded-lg border border-border bg-muted/40 p-3" aria-label="The work order being measured">
@@ -94,6 +105,7 @@ function MeasureForm({ orderId, order, jobCode, line, onClose }: { orderId: numb
         )}
         <ItemFacts line={line} />
       </div>
+      <SheetFill orderId={orderId} itemId={line.item_id} onUse={fromSheet} />
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <Tabs
           label="How it is measured"

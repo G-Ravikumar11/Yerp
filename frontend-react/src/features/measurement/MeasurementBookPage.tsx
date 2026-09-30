@@ -4,7 +4,7 @@ import { FileDown, FileUp, Ruler, Trash2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
-import { Badge, Button, ConfirmDialog, Stat, StatGrid } from '@/components/ui'
+import { Badge, Button, ConfirmDialog, Select, Stat, StatGrid } from '@/components/ui'
 import { deleteEntry, mbKeys, useMeasurementBook, type MbEntry, type MbLine } from '@/api/mb'
 import { useOrderVocabulary, useOrders, type Order } from '@/api/orders'
 import { useAction } from '@/lib/mutate'
@@ -56,10 +56,14 @@ export default function MeasurementBookPage() {
   const orders = useOrders()
   const all = orders.data?.orders ?? []
   const isLive = (o: Order) => o.status === 'APPROVED' || o.status === 'EXECUTED'
-  // Every work order is in the list, so none can go missing: the ones that can be measured come first,
-  // the rest show what state they are in and say why they cannot take a measurement yet.
-  const order_of: Record<string, number> = { APPROVED: 0, EXECUTED: 0, PROVISIONAL: 1, DRAFT: 2, AMENDED: 3, CANCELLED: 4 }
-  const live = [...all].sort((a, b) => (order_of[a.status] ?? 5) - (order_of[b.status] ?? 5))
+  // The book lists the orders that can be measured, and the amended ones whose record it holds.
+  // Drafts, orders still waiting for approval and cancelled ones have nothing to measure, so they stay out.
+  const order_of: Record<string, number> = { APPROVED: 0, EXECUTED: 0, AMENDED: 1 }
+  const live = all.filter((o) => o.status in order_of).sort((a, b) => order_of[a.status] - order_of[b.status])
+  // Work orders can be narrowed to one site (the project each is charged to).
+  const [site, setSite] = useState(0)
+  const sites = Array.from(new Map(live.filter((o) => o.job_id).map((o) => [o.job_id as number, o.project] as const)).entries()).sort((a, b) => a[1].localeCompare(b[1]))
+  const shown = site ? live.filter((o) => o.job_id === site) : live
   const vocab = useOrderVocabulary()
   const jobCode = (o: Order) => vocab.data?.jobs.find((j) => j.id === o.job_id)?.number ?? ''
   const last = remembered()
@@ -200,18 +204,45 @@ export default function MeasurementBookPage() {
       />
 
       <div className="z-10 md:sticky md:top-[calc(4rem+env(safe-area-inset-top))] -mx-4 mb-6 border-b border-border bg-background/95 px-4 pb-3 pt-3 backdrop-blur sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
-        <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
+        <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,42rem)_minmax(0,1fr)]">
           <div>
-            <WorkOrderPicker
-              orders={live}
-              value={chosen}
-              loading={orders.isPending}
-              jobCode={jobCode}
-              onChange={(id) => {
-                remember(id)
-                setParams({ order: String(id) })
-              }}
-            />
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <div className="sm:w-52 sm:shrink-0">
+                <Select
+                  aria-label="Site"
+                  className="h-11"
+                  value={site || ''}
+                  placeholder={`All sites (${sites.length})`}
+                  options={sites.map(([id, label]) => ({ value: id, label }))}
+                  onChange={(e) => {
+                    const id = Number(e.target.value) || 0
+                    setSite(id)
+                    // Moving to a site whose list does not hold the open order opens that site's first one.
+                    const inSite = id ? live.filter((o) => o.job_id === id) : live
+                    if (!inSite.some((o) => o.id === chosen)) {
+                      const next = inSite.find(isLive) ?? inSite[0]
+                      if (next) {
+                        remember(next.id)
+                        setParams({ order: String(next.id) })
+                      }
+                    }
+                  }}
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <WorkOrderPicker
+                  orders={shown}
+                  selected={order}
+                  value={chosen}
+                  loading={orders.isPending}
+                  jobCode={jobCode}
+                  onChange={(id) => {
+                    remember(id)
+                    setParams({ order: String(id) })
+                  }}
+                />
+              </div>
+            </div>
             {order && (
               <p className="mt-1.5 truncate text-xs text-muted-foreground" title={`${order.project} · ${order.subject}`}>
                 {order.project}

@@ -192,6 +192,53 @@ check('on reconnecting it is sent, in order, and the server has it', steel.measu
 check('the top bar goes quiet again', !(await page.$eval('header', (e) => e.textContent)).match(/Offline|sending|kept/))
 
 
+// --- Fill the lines from an Excel sheet, inside the measure window ----------------------------------------------------
+await open(page, `/subcontractors/measurement-book?order=${created.id}`)
+await page.waitForSelector('table[aria-label="Items on the order"] tbody tr')
+await page.click('table[aria-label="Items on the order"] tbody tr:first-child button')
+await page.waitForSelector('[role=dialog] [role=grid]')
+check('the window offers the template to download', (await page.$('[role=dialog] a[href="/api/sub-mb/template.xlsx"]')) !== null)
+const bytes = await page.evaluate(async () => Array.from(new Uint8Array(await (await fetch('/api/sub-mb/template.xlsx', { credentials: 'include' })).arrayBuffer())))
+const sheet = join(tmpdir(), 'e2e-mb-template.xlsx')
+writeFileSync(sheet, Buffer.from(bytes))
+await (await page.$('input[aria-label="Excel file to read the lines from"]')).uploadFile(sheet)
+await page.waitForFunction(() => document.querySelector('#m-where')?.value.includes('Block C-3'), { timeout: 10000 })
+const rows = await page.$$eval('[role=dialog] [role=grid] [role=row]', (rs) => rs.slice(1, 4).map((r) => r.querySelector('[role=gridcell]')?.textContent.trim()))
+check('importing the sheet fills the lines from it', rows[0] === 'Slab' && rows[1] === 'Beam', rows.join(' | '))
+check('and where it was measured', (await page.$eval('#m-where', (e) => e.value)) === 'Block C-3, First Floor')
+check('the quantity is worked out from those lines (114.4)', (await page.$eval('[role=dialog]', (e) => e.textContent)).includes('114.4'))
+check('nothing is recorded until asked', (await api(page, 'GET', `/api/sub-mb/${created.id}`)).data.entries.every((e) => !(e.quantity === 114.4 && e.mb_ref.includes('e2e-mb-template'))))
+await page.keyboard.press('Escape')
+await page.waitForFunction(() => !document.querySelector('[role=dialog]'))
+
+// --- Narrow the work orders to one site -------------------------------------------------------------------------------------
+const other = vocab.jobs[1]
+let otherBudgets = (await api(page, 'GET', `/api/wo/projects/${other.id}/budgets`)).data.budgets
+if (!otherBudgets.length) {
+  await api(page, 'POST', `/api/wo/projects/${other.id}/budgets`, { name: 'E2E other', code: 'E2E-2', allocated_amount: 90000000 })
+  otherBudgets = (await api(page, 'GET', `/api/wo/projects/${other.id}/budgets`)).data.budgets
+}
+const elsewhere = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: gang.id, job_id: other.id, department: 'Civil', subject: 'E2E other site', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
+await api(page, 'PUT', `/api/wo/orders/${elsewhere.id}/boq`, { lines: [{ activity_no: '1.0', item_description: 'Plastering', uom: 'sqm', quantity: 100, unit_rate: 200, budget_id: otherBudgets[0].id }] })
+await api(page, 'POST', `/api/wo/orders/${elsewhere.id}/self-approve`, { comments: 'e2e' })
+await open(page, `/subcontractors/measurement-book?order=${created.id}`)
+await page.waitForSelector('select[aria-label="Site"]')
+const siteOptions = await page.$$eval('select[aria-label="Site"] option', (o) => o.map((e) => e.textContent))
+check('the sites of the work orders can be chosen from', siteOptions.length >= 3 && siteOptions[0].startsWith('All sites'), siteOptions.join(' | '))
+await page.select('select[aria-label="Site"]', String(other.id))
+await page.waitForFunction((id) => location.search.includes('order=' + id), {}, elsewhere.id)
+await page.click(picker)
+await page.waitForSelector('[role=listbox] [role=option]')
+const inSite = await page.$$eval('[role=listbox] [role=option]', (o) => o.map((e) => e.textContent))
+check('choosing a site lists only its work orders, and opens the first', inSite.length >= 1 && inSite.every((t) => t.includes(other.number)), `${inSite.length} listed`)
+await page.keyboard.press('Escape')
+await page.select('select[aria-label="Site"]', '')
+await page.click(picker)
+await page.waitForSelector('[role=listbox] [role=option]')
+const everywhere = await page.$$eval('[role=listbox] [role=option]', (o) => o.map((e) => e.textContent))
+check('All sites brings the rest back', everywhere.some((t) => t.includes(other.number)) && everywhere.some((t) => t.includes(vocab.jobs[0].number)))
+await page.keyboard.press('Escape')
+
 // --- An amended order is still in the book, read-only, and points to its revision ----------------------
 const old = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: gang.id, job_id: job.id, department: 'Civil', subject: 'E2E to be amended', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
 await api(page, 'PUT', `/api/wo/orders/${old.id}/boq`, { lines: [{ activity_no: '1.0', item_description: 'Brickwork', uom: 'cum', quantity: 50, unit_rate: 5200, budget_id: budgets[0].id }] })
@@ -215,11 +262,18 @@ await page.waitForSelector('table[aria-label="Items on the order"] tbody tr')
 check('one click opens the revision, which can be measured', (await page.$('table[aria-label="Items on the order"] tbody button')) !== null)
 
 
-// --- A draft is listed too, and says why it cannot be measured yet -----------------------------------------
+// --- A draft has nothing to measure, so the picker leaves it out -----------------------------------------------
 const draft = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: gang.id, job_id: job.id, department: 'Civil', subject: 'E2E still a draft', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
+await open(page, `/subcontractors/measurement-book?order=${created.id}`)
+await page.click('button[aria-label="Work order"]')
+await page.waitForSelector('[role=listbox] [role=option]')
+const listed = await page.$$eval('[role=listbox] [role=option]', (o) => o.map((e) => e.textContent))
+check('a draft is not in the picker', !listed.some((t) => t.includes(draft.wo_number)) && listed.length >= 2, `${listed.length} listed`)
+check('nor is anything else that is not approved or amended', !listed.some((t) => /draft|awaiting|cancelled/.test(t)))
+await page.keyboard.press('Escape')
 await open(page, `/subcontractors/measurement-book?order=${draft.id}`)
 await page.waitForSelector('[role=status]')
-check('a draft is in the list too, and says it is still a draft', (await page.$eval('[role=status]', (e) => e.textContent)).includes('still a draft'))
+check('opened by its link, a draft says it is still a draft', (await page.$eval('[role=status]', (e) => e.textContent)).includes('still a draft'))
 check('and it takes no measurements', (await page.$('input[aria-label="Item code"]')) === null)
 
 await done()

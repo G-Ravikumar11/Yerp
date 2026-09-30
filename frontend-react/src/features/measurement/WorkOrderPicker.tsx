@@ -15,7 +15,7 @@ const haystack = (o: Order, jobCode: JobCodeOf) => [o.wo_number, jobCode(o), o.p
  * Pick from every work order by typing any part of its number, job code,
  * project or gang. Keyboard all the way: arrows move, Enter chooses, Esc closes.
  */
-export function WorkOrderPicker({ orders, value, onChange, jobCode, loading }: { orders: Order[]; value: number; onChange: (id: number) => void; jobCode: JobCodeOf; loading?: boolean }) {
+export function WorkOrderPicker({ orders, value, onChange, jobCode, loading, selected }: { orders: Order[]; value: number; onChange: (id: number) => void; jobCode: JobCodeOf; loading?: boolean; selected?: Order }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const [active, setActive] = useState(0)
@@ -23,7 +23,7 @@ export function WorkOrderPicker({ orders, value, onChange, jobCode, loading }: {
   const input = useRef<HTMLInputElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const listId = useId()
-  const current = orders.find((o) => o.id === value)
+  const current = selected ?? orders.find((o) => o.id === value)
 
   const shown = useMemo(() => {
     const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean)

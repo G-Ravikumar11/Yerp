@@ -45,12 +45,45 @@ window.applySubTab = applySubTab;
 
 /* Every work order can be found by typing: its number, its job code, the project or the gang.
    The hidden select below it stays the source of truth for the rest of the screen. */
-var SUBWO = { orders: [], jobs: {}, query: '', active: 0, shown: [] };
+var SUBWO = { orders: [], jobs: {}, query: '', active: 0, shown: [], site: '' };
 var SUB_LAST = 'yerp.sub.order';
 
 function subIsLive(o) { return o.status === 'APPROVED' || o.status === 'EXECUTED'; }
 function subJobCode(o) { return SUBWO.jobs[o.job_id] || ''; }
 function subOrderById(id) { return SUBWO.orders.filter(function (o) { return o.id === id; })[0]; }
+
+/* --- Narrow the work orders to one site (the project each is charged to) ------------------- */
+
+function subWoPool() {
+    return SUBWO.site ? SUBWO.orders.filter(function (o) { return String(o.job_id) === SUBWO.site; }) : SUBWO.orders;
+}
+
+function subSiteFill() {
+    var pick = document.getElementById('sub-site');
+    if (!pick) return;
+    var seen = {};
+    var sites = [];
+    SUBWO.orders.forEach(function (o) {
+        if (o.job_id && !seen[o.job_id]) { seen[o.job_id] = true; sites.push({ id: o.job_id, label: o.project || ('Site ' + o.job_id) }); }
+    });
+    sites.sort(function (a, b) { return a.label.localeCompare(b.label); });
+    pick.innerHTML = '<option value="">All sites (' + sites.length + ')</option>' + sites.map(function (s) {
+        return '<option value="' + s.id + '">' + esc(s.label) + '</option>';
+    }).join('');
+    pick.value = SUBWO.site || '';
+}
+
+function subSiteChanged() {
+    SUBWO.site = document.getElementById('sub-site').value;
+    // Moving to a site that does not hold the open order opens that site's first one.
+    var current = parseInt((document.getElementById('sub-order') || {}).value);
+    var pool = subWoPool();
+    if (!pool.some(function (o) { return o.id === current; })) {
+        var next = pool.filter(subIsLive)[0] || pool[0];
+        if (next) subWoChoose(next.id);
+    }
+}
+window.subSiteChanged = subSiteChanged;
 
 async function loadSubBills() {
     var pick = document.getElementById('sub-order');
@@ -65,11 +98,13 @@ async function loadSubBills() {
     ]);
     SUBWO.jobs = {};
     (got[1].jobs || []).forEach(function (j) { SUBWO.jobs[j.id] = j.number; });
-    // Every order is listed, so none can go missing. Only an approved one can be measured; the rest say why not.
-    var rank = { APPROVED: 0, EXECUTED: 0, PROVISIONAL: 1, DRAFT: 2, AMENDED: 3, CANCELLED: 4 };
-    var rankOf = function (o) { return rank[o.status] === undefined ? 5 : rank[o.status]; };
-    var live = (got[0].orders || []).slice().sort(function (a, b) { return rankOf(a) - rankOf(b); });
+    // The book lists the orders that can be measured, and the amended ones whose record it holds.
+    // Drafts, orders still waiting for approval and cancelled ones have nothing to measure, so they stay out.
+    var rank = { APPROVED: 0, EXECUTED: 0, AMENDED: 1 };
+    var live = (got[0].orders || []).filter(function (o) { return rank[o.status] !== undefined; })
+        .sort(function (a, b) { return rank[a.status] - rank[b.status]; });
     SUBWO.orders = live;
+    subSiteFill();
     pick.innerHTML = live.length
         ? live.map(function (o) {
             return '<option value="' + o.id + '">' + esc(o.wo_number) + ' — ' +
@@ -132,7 +167,7 @@ function subWoOpen() {
     var list = document.getElementById('sub-wo-list');
     if (!list || list.style.display !== 'none') return;
     SUBWO.query = '';
-    SUBWO.active = Math.max(0, SUBWO.orders.map(function (o) { return String(o.id); })
+    SUBWO.active = Math.max(0, subWoPool().map(function (o) { return String(o.id); })
         .indexOf((document.getElementById('sub-order') || {}).value));
     var input = document.getElementById('sub-wo-find');
     input.select();
@@ -152,7 +187,7 @@ function subWoRender() {
     var list = document.getElementById('sub-wo-list');
     var words = SUBWO.query.trim().toLowerCase().split(/\s+/).filter(Boolean);
     var first = SUBWO.query.trim().toLowerCase();
-    SUBWO.shown = SUBWO.orders.filter(function (o) {
+    SUBWO.shown = subWoPool().filter(function (o) {
         var hay = [o.wo_number, subJobCode(o), o.project, o.contractor, o.vendor_code, o.subject, o.work_type]
             .join(' ').toLowerCase();
         return words.every(function (w) { return hay.indexOf(w) >= 0; });
@@ -169,7 +204,7 @@ function subWoRender() {
             '<span class="wo-opt-gang">' + esc(o.contractor || 'no gang') + '</span></div>' +
             '<div class="wo-opt-sub">' + esc(o.project || '') + (o.subject ? ' · ' + esc(o.subject) : '') + '</div></div>';
     }).join('') : '<div class="wo-none">No work order matches that.</div>') +
-        '<div class="wo-foot">' + SUBWO.shown.length + ' of ' + SUBWO.orders.length +
+        '<div class="wo-foot">' + SUBWO.shown.length + ' of ' + subWoPool().length +
         ' work orders · Up and down to move, Enter to open, Esc to close</div>';
     var on = list.querySelector('.wo-opt.active');
     if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest' });

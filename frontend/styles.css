@@ -1869,3 +1869,8 @@ table.data-table thead th[data-sort] { color: var(--primary-color); }
 .sub-measure-wo { margin: 0 0 6px; font-size: 0.82rem; color: var(--text-primary); }
 .sub-measure-wo .job { font-family: monospace; font-size: 0.7rem; color: var(--primary-color); background: var(--primary-soft); border-radius: 4px; padding: 1px 6px; margin: 0 4px; }
 .sub-amend-note { margin-bottom: 18px; padding: 12px 16px; border: 1px solid var(--warning-color); background: var(--warning-soft); border-radius: var(--radius-md); display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; font-size: 0.88rem; }
+.sub-wo-line { display: flex; gap: 8px; align-items: flex-start; }
+.sub-wo-line .sub-site { flex: 0 0 11.5rem; max-width: 11.5rem; }
+.sub-wo-line .wo-combo { flex: 1; min-width: 0; }
+@media (max-width: 640px) { .sub-wo-line { flex-direction: column; } .sub-wo-line .sub-site { flex: none; max-width: none; width: 100%; } }
+@media (min-width: 900px) { .sub-wo-row { grid-template-columns: minmax(0, 42rem) minmax(0, 1fr); } }

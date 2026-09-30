@@ -81,6 +81,18 @@ export const deleteEntry = (id: number) => del<{ message: string }>(`/api/sub-mb
 
 /* --- The book as the site keeps it in Excel ------------------------------ */
 
+/** One line of a sheet's entry, as the server read it. */
+export interface ImportDim {
+  particulars: string
+  is_heading: boolean
+  nos: number | null
+  nom: number | null
+  length: number | null
+  breadth: number | null
+  depth: number | null
+  deduct: boolean
+}
+
 export interface ImportSection {
   index: number
   description: string
@@ -89,7 +101,7 @@ export interface ImportSection {
   item: string
   uom: string
   quantity: number
-  entries: { location: string; multiplier: number; lines: number; one_block: number; quantity: number; stated: number | null }[]
+  entries: { location: string; multiplier: number; lines: number; one_block: number; quantity: number; stated: number | null; dims?: ImportDim[] }[]
 }
 
 export interface ImportPreview {
@@ -104,11 +116,12 @@ export interface ImportPreview {
   message?: string
 }
 
-export function importBook(orderId: number, file: File, opts: { commit: boolean; mapping?: Record<number, number | null>; measuredOn?: string }) {
+export function importBook(orderId: number, file: File, opts: { commit: boolean; mapping?: Record<number, number | null>; measuredOn?: string; includeDims?: boolean }) {
   const form = new FormData()
   form.append('file', file)
   form.append('commit', opts.commit ? '1' : '0')
   if (opts.mapping) form.append('mapping', JSON.stringify(opts.mapping))
   if (opts.measuredOn) form.append('measured_on', opts.measuredOn)
+  if (opts.includeDims) form.append('include_dims', '1')
   return api<ImportPreview>(`/api/sub-mb/${orderId}/import`, { method: 'POST', body: form })
 }

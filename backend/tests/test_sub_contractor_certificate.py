@@ -290,6 +290,25 @@ def test_the_measurement_book_is_read_from_its_sheet(tenant):
     assert entry["measured_on"] == "2026-02-28"
 
 
+def test_the_preview_returns_the_lines_when_the_measure_window_asks_for_them(tenant):
+    """The measure window fills its own grid from a sheet, so it needs each entry's
+    dimension lines back - and only when it asks, as the import screen does not."""
+    order = painting_order(tenant)
+    raw = mb_workbook()
+    plain = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)}).json()
+    assert "dims" not in plain["sections"][0]["entries"][0]
+
+    res = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)},
+                      data={"include_dims": "1"})
+    assert res.status_code == 200, res.text
+    entry = res.json()["sections"][1]["entries"][0]
+    assert entry["multiplier"] == 4
+    lines = [d for d in entry["dims"] if not d["is_heading"]]
+    assert [d["particulars"] for d in lines][-1] == "Window Deduct"
+    assert lines[0]["nos"] is not None and lines[0]["length"] is not None
+    assert book(tenant, order["id"])["entries"] == [], "asking for the lines records nothing"
+
+
 def test_an_import_past_the_order_records_none_of_it(tenant):
     order = draft(tenant, gst_rate=0)
     res = tenant.put("/api/wo/orders/%d/boq" % order["id"], json={"lines": [

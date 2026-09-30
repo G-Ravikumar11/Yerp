@@ -36,7 +36,7 @@
         }}
       };
     </script>
-    <link rel="stylesheet" href="styles.css?v=106">
+    <link rel="stylesheet" href="styles.css?v=107">
     <link rel="stylesheet" href="mobile.css?v=66">
 </head>
 <body>
@@ -4923,9 +4923,12 @@
                             <div class="sub-wo-row">
                                 <div class="sub-wo-pick">
                                     <label for="sub-wo-find" class="sub-wo-label">Work order</label>
+                                    <div class="sub-wo-line">
+                                    <select id="sub-site" class="form-control sub-site" aria-label="Site" onchange="subSiteChanged()"><option value="">All sites</option></select>
                                     <div class="wo-combo">
                                         <input type="text" id="sub-wo-find" class="form-control" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="sub-wo-list" aria-label="Find a work order by number, job code, project or gang" placeholder="Find by work order no., job code, project or gang" onfocus="subWoOpen()" onclick="subWoOpen()" oninput="subWoFilter()" onkeydown="subWoKey(event)">
                                         <div id="sub-wo-list" class="wo-list" role="listbox" aria-label="Work orders" style="display:none;"></div>
+                                    </div>
                                     </div>
                                     <select id="sub-order" style="display:none;" onchange="subOrderChanged()"></select>
                                     <div id="sub-wo-current" class="sub-wo-current"></div>
@@ -5831,7 +5834,7 @@
     <script src="stock.js?v=115"></script>
     <script src="diary.js?v=117"></script>
     <script src="money.js?v=97"></script>
-    <script src="subbills.js?v=102"></script>
+    <script src="subbills.js?v=103"></script>
     <script src="vendors.js?v=5"></script>
     <script src="estimate.js?v=81"></script>
     <script src="gst.js?v=80"></script>

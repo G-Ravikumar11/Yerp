@@ -25758,7 +25758,7 @@ def mb_match_item(items, description):
 @app.post("/api/sub-mb/{order_id}/import")
 async def import_sub_measurement_book(order_id: int, request: Request, file: UploadFile = File(...),
                                       commit: str = Form("0"), mapping: str = Form(""),
-                                      sheet: str = Form(""), measured_on: str = Form(""),
+                                      sheet: str = Form(""), measured_on: str = Form(""), include_dims: str = Form("0"),
                                       db: Session = Depends(get_db)):
     """The measurement book as the site keeps it in Excel - S.No, Description,
     UoM, No's, NoM, Length, Width, Height, Total Quantity - read into the
@@ -25800,6 +25800,8 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
     except (ValueError, TypeError, AttributeError):
         raise HTTPException(400, "The item matches could not be read.")
     sections, missing = [], []
+    # The measure window reads a sheet to fill its own lines, so it asks for them to come back.
+    want_dims = (include_dims or "0") in ("1", "true", "yes")
     for i, sec in enumerate(book["items"]):
         item = by_id.get(chosen[i]) if i in chosen else mb_match_item(items, sec["description"])
         if item is None:
@@ -25812,7 +25814,9 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
                          "entries": [{"location": e["location"], "multiplier": e["multiplier"],
                                       "lines": len([d for d in e["dims"] if not d["is_heading"]]),
                                       "one_block": e["one"], "quantity": e["quantity"],
-                                      "stated": e.get("stated_total")} for e in sec["entries"]]})
+                                      "stated": e.get("stated_total"),
+                                      **({"dims": e["dims"]} if want_dims else {})}
+                                     for e in sec["entries"]]})
     preview = {"sheet": book["sheet"], "meta": book["meta"], "sections": sections,
                "warnings": book["warnings"],
                "items": [{"id": it.id, "label": ("%s %s" % (it.activity_no or "", (it.item_description or "").split("\n")[0])).strip(),
