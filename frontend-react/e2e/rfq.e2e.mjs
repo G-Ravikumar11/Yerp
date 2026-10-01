@@ -1,0 +1,60 @@
+import { api, clickText, fill, launch, open, setValue, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
+
+// Enquiries: ask for two items, record three suppliers' quotes, read the comparison (lowest per line, L1 landed), award it and find the orders.
+const { page, check, done } = await launch()
+await signIn(page)
+const stamp = Date.now().toString().slice(-6)
+const title = `QA Cement and steel ${stamp}`
+const text = (sel) => page.$eval(sel, (e) => e.textContent.replace(/\s+/g, ' ').trim())
+const gone = () => page.waitForFunction(() => !document.querySelector('[role=dialog], [role=alertdialog]'), { timeout: 10000 })
+const last = (label) => page.evaluate((label) => [...[...document.querySelectorAll('[role=dialog]')].pop().querySelectorAll('button')].find((b) => b.textContent.trim() === label).click(), label)
+
+await open(page, '/store/enquiries')
+await page.waitForSelector('main h1')
+await clickText(page, 'main button', 'Enquiry')
+await page.waitForSelector('#rn-title')
+await fill(page, '#rn-title', title)
+await fill(page, 'input[aria-label="What 1"]', 'Cement OPC 53')
+await fill(page, 'input[aria-label="Qty 1"]', '200')
+await clickText(page, '[role=dialog] button', 'Line')
+await fill(page, 'input[aria-label="What 2"]', 'TMT bar 12mm')
+await setValue(page, 'select[aria-label="Unit 2"]', 'MT')
+await fill(page, 'input[aria-label="Qty 2"]', '5')
+await last('Open the enquiry')
+await page.waitForSelector('table[aria-label=Comparison]')
+await gone()
+check('the enquiry opens on its comparison, with no quotes yet', (await text('section[aria-label^="Comparative statement"]')).includes('No quotes yet'))
+await toastsGone(page)
+
+const id = (await api(page, 'GET', '/api/rfqs')).data.rfqs.find((r) => r.title === title).id
+const lines = (await api(page, 'GET', `/api/rfqs/${id}`)).data.lines
+const quote = (supplier, rates, freight) => api(page, 'POST', `/api/rfqs/${id}/quotes`, { supplier_name: `${supplier} ${stamp}`, quote_ref: 'Q1', quote_date: '2026-10-01', payment_terms: '30 days', freight, delivery_days: 5, lines: lines.map((l, i) => ({ rfq_line_id: l.rfq_line_id, rate: rates[i], tax_percent: 18 })) })
+
+// The first quote through the screen
+await clickText(page, 'section[aria-label^="Comparative statement"] button', 'Quote')
+await page.waitForSelector('#rq-sup')
+await fill(page, '#rq-sup', `Alpha Traders ${stamp}`)
+await fill(page, '#rq-freight', '500')
+await fill(page, 'input[aria-label="Rate 1"]', '400')
+await fill(page, 'input[aria-label="Rate 2"]', '65000')
+await last('Record the quote')
+await sleep(1500)
+await gone()
+check('a quote recorded on screen shows as a column', (await text('table[aria-label=Comparison]')).includes(`Alpha Traders ${stamp}`))
+await quote('Beta Supplies', [395, 66000], 1500)
+await quote('Gamma Steel', [410, 64000], 0)
+await page.evaluate(() => indexedDB.deleteDatabase('keyval-store'))
+await open(page, '/store/enquiries')
+await page.evaluate((t) => [...document.querySelectorAll('table[aria-label=Enquiries] tbody tr')].find((r) => r.textContent.includes(t)).querySelector('button').click(), title)
+await page.waitForSelector('table[aria-label=Comparison] tfoot')
+const t = await text('table[aria-label=Comparison]')
+check('three suppliers sit side by side with their landed totals and ranks', ['Alpha', 'Beta', 'Gamma'].every((n) => t.includes(n)) && /L1/.test(t) && t.includes('Landed at site'), t.slice(0, 200))
+await clickText(page, 'section[aria-label^="Comparative statement"] button', 'Award')
+await page.waitForSelector('#aw-mode')
+await last('Award it')
+await sleep(1500)
+await gone()
+check('awarding each line to its lowest quote marks who got what', /awarded/.test(await text('table[aria-label=Comparison]')), (await text('table[aria-label=Comparison]')).slice(0, 160))
+const pos = (await api(page, 'GET', '/api/purchase-orders')).data.orders
+check('the award made purchase orders as drafts', pos.some((o) => /Alpha|Beta|Gamma/.test(o.supplier_name) && o.supplier_name.includes(String(stamp))))
+await done()

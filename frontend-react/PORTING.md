@@ -32,26 +32,26 @@ Status: `done` · `todo`
 | Screen | Old view | Status |
 | --- | --- | --- |
 | Item Master | `items-view` | done |
-| Enquiries & Comparison | `rfq-view`, `inquiry-view` | todo |
+| Enquiries & Comparison | `rfq-view`, `inquiry-view` | done (new enquiry or from a work order, quotes, comparison with landed cost, award makes draft orders) |
 | Purchase Orders (+ My Orders for staff) | `orders-view`, `my-orders-view` | done |
-| E-way Bills | `eway-view` | todo |
-| Goods Receipt & Match | `stores-view` | todo |
-| Stock & Issues | `stock-view` | todo |
-| Material Used vs Costed | `consume-view` | todo |
+| E-way Bills | `eway-view` | done (typed or drawn from a transfer, what the portal would refuse, issued number, vehicle change, cancel) |
+| Goods Receipt & Match | `stores-view` | done (receive against an order, reject part, post, bill from what arrived, three-way match) |
+| Stock & Issues | `stock-view` | done (ledger, count, issue to site with optional charge to a gang, post, cancel, send to another store) |
+| Material Used vs Costed | `consume-view` | done |
 
 ## Projects
 | Screen | Old view | Status |
 | --- | --- | --- |
-| Projects (+ detail) | `jobs-view`, `job-detail-view` | todo |
+| Projects (+ detail) | `jobs-view`, `job-detail-view` | done (board, project page, form with site location and GST state) |
 | Programme & Progress | `schedule-view` | done (bars, S-curve, activities after one another, progress by hand or from a work order line) |
-| Drawings & Photos | `drawings-view` | todo |
+| Drawings & Photos | `drawings-view` | done (drawings register with revisions and status, project photos and files) |
 | Quality | `quality-view` | done (inspections walked item by item, cube sets and results, NCRs, photos, PDFs) |
 | Safety | `safety-view` | done (incidents with cause and fix, toolbox talks, permits to work, photos, PDFs) |
 | Site Diary (record a day, labour and plant, photos, sign off, DPR, who has been on site) | `diary-view` | done; works offline (kept on the device, goes up by itself) |
-| Project Chat | `chat-view` | todo |
-| Equipment & Plant | `equipment-view` | todo |
-| Project Profit | `pnl-view` | todo |
-| Cost by Project | `project-costs-view`, `costs-view` | todo |
+| Project Chat | `chat-view` | done (threads, photos, @names, close and reopen, unread counts) |
+| Equipment & Plant | `equipment-view` | done (register, deploy and move, log a day, service, history) |
+| Project Profit | `pnl-view` | done |
+| Cost by Project | `project-costs-view`, `costs-view` | done (list and each project with the papers behind the figures) |
 | Budget report | `budget-report-view` | todo |
 
 ## Subcontractors
