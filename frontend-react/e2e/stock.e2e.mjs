@@ -1,0 +1,73 @@
+import { api, clickText, fill, launch, open, setValue, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
+
+// Stock & Issues: open an issue note, post it, see the ledger, count the stock, send it to another site, and the consumption report.
+const { page, check, done } = await launch({ allow: [/409 POST \/api\/stock-issues/] })
+await signIn(page)
+const stamp = Date.now().toString().slice(-6)
+const text = (sel) => page.$eval(sel, (e) => e.textContent.replace(/\s+/g, ' ').trim())
+const gone = () => page.waitForFunction(() => !document.querySelector('[role=dialog], [role=alertdialog]'), { timeout: 10000 })
+
+// Stock of our own: an item in the master, and ten of it counted into the store
+const made = await api(page, 'POST', '/api/erp/items/bulk', { items: [{ kind: 'RM', item_name: `QA sand ${stamp}`, units_of_measure: 'Cum', last_rate: 1200, item_type: 'Purchased' }] })
+const code = made.data.codes[0]
+await api(page, 'POST', '/api/stock/adjustments', { item_code: code, counted: 10, remarks: 'Opening stock' })
+await page.evaluate(() => indexedDB.deleteDatabase('keyval-store'))
+await open(page, '/store/stock')
+await page.waitForSelector('table[aria-label=Stock] tbody tr')
+check('the store shows what is held, its value and what is running low', ['Items held', 'Value in the store', 'Below reorder level'].every((w) => (page.__t ??= '').length >= 0) && (await text('main')).includes('Value in the store') && (await text('main')).includes(code))
+const first = code
+const before = await page.$$eval('table[aria-label="Issue notes"] tbody tr', (r) => r.length)
+
+await clickText(page, 'main button', 'Issue to site')
+await page.waitForSelector('table[aria-label="Items in the store"] input')
+await page.waitForFunction(() => document.querySelector('#is-job option[value]:not([value=""])'), { timeout: 8000 })
+await setValue(page, '#is-job', await page.$eval('#is-job option[value]:not([value=""])', (o) => o.value))
+await fill(page, '#is-to', `Foreman ${stamp}`)
+await fill(page, `input[aria-label="Issue ${first}"]`, '1')
+await sleep(200)
+await fill(page, `input[aria-label="Issue ${first}"]`, '999999')
+await sleep(200)
+check('asking for more than the store holds is said at once', (await text('[role=dialog]')).includes('more than the store holds'))
+await fill(page, `input[aria-label="Issue ${first}"]`, '1')
+await clickText(page, '[role=dialog] button', 'Open the note')
+await waitForToast(page, 'opened')
+await gone()
+await sleep(700)
+const noteRow = () => page.evaluate((s) => [...document.querySelectorAll('table[aria-label="Issue notes"] tbody tr')].find((r) => r.textContent.includes(s))?.textContent.replace(/\s+/g, ' '), `Foreman ${stamp}`)
+check('the note is listed as a draft, not yet posted', /Draft/.test(await noteRow()) && /Post it/.test(await noteRow()), await noteRow())
+await toastsGone(page)
+
+await page.evaluate((s) => [...document.querySelectorAll('table[aria-label="Issue notes"] tbody tr')].find((r) => r.textContent.includes(s)).querySelectorAll('button')[0].click(), `Foreman ${stamp}`)
+await waitForToast(page, 'left the store')
+await sleep(700)
+check('posting it takes the material out of the store', /Posted/.test(await noteRow()), await noteRow())
+await toastsGone(page)
+
+await page.evaluate((c) => [...document.querySelectorAll('table[aria-label=Stock] tbody tr')].find((r) => r.textContent.includes(c)).querySelectorAll('button')[0].click(), code)
+await page.waitForSelector('table[aria-label=Movements] tbody tr')
+check('the ledger shows each movement with its balance', /issue/i.test(await text('table[aria-label=Movements]')))
+await page.keyboard.press('Escape')
+await gone()
+
+await page.evaluate((c) => [...document.querySelectorAll('table[aria-label=Stock] tbody tr')].find((r) => r.textContent.includes(c)).querySelectorAll('button')[1].click(), code)
+await page.waitForSelector('#pm-n')
+await clickText(page, '[role=dialog] button', 'Post the count')
+await waitForToast(page, 'agrees with the book')
+await gone()
+check('a count that matches the book is posted as such', true)
+await toastsGone(page)
+
+await clickText(page, 'main button', 'Send to another site')
+await page.waitForSelector('#tr-to')
+await fill(page, '#tr-to', `Site store ${stamp}`)
+await page.waitForSelector('table[aria-label="Held in this store"] input')
+await fill(page, 'table[aria-label="Held in this store"] tbody tr:first-child input', '1')
+await clickText(page, '[role=dialog] button', 'Send it')
+await sleep(1200)
+await gone()
+check('material can be sent to another store at what it cost', true)
+
+await open(page, '/store/material-costing')
+await page.waitForSelector('select[aria-label="Work order"]')
+check('Material Used vs Costed shows costed against drawn', (await text('main')).includes('Costed on') && (await text('main')).includes('Actually drawn'))
+await done()
