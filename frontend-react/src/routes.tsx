@@ -48,6 +48,7 @@ export const PORTED: PortedRoute[] = [
   { path: '/projects/profit', Component: lazy(() => import('@/features/projects/ProjectProfitPage')) },
   { path: '/store/stock', Component: lazy(() => import('@/features/stock/StockPage')) },
   { path: '/store/material-costing', Component: lazy(() => import('@/features/stock/ConsumptionPage')) },
+  { path: '/store/goods-receipt', Component: lazy(() => import('@/features/grn/GrnPage')) },
   { path: '/projects/diary', Component: lazy(() => import('@/features/diary/DiaryPage')) },
   { path: '/people/attendance', Component: lazy(() => import('@/features/attendance/AttendancePage')) },
   { path: '/people/leave', Component: lazy(() => import('@/features/leave/LeavePage')) },
