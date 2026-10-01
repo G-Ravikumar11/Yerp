@@ -78,3 +78,27 @@ def test_a_client_work_order_goes_with_everything_on_it(tenant):
     assert prev.status_code == 200 and prev.json()["can_delete"] is True
     assert tenant.delete("/api/erp/work-orders/%d" % wo["id"]).status_code == 200
     assert tenant.get("/api/erp/work-orders/%d" % wo["id"]).status_code == 404
+
+
+def test_delete_all_needs_the_phrase_then_clears_every_work_order(tenant):
+    from test_work_order_pricing import fg, job
+    live_order(tenant, mobilization_advance_percent=10)
+    sub = live_order(tenant, pay_advance=False)
+    tenant.post("/api/wo/orders/%d/amend" % sub["id"], json={})
+    tenant.post("/api/erp/work-orders/build", json={
+        "job_id": job(tenant)["id"], "reference": "PO/ALL/1",
+        "lines": [{"code": fg(tenant), "qty": 10, "rate": 500}]})
+    prev = tenant.get("/api/work-orders/delete-all-preview").json()
+    assert prev["subcontract"] >= 3 and prev["client"] >= 1
+    assert tenant.post("/api/work-orders/delete-all", json={"confirm": "yes"}).status_code == 400
+    res = tenant.post("/api/work-orders/delete-all", json={"confirm": prev["phrase"]})
+    assert res.status_code == 200, res.text
+    after = tenant.get("/api/work-orders/delete-all-preview").json()
+    assert after["subcontract"] == 0 and after["client"] == 0 and after["sub_bills"] == 0
+
+
+def test_staff_cannot_delete_everything(tenant, portal):
+    pm = make_employee(tenant, permission_role="project_manager", password=PASSWORD)
+    tenant.put("/api/employees/%d" % pm["id"], json={"status": "active"})
+    portal.post("/api/employee/auth/login", json={"email": pm["email"], "password": PASSWORD})
+    assert portal.post("/api/work-orders/delete-all", json={"confirm": "DELETE ALL WORK ORDERS"}).status_code in (401, 403)

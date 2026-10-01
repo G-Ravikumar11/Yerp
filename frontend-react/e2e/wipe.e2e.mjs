@@ -1,0 +1,27 @@
+import { api, approvedOrder, clickText, fill, launch, measure, open, signIn, sleep } from './lib.mjs'
+
+// Settings > Alerts & data > Delete all work orders: typed to confirm, then every work order is gone.
+const { page, check, done } = await launch({ allow: [/^400 /] })
+await signIn(page)
+const o = await approvedOrder(page, { subject: 'wipe me' })
+await measure(page, o.id, o.items[0].item_id, 5)
+await api(page, 'POST', '/api/sub-bills', { order_id: o.id })
+await open(page, '/settings')
+await clickText(page, '[role=tab]', 'Alerts & data')
+await page.waitForFunction(() => [...document.querySelectorAll('main button')].some((b) => b.textContent.includes('Delete all work orders')), { timeout: 10000 })
+check('the block offers a backup first', (await page.$eval('main', (e) => e.textContent)).includes('Download a backup first'))
+await clickText(page, 'main button', 'Delete all work orders')
+await page.waitForSelector('#wipe-phrase')
+const btn = () => page.$eval('[role=dialog]', (d) => [...d.querySelectorAll('button')].find((b) => b.textContent.includes('Delete everything')).disabled)
+check('Delete everything is off until the phrase is typed', await btn())
+await fill(page, '#wipe-phrase', 'delete all')
+check('and stays off for a wrong phrase', await btn())
+await fill(page, '#wipe-phrase', 'DELETE ALL WORK ORDERS')
+check('and on once it is typed exactly', !(await btn()))
+await clickText(page, '[role=dialog] button', 'Delete everything')
+await page.waitForFunction(async () => { const r = await (await fetch('/api/work-orders/delete-all-preview', { credentials: 'include' })).json(); return r.subcontract === 0 && r.client === 0 }, { timeout: 15000, polling: 500 })
+const orders = (await api(page, 'GET', '/api/wo/orders')).data.orders
+check('every gang work order is gone', orders.length === 0, String(orders.length))
+check('and the client ones', ((await api(page, 'GET', '/api/erp/work-orders')).data.work_orders ?? []).length === 0)
+check('and the bills', (await api(page, 'GET', '/api/sub-bills')).data.bills?.length === 0 || !(await api(page, 'GET', '/api/sub-bills')).data.bills)
+await done()

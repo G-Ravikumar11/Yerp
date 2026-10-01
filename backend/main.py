@@ -20658,6 +20658,50 @@ def wo_delete_order_now(order_id, request, db):
                                           " everywhere" if rep["counts"]["bills"] or rep["counts"]["measurements"] else "")}
 
 
+WIPE_PHRASE = "DELETE ALL WORK ORDERS"
+
+
+@app.get("/api/work-orders/delete-all-preview")
+def work_orders_delete_all_preview(request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    return {"phrase": WIPE_PHRASE,
+            "subcontract": db.query(models.DBSubcontractOrder).filter(
+                models.DBSubcontractOrder.client_id == client.id).count(),
+            "client": db.query(models.DBWorkOrder).filter(models.DBWorkOrder.client_id == client.id).count(),
+            "sub_bills": db.query(models.DBSubBill).filter(models.DBSubBill.client_id == client.id).count(),
+            "ra_bills": db.query(models.DBRABill).filter(models.DBRABill.client_id == client.id).count()}
+
+
+@app.post("/api/work-orders/delete-all")
+def work_orders_delete_all(request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """Every work order - given to gangs and received from clients - with everything attached
+    to each. The owner's alone, and only with the phrase typed out: there is no undoing it,
+    so a backup is taken first (Settings, Alerts & data)."""
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    if ((body or {}).get("confirm") or "").strip() != WIPE_PHRASE:
+        raise HTTPException(400, "Type %s to confirm." % WIPE_PHRASE)
+    scope = (body or {}).get("scope") or "all"
+    gone = {"subcontract": 0, "client": 0}
+    if scope in ("all", "subcontract"):
+        for oid in [o.id for o in db.query(models.DBSubcontractOrder.id).filter(
+                models.DBSubcontractOrder.client_id == client.id).order_by(models.DBSubcontractOrder.id.desc()).all()]:
+            if not db.query(models.DBSubcontractOrder).filter(models.DBSubcontractOrder.id == oid).first():
+                continue  # went with an earlier version of the same order
+            wo_delete_order_now(oid, request, db)
+            gone["subcontract"] += 1
+    if scope in ("all", "client"):
+        for wid in [w.id for w in db.query(models.DBWorkOrder.id).filter(models.DBWorkOrder.client_id == client.id).all()]:
+            erp_delete_work_order(wid, request, db)
+            gone["client"] += 1
+    log_audit(db, client.id, "work_orders_wiped", "work_order", None, "all", "Deleted %d subcontract and %d client work orders" % (
+        gone["subcontract"], gone["client"]), request)
+    db.commit()
+    return {"ok": True, **gone, "message": "Deleted %d subcontract and %d client work orders, with everything attached." % (
+        gone["subcontract"], gone["client"])}
+
+
 @app.post("/api/wo/orders/{order_id}/amend")
 def wo_amend(order_id: int, body: WoActionIn, request: Request,
              db: Session = Depends(get_db)):

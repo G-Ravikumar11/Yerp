@@ -5,6 +5,7 @@ import { buttonVariants } from '@/components/ui/button'
 import { useAuditLog, useBackupInfo, type AuditRow } from '@/api/settings'
 import { formatDate } from '@/lib/format'
 import { Alerts } from './Alerts'
+import { WipeWorkOrders } from './WipeWorkOrders'
 import { Section } from './Section'
 
 const size = (b: number) => (b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`)
@@ -51,6 +52,7 @@ export default function DataTab() {
       <Alerts />
       <Backup />
       <Activity />
+      <WipeWorkOrders />
     </>
   )
 }
