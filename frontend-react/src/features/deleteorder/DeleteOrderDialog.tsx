@@ -53,10 +53,10 @@ export function DeleteOrderDialog({ open, onOpenChange, kind, id, number, onDele
         <p className="text-sm text-danger">Could not check what this order is tied to. Try again.</p>
       ) : (
         <div className="grid gap-3 text-sm">
-          {p.blockers.length > 0 && (
+          {(p.warnings ?? []).length > 0 && (
             <div role="alert" className="rounded-lg border border-danger/40 bg-danger-soft px-3 py-2.5 text-danger">
-              <p className="font-medium">It cannot be deleted yet.</p>
-              <ul className="mt-1 list-disc pl-5">{p.blockers.map((b) => <li key={b}>{b}</li>)}</ul>
+              <p className="font-medium">Money is recorded against it. It goes too.</p>
+              <ul className="mt-1 list-disc pl-5">{p.warnings.map((b) => <li key={b}>{b}</li>)}</ul>
             </div>
           )}
           {several && <p>It was amended, so every version goes together: <strong>{p.numbers.join(', ')}</strong>.</p>}

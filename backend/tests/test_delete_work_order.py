@@ -45,14 +45,16 @@ def test_a_revision_takes_the_whole_chain_with_it(tenant):
     assert order["id"] not in ids and rev["id"] not in ids
 
 
-def test_money_paid_against_it_stops_the_delete(tenant):
+def test_money_paid_against_it_is_deleted_with_it(tenant):
     order = live_order(tenant, mobilization_advance_percent=10)
     assert order["mobilization_advance_amount"] > 0
     prev = tenant.get("/api/wo/orders/%d/delete-preview" % order["id"]).json()
-    assert prev["can_delete"] is False and "advance" in prev["blockers"][0]
-    res = tenant.delete("/api/wo/orders/%d" % order["id"])
-    assert res.status_code == 409 and "Payments & Ledgers" in res.json()["detail"]
-    assert tenant.get("/api/wo/orders/%d" % order["id"]).status_code == 200
+    assert prev["can_delete"] is True and "advance" in prev["warnings"][0]
+    assert tenant.delete("/api/wo/orders/%d" % order["id"]).status_code == 200
+    assert tenant.get("/api/wo/orders/%d" % order["id"]).status_code == 404
+    entries = tenant.get("/api/money/entries").json()
+    rows = entries.get("entries", entries) if isinstance(entries, dict) else entries
+    assert not [e for e in rows if e.get("doc_type") == "sub_advance" and e.get("doc_id") == order["id"]]
 
 
 def test_staff_cannot_delete_a_work_order(tenant, portal):

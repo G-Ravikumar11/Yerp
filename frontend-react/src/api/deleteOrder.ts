@@ -9,6 +9,7 @@ export interface DeletePreview {
   numbers: string[]
   counts: Record<string, number>
   blockers: string[]
+  warnings: string[]
   can_delete: boolean
 }
 
