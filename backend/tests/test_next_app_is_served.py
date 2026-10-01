@@ -61,6 +61,6 @@ def test_the_service_worker_is_javascript_and_never_cached_stale(client):
     assert "no-cache" in res.headers["cache-control"]
 
 
-def test_the_current_app_is_still_served_at_the_root(client):
-    assert client.get("/app.html").status_code == 200
+def test_the_sign_in_pages_are_still_served_at_the_root_and_the_old_app_forwards(client):
+    assert "/next/" in client.get("/app.html").text
     assert client.get("/login.html").status_code == 200

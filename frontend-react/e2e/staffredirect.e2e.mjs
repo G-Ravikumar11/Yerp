@@ -15,6 +15,4 @@ await Promise.all([page.waitForFunction(() => location.pathname.startsWith('/nex
 check('employee-login lands on /next/', page.url().includes('/next/'), page.url())
 await page.goto(BASE + '/employee-dashboard.html', { waitUntil: 'networkidle0' })
 check('the old staff page forwards to /next/', page.url().includes('/next/'), page.url())
-await page.goto(BASE + '/employee-dashboard.html?old=1', { waitUntil: 'domcontentloaded' })
-check('?old=1 keeps the old page', page.url().includes('employee-dashboard.html'), page.url())
 await done()

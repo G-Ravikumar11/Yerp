@@ -1,8 +1,8 @@
 # Y ERP — new interface (React)
 
-The rewrite of the Y ERP front end. It talks to the same FastAPI backend as the
-current app and is served by it at **`/next/`**. The current app at `/app.html`
-is untouched and stays live while screens move across.
+The Y ERP front end. It talks to the FastAPI backend and is served by it at
+**`/next/`**. It replaced the earlier plain-JavaScript app, which has been
+removed; its old addresses forward here.
 
 Stack: Vite, React 19, TypeScript (strict), Tailwind v4, Radix primitives,
 TanStack Query, Zustand, Framer Motion, Recharts, and a `vite-plugin-pwa`

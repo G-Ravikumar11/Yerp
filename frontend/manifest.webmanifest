@@ -2,24 +2,24 @@
   "name": "Y ERP",
   "short_name": "Y ERP",
   "description": "Civil contracting, end to end - the site diary, bills, stores and money",
-  "id": "/app.html",
-  "start_url": "/app.html",
+  "id": "/next/",
+  "start_url": "/next/",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#f8fafc",
-  "theme_color": "#0f172a",
+  "background_color": "#0b0b0e",
+  "theme_color": "#0b0b0e",
   "icons": [
     { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
     { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ],
   "shortcuts": [
-    { "name": "Site Diary", "short_name": "Diary", "url": "/app.html#diary-view",
+    { "name": "Site Diary", "short_name": "Diary", "url": "/next/projects/diary",
       "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
-    { "name": "Project Chat", "short_name": "Chat", "url": "/app.html#chat-view",
+    { "name": "Project Chat", "short_name": "Chat", "url": "/next/projects/chat",
       "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
-    { "name": "Drawings & Photos", "short_name": "Photos", "url": "/app.html#drawings-view",
+    { "name": "Drawings & Photos", "short_name": "Photos", "url": "/next/projects/drawings",
       "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
   ]
 }

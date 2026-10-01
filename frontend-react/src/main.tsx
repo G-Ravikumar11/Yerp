@@ -6,13 +6,6 @@ import { registerSW } from 'virtual:pwa-register'
 import { toast } from './stores/toast'
 import { useOffline } from './stores/offline'
 
-// Arriving here ends a visit to the previous version: app.html will send the account holder back to this one.
-try {
-  sessionStorage.removeItem('yerp.old')
-} catch {
-  // Private window: nothing to clear.
-}
-
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />

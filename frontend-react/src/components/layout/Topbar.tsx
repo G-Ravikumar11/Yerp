@@ -150,9 +150,6 @@ export function Topbar() {
         </button>
         <Breadcrumbs />
         <div className="ml-auto flex items-center gap-3">
-          <a href="/app.html?old=1" title="The previous version of Y ERP, with every screen" className="hidden text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline md:inline">
-            Old version
-          </a>
           <InstallButton />
           {user?.type === 'employee' && <NotificationBell />}
           <SyncIndicator />

@@ -1,7 +1,7 @@
 import { lazy, Suspense } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { AlertTriangle, ArrowUpRight, CheckCheck, ExternalLink } from 'lucide-react'
+import { AlertTriangle, ArrowUpRight, CheckCheck } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Skeleton, Stat } from '@/components/ui'
 import { useInbox } from '@/api/approvals'
@@ -104,11 +104,6 @@ export default function Dashboard() {
               <Link to="/approvals">
                 <CheckCheck /> {waiting ? `${waiting} waiting on you` : 'Approvals'}
               </Link>
-            </Button>
-            <Button variant="outline" asChild>
-              <a href="/app.html?old=1">
-                Current app <ExternalLink />
-              </a>
             </Button>
           </>
         }

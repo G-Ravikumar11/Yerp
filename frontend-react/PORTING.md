@@ -1,10 +1,12 @@
-# Porting the current app (`/app.html`) to the new interface (`/next/`)
+# Porting the old app (`/app.html`) to the new interface (`/next/`) - finished, and the old app removed
 
 The two share one server and one database, so **no data moves**: a record made in
 either shows in both. What is being ported is the screens.
 
-The old app is removed only when every row below is done, verified in a real
-browser, and the owner has said to go ahead.
+Every screen was ported and checked in a real browser, and the owner confirmed on 2026-10-01 that
+the old app should go. It is removed: `frontend/` keeps only the pages below, and `app.html`,
+`hr.html` and `employee-dashboard.html` are small forwards to `/next/`. It is all in git history
+if anything has to be recovered.
 
 Status: `done` · `todo`
 
@@ -82,10 +84,15 @@ Status: `done` · `todo`
 | Staff self-service (overview with clock, timesheet, costs, orders, leave, payslips, documents) | `my-*-view`, `employee-dashboard.html` | done; notifications, goals, team presence and profile of the old staff page are not ported |
 
 ## Sign-in
-One sign-in door (`login.html`) now sends the owner **and staff** to `/next/`. `app.html` sends both there too, unless opened as `app.html?old=1` (the "Old version" link). `employee-login.html` and `employee-dashboard.html` also go to `/next/` (the old staff page stays at `employee-dashboard.html?old=1`).
+One sign-in door (`login.html`) and `employee-login.html` send the owner and staff to `/next/`.
 
-## Pages outside `app.html`
-Sign-in (`login.html`, `employee-login.html`, `superadmin-login.html`), `portal.html`
-(partners), `employee-dashboard.html`, `hr.html`, `recruitment.html`, `onboard.html`,
-`reset-password.html`, `meeting.html`, `superadmin.html`. Decide with the owner which of
-these count as "the old app" before removing anything.
+## Pages that stay in `frontend/`
+Sign-in (`login.html`, `employee-login.html`, `superadmin-login.html`), `reset-password.html`, `onboard.html`,
+`portal.html` (partners), `superadmin.html`, `recruitment.html` (the public application form), `jobs.html`
+(the public job board) and `meeting.html`. They are separate from the ERP screens and were not rebuilt.
+
+## Gone with the old app, not rebuilt
+- Recruitment management (vacancies and applications): it was only in the hidden legacy part of the old app and in `hr.html`. The server side still exists.
+- The old invoicing, quotes, recurring invoices and reports screens (legacy, hidden in the old app).
+- Staff goals, team presence and profile on the old staff page; attendance AI alerts and summary.
+- The old customer history page behind a contact (invoice based).

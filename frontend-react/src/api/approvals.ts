@@ -60,6 +60,6 @@ export function hrefFor(i: ApprovalItem): { to: string; external: boolean } {
     case 'ra_bill':
       return { to: `/clients/measurement?bill=${i.id}`, external: false }
     default:
-      return { to: '/app.html?old=1', external: true }
+      return { to: '/approvals', external: false }
   }
 }

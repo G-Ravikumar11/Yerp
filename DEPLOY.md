@@ -3,10 +3,11 @@
 The app is one FastAPI service serving its own frontend. There is no build
 step on Railway and no separate worker.
 
-There are two front ends. The current one (`frontend/`, at `/app.html`) is
-plain files. The new React one is served at `/next/` from `frontend-next/`,
+The app is the React interface, served at `/next/` from `frontend-next/`,
 which is **built output committed to the repository** - Railway does not build
-it. After changing anything under `frontend-react/`, run `npm run build` there
+it. `frontend/` holds only the sign-in, onboarding, partner portal, super admin,
+recruitment, job board and meeting pages, plus small forwards from the old
+addresses (`app.html`, `hr.html`, `employee-dashboard.html`). After changing anything under `frontend-react/`, run `npm run build` there
 and commit `frontend-next/` with it (see `frontend-react/README.md`).
 
 ## What Railway needs from you

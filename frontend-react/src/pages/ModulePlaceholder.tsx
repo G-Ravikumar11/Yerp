@@ -10,11 +10,11 @@ export default function ModulePlaceholder({ title, group }: { title: string; gro
       <PageHeader
         eyebrow={group}
         title={title}
-        description="This screen is still on the current app. It moves across module by module, keeping every rule it has now."
+        description="This screen is not available yet."
         actions={
           <Button asChild>
-            <a href="/app.html?old=1">
-              Open in current app <ExternalLink />
+            <a href="/">
+              Back to the Command Center <ExternalLink />
             </a>
           </Button>
         }

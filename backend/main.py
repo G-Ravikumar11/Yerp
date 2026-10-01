@@ -1099,8 +1099,8 @@ def superadmin_client_overview(client_id: int, request: Request, db: Session = D
             "interviews": tenant_count(models.DBInterview),
         },
         "portals": {
-            "invoicing": "/app.html",
-            "hr": "/hr.html",
+            "invoicing": "/next/",
+            "hr": "/next/people/employees",
             "employee": "/employee-login.html",
             "job_board": f"/jobs.html?c={client.id}",
         },
@@ -5608,7 +5608,7 @@ def start_approval(db, client_id, doc, entity_type, submitted_by, request, actor
     notify_employee(db, client_id, chain[0]["employee_id"],
                     "Approval needed",
                     f"{getattr(doc, 'number', 'A document')} is waiting for your approval.",
-                    link="/app.html#approvals")
+                    link="/next/approvals")
 
     log_audit(db, client_id, f"{entity_type}_submitted_for_approval", entity_type, doc.id,
               getattr(doc, "number", str(doc.id)),
@@ -5703,7 +5703,7 @@ def decide_approval_step(db, step, action, notes, request, client_id, actor=""):
     if next_step:
         doc.current_approval_step = next_step.step
         notify_employee(db, client_id, next_step.approver_id, "Approval needed",
-                        f"{number} is waiting for your approval.", link="/app.html#approvals")
+                        f"{number} is waiting for your approval.", link="/next/approvals")
         log_audit(db, client_id, f"{step.entity_type}_approved_step", step.entity_type,
                   doc.id, number,
                   f"Approved step {step.step}, escalated to step {next_step.step}",
@@ -6089,7 +6089,7 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
                 request.session['refresh_token'] = refresh_token
 
             oauth_portal = request.session.pop('oauth_portal', 'invoicing')
-            target_dashboard = "/hr.html" if oauth_portal == "hr" else "/app.html"
+            target_dashboard = "/next/people/employees" if oauth_portal == "hr" else "/next/"
 
             google_email = user.get('email', '')
 
@@ -6182,14 +6182,14 @@ def google_status():
 
 
 @app.get("/api/auth/google/start")
-async def google_signin_start(request: Request, next: str = "/app.html"):
+async def google_signin_start(request: Request, next: str = "/next/"):
     if not google_configured():
         # Back to the sign-in page with something readable, rather than a raw
         # server error. Somebody can reach this from a stale tab long after the
         # button stopped being offered.
         return RedirectResponse("/login.html?error=google_unconfigured")
     # Only a path on this site, so the redirect cannot be pointed elsewhere.
-    request.session["google_next"] = next if next.startswith("/") and not next.startswith("//") else "/app.html"
+    request.session["google_next"] = next if next.startswith("/") and not next.startswith("//") else "/next/"
     redirect_uri = str(request.url_for("google_signin_callback"))
     if redirect_uri.startswith("http://") and "localhost" not in redirect_uri:
         redirect_uri = redirect_uri.replace("http://", "https://", 1)
@@ -6223,7 +6223,7 @@ async def google_signin_callback(request: Request, db: Session = Depends(get_db)
     if info.get("email_verified") is False:
         return RedirectResponse("/login.html?error=google_unverified")
 
-    target = request.session.pop("google_next", "/app.html")
+    target = request.session.pop("google_next", "/next/")
 
     client = db.query(models.DBClient).filter(
         sqlfunc.lower(models.DBClient.email) == email).first()
@@ -15009,8 +15009,8 @@ def _create_stripe_checkout(order, client, request):
         auth=(cfg["secret"], ""),
         data={
             "mode": "payment",
-            "success_url": f"{base}/app.html?topup=success",
-            "cancel_url": f"{base}/app.html?topup=cancelled",
+            "success_url": f"{base}/next/?topup=success",
+            "cancel_url": f"{base}/next/?topup=cancelled",
             "client_reference_id": str(order.id),
             "metadata[order_id]": str(order.id),
             "metadata[client_id]": str(client.id),
@@ -15102,8 +15102,8 @@ def _create_paypal_order(order, client, request):
                 },
             }],
             "application_context": {
-                "return_url": f"{base}/app.html?topup=success",
-                "cancel_url": f"{base}/app.html?topup=cancelled",
+                "return_url": f"{base}/next/?topup=success",
+                "cancel_url": f"{base}/next/?topup=cancelled",
             },
         },
         timeout=20,
@@ -20053,7 +20053,7 @@ def wo_notify(db, client, order, action, actor_id, actor_name, comments=""):
                         order.wo_number,
                         wo_dict(db, order).get("contractor") or "a contractor",
                         format_money_plain(order.net_order_value), actor_name),
-                    link="/app.html#approvals")
+                    link="/next/approvals")
         elif action in ("APPROVE", "REJECT", "CANCEL") and order.submitted_by:
             if order.submitted_by == actor_id:
                 return
@@ -20064,7 +20064,7 @@ def wo_notify(db, client, order, action, actor_id, actor_name, comments=""):
                 "Work order " + wording,
                 "%s was %s by %s.%s" % (order.wo_number, wording, actor_name,
                                         " " + comments.strip() if comments else ""),
-                link="/app.html#subcontracts")
+                link="/next/subcontractors/work-orders")
     except Exception:
         logger.exception("Could not queue work order notifications for %s",
                          order.wo_number)
@@ -26280,7 +26280,7 @@ def sub_bill_decide(db, client, bill, actor_id, actor_name, approve, comments=""
                             "%s - %s of work, net %s. Signed by %s and now with you." % (
                                 bill.number, format_money_plain(bill.this_bill),
                                 format_money_plain(bill.net_payable), actor_name),
-                            link="/app.html#approvals")
+                            link="/next/approvals")
         return False
     return True
 
@@ -26439,7 +26439,7 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
                                 "%s from %s - %s of work, net %s." % (
                                     bill.number, gang, format_money_plain(bill.this_bill),
                                     format_money_plain(bill.net_payable)),
-                                link="/app.html#approvals")
+                                link="/next/approvals")
             db.commit()
         else:
             notify(db, client.id, "sub_bill_certified", "%s certified - %s to pay %s" % (
@@ -31194,7 +31194,7 @@ def notify(db, client_id, kind, title, body="", view="", ref_type="", ref_id=Non
         if right:
             for emp in holders_of(db, client_id, right):
                 notify_employee(db, client_id, emp.id, title[:200], (body or title)[:500],
-                                link="/app.html#approvals")
+                                link="/next/approvals")
             db.commit()
         if emails or numbers:
             client = db.query(models.DBClient).filter(models.DBClient.id == client_id).first()
@@ -37214,7 +37214,7 @@ def decide_contractor_registration(con_id: int, action: str, request: Request, b
         notify_employee(db, client.id, con.registered_by,
                         "Registration %s: %s" % ("approved" if move == "approve" else "sent back", con.company_name),
                         ("%s is now a registered sub contractor." % con.vendor_code) if move == "approve"
-                        else "Put right: " + comments, link="/app.html#vendors")
+                        else "Put right: " + comments, link="/next/subcontractors/vendors")
     db.commit()
     return {"ok": True, "contractor": contractor_dict(con),
             "message": "%s %s." % (con.vendor_code or con.company_name,
@@ -37422,7 +37422,7 @@ def wo_decide_step(db, client, order, actor_id, actor_name, approve, comments=""
                         "%s to %s, %s - approved by %s and now with you." % (
                             order.wo_number, wo_dict(db, order).get("contractor") or "a contractor",
                             format_money_plain(order.net_order_value), actor_name),
-                        link="/app.html#approvals")
+                        link="/next/approvals")
     return nxt
 
 

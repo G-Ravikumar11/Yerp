@@ -85,6 +85,13 @@ export function attentionHref(view: string): { to: string; external: boolean } {
     'gst-view': '/money/gst',
     'fixedassets-view': '/money/assets',
     'registers-view': '/money/registers',
+    'stock-view': '/store/stock',
+    'diary-view': '/projects/diary',
+    'chat-view': '/projects/chat',
+    'attendance-view': '/people/attendance',
+    'leave-view': '/people/leave',
+    'payroll-view': '/people/payroll',
+    'settings-view': '/settings',
   }
-  return ported[view] ? { to: ported[view], external: false } : { to: '/app.html?old=1', external: true }
+  return ported[view] ? { to: ported[view], external: false } : { to: '/', external: false }
 }
