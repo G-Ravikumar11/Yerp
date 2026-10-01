@@ -76,7 +76,7 @@ Status: `done` · `todo`
 | --- | --- | --- |
 | Command Center | `dashboard-view` | done |
 | Approvals | `approvals-view` | done |
-| Settings (letterhead, company, users) | `settings-view` | todo |
+| Settings (company, logo, bank, tax rates, letterheads, signatures, conditions, approval rules, staff domain, team, partner logins, alerts, backup, activity log) | `settings-view` | done; the hidden legacy blocks (Gmail connect, invoice templates, demo mail) are not ported |
 | Contacts | `contacts-view` | todo |
 | Document viewer | `document-view` | todo |
 | Staff self-service (overview with clock, timesheet, costs, orders, leave, payslips, documents) | `my-*-view`, `employee-dashboard.html` | done; notifications, goals, team presence and profile of the old staff page are not ported |
