@@ -82,7 +82,7 @@ Status: `done` · `todo`
 | Staff self-service (overview with clock, timesheet, costs, orders, leave, payslips, documents) | `my-*-view`, `employee-dashboard.html` | done; notifications, goals, team presence and profile of the old staff page are not ported |
 
 ## Sign-in
-One sign-in door (`login.html`) now sends the owner **and staff** to `/next/`. `app.html` sends both there too, unless opened as `app.html?old=1` (the "Old version" link). `employee-login.html` still goes to the separate `employee-dashboard.html`.
+One sign-in door (`login.html`) now sends the owner **and staff** to `/next/`. `app.html` sends both there too, unless opened as `app.html?old=1` (the "Old version" link). `employee-login.html` and `employee-dashboard.html` also go to `/next/` (the old staff page stays at `employee-dashboard.html?old=1`).
 
 ## Pages outside `app.html`
 Sign-in (`login.html`, `employee-login.html`, `superadmin-login.html`), `portal.html`

@@ -165,7 +165,7 @@
         });
         var data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Login failed');
-        window.location.href = '/employee-dashboard.html';
+        window.location.href = '/next/';
       } catch (e) {
         err.textContent = e.message; err.classList.remove('hidden');
       } finally {

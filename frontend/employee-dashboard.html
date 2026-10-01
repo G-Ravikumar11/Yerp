@@ -8,6 +8,13 @@
   <meta name="theme-color" content="#f8fafc">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+  <script>
+    /* Staff work in the new interface now. This page stays reachable at employee-dashboard.html?old=1. */
+    (function () {
+      if (new URLSearchParams(location.search).get('old') === '1') return;
+      location.replace('/next/');
+    })();
+  </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
