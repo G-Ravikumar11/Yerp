@@ -81,16 +81,21 @@ export default function MeasurementBookPage() {
   const shown = site ? live.filter((o) => o.job_id === site) : live
   const vocab = useOrderVocabulary()
   const jobCode = (o: Order) => vocab.data?.jobs.find((j) => j.id === o.job_id)?.number ?? ''
-  const last = remembered()
+  // The order that carries on from an amended one: follow the revisions on to the one now live.
+  const liveAfter = (from: Order | undefined) => {
+    let cur = from
+    for (let i = 0; i < 20 && cur?.status === 'AMENDED'; i++) cur = all.find((o) => o.supersedes_id === cur?.id && o.status in order_of)
+    return cur && cur.id !== from?.id && isLive(cur) ? cur : undefined
+  }
+  // The book reopens on the order last worked on - and once that order has been amended and its revision
+  // approved, on the revision, which is the one that takes measurements now.
+  const lastOrder = all.find((o) => o.id === remembered())
+  const last = (liveAfter(lastOrder) ?? lastOrder)?.id ?? 0
   const chosen = Number(params.get('order')) || (live.some((o) => o.id === last) ? last : 0) || live[0]?.id || 0
   const order = all.find((o) => o.id === chosen)
   const measurable = !!order && isLive(order)
   // The order that carries on from this one: follow the revisions on to the one now live.
-  const replacement = (() => {
-    let cur = order
-    for (let i = 0; i < 20 && cur?.status === 'AMENDED'; i++) cur = all.find((o) => o.supersedes_id === cur?.id && o.status in order_of)
-    return cur && cur.id !== order?.id && isLive(cur) ? cur : undefined
-  })()
+  const replacement = liveAfter(order)
   const quick = useRef<QuickMeasureHandle>(null)
   const book = useMeasurementBook(chosen)
   const [measuring, setMeasuring] = useState<MbLine | null>(null)
