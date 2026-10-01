@@ -40,13 +40,13 @@ def test_a_complete_bill_is_ready(tenant):
 def test_the_values_are_the_bills_to_the_paisa(tenant):
     b = ready_bill(tenant)
     p = tenant.get("/api/ra-bills/%d/einvoice" % b["id"]).json()["payload"]
-    taxable = round(b["this_bill"] - b["retention_amount"] - b["advance_recovery"] - b["other_deductions"], 2)
+    taxable = round(b["this_bill"], 2)
     v = p["ValDtls"]
     assert v["AssVal"] == taxable
     assert v["CgstVal"] == b["cgst_amount"] and v["SgstVal"] == b["sgst_amount"] and v["IgstVal"] == 0
     assert v["TotInvVal"] == round(taxable + b["tax_amount"], 2)
     item = p["ItemList"][0]
-    assert item["TotAmt"] == b["this_bill"] and item["Discount"] == b["retention_amount"]
+    assert item["TotAmt"] == b["this_bill"] and item["Discount"] == 0
     assert item["HsnCd"] == "9954" and item["IsServc"] == "Y" and item["Unit"] == "MTR"
 
 

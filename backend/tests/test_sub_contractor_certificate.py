@@ -350,7 +350,7 @@ def test_the_certificate_adds_up_as_the_top_sheet_does(tenant):
     assert bill["bill_date"] == "2026-02-17"
 
 
-def test_gst_is_charged_on_the_gross_after_debit_notes(tenant):
+def test_gst_is_charged_on_the_measured_value_not_the_gross_after_debit_notes(tenant):
     order = live_order(tenant, retention_percent=5)          # 18% GST, 1% TDS
     item = book(tenant, order["id"])["lines"][0]["item_id"]
     measure(tenant, order["id"], item, 10)                   # 68,000 of work
@@ -359,10 +359,10 @@ def test_gst_is_charged_on_the_gross_after_debit_notes(tenant):
     assert res.status_code == 200, res.text
     bill = res.json()["bill"]
     assert bill["gross_value"] == 60000
-    assert bill["gst_amount"] == 10800                       # 18% of the 60,000 gross
+    assert bill["gst_amount"] == 12240                       # 18% of the 68,000 measured
     assert bill["retention_amount"] == 3400                  # 5% of the 68,000 of work
     assert bill["tds_amount"] == 680
-    assert bill["net_payable"] == 60000 + 10800 - 3400 - 680
+    assert bill["net_payable"] == 60000 + 12240 - 3400 - 680
 
 
 def test_a_sent_bill_s_boxes_are_not_changed(tenant):

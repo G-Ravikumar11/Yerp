@@ -383,3 +383,25 @@ def test_a_revision_says_what_stops_it_being_approved_before_anyone_tries(tenant
     assert again["revision_blockers"] == []
     ok = tenant.post("/api/wo/orders/%d/self-approve" % rev["id"], json={})
     assert ok.status_code == 200 and ok.json()["order"]["status"] == "APPROVED"
+
+
+def test_every_tax_on_a_gang_bill_is_on_the_measured_value(tenant):
+    """GST, retention and TDS are all on the work measured; debit notes come off what is payable,
+    they do not shrink the value the tax is charged on. The rates are shown as CGST/SGST or IGST."""
+    order = live_order(tenant, pay_advance=False)
+    item = book(tenant, order["id"])["lines"][0]
+    measure(tenant, order["id"], item["item_id"], 10)
+    res = tenant.post("/api/sub-bills", json={"order_id": order["id"], "debit_notes": 500})
+    assert res.status_code == 200, res.text
+    b = res.json().get("bill") or res.json()
+    work = b["this_bill"]
+    assert work > 0 and b["debit_notes"] == 500
+    assert b["gst_amount"] == round(work * (b["gst_percent"] or 0) / 100.0)      # on the measured value, not on work less debit notes
+    assert b["taxable_value"] == work
+    assert b["retention_amount"] == round(work * (b["retention_percent"] or 0) / 100.0)
+    assert b["tds_amount"] == round(work * (b["tds_percent"] or 0) / 100.0)
+    shown = (b["cgst_percent"], b["sgst_percent"], b["igst_percent"])
+    assert shown in ((b["gst_percent"] / 2, b["gst_percent"] / 2, 0), (0, 0, b["gst_percent"]))
+    expected = round(work - 500 + b["gst_amount"] - b["retention_amount"] - b["tds_amount"]
+                     - (b["advance_recovery"] or 0) - (b["other_deductions"] or 0) - (b["labour_cess_amount"] or 0))
+    assert b["net_payable"] == expected

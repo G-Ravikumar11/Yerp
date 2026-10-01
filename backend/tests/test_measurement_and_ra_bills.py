@@ -183,17 +183,17 @@ def test_billing_needs_the_order_placed(tenant):
 # --- The deductions ---------------------------------------------------------
 
 def test_retention_comes_off_the_work_and_tds_off_the_lot(tenant):
-    """Retention comes off the work, tax goes on top of what is left, and TDS
-    is withheld from the whole claim. The order is worth real money."""
+    """Every tax is on the work measured in the bill; retention comes off what is
+    payable, it does not shrink the value the tax is charged on."""
     wo = placed_order(tenant, qty=1000, rate=100)
     measure(tenant, wo["id"], line_of(tenant, wo["id"]), 1000)
     b = raise_bill(tenant, wo["id"], retention_percent=5, tax_percent=18,
                    tds_percent=1).json()["bill"]
     assert b["this_bill"] == 100000
     assert b["retention_amount"] == 5000            # 5% of the work
-    assert b["tax_amount"] == 17100                 # 18% of 95,000
+    assert b["tax_amount"] == 18000                 # 18% of the 1,00,000 measured
     assert b["tds_amount"] == 1000                  # 1% of the whole claim
-    assert b["net_payable"] == 111100               # 95,000 + 17,100 - 1,000
+    assert b["net_payable"] == 112000               # 1,00,000 + 18,000 - 5,000 - 1,000
 
 
 def test_an_advance_is_recovered_out_of_the_bill(tenant):
@@ -334,7 +334,7 @@ def test_the_register_totals_what_is_claimed_held_and_owed(tenant):
     s = tenant.get("/api/ra-bills").json()["summary"]
     assert s["claimed"] == 100000
     assert s["retention_held"] == 5000
-    assert s["certified_unpaid"] == 111100
+    assert s["certified_unpaid"] == 112000
 
 
 def test_one_tenant_cannot_read_anothers_bill(tenant, second_tenant):

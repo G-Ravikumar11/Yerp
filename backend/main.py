@@ -21401,8 +21401,7 @@ def gst_outward(request: Request, date_from: str = "", date_to: str = "",
         if date_to and on > date_to:
             continue
         job = db.query(models.DBJob).filter(models.DBJob.id == b.job_id).first()
-        taxable = money(b.this_bill - (b.retention_amount or 0) -
-                        (b.advance_recovery or 0) - (b.other_deductions or 0))
+        taxable = money(b.this_bill)
         rows.append({
             "kind": "RA bill", "number": b.number or "", "date": on,
             "party": job.customer_name if job else "", "project": job.name if job else "",
@@ -21464,8 +21463,7 @@ def gst_inward(request: Request, date_from: str = "", date_to: str = "",
         if date_to and on > date_to:
             continue
         con = contractors.get(b.contractor_id)
-        taxable = money(b.this_bill - (b.retention_amount or 0) -
-                        (b.advance_recovery or 0) - (b.other_deductions or 0))
+        taxable = money(b.this_bill)
         rows.append({
             "kind": "Subcontractor bill", "number": b.number or "", "date": on,
             "party": con.company_name if con else "",
@@ -21660,9 +21658,10 @@ def ra_bill_or_404(db, client_id, bill_id):
 def recost_ra_bill(db, bill):
     """Total the lines, then apply the deductions in the order they are made.
 
-    Retention comes off the work, tax goes on top of it, and TDS is withheld
-    from the lot. Getting that order wrong is worth real money on a large
-    bill, so it is written once, here.
+    The work measured in this bill is the base for every tax: GST goes on it, and
+    retention and TDS are taken on it. Retention, the advance and other
+    deductions then come off what is payable - they do not shrink the value the
+    tax is charged on. Written once, here.
     """
     lines = db.query(models.DBRABillLine).filter(
         models.DBRABillLine.ra_bill_id == bill.id).all()
@@ -21677,7 +21676,7 @@ def recost_ra_bill(db, bill):
     # Split the way the return needs it. Place of supply for a works contract
     # is the site, so the job's state is what our state is compared with.
     supply = supply_state_for_job(db, bill.job_id)
-    gst = split_gst(after_retention, bill.tax_percent or 0,
+    gst = split_gst(this_bill, bill.tax_percent or 0,
                     our_state(db, bill.client_id), supply)
     bill.tax_amount = gst["total"]
     bill.cgst_amount, bill.sgst_amount, bill.igst_amount = gst["cgst"], gst["sgst"], gst["igst"]
@@ -21730,6 +21729,10 @@ def ra_bill_dict(db, bill, detail=False):
         "tax_percent": bill.tax_percent or 0, "tax_amount": money(bill.tax_amount),
         "cgst_amount": money(bill.cgst_amount), "sgst_amount": money(bill.sgst_amount),
         "igst_amount": money(bill.igst_amount), "place_of_supply": bill.place_of_supply or "",
+        "cgst_percent": (bill.tax_percent or 0) / 2.0 if (bill.cgst_amount or bill.sgst_amount) else 0,
+        "sgst_percent": (bill.tax_percent or 0) / 2.0 if (bill.cgst_amount or bill.sgst_amount) else 0,
+        "igst_percent": (bill.tax_percent or 0) if bill.igst_amount else 0,
+        "taxable_value": money(bill.this_bill),
         "tds_percent": bill.tds_percent or 0, "tds_amount": money(bill.tds_amount),
         "net_payable": money(bill.net_payable),
         "certified_by_name": bill.certified_by_name or "",
@@ -25804,10 +25807,11 @@ def rupees(val) -> float:
 def recost_sub_bill(db, bill):
     """The Certificate of Payment's arithmetic, row for row.
 
-    4.01 is the work measured in this bill. Recoveries in debit notes (4.04)
-    come off it to give the gross total, and GST is charged on that gross
-    (4.05 to 4.08) - the gang's invoice is for the whole of the work; what we
-    hold back is not a discount on it. Then the deductions: the advance and
+    4.01 is the work measured in this bill, and it is the base for every tax:
+    GST (4.05 to 4.08), retention (5.03), TDS (5.04) and labour cess are all
+    on it. Recoveries in debit notes (4.04) come off the payable, not off the
+    value the tax is charged on - the gang's invoice is for the whole of the
+    work; what we hold back is not a discount on it. Then the deductions: the advance and
     the material or other recoveries (5.01, 5.02), retention (5.03) and TDS
     (5.04), both on the value of the work, and the labour cess where the
     order carries one. Every figure after the work itself is in whole
@@ -25824,7 +25828,7 @@ def recost_sub_bill(db, bill):
     # It is the gang's supply, so it is their registration against the site
     # that decides the split - ours only when they have none on file.
     origin = contractor_state(db, bill.contractor_id) or our_state(db, bill.client_id)
-    gst = split_gst(gross, bill.gst_percent or 0, origin, supply)
+    gst = split_gst(rupees(this_bill), bill.gst_percent or 0, origin, supply)
     bill.cgst_amount, bill.sgst_amount, bill.igst_amount = (
         rupees(gst["cgst"]), rupees(gst["sgst"]), rupees(gst["igst"]))
     bill.gst_amount = money(bill.cgst_amount + bill.sgst_amount + bill.igst_amount)
@@ -25873,6 +25877,10 @@ def sub_bill_dict(db, bill, detail=False):
         "gst_percent": bill.gst_percent or 0, "gst_amount": money(bill.gst_amount),
         "cgst_amount": money(bill.cgst_amount), "sgst_amount": money(bill.sgst_amount),
         "igst_amount": money(bill.igst_amount), "place_of_supply": bill.place_of_supply or "",
+        "cgst_percent": (bill.gst_percent or 0) / 2.0 if (bill.cgst_amount or bill.sgst_amount) else 0,
+        "sgst_percent": (bill.gst_percent or 0) / 2.0 if (bill.cgst_amount or bill.sgst_amount) else 0,
+        "igst_percent": (bill.gst_percent or 0) if bill.igst_amount else 0,
+        "taxable_value": money(bill.this_bill),
         "tds_percent": bill.tds_percent or 0, "tds_amount": money(bill.tds_amount),
         "labour_cess_percent": bill.labour_cess_percent or 0,
         "labour_cess_amount": money(bill.labour_cess_amount),
@@ -30083,7 +30091,8 @@ def einvoice_payload(db, client, bill):
     if not lines:
         problems.append("at least one line with work on it")
 
-    deductions = money((bill.retention_amount or 0) + (bill.advance_recovery or 0) + (bill.other_deductions or 0))
+    # The invoice is for the work measured; retention and recoveries are settled in payment, not taken off its value.
+    deductions = 0.0
     gross = money(sum(l.amount or 0 for l in lines)) or 1.0
     rate = bill.tax_percent or 0
     intra = bool(bill.cgst_amount or bill.sgst_amount) and not bill.igst_amount
@@ -35135,11 +35144,17 @@ def ra_form_spec(db, client, bill):
              form_pdf.qty_text(l.get("this_bill_qty")), form_pdf.qty_text(l.get("measured_to_date")),
              form_pdf.plain_number(l.get("rate")), form_pdf.plain_number(l.get("amount"))]
             for i, l in enumerate(b.get("lines") or [], 1)]
-    taxable = money(b["this_bill"] - b["retention_amount"] - b["advance_recovery"] - b["other_deductions"])
+    taxable = money(b["this_bill"])
     rate = b.get("tax_percent") or 0
     sums = [("Value of work done up to date", form_pdf.inr(b["gross_to_date"]), False),
             ("Less: claimed in earlier bills", form_pdf.inr(-b["previously_billed"]), False),
             ("Value of work in this bill", form_pdf.inr(b["this_bill"]), True)]
+    sums.append(("Taxable value (work measured)", form_pdf.inr(taxable), True))
+    if b["cgst_amount"] or b["sgst_amount"]:
+        sums += [("Add: CGST @ %g%%" % (rate / 2), form_pdf.inr(b["cgst_amount"]), False),
+                 ("Add: SGST @ %g%%" % (rate / 2), form_pdf.inr(b["sgst_amount"]), False)]
+    elif b["igst_amount"]:
+        sums.append(("Add: IGST @ %g%%" % rate, form_pdf.inr(b["igst_amount"]), False))
     if b["retention_amount"]:
         sums.append(("Less: retention @ %g%%" % b["retention_percent"], form_pdf.inr(-b["retention_amount"]), False))
     if b["advance_recovery"]:
@@ -35147,12 +35162,6 @@ def ra_form_spec(db, client, bill):
     if b["other_deductions"]:
         sums.append(("Less: other deductions%s" % ((" (%s)" % b["deduction_notes"]) if b["deduction_notes"] else ""),
                      form_pdf.inr(-b["other_deductions"]), False))
-    sums.append(("Taxable value", form_pdf.inr(taxable), True))
-    if b["cgst_amount"] or b["sgst_amount"]:
-        sums += [("Add: CGST @ %g%%" % (rate / 2), form_pdf.inr(b["cgst_amount"]), False),
-                 ("Add: SGST @ %g%%" % (rate / 2), form_pdf.inr(b["sgst_amount"]), False)]
-    elif b["igst_amount"]:
-        sums.append(("Add: IGST @ %g%%" % rate, form_pdf.inr(b["igst_amount"]), False))
     if b["tds_amount"]:
         sums.append(("Less: TDS @ %g%% (deducted by the client)" % b["tds_percent"], form_pdf.inr(-b["tds_amount"]), False))
     sums.append(("NET AMOUNT PAYABLE", form_pdf.inr(b["net_payable"]), True))

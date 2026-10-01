@@ -62,10 +62,11 @@ def test_a_site_in_our_own_state_is_cgst_plus_sgst(tenant):
     site_in(tenant, job_id, "36")
     measure(tenant, wo["id"], book(tenant, wo["id"])["lines"][0]["line_id"], 100)
     b = tenant.post("/api/ra-bills", json={"work_order_id": wo["id"]}).json()["bill"]
-    # 10,000 of work, 5% retention -> 9,500 taxable at 18% = 1,710.
-    assert b["tax_amount"] == 1710
-    assert b["cgst_amount"] == 855
-    assert b["sgst_amount"] == 855
+    # 10,000 of work measured, 18% on all of it = 1,800 (retention does not shrink the taxable value).
+    assert b["tax_amount"] == 1800
+    assert b["cgst_amount"] == 900 and b["cgst_percent"] == 9
+    assert b["sgst_amount"] == 900 and b["sgst_percent"] == 9
+    assert b["igst_amount"] == 0 and b["igst_percent"] == 0
     assert b["igst_amount"] == 0
     assert b["place_of_supply"] == "36"
 
@@ -78,8 +79,9 @@ def test_a_site_across_the_border_is_all_igst(tenant):
     site_in(tenant, job_id, "37")
     measure(tenant, wo["id"], book(tenant, wo["id"])["lines"][0]["line_id"], 100)
     b = tenant.post("/api/ra-bills", json={"work_order_id": wo["id"]}).json()["bill"]
-    assert b["tax_amount"] == 1710
-    assert b["igst_amount"] == 1710
+    assert b["tax_amount"] == 1800
+    assert b["igst_amount"] == 1800 and b["igst_percent"] == 18
+    assert b["cgst_amount"] == 0 and b["cgst_percent"] == 0
     assert b["cgst_amount"] == 0 and b["sgst_amount"] == 0
 
 

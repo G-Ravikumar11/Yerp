@@ -68,6 +68,26 @@ export function BillsPanel({ workOrderId }: { workOrderId: number }) {
     { id: 'this', header: 'This bill', align: 'right', cell: (b) => formatINR(b.this_bill) },
     { id: 'upto', header: 'Up to date', hideBelow: 'lg', align: 'right', cell: (b) => formatINR(b.gross_to_date) },
     { id: 'ret', header: 'Retention', hideBelow: 'xl', align: 'right', cell: (b) => formatINR(b.retention_amount) },
+    {
+      id: 'tax',
+      header: 'GST',
+      hideBelow: 'md',
+      align: 'right',
+      cell: (b) => (
+        <div className="text-xs leading-5">
+          {b.igst_amount ? (
+            <div>IGST {b.igst_percent}% <span className="tabular font-medium">{formatINR(b.igst_amount)}</span></div>
+          ) : b.cgst_amount || b.sgst_amount ? (
+            <>
+              <div>CGST {b.cgst_percent}% <span className="tabular font-medium">{formatINR(b.cgst_amount)}</span></div>
+              <div>SGST {b.sgst_percent}% <span className="tabular font-medium">{formatINR(b.sgst_amount)}</span></div>
+            </>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          )}
+        </div>
+      ),
+    },
     { id: 'net', header: 'Net payable', align: 'right', cell: (b) => <span className="font-semibold">{formatINR(b.net_payable)}</span> },
     { id: 'cum', header: 'Cumulative net', hideBelow: 'xl', align: 'right', cell: (b) => formatINR(cumulative.get(b.id)) },
     {

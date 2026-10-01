@@ -52,7 +52,7 @@ def test_the_ra_bill_prints_in_the_same_form(tenant):
     bill = raise_bill(tenant, wo["id"], retention_percent=5, tax_percent=18, tds_percent=1).json()["bill"]
     pages, text = pdf_text(tenant.get("/api/ra-bills/%d/document.pdf" % bill["id"]))
     for words in ("RA BILL", "Bill To", "VALUE OF WORK IN THIS BILL", "retention @ 5%", "NET AMOUNT PAYABLE",
-                  "1,11,100.00", "DRAFT"):
+                  "1,12,000.00", "DRAFT"):
         assert words in text, words
 
 

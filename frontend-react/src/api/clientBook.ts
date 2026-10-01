@@ -72,6 +72,14 @@ export interface RaBill {
   retention_amount: number
   tds_amount: number
   net_payable: number
+  tax_amount: number
+  cgst_amount: number
+  sgst_amount: number
+  igst_amount: number
+  cgst_percent: number
+  sgst_percent: number
+  igst_percent: number
+  taxable_value: number
   certified_by_name: string
   actions: string[]
 }
