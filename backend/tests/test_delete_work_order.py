@@ -102,3 +102,16 @@ def test_staff_cannot_delete_everything(tenant, portal):
     tenant.put("/api/employees/%d" % pm["id"], json={"status": "active"})
     portal.post("/api/employee/auth/login", json={"email": pm["email"], "password": PASSWORD})
     assert portal.post("/api/work-orders/delete-all", json={"confirm": "DELETE ALL WORK ORDERS"}).status_code in (401, 403)
+
+
+def test_alerts_that_were_read_and_drawings_do_not_stop_a_delete(tenant):
+    order = live_order(tenant, pay_advance=False)
+    tenant.post("/api/wo/orders/%d/submit" % order["id"], json={}) if False else None
+    tenant.post("/api/alerts/read", json={"all": True})
+    assert tenant.delete("/api/wo/orders/%d" % order["id"]).status_code == 200
+    from test_work_order_pricing import fg, job
+    wo = tenant.post("/api/erp/work-orders/build", json={
+        "job_id": job(tenant)["id"], "reference": "PO/ALR/1",
+        "lines": [{"code": fg(tenant), "qty": 10, "rate": 500}]}).json()["work_order"]
+    tenant.post("/api/alerts/read", json={"all": True})
+    assert tenant.delete("/api/erp/work-orders/%d" % wo["id"]).status_code == 200

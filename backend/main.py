@@ -5093,16 +5093,16 @@ def erp_delete_work_order(wo_id: int, request: Request, db: Session = Depends(ge
     meas_ids = [m.id for m in db.query(models.DBMeasurement.id).filter(models.DBMeasurement.work_order_id == wo.id).all()]
     if meas_ids:
         drop(db.query(models.DBMeasurementDimension).filter(models.DBMeasurementDimension.measurement_id.in_(meas_ids)))
-        drop(db.query(models.DBFile).filter(models.DBFile.attached_type == "measurement", models.DBFile.attached_id.in_(meas_ids)))
+        drop_files_of(db, "measurement", meas_ids)
     if bill_ids:
         drop(db.query(models.DBRABillLine).filter(models.DBRABillLine.ra_bill_id.in_(bill_ids)))
         drop(db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.doc_type == "ra_bill", models.DBMoneyEntry.doc_id.in_(bill_ids)))
-        drop(db.query(models.DBAlert).filter(models.DBAlert.ref_type == "ra_bill", models.DBAlert.ref_id.in_(bill_ids)))
+        drop_alerts_about(db, "ra_bill", bill_ids)
     drop(db.query(models.DBMeasurement).filter(models.DBMeasurement.work_order_id == wo.id))
     drop(db.query(models.DBRABill).filter(models.DBRABill.work_order_id == wo.id))
     if var_ids:
         drop(db.query(models.DBVariationLine).filter(models.DBVariationLine.variation_order_id.in_(var_ids)))
-        drop(db.query(models.DBFile).filter(models.DBFile.attached_type == "variation", models.DBFile.attached_id.in_(var_ids)))
+        drop_files_of(db, "variation", var_ids)
     drop(db.query(models.DBVariationOrder).filter(models.DBVariationOrder.work_order_id == wo.id))
     rel_ids = [r.id for r in db.query(models.DBRetentionRelease.id).filter(models.DBRetentionRelease.work_order_id == wo.id).all()]
     if rel_ids:
@@ -5112,11 +5112,13 @@ def erp_delete_work_order(wo_id: int, request: Request, db: Session = Depends(ge
         drop(db.query(models.DBEinvoiceIrn).filter(
             models.DBEinvoiceIrn.doc_type == "ra_bill", models.DBEinvoiceIrn.doc_id.in_(bill_ids)))
     drop(db.query(models.DBRetentionRelease).filter(models.DBRetentionRelease.work_order_id == wo.id))
+    line_ids = [l.id for l in db.query(models.DBWorkOrderLine.id).filter(models.DBWorkOrderLine.work_order_id == wo.id).all()]
+    sweep_referrers(db, {"work_order_lines": line_ids})
     drop(db.query(models.DBWorkOrderLine).filter(models.DBWorkOrderLine.work_order_id == wo.id))
     drop(db.query(models.DBBomLine).filter(models.DBBomLine.work_order_id == wo.id))
     drop(db.query(models.DBApprovalChain).filter(
         models.DBApprovalChain.entity_type == "work_order", models.DBApprovalChain.entity_id == wo.id))
-    drop(db.query(models.DBFile).filter(models.DBFile.attached_type == "work_order", models.DBFile.attached_id == wo.id))
+    drop_files_of(db, "work_order", [wo.id])
     # Records that only mention the order stay, and simply no longer point at it.
     for model in (models.DBStockMovement, models.DBStockIssue, models.DBSiteDiary, models.DBEstimate, models.DBRfq):
         db.query(model).filter(model.work_order_id == wo.id).update({"work_order_id": None}, synchronize_session=False)
@@ -20527,6 +20529,29 @@ def sweep_referrers(db, parents):
             db.execute(text(sql).bindparams(bindparam("ids", expanding=True)), {"ids": list(ids)})
 
 
+def drop_files_of(db, attached_type, ids):
+    """Photos, drawings and documents kept against these records - and the drawing revisions that point at them."""
+    ids = list(ids)
+    if not ids:
+        return
+    file_ids = [x.id for x in db.query(models.DBFile.id).filter(
+        models.DBFile.attached_type == attached_type, models.DBFile.attached_id.in_(ids)).all()]
+    if file_ids:
+        sweep_referrers(db, {"project_files": file_ids})
+        db.query(models.DBFile).filter(models.DBFile.id.in_(file_ids)).delete(synchronize_session=False)
+
+
+def drop_alerts_about(db, ref_type, ref_ids):
+    """The bell's alerts about these records, and who has read them, so nothing points at a record that is gone."""
+    if not ref_ids:
+        return
+    alert_ids = [a.id for a in db.query(models.DBAlert.id).filter(
+        models.DBAlert.ref_type == ref_type, models.DBAlert.ref_id.in_(ref_ids)).all()]
+    if alert_ids:
+        sweep_referrers(db, {"office_alerts": alert_ids})
+        db.query(models.DBAlert).filter(models.DBAlert.id.in_(alert_ids)).delete(synchronize_session=False)
+
+
 def wo_chain_ids(db, client_id, order):
     """Every version of an order: the original, its revisions, and theirs."""
     seen = {order.id}
@@ -20616,12 +20641,11 @@ def wo_delete_order_now(order_id, request, db):
         # Voided entries net to nothing; they would only point at a bill that is no longer there.
         drop(db.query(models.DBMoneyEntry).filter(
             models.DBMoneyEntry.doc_type == "sub_bill", models.DBMoneyEntry.doc_id.in_(bill_ids)))
-        drop(db.query(models.DBAlert).filter(
-            models.DBAlert.ref_type == "sub_bill", models.DBAlert.ref_id.in_(bill_ids)))
+        drop_alerts_about(db, "sub_bill", bill_ids)
     sub_meas = [m.id for m in db.query(models.DBSubMeasurement.id).filter(models.DBSubMeasurement.order_id.in_(ids)).all()]
     if sub_meas:
         drop(db.query(models.DBMeasurementDimension).filter(models.DBMeasurementDimension.sub_measurement_id.in_(sub_meas)))
-        drop(db.query(models.DBFile).filter(models.DBFile.attached_type == "measurement", models.DBFile.attached_id.in_(sub_meas)))
+        drop_files_of(db, "measurement", sub_meas)
     drop(db.query(models.DBMaterialRecovery).filter(models.DBMaterialRecovery.order_id.in_(ids)))
     drop(db.query(models.DBSubMeasurement).filter(models.DBSubMeasurement.order_id.in_(ids)))
     drop(db.query(models.DBSubBill).filter(models.DBSubBill.order_id.in_(ids)))
@@ -20634,10 +20658,8 @@ def wo_delete_order_now(order_id, request, db):
         models.DBApprovalChain.entity_type == "subcontract_order", models.DBApprovalChain.entity_id.in_(ids)))
     drop(db.query(models.DBMoneyEntry).filter(
         models.DBMoneyEntry.doc_type == "sub_advance", models.DBMoneyEntry.doc_id.in_(ids)))
-    drop(db.query(models.DBAlert).filter(
-        models.DBAlert.ref_type == "subcontract_order", models.DBAlert.ref_id.in_(ids)))
-    drop(db.query(models.DBFile).filter(
-        models.DBFile.attached_type == "subcontract_order", models.DBFile.attached_id.in_(ids)))
+    drop_alerts_about(db, "subcontract_order", ids)
+    drop_files_of(db, "subcontract_order", ids)
     drop(db.query(models.DBSubcontractApproval).filter(models.DBSubcontractApproval.order_id.in_(ids)))
     drop(db.query(models.DBSubcontractTerm).filter(models.DBSubcontractTerm.order_id.in_(ids)))
     drop(db.query(models.DBSubcontractItem).filter(models.DBSubcontractItem.order_id.in_(ids)))
