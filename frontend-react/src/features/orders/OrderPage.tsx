@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Copy, Download, FileText, Save } from 'lucide-react'
+import { ArrowLeft, Copy, Download, FileText, Save, Trash2 } from 'lucide-react'
 import { Badge, Button, ConfirmDialog, Skeleton, Stat, StatGrid, StatusBadge, Tabs } from '@/components/ui'
 import {
   copyOrder,
@@ -20,6 +20,7 @@ import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { ApiError } from '@/lib/api'
+import { DeleteOrderDialog } from '@/features/deleteorder/DeleteOrderDialog'
 import { ApprovalTab } from './ApprovalTab'
 import { CostCentreModal } from './CostCentreModal'
 import { HeadForm, headFrom } from './HeadForm'
@@ -62,6 +63,7 @@ const MOVE_LABEL: Record<string, string> = { SUBMIT: 'Submit for approval', APPR
 function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
   const nav = useNavigate()
   const { can, isOwner } = useSession()
+  const [deleting, setDeleting] = useState(false)
   const vocab = useOrderVocabulary()
 
   const [tab, setTab] = useState<Tab>('details')
@@ -192,6 +194,11 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
                 {label('AMEND')}
               </Button>
             )}
+            {isOwner && (
+              <Button variant="ghost" className="text-danger hover:bg-danger-soft hover:text-danger" onClick={() => setDeleting(true)}>
+                <Trash2 /> Delete
+              </Button>
+            )}
             {has('CANCEL') && canDecide && (
               <Button variant="ghost" className="text-danger hover:bg-danger-soft hover:text-danger" onClick={() => setDialog('cancel')}>
                 {label('CANCEL')}
@@ -304,6 +311,7 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
         loading={move.isPending}
         onConfirm={() => move.mutate({ action: 'execute' })}
       />
+      <DeleteOrderDialog open={deleting} onOpenChange={setDeleting} kind="subcontract" id={order.id} number={order.wo_number} onDeleted={() => nav('/subcontractors/work-orders')} />
     </>
   )
 }

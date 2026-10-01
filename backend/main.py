@@ -5044,22 +5044,82 @@ def erp_wo_decide(wo_id: int, body: WoDecisionIn, request: Request, db: Session 
     return dict(out, work_order=work_order_to_dict(db, wo))
 
 
+def erp_wo_delete_report(db, client, wo):
+    bills = db.query(models.DBRABill).filter(models.DBRABill.work_order_id == wo.id).all()
+    blockers = []
+    for b in bills:
+        got = settled_on(db, client.id, "ra_bill", b.id)
+        if got > 0:
+            blockers.append("%s has %s received against it. Void those entries under Payments & Ledgers first." % (b.number, inr(got)))
+        if active_irn(db, client.id, "ra_bill", b.id):
+            blockers.append("%s is registered on the e-invoice portal. Cancel its IRN first." % b.number)
+    if db.query(models.DBRetentionRelease).filter(
+            models.DBRetentionRelease.work_order_id == wo.id,
+            models.DBRetentionRelease.status != "CANCELLED").count():
+        blockers.append("Retention has been released against it. Cancel the release first.")
+    variations = db.query(models.DBVariationOrder.id).filter(models.DBVariationOrder.work_order_id == wo.id).all()
+    return {
+        "bills": bills, "variation_ids": [v.id for v in variations], "blockers": blockers,
+        "counts": {
+            "lines": db.query(models.DBWorkOrderLine).filter(models.DBWorkOrderLine.work_order_id == wo.id).count(),
+            "measurements": db.query(models.DBMeasurement).filter(models.DBMeasurement.work_order_id == wo.id).count(),
+            "bills": len(bills), "variations": len(variations),
+        },
+    }
+
+
+@app.get("/api/erp/work-orders/{wo_id}/delete-preview")
+def erp_delete_work_order_preview(wo_id: int, request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    wo = work_order_or_404(db, client.id, wo_id)
+    rep = erp_wo_delete_report(db, client, wo)
+    return {"numbers": [wo.number], "counts": rep["counts"], "blockers": rep["blockers"],
+            "can_delete": not rep["blockers"]}
+
+
 @app.delete("/api/erp/work-orders/{wo_id}")
 def erp_delete_work_order(wo_id: int, request: Request, db: Session = Depends(get_db)):
-    client = require_workorder_access(request, db)
+    """The owner's alone. Takes the order and everything that hangs off it - its
+    measurements, RA bills, variations and budget - away from every screen. An
+    order with money received against it is refused."""
+    client = get_client_user(request, db)
+    require_owner(request, db)
     wo = work_order_or_404(db, client.id, wo_id)
-    if (wo.approval_status or "none") == "approved":
-        raise HTTPException(409, "This order has been approved and cannot be deleted.")
-    db.query(models.DBWorkOrderLine).filter(
-        models.DBWorkOrderLine.work_order_id == wo.id).delete()
-    db.query(models.DBBomLine).filter(models.DBBomLine.work_order_id == wo.id).delete()
-    db.query(models.DBApprovalChain).filter(
-        models.DBApprovalChain.entity_type == "work_order",
-        models.DBApprovalChain.entity_id == wo.id).delete()
-    log_audit(db, client.id, "work_order_deleted", "work_order", wo.id, wo.number, "", request)
+    rep = erp_wo_delete_report(db, client, wo)
+    if rep["blockers"]:
+        raise HTTPException(409, rep["blockers"][0])
+    drop = lambda q: q.delete(synchronize_session=False)
+    bill_ids = [b.id for b in rep["bills"]]
+    var_ids = rep["variation_ids"]
+    meas_ids = [m.id for m in db.query(models.DBMeasurement.id).filter(models.DBMeasurement.work_order_id == wo.id).all()]
+    if meas_ids:
+        drop(db.query(models.DBMeasurementDimension).filter(models.DBMeasurementDimension.measurement_id.in_(meas_ids)))
+        drop(db.query(models.DBFile).filter(models.DBFile.attached_type == "measurement", models.DBFile.attached_id.in_(meas_ids)))
+    if bill_ids:
+        drop(db.query(models.DBRABillLine).filter(models.DBRABillLine.ra_bill_id.in_(bill_ids)))
+        drop(db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.doc_type == "ra_bill", models.DBMoneyEntry.doc_id.in_(bill_ids)))
+        drop(db.query(models.DBAlert).filter(models.DBAlert.ref_type == "ra_bill", models.DBAlert.ref_id.in_(bill_ids)))
+    drop(db.query(models.DBMeasurement).filter(models.DBMeasurement.work_order_id == wo.id))
+    drop(db.query(models.DBRABill).filter(models.DBRABill.work_order_id == wo.id))
+    if var_ids:
+        drop(db.query(models.DBVariationLine).filter(models.DBVariationLine.variation_order_id.in_(var_ids)))
+        drop(db.query(models.DBFile).filter(models.DBFile.attached_type == "variation", models.DBFile.attached_id.in_(var_ids)))
+    drop(db.query(models.DBVariationOrder).filter(models.DBVariationOrder.work_order_id == wo.id))
+    drop(db.query(models.DBRetentionRelease).filter(models.DBRetentionRelease.work_order_id == wo.id))
+    drop(db.query(models.DBWorkOrderLine).filter(models.DBWorkOrderLine.work_order_id == wo.id))
+    drop(db.query(models.DBBomLine).filter(models.DBBomLine.work_order_id == wo.id))
+    drop(db.query(models.DBApprovalChain).filter(
+        models.DBApprovalChain.entity_type == "work_order", models.DBApprovalChain.entity_id == wo.id))
+    drop(db.query(models.DBFile).filter(models.DBFile.attached_type == "work_order", models.DBFile.attached_id == wo.id))
+    # Records that only mention the order stay, and simply no longer point at it.
+    for model in (models.DBStockMovement, models.DBStockIssue, models.DBSiteDiary, models.DBEstimate, models.DBRfq):
+        db.query(model).filter(model.work_order_id == wo.id).update({"work_order_id": None}, synchronize_session=False)
+    log_audit(db, client.id, "work_order_deleted", "work_order", wo.id, wo.number, "Deleted with %s" % ", ".join(
+        "%d %s" % (n, k) for k, n in rep["counts"].items() if n), request)
     db.delete(wo)
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "message": "%s deleted%s." % (wo.number, " everywhere" if any(rep["counts"].values()) else "")}
 
 
 # --- Budget allocation (BOM) -----------------------------------------------
@@ -20431,6 +20491,131 @@ def wo_cancel(order_id: int, body: WoActionIn, request: Request,
     db.refresh(order)
     return {"order": wo_dict(db, order, detail=True),
             "message": order.wo_number + " cancelled."}
+
+
+# --- Deleting a work order -----------------------------------------------------
+#
+# Cancelling keeps the record; deleting removes it, and everything that hangs
+# off it, from every screen. It is the owner's alone. An order that has money
+# behind it is refused: the payments are in the ledger and the bank book, and
+# taking the order away would leave them standing against nothing.
+
+def wo_chain_ids(db, client_id, order):
+    """Every version of an order: the original, its revisions, and theirs."""
+    seen = {order.id}
+    queue = [order]
+    while queue:
+        o = queue.pop()
+        neighbours = db.query(models.DBSubcontractOrder).filter(
+            models.DBSubcontractOrder.client_id == client_id,
+            or_(models.DBSubcontractOrder.supersedes_id == o.id,
+                models.DBSubcontractOrder.id == (o.supersedes_id or 0))).all()
+        for n in neighbours:
+            if n.id not in seen:
+                seen.add(n.id)
+                queue.append(n)
+    return sorted(seen)
+
+
+def wo_delete_report(db, client, order):
+    ids = wo_chain_ids(db, client.id, order)
+    orders = db.query(models.DBSubcontractOrder).filter(
+        models.DBSubcontractOrder.id.in_(ids)).order_by(models.DBSubcontractOrder.id).all()
+    bills = db.query(models.DBSubBill).filter(models.DBSubBill.order_id.in_(ids)).all()
+    blockers = []
+    for o in orders:
+        if settled_on(db, client.id, "sub_advance", o.id) > 0:
+            blockers.append("%s has an advance paid against it. Void that payment under Payments & Ledgers first." % o.wo_number)
+    for b in bills:
+        got = settled_on(db, client.id, "sub_bill", b.id)
+        if (b.status or "") == "PAID" or got > 0:
+            blockers.append("%s is paid%s. Void the payments under Payments & Ledgers first." % (
+                b.number, " (%s)" % inr(got) if got > 0 else ""))
+    released = db.query(models.DBRetentionRelease).filter(
+        models.DBRetentionRelease.sub_order_id.in_(ids),
+        models.DBRetentionRelease.status != "CANCELLED").count()
+    if released:
+        blockers.append("Retention has been released against it. Cancel the release first.")
+    count = lambda model, col: db.query(model).filter(col.in_(ids)).count()
+    return {
+        "ids": ids,
+        "numbers": [o.wo_number for o in orders],
+        "blockers": blockers,
+        "counts": {
+            "versions": len(orders),
+            "items": count(models.DBSubcontractItem, models.DBSubcontractItem.order_id),
+            "measurements": count(models.DBSubMeasurement, models.DBSubMeasurement.order_id),
+            "bills": len(bills),
+            "files": db.query(models.DBFile).filter(
+                models.DBFile.attached_type == "subcontract_order",
+                models.DBFile.attached_id.in_(ids)).count(),
+        },
+    }
+
+
+@app.get("/api/wo/orders/{order_id}/delete-preview")
+def wo_delete_preview(order_id: int, request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    rep = wo_delete_report(db, client, order)
+    return {"numbers": rep["numbers"], "counts": rep["counts"], "blockers": rep["blockers"],
+            "can_delete": not rep["blockers"]}
+
+
+@app.delete("/api/wo/orders/{order_id}")
+def wo_delete_order(order_id: int, request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    rep = wo_delete_report(db, client, order)
+    if rep["blockers"]:
+        raise HTTPException(409, rep["blockers"][0])
+    ids = rep["ids"]
+    bill_ids = [b.id for b in db.query(models.DBSubBill.id).filter(models.DBSubBill.order_id.in_(ids)).all()]
+    drop = lambda q: q.delete(synchronize_session=False)
+    if bill_ids:
+        drop(db.query(models.DBSubBillLine).filter(models.DBSubBillLine.sub_bill_id.in_(bill_ids)))
+        drop(db.query(models.DBApprovalChain).filter(
+            models.DBApprovalChain.entity_type == "sub_bill", models.DBApprovalChain.entity_id.in_(bill_ids)))
+        # Voided entries net to nothing; they would only point at a bill that is no longer there.
+        drop(db.query(models.DBMoneyEntry).filter(
+            models.DBMoneyEntry.doc_type == "sub_bill", models.DBMoneyEntry.doc_id.in_(bill_ids)))
+        drop(db.query(models.DBAlert).filter(
+            models.DBAlert.ref_type == "sub_bill", models.DBAlert.ref_id.in_(bill_ids)))
+    sub_meas = [m.id for m in db.query(models.DBSubMeasurement.id).filter(models.DBSubMeasurement.order_id.in_(ids)).all()]
+    if sub_meas:
+        drop(db.query(models.DBMeasurementDimension).filter(models.DBMeasurementDimension.sub_measurement_id.in_(sub_meas)))
+        drop(db.query(models.DBFile).filter(models.DBFile.attached_type == "measurement", models.DBFile.attached_id.in_(sub_meas)))
+    drop(db.query(models.DBMaterialRecovery).filter(models.DBMaterialRecovery.order_id.in_(ids)))
+    drop(db.query(models.DBSubMeasurement).filter(models.DBSubMeasurement.order_id.in_(ids)))
+    drop(db.query(models.DBSubBill).filter(models.DBSubBill.order_id.in_(ids)))
+    drop(db.query(models.DBRetentionRelease).filter(models.DBRetentionRelease.sub_order_id.in_(ids)))
+    drop(db.query(models.DBApprovalChain).filter(
+        models.DBApprovalChain.entity_type == "subcontract_order", models.DBApprovalChain.entity_id.in_(ids)))
+    drop(db.query(models.DBMoneyEntry).filter(
+        models.DBMoneyEntry.doc_type == "sub_advance", models.DBMoneyEntry.doc_id.in_(ids)))
+    drop(db.query(models.DBAlert).filter(
+        models.DBAlert.ref_type == "subcontract_order", models.DBAlert.ref_id.in_(ids)))
+    drop(db.query(models.DBFile).filter(
+        models.DBFile.attached_type == "subcontract_order", models.DBFile.attached_id.in_(ids)))
+    drop(db.query(models.DBSubcontractApproval).filter(models.DBSubcontractApproval.order_id.in_(ids)))
+    drop(db.query(models.DBSubcontractTerm).filter(models.DBSubcontractTerm.order_id.in_(ids)))
+    drop(db.query(models.DBSubcontractItem).filter(models.DBSubcontractItem.order_id.in_(ids)))
+    # Orders outside the chain that were copied from one inside it keep their own content.
+    db.query(models.DBSubcontractOrder).filter(
+        models.DBSubcontractOrder.copied_from_id.in_(ids),
+        models.DBSubcontractOrder.id.notin_(ids)).update({"copied_from_id": None}, synchronize_session=False)
+    db.query(models.DBSubcontractOrder).filter(
+        models.DBSubcontractOrder.id.in_(ids)).update(
+            {"supersedes_id": None, "copied_from_id": None}, synchronize_session=False)
+    drop(db.query(models.DBSubcontractOrder).filter(models.DBSubcontractOrder.id.in_(ids)))
+    log_audit(db, client.id, "subcontract_deleted", "subcontract_order", order.id,
+              order.wo_number or "", "Deleted with %s" % ", ".join(rep["numbers"]), request)
+    db.commit()
+    return {"ok": True, "deleted": rep["numbers"],
+            "message": "%s deleted%s." % (", ".join(rep["numbers"][:3]) + ("..." if len(rep["numbers"]) > 3 else ""),
+                                          " everywhere" if rep["counts"]["bills"] or rep["counts"]["measurements"] else "")}
 
 
 @app.post("/api/wo/orders/{order_id}/amend")

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Download, FileUp, Plus, Ruler, ShoppingCart } from 'lucide-react'
+import { Download, FileUp, Plus, Ruler, ShoppingCart, Trash2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
@@ -8,6 +8,7 @@ import { Badge, Button, ConfirmDialog, Stat, StatGrid } from '@/components/ui'
 import { clientOrderKeys, decideClientOrder, placeClientOrder, useClientOrders, type ClientOrder } from '@/api/clientOrders'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
+import { DeleteOrderDialog } from '@/features/deleteorder/DeleteOrderDialog'
 import { formatDate } from '@/lib/format'
 import { compactINR, formatINR } from '@/lib/utils'
 import { BudgetModal } from './BudgetModal'
@@ -34,7 +35,8 @@ function Stage({ o }: { o: ClientOrder }) {
 }
 
 export default function ClientOrdersPage() {
-  const { can, user } = useSession()
+  const { can, user, isOwner } = useSession()
+  const [deleting, setDeleting] = useState<ClientOrder | null>(null)
   const orders = useClientOrders()
   const [creating, setCreating] = useState(false)
   const [fromFile, setFromFile] = useState(false)
@@ -187,7 +189,7 @@ export default function ClientOrdersPage() {
         </div>
       ),
     },
-    { id: 'act', header: '', align: 'right', cell: (o) => <div className="ml-auto flex max-w-64 flex-wrap justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>{rowActions(o)}{o.budgeted && <Button size="sm" variant="outline" asChild><Link to={`/clients/work-orders/${o.id}/budget-report`} title="The budget read back under the lines it was allocated against">Report</Link></Button>}</div> },
+    { id: 'act', header: '', align: 'right', cell: (o) => <div className="ml-auto flex max-w-64 flex-wrap justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>{rowActions(o)}{isOwner && <Button size="sm" variant="ghost" className="text-danger hover:bg-danger-soft hover:text-danger" aria-label={`Delete ${o.number}`} onClick={() => setDeleting(o)}><Trash2 /></Button>}{o.budgeted && <Button size="sm" variant="outline" asChild><Link to={`/clients/work-orders/${o.id}/budget-report`} title="The budget read back under the lines it was allocated against">Report</Link></Button>}</div> },
   ]
 
   return (
@@ -239,6 +241,7 @@ export default function ClientOrdersPage() {
       <NewClientOrderModal open={creating} onOpenChange={setCreating} staff={user?.type === 'employee'} onCreated={(o) => setBudgeting(o)} />
       <OrderSheetModal open={fromFile} onOpenChange={setFromFile} staff={user?.type === 'employee'} />
       <BudgetModal order={budgeting} onClose={() => setBudgeting(null)} />
+      <DeleteOrderDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)} kind="client" id={deleting?.id ?? 0} number={deleting?.number ?? ''} onDeleted={() => setDeleting(null)} />
       <RequisitionModal order={material} onClose={() => setMaterial(null)} />
       <OrderDetailModal order={viewing} onClose={() => setViewing(null)} />
       <ConfirmDialog
