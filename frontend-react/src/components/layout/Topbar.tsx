@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils'
 import { type Theme, useUI } from '@/stores/ui'
 import { useState } from 'react'
 import { ConfirmDialog, Skeleton, Tooltip } from '@/components/ui'
+import { NotificationBell } from './NotificationBell'
 import { SyncIndicator } from './SyncIndicator'
 
 function Breadcrumbs() {
@@ -135,6 +136,7 @@ function InstallButton() {
 
 export function Topbar() {
   const setMobileNav = useUI((s) => s.setMobileNav)
+  const { user } = useSession()
   return (
     <header className="pt-safe glass sticky top-0 z-20 border-b border-border">
       <div className="flex h-16 items-center gap-3 px-4 sm:px-6 lg:px-8">
@@ -152,6 +154,7 @@ export function Topbar() {
             Old version
           </a>
           <InstallButton />
+          {user?.type === 'employee' && <NotificationBell />}
           <SyncIndicator />
           <ThemeSwitch />
           <span className="hidden h-6 w-px bg-border sm:block" aria-hidden />

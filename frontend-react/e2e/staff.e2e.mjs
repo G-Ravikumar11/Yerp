@@ -14,6 +14,8 @@ const d = await api(page, 'POST', '/api/departments', { name: dept, description:
 const made = await api(page, 'POST', '/api/employees', { first_name: 'Ravi', last_name: `Survey${stamp}`, email, password: 'Passw0rd-QA1', phone: '', job_title: 'Surveyor', department_id: d.data.id, reports_to: null, level: 'L1', role: 'employee', permission_role: 'staff', site_ids: [], employment_type: 'full_time', pay_frequency: 'monthly', salary: 30000, tax_rate: 0, start_date: '2026-01-01', emergency_contact: '', emergency_phone: '' })
 check('the owner has created the department and the employee', d.status === 200 && made.status === 200, JSON.stringify([d.status, made.status, made.data]).slice(0, 200))
 
+// HR sets the new starter a goal, and a document to provide
+await api(page, 'POST', `/api/employees/${made.data.id}/goals`, { title: `Survey 10 sites ${stamp}`, description: 'Before the month ends', target_value: 10, current_value: 2, unit: 'sites', category: 'performance', priority: 'high', due_date: '2026-12-31' })
 // The owner has the app open on this device; then somebody else signs in here. What was kept for the owner must not be theirs to see.
 await open(page, '/')
 let asked = 0
@@ -103,6 +105,41 @@ check('Payslips opens (none yet)', (await text('main')).includes('No payslips ye
 await open(page, '/me/documents')
 check('Documents opens', (await text('main h1')).includes('Documents'))
 
+
+// The rest of the portal: goals, notifications, team, profile, onboarding, and the overview's week
+await open(page, '/')
+await page.waitForSelector('section[aria-label="This week"] [role=img]')
+check('the overview shows the week, recent attendance and the team', !!(await page.$('section[aria-label="Recent attendance"]')) && !!(await page.$('section[aria-label="Team presence"]')))
+await page.waitForSelector('button[aria-label^="Notifications"]')
+check('the bell says there is something new (the goal HR set)', /unread/.test(await page.$eval('button[aria-label^="Notifications"]', (e) => e.getAttribute('aria-label'))), await page.$eval('button[aria-label^="Notifications"]', (e) => e.getAttribute('aria-label')))
+await page.click('button[aria-label^="Notifications"]')
+await page.waitForSelector('[role=dialog][aria-label=Notifications] li')
+check('and lists it', (await text('[role=dialog][aria-label=Notifications]')).includes('oal'))
+await clickText(page, '[role=dialog][aria-label=Notifications] button', 'Mark all read')
+await page.waitForFunction(() => !/unread/.test(document.querySelector('button[aria-label^="Notifications"]').getAttribute('aria-label')), { timeout: 8000 })
+check('marking all read clears the count', true)
+await page.keyboard.press('Escape')
+
+await open(page, '/me/goals')
+await page.waitForSelector(`section[aria-label="Survey 10 sites ${stamp}"]`)
+check('the goal is there with its progress', (await text(`section[aria-label="Survey 10 sites ${stamp}"]`)).includes('20%'))
+await clickText(page, 'main button', 'Update progress')
+await page.waitForSelector('#pm-v')
+await fill(page, '#pm-v', '5')
+await clickText(page, '[role=dialog] button', 'Save progress')
+await waitForToast(page, 'Progress updated')
+await sleep(600)
+check('updating it moves the bar', (await text(`section[aria-label="Survey 10 sites ${stamp}"]`)).includes('50%'))
+await toastsGone(page)
+
+await open(page, '/me/team')
+await page.waitForSelector('main section')
+check('My Team lists the department, with who is in', (await text('main')).includes('Ravi') && /Working|Away|On a break/.test(await text('main')))
+await open(page, '/me/profile')
+await page.waitForSelector('section[aria-label=Profile]')
+check('My Profile shows the department the owner chose, and the goal count', (await text('section[aria-label=Profile]')).includes(dept) && /1 goal/.test(await text('section[aria-label=Profile]')), (await text('section[aria-label=Profile]')).slice(0, 160))
+await open(page, '/me/onboarding')
+check('Onboarding opens with its progress', (await text('main')).includes('Onboarding progress'))
 // What the owner sees still works for the owner
 await api(page, 'POST', '/api/employee/auth/logout')
 await signIn(page)

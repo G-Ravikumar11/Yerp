@@ -48,4 +48,8 @@ export const PORTED: PortedRoute[] = [
   { path: '/me/leave', Component: lazy(() => import('@/features/staff/LeavePage')) },
   { path: '/me/payslips', Component: lazy(() => import('@/features/staff/PayslipsPage')) },
   { path: '/me/documents', Component: lazy(() => import('@/features/staff/DocumentsPage')) },
+  { path: '/me/goals', Component: lazy(() => import('@/features/staff/GoalsPage')) },
+  { path: '/me/onboarding', Component: lazy(() => import('@/features/staff/OnboardingPage')) },
+  { path: '/me/team', Component: lazy(() => import('@/features/staff/TeamPage')) },
+  { path: '/me/profile', Component: lazy(() => import('@/features/staff/ProfilePage')) },
 ]

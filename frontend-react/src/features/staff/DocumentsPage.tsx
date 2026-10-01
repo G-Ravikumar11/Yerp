@@ -3,7 +3,7 @@ import { Download, Upload } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, Field, Input, Modal, Skeleton } from '@/components/ui'
-import { downloadMyFile, staffKeys, uploadDocument, useMyDocuments, type DocRequest, type MyFile } from '@/api/staff'
+import { downloadMyFile, downloadTemplate, staffKeys, uploadDocument, useMyDocuments, type DocRequest, type MyFile } from '@/api/staff'
 import { useAction } from '@/lib/mutate'
 import { formatDate } from '@/lib/format'
 
@@ -31,7 +31,7 @@ export default function DocumentsPage() {
               <div className="min-w-0 flex-1">
                 <p className="font-medium">{r.name}{r.is_mandatory && <span className="ml-1.5 text-xs text-muted-foreground">(required)</span>}</p>
                 {r.description && <p className="text-[13px] text-muted-foreground">{r.description}</p>}
-                <p className="mt-1 text-xs text-muted-foreground">{r.due_date ? `Due ${formatDate(r.due_date)}` : 'No due date'}{r.file_name && ` · ${r.file_name}`}{r.expires_on && ` · expires ${formatDate(r.expires_on)}`}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{r.due_date ? `Due ${formatDate(r.due_date)}` : 'No due date'}{r.file_name && ` · ${r.file_name}`}{r.expires_on && <span className={r.is_expired ? 'text-danger' : r.expiring_soon ? 'text-warning' : ''}> · {r.is_expired ? 'expired' : 'expires'} {formatDate(r.expires_on)}</span>}{!r.expires_on && r.requires_expiry && r.status === 'pending' && <span className="text-warning"> · expiry date needed</span>}{r.has_template && r.requirement_id && <> · <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={() => void downloadTemplate(r.requirement_id as number)}>Download blank form</button></>}</p>
                 {r.status === 'rejected' && r.review_note && <p className="mt-1 text-[13px] text-danger">HR sent it back: {r.review_note}</p>}
               </div>
               {r.is_overdue && <Badge tone="danger">Overdue</Badge>}

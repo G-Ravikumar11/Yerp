@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { get, post, put } from '@/lib/api'
+import { api, get, post, put } from '@/lib/api'
 
 /** A member of staff's own day: where they are clocked in, what waits for them, and the sites they work on. */
 export interface Today {
@@ -121,6 +121,10 @@ export interface DocRequest {
   expires_on: string
   review_note: string
   file_name?: string
+  requirement_id?: number | null
+  has_template?: boolean
+  is_expired?: boolean
+  expiring_soon?: boolean
 }
 
 export interface MyFile { id: number; title: string; doc_type: string; file_name: string; uploaded_by: string; created_at: string }
@@ -178,3 +182,70 @@ export const breakFor = (which: 'start' | 'stop') => post<{ message?: string }>(
 export interface MyJob { id: number; number: string; name: string; customer_name: string; site_address: string }
 export const useMyJobs = () => useQuery({ queryKey: k('jobs'), queryFn: async () => (await get<{ jobs: MyJob[] }>('/api/employee/jobs')).jobs ?? [] })
 export const bookToJob = (job_id: number | null) => post<{ message?: string }>('/api/employee/attendance/job', { job_id })
+
+/* --- Goals, onboarding, team, profile, notifications, the week --------------------------------------- */
+
+export interface Goal {
+  id: number
+  title: string
+  description: string
+  target_value: number
+  current_value: number
+  unit: string
+  category: string
+  priority: string
+  start_date: string
+  due_date: string
+  status: string
+  created_by: string
+}
+export const useGoals = () => useQuery({ queryKey: k('goals'), queryFn: () => get<Goal[]>('/api/employee/goals') })
+export const updateGoal = (id: number, current_value: number) => post<{ message?: string }>(`/api/employee/goals/${id}/update`, { current_value })
+
+export interface OnboardingItem { id: number; title: string; is_completed: boolean; category: string; assigned_to: string }
+export const useOnboarding = () => useQuery({ queryKey: k('dashboard'), queryFn: () => get<{ onboarding: OnboardingItem[] }>('/api/employee/dashboard'), select: (d) => d.onboarding ?? [] })
+
+export interface Teammate { id: number; name: string; job_title: string; is_online: boolean; clock_in: string; is_on_break: boolean }
+export const useTeam = () => useQuery({ queryKey: k('team'), queryFn: () => get<Teammate[]>('/api/employee/team-presence'), refetchInterval: 60_000 })
+
+export interface Profile {
+  full_name: string
+  first_name: string
+  email: string
+  phone: string
+  address: string
+  job_title: string
+  level: string
+  employment_type: string
+  department: string
+  manager: string
+  start_date: string
+  work_location: string
+  emergency_contact: string
+  emergency_phone: string
+  employee_id_code: string
+  goals_count: number
+  goal_progress: number
+  team: { id: number; name: string; job_title: string; email: string }[]
+}
+export const useProfile = () => useQuery({ queryKey: k('profile'), queryFn: () => get<Profile>('/api/employee/profile') })
+
+export interface Note { id: number; title: string; message: string; type: string; is_read: boolean; link: string; created_at: string }
+export const useNotes = () => useQuery({ queryKey: k('notes'), queryFn: () => get<{ notifications: Note[]; unread_count: number }>('/api/employee/notifications'), refetchInterval: 60_000 })
+export const readNote = (id: number) => api(`/api/employee/notifications/${id}/read`, { method: 'PATCH', body: {} })
+export const readAllNotes = () => post<{ message?: string }>('/api/employee/notifications/read-all')
+
+export interface WeekDay { date: string; day: string; hours: number; is_today: boolean }
+export const useWeek = () => useQuery({ queryKey: k('week'), queryFn: () => get<WeekDay[]>('/api/employee/weekly-chart') })
+
+/** A blank form HR attached to a requirement, handed to the browser as a download. */
+export async function downloadTemplate(requirementId: number) {
+  const f = await get<{ file_name: string; file_type: string; file_data: string }>(`/api/onboarding/requirements/${requirementId}/template`)
+  const bytes = Uint8Array.from(atob(f.file_data), (c) => c.charCodeAt(0))
+  const url = URL.createObjectURL(new Blob([bytes], { type: f.file_type || 'application/octet-stream' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = f.file_name || 'form'
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 10_000)
+}

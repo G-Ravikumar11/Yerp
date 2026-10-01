@@ -16738,7 +16738,7 @@ def get_employee_profile(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Employee not found")
     dept = db.query(models.DBDepartment).filter(models.DBDepartment.id == emp.department_id).first() if emp.department_id else None
     manager = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp.reports_to).first() if emp.reports_to else None
-    team = db.query(models.DBEmployee).filter(models.DBEmployee.department_id == emp.department_id, models.DBEmployee.status == "active", models.DBEmployee.id != emp_id).all() if emp.department_id else []
+    team = db.query(models.DBEmployee).filter(models.DBEmployee.department_id == emp.department_id, or_(models.DBEmployee.status.is_(None), models.DBEmployee.status.notin_(GONE_STATUSES)), models.DBEmployee.id != emp_id).all() if emp.department_id else []
     goals = db.query(models.DBEmployeeGoal).filter(models.DBEmployeeGoal.employee_id == emp_id).all()
     goal_progress = 0
     if goals:
@@ -16805,7 +16805,7 @@ def get_team_presence(request: Request, db: Session = Depends(get_db)):
     if not emp or not emp.department_id:
         return []
     today = datetime.now().strftime("%Y-%m-%d")
-    team = db.query(models.DBEmployee).filter(models.DBEmployee.department_id == emp.department_id, models.DBEmployee.status == "active").all()
+    team = db.query(models.DBEmployee).filter(models.DBEmployee.department_id == emp.department_id, or_(models.DBEmployee.status.is_(None), models.DBEmployee.status.notin_(GONE_STATUSES))).all()
     result = []
     for t in team:
         att = db.query(models.DBAttendance).filter(models.DBAttendance.employee_id == t.id, models.DBAttendance.date == today).first()

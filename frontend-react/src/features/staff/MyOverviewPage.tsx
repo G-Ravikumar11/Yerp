@@ -1,11 +1,12 @@
 import { Link } from 'react-router-dom'
-import { AlertTriangle, CalendarDays, FileText, Receipt, ShoppingCart, Wallet } from 'lucide-react'
+import { AlertTriangle, CalendarDays, FileText, Receipt, ShoppingCart, Target, Users, Wallet } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Skeleton, Stat, StatGrid } from '@/components/ui'
 import { useMyDashboard, useToday } from '@/api/staff'
 import { formatDate, plural } from '@/lib/format'
 import { useSession } from '@/lib/session'
 import { ClockCard } from './ClockCard'
+import { PresenceCard, RecentCard, WeekCard } from './WeekCard'
 
 const QUICK = [
   { to: '/me/costs', label: 'Raise a cost', hint: 'A bill or receipt for approval', icon: Receipt, perm: 'bills.submit' },
@@ -13,6 +14,8 @@ const QUICK = [
   { to: '/me/leave', label: 'Ask for leave', hint: 'Balance and requests', icon: CalendarDays },
   { to: '/me/payslips', label: 'Payslips', hint: 'Your last six', icon: Wallet },
   { to: '/me/documents', label: 'Documents', hint: 'What HR has asked for', icon: FileText },
+  { to: '/me/goals', label: 'My goals', hint: 'What you have been set', icon: Target },
+  { to: '/me/team', label: 'My team', hint: 'Who is in today', icon: Users },
 ]
 
 /** A member of staff's own day: the clock, the sites they work on, what is waiting for them. */
@@ -43,6 +46,8 @@ export default function MyOverviewPage() {
         </section>
       )}
 
+      <div className="mb-8 grid gap-6 lg:grid-cols-2"><WeekCard /><RecentCard rows={dash.data?.attendance ?? []} /></div>
+
       <h2 className="mb-3 text-sm font-semibold">Quick actions</h2>
       <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {QUICK.filter((a) => !a.perm || can(a.perm)).map(({ to, label, hint, icon: Icon }) => (
@@ -71,6 +76,7 @@ export default function MyOverviewPage() {
           ))}
         </div>
       ) : <p className="rounded-lg border border-border bg-muted/40 p-4 text-sm">No sites are assigned to you yet. Your manager assigns them.</p>}
+      <div className="mt-8"><PresenceCard /></div>
     </>
   )
 }
