@@ -230,7 +230,7 @@
 
         function signInWithGoogle() {
             window.location = '/api/auth/google/start?next=' +
-                encodeURIComponent(nextTarget('/app.html'));
+                encodeURIComponent(nextTarget('/next/'));
         }
 
         function showError(msg) {
@@ -251,11 +251,11 @@
         // account holder or to a member of staff is the server's business, not
         // something anyone should have to know before they can sign in.
         fetch('/api/client/me').then(function(r) {
-            // The account holder lands on the new interface; staff stay on the current one until their screens move.
+            // Everyone lands on the new interface; the previous one stays at /app.html?old=1.
             if (r.ok) { window.location.href = nextTarget('/next/'); return; }
             return fetch('/api/employee/auth/me');
         }).then(function(r) {
-            if (r && r.ok) { window.location.href = nextTarget('/app.html'); return; }
+            if (r && r.ok) { window.location.href = nextTarget('/next/'); return; }
             return fetch('/api/superadmin/me');
         }).then(function(r) {
             if (r && r.ok) { window.location.href = '/superadmin.html'; }
@@ -307,7 +307,7 @@
                 // Not the account holder - try them as a member of staff before
                 // giving up. Both land in the same portal.
                 var staff = await signInAsStaff(email, password);
-                if (staff) { window.location.href = nextTarget('/app.html'); return; }
+                if (staff) { window.location.href = nextTarget('/next/'); return; }
 
                 throw new Error('That email and password did not match an account.');
             } catch (err) {

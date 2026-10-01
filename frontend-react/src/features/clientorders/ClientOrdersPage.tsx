@@ -69,7 +69,7 @@ export default function ClientOrdersPage() {
   })
 
   /** The one thing this order needs next, and nothing else. */
-  const actions = (o: ClientOrder) => {
+  const rowActions = (o: ClientOrder) => {
     const budget = (primary: boolean) => (
       <Button size="sm" variant={primary ? 'primary' : 'outline'} onClick={() => setBudgeting(o)}>
         {o.budgeted ? 'Budget' : 'Allocate budget'}
@@ -187,7 +187,7 @@ export default function ClientOrdersPage() {
         </div>
       ),
     },
-    { id: 'act', header: '', align: 'right', cell: (o) => <div className="ml-auto flex max-w-64 flex-wrap justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>{actions(o)}</div> },
+    { id: 'act', header: '', align: 'right', cell: (o) => <div className="ml-auto flex max-w-64 flex-wrap justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>{rowActions(o)}{o.budgeted && <Button size="sm" variant="outline" asChild><Link to={`/clients/work-orders/${o.id}/budget-report`} title="The budget read back under the lines it was allocated against">Report</Link></Button>}</div> },
   ]
 
   return (

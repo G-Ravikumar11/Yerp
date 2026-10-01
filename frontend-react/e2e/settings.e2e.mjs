@@ -53,6 +53,8 @@ await tab('Documents')
 await page.waitForSelector('[aria-label^="Edit letterhead"]')
 await page.click('[aria-label^="Edit letterhead"]')
 await page.waitForSelector('#lh-addr')
+const firstUnit = (await api(page, 'GET', '/api/wo/business-units')).data.business_units[0]
+if (firstUnit.gstin) await fill(page, '#lh-pan', firstUnit.gstin.slice(2, 12))
 await fill(page, '#lh-addr', `Plot ${stamp}, Hyderabad`)
 await clickText(page, '[role=dialog] button', 'Save letterhead')
 await waitForToast(page, 'saved')
@@ -92,9 +94,11 @@ await waitForToast(page, 'finance limit')
 check('a finance limit under the sign-off limit is refused', true)
 await toastsGone(page)
 check('who approves what is spelled out', (await main()).includes('Leave') && (await main()).includes('owner, last'))
+const domainBefore = (await api(page, 'GET', '/api/hr/org-domain')).data.domain
 await fill(page, '#org-domain', `qa${stamp}.example.in`)
 await save('Save domain', 'domain saved')
 check('the staff domain is saved', (await api(page, 'GET', '/api/hr/org-domain')).data.domain === `qa${stamp}.example.in`)
+await api(page, 'PUT', '/api/hr/org-domain', { domain: domainBefore })
 
 // --- People and access --------------------------------------------------------------------------------------
 await tab('People & access')

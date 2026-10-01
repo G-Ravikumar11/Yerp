@@ -74,6 +74,7 @@ export const NAV: NavEntry[] = [
       { label: 'Client Work Orders', path: '/clients/work-orders', perm: 'workorders.manage' },
       { label: 'Measurement & RA Bills', path: '/clients/measurement', perm: 'site.record|billing.manage' },
       { label: 'Customers', path: '/clients/customers', perm: 'customers.manage' },
+      { label: 'Contacts', path: '/clients/contacts', perm: 'customers.manage' },
     ],
   },
   {

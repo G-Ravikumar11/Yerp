@@ -52,7 +52,7 @@ Status: `done` · `todo`
 | Equipment & Plant | `equipment-view` | done (register, deploy and move, log a day, service, history) |
 | Project Profit | `pnl-view` | done |
 | Cost by Project | `project-costs-view`, `costs-view` | done (list and each project with the papers behind the figures) |
-| Budget report | `budget-report-view` | todo |
+| Budget report | `budget-report-view` | done (a Report button on every budgeted client work order: sold lines, what each consumes, unbudgeted lines flagged, margin, workbook, print) |
 
 ## Subcontractors
 | Screen | Old view | Status |
@@ -77,9 +77,12 @@ Status: `done` · `todo`
 | Command Center | `dashboard-view` | done |
 | Approvals | `approvals-view` | done |
 | Settings (company, logo, bank, tax rates, letterheads, signatures, conditions, approval rules, staff domain, team, partner logins, alerts, backup, activity log) | `settings-view` | done; the hidden legacy blocks (Gmail connect, invoice templates, demo mail) are not ported |
-| Contacts | `contacts-view` | todo |
-| Document viewer | `document-view` | todo |
+| Contacts | `contacts-view` | done (list, search, add, edit, delete; under Clients). The old customer history page behind a contact was invoice-based (legacy) and is not ported |
+| Document viewer | `document-view` | not needed: it only framed the server PDF. Every screen now opens its own PDF (bill, order, purchase order, statement, slips) in a tab; Goods Receipt has its own screen |
 | Staff self-service (overview with clock, timesheet, costs, orders, leave, payslips, documents) | `my-*-view`, `employee-dashboard.html` | done; notifications, goals, team presence and profile of the old staff page are not ported |
+
+## Sign-in
+One sign-in door (`login.html`) now sends the owner **and staff** to `/next/`. `app.html` sends both there too, unless opened as `app.html?old=1` (the "Old version" link). `employee-login.html` still goes to the separate `employee-dashboard.html`.
 
 ## Pages outside `app.html`
 Sign-in (`login.html`, `employee-login.html`, `superadmin-login.html`), `portal.html`
