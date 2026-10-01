@@ -43,10 +43,10 @@ Status: `done` · `todo`
 | Screen | Old view | Status |
 | --- | --- | --- |
 | Projects (+ detail) | `jobs-view`, `job-detail-view` | todo |
-| Programme & Progress | `schedule-view` | todo |
+| Programme & Progress | `schedule-view` | done (bars, S-curve, activities after one another, progress by hand or from a work order line) |
 | Drawings & Photos | `drawings-view` | todo |
-| Quality | `quality-view` | todo |
-| Safety | `safety-view` | todo |
+| Quality | `quality-view` | done (inspections walked item by item, cube sets and results, NCRs, photos, PDFs) |
+| Safety | `safety-view` | done (incidents with cause and fix, toolbox talks, permits to work, photos, PDFs) |
 | Site Diary (record a day, labour and plant, photos, sign off, DPR, who has been on site) | `diary-view` | done; works offline (kept on the device, goes up by itself) |
 | Project Chat | `chat-view` | todo |
 | Equipment & Plant | `equipment-view` | todo |

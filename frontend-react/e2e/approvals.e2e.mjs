@@ -62,4 +62,25 @@ await sleep(600)
 check('approving from the inbox approves the order, by the same rules', (await api(page, 'GET', `/api/wo/orders/${draft.id}`)).data.order.status === 'APPROVED')
 check('what was decided leaves the inbox', !(await list()).some((t) => t.includes(bill.number)))
 
+// --- A revision raised by the owner, while a manager holds the right to approve --------------------------------
+// It goes up the line first, so it is with the manager. The owner may still step in, and says so by deciding it.
+const stamp = Date.now().toString().slice(-6)
+await api(page, 'POST', '/api/employees', { first_name: 'Mgr', last_name: `Rev${stamp}`, email: `mgr.rev.${stamp}@example.in`, password: 'Passw0rd-QA1', phone: '', job_title: 'Project manager', department_id: null, reports_to: null, level: 'L4', role: 'employee', permission_role: 'project_manager', site_ids: [], employment_type: 'full_time', pay_frequency: 'monthly', salary: 1, tax_rate: 0, start_date: '2026-01-01', emergency_contact: '', emergency_phone: '' })
+const base = await approvedOrder(page, { subject: `E2E revision ${stamp}` })
+const rev = (await api(page, 'POST', `/api/wo/orders/${base.id}/amend`, {})).data.order
+await api(page, 'POST', `/api/wo/orders/${rev.id}/submit`, {})
+await page.evaluate(() => indexedDB.deleteDatabase('keyval-store')) // what this device kept of the inbox is a few seconds old
+await open(page, '/approvals')
+await page.waitForFunction((n) => [...document.querySelectorAll('main ul li')].some((l) => l.textContent.includes(n)), { timeout: 10000 }, rev.wo_number)
+const card = () => page.evaluate((n) => [...document.querySelectorAll('main ul li')].find((l) => l.textContent.includes(n)).textContent.replace(/\s+/g, ' '), rev.wo_number)
+check('a revision with the manager is shown to the owner, with whose desk it is on', /With /.test(await card()) && /decide it yourself/.test(await card()), (await card()).slice(0, 160))
+check('and apart from what waits on the owner', await page.evaluate(() => [...document.querySelectorAll('main h2')].some((h) => h.textContent.includes('With your team'))))
+await page.evaluate((n) => { const li = [...document.querySelectorAll('main ul li')].find((l) => l.textContent.includes(n)); [...li.querySelectorAll('button')].at(-1).click() }, rev.wo_number)
+await page.waitForSelector('[role=dialog]')
+await clickText(page, '[role=dialog] button', 'Approve')
+await waitForToast(page, 'approved')
+await sleep(600)
+const after = (await api(page, 'GET', '/api/wo/orders')).data.orders
+check('the owner deciding it approves the revision and the original is amended', after.find((o) => o.id === rev.id).status === 'APPROVED' && after.find((o) => o.id === base.id).status === 'AMENDED')
+
 await done()

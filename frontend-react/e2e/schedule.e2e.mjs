@@ -1,0 +1,66 @@
+import { clickText, fill, launch, open, setValue, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
+
+// Programme: add activities (one after the other), record progress by hand, edit one, remove one.
+const { page, check, done } = await launch()
+await signIn(page)
+const stamp = Date.now().toString().slice(-5)
+const text = (sel) => page.$eval(sel, (e) => e.textContent.replace(/\s+/g, ' ').trim())
+const gone = () => page.waitForFunction(() => !document.querySelector('[role=dialog]'), { timeout: 10000 })
+const iso = (n) => { const d = new Date(Date.now() + n * 86400000); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
+
+await open(page, '/projects/programme')
+await page.waitForFunction(() => document.querySelector('#sch-job option[value]')?.value, { timeout: 10000 })
+// a project of our own, so earlier runs do not crowd it
+const made = await page.evaluate(async (stamp) => {
+  const r = await fetch('/api/jobs', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'QA Programme ' + stamp, customer_name: 'QA Client' }) })
+  return r.json()
+}, stamp)
+const jobId = String(made.job?.id ?? made.id)
+await page.reload({ waitUntil: 'networkidle0' })
+await page.waitForSelector('#sch-job option[value]')
+await setValue(page, '#sch-job', jobId)
+await sleep(600)
+check('a project with no programme says so', (await text('main')).includes('No programme yet'))
+
+const add = async (name, code, start, finish, after) => {
+  await clickText(page, 'main button', 'Activity')
+  await page.waitForSelector('#ac-name')
+  await fill(page, '#ac-name', name)
+  await fill(page, '#ac-code', code)
+  await setValue(page, '#ac-start', start)
+  await setValue(page, '#ac-finish', finish)
+  await fill(page, '#ac-weight', '10')
+  if (after) await setValue(page, '#ac-after', after)
+  await clickText(page, '[role=dialog] button', 'Save the activity')
+  await waitForToast(page, 'saved')
+  await gone()
+  await sleep(500)
+  await toastsGone(page)
+}
+await add(`Excavation ${stamp}`, 'A10', iso(-3), iso(7))
+const firstId = await page.$eval('table[aria-label=Programme] tbody tr button', () => null).catch(() => null)
+const aid = (await page.evaluate(async (j) => (await (await fetch('/api/jobs/' + j + '/schedule', { credentials: 'include' })).json()).activities[0].id, jobId))
+await add(`Footings ${stamp}`, 'A20', iso(8), iso(20), String(aid))
+const rows = await page.$$eval('table[aria-label=Programme] tbody tr', (r) => r.length)
+check('both activities are drawn as bars, the second after the first', rows === 2 && (await text('table[aria-label=Programme]')).includes('after A10'), (await text('table[aria-label=Programme]')).slice(0, 200))
+check('the planned-against-actual curve is drawn', !!(await page.$('section[aria-label="Planned against actual"] svg')))
+
+await page.evaluate(() => [...document.querySelectorAll('table[aria-label=Programme] tbody tr')][0].querySelectorAll('button')[1].click())
+await page.waitForSelector('#pm-pct')
+await fill(page, '#pm-pct', '40')
+await clickText(page, '[role=dialog] button', 'Record progress')
+await waitForToast(page, 'Progress recorded')
+await gone()
+await sleep(600)
+check('progress recorded by hand shows against the activity', /40%/.test(await text('table[aria-label=Programme] tbody tr')), await text('table[aria-label=Programme] tbody tr'))
+await toastsGone(page)
+
+await clickText(page, 'table[aria-label=Programme] tbody button', `Footings ${stamp}`)
+await page.waitForSelector('#ac-name')
+await clickText(page, '[role=dialog] button', 'Remove')
+await page.waitForFunction(() => [...document.querySelectorAll('[role=dialog], [role=alertdialog]')].some((d) => d.textContent.includes('Remove this activity')))
+await page.evaluate(() => { const ds = [...document.querySelectorAll('[role=dialog], [role=alertdialog]')]; const d = ds.find((x) => x.textContent.includes('Remove this activity')); [...d.querySelectorAll('button')].filter((b) => b.textContent.trim() === 'Remove').pop().click() })
+await waitForToast(page, 'removed')
+await sleep(600)
+check('removing an activity takes it off the programme', (await page.$$eval('table[aria-label=Programme] tbody tr', (r) => r.length)) === 1)
+await done()

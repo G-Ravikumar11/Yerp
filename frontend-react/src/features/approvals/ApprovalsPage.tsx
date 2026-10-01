@@ -20,7 +20,8 @@ export default function ApprovalsPage() {
   const [pending, setPending] = useState<{ item: ApprovalItem; mode: 'approve' | 'reject' } | null>(null)
   const [override, setOverride] = useState(false)
 
-  const items = useMemo(() => (inbox.data?.items ?? []).filter((i) => (!mineOnly || i.mine) && (!kind || i.kind_label === kind)), [inbox.data, kind, mineOnly])
+  // Yours first; what waits on somebody else follows, apart.
+  const items = useMemo(() => (inbox.data?.items ?? []).filter((i) => (!mineOnly || i.mine) && (!kind || i.kind_label === kind)).sort((a, b) => Number(b.mine) - Number(a.mine)), [inbox.data, kind, mineOnly])
   const kinds = useMemo(() => {
     const counts = new Map<string, number>()
     for (const i of inbox.data?.items ?? []) counts.set(i.kind_label, (counts.get(i.kind_label) ?? 0) + 1)
@@ -79,10 +80,12 @@ export default function ApprovalsPage() {
             </Card>
           ) : (
             <ul className="space-y-3">
-              {items.map((i) => {
+              {items.map((i, n) => {
+                const firstOthers = !!owner && !i.mine && n === items.findIndex((x) => !x.mine)
                 const link = hrefFor(i)
                 return (
                   <li key={i.key}>
+                    {firstOthers && <h2 className="mb-2 mt-4 text-sm font-semibold">With your team <span className="font-normal text-muted-foreground">- waiting on somebody else; stepping in is your call</span></h2>}
                     <Card className="p-4 sm:p-5">
                       <div className="flex flex-wrap items-start justify-between gap-4">
                         <div className="min-w-0 flex-1">
@@ -90,6 +93,7 @@ export default function ApprovalsPage() {
                             <Badge tone="ember">{i.kind_label}</Badge>
                             <span className="font-mono text-[15px] font-semibold">{i.number}</span>
                             {!i.mine && <Badge tone="neutral">With {i.waiting_on}</Badge>}
+                            {!i.mine && owner && <span className="text-xs text-muted-foreground">You can decide it yourself if it is stuck</span>}
                           </div>
                           <p className="mt-2 text-[15px]">
                             {i.party}
@@ -129,7 +133,7 @@ export default function ApprovalsPage() {
                                 </a>
                               </Button>
                             )}
-                            {i.mine && (
+                            {(i.mine || owner) && (
                               <>
                                 <Button size="sm" variant="outline" onClick={() => setPending({ item: i, mode: 'reject' })}>
                                   {i.reject_label}
