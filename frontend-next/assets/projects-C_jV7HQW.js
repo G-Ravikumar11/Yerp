@@ -1,1 +1,0 @@
-import{i as e,s as t}from"./api-C9UCh3g2.js";import{ht as n}from"./index--4BzKPDQ.js";function r(){let{user:r}=n(),i=r?.type===`employee`;return t({queryKey:[`projects`,`mine`,i],enabled:!!r,queryFn:async()=>{let t=await e(i?`/api/employee/jobs`:`/api/jobs`);return Array.isArray(t)?t:t.jobs??[]}})}var i=e=>`${e.number?e.number+` - `:``}${e.name}`;export{r as n,i as t};

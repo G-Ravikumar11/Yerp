@@ -1,0 +1,61 @@
+import { writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { clickText, fill, launch, open, setValue, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
+
+// Drawings & Photos: add a sheet to the register, give it revisions, mark it good for construction; photos kept on the project.
+const { page, check, done } = await launch()
+await signIn(page)
+const stamp = Date.now().toString().slice(-5)
+const no = `STR-${stamp}`
+const text = (sel) => page.$eval(sel, (e) => e.textContent.replace(/\s+/g, ' ').trim())
+const gone = () => page.waitForFunction(() => !document.querySelector('[role=dialog]'), { timeout: 10000 })
+const row = () => page.evaluate((n) => [...document.querySelectorAll('table[aria-label=Drawings] tbody tr')].find((r) => r.textContent.includes(n))?.textContent.replace(/\s+/g, ' '), no)
+const png = join(tmpdir(), 'sheet.png')
+writeFileSync(png, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'))
+
+await open(page, '/projects/drawings')
+await page.waitForFunction(() => document.querySelector('#drw-job option[value]'), { timeout: 10000 })
+await sleep(600)
+await clickText(page, 'main button', 'Drawing')
+await page.waitForSelector('#dw-no')
+await fill(page, '#dw-no', no)
+await fill(page, '#dw-title', 'Raft reinforcement')
+await clickText(page, '[role=dialog] button', 'Add the drawing')
+await waitForToast(page, 'added')
+await page.waitForSelector('#rv-rev')
+check('adding a drawing goes straight on to its first revision', await page.evaluate((n) => [...document.querySelectorAll('[role=dialog]')].some((d) => d.textContent.includes('New revision') && d.textContent.includes(n)), no))
+await (await page.$('#rv-file')).uploadFile(png)
+await fill(page, '#rv-rev', 'R0')
+await fill(page, '#rv-from', 'The structural consultant')
+await clickText(page, '[role=dialog] button', 'Add the revision')
+await gone()
+await sleep(700)
+check('the register shows it at revision R0', /R0/.test(await row()), await row())
+await toastsGone(page)
+
+await page.evaluate((n) => [...document.querySelectorAll('table[aria-label=Drawings] tbody tr')].find((r) => r.textContent.includes(n)).querySelectorAll('button')[0].click(), no)
+await page.waitForSelector('#rv-rev')
+await (await page.$('#rv-file')).uploadFile(png)
+await fill(page, '#rv-rev', 'R1')
+await clickText(page, '[role=dialog] button', 'Add the revision')
+await gone()
+await sleep(700)
+check('a second revision makes R1 current, with the count beside it', /R1/.test(await row()) && /\(2\)/.test(await row()), await row())
+await toastsGone(page)
+
+await page.evaluate((n) => [...document.querySelectorAll('table[aria-label=Drawings] tbody tr')].find((r) => r.textContent.includes(n)).querySelectorAll('button')[1].click(), no)
+await page.waitForSelector('table[aria-label=Revisions] tbody tr')
+check('its history lists both revisions', (await page.$$eval('table[aria-label=Revisions] tbody tr', (r) => r.length)) === 2)
+await clickText(page, '[role=dialog] button', 'Mark good for construction')
+await sleep(1200)
+await gone()
+check('marked good for construction, it says so in the register', /Good for construction/.test(await row()), await row())
+
+await clickText(page, '[role=tab]', 'Photos & files')
+await page.waitForSelector('input[aria-label="Photos of the site"]')
+await (await page.$('input[aria-label="Photos of the site"]')).uploadFile(png)
+await page.waitForFunction(() => document.querySelector('main figure'), { timeout: 12000 })
+check('a photo added to the project is kept and shown', true)
+check('the project summary counts what is kept', /Photos\s*[1-9]/.test(await text('main')) || /Drawings\s*[1-9]/.test(await text('main')))
+await done()

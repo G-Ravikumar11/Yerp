@@ -419,3 +419,14 @@ def test_the_rules_screen_says_whether_anyone_can_hold_the_finance_step(tenant):
 def test_nonsense_limits_are_refused(tenant):
     assert tenant.put("/api/approval-rules", json={"auto_below": "lots"}).status_code == 400
     assert tenant.put("/api/approval-rules", json={"auto_below": -5}).status_code == 400
+
+
+def test_the_state_the_site_is_in_is_kept_when_a_project_is_made_and_changed(tenant):
+    """The project form has a state picker that decides the GST place of supply. The server dropped it."""
+    job = make_job(tenant, state_code="36")
+    assert tenant.get("/api/jobs/%d" % job["id"]).json()["state_code"] == "36"
+    res = tenant.put("/api/jobs/%d" % job["id"], json={"name": job["name"], "state_code": "37"})
+    assert res.status_code == 200 and tenant.get("/api/jobs/%d" % job["id"]).json()["state_code"] == "37"
+    # An edit that does not mention it leaves it as it was.
+    tenant.put("/api/jobs/%d" % job["id"], json={"name": job["name"]})
+    assert tenant.get("/api/jobs/%d" % job["id"]).json()["state_code"] == "37"

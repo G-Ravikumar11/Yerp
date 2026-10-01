@@ -2605,6 +2605,8 @@ class JobIn(BaseModel):
     currency: Optional[str] = ""
     reference: Optional[str] = ""
     manager_id: Optional[int] = None
+    # The state the site is in, which decides the GST place of supply. None leaves it as it was.
+    state_code: Optional[str] = None
 
 
 def clamp_percent(value) -> float:
@@ -2729,6 +2731,7 @@ def create_job(body: JobIn, request: Request, db: Session = Depends(get_db)):
         currency=(body.currency or client.currency or "").upper(),
         reference=(body.reference or "").strip(),
         manager_id=body.manager_id,
+        state_code=(body.state_code or "").strip(),
     )
     db.add(job)
     db.commit()
