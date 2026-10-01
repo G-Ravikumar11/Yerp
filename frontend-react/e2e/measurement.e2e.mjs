@@ -276,6 +276,21 @@ await page.waitForSelector('table[aria-label="Items on the order"] tbody tr')
 check('one click opens the revision, which can be measured', (await page.$('table[aria-label="Items on the order"] tbody button')) !== null)
 
 
+// --- Amended twice: the line of revisions sits together, and the oldest points at the one now live -----------------
+const rev2 = (await api(page, 'POST', `/api/wo/orders/${rev.id}/amend`, {})).data.order
+await api(page, 'POST', `/api/wo/orders/${rev2.id}/self-approve`, {})
+await page.evaluate(() => indexedDB.deleteDatabase('keyval-store'))
+await open(page, `/subcontractors/measurement-book?order=${old.id}`)
+await page.waitForSelector('[role=status]')
+const banner2 = await page.$eval('[role=status]', (e) => e.textContent)
+check('the oldest order, amended twice, points to the revision that is live now', banner2.includes(rev2.wo_number) && banner2.includes('amended'), banner2.slice(0, 120))
+await page.click('button[aria-label="Work order"]')
+await page.waitForSelector('[role=listbox] [role=option]')
+const options = await page.$$eval('[role=listbox] [role=option]', (o) => o.map((e) => e.textContent))
+const at = options.findIndex((t) => t.includes(rev2.wo_number))
+check('and each amended order is listed directly under the one that replaced it', at >= 0 && options[at + 1]?.includes(rev.wo_number) && options[at + 2]?.includes(old.wo_number) && options[at + 1].includes('amended'), options.slice(at, at + 3).map((t) => t.slice(0, 40)).join(' | '))
+await page.keyboard.press('Escape')
+
 // --- A draft has nothing to measure, so the picker leaves it out -----------------------------------------------
 const draft = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: gang.id, job_id: job.id, department: 'Civil', subject: 'E2E still a draft', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
 await open(page, `/subcontractors/measurement-book?order=${created.id}`)

@@ -59,7 +59,22 @@ export default function MeasurementBookPage() {
   // The book lists the orders that can be measured, and the amended ones whose record it holds.
   // Drafts, orders still waiting for approval and cancelled ones have nothing to measure, so they stay out.
   const order_of: Record<string, number> = { APPROVED: 0, EXECUTED: 0, AMENDED: 1 }
-  const live = all.filter((o) => o.status in order_of).sort((a, b) => order_of[a.status] - order_of[b.status])
+  // Each amended order sits directly under the revision that replaced it, so 002 is found beside 002-REV-02
+  // rather than at the foot of the list. Amended orders with no revision in the book (an older order, or a
+  // revision not yet approved) come last.
+  const ranked = all.filter((o) => o.status in order_of)
+  const placed = new Set<number>()
+  const grouped: Order[] = []
+  for (const o of ranked.filter(isLive)) {
+    // The live order, then what it replaced, then what that replaced.
+    for (let cur: Order | undefined = o; cur && !placed.has(cur.id); ) {
+      placed.add(cur.id)
+      grouped.push(cur)
+      const before: number | null = cur.supersedes_id
+      cur = before ? ranked.find((x) => x.id === before && x.status === 'AMENDED') : undefined
+    }
+  }
+  const live = [...grouped, ...ranked.filter((o) => !placed.has(o.id))]
   // Work orders can be narrowed to one site (the project each is charged to).
   const [site, setSite] = useState(0)
   const sites = Array.from(new Map(live.filter((o) => o.job_id).map((o) => [o.job_id as number, o.project] as const)).entries()).sort((a, b) => a[1].localeCompare(b[1]))
@@ -70,7 +85,12 @@ export default function MeasurementBookPage() {
   const chosen = Number(params.get('order')) || (live.some((o) => o.id === last) ? last : 0) || live[0]?.id || 0
   const order = all.find((o) => o.id === chosen)
   const measurable = !!order && isLive(order)
-  const replacement = order?.status === 'AMENDED' ? all.find((o) => o.supersedes_id === chosen && isLive(o)) : undefined
+  // The order that carries on from this one: follow the revisions on to the one now live.
+  const replacement = (() => {
+    let cur = order
+    for (let i = 0; i < 20 && cur?.status === 'AMENDED'; i++) cur = all.find((o) => o.supersedes_id === cur?.id && o.status in order_of)
+    return cur && cur.id !== order?.id && isLive(cur) ? cur : undefined
+  })()
   const quick = useRef<QuickMeasureHandle>(null)
   const book = useMeasurementBook(chosen)
   const [measuring, setMeasuring] = useState<MbLine | null>(null)
