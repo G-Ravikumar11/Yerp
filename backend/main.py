@@ -22343,7 +22343,7 @@ def grn_apply(db, client_id, grn, action, request=None, actor_name="", comments=
     allowed = GRN_TRANSITIONS.get(state, {})
     if action not in allowed:
         raise HTTPException(
-            409, "A %s receipt cannot be %sed." % (state.lower(), action.lower()))
+            409, "A %s receipt cannot be %s." % (state.lower(), past_tense(action)))
     grn.status = allowed[action]
     if action == "POST":
         grn.posted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -22894,8 +22894,8 @@ def act_on_variation(vo_id: int, action: str, request: Request, body: dict = Non
     allowed = VO_TRANSITIONS.get(vo.status or "DRAFT", {})
     if move not in allowed:
         raise HTTPException(
-            409, "A %s variation cannot be %sed." % ((vo.status or "draft").lower(),
-                                                     move.lower()))
+            409, "A %s variation cannot be %s." % ((vo.status or "draft").lower(),
+                                                    past_tense(move)))
     body = body or {}
     if move == "APPROVE":
         # Approving raises the contract value, so it is the approver's right
@@ -25453,6 +25453,13 @@ def bill_from_receipt(grn_id: int, request: Request, body: dict = None,
 # retention: here it is us, and TDS is what we withhold and remit.
 # ============================================================================
 
+def past_tense(action):
+    """"cannot be certified", not "certifyed": the word an action turns into once done."""
+    word = (action or "").lower()
+    return {"submit": "submitted", "certify": "certified", "reject": "sent back", "pay": "paid",
+            "cancel": "cancelled", "post": "posted", "approve": "approved"}.get(word, word + "ed")
+
+
 SUB_TRANSITIONS = {
     "DRAFT":     {"SUBMIT": "SUBMITTED", "CANCEL": "CANCELLED"},
     "SUBMITTED": {"CERTIFY": "CERTIFIED", "REJECT": "DRAFT", "CANCEL": "CANCELLED"},
@@ -26354,8 +26361,8 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
 
     allowed = SUB_TRANSITIONS.get(bill.status or "DRAFT", {})
     if move not in allowed:
-        raise HTTPException(409, "A %s bill cannot be %sed."
-                                 % ((bill.status or "draft").lower(), move.lower()))
+        raise HTTPException(409, "A %s bill cannot be %s."
+                                 % ((bill.status or "draft").lower(), past_tense(move)))
     order = wo_or_404(db, client.id, bill.order_id)
     if move in ("SUBMIT", "CERTIFY") and (order.status or "") not in ("APPROVED", "EXECUTED"):
         raise HTTPException(409, "%s is %s - nothing more is billed or certified against it."
