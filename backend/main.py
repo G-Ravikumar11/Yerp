@@ -5091,6 +5091,8 @@ def erp_delete_work_order(wo_id: int, request: Request, db: Session = Depends(ge
     bill_ids = [b.id for b in rep["bills"]]
     var_ids = rep["variation_ids"]
     meas_ids = [m.id for m in db.query(models.DBMeasurement.id).filter(models.DBMeasurement.work_order_id == wo.id).all()]
+    rel_ids = [r.id for r in db.query(models.DBRetentionRelease.id).filter(models.DBRetentionRelease.work_order_id == wo.id).all()]
+    cascade_delete_referrers(db, "work_orders", [wo.id])
     if meas_ids:
         drop(db.query(models.DBMeasurementDimension).filter(models.DBMeasurementDimension.measurement_id.in_(meas_ids)))
         drop_files_of(db, "measurement", meas_ids)
@@ -5104,7 +5106,6 @@ def erp_delete_work_order(wo_id: int, request: Request, db: Session = Depends(ge
         drop(db.query(models.DBVariationLine).filter(models.DBVariationLine.variation_order_id.in_(var_ids)))
         drop_files_of(db, "variation", var_ids)
     drop(db.query(models.DBVariationOrder).filter(models.DBVariationOrder.work_order_id == wo.id))
-    rel_ids = [r.id for r in db.query(models.DBRetentionRelease.id).filter(models.DBRetentionRelease.work_order_id == wo.id).all()]
     if rel_ids:
         drop(db.query(models.DBMoneyEntry).filter(
             models.DBMoneyEntry.doc_type == "retention_release", models.DBMoneyEntry.doc_id.in_(rel_ids)))
@@ -20508,6 +20509,45 @@ def wo_cancel(order_id: int, body: WoActionIn, request: Request,
 # behind it is refused: the payments are in the ledger and the bank book, and
 # taking the order away would leave them standing against nothing.
 
+# Rows that belong to an order and go with it, whether or not their link column may be empty.
+OWNED_BY_AN_ORDER = {
+    "retention_releases", "measurement_dimensions", "material_recoveries", "sub_bill_lines", "sub_measurements",
+    "sub_bills", "measurements", "ra_bills", "ra_bill_lines", "variation_orders", "variation_lines",
+    "work_order_lines", "bom_lines", "subcontract_items", "subcontract_terms", "subcontract_approvals",
+}
+
+
+def cascade_delete_referrers(db, parent, ids, _depth=0):
+    """Everything in the live database that points at these rows, and what points at that, gone first.
+
+    Read from the database's own constraints, so a link an older release left behind - or one a
+    model never mentioned - cannot stop a delete. What belongs to the order is deleted; a record that
+    merely mentions it (a stock issue, a diary day) is kept and unlinked."""
+    from sqlalchemy import inspect as sa_inspect, text, bindparam
+    ids = list(ids)
+    if not ids or _depth > 8:
+        return
+    insp = sa_inspect(db.get_bind())
+    for table in insp.get_table_names():
+        for fk in insp.get_foreign_keys(table):
+            cols = fk.get("constrained_columns", [])
+            if fk.get("referred_table") != parent or len(cols) != 1:
+                continue
+            col = cols[0]
+            nullable = {c["name"]: c.get("nullable", True) for c in insp.get_columns(table)}.get(col, True)
+            where = "%s IN :ids" % col
+            bind = lambda sql: db.execute(text(sql).bindparams(bindparam("ids", expanding=True)), {"ids": ids})
+            if table == parent or (nullable and table not in OWNED_BY_AN_ORDER):
+                bind("UPDATE %s SET %s = NULL WHERE %s" % (table, col, where))
+                continue
+            pk = insp.get_pk_constraint(table).get("constrained_columns") or []
+            if len(pk) == 1:
+                kids = [r[0] for r in bind("SELECT %s FROM %s WHERE %s" % (pk[0], table, where)).fetchall()]
+                if kids:
+                    cascade_delete_referrers(db, table, kids, _depth + 1)
+            bind("DELETE FROM %s WHERE %s" % (table, where))
+
+
 def sweep_referrers(db, parents):
     """Whatever still points at rows about to be deleted, found in the live database itself -
     not in the models - so a constraint left by an older release cannot stop a delete.
@@ -20633,7 +20673,10 @@ def wo_delete_order_now(order_id, request, db):
     rep = wo_delete_report(db, client, order)
     ids = rep["ids"]
     bill_ids = [b.id for b in db.query(models.DBSubBill.id).filter(models.DBSubBill.order_id.in_(ids)).all()]
+    sub_meas = [m.id for m in db.query(models.DBSubMeasurement.id).filter(models.DBSubMeasurement.order_id.in_(ids)).all()]
+    rel_ids = [r.id for r in db.query(models.DBRetentionRelease.id).filter(models.DBRetentionRelease.sub_order_id.in_(ids)).all()]
     drop = lambda q: q.delete(synchronize_session=False)
+    cascade_delete_referrers(db, "subcontract_orders", ids)
     if bill_ids:
         drop(db.query(models.DBSubBillLine).filter(models.DBSubBillLine.sub_bill_id.in_(bill_ids)))
         drop(db.query(models.DBApprovalChain).filter(
@@ -20642,18 +20685,15 @@ def wo_delete_order_now(order_id, request, db):
         drop(db.query(models.DBMoneyEntry).filter(
             models.DBMoneyEntry.doc_type == "sub_bill", models.DBMoneyEntry.doc_id.in_(bill_ids)))
         drop_alerts_about(db, "sub_bill", bill_ids)
-    sub_meas = [m.id for m in db.query(models.DBSubMeasurement.id).filter(models.DBSubMeasurement.order_id.in_(ids)).all()]
     if sub_meas:
         drop(db.query(models.DBMeasurementDimension).filter(models.DBMeasurementDimension.sub_measurement_id.in_(sub_meas)))
         drop_files_of(db, "measurement", sub_meas)
     drop(db.query(models.DBMaterialRecovery).filter(models.DBMaterialRecovery.order_id.in_(ids)))
     drop(db.query(models.DBSubMeasurement).filter(models.DBSubMeasurement.order_id.in_(ids)))
     drop(db.query(models.DBSubBill).filter(models.DBSubBill.order_id.in_(ids)))
-    rel_ids = [r.id for r in db.query(models.DBRetentionRelease.id).filter(models.DBRetentionRelease.sub_order_id.in_(ids)).all()]
     if rel_ids:
         drop(db.query(models.DBMoneyEntry).filter(
             models.DBMoneyEntry.doc_type == "retention_release", models.DBMoneyEntry.doc_id.in_(rel_ids)))
-    drop(db.query(models.DBRetentionRelease).filter(models.DBRetentionRelease.sub_order_id.in_(ids)))
     drop(db.query(models.DBApprovalChain).filter(
         models.DBApprovalChain.entity_type == "subcontract_order", models.DBApprovalChain.entity_id.in_(ids)))
     drop(db.query(models.DBMoneyEntry).filter(
@@ -20711,11 +20751,19 @@ def work_orders_delete_all(request: Request, body: dict = None, db: Session = De
                 models.DBSubcontractOrder.client_id == client.id).order_by(models.DBSubcontractOrder.id.desc()).all()]:
             if not db.query(models.DBSubcontractOrder).filter(models.DBSubcontractOrder.id == oid).first():
                 continue  # went with an earlier version of the same order
-            wo_delete_order_now(oid, request, db)
+            try:
+                wo_delete_order_now(oid, request, db)
+            except IntegrityError as exc:
+                db.rollback()
+                raise HTTPException(409, "Could not delete order %s: %s" % (oid, str(getattr(exc, "orig", exc)).splitlines()[0][:220]))
             gone["subcontract"] += 1
     if scope in ("all", "client"):
         for wid in [w.id for w in db.query(models.DBWorkOrder.id).filter(models.DBWorkOrder.client_id == client.id).all()]:
-            erp_delete_work_order(wid, request, db)
+            try:
+                erp_delete_work_order(wid, request, db)
+            except IntegrityError as exc:
+                db.rollback()
+                raise HTTPException(409, "Could not delete client order %s: %s" % (wid, str(getattr(exc, "orig", exc)).splitlines()[0][:220]))
             gone["client"] += 1
     log_audit(db, client.id, "work_orders_wiped", "work_order", None, "all", "Deleted %d subcontract and %d client work orders" % (
         gone["subcontract"], gone["client"]), request)

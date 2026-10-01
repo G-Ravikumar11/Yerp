@@ -115,3 +115,23 @@ def test_alerts_that_were_read_and_drawings_do_not_stop_a_delete(tenant):
         "lines": [{"code": fg(tenant), "qty": 10, "rate": 500}]}).json()["work_order"]
     tenant.post("/api/alerts/read", json={"all": True})
     assert tenant.delete("/api/erp/work-orders/%d" % wo["id"]).status_code == 200
+
+
+def test_a_link_no_model_knows_about_does_not_stop_a_delete(tenant):
+    """An older release can leave a table pointing at a bill. The delete reads the database's own
+    constraints, so that row goes with the bill instead of blocking it."""
+    from sqlalchemy import text
+    from database import engine
+    order = live_order(tenant, pay_advance=False)
+    bill = raise_a_bill(tenant, order)
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE IF NOT EXISTS zz_legacy_link (id INTEGER PRIMARY KEY, "
+                          "bill_id INTEGER NOT NULL REFERENCES sub_bills(id))"))
+        conn.execute(text("INSERT INTO zz_legacy_link (bill_id) VALUES (:b)"), {"b": bill["id"]})
+    try:
+        assert tenant.delete("/api/wo/orders/%d" % order["id"]).status_code == 200
+        with engine.begin() as conn:
+            assert conn.execute(text("SELECT COUNT(*) FROM zz_legacy_link")).scalar() == 0
+    finally:
+        with engine.begin() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS zz_legacy_link"))
