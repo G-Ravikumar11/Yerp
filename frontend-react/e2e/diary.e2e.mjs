@@ -43,7 +43,7 @@ check('the day is listed, rained off, with its mandays', /rained off/.test(await
 await toastsGone(page)
 
 // Photos kept against the day
-await clickText(page, 'table[aria-label="Diary days"] tbody button', 'Photos')
+await page.evaluate(() => [...document.querySelectorAll('table[aria-label="Diary days"] tbody tr')].find((r) => r.textContent.includes('Raft reinforcement')).querySelectorAll('button')[1].click())
 await page.waitForSelector('[role=dialog] figure', { timeout: 8000 })
 check('the photo went up with the day', (await text('[role=dialog]')).includes('site'))
 await page.keyboard.press('Escape')
