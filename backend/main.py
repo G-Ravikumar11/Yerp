@@ -5288,7 +5288,9 @@ def erp_budget_report_xlsx(wo_id: int, request: Request, db: Session = Depends(g
 def build_approval_chain(employee_id, client_id, db):
     """Walk the reports_to chain from the given employee upward. Returns a list
     of {employee_id, level, role} sorted by step number (1 = first approver).
-    Skips duplicate levels and stops after 8 steps max."""
+    Skips duplicate levels and stops after 8 steps max. A person still onboarding counts: an
+    employee the owner has added with a login is somebody to report to, active or not; only
+    those who have left are passed over."""
     chain = []
     visited = set()
     current_id = employee_id
@@ -5299,7 +5301,7 @@ def build_approval_chain(employee_id, client_id, db):
         emp = db.query(models.DBEmployee).filter(
             models.DBEmployee.id == current_id,
             models.DBEmployee.client_id == client_id,
-            models.DBEmployee.status == "active"
+            or_(models.DBEmployee.status.is_(None), models.DBEmployee.status.notin_(GONE_STATUSES))
         ).first()
         if not emp:
             break
@@ -5309,7 +5311,7 @@ def build_approval_chain(employee_id, client_id, db):
         manager = db.query(models.DBEmployee).filter(
             models.DBEmployee.id == emp.reports_to,
             models.DBEmployee.client_id == client_id,
-            models.DBEmployee.status == "active"
+            or_(models.DBEmployee.status.is_(None), models.DBEmployee.status.notin_(GONE_STATUSES))
         ).first()
         if not manager:
             break
@@ -18373,6 +18375,7 @@ def wo_dict(db, order, detail=False):
         owner_client = db.query(models.DBClient).filter(models.DBClient.id == order.client_id).first()
         row["pending_with"] = wo_waiting_names(db, owner_client, order)
         row["approval_route"] = wo_route(db, order)
+        row["revision_blockers"] = wo_revision_blockers(db, order)
         if order.copied_from_id:
             src = db.query(models.DBSubcontractOrder.wo_number).filter(
                 models.DBSubcontractOrder.id == order.copied_from_id).first()
@@ -20097,6 +20100,51 @@ def wo_map_items(old_items, new_items):
             if len(hits) == 1:
                 out[old.id] = hits[0]
                 break
+    return out
+
+
+def wo_revision_blockers(db, order):
+    """What would stop this revision being approved right now, in the words approval would use.
+
+    A revision takes over the work measured and billed on the order it replaces, and approval refuses
+    where that cannot be done cleanly. Said on the revision itself, so nobody finds out only when the
+    approver clicks Approve and is told no."""
+    if not order.supersedes_id or (order.status or "") not in ("DRAFT", "PROVISIONAL"):
+        return []
+    old = db.query(models.DBSubcontractOrder).filter(
+        models.DBSubcontractOrder.id == order.supersedes_id,
+        models.DBSubcontractOrder.client_id == order.client_id).first()
+    if not old:
+        return []
+    entries = db.query(models.DBSubMeasurement).filter(models.DBSubMeasurement.order_id == old.id).all()
+    bills = db.query(models.DBSubBill).filter(models.DBSubBill.order_id == old.id).all()
+    advances = db.query(models.DBMoneyEntry).filter(
+        models.DBMoneyEntry.client_id == order.client_id, models.DBMoneyEntry.doc_type == "sub_advance",
+        models.DBMoneyEntry.doc_id == old.id).all()
+    if not entries and not bills and not advances:
+        return []
+    out = ["%s is still open on %s. Certify or cancel it before this revision can be approved." % (b.number, old.wo_number)
+           for b in bills if (b.status or "") in ("DRAFT", "SUBMITTED")]
+    if (old.contractor_id or None) != (order.contractor_id or None):
+        out.append("%s already has work measured or billed for its sub contractor. A revision keeps the same sub "
+                   "contractor - raise a new order for a different one." % old.wo_number)
+    old_items = db.query(models.DBSubcontractItem).filter(models.DBSubcontractItem.order_id == old.id).all()
+    new_items = db.query(models.DBSubcontractItem).filter(models.DBSubcontractItem.order_id == order.id).all()
+    mapping = wo_map_items(old_items, new_items)
+    live_ids = [b.id for b in bills if (b.status or "") != "CANCELLED"]
+    lines = db.query(models.DBSubBillLine).filter(
+        models.DBSubBillLine.sub_bill_id.in_([b.id for b in bills] or [0])).all()
+    used = {e.item_id for e in entries} | {l.item_id for l in lines if l.sub_bill_id in live_ids and l.item_id}
+    missing = [i for i in old_items if i.id in used and i.id not in mapping]
+    if missing:
+        out.append("Lines measured or billed on %s are not on this revision: %s. Keep them - the quantity can come "
+                   "down to what is done, not below." % (old.wo_number, ", ".join(
+                       (i.activity_no or (i.item_description or "")[:40]) for i in missing)))
+    measured = sub_measured_to_date(db, old.id)
+    for o, n in [(i, mapping[i.id]) for i in old_items if i.id in mapping]:
+        if money(measured.get(o.id, 0.0)) > item_ceiling(n) + 0.0001:
+            out.append("%s is measured to %s but the revision orders %s." % (
+                o.activity_no or "A line", qty_text(measured.get(o.id, 0.0)), qty_text(n.quantity)))
     return out
 
 
@@ -36434,6 +36482,7 @@ def approval_inbox(db, client, emp):
             except Exception:
                 over = []
             notes = ["Over the project allocation: " + "; ".join(over)] if over else []
+            notes += wo_revision_blockers(db, o)
             if o.supersedes_id:
                 prev = db.query(models.DBSubcontractOrder).filter(
                     models.DBSubcontractOrder.id == o.supersedes_id).first()

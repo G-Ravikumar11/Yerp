@@ -225,3 +225,6 @@ export async function approvedOrder(page, { subject = 'E2E order', lines } = {})
 
 /** Record a measurement through the API. */
 export const measure = (page, orderId, itemId, quantity) => api(page, 'POST', `/api/sub-mb/${orderId}/entries`, { item_id: itemId, quantity, measured_on: '2026-11-15' })
+
+/** Every toast on screen, so a test can say what the person was told. */
+export const allToasts = (page) => page.evaluate(() => [...document.querySelectorAll('[aria-live=polite] [role=status], [aria-live=polite] [role=alert]')].map((e) => e.textContent.trim()))

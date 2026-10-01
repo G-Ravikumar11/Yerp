@@ -365,3 +365,21 @@ def test_the_gangs_ledger_shows_only_the_advance_still_owed(tenant):
     still_out = round(order["mobilization_advance_amount"] - bill["advance_recovery"], 2)
     assert bill["advance_recovery"] > 0
     assert gang["balance"] == -still_out
+
+
+def test_a_revision_says_what_stops_it_being_approved_before_anyone_tries(tenant):
+    """An RA bill still open on the old order blocks the revision. The revision says so itself, and so does the
+    approver's inbox - rather than the refusal being found only when somebody clicks Approve."""
+    order = live_order(tenant)
+    item = book(tenant, order["id"])["lines"][0]
+    measure(tenant, order["id"], item["item_id"], 3)
+    bill = raise_bill(tenant, order["id"]).json()["bill"]
+    rev = tenant.post("/api/wo/orders/%d/amend" % order["id"], json={}).json()["order"]
+    assert any(bill["number"] in b and "still open" in b for b in rev["revision_blockers"])
+    refused = tenant.post("/api/wo/orders/%d/self-approve" % rev["id"], json={})
+    assert refused.status_code == 409 and bill["number"] in refused.json()["detail"]
+    tenant.post("/api/sub-bills/%d/cancel" % bill["id"], json={"comments": "raised twice"})
+    again = tenant.get("/api/wo/orders/%d" % rev["id"]).json()["order"]
+    assert again["revision_blockers"] == []
+    ok = tenant.post("/api/wo/orders/%d/self-approve" % rev["id"], json={})
+    assert ok.status_code == 200 and ok.json()["order"]["status"] == "APPROVED"

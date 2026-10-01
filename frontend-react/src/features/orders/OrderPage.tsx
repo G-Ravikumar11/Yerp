@@ -201,6 +201,15 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
         </div>
       </div>
 
+      {(order.revision_blockers ?? []).length > 0 && (
+        <div role="alert" className="mb-5 rounded-xl border border-danger/30 bg-danger-soft p-3.5 text-[13.5px] text-danger">
+          <p className="mb-1 font-semibold">This revision cannot be approved yet</p>
+          {(order.revision_blockers ?? []).map((w) => (
+            <p key={w}>{w}</p>
+          ))}
+        </div>
+      )}
+
       {budgetWarnings.length > 0 && (
         <div role="alert" className="mb-5 rounded-xl border border-warning/30 bg-warning-soft p-3.5 text-[13.5px] text-warning">
           {budgetWarnings.map((w) => (

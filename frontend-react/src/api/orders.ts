@@ -134,6 +134,8 @@ export interface Order {
   copied_from?: string
   budgets?: BudgetRow[]
   budget_warnings?: string[]
+  /** What would stop this revision being approved now: a bill still open on the order it replaces, lines it drops. */
+  revision_blockers?: string[]
 }
 
 export interface OrderSummary {

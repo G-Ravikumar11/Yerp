@@ -172,3 +172,36 @@ def test_a_bill_climbs_every_rank_before_it_is_approved(tenant, portal):
         item = [i for i in inbox(portal) if i["kind"] == "step"][0]
         out = decide(portal, item).json()
     assert out["status"] == "approved"
+
+
+def test_the_manager_the_owner_set_is_asked_first_even_while_still_onboarding(tenant, portal):
+    """People the owner adds with a login are 'onboarding' until somebody moves them on.
+    The manager set for them is still their manager: the order goes to that person, not to
+    whoever happens to hold the right first."""
+    earlier = person(tenant, "project_manager")                  # created first, holds the right
+    chosen = make_employee(tenant, permission_role="project_manager", password="Crew1234")
+    tenant.put("/api/employees/%d" % chosen["id"], json={"status": "onboarding"})
+    qs = make_employee(tenant, permission_role="planning_billing", password="Crew1234", reports_to=chosen["id"])
+    tenant.put("/api/employees/%d" % qs["id"], json={"status": "onboarding"})
+    sign_in(portal, qs)
+    order = priced_order(portal)
+    assert portal.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 200
+    first = route(tenant, order["id"])[0]
+    assert chosen["last_name"] in first["name"] and first["status"] == "waiting"
+
+
+def test_a_revision_goes_up_the_same_line_and_the_owner_may_decide_it(tenant, portal):
+    """Amending is raising again: the revision is a draft that goes for approval like any order,
+    the owner can approve it as raised, and approving it moves the old order to 'amended'."""
+    person(tenant, "project_manager")
+    base = priced_order(tenant)
+    assert tenant.post("/api/wo/orders/%d/self-approve" % base["id"], json={}).json()["order"]["status"] == "APPROVED"
+    rev = tenant.post("/api/wo/orders/%d/amend" % base["id"], json={}).json()["order"]
+    assert rev["status"] == "DRAFT"
+    assert "SUBMIT" in rev["actions"]
+    sent = tenant.post("/api/wo/orders/%d/submit" % rev["id"], json={})
+    assert sent.status_code == 200 and sent.json()["order"]["status"] == "PROVISIONAL"
+    item = [i for i in inbox(tenant) if i["kind"] == "subcontract_order" and i["id"] == rev["id"]][0]
+    assert item["mine"] is False and item["waiting_on"]            # with the manager, shown to the owner
+    assert decide(tenant, item, note="").json()["order"]["status"] == "APPROVED"
+    assert tenant.get("/api/wo/orders/%d" % base["id"]).json()["order"]["status"] == "AMENDED"
