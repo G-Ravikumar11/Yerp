@@ -300,7 +300,11 @@ export function DataGrid<T>({
 
   const cancelEdit = () => closeEditor()
 
+  /** A picker opened only to look at its choices, then left: the cell keeps what it had. */
+  const untouchedPicker = (text: string) => !!edit && columns[edit.c]?.type === 'select' && !text.trim()
+
   const blurAway = (text: string) => {
+    if (untouchedPicker(text)) return setEdit(null)
     const err = commit(text, 'none')
     if (err) {
       setEdit(null)
@@ -311,6 +315,7 @@ export function DataGrid<T>({
   /** Whatever is in the box is kept if it can be, before the cursor goes elsewhere. */
   const settleEditor = () => {
     if (!edit) return
+    if (untouchedPicker(editTextRef.current)) return setEdit(null)
     const err = commit(editTextRef.current, 'none')
     if (err) {
       setEdit(null)
@@ -487,9 +492,14 @@ export function DataGrid<T>({
       focusGrid()
       dragging.current = true
       select({ r, c }, e.shiftKey)
+      // A picker shows what can be chosen the moment it is clicked, without waiting for typing.
+      if (!e.shiftKey && columns[c]?.type === 'select') startEditAt(r, c)
     },
     cellEnter: (r, c) => {
-      if (dragging.current) select({ r, c }, true)
+      if (!dragging.current) return
+      // Dragging on from a picker is selecting a range, not choosing.
+      setEdit(null)
+      select({ r, c }, true)
     },
     cellDouble: (r, c) => {
       select({ r, c })

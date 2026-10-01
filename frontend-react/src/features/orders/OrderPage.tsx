@@ -104,8 +104,8 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
 
   const move = useAction(
     async (m: Move) => {
-      // Sent for approval as it stands on screen, not as it was last saved.
-      if (m.action === 'submit' && editable && dirty) await persist()
+      // Sent for approval, or signed, as it stands on screen - not as it was last saved.
+      if ((m.action === 'submit' || m.action === 'self-approve') && editable && dirty) await persist()
       return moveOrder(order.id, m)
     },
     {

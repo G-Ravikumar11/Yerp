@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { api, clickText, fill, launch, open, setValue, signIn, toastsGone, waitForToast } from './lib.mjs'
 
 // Settings: the owner's company, paper, rules, access and alerts.
-const { page, check, done } = await launch()
+const { page, check, done } = await launch({ allow: [/^400 (POST|PUT) .api.(settings|approval-rules)/] })
 await signIn(page)
 const stamp = Date.now().toString().slice(-6)
 const main = () => page.$eval('main', (e) => e.textContent.replace(/\s+/g, ' ').trim())

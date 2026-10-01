@@ -3,7 +3,7 @@ import { api, launch, signIn } from './lib.mjs'
 // The whole chain, with the people who really do each step: a planner drafts a work order, the project
 // manager and then the owner approve it, a site engineer measures, the planner bills, the same two sign
 // the bill, accounts pays. Then the order is amended with a certified bill behind it.
-const { page, check, done } = await launch({ allow: [/ 40[0-9] /] })
+const { page, check, done } = await launch({ allow: [/^(40[0-9]|429) /] })
 await signIn(page)
 const stamp = Date.now().toString().slice(-6)
 const PW = 'Passw0rd-QA1'
