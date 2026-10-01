@@ -20565,6 +20565,16 @@ def wo_delete_preview(order_id: int, request: Request, db: Session = Depends(get
 
 @app.delete("/api/wo/orders/{order_id}")
 def wo_delete_order(order_id: int, request: Request, db: Session = Depends(get_db)):
+    try:
+        return wo_delete_order_now(order_id, request, db)
+    except IntegrityError as exc:
+        # Say which constraint stopped it, rather than a generic clash.
+        db.rollback()
+        logger.warning("Work order %s could not be deleted: %s", order_id, exc)
+        raise HTTPException(409, "Could not delete it: %s" % str(getattr(exc, "orig", exc)).splitlines()[0][:240])
+
+
+def wo_delete_order_now(order_id, request, db):
     client = get_client_user(request, db)
     require_owner(request, db)
     order = wo_or_404(db, client.id, order_id)
