@@ -1,0 +1,70 @@
+import { writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { api, clickText, fill, launch, open, setValue, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
+
+// Project chat: the owner starts a thread and writes; a member of staff sees it as unread and answers; photos, remove, close and reopen.
+const { page, check, done } = await launch()
+await signIn(page)
+const stamp = Date.now().toString().slice(-6)
+const text = (sel) => page.$eval(sel, (e) => e.textContent.replace(/\s+/g, ' ').trim())
+const gone = () => page.waitForFunction(() => !document.querySelector('[role=dialog]'), { timeout: 10000 })
+const say = async (words) => { await fill(page, 'textarea[aria-label=Message]', words); await page.keyboard.press('Enter') }
+const email = `qa.chat.${stamp}@example.in`
+await api(page, 'POST', '/api/employees', { first_name: 'Chitra', last_name: `Chat${stamp}`, email, password: 'Passw0rd-QA1', phone: '', job_title: 'Engineer', department_id: null, reports_to: null, level: 'L1', role: 'employee', permission_role: 'staff', site_ids: [], employment_type: 'full_time', pay_frequency: 'monthly', salary: 1, tax_rate: 0, start_date: '2026-01-01', emergency_contact: '', emergency_phone: '' })
+
+await open(page, '/projects/chat')
+await page.waitForFunction(() => document.querySelector('#chat-job option[value]'), { timeout: 10000 })
+await clickText(page, 'main button', 'New thread')
+await page.waitForSelector('#ct-title')
+await setValue(page, '#ct-job', await page.$eval('#ct-job option[value]:not([value=""])', (o) => o.value))
+await fill(page, '#ct-title', `Slab cubes ${stamp}`)
+await fill(page, '#ct-body', 'Cubes for the first floor slab go to the lab tomorrow.')
+await clickText(page, '[role=dialog] button', 'Start the thread')
+await waitForToast(page, 'Thread started')
+await gone()
+await page.waitForSelector('[aria-label=Messages] > div')
+check('the thread opens with the first message', (await text('[aria-label=Messages]')).includes('Cubes for the first floor slab'))
+await toastsGone(page)
+
+await say('Photo of the pour attached.')
+await sleep(800)
+const png = join(tmpdir(), 'pour.png')
+writeFileSync(png, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'))
+await (await page.$('input[aria-label="Attach files"]')).uploadFile(png)
+await page.waitForFunction(() => document.querySelector('button[aria-label^="Remove pour"]'), { timeout: 10000 })
+check('a photo can be put beside the words', true)
+await say('Here it is.')
+await page.waitForFunction(() => document.querySelector('[aria-label=Messages] img'), { timeout: 10000 })
+check('and it shows in the conversation', true)
+
+// A member of staff
+await api(page, 'POST', '/api/client/logout')
+await api(page, 'POST', '/api/employee/auth/login', { email, password: 'Passw0rd-QA1' })
+const unread = (await api(page, 'GET', '/api/chat/unread')).data.unread
+check('the thread is unread for the member of staff', unread >= 2, String(unread))
+await page.evaluate(() => indexedDB.deleteDatabase('keyval-store'))
+await open(page, '/projects/chat')
+await page.waitForFunction((s) => [...document.querySelectorAll('[role=listitem]')].some((b) => b.textContent.includes(s)), { timeout: 10000 }, `Slab cubes ${stamp}`)
+check('they see it in the list with its unread count and last words', /unread/.test(await page.$eval('[role=list]', (e) => e.innerHTML)) && (await text('[role=list]')).includes('Here it is'))
+await page.evaluate((s) => [...document.querySelectorAll('[role=listitem]')].find((b) => b.textContent.includes(s)).click(), `Slab cubes ${stamp}`)
+await page.waitForSelector('textarea[aria-label=Message]')
+await fill(page, 'textarea[aria-label=Message]', 'Noted, @Rav')
+await sleep(300)
+check('typing @ offers the people to ring', !!(await page.$('[role=listbox][aria-label=People]')), (await page.$eval('textarea[aria-label=Message]', (e) => e.value)))
+await fill(page, 'textarea[aria-label=Message]', 'Noted, will collect the cubes at 9.')
+await page.keyboard.press('Enter')
+await page.waitForFunction(() => [...document.querySelectorAll('[aria-label=Messages] div')].some((d) => d.textContent.includes('will collect the cubes')), { timeout: 10000 })
+check('they answer in the thread', true)
+await page.evaluate(() => [...document.querySelectorAll('[aria-label=Messages] button')].find((b) => b.textContent === 'remove').click())
+await page.waitForSelector('[role=alertdialog], [role=dialog]')
+await page.evaluate(() => [...document.querySelectorAll('[role=alertdialog] button, [role=dialog] button')].find((b) => b.textContent.trim() === 'Remove it').click())
+await page.waitForFunction(() => document.querySelector('[aria-label=Messages]')?.textContent.includes('message removed'), { timeout: 10000 })
+check('a message can be taken back, and says it was', true)
+await clickText(page, 'main button', 'Close')
+await page.waitForFunction(() => !document.querySelector('textarea[aria-label=Message]'), { timeout: 10000 })
+check('a closed thread takes no more words', (await text('main')).includes('This thread is closed'))
+await clickText(page, 'main button', 'Reopen')
+await page.waitForSelector('textarea[aria-label=Message]')
+check('and can be reopened', true)
+await done()

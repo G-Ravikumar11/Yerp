@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { groupFor, visibleNav, type NavGroup } from '@/lib/nav'
 import { useSession } from '@/lib/session'
 import { useInbox } from '@/api/approvals'
+import { useChatUnread } from '@/api/chat'
 import { useUI } from '@/stores/ui'
 import { Tooltip } from '@/components/ui'
 
@@ -153,6 +154,7 @@ function Group({ group, collapsed }: { group: NavGroup; collapsed: boolean }) {
                           />
                         )}
                         <span className="truncate">{item.label}</span>
+                        {item.path === '/projects/chat' && <ChatBadge />}
                       </>
                     )}
                   </NavLink>
@@ -252,4 +254,12 @@ export function Sidebar() {
       </AnimatePresence>
     </>
   )
+}
+
+/** How many messages are unread, beside Project Chat in the menu. */
+function ChatBadge() {
+  const q = useChatUnread()
+  const n = q.data?.unread ?? 0
+  if (!n) return null
+  return <span className="tabular ml-auto grid min-w-5 place-items-center rounded-full bg-primary px-1.5 text-[11px] font-semibold text-primary-foreground" aria-label={`${n} unread`}>{n > 99 ? '99+' : n}</span>
 }
