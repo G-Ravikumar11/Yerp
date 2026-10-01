@@ -1,0 +1,26 @@
+import { launch, open, signIn, sleep } from './lib.mjs'
+
+// Cost by Project and Project Profit: the board, one project's figures with the papers behind them, and the profit table.
+const { page, check, done } = await launch()
+await signIn(page)
+const text = (sel) => page.$eval(sel, (e) => e.textContent.replace(/\s+/g, ' ').trim())
+
+await open(page, '/projects/costs')
+await page.waitForSelector('table[aria-label="Cost by project"] tbody tr')
+const t = await text('main')
+check('Cost by Project shows the sold, incurred and forecast figures and the split', ['Sold', 'Incurred', 'Forecast margin', 'Retention held', 'Where the money went'].every((w) => t.includes(w)))
+const jobs = await page.$$eval('table[aria-label="Cost by project"] tbody tr', (r) => r.length)
+check('with a row for each project', jobs > 0, String(jobs))
+await page.click('table[aria-label="Cost by project"] tbody tr')
+await page.waitForFunction(() => location.pathname.includes('/projects/costs/'), { timeout: 8000 })
+await page.waitForSelector('section[aria-label="The contract"]')
+const d = await text('main')
+check("a project's page has the contract, the cost so far, the customer side and the suppliers", ['The contract', 'Where the cost has got to', 'The customer side', 'Owed to suppliers', 'Cost to complete'].every((w) => d.includes(w)))
+check('and the papers behind the figures', ['Work orders', 'Purchase orders', 'Subcontract orders', 'Bills'].every((w) => d.includes(w)))
+await page.goBack()
+await page.waitForSelector('table[aria-label="Cost by project"]')
+await open(page, '/projects/profit')
+await page.waitForSelector('table[aria-label="Project profit"] tbody tr')
+check('Project Profit lists every project with its margin and a download', (await text('main')).includes('Order book') && (await page.$('table[aria-label="Project profit"] a[href$="pnl.xlsx"]')) !== null)
+await sleep(100)
+await done()
