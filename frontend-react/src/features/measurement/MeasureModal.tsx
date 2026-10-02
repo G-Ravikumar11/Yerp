@@ -125,7 +125,7 @@ function MeasureForm({ orderId, order, jobCode, line, onClose, target }: { order
         )}
         <ItemFacts line={line} />
       </div>
-      {!target.client && <SheetFill orderId={orderId} itemId={line.item_id} onRecorded={onClose} itemName={[line.item_code, line.activity_no].filter(Boolean).join(" ") || line.description} onUse={fromSheet} />}
+      {!target.client && <SheetFill orderId={orderId} itemId={line.item_id} room={(line.max_quantity ?? Infinity) - (line.measured_to_date ?? 0)} onRecorded={onClose} itemName={[line.item_code, line.activity_no].filter(Boolean).join(" ") || line.description} onUse={fromSheet} />}
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <Tabs
           label="How it is measured"

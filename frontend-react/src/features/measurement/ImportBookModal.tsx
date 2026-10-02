@@ -182,6 +182,19 @@ export function ImportBookModal({ orderId, open, onOpenChange }: { orderId: numb
                     <td className="px-3 py-2.5">
                       <div className="font-medium">{s.description}</div>
                       <div className="text-xs text-muted-foreground">Section {s.sno}</div>
+                      <details className="mt-1.5 text-xs">
+                        <summary className="cursor-pointer text-primary">Look at the {s.entries.length} {s.entries.length === 1 ? 'entry' : 'entries'} before recording</summary>
+                        <ul className="mt-1 space-y-0.5 rounded-md border border-border bg-muted/40 p-2">
+                          {s.entries.map((e, i) => (
+                            <li key={i} className="flex flex-wrap items-baseline justify-between gap-2">
+                              <span className="min-w-0 flex-1 truncate">{e.location || s.description}{e.multiplier !== 1 ? ` · ${e.multiplier} blocks` : ''}</span>
+                              <span className="tabular shrink-0 font-medium">{formatQty(e.quantity)}</span>
+                              {(e.held_back ?? 0) > 0 && <span className="shrink-0 text-muted-foreground">pays {formatQty(e.quantity)} of {formatQty(e.full_quantity)}</span>}
+                              {e.already_in_book && <span className="shrink-0 text-warning">already in the book{e.already_quantity ? ` (${formatQty(e.already_quantity)})` : ''}</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
                     </td>
                     <td className="w-80 max-w-[40vw] px-3 py-2.5">
                       <Select

@@ -30,7 +30,7 @@ type Found = { source: string; matched: boolean; sections: ImportSection[] }
  * Fill the lines from the measurement book as the site keeps it in Excel, instead of typing them.
  * The sheet is read but nothing is recorded: the lines land in the grid to be checked first.
  */
-export function SheetFill({ orderId, itemId, itemName, onUse, onRecorded }: { orderId: number; itemId: number; itemName?: string; onUse: (entry: SheetEntry, source: string) => void; onRecorded?: () => void }) {
+export function SheetFill({ orderId, itemId, itemName, room, onUse, onRecorded }: { orderId: number; itemId: number; itemName?: string; room?: number; onUse: (entry: SheetEntry, source: string) => void; onRecorded?: () => void }) {
   const input = useRef<HTMLInputElement>(null)
   const [reading, setReading] = useState(false)
   const [error, setError] = useState('')
@@ -38,6 +38,9 @@ export function SheetFill({ orderId, itemId, itemName, onUse, onRecorded }: { or
   const [file, setFile] = useState<File | null>(null)
   // Entries ticked to be recorded, as "section:entry" - for a workbook with many blocks, all at once.
   const [ticked, setTicked] = useState<Set<string>>(new Set())
+  // Ticked entries are looked over here, line by line, before anything is saved.
+  const [review, setReview] = useState(false)
+  const [shown, setShown] = useState<string | null>(null)
   const everyEntry = (f: Found) => f.sections.flatMap((sec) => sec.entries.map((e, i) => ({ key: `${sec.index}:${i}`, sec, e, i })).filter((x) => x.e.dims?.length))
   // Select all leaves out a block that is already in the book: ticking one by hand is a decision.
   const newEntries = (f: Found) => everyEntry(f).filter((x) => !x.e.already_in_book)
@@ -48,7 +51,7 @@ export function SheetFill({ orderId, itemId, itemName, onUse, onRecorded }: { or
       const mapping = Object.fromEntries((found?.sections ?? []).map((sec) => [sec.index, itemId]))
       return importBook(orderId, file!, { commit: true, mapping, entries: pairs })
     },
-    { invalidate: [mbKeys.all, ['subbills']], onSuccess: () => { setFound(null); setTicked(new Set()); onRecorded?.() } },
+    { invalidate: [mbKeys.all, ['subbills']], onSuccess: () => { setFound(null); setTicked(new Set()); setReview(false); onRecorded?.() } },
   )
 
   const read = async (file: File) => {
@@ -56,6 +59,7 @@ export function SheetFill({ orderId, itemId, itemName, onUse, onRecorded }: { or
     setError('')
     setFound(null)
     setTicked(new Set())
+    setReview(false)
     setFile(file)
     try {
       const out = await importBook(orderId, file, { commit: false, includeDims: true })
@@ -105,14 +109,62 @@ export function SheetFill({ orderId, itemId, itemName, onUse, onRecorded }: { or
           <p className="mb-2 text-[13px] text-muted-foreground">
             {found.matched ? 'This item is in the sheet more than once. Choose the entry to load:' : `Nothing in the sheet is named like ${itemName || 'this item'}. These are the sections it has - load one only if it is the same work:`}
           </p>
+          {review && (
+            <div aria-label="Check before recording">
+              <p className="mb-2 text-[13px] font-medium">Check these {ticked.size} entries. Nothing is saved until you press Record.</p>
+              <ul className="flex max-h-80 flex-col gap-2 overflow-y-auto">
+                {everyEntry(found).filter((x) => ticked.has(x.key)).map(({ key, sec, e }) => (
+                  <li key={key} className="rounded-md border border-border">
+                    <div className="flex items-center gap-2 px-3 py-1.5 text-[13px]">
+                      <button type="button" className="min-w-0 flex-1 truncate text-left" aria-expanded={shown === key} onClick={() => setShown(shown === key ? null : key)}>
+                        <span className="mr-1 text-muted-foreground">{shown === key ? '▾' : '▸'}</span>
+                        <span className="font-medium">{e.location || sec.description}</span>
+                        {e.multiplier !== 1 ? <span className="text-muted-foreground"> · {e.multiplier} blocks</span> : null}
+                      </button>
+                      <span className="tabular shrink-0">{formatQty(e.quantity)}</span>
+                      {(e.held_back ?? 0) > 0 && <span className="shrink-0 text-xs text-muted-foreground">pays {formatQty(e.quantity)} of {formatQty(e.full_quantity)}</span>}
+                      <button type="button" aria-label={`Leave out ${e.location || sec.description}`} className="shrink-0 text-xs text-danger" onClick={() => setTicked((t) => { const n = new Set(t); n.delete(key); return n })}>Leave out</button>
+                    </div>
+                    {shown === key && (
+                      <ul className="border-t border-border bg-muted/40 px-3 py-1.5 text-xs">
+                        {(e.dims ?? []).map((d, i) => {
+                          const parts = [d.nos, d.nom, d.length, d.breadth, d.depth].filter((v) => v !== null && v !== undefined)
+                          const q = d.is_heading ? null : parts.reduce((a, v) => a * (v as number), 1) * (d.deduct ? -1 : 1)
+                          return (
+                            <li key={i} className={d.is_heading ? 'mt-1 font-medium' : 'flex justify-between gap-3'}>
+                              <span className="truncate">{d.particulars || 'line'}{!d.is_heading && parts.length ? <span className="text-muted-foreground"> · {parts.join(' × ')}</span> : null}</span>
+                              {q !== null && <span className={`tabular shrink-0 ${q < 0 ? 'text-danger' : ''}`}>{formatQty(Math.abs(q) === 0 ? 0 : (d.deduct && q > 0 ? -q : q))}</span>}
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {(() => {
+                const total = everyEntry(found).filter((x) => ticked.has(x.key)).reduce((n, x) => n + x.e.quantity, 0)
+                const over = room !== undefined && total > room + 0.0001
+                return (
+                  <div className="mt-3 flex flex-wrap items-center gap-3 text-[13px]">
+                    <span>Total <strong className="tabular">{formatQty(total)}</strong>{room !== undefined && Number.isFinite(room) ? <span className="text-muted-foreground"> of {formatQty(Math.max(0, room))} still allowed on this item</span> : null}</span>
+                    {over && <span role="alert" className="text-danger">That is more than the order allows, so none of it can be recorded. Amend the order or leave some out.</span>}
+                    <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setReview(false)}>Back</Button>
+                    <Button size="sm" disabled={!ticked.size || over} loading={recordTicked.isPending} onClick={() => recordTicked.mutate()}>Record {ticked.size} entries</Button>
+                  </div>
+                )
+              })()}
+            </div>
+          )}
+          {!review && (<>
           <div className="mb-2 flex flex-wrap items-center gap-3 text-[13px]">
             <label className="flex items-center gap-2">
               <input type="checkbox" aria-label="Select every entry" checked={ticked.size > 0 && ticked.size === newEntries(found).length} onChange={(e) => setTicked(e.target.checked ? new Set(newEntries(found).map((x) => x.key)) : new Set())} />
               Select all {newEntries(found).length} new entries
             </label>
             <span className="text-muted-foreground">{ticked.size} ticked</span>
-            <Button size="sm" className="ml-auto" disabled={!ticked.size} loading={recordTicked.isPending} onClick={() => recordTicked.mutate()}>
-              Record {ticked.size || ''} ticked as entries on this item
+            <Button size="sm" className="ml-auto" disabled={!ticked.size} onClick={() => setReview(true)}>
+              Review {ticked.size || ''} ticked
             </Button>
           </div>
           <ul className="flex max-h-72 flex-col gap-1.5 overflow-y-auto">
@@ -147,7 +199,8 @@ export function SheetFill({ orderId, itemId, itemName, onUse, onRecorded }: { or
               </li>
             ))}
           </ul>
-          <p className="mt-2 text-xs text-muted-foreground">Tick the entries that belong to this item and record them in one go, or click one to load it into the grid and check it first. Nothing goes past what the order allows.</p>
+          <p className="mt-2 text-xs text-muted-foreground">Tick the entries that belong to this item and review them together, or click one to load it into the grid below and check it there. Nothing is saved until you press Record.</p>
+          </>)}
         </div>
       )}
     </div>
