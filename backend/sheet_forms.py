@@ -19,6 +19,8 @@ back out, so what the app downloads is the paper people already sign. The
 arithmetic is the app's; nothing here decides a figure.
 """
 import io
+
+import identity
 import re
 from datetime import date, datetime
 
@@ -193,7 +195,7 @@ def read_registration_forms(book):
     return out
 
 
-def registration_workbook(form):
+def registration_workbook(form, company=None):
     """The registration form as its own workbook, laid out as the office's."""
     book = openpyxl.Workbook()
     ws = book.active
@@ -259,6 +261,7 @@ def registration_workbook(form):
     for col, text in ((1, "Authorized Signature "), (2, "Contractor Signature ")):
         c = ws.cell(row=r, column=col, value=text)
         c.font = bold
+    identity.add_logo(ws, company, "C1", height=48)
     stream = io.BytesIO()
     book.save(stream)
     return stream.getvalue()
@@ -556,13 +559,16 @@ MONEY = "#,##0.00"
 QTY = "#,##0.000"
 
 
-def ra_bill_workbook(cert):
+def ra_bill_workbook(cert, company=None):
     """The bill as the three sheets it was always sent as: Top Sheet, AB-1, MB-1."""
     book = openpyxl.Workbook()
     st = _styles()
     _top_sheet(book.active, st, cert)
     _abstract_sheet(book.create_sheet("AB-1"), st, cert)
     _mb_sheet(book.create_sheet("MB-1"), st, cert)
+    # The company's mark beside each sheet's head, outside the ruled table.
+    for ws, column in zip(book.worksheets, ("I", "N", "L")):
+        identity.add_logo(ws, company, "%s1" % column, height=48)
     stream = io.BytesIO()
     book.save(stream)
     return stream.getvalue()

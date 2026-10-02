@@ -728,6 +728,11 @@ class ClientOnboard(BaseModel):
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
+# The company whose request this is, once it is known: a workbook built deep inside a route heads itself
+# with the company's identity without every route passing it down.
+CURRENT_CLIENT_ID = contextvars.ContextVar("current_client_id", default=None)
+
+
 def get_client_user(request: Request, db: Session):
     client_id = request.session.get("client_id")
     if not client_id:
@@ -735,6 +740,7 @@ def get_client_user(request: Request, db: Session):
     client = db.query(models.DBClient).filter(models.DBClient.id == client_id).first()
     if not client or not client.is_active:
         raise HTTPException(status_code=403, detail="Account disabled")
+    CURRENT_CLIENT_ID.set(client.id)
 
     # Read-only members are stopped here rather than on each endpoint. Every
     # route that touches tenant data resolves the tenant through this function,
@@ -3063,7 +3069,7 @@ BOM_COLUMNS = ["fg_code", "rm_code", "rm_name", "qty", "uom", "rate"]
 BOM_HEADERS = ["FG Code", "RM Code", "RM Name", "Qty", "UOM", "Rate"]
 
 
-def sheet_response(headers, sample, filename, fmt="xlsx", preamble=None, closing=None):
+def sheet_response(headers, sample, filename, fmt="xlsx", preamble=None, closing=None, branded=True):
     """The template, as a real workbook by default.
 
     A workbook is what people asked for and what they will edit; CSV stays
@@ -3105,6 +3111,21 @@ def sheet_response(headers, sample, filename, fmt="xlsx", preamble=None, closing
         return sheet_response(headers, sample, filename.rsplit(".", 1)[0] + ".csv",
                               "csv", preamble, closing)
 
+    # Whatever the company issues carries its name, address, tax numbers and logo - but a template is
+    # read back in, so it stays exactly the shape it is read in.
+    company = None
+    # branded="logo": a report whose own layout is fixed keeps its rows and takes only the logo.
+    if branded and "template" not in filename and CURRENT_CLIENT_ID.get():
+        try:
+            with SessionLocal() as own:
+                owner = own.query(models.DBClient).filter(models.DBClient.id == CURRENT_CLIENT_ID.get()).first()
+                company = letterhead(own, owner) if owner else None
+        except Exception:
+            company = None
+    head_rows = identity.sheet_head_rows(company) if company and branded is True else []
+    if head_rows:
+        preamble = head_rows + [[]] + preamble
+
     book = openpyxl.Workbook()
     sheet = book.active
     sheet.title = "Sheet1"
@@ -3119,6 +3140,11 @@ def sheet_response(headers, sample, filename, fmt="xlsx", preamble=None, closing
 
     if preamble:
         sheet.cell(row=1, column=1).font = Font(bold=True, size=13)
+        if head_rows:
+            for n in range(2, len(head_rows) + 1):
+                sheet.cell(row=n, column=1).font = Font(size=10)
+            if len(preamble) > len(head_rows) + 1:
+                sheet.cell(row=len(head_rows) + 2, column=1).font = Font(bold=True, size=12)
     header_font = Font(bold=True, color="FFFFFF")
     fill = PatternFill("solid", fgColor="4F46E5")
     for cell in sheet[header_row]:
@@ -3131,6 +3157,11 @@ def sheet_response(headers, sample, filename, fmt="xlsx", preamble=None, closing
         sheet.column_dimensions[openpyxl.utils.get_column_letter(index)].width = min(40, longest + 4)
     # Freeze under the headings, so the columns stay named while the rows move.
     sheet.freeze_panes = "A%d" % (header_row + 1)
+    if company:
+        if head_rows:
+            for n in range(1, 4):
+                sheet.row_dimensions[n].height = 20
+        identity.add_logo(sheet, company, "%s1" % openpyxl.utils.get_column_letter(max(len(headers), 4) + 1))
 
     stream = io.BytesIO()
     book.save(stream)
@@ -5352,7 +5383,7 @@ def erp_budget_report_xlsx(wo_id: int, request: Request, db: Session = Depends(g
     ]
     return sheet_response(BUDGET_REPORT_HEADERS, rows,
                           "budget_entry_report_%s.xlsx" % wo.number,
-                          preamble=preamble, closing=closing)
+                          preamble=preamble, closing=closing, branded="logo")
 
 
 # --- Approval Chain Helpers ---------------------------------------------------
@@ -12048,6 +12079,7 @@ def get_employee_user(request: Request, db: Session):
     if not client or not client.is_active:
         raise HTTPException(status_code=403, detail="Account disabled")
     STAFF_VIEWER.set(emp.id)
+    CURRENT_CLIENT_ID.set(client.id)
     return emp
 
 
@@ -27168,7 +27200,8 @@ def export_sub_bill(bill_id: int, request: Request, db: Session = Depends(get_db
     bill = sub_bill_or_404(db, client.id, bill_id)
     if SHEET_AS_PDF.get() is not None:
         return form_pdf_response(sub_bill_form_spec(db, client, bill), bill.number)
-    data = sheet_forms.ra_bill_workbook(sub_bill_certificate(db, client, bill))
+    cert = sub_bill_certificate(db, client, bill)
+    data = sheet_forms.ra_bill_workbook(cert, cert.get("company"))
     return Response(content=data,
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": 'attachment; filename="sub_bill_%s.xlsx"'
@@ -35223,6 +35256,7 @@ def download_backup(request: Request, files: int = 0, db: Session = Depends(get_
 # ============================================================================
 
 import form_pdf
+import identity
 
 DOC_SIGNATORIES = (("prepared", "Prepared By", "QS"), ("proposed", "Proposed By", "GM"),
                    ("recommended", "Recommended By", "Project Coordinator"),
@@ -35318,6 +35352,23 @@ def letterhead(db, client, unit_id=None):
             "address": (unit.address if unit else "") or company_address(db, client),
             "gstin": gstin, "pan": pan, "state": _state_line(gstin),
             "logo_url": (unit.logo_url if unit else "") or client.logo_url or ""}
+
+
+def company_identity(db, client, unit_id=None):
+    """The one company block every document and screen is headed with, and what of it is still missing."""
+    me = letterhead(db, client, unit_id)
+    me["missing"] = identity.missing_details(me)
+    return me
+
+
+@app.get("/api/company/identity")
+def company_identity_api(request: Request, db: Session = Depends(get_db)):
+    """The company as its documents show it. Anyone signed in may read it - it is on every page they print."""
+    client = get_client_user(request, db) if request.session.get("client_id") else None
+    if client is None:
+        emp = get_employee_user(request, db)
+        client = db.query(models.DBClient).filter(models.DBClient.id == emp.client_id).first()
+    return company_identity(db, client)
 
 
 def party_facts(gstin, pan, state=""):
@@ -36355,7 +36406,7 @@ def sub_bill_form_spec(db, client, bill):
             cells[0] = {"t": row["label"], "b": True}
             m_spans.append((0, r, 2, r))
         m_rows.append(cells)
-    blocks = [{"type": "banner", "lines": [x for x in top["banner"] if x[0]]},
+    blocks = [{"type": "banner", "logo": c["company"].get("logo_url"), "lines": [x for x in top["banner"] if x[0]]},
               {"type": "grid", "widths": W6, "rows": info_rows, "spans": info_spans},
               {"type": "grid", "widths": W6, "rows": m_rows, "spans": m_spans, "shade": m_shade, "head": 1},
               {"type": "words", "label": "AMOUNT IN WORDS:", "text": top["words"]},
@@ -36386,7 +36437,7 @@ def sub_bill_form_spec(db, client, bill):
                    {"t": "In this Bill", "b": True}, "", {"t": _dash(t["this"]), "b": True, "a": "R"}, "",
                    {"t": _dash(t["upto"]), "b": True, "a": "R"}, ""])
     a_spans += [(2, r, 4, r), (6, r, 7, r)]
-    blocks += [{"type": "banner", "lines": a["banner"]},
+    blocks += [{"type": "banner", "logo": c["company"].get("logo_url"), "lines": a["banner"]},
                {"type": "grid", "widths": [72, 56, 54], "rows": [list(x) for x in a["meta"]], "size": "small"},
                {"type": "grid", "widths": W12, "rows": a_rows, "spans": a_spans, "head": 2, "size": "small"},
                sigs(a["signatures"]),
@@ -36417,7 +36468,7 @@ def sub_bill_form_spec(db, client, bill):
                             row.get("remarks") or ""])
     if len(mb_rows) == 1:
         mb_rows.append(["", "Nothing measured is pinned to this bill."])
-    blocks += [{"type": "banner", "lines": m["banner"]},
+    blocks += [{"type": "banner", "logo": c["company"].get("logo_url"), "lines": m["banner"]},
                {"type": "grid", "widths": [110, 72], "rows": [list(x) for x in m["meta"]], "size": "small"},
                {"type": "grid", "widths": W10, "rows": mb_rows, "spans": mb_spans, "head": 1, "size": "small"},
                sigs(m["signatures"])]
@@ -37733,7 +37784,7 @@ def registration_form_spec(db, client, con):
              ("Contractor Signature", f["name"])]
     return {"title": "Sub Contractor Registration %s" % f["vendor_code"], "author": f["company"],
             "watermark": {"PENDING": "AWAITING APPROVAL", "REJECTED": "SENT BACK"}.get(f["status"], ""),
-            "blocks": [{"type": "banner", "lines": [(f["company"], "banner"),
+            "blocks": [{"type": "banner", "logo": letterhead(db, client).get("logo_url"), "lines": [(f["company"], "banner"),
                                                     ("SUB CONTRACTOR REGISTRATION FORM", "band"),
                                                     ("PROJECT: %s" % f["project"], "centrebold")]},
                        {"type": "grid", "widths": [70, 112], "rows": rows, "spans": spans, "shade": shade}]
@@ -37761,7 +37812,7 @@ def contractor_registration_pdf(con_id: int, request: Request, db: Session = Dep
 def contractor_registration_xlsx(con_id: int, request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     con = contractor_or_404(db, client.id, con_id)
-    data = sheet_forms.registration_workbook(registration_form_data(db, client, con))
+    data = sheet_forms.registration_workbook(registration_form_data(db, client, con), letterhead(db, client))
     name = re.sub(r"[^A-Za-z0-9]+", "_", "registration_%s" % (con.vendor_code or con.id)).strip("_")
     return Response(content=data,
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

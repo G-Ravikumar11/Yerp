@@ -325,11 +325,37 @@ def _banner(block, st):
         if style == "band":
             extra.append(("BACKGROUND", (0, len(rows) - 1), (0, len(rows) - 1), colors.HexColor(SHADE)))
             extra.append(("LINEABOVE", (0, len(rows) - 1), (0, len(rows) - 1), GRID, colors.black))
+    # The company's mark sits in the first lines beside the name, the rest of the band keeps the full width.
+    logo = _picture(block.get("logo"), 30 * mm, 16 * mm)
     t = Table(rows or [[""]], colWidths=[_W()])
     t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), GRID, colors.black),
                            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                            ("TOPPADDING", (0, 0), (-1, -1), 1.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)] + extra))
-    return t
+    if not logo or not rows:
+        return t
+    # Lines above the first band are the company's head: set them beside the logo.
+    head = [i for i, (_, style) in enumerate(block.get("lines") or []) if style == "band"]
+    top = head[0] if head else len(rows)
+    if top == 0:
+        return t
+    upper = Table(rows[:top], colWidths=[_W() - 36 * mm])
+    upper.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                               ("TOPPADDING", (0, 0), (-1, -1), 1.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
+    lower = Table(rows[top:], colWidths=[_W()]) if rows[top:] else None
+    if lower is not None:
+        lower.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                   ("TOPPADDING", (0, 0), (-1, -1), 1.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                                   ]
+                                  + [("BACKGROUND", (0, i - top), (0, i - top), colors.HexColor(SHADE))
+                                     for i in head if i >= top]
+                                  + [("LINEABOVE", (0, i - top), (0, i - top), GRID, colors.black) for i in head if i >= top]))
+    outer = Table([[upper, logo]] + ([[lower, ""]] if lower is not None else []), colWidths=[_W() - 36 * mm, 36 * mm])
+    outer.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), GRID, colors.black),
+                               ("ALIGN", (1, 0), (1, 0), "CENTER"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                               ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                               ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]
+                              + ([("SPAN", (0, 1), (1, 1))] if lower is not None else [])))
+    return outer
 
 
 def _grid(block, st):

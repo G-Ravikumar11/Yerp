@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
+import { Check, Circle } from 'lucide-react'
 import { Button, Field, Input, Select, Skeleton, Textarea } from '@/components/ui'
+import { MANDATORY, useIdentity } from '@/api/identity'
 import { PictureField } from '@/components/data/PictureField'
 import { useAction } from '@/lib/mutate'
 import { saveCompany, saveLogo, settingsKeys, useCompany, useLogo, type BankDetail } from '@/api/settings'
@@ -17,6 +19,31 @@ function parseBanks(raw: string | undefined): BankDetail[] {
   } catch {
     return [blankBank()]
   }
+}
+
+/** What every document carries, and which of it is still to be given. One list for the whole app. */
+function Mandatory() {
+  const { data } = useIdentity()
+  if (!data) return null
+  const lacking = new Set(data.missing.map((m) => m.toLowerCase()))
+  const missing = (label: string) => lacking.has(label.toLowerCase()) || (label === 'Company name' && lacking.has('company name'))
+  return (
+    <Section title="On every document" description="These are printed at the head of every work order, bill, purchase order, statement, form and Excel export - and shown across the app. All of them are needed.">
+      <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3" aria-label="Mandatory company details">
+        {MANDATORY.map(({ key, label }) => {
+          const lack = missing(label)
+          return (
+            <li key={key} className="flex items-center gap-2 text-sm">
+              {lack ? <Circle className="size-4 text-warning" aria-hidden /> : <Check className="size-4 text-success" aria-hidden />}
+              <span className={lack ? 'font-medium' : 'text-muted-foreground'}>{label}</span>
+              {lack && <span className="text-xs text-warning">missing</span>}
+              {!lack && key !== 'logo_url' && <span className="truncate text-xs text-muted-foreground">{String(data[key]).split(String.fromCharCode(10))[0].trim()}</span>}
+            </li>
+          )
+        })}
+      </ul>
+    </Section>
+  )
 }
 
 /** The company as it prints on documents: name, GSTIN, address, logo and the bank accounts. */
@@ -58,6 +85,7 @@ export default function CompanyTab() {
   if (q.isPending) return <Skeleton className="h-96 w-full" />
   return (
     <>
+      <Mandatory />
       <Section title="Company details" description="Printed on every work order, bill, purchase order and statement.">
         <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); save.mutate() }}>
           <Field label="Company name" htmlFor="co-name"><Input id="co-name" value={f.name} onChange={set('name')} /></Field>

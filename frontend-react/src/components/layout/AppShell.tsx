@@ -5,6 +5,7 @@ import { trailFor } from '@/lib/nav'
 import { useSession } from '@/lib/session'
 import { useUI } from '@/stores/ui'
 import { Button, Skeleton } from '@/components/ui'
+import { CompanyNotice } from '@/components/company/CompanyNotice'
 import { PageErrorBoundary } from './PageErrorBoundary'
 import { Sidebar, SIDEBAR_COLLAPSED, SIDEBAR_WIDTH } from './Sidebar'
 import { Topbar } from './Topbar'
@@ -60,6 +61,7 @@ export function AppShell() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
           >
+            {gated && !isLoading && !isAnonymous && !pathname.startsWith('/settings') && <CompanyNotice />}
             {gated && isLoading ? (
               <div className="space-y-4" role="status" aria-label="Loading">
                 <Skeleton className="h-9 w-64" />
