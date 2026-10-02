@@ -20733,6 +20733,116 @@ def wo_delete_order_now(order_id, request, db):
                                           " everywhere" if rep["counts"]["bills"] or rep["counts"]["measurements"] else "")}
 
 
+# --- Deleting the rest of the subcontract side: a bill, a vendor, a measurement ---------------------------
+#
+# Same rule as a work order: the owner's alone, with a preview of what goes, and what hangs off it goes with it.
+
+def _is_owner(request, db):
+    try:
+        return current_role(request, db) == "owner"
+    except HTTPException:
+        return False
+
+
+@app.get("/api/sub-bills/{bill_id}/delete-preview")
+def sub_bill_delete_preview(bill_id: int, request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    bill = sub_bill_or_404(db, client.id, bill_id)
+    paid = settled_on(db, client.id, "sub_bill", bill.id)
+    warnings = []
+    if paid > 0 or (bill.status or "") == "PAID":
+        warnings.append("%s is paid%s - the payments are deleted too." % (bill.number, " (%s)" % inr(paid) if paid > 0 else ""))
+    return {"numbers": [bill.number], "blockers": [], "warnings": warnings, "can_delete": True, "counts": {
+        "lines": db.query(models.DBSubBillLine).filter(models.DBSubBillLine.sub_bill_id == bill.id).count(),
+        "measurements": db.query(models.DBSubMeasurement).filter(models.DBSubMeasurement.sub_bill_id == bill.id).count()}}
+
+
+@app.delete("/api/sub-bills/{bill_id}")
+def sub_bill_delete(bill_id: int, request: Request, db: Session = Depends(get_db)):
+    """Takes the bill, its approval route and its payments away. What it measured goes back to waiting
+    for the next bill - the work was done; only the claim for it is removed."""
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    bill = sub_bill_or_404(db, client.id, bill_id)
+    number = bill.number
+    drop = lambda q: q.delete(synchronize_session=False)
+    db.query(models.DBSubMeasurement).filter(models.DBSubMeasurement.sub_bill_id == bill.id).update(
+        {"sub_bill_id": None}, synchronize_session=False)
+    release_material_recovery(db, client.id, bill.id)
+    drop(db.query(models.DBSubBillLine).filter(models.DBSubBillLine.sub_bill_id == bill.id))
+    drop(db.query(models.DBApprovalChain).filter(
+        models.DBApprovalChain.entity_type == "sub_bill", models.DBApprovalChain.entity_id == bill.id))
+    drop(db.query(models.DBMoneyEntry).filter(
+        models.DBMoneyEntry.doc_type == "sub_bill", models.DBMoneyEntry.doc_id == bill.id))
+    drop_alerts_about(db, "sub_bill", [bill.id])
+    cascade_delete_referrers(db, "sub_bills", [bill.id])
+    drop(db.query(models.DBSubBill).filter(models.DBSubBill.id == bill.id))
+    log_audit(db, client.id, "sub_bill_deleted", "sub_bill", bill_id, number, "Deleted by the owner", request)
+    db.commit()
+    return {"ok": True, "message": "%s deleted. What it measured is free to be billed again." % number}
+
+
+def _vendor_report(db, client, con):
+    orders = db.query(models.DBSubcontractOrder).filter(
+        models.DBSubcontractOrder.client_id == client.id, models.DBSubcontractOrder.contractor_id == con.id).all()
+    ids = sorted({i for o in orders for i in wo_chain_ids(db, client.id, o)})
+    bills = db.query(models.DBSubBill).filter(models.DBSubBill.client_id == client.id, models.DBSubBill.contractor_id == con.id).count()
+    money_rows = db.query(models.DBMoneyEntry).filter(
+        models.DBMoneyEntry.client_id == client.id, models.DBMoneyEntry.party_type == "contractor",
+        models.DBMoneyEntry.party_id == con.id, models.DBMoneyEntry.voided.is_(False)).all()
+    paid = money(sum(abs(e.amount or 0) for e in money_rows))
+    logins = db.query(models.DBPortalUser).filter(
+        models.DBPortalUser.client_id == client.id, models.DBPortalUser.party_type == "contractor",
+        models.DBPortalUser.party_id == con.id).count()
+    return ids, bills, paid, logins
+
+
+def _vendor_or_404(db, client, con_id):
+    con = db.query(models.DBContractor).filter(models.DBContractor.id == con_id, models.DBContractor.client_id == client.id).first()
+    if not con:
+        raise HTTPException(404, "Vendor not found")
+    return con
+
+
+@app.get("/api/wo/contractors/{con_id}/delete-preview")
+def vendor_delete_preview(con_id: int, request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    con = _vendor_or_404(db, client, con_id)
+    ids, bills, paid, logins = _vendor_report(db, client, con)
+    warnings = ["%s has %s paid against it - those payments are deleted too." % (con.company_name, inr(paid))] if paid > 0 else []
+    return {"numbers": [con.company_name], "blockers": [], "warnings": warnings, "can_delete": True,
+            "counts": {"versions": len(ids), "bills": bills, "logins": logins}}
+
+
+@app.delete("/api/wo/contractors/{con_id}")
+def vendor_delete(con_id: int, request: Request, db: Session = Depends(get_db)):
+    """A vendor goes with every work order, bill, measurement, payment and portal login that is theirs."""
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    con = _vendor_or_404(db, client, con_id)
+    name = con.company_name
+    ids, _, _, _ = _vendor_report(db, client, con)
+    for oid in ids:
+        if db.query(models.DBSubcontractOrder).filter(models.DBSubcontractOrder.id == oid).first():
+            wo_delete_order_now(oid, request, db)       # each order with everything attached, as when deleted by itself
+    drop = lambda q: q.delete(synchronize_session=False)
+    rel_ids = [r.id for r in db.query(models.DBRetentionRelease.id).filter(models.DBRetentionRelease.contractor_id == con.id).all()]
+    if rel_ids:
+        drop(db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.doc_type == "retention_release", models.DBMoneyEntry.doc_id.in_(rel_ids)))
+        drop(db.query(models.DBRetentionRelease).filter(models.DBRetentionRelease.id.in_(rel_ids)))
+    drop(db.query(models.DBMoneyEntry).filter(
+        models.DBMoneyEntry.client_id == client.id, models.DBMoneyEntry.party_type == "contractor", models.DBMoneyEntry.party_id == con.id))
+    drop(db.query(models.DBPortalUser).filter(
+        models.DBPortalUser.client_id == client.id, models.DBPortalUser.party_type == "contractor", models.DBPortalUser.party_id == con.id))
+    cascade_delete_referrers(db, "contractors", [con.id])
+    drop(db.query(models.DBContractor).filter(models.DBContractor.id == con.id))
+    log_audit(db, client.id, "vendor_deleted", "contractor", con_id, name, "Deleted with their orders and bills", request)
+    db.commit()
+    return {"ok": True, "message": "%s deleted, with their orders, bills and payments." % name}
+
+
 WIPE_PHRASE = "DELETE ALL WORK ORDERS"
 
 
@@ -26365,14 +26475,77 @@ def delete_sub_measurement(entry_id: int, request: Request, db: Session = Depend
         models.DBSubMeasurement.client_id == client.id).first()
     if not entry:
         raise HTTPException(404, "Entry not found")
+    bill = None
     if entry.sub_bill_id:
-        raise HTTPException(409, "This measurement has been billed. Record a "
-                                 "correcting entry instead.")
+        # The owner may take a measurement off a bill that is still a draft; a sent bill has to be deleted first.
+        bill = db.query(models.DBSubBill).filter(models.DBSubBill.id == entry.sub_bill_id).first()
+        if not (bill and (bill.status or "") == "DRAFT" and _is_owner(request, db)):
+            raise HTTPException(409, "This measurement is on %s, which has been %s. %s" % (
+                bill.number if bill else "a bill", ((bill.status if bill else "") or "sent").lower(),
+                "Delete that bill first." if _is_owner(request, db) else "Ask the owner, or record a correcting entry instead."))
     db.query(models.DBMeasurementDimension).filter(
         models.DBMeasurementDimension.sub_measurement_id == entry.id).delete()
+    drop_files_of(db, "measurement", [entry.id])
     db.delete(entry)
+    db.flush()
+    if bill is not None:
+        order = db.query(models.DBSubcontractOrder).filter(models.DBSubcontractOrder.id == bill.order_id).first()
+        draw_sub_bill_lines(db, bill, order)
+        recost_sub_bill(db, bill)
     db.commit()
     return {"ok": True, "message": "Entry removed."}
+
+
+@app.put("/api/sub-mb/entries/{entry_id}")
+def update_sub_measurement(entry_id: int, body: SubMeasurementIn, request: Request, db: Session = Depends(get_db)):
+    """Change an entry's calculation after it was imported or typed: its lines, blocks, date, place or
+    total. The quantity is worked out again and held to the same ceiling as a new entry. An entry on a bill
+    that has been sent is not changed under it; one on a draft bill is, and the bill is drawn up again."""
+    client, actor_id, actor_name = wo_actor(request, db, "site.record")
+    entry = db.query(models.DBSubMeasurement).filter(
+        models.DBSubMeasurement.id == entry_id, models.DBSubMeasurement.client_id == client.id).first()
+    if not entry:
+        raise HTTPException(404, "Entry not found")
+    order = wo_or_404(db, client.id, entry.order_id)
+    item = db.query(models.DBSubcontractItem).filter(models.DBSubcontractItem.id == entry.item_id).first()
+    bill = None
+    if entry.sub_bill_id:
+        bill = db.query(models.DBSubBill).filter(models.DBSubBill.id == entry.sub_bill_id).first()
+        if not (bill and (bill.status or "") == "DRAFT"):
+            raise HTTPException(409, "This measurement is on %s, which has been %s. Delete that bill to change it." % (
+                bill.number if bill else "a bill", ((bill.status if bill else "") or "sent").lower()))
+    if (order.status or "") not in ("APPROVED", "EXECUTED"):
+        raise HTTPException(409, "Nothing is measured against an order that has not been approved.")
+    multiplier = sub_measure_multiplier(getattr(body, "multiplier", 1))
+    quantity = money(body.quantity or 0)
+    if body.dimensions:
+        quantity = money(dimension_total(body.dimensions))
+    quantity = money(quantity * multiplier)
+    if not quantity:
+        raise HTTPException(400, "A measurement of nothing is not a measurement")
+    if quantity > 0 and item is not None:
+        done = money(sub_measured_to_date(db, order.id).get(item.id, 0.0) - (entry.quantity or 0.0))
+        ceiling = item_ceiling(item)
+        if money(done + quantity) > ceiling + 0.0001:
+            raise HTTPException(409, "%s: %s already measured elsewhere; %s would make %s against %s ordered%s. Amend the order to measure beyond it." % (
+                item.activity_no or "Item", done, quantity, money(done + quantity), money(item.quantity),
+                " (+%g%% tolerance = %s)" % (item.tolerance_percent, ceiling) if item.tolerance_percent else ""))
+    entry.quantity, entry.multiplier = quantity, multiplier
+    entry.measured_on = body.measured_on or entry.measured_on
+    entry.mb_ref = (body.mb_ref or "").strip()
+    entry.location = (body.location or "").strip()[:200]
+    entry.remarks = (body.remarks or "").strip()
+    db.query(models.DBMeasurementDimension).filter(
+        models.DBMeasurementDimension.sub_measurement_id == entry.id).delete(synchronize_session=False)
+    write_dimensions(db, client.id, body.dimensions, sub_measurement_id=entry.id)
+    db.flush()
+    if bill is not None:
+        draw_sub_bill_lines(db, bill, order)
+        recost_sub_bill(db, bill)
+    log_audit(db, client.id, "sub_measurement_changed", "subcontract_order", order.id, order.wo_number or "",
+              "%s %s" % (entry.activity_no or "", quantity), request)
+    db.commit()
+    return {"ok": True, "quantity": quantity, "message": "Entry updated."}
 
 
 # --- The bills ---------------------------------------------------------------

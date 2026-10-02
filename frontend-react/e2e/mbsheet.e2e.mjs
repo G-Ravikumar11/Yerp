@@ -27,7 +27,7 @@ await sleep(1200)
 check('the import recorded the sheet', (await api(page, 'GET', `/api/sub-mb/${o.id}`)).data.entries.length >= 3)
 
 await open(page, `/subcontractors/measurement-book?order=${o.id}`)
-await clickText(page, '[role=tab]', 'Measurement sheet')
+await clickText(page, '[role=tab]', 'Excel layout')
 await page.waitForSelector('[aria-label="Measurement sheet"]')
 const t = await page.$eval('[aria-label="Measurement sheet"]', (e) => e.textContent.replace(/\s+/g, ' '))
 check('the sections are shown with their headings', /I\s*Laying of tiles/.test(t) && /II\s*Internal Painting Work/.test(t), t.slice(0, 160))

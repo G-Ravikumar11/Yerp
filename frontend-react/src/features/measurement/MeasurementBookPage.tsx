@@ -13,6 +13,7 @@ import { formatDate, formatQty } from '@/lib/format'
 import { cn, compactINR, formatINR } from '@/lib/utils'
 import { ImportBookModal } from './ImportBookModal'
 import { SheetView } from './SheetView'
+import { EntryDetail, calcSummary } from './EntryDetail'
 import { MeasureModal } from './MeasureModal'
 import { QuickMeasure, type QuickMeasureHandle } from './QuickMeasure'
 import { WorkOrderPicker } from './WorkOrderPicker'
@@ -101,14 +102,16 @@ export default function MeasurementBookPage() {
   const book = useMeasurementBook(chosen)
   const [measuring, setMeasuring] = useState<MbLine | null>(null)
   const [importing, setImporting] = useState(false)
-  // The book reads like the Excel sheet by default; the flat list is one tab away. The choice is remembered.
+  // The entries are listed as they always were; the Excel-style layout is one tab away. The choice is remembered.
   const [view, setViewState] = useState<'sheet' | 'list'>(() => {
     try {
-      return localStorage.getItem('yerp.mb.view') === 'list' ? 'list' : 'sheet'
+      return localStorage.getItem('yerp.mb.view') === 'sheet' ? 'sheet' : 'list'
     } catch {
-      return 'sheet'
+      return 'list'
     }
   })
+  const [opened, setOpened] = useState<MbEntry | null>(null)
+  const [changing, setChanging] = useState<MbEntry | null>(null)
   const setView = (v: 'sheet' | 'list') => {
     setViewState(v)
     try {
@@ -214,6 +217,7 @@ export default function MeasurementBookPage() {
         )
       },
     },
+    { id: 'calc', header: 'Calculation', hideBelow: 'xl', cell: (e) => <span className="line-clamp-2 max-w-xs font-mono text-xs text-muted-foreground">{calcSummary(e) || '-'}</span> },
     { id: 'qty', header: 'Quantity', align: 'right', sort: (e) => e.quantity, cell: (e) => <span className={cn('font-medium', e.quantity < 0 && 'text-danger')}>{formatQty(e.quantity)}</span> },
     { id: 'ref', header: 'Ref', hideBelow: 'xl', cell: (e) => <span className="font-mono text-xs">{e.mb_ref || '-'}</span> },
     { id: 'who', header: 'Recorded by', hideBelow: 'xl', cell: (e) => e.recorded_by_name },
@@ -225,7 +229,7 @@ export default function MeasurementBookPage() {
       width: '3rem',
       cell: (e) =>
         record && !e.billed ? (
-          <Button variant="ghost" size="icon-sm" aria-label="Remove this entry" onClick={() => setRemoving(e)}>
+          <Button variant="ghost" size="icon-sm" aria-label="Remove this entry" onClick={(ev) => { ev.stopPropagation(); setRemoving(e) }}>
             <Trash2 />
           </Button>
         ) : null,
@@ -346,18 +350,41 @@ export default function MeasurementBookPage() {
 
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-semibold">Measurement entries</h2>
-            <Tabs label="How to show the entries" value={view} onChange={setView} items={[{ value: 'sheet', label: 'Measurement sheet' }, { value: 'list', label: 'Entries' }]} />
+            <Tabs label="How to show the entries" value={view} onChange={setView} items={[{ value: 'list', label: 'Entries' }, { value: 'sheet', label: 'Excel layout' }]} />
           </div>
           <FilterBar filters={filters} placeholder="Search entries..." />
           {view === 'sheet' ? <SheetView entries={filters.filtered} byItem={byItem} /> : <DataTable
             label="Measurement entries"
             rows={filters.filtered}
             columns={entryColumns}
+            onRowClick={setOpened}
             rowKey={(e) => e.id}
             loading={book.isPending}
             empty={filters.active ? 'Nothing matches those filters.' : 'Nothing measured yet.'}
           />}
 
+          <EntryDetail
+            entry={opened}
+            line={opened ? byItem.get(opened.item_id) : undefined}
+            canChange={record && !opened?.billed}
+            onClose={() => setOpened(null)}
+            onEdit={(e) => {
+              setOpened(null)
+              setChanging(e)
+            }}
+            onRemove={(e) => {
+              setOpened(null)
+              setRemoving(e)
+            }}
+          />
+          <MeasureModal
+            orderId={chosen}
+            order={order}
+            jobCode={order ? jobCode(order) : ''}
+            line={changing ? byItem.get(changing.item_id) ?? null : null}
+            entry={changing}
+            onClose={() => setChanging(null)}
+          />
           <MeasureModal
             orderId={chosen}
             order={order}

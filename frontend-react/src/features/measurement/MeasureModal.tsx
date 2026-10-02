@@ -1,14 +1,14 @@
 import { useMemo, useState } from 'react'
 import { DataGrid } from '@/components/grid'
 import { Button, Field, Input, Modal, NumField, Tabs } from '@/components/ui'
-import { mbKeys, recordUrl, type MbLine } from '@/api/mb'
+import { mbKeys, recordUrl, type MbEntry, type MbLine } from '@/api/mb'
 /** The work order as the window shows it: its number, who it is with, and where. */
 export interface MeasureOrder {
   wo_number: string
   contractor: string
   project: string
 }
-import { blankDim, dimTotal, type DimLine } from '@/lib/measure'
+import { blankDim, dimTotal, evalCalc, type DimLine } from '@/lib/measure'
 import { formatQty, today } from '@/lib/format'
 import { useAction } from '@/lib/mutate'
 import { sendOrQueue } from '@/stores/offline'
@@ -38,10 +38,10 @@ const subTarget = (orderId: number): MeasureTarget => ({ url: recordUrl(orderId)
  * the field book, worked out as they are typed, or - for a count - just a
  * total. With no signal it is kept on the device and sent when one returns.
  */
-export function MeasureModal({ orderId, order, jobCode, line, onClose, target }: { orderId: number; order?: MeasureOrder; jobCode?: string; line: MbLine | null; onClose: () => void; target?: MeasureTarget }) {
+export function MeasureModal({ orderId, order, jobCode, line, entry, onClose, target }: { orderId: number; order?: MeasureOrder; jobCode?: string; line: MbLine | null; /** An entry already in the book, to change its calculation. */ entry?: MbEntry | null; onClose: () => void; target?: MeasureTarget }) {
   return (
-    <Modal open={!!line} onOpenChange={(o) => !o && onClose()} size="xl" title={line ? `Measure ${[line.item_code, line.activity_no].filter(Boolean).join(" ")} ${line.description}` : 'Measure'} description={line ? allowance(line, !!target?.client) : undefined}>
-      {line && <MeasureForm key={line.item_id} orderId={orderId} order={order} jobCode={jobCode} line={line} onClose={onClose} target={target ?? subTarget(orderId)} />}
+    <Modal open={!!line} onOpenChange={(o) => !o && onClose()} size="xl" title={line ? `${entry ? 'Change the measurement of' : 'Measure'} ${[line.item_code, line.activity_no].filter(Boolean).join(' ')} ${line.description}` : 'Measure'} description={line ? allowance(line, !!target?.client) : undefined}>
+      {line && <MeasureForm key={`${line.item_id}-${entry?.id ?? 0}`} entry={entry ?? undefined} orderId={orderId} order={order} jobCode={jobCode} line={line} onClose={onClose} target={target ?? subTarget(orderId)} />}
     </Modal>
   )
 }
@@ -51,20 +51,23 @@ const allowance = (l: MbLine, client: boolean) =>
   (l.tolerance_percent ? `; up to ${formatQty(l.max_quantity)} allowed with ${l.tolerance_percent}% tolerance` : '') +
   (client ? '. Past that the work is a variation, raised from the book.' : '. Past that the order is amended.')
 
-function MeasureForm({ orderId, order, jobCode, line, onClose, target }: { orderId: number; order?: MeasureOrder; jobCode?: string; line: MbLine; onClose: () => void; target: MeasureTarget }) {
-  const [mode, setMode] = useState<Mode>('dims')
-  const [dims, setDims] = useState<DimLine[]>([])
-  const [total, setTotal] = useState(0)
-  const [blocks, setBlocks] = useState(1)
-  const [on, setOn] = useState(today())
-  const [ref, setRef] = useState('')
-  const [where, setWhere] = useState('')
-  const [remarks, setRemarks] = useState('')
+function MeasureForm({ orderId, order, jobCode, line, entry, onClose, target }: { orderId: number; order?: MeasureOrder; jobCode?: string; line: MbLine; entry?: MbEntry; onClose: () => void; target: MeasureTarget }) {
+  const lined = entry?.dimensions.some((d) => !d.is_heading) ?? true
+  const [mode, setMode] = useState<Mode>(lined ? 'dims' : 'total')
+  const [dims, setDims] = useState<DimLine[]>(() => (entry && lined ? entry.dimensions.map((d) => toDimLine({ ...d, is_heading: !!d.is_heading })) : []))
+  const [total, setTotal] = useState(entry && !lined ? Math.round((entry.quantity / (entry.multiplier || 1)) * 1000) / 1000 : 0)
+  const [blocks, setBlocks] = useState(entry?.multiplier || 1)
+  const [on, setOn] = useState(entry?.measured_on || today())
+  const [ref, setRef] = useState(entry?.mb_ref ?? '')
+  const [where, setWhere] = useState(entry?.location ?? '')
+  const [remarks, setRemarks] = useState(entry?.remarks ?? '')
+  const [calcLabel, setCalcLabel] = useState('')
+  const [calcText, setCalcText] = useState('')
   const [witness, setWitness] = useState('')
 
   const one = mode === 'dims' ? dimTotal(dims) : total
   const quantity = Math.round(one * blocks * 1000) / 1000
-  const after = (line.measured_to_date ?? 0) + quantity
+  const after = (line.measured_to_date ?? 0) - (entry?.quantity ?? 0) + quantity
   const over = quantity > 0 && after > (line.max_quantity ?? Infinity) + 0.0001
 
   const save = useAction(
@@ -85,10 +88,10 @@ function MeasureForm({ orderId, order, jobCode, line, onClose, target }: { order
           : { quantity: total }),
       }
       const sent = await sendOrQueue<{ message: string }>({
-        method: 'POST',
-        url: target.url,
+        method: entry ? 'PUT' : 'POST',
+        url: entry ? `/api/sub-mb/entries/${entry.id}` : target.url,
         body,
-        label: `Measured ${formatQty(quantity)} ${line.uom ?? ''} against ${line.activity_no}`.trim(),
+        label: `${entry ? 'Changed' : 'Measured'} ${formatQty(quantity)} ${line.uom ?? ''} against ${line.activity_no}`.trim(),
       })
       if (sent.queued) {
         toast.info('No connection - kept on this device and sent when it returns.')
@@ -100,6 +103,17 @@ function MeasureForm({ orderId, order, jobCode, line, onClose, target }: { order
   )
 
   const columns = useMemo(() => dimColumns, [])
+
+  /** A custom calculation: worked out from what the lines come to, and kept as a line of its own. */
+  const lineTotal = dimTotal(dims)
+  const calc = calcText.trim() ? evalCalc(calcText, lineTotal) : null
+  const addCalc = () => {
+    if (calc === null || calc === 0) return
+    const label = calcLabel.trim() || calcText.trim()
+    setDims((rows) => [...rows.filter((r) => r.particulars.trim() || [r.nos, r.nom, r.length, r.breadth, r.depth].some((v) => v !== null)), { ...blankDim(), particulars: label, nos: Math.abs(calc), deduct: calc < 0 }])
+    setCalcLabel('')
+    setCalcText('')
+  }
 
   /** Lines read from a sheet replace what is in the grid; nothing is recorded until the person says so. */
   const fromSheet = (entry: SheetEntry, source: string) => {
@@ -125,7 +139,7 @@ function MeasureForm({ orderId, order, jobCode, line, onClose, target }: { order
         )}
         <ItemFacts line={line} />
       </div>
-      {!target.client && <SheetFill orderId={orderId} itemId={line.item_id} room={(line.max_quantity ?? Infinity) - (line.measured_to_date ?? 0)} onRecorded={onClose} itemName={[line.item_code, line.activity_no].filter(Boolean).join(" ") || line.description} onUse={fromSheet} />}
+      {!target.client && !entry && <SheetFill orderId={orderId} itemId={line.item_id} room={(line.max_quantity ?? Infinity) - (line.measured_to_date ?? 0)} onRecorded={onClose} itemName={[line.item_code, line.activity_no].filter(Boolean).join(" ") || line.description} onUse={fromSheet} />}
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <Tabs
           label="How it is measured"
@@ -142,7 +156,23 @@ function MeasureForm({ orderId, order, jobCode, line, onClose, target }: { order
       </div>
 
       {mode === 'dims' ? (
-        <DataGrid aria-label="Dimensions" columns={columns} rows={dims} onRowsChange={(r) => setDims(r)} newRow={blankDim} minRows={5} maxHeight={300} rowClassName={(r) => (r.heading ? 'font-semibold' : undefined)} />
+        <>
+          <DataGrid aria-label="Dimensions" columns={columns} rows={dims} onRowsChange={(r) => setDims(r)} newRow={blankDim} minRows={5} maxHeight={300} rowClassName={(r) => (r.heading ? 'font-semibold' : undefined)} />
+          <div className="mt-3 rounded-lg border border-dashed border-border p-3" aria-label="Custom calculation">
+            <p className="mb-2 text-[13px] font-medium">Custom calculation</p>
+            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto] sm:items-end">
+              <Field label="Name" htmlFor="m-calc-label">
+                <Input id="m-calc-label" value={calcLabel} onChange={(e) => setCalcLabel(e.target.value)} placeholder="Hold 5% for finishes" />
+              </Field>
+              <Field label="Calculation" htmlFor="m-calc" hint={calcText.trim() ? (calc === null ? 'Not understood. Try total * 5%' : `= ${formatQty(calc)}${calc < 0 ? ' (taken away)' : ''}`) : `"total" is what the lines above come to (${formatQty(lineTotal)}). Try -total * 5%, (total - 12.5) / 2 or 3 x 4.5`}>
+                <Input id="m-calc" value={calcText} onChange={(e) => setCalcText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCalc() } }} placeholder="-total * 5%" />
+              </Field>
+              <Button variant="outline" disabled={calc === null || calc === 0} onClick={addCalc}>
+                Add as a line
+              </Button>
+            </div>
+          </div>
+        </>
       ) : (
         <div className="max-w-xs">
           <Field label={`Quantity (${line.uom ?? ''})`} htmlFor="m-total">
@@ -191,7 +221,7 @@ function MeasureForm({ orderId, order, jobCode, line, onClose, target }: { order
             Cancel
           </Button>
           <Button loading={save.isPending} disabled={quantity === 0} onClick={() => save.mutate()}>
-            Record it in the book
+            {entry ? 'Save the change' : 'Record it in the book'}
           </Button>
         </div>
       </div>

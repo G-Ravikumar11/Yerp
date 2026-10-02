@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils'
 const HELD = /^held back/i
 
 /** What one line comes to: the figures multiplied, a deduction taken away. */
-const lineQty = (d: MbDimension) => {
+export const lineQty = (d: MbDimension) => {
   if (d.is_heading) return null
   const parts = [d.nos, d.nom, d.length, d.breadth, d.depth].filter((v): v is number => v !== null && v !== undefined)
   if (!parts.length) return d.quantity ?? null

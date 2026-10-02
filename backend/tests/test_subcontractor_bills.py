@@ -189,11 +189,12 @@ def test_cancelling_a_bill_returns_the_work_to_be_claimed(tenant):
     assert raise_bill(tenant, order["id"]).status_code == 200
 
 
-def test_a_billed_measurement_cannot_be_deleted(tenant):
+def test_a_measurement_on_a_sent_bill_cannot_be_deleted(tenant):
     order = live_order(tenant)
     item = book(tenant, order["id"])["lines"][0]["item_id"]
     entry = measure(tenant, order["id"], item, 100)
-    raise_bill(tenant, order["id"])
+    billed = raise_bill(tenant, order["id"]).json()["bill"]
+    assert tenant.post("/api/sub-bills/%d/submit" % billed["id"], json={}).status_code == 200
     entries = book(tenant, order["id"])["entries"]
     assert entries[0]["billed"] is True
     assert tenant.delete("/api/sub-mb/entries/%d" % entries[0]["id"]).status_code == 409

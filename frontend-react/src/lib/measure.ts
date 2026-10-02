@@ -51,3 +51,76 @@ export function dimTotal(lines: readonly DimLine[]): number {
   const sum = lines.reduce((total, l) => total + (dimQty(l) ?? 0), 0)
   return Math.round(sum * 1000) / 1000
 }
+
+/**
+ * A custom calculation, written the way it is said: `total * 5%`, `5% of total`, `(total - 12.5) / 2`.
+ * `total` is what the lines above come to for one block. Only numbers, + - * / x of ( ) % and the word
+ * `total` are understood; anything else gives null rather than a guess.
+ */
+export function evalCalc(text: string, total: number): number | null {
+  const src = text
+    .toLowerCase()
+    .split('×').join('*')
+    .split('÷').join('/')
+    .split('−').join('-')
+    .split(',').join('')
+  const tokens: string[] = []
+  const re = /\s*(\d+\.?\d*|\.\d+|total|of|[-+*/()%x])/gy
+  let at = 0
+  for (;;) {
+    re.lastIndex = at
+    const m = re.exec(src)
+    if (!m) break
+    tokens.push(m[1] === 'of' || m[1] === 'x' ? '*' : m[1])
+    at = re.lastIndex
+  }
+  if (src.slice(at).trim() || !tokens.length) return null
+  let i = 0
+  const peek = () => tokens[i]
+  const atom = (): number | null => {
+    const t = tokens[i++]
+    if (t === undefined) return null
+    if (t === '(') {
+      const v = sum()
+      if (tokens[i++] !== ')') return null
+      return percent(v)
+    }
+    if (t === '-') {
+      const v = atom()
+      return v === null ? null : -v
+    }
+    if (t === '+') return atom()
+    const v = t === 'total' ? total : Number(t)
+    return Number.isFinite(v) ? percent(v) : null
+  }
+  const percent = (v: number | null): number | null => {
+    while (v !== null && peek() === '%') {
+      i++
+      v = v / 100
+    }
+    return v
+  }
+  const product = (): number | null => {
+    let v = atom()
+    while (v !== null && (peek() === '*' || peek() === '/')) {
+      const op = tokens[i++]
+      const r = atom()
+      if (r === null || (op === '/' && r === 0)) return null
+      v = op === '*' ? v * r : v / r
+    }
+    return v
+  }
+  const sum = (): number | null => {
+    let v = product()
+    while (v !== null && (peek() === '+' || peek() === '-')) {
+      const op = tokens[i++]
+      const r = product()
+      if (r === null) return null
+      v = op === '+' ? v + r : v - r
+    }
+    return v
+  }
+  const result = sum()
+  if (result === null || i !== tokens.length || !Number.isFinite(result)) return null
+  return Math.round(result * 1000) / 1000
+}
