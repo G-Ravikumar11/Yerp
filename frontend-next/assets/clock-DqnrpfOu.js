@@ -1,0 +1,1 @@
+import{jt as e}from"./index-Ci0q_vVE.js";var t={name:`clock`,size:24,node:[[`circle`,{cx:`12`,cy:`12`,r:`10`,key:`1mglay`}],[`path`,{d:`M12 6v6l4 2`,key:`mmk7yg`}]]};t.node;var n=e(t);export{n as t};

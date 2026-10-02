@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { api, clickText, fill, launch, open, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
+import { api, clickText, fill, launch, open, setValue, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
 
 const { page, check, done } = await launch({ allow: [/400 POST \/api\/wo\/contractors/] })
 await signIn(page)
@@ -42,7 +42,7 @@ const file = await api(page, 'GET', `/api/wo/contractors/${made.id}/documents/gs
 check('the stored document can be read back', file.status === 200)
 
 // --- Open the form again ------------------------------------------------------------------------------
-await fill(page, 'input[aria-label="Search vendors"]', 'E2E')
+await fill(page, 'input[aria-label=Search]', 'E2E')
 await sleep(700)
 check('search narrows the register', (await rows()) === 1)
 await clickText(page, 'table[aria-label=Vendors] tbody tr button', 'Form')
@@ -51,9 +51,9 @@ check('the form reopens with what was saved, and a link to the document', (await
 await page.keyboard.press('Escape')
 
 // --- Tabs ------------------------------------------------------------------------------------------------
-await fill(page, 'input[aria-label="Search vendors"]', '')
-await clickText(page, 'button[role=tab]', 'Registered')
+await fill(page, 'input[aria-label=Search]', '')
+await setValue(page, 'select[aria-label=Status]', 'Registered')
 await sleep(600)
-check('the Registered tab lists only registered gangs', (await page.$$eval('table[aria-label=Vendors] tbody tr', (r) => r.every((x) => x.textContent.includes('Registered')))))
+check('filtering to Registered lists only registered gangs', (await page.$$eval('table[aria-label=Vendors] tbody tr', (r) => r.every((x) => x.textContent.includes('Registered')))))
 
 await done()

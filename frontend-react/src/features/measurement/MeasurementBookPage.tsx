@@ -109,12 +109,20 @@ export default function MeasurementBookPage() {
   const byItem = new Map(lines.map((l) => [l.item_id, l]))
   const entries = book.data?.entries ?? []
   const filters = useListFilters(entries, {
-    search: (e) => [e.activity_no, byItem.get(e.item_id)?.description, e.location, e.mb_ref, e.remarks, e.recorded_by_name, e.dimensions.map((d) => d.particulars).join(' ')].join(' '),
+    search: (e) => [e.activity_no, byItem.get(e.item_id)?.item_code, byItem.get(e.item_id)?.description, e.location, e.mb_ref, e.remarks, e.recorded_by_name, e.dimensions.map((d) => d.particulars).join(' ')].join(' '),
+    status: (e) => (e.billed ? 'Billed' : 'Not billed'),
     date: (e) => e.measured_on,
+  })
+  // Each item of the order: by code, activity or words, and by how far the work has got.
+  const progress = (l: MbLine) => (l.is_header ? '' : l.over_measured ? 'Over measured' : !l.measured_to_date ? 'Not started' : (l.balance_to_measure ?? 0) <= 0 ? 'Complete' : 'In progress')
+  const itemFilters = useListFilters(lines, {
+    search: (l) => [l.item_code, l.activity_no, l.description, l.uom].join(' '),
+    status: progress,
   })
   const s = book.data?.summary
 
   const itemColumns: TableColumn<MbLine>[] = [
+    { id: 'code', header: 'Item code', width: '7rem', cell: (l) => <span className="font-mono text-[13px] font-semibold">{l.is_header ? '' : l.item_code || '-'}</span> },
     {
       id: 'activity',
       header: 'Activity',
@@ -165,6 +173,7 @@ export default function MeasurementBookPage() {
       cell: (e) => (
         <div className="max-w-xs">
           <div className="truncate">
+            {byItem.get(e.item_id)?.item_code && <span className="mr-1.5 font-mono text-xs font-semibold">{byItem.get(e.item_id)?.item_code}</span>}
             <span className="mr-1.5 font-mono text-xs text-muted-foreground">{e.activity_no}</span>
             {byItem.get(e.item_id)?.description}
           </div>
@@ -315,7 +324,8 @@ export default function MeasurementBookPage() {
           </StatGrid>
 
           <h2 className="mb-3 text-lg font-semibold">Items on the order - measure each one</h2>
-          <DataTable label="Items on the order" rows={lines} columns={itemColumns} rowKey={(l) => l.item_id} loading={book.isPending} empty="This order has no schedule lines." className="mb-8" />
+          <FilterBar filters={itemFilters} placeholder="Search by item code, activity or words..." />
+          <DataTable label="Items on the order" rows={itemFilters.filtered} columns={itemColumns} rowKey={(l) => l.item_id} loading={book.isPending} empty={itemFilters.active ? 'No item matches those filters.' : 'This order has no schedule lines.'} className="mb-8" />
 
           <h2 className="mb-3 text-lg font-semibold">Measurement entries</h2>
           <FilterBar filters={filters} placeholder="Search entries..." />

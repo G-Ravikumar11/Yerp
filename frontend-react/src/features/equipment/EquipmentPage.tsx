@@ -12,6 +12,7 @@ import { MachineDetail } from './MachineDetail'
 import { MachineModal } from './MachineModal'
 import { MoveModal } from './MoveModal'
 import { ServiceModal } from './ServiceModal'
+import { FilterBar, useListFilters } from '@/components/data/filters'
 
 const tone = (s: string) => (s === 'Deployed' ? 'success' : s === 'Under repair' ? 'danger' : 'neutral') as 'success' | 'danger' | 'neutral'
 
@@ -49,6 +50,11 @@ export default function EquipmentPage() {
       ),
     },
   ]
+  const filters = useListFilters(q.data?.assets, {
+    search: (m) => [m.code, m.name, m.category, m.make, m.model, m.reg_no, m.current_job, m.hired_from, m.status].join(' '),
+    status: (m) => m.status,
+    date: (m) => m.purchase_date,
+  })
   return (
     <>
       <PageHeader eyebrow="Projects" title="Equipment & Plant" description="Where each machine is, what it did, what it burned and when it is due - and what it cost the site it worked for." actions={<>{manage && <Button onClick={() => setEditing('new')}><Plus /> Machine</Button>}<div className="w-44"><Select aria-label="Status" value={status} placeholder="Every machine" onChange={(e) => setStatus(e.target.value)} options={['Deployed', 'Available', 'Under repair', 'Disposed'].map((x) => ({ value: x, label: x }))} /></div></>} />
@@ -59,7 +65,8 @@ export default function EquipmentPage() {
         <Stat label="Service due" value={s?.service_due ?? 0} sub={s?.service_soon ? `+${s.service_soon} soon` : undefined} tone={s?.service_due ? 'danger' : undefined} loading={q.isPending} />
         <Stat label="Cost to date" value={formatINR(s?.cost_to_date ?? 0)} loading={q.isPending} />
       </StatGrid>
-      <DataTable label="Machines" rows={q.data?.assets ?? []} columns={columns} rowKey={(m) => m.id} loading={q.isPending} empty="No machines on the register yet. Add what the business owns, and what it hires in." />
+      <FilterBar filters={filters} placeholder="Search by code, name, make, registration..." />
+      <DataTable label="Machines" rows={filters.filtered} columns={columns} rowKey={(m) => m.id} loading={q.isPending} empty="No machines on the register yet. Add what the business owns, and what it hires in." />
       {open && <MachineDetail id={open} onClose={() => setOpen(null)} />}
       <MachineModal machine={editing && editing !== 'new' ? editing : null} categories={q.data?.categories ?? []} open={!!editing} onClose={() => setEditing(null)} />
       <MoveModal machine={moving} onClose={() => setMoving(null)} />

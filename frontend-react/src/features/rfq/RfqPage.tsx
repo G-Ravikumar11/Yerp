@@ -9,6 +9,7 @@ import { AwardModal } from './AwardModal'
 import { NewRfqModal } from './NewRfqModal'
 import { QuoteModal } from './QuoteModal'
 import { StatementPanel } from './StatementPanel'
+import { FilterBar, useListFilters } from '@/components/data/filters'
 
 const tone = (s: string) => (s === 'AWARDED' ? 'success' : s === 'OPEN' ? 'warning' : 'neutral') as 'success' | 'warning' | 'neutral'
 
@@ -30,6 +31,11 @@ export default function RfqPage() {
     { id: 'st', header: 'Status', cell: (r) => <Badge tone={tone(r.status)} dot>{r.status === 'OPEN' ? 'Open' : r.status === 'AWARDED' ? 'Awarded' : 'Cancelled'}</Badge> },
     { id: 'a', header: '', align: 'right', cell: (r) => <Button size="sm" variant={r.status === 'OPEN' ? 'primary' : 'outline'} onClick={() => setOpen(r.id)}>{r.status === 'OPEN' ? 'Quotes & compare' : 'Statement'}</Button> },
   ]
+  const filters = useListFilters(q.data?.rfqs, {
+    search: (r) => [r.number, r.title, r.project, r.status].join(' '),
+    status: (r) => r.status,
+    date: (r) => r.needed_by,
+  })
   return (
     <>
       <PageHeader eyebrow="Store" title="Enquiries & Comparison" description="Three suppliers asked, their answers side by side, the lowest landed at site - and an award that makes the orders." actions={<Button onClick={() => setCreating(true)}><Plus /> Enquiry</Button>} />
@@ -38,7 +44,8 @@ export default function RfqPage() {
         <Stat label="Fewer than three quotes" value={s?.waiting_for_quotes ?? 0} tone={s?.waiting_for_quotes ? 'warning' : undefined} loading={q.isPending} />
         <Stat label="Awarded" value={s?.awarded ?? 0} loading={q.isPending} />
       </StatGrid>
-      <DataTable label="Enquiries" rows={q.data?.rfqs ?? []} columns={columns} rowKey={(r) => r.id} loading={q.isPending} empty="No enquiries yet. Ask three suppliers before an order goes out." />
+      <FilterBar filters={filters} placeholder="Search by enquiry, title, project..." />
+      <DataTable label="Enquiries" rows={filters.filtered} columns={columns} rowKey={(r) => r.id} loading={q.isPending} empty="No enquiries yet. Ask three suppliers before an order goes out." />
       {open && <StatementPanel id={open} onClose={() => setOpen(null)} onQuote={() => setQuoting(true)} onAward={() => setAwarding(true)} />}
       <NewRfqModal open={creating} onClose={() => setCreating(false)} onOpened={(id) => { setCreating(false); setOpen(id) }} />
       <QuoteModal statement={statement.data ?? null} open={quoting} onClose={() => setQuoting(false)} />

@@ -5,6 +5,7 @@ import { actOnVariation, bookKeys, raiseVariation, useVariationSuggestion, useVa
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { compactINR, formatINR } from '@/lib/utils'
+import { FilterBar, useListFilters } from '@/components/data/filters'
 
 const TONE: Record<string, 'neutral' | 'warning' | 'success' | 'danger'> = { DRAFT: 'neutral', SUBMITTED: 'warning', APPROVED: 'success', REJECTED: 'danger', CANCELLED: 'danger' }
 
@@ -71,6 +72,10 @@ export function VariationsPanel({ workOrderId }: { workOrderId: number }) {
     },
   ]
 
+  const filters = useListFilters(vars.data?.variations, {
+    search: (v) => [v.number, v.origin, v.reason, v.status, v.value].join(' '),
+    status: (v) => v.status,
+  })
   return (
     <section aria-label="Variations" className="mt-10">
       <h2 className="mb-3 text-lg font-semibold">Variations</h2>
@@ -91,7 +96,8 @@ export function VariationsPanel({ workOrderId }: { workOrderId: number }) {
         <Stat label="Agreed" value={compactINR(s?.approved_value)} loading={vars.isPending} />
         <Stat label="Asked for, not agreed" value={compactINR(s?.pending_value)} loading={vars.isPending} />
       </StatGrid>
-      <DataTable label="Variations" rows={vars.data?.variations ?? []} columns={columns} rowKey={(v) => v.id} loading={vars.isPending} empty="No variations on this order." />
+      <FilterBar filters={filters} placeholder="Search variations..." />
+      <DataTable label="Variations" rows={filters.filtered} columns={columns} rowKey={(v) => v.id} loading={vars.isPending} empty="No variations on this order." />
 
       <ConfirmDialog open={raising} onOpenChange={setRaising} title="Raise a variation from the book" description="The lines built past the order become a priced variation." confirmLabel="Raise it" reason={{ label: 'Why did the work run over? (goes on the variation)' }} loading={raise.isPending} onConfirm={(reason) => raise.mutate(reason)} />
       <ConfirmDialog

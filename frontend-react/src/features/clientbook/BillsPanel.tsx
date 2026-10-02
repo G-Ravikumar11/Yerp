@@ -8,6 +8,7 @@ import { EInvoiceModal } from '@/features/einvoice/EInvoiceModal'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { compactINR, formatINR } from '@/lib/utils'
+import { FilterBar, useListFilters } from '@/components/data/filters'
 
 const TONE: Record<string, 'neutral' | 'warning' | 'success' | 'danger'> = { DRAFT: 'neutral', SUBMITTED: 'warning', CERTIFIED: 'success', PAID: 'success', CANCELLED: 'danger' }
 const link = 'text-primary underline-offset-2 hover:underline'
@@ -125,6 +126,11 @@ export function BillsPanel({ workOrderId }: { workOrderId: number }) {
     },
   ]
 
+  const filters = useListFilters(bills, {
+    search: (b) => [b.number, b.status, b.certified_by_name, b.net_payable, b.this_bill].join(' '),
+    status: (b) => b.status,
+    date: (b) => b.created_at ?? '',
+  })
   return (
     <section aria-label="Running account bills" className="mt-10">
       <h2 className="mb-3 text-lg font-semibold">Running account bills</h2>
@@ -135,7 +141,8 @@ export function BillsPanel({ workOrderId }: { workOrderId: number }) {
         <Stat label="Retention held" value={compactINR(s?.retention_held)} loading={q.isPending} />
         <Stat label="Paid" value={compactINR(s?.paid)} loading={q.isPending} />
       </StatGrid>
-      <DataTable label="Running account bills" rows={bills} columns={columns} rowKey={(b) => b.id} loading={q.isPending} empty="No bills yet. Measure the work, then draw one up." />
+      <FilterBar filters={filters} placeholder="Search by bill, status, amount..." />
+      <DataTable label="Running account bills" rows={filters.filtered} columns={columns} rowKey={(b) => b.id} loading={q.isPending} empty="No bills yet. Measure the work, then draw one up." />
 
       <EInvoiceModal docType="ra_bill" docId={einvoice} onClose={() => setEinvoice(null)} />
       {paying && <PayModal docType="ra_bill" docId={paying.id} title={paying.number} verb="Receive" open onOpenChange={(o) => !o && setPaying(null)} invalidate={[bookKeys.all]} />}

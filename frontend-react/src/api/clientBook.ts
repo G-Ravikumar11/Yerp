@@ -80,6 +80,7 @@ export interface RaBill {
   sgst_percent: number
   igst_percent: number
   taxable_value: number
+  created_at?: string
   certified_by_name: string
   actions: string[]
 }

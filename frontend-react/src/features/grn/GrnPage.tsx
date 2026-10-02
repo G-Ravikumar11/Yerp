@@ -8,6 +8,7 @@ import { formatDate } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { ReceiptModal } from './ReceiptModal'
 import { ReceiveModal } from './ReceiveModal'
+import { FilterBar, useListFilters } from '@/components/data/filters'
 
 const tone = (s: string) => (s === 'POSTED' ? 'success' : s === 'CANCELLED' ? 'danger' : 'neutral') as 'success' | 'danger' | 'neutral'
 
@@ -37,6 +38,11 @@ export default function GrnPage() {
     { id: 'bil', header: 'Billed', align: 'right', cell: (r) => <div>{formatINR(r.billed_value)}<div className="text-xs text-muted-foreground">{r.bill_count} bill{r.bill_count === 1 ? '' : 's'}</div></div> },
     { id: 'v', header: 'Verdict', cell: (r) => <div><Badge tone={VERDICT[r.verdict]?.tone ?? 'neutral'} dot>{VERDICT[r.verdict]?.label ?? r.verdict}</Badge><div className="mt-0.5 max-w-72 text-xs text-muted-foreground">{r.note}</div></div> },
   ]
+  const filters = useListFilters(q.data?.goods_receipts, {
+    search: (g) => [g.number, g.challan_number, g.supplier_name, g.purchase_order, g.project, g.status].join(' '),
+    status: (g) => g.status,
+    date: (g) => g.received_on,
+  })
   return (
     <>
       <PageHeader eyebrow="Store" title="Goods Receipt & Match" description="What actually arrived at the gate, and whether the order, the delivery and the bill agree." actions={<Button onClick={() => setReceiving(true)}><PackagePlus /> Receive a delivery</Button>} />
@@ -46,7 +52,8 @@ export default function GrnPage() {
         <Stat label="Accepted" value={formatINR(s?.accepted_value ?? 0)} loading={q.isPending} />
         <Stat label="Rejected" value={formatINR(s?.rejected_value ?? 0)} loading={q.isPending} />
       </StatGrid>
-      <DataTable label="Goods receipts" rows={q.data?.goods_receipts ?? []} columns={receipts} rowKey={(g) => g.id} loading={q.isPending} empty="Nothing received yet. Take a delivery against an approved order." />
+      <FilterBar filters={filters} placeholder="Search by receipt, challan, supplier, order..." />
+      <DataTable label="Goods receipts" rows={filters.filtered} columns={receipts} rowKey={(g) => g.id} loading={q.isPending} empty="Nothing received yet. Take a delivery against an approved order." />
       <div className="mb-3 mt-10 flex flex-wrap items-center justify-between gap-3"><h2 className="text-sm font-semibold">The three-way match</h2><label className="flex items-center gap-2 text-[13px]"><input type="checkbox" checked={exceptions} onChange={(e) => setExceptions(e.target.checked)} /> Only what needs a look</label></div>
       <StatGrid>
         <Stat label="Orders" value={m?.orders ?? 0} loading={match.isPending} />

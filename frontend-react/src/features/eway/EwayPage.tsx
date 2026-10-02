@@ -7,6 +7,7 @@ import { useEways, type Eway, type Uncovered } from '@/api/eway'
 import { formatDate } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { EwayModal } from './EwayModal'
+import { FilterBar, useListFilters } from '@/components/data/filters'
 
 /** Goods over the threshold on the road - site transfers, plant, returns - each with its e-way bill. */
 export default function EwayPage() {
@@ -29,6 +30,11 @@ export default function EwayPage() {
     { id: 'valid', header: 'Valid to', hideBelow: 'xl', cell: (e) => e.valid_upto },
     { id: 'st', header: 'Status', cell: (e) => <Badge tone={e.status === 'GENERATED' ? (e.expired ? 'danger' : 'success') : e.status === 'CANCELLED' ? 'neutral' : 'warning'} dot>{e.expired ? 'Expired' : e.status === 'GENERATED' ? 'Issued' : e.status === 'CANCELLED' ? 'Cancelled' : 'Draft'}</Badge> },
   ]
+  const filters = useListFilters(q.data?.eway_bills, {
+    search: (e) => [e.number, e.ewb_no, e.source_ref, e.vehicle_no, e.doc_no, e.from.name, e.to.name, e.status].join(' '),
+    status: (e) => e.status,
+    date: (e) => e.doc_date || e.ewb_date,
+  })
   return (
     <>
       <PageHeader eyebrow="Store" title="E-way Bills" description="Goods on the road over the threshold - site transfers, plant, returns - each with its e-way bill." actions={<Button onClick={() => setOpen({ id: null, transfer: '' })}><Plus /> E-way bill</Button>} />
@@ -40,7 +46,8 @@ export default function EwayPage() {
       </StatGrid>
       {(q.data?.uncovered_transfers.length ?? 0) > 0 && <section aria-label="Transfers that need one" className="mb-6"><h2 className="mb-2 text-sm font-semibold">Transfers that need one</h2><DataTable label="Transfers that need one" rows={q.data?.uncovered_transfers ?? []} columns={need} rowKey={(t) => t.number} /></section>}
       <h2 className="mb-2 text-sm font-semibold">E-way bills</h2>
-      <DataTable label="E-way bills" rows={q.data?.eway_bills ?? []} columns={bills} rowKey={(e) => e.id} onRowClick={(e) => setOpen({ id: e.id, transfer: '' })} loading={q.isPending} empty="None yet. Draw one from a transfer above, or type one for plant or a return." />
+      <FilterBar filters={filters} placeholder="Search by number, vehicle, party..." />
+      <DataTable label="E-way bills" rows={filters.filtered} columns={bills} rowKey={(e) => e.id} onRowClick={(e) => setOpen({ id: e.id, transfer: '' })} loading={q.isPending} empty="None yet. Draw one from a transfer above, or type one for plant or a return." />
       <EwayModal id={open?.id ?? null} fromTransfer={open?.transfer ?? ''} open={!!open} onClose={() => setOpen(null)} />
     </>
   )

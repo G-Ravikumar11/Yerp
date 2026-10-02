@@ -1,16 +1,14 @@
 import { useRef, useState } from 'react'
-import { Download, FileUp, Plus, Search } from 'lucide-react'
+import { Download, FileUp, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
-import { Badge, Button, ConfirmDialog, Input, Tabs } from '@/components/ui'
+import { FilterBar, useListFilters } from '@/components/data/filters'
+import { Badge, Button, ConfirmDialog } from '@/components/ui'
 import { decideVendor, importVendors, useVendors, vendorKeys, type Registration, type Vendor } from '@/api/vendors'
 import { useAction } from '@/lib/mutate'
-import { useDebounced } from '@/lib/hooks'
 import { useSession } from '@/lib/session'
 import { toast } from '@/stores/toast'
 import { VendorFormModal } from './VendorFormModal'
-
-type Tab = '' | Registration
 
 const REG: Record<Registration, { word: string; tone: 'success' | 'warning' | 'danger' }> = {
   APPROVED: { word: 'Registered', tone: 'success' },
@@ -20,10 +18,13 @@ const REG: Record<Registration, { word: string; tone: 'success' | 'warning' | 'd
 
 export default function VendorsPage() {
   const { can } = useSession()
-  const [tab, setTab] = useState<Tab>('')
-  const [q, setQ] = useState('')
-  const search = useDebounced(q)
-  const vendors = useVendors(tab, search)
+  const vendors = useVendors('', '')
+  // Search, registration status and date: the same filters as the Work Orders list.
+  const filters = useListFilters(vendors.data?.contractors, {
+    search: (v) => [v.company_name, v.vendor_code, v.nature_of_work, v.registered_project, v.pan, v.gst_number, v.city, v.state, v.contact_person, v.phone_number, v.bank_name].join(' '),
+    status: (v) => REG[v.registration_status]?.word ?? v.registration_status,
+    date: (v) => v.joining_date || v.created_at || '',
+  })
   const [editing, setEditing] = useState<Vendor | null>(null)
   const [creating, setCreating] = useState(false)
   const [sendBack, setSendBack] = useState<Vendor | null>(null)
@@ -40,9 +41,6 @@ export default function VendorsPage() {
       if (notes.length) toast.info(notes.slice(0, 3).join(' '))
     },
   })
-
-  const s = vendors.data?.summary
-  const total = s ? s.registered + s.pending + s.sent_back : undefined
 
   const columns: TableColumn<Vendor>[] = [
     { id: 'code', header: 'Vendor code', width: '7rem', sort: (v) => v.vendor_code, cell: (v) => <span className="font-mono text-[13px] font-semibold">{v.vendor_code || '-'}</span> },
@@ -159,30 +157,15 @@ export default function VendorsPage() {
         }
       />
 
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Tabs
-          label="Registration"
-          value={tab}
-          onChange={setTab}
-          items={[
-            { value: '', label: 'All vendors', count: total },
-            { value: 'APPROVED', label: 'Registered', count: s?.registered },
-            { value: 'PENDING', label: 'Awaiting approval', count: s?.pending },
-            { value: 'REJECTED', label: 'Sent back', count: s?.sent_back },
-          ]}
-        />
-        <div className="min-w-[14rem] flex-1 sm:max-w-sm">
-          <Input type="search" aria-label="Search vendors" placeholder="Search by name, vendor code, work, GSTIN" value={q} onChange={(e) => setQ(e.target.value)} leading={<Search />} />
-        </div>
-      </div>
+      <FilterBar filters={filters} placeholder="Search by name, vendor code, work, GSTIN..." />
 
       <DataTable
         label="Vendors"
-        rows={vendors.data?.contractors ?? []}
+        rows={filters.filtered}
         columns={columns}
         rowKey={(v) => v.id}
         loading={vendors.isPending}
-        empty={search || tab ? 'Nobody matches that.' : 'No sub contractors yet. Register one, or import the registration forms workbook.'}
+        empty={filters.active ? 'Nobody matches those filters.' : 'No sub contractors yet. Register one, or import the registration forms workbook.'}
       />
 
       <VendorFormModal vendor={null} open={creating} onOpenChange={setCreating} />
