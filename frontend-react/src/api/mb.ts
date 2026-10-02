@@ -116,12 +116,13 @@ export interface ImportPreview {
   message?: string
 }
 
-export function importBook(orderId: number, file: File, opts: { commit: boolean; mapping?: Record<number, number | null>; measuredOn?: string; includeDims?: boolean }) {
+export function importBook(orderId: number, file: File, opts: { commit: boolean; mapping?: Record<number, number | null>; measuredOn?: string; includeDims?: boolean; entries?: [number, number][] }) {
   const form = new FormData()
   form.append('file', file)
   form.append('commit', opts.commit ? '1' : '0')
   if (opts.mapping) form.append('mapping', JSON.stringify(opts.mapping))
   if (opts.measuredOn) form.append('measured_on', opts.measuredOn)
   if (opts.includeDims) form.append('include_dims', '1')
+  if (opts.entries) form.append('entries', JSON.stringify(opts.entries))
   return api<ImportPreview>(`/api/sub-mb/${orderId}/import`, { method: 'POST', body: form })
 }

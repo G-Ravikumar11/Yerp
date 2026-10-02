@@ -7,6 +7,7 @@ tests are the rules those papers carry: who is taken on and by whom, how the
 book is written, how the certificate adds up, and who signs it in what order.
 """
 import io
+import json
 
 import openpyxl
 
@@ -538,3 +539,26 @@ def test_a_serial_number_is_not_taken_for_an_activity_number(tenant):
     order = painting_order(tenant)
     pv = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", mb_workbook())}).json()
     assert [s["item"] for s in pv["sections"]] == ["1 Buffering works", "2 Hole Packing"]
+
+
+def test_only_the_ticked_entries_are_recorded_and_all_can_go_to_one_item(tenant):
+    order = painting_order(tenant)
+    items = [i for i in items_of(tenant, order["id"])]
+    first, second = items[0]["item_id"], items[1]["item_id"]
+    raw = mb_workbook()
+    # one entry of two, the other left out
+    res = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)},
+                      data={"commit": "1", "entries": json.dumps([[1, 0]]), "mapping": json.dumps({"0": first, "1": second})})
+    assert res.status_code == 200, res.text
+    assert res.json()["entries"] == 1
+    assert len(book(tenant, order["id"])["entries"]) == 1
+    # every section sent to the one item
+    res = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)},
+                      data={"commit": "1", "mapping": json.dumps({"0": first, "1": first})})
+    assert res.status_code == 200, res.text
+    assert res.json()["entries"] == 2
+    assert len([e for e in book(tenant, order["id"])["entries"] if e["item_id"] == first]) == 2
+    # a section with no item is only an error when one of its entries is wanted
+    res = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)},
+                      data={"commit": "1", "entries": json.dumps([[0, 0]]), "mapping": json.dumps({"0": first})})
+    assert res.status_code == 200, res.text

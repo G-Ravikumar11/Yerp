@@ -26202,7 +26202,7 @@ def mb_match_item(items, description, sno=""):
 async def import_sub_measurement_book(order_id: int, request: Request, file: UploadFile = File(...),
                                       commit: str = Form("0"), mapping: str = Form(""),
                                       sheet: str = Form(""), measured_on: str = Form(""), include_dims: str = Form("0"),
-                                      db: Session = Depends(get_db)):
+                                      entries: str = Form(""), db: Session = Depends(get_db)):
     """The measurement book as the site keeps it in Excel - S.No, Description,
     UoM, No's, NoM, Length, Width, Height, Total Quantity - read into the
     gang's book. Each section of the sheet is matched to an item on the order
@@ -26242,13 +26242,20 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
         chosen = {int(k): int(v) for k, v in (json.loads(mapping) if mapping else {}).items() if v}
     except (ValueError, TypeError, AttributeError):
         raise HTTPException(400, "The item matches could not be read.")
+    # Only some entries of the sheet, when the person ticked them: [[section, entry], ...].
+    picked = None
+    if entries:
+        try:
+            picked = {(int(a), int(b)) for a, b in json.loads(entries)}
+        except (ValueError, TypeError):
+            raise HTTPException(400, "The entries chosen could not be read.")
     sections, missing = [], []
     # The measure window reads a sheet to fill its own lines, so it asks for them to come back.
     want_dims = (include_dims or "0") in ("1", "true", "yes")
     for i, sec in enumerate(book["items"]):
         item = by_id.get(chosen[i]) if i in chosen else mb_match_item(items, sec["description"], sec.get("sno") or "")
         if item is None:
-            missing.append(sec["description"])
+            missing.append((i, sec["description"]))
         sections.append({"index": i, "description": sec["description"], "sno": sec["sno"],
                          "item_id": item.id if item else None,
                          "item": mb_item_label(item) if item else "",
@@ -26264,16 +26271,21 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
                "items": [{"id": it.id, "label": mb_item_label(it), "uom": it.uom or ""} for it in items]}
     if (commit or "0") not in ("1", "true", "yes"):
         return dict(preview, ok=True, committed=False)
-    if missing:
-        raise HTTPException(400, "Say which item on the order these are for: " + "; ".join(missing[:5]))
+    needed = [d for i, d in missing if picked is None or i in {a for a, _ in picked}]
+    if needed:
+        raise HTTPException(400, "Say which item on the order these are for: " + "; ".join(needed[:5]))
     when = (measured_on or book["meta"].get("date") or datetime.now().strftime("%Y-%m-%d"))[:10]
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", when):
         when = datetime.now().strftime("%Y-%m-%d")
     written = 0
     source = os.path.basename(file.filename or "workbook")
-    for sec, row in zip(book["items"], sections):
+    for si, (sec, row) in enumerate(zip(book["items"], sections)):
+        if picked is not None and not any(a == si for a, _ in picked):
+            continue
         item = by_id[row["item_id"]]
-        for e in sec["entries"]:
+        for ei, e in enumerate(sec["entries"]):
+            if picked is not None and (si, ei) not in picked:
+                continue
             dims = [DimensionIn(particulars=d["particulars"][:200], is_heading=d["is_heading"],
                                 nos=d.get("nos"), nom=d.get("nom"), length=d.get("length"),
                                 breadth=d.get("breadth"), depth=d.get("depth"), deduct=d.get("deduct", False))

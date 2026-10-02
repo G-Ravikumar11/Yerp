@@ -141,6 +141,23 @@ export function ImportBookModal({ orderId, open, onOpenChange }: { orderId: numb
               ))}
             </ul>
           )}
+          {unmatched > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-3 text-[13px]">
+              <span>{unmatched} section{unmatched === 1 ? ' has' : 's have'} no item.</span>
+              <div className="w-72 max-w-full">
+                <Select
+                  aria-label="Send every section with no item to"
+                  value=""
+                  placeholder="Send them all to one item..."
+                  onChange={(e) => {
+                    const id = Number(e.target.value)
+                    if (id) setMapping((m) => ({ ...m, ...Object.fromEntries(preview.sections.filter((s) => !m[s.index]).map((s) => [s.index, id])) }))
+                  }}
+                  options={preview.items.map((i) => ({ value: i.id, label: `${i.label} (${i.uom})` }))}
+                />
+              </div>
+            </div>
+          )}
           <div className="overflow-hidden rounded-xl border border-border">
             <table className="w-full text-[13.5px]">
               <thead className="bg-surface text-left text-[11px] uppercase tracking-wide text-muted-foreground">
