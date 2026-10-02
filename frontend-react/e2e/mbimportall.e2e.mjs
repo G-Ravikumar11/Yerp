@@ -27,7 +27,7 @@ check('the sheet\'s entries are listed with a tick box each', (await page.$$('[r
 const btn = () => page.$eval('[role=dialog]', (d) => [...d.querySelectorAll('button')].find((b) => b.textContent.includes('ticked as entries')).disabled)
 check('nothing is recorded until something is ticked', await btn())
 await page.click('input[aria-label="Select every entry"]')
-check('Select all ticks every entry', !(await btn()) && /Select all \d+ entries/.test(await dlg()), (await dlg()).slice(0, 200))
+check('Select all ticks every entry', !(await btn()) && /Select all [0-9]+ new entries/.test(await dlg()), (await dlg()).slice(0, 200))
 await page.evaluate(() => [...document.querySelectorAll('[role=dialog] button')].find((b) => b.textContent.includes('ticked as entries')).click())
 await page.waitForFunction(() => !document.querySelector('[role=dialog]'), { timeout: 15000 })
 await sleep(800)

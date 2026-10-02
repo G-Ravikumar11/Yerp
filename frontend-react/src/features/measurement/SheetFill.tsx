@@ -39,6 +39,8 @@ export function SheetFill({ orderId, itemId, itemName, onUse, onRecorded }: { or
   // Entries ticked to be recorded, as "section:entry" - for a workbook with many blocks, all at once.
   const [ticked, setTicked] = useState<Set<string>>(new Set())
   const everyEntry = (f: Found) => f.sections.flatMap((sec) => sec.entries.map((e, i) => ({ key: `${sec.index}:${i}`, sec, e, i })).filter((x) => x.e.dims?.length))
+  // Select all leaves out a block that is already in the book: ticking one by hand is a decision.
+  const newEntries = (f: Found) => everyEntry(f).filter((x) => !x.e.already_in_book)
   const recordTicked = useAction(
     () => {
       const pairs = [...ticked].map((k) => k.split(':').map(Number) as [number, number])
@@ -105,8 +107,8 @@ export function SheetFill({ orderId, itemId, itemName, onUse, onRecorded }: { or
           </p>
           <div className="mb-2 flex flex-wrap items-center gap-3 text-[13px]">
             <label className="flex items-center gap-2">
-              <input type="checkbox" aria-label="Select every entry" checked={ticked.size > 0 && ticked.size === everyEntry(found).length} onChange={(e) => setTicked(e.target.checked ? new Set(everyEntry(found).map((x) => x.key)) : new Set())} />
-              Select all {everyEntry(found).length} entries
+              <input type="checkbox" aria-label="Select every entry" checked={ticked.size > 0 && ticked.size === newEntries(found).length} onChange={(e) => setTicked(e.target.checked ? new Set(newEntries(found).map((x) => x.key)) : new Set())} />
+              Select all {newEntries(found).length} new entries
             </label>
             <span className="text-muted-foreground">{ticked.size} ticked</span>
             <Button size="sm" className="ml-auto" disabled={!ticked.size} loading={recordTicked.isPending} onClick={() => recordTicked.mutate()}>
@@ -138,7 +140,9 @@ export function SheetFill({ orderId, itemId, itemName, onUse, onRecorded }: { or
                   <span className="tabular shrink-0 text-muted-foreground">
                     {e.lines} lines · {formatQty(e.quantity)}
                     {e.multiplier !== 1 ? ` · ${e.multiplier} blocks` : ''}
+                    {(e.held_back ?? 0) > 0 ? ` · pays ${formatQty(e.quantity)} of ${formatQty(e.full_quantity)}` : ''}
                   </span>
+                  {e.already_in_book && <span className="shrink-0 rounded bg-warning-soft px-1.5 py-0.5 text-[11px] text-warning">already in the book</span>}
                 </button>
               </li>
             ))}

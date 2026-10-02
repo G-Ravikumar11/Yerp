@@ -26202,7 +26202,7 @@ def mb_match_item(items, description, sno=""):
 async def import_sub_measurement_book(order_id: int, request: Request, file: UploadFile = File(...),
                                       commit: str = Form("0"), mapping: str = Form(""),
                                       sheet: str = Form(""), measured_on: str = Form(""), include_dims: str = Form("0"),
-                                      entries: str = Form(""), db: Session = Depends(get_db)):
+                                      entries: str = Form(""), allow_duplicates: str = Form("0"), db: Session = Depends(get_db)):
     """The measurement book as the site keeps it in Excel - S.No, Description,
     UoM, No's, NoM, Length, Width, Height, Total Quantity - read into the
     gang's book. Each section of the sheet is matched to an item on the order
@@ -26249,6 +26249,22 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
             picked = {(int(a), int(b)) for a, b in json.loads(entries)}
         except (ValueError, TypeError):
             raise HTTPException(400, "The entries chosen could not be read.")
+    # What is already in the book, by item and where it was measured: a block imported twice is billed twice.
+    # (The same block measured for another item - flooring, then painting - is not a repeat.)
+    plain_place = lambda t: re.sub(r"[^a-z0-9]+", "", (t or "").lower())
+    in_book = {}
+    for m in db.query(models.DBSubMeasurement).filter(models.DBSubMeasurement.order_id == order.id).all():
+        if plain_place(m.location):
+            key = (m.item_id, plain_place(m.location))
+            in_book[key] = in_book.get(key, 0.0) + (m.quantity or 0.0)
+    book_of = lambda item_id, place: (in_book.get((item_id, place)) if item_id else next((q for (i, p), q in in_book.items() if p == place), None))
+    # A sheet from another contractor's bill is not stopped, but it is said.
+    con = db.query(models.DBContractor).filter(models.DBContractor.id == order.contractor_id).first() if order.contractor_id else None
+    sheet_con = (book["meta"].get("contractor") or "").strip()
+    if con and sheet_con:
+        words = lambda t: {w for w in re.sub(r"[^a-z0-9]+", " ", (t or "").lower()).split() if len(w) >= 3 and w not in ("m/s", "the", "and", "pvt", "ltd", "private", "limited")}
+        if not (words(sheet_con) & words(con.company_name)):
+            book["warnings"].append("The sheet is for %s, but this order is with %s." % (sheet_con, con.company_name))
     sections, missing = [], []
     # The measure window reads a sheet to fill its own lines, so it asks for them to come back.
     want_dims = (include_dims or "0") in ("1", "true", "yes")
@@ -26264,6 +26280,9 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
                                       "lines": len([d for d in e["dims"] if not d["is_heading"]]),
                                       "one_block": e["one"], "quantity": e["quantity"],
                                       "stated": e.get("stated_total"),
+                                      "held_back": e.get("held_back", 0.0), "full_quantity": e.get("full_quantity", e["quantity"]),
+                                      "already_in_book": bool(plain_place(e["location"]) and book_of(item.id if item else None, plain_place(e["location"])) is not None),
+                                      "already_quantity": money(book_of(item.id if item else None, plain_place(e["location"]))) if plain_place(e["location"]) and book_of(item.id if item else None, plain_place(e["location"])) is not None else None,
                                       **({"dims": e["dims"]} if want_dims else {})}
                                      for e in sec["entries"]]})
     preview = {"sheet": book["sheet"], "meta": book["meta"], "sections": sections,
@@ -26278,6 +26297,7 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", when):
         when = datetime.now().strftime("%Y-%m-%d")
     written = 0
+    skipped = []
     source = os.path.basename(file.filename or "workbook")
     for si, (sec, row) in enumerate(zip(book["items"], sections)):
         if picked is not None and not any(a == si for a, _ in picked):
@@ -26285,6 +26305,10 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
         item = by_id[row["item_id"]]
         for ei, e in enumerate(sec["entries"]):
             if picked is not None and (si, ei) not in picked:
+                continue
+            # Whole-book imports leave out a block that is already in the book; ticking one is a decision.
+            if picked is None and (allow_duplicates or "0") not in ("1", "true", "yes") and plain_place(e["location"])                     and (item.id, plain_place(e["location"])) in in_book:
+                skipped.append(e["location"] or sec["description"])
                 continue
             dims = [DimensionIn(particulars=d["particulars"][:200], is_heading=d["is_heading"],
                                 nos=d.get("nos"), nom=d.get("nom"), length=d.get("length"),
@@ -26305,8 +26329,9 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
     log_audit(db, client.id, "sub_mb_imported", "subcontract_order", order.id, order.wo_number or "",
               "%s: %d entries" % (source, written), request)
     db.commit()
-    return dict(preview, ok=True, committed=True, entries=written,
-                message="%d measurement%s recorded from %s." % (written, "" if written == 1 else "s", book["sheet"]))
+    note = (" %d already in the book %s left out: %s." % (len(skipped), "was" if len(skipped) == 1 else "were", "; ".join(skipped[:3]))) if skipped else ""
+    return dict(preview, ok=True, committed=True, entries=written, skipped=skipped,
+                message="%d measurement%s recorded from %s.%s" % (written, "" if written == 1 else "s", book["sheet"], note))
 
 
 @app.delete("/api/sub-mb/entries/{entry_id}")

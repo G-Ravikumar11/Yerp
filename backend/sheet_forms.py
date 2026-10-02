@@ -337,6 +337,12 @@ def read_measurement_book(values, formulas=None):
     "Deductions"). A row with figures is a dimension line, a negative count
     being a deduction. "Total Quantity for one Block" closes the entry, and
     "Total Quantity for 4 Blocks" says how many times it is built.
+
+    Some books hold part of the work back: under the totals there are rows such as
+    "Hold 5 % for Finishes & Handing over" and "Total Qty To be paid - 45%". Those are
+    not measurements. The "to be paid" figure is the quantity the entry is billed at,
+    and the difference is recorded as one held-back deduction line, so the entry
+    comes to exactly what the sheet says is payable.
     """
     head, cols = _mb_columns(values, formulas)
     if not head:
@@ -366,6 +372,8 @@ def read_measurement_book(values, formulas=None):
 
     items, warnings = [], []
     item = entry = None
+    # Entries not yet covered by a "to be paid" row, and the groups that have been.
+    pending, groups = [], []
 
     def close():
         nonlocal entry
@@ -383,6 +391,7 @@ def read_measurement_book(values, formulas=None):
         nonlocal entry
         entry = {"row": r, "location": location, "dims": [], "multiplier": 1.0, "stated_total": None}
         item["entries"].append(entry)
+        pending.append(entry)
 
     for r in range(head + 1, values.max_row + 1):
         desc = _plain(get(r, "description"))
@@ -394,6 +403,18 @@ def read_measurement_book(values, formulas=None):
         total = _number(get(r, "total"))
         row_text = " ".join(_plain(_cell_value(values, formulas, r, c)) for c in range(1, min(values.max_column, 14) + 1))
 
+        # Derived rows - the part held back, and what is to be paid - are the sheet's own arithmetic on the
+        # totals above them, not measurements: read them for the payable figure, never as lines.
+        if total is not None and not given and re.search(r"(?i)hold\s*\d+(?:\.\d+)?\s*%|to\s+be\s+paid|^release\b", (desc + " " + row_text).strip()):
+            if re.search(r"(?i)to\s+be\s+paid", row_text) and total:
+                # It covers every entry since the last such row: one block, or several under one subtotal.
+                group = [e for e in pending if e["dims"]]
+                pending.clear()
+                if group:
+                    groups.append((r, group, total))
+                else:
+                    warnings.append("Row %d: a 'to be paid' figure with no entry above it was left out." % r)
+            continue
         if not desc and not given and not sno_text:
             continue
         if low.startswith("total"):
@@ -463,6 +484,27 @@ def read_measurement_book(values, formulas=None):
             if "quantity" not in e:
                 one = round(sum(d["quantity"] for d in e["dims"]), 3)
                 e["one"], e["quantity"] = one, round(one * e["multiplier"], 3)
+    for row, group, pay in groups:
+        full = round(sum(e["quantity"] for e in group), 3)
+        if pay > full + 0.011:
+            warnings.append("Row %d: the sheet says %s is to be paid but the lines come to %s, so the lines are used." % (row, round(pay, 3), full))
+            continue
+        if not full or pay >= full - 0.0005:
+            continue
+        share = pay / full          # the same share of every entry under that subtotal
+        for e in group:
+            mine = e["quantity"] * share
+            cut = round(e["one"] - mine / e["multiplier"], 3)
+            if cut <= 0:
+                continue
+            e["dims"].append({
+                "particulars": "Held back for finishes and handing over (%g%% of %s)" % (round((1 - share) * 100, 2), e["quantity"]),
+                "is_heading": False, "nos": cut, "nom": None, "length": None, "breadth": None, "depth": None,
+                "deduct": True, "quantity": -cut, "remarks": "", "holdback": True})
+            e["full_quantity"], e["held_back"] = e["quantity"], round(e["quantity"] - mine, 3)
+            e["one"] = round(e["one"] - cut, 3)
+            e["quantity"] = round(e["one"] * e["multiplier"], 3)
+    for it in items:
         it["quantity"] = round(sum(e["quantity"] for e in it["entries"]), 3)
     return {"sheet": values.title, "meta": meta, "items": [i for i in items if i["entries"]], "warnings": warnings}
 

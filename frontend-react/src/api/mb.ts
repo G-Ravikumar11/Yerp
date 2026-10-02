@@ -101,7 +101,7 @@ export interface ImportSection {
   item: string
   uom: string
   quantity: number
-  entries: { location: string; multiplier: number; lines: number; one_block: number; quantity: number; stated: number | null; dims?: ImportDim[] }[]
+  entries: { location: string; multiplier: number; lines: number; one_block: number; quantity: number; stated: number | null; held_back?: number; full_quantity?: number; already_in_book?: boolean; already_quantity?: number | null; dims?: ImportDim[] }[]
 }
 
 export interface ImportPreview {
@@ -116,7 +116,7 @@ export interface ImportPreview {
   message?: string
 }
 
-export function importBook(orderId: number, file: File, opts: { commit: boolean; mapping?: Record<number, number | null>; measuredOn?: string; includeDims?: boolean; entries?: [number, number][] }) {
+export function importBook(orderId: number, file: File, opts: { commit: boolean; mapping?: Record<number, number | null>; measuredOn?: string; includeDims?: boolean; entries?: [number, number][]; allowDuplicates?: boolean }) {
   const form = new FormData()
   form.append('file', file)
   form.append('commit', opts.commit ? '1' : '0')
@@ -124,5 +124,6 @@ export function importBook(orderId: number, file: File, opts: { commit: boolean;
   if (opts.measuredOn) form.append('measured_on', opts.measuredOn)
   if (opts.includeDims) form.append('include_dims', '1')
   if (opts.entries) form.append('entries', JSON.stringify(opts.entries))
+  if (opts.allowDuplicates) form.append('allow_duplicates', '1')
   return api<ImportPreview>(`/api/sub-mb/${orderId}/import`, { method: 'POST', body: form })
 }

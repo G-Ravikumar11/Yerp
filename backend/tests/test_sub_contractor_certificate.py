@@ -554,7 +554,7 @@ def test_only_the_ticked_entries_are_recorded_and_all_can_go_to_one_item(tenant)
     assert len(book(tenant, order["id"])["entries"]) == 1
     # every section sent to the one item
     res = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)},
-                      data={"commit": "1", "mapping": json.dumps({"0": first, "1": first})})
+                      data={"commit": "1", "allow_duplicates": "1", "mapping": json.dumps({"0": first, "1": first})})
     assert res.status_code == 200, res.text
     assert res.json()["entries"] == 2
     assert len([e for e in book(tenant, order["id"])["entries"] if e["item_id"] == first]) == 2
@@ -562,3 +562,73 @@ def test_only_the_ticked_entries_are_recorded_and_all_can_go_to_one_item(tenant)
     res = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)},
                       data={"commit": "1", "entries": json.dumps([[0, 0]]), "mapping": json.dumps({"0": first})})
     assert res.status_code == 200, res.text
+
+
+def held_back_workbook():
+    """A book that holds work back, shaped like a real one: a subtotal for a group of blocks with
+    '5 % held' and 'to be paid' rows under it, and a painting block with its own 45% rows."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "MB-1"
+    ws["A1"] = "YALAVARTI INFRA PROJECTS"
+    ws["A3"] = "Name of the contractor :-   ALN INFRA DEVELOPERS"
+    ws["I4"] = "Date :- 08-01-2026"
+    for c, h in enumerate(("S.No", "Description", "UoM", "No's", "NoM", "Length", "Width", "Height", "Total Quantity", "Remarks"), 1):
+        ws.cell(row=5, column=c, value=h)
+    rows = [
+        ("I", "Laying of tiles"), ("A", "365 sft - Block No. B24"),
+        (None, "Living Room", "Sqm", 1, 5, 4, 5, None, 100),
+        ("B", "365 sft - Block No. B12"),
+        (None, "Corridor", "Sqm", 1, 1, 10, 10, None, 100),
+        (None, None, None, None, None, "Total Quantity", None, None, 200),
+        (None, None, None, None, None, "Hold 5 % for Finishes & Handing over", None, None, 10),
+        (None, None, None, None, None, "Total Qty To be paid", None, None, 190),
+        ("II", "Internal Painting Work"), (None, "365 SFT-Block"),
+        (None, "Long Walls", "Sqm", 1, 1, 50, None, 2, 100),
+        (None, "Total Quantity for one Block", None, None, None, "Total Quantity", None, None, 100),
+        (None, "Total Quantity for Block No. - B19, B21", None, None, None, "Total Quantity for 4 Blocks", None, None, 400),
+        (None, "Release Putty Two coats - 40% & Primer - 10%", None, None, None, "Hold 5 % for Finishes & Handing over", None, None, 180),
+        (None, None, None, None, None, "Total Qty To be paid - 45%", None, None, 180),
+    ]
+    for r, row in enumerate(rows, 6):
+        for c, v in enumerate(row, 1):
+            if v is not None:
+                ws.cell(row=r, column=c, value=v)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_held_back_rows_set_the_quantity_to_bill_and_are_never_measurements():
+    import sheet_forms
+    wb = openpyxl.load_workbook(io.BytesIO(held_back_workbook()), data_only=True)
+    book = sheet_forms.read_measurement_book(wb.active, wb.active)
+    assert book["warnings"] == []
+    tiles, painting = book["items"][0]["entries"], book["items"][0]["entries"]
+    entries = [e for it in book["items"] for e in it["entries"]]
+    assert [round(e["quantity"], 2) for e in entries] == [95.0, 95.0, 180.0]      # 190 shared over two blocks; 45% of 400
+    assert sum(e["quantity"] for e in entries[:2]) == 190
+    assert round(entries[2]["full_quantity"], 2) == 400 and round(entries[2]["held_back"], 2) == 220
+    assert not any("Release" in d["particulars"] and not d.get("holdback") for e in entries for d in e["dims"]), \
+        "a 'release / to be paid' row is not a line of the next block"
+    assert all(any(d.get("holdback") for d in e["dims"]) for e in entries)
+
+
+def test_a_block_already_in_the_book_is_left_out_and_a_stranger_is_named(tenant):
+    order = painting_order(tenant)
+    first = items_of(tenant, order["id"])[0]["item_id"]
+    tenant.post("/api/sub-mb/%d/entries" % order["id"], json={"item_id": first, "quantity": 100, "location": "365 sft - Block No. B24"})
+    raw = held_back_workbook()
+    pv = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)}).json()
+    assert pv["sections"][0]["entries"][0]["already_in_book"] is True
+    assert pv["sections"][0]["entries"][1]["already_in_book"] is False
+    assert any("ALN INFRA DEVELOPERS" in w for w in pv["warnings"]), "a sheet from another contractor is said, not silent"
+    mapping = {str(s["index"]): first for s in pv["sections"]}
+    res = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)},
+                      data={"commit": "1", "mapping": json.dumps(mapping)}).json()
+    assert res["entries"] == 2 and res["skipped"] == ["365 sft - Block No. B24"]
+    assert "already in the book" in res["message"]
+    # ticking it by hand is a decision, and goes in
+    res = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)},
+                      data={"commit": "1", "mapping": json.dumps(mapping), "entries": json.dumps([[0, 0]])}).json()
+    assert res["entries"] == 1 and res["skipped"] == []

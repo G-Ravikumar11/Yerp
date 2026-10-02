@@ -19,11 +19,13 @@ export function ImportBookModal({ orderId, open, onOpenChange }: { orderId: numb
   const [measuredOn, setMeasuredOn] = useState('')
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState('')
+  const [again, setAgain] = useState(false)
 
   const reset = () => {
     setPicked(null)
     setPreview(null)
     setMapping({})
+    setAgain(false)
     setProblem('')
     if (file.current) file.current.value = ''
   }
@@ -43,7 +45,7 @@ export function ImportBookModal({ orderId, open, onOpenChange }: { orderId: numb
     }
   }
 
-  const commit = useAction(() => importBook(orderId, picked!, { commit: true, mapping, measuredOn: measuredOn || undefined }), {
+  const commit = useAction(() => importBook(orderId, picked!, { commit: true, mapping, measuredOn: measuredOn || undefined, allowDuplicates: again }), {
     invalidate: [mbKeys.all, ['subbills']],
     onSuccess: () => {
       reset()
@@ -141,6 +143,12 @@ export function ImportBookModal({ orderId, open, onOpenChange }: { orderId: numb
               ))}
             </ul>
           )}
+          {preview.sections.some((s) => s.entries.some((e) => e.already_in_book)) && (
+            <label className="mb-3 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning-soft p-3 text-[13px] text-warning">
+              <input type="checkbox" className="mt-0.5" checked={again} onChange={(e) => setAgain(e.target.checked)} />
+              <span>Some blocks in this sheet are already in the book for the same item. They are left out so nothing is billed twice. Tick to record them again anyway.</span>
+            </label>
+          )}
           {unmatched > 0 && (
             <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-3 text-[13px]">
               <span>{unmatched} section{unmatched === 1 ? ' has' : 's have'} no item.</span>
@@ -185,9 +193,17 @@ export function ImportBookModal({ orderId, open, onOpenChange }: { orderId: numb
                         options={preview.items.map((i) => ({ value: i.id, label: `${i.label} (${i.uom})` }))}
                       />
                     </td>
-                    <td className="tabular px-3 py-2.5 text-right">{s.entries.length}</td>
+                    <td className="tabular px-3 py-2.5 text-right">
+                      {s.entries.length}
+                      {s.entries.some((e) => e.already_in_book) && <div className="text-xs font-normal text-warning">{s.entries.filter((e) => e.already_in_book).length} already in the book, left out</div>}
+                    </td>
                     <td className="tabular px-3 py-2.5 text-right font-medium">
                       {formatQty(s.quantity)} {s.uom}
+                      {s.entries.some((e) => (e.held_back ?? 0) > 0) && (
+                        <div className="text-xs font-normal text-muted-foreground">
+                          after holding back {formatQty(s.entries.reduce((n, e) => n + (e.held_back ?? 0), 0))}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
