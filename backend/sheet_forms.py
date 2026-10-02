@@ -387,9 +387,9 @@ def read_measurement_book(values, formulas=None):
                     entry["row"], round(stated, 3), entry["quantity"]))
         entry = None
 
-    def open_entry(r, location=""):
+    def open_entry(r, location="", letter=""):
         nonlocal entry
-        entry = {"row": r, "location": location, "dims": [], "multiplier": 1.0, "stated_total": None}
+        entry = {"row": r, "location": location, "letter": letter, "dims": [], "multiplier": 1.0, "stated_total": None}
         item["entries"].append(entry)
         pending.append(entry)
 
@@ -432,6 +432,9 @@ def read_measurement_book(values, formulas=None):
             continue
         if not given:
             is_item = isinstance(sno, (int, float)) and not isinstance(sno, bool) or re.match(r"^\d+(\.\d+)?$", sno_text)
+            # Capital roman numerals of two letters or more (II, III, IV...) number the sections of a book,
+            # as in "II  Internal Painting Work"; one letter is a block ("A", "B").
+            is_item = is_item or bool(re.match(r"^[IVXL]{2,}$", sno_text))
             is_entry = bool(re.match(r"^[A-Za-z]{1,3}\)?$|^\([A-Za-z]{1,3}\)$|^[ivx]+$", sno_text))
             if desc and (is_item or item is None):
                 close()
@@ -440,7 +443,7 @@ def read_measurement_book(values, formulas=None):
                 continue
             if desc and is_entry:
                 close()
-                open_entry(r, desc)
+                open_entry(r, desc, sno_text)
                 continue
             if desc and total and abs(total) > 0.0001:
                 # Words and a quantity but no dimensions: a lump sum line.
@@ -484,7 +487,14 @@ def read_measurement_book(values, formulas=None):
             if "quantity" not in e:
                 one = round(sum(d["quantity"] for d in e["dims"]), 3)
                 e["one"], e["quantity"] = one, round(one * e["multiplier"], 3)
-    for row, group, pay in groups:
+    for it in items:
+        for e in it["entries"]:
+            if not e["location"]:
+                # An entry the sheet gives no place to is named by the first heading inside it ("365 SFT-Block ( B24, B21 & B19)").
+                e["location"] = _norm(next((d["particulars"] for d in e["dims"] if d["is_heading"] and d["particulars"]), ""))
+    for number, (row, group, pay) in enumerate(groups, 1):
+        for e in group:
+            e["group"] = number         # blocks under one subtotal share one hold-back
         full = round(sum(e["quantity"] for e in group), 3)
         if pay > full + 0.011:
             warnings.append("Row %d: the sheet says %s is to be paid but the lines come to %s, so the lines are used." % (row, round(pay, 3), full))

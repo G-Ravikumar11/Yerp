@@ -4,7 +4,7 @@ import { FileDown, FileUp, Ruler, Trash2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
-import { Badge, Button, ConfirmDialog, Select, Stat, StatGrid } from '@/components/ui'
+import { Badge, Button, ConfirmDialog, Select, Stat, StatGrid, Tabs } from '@/components/ui'
 import { deleteEntry, mbKeys, useMeasurementBook, type MbEntry, type MbLine } from '@/api/mb'
 import { useOrderVocabulary, useOrders, type Order } from '@/api/orders'
 import { useAction } from '@/lib/mutate'
@@ -12,6 +12,7 @@ import { useSession } from '@/lib/session'
 import { formatDate, formatQty } from '@/lib/format'
 import { cn, compactINR, formatINR } from '@/lib/utils'
 import { ImportBookModal } from './ImportBookModal'
+import { SheetView } from './SheetView'
 import { MeasureModal } from './MeasureModal'
 import { QuickMeasure, type QuickMeasureHandle } from './QuickMeasure'
 import { WorkOrderPicker } from './WorkOrderPicker'
@@ -100,6 +101,22 @@ export default function MeasurementBookPage() {
   const book = useMeasurementBook(chosen)
   const [measuring, setMeasuring] = useState<MbLine | null>(null)
   const [importing, setImporting] = useState(false)
+  // The book reads like the Excel sheet by default; the flat list is one tab away. The choice is remembered.
+  const [view, setViewState] = useState<'sheet' | 'list'>(() => {
+    try {
+      return localStorage.getItem('yerp.mb.view') === 'list' ? 'list' : 'sheet'
+    } catch {
+      return 'sheet'
+    }
+  })
+  const setView = (v: 'sheet' | 'list') => {
+    setViewState(v)
+    try {
+      localStorage.setItem('yerp.mb.view', v)
+    } catch {
+      // Private window: the choice lasts until the page closes.
+    }
+  }
   const [removing, setRemoving] = useState<MbEntry | null>(null)
   const record = can('site.record') && measurable
 
@@ -327,16 +344,19 @@ export default function MeasurementBookPage() {
           <FilterBar filters={itemFilters} placeholder="Search by item code, activity or words..." />
           <DataTable label="Items on the order" rows={itemFilters.filtered} columns={itemColumns} rowKey={(l) => l.item_id} loading={book.isPending} empty={itemFilters.active ? 'No item matches those filters.' : 'This order has no schedule lines.'} className="mb-8" />
 
-          <h2 className="mb-3 text-lg font-semibold">Measurement entries</h2>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">Measurement entries</h2>
+            <Tabs label="How to show the entries" value={view} onChange={setView} items={[{ value: 'sheet', label: 'Measurement sheet' }, { value: 'list', label: 'Entries' }]} />
+          </div>
           <FilterBar filters={filters} placeholder="Search entries..." />
-          <DataTable
+          {view === 'sheet' ? <SheetView entries={filters.filtered} byItem={byItem} /> : <DataTable
             label="Measurement entries"
             rows={filters.filtered}
             columns={entryColumns}
             rowKey={(e) => e.id}
             loading={book.isPending}
             empty={filters.active ? 'Nothing matches those filters.' : 'Nothing measured yet.'}
-          />
+          />}
 
           <MeasureModal
             orderId={chosen}

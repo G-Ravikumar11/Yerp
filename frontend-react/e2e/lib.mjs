@@ -21,6 +21,8 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 export async function launch({ width = 1440, height = 1000, allow = [] } = {}) {
   const browser = await puppeteer.launch({ executablePath: BROWSER, headless: 'new', args: ['--no-sandbox', '--disable-gpu'], defaultViewport: { width, height } })
   const page = await browser.newPage()
+  // The book opens as the Excel-style sheet; the suites that drive its entries table ask for the plain list.
+  await page.evaluateOnNewDocument(() => { try { localStorage.setItem('yerp.mb.view', 'list') } catch { /* private window */ } })
   const problems = []
   page.on('pageerror', (e) => problems.push('page error: ' + e.message))
   page.on('console', (m) => {

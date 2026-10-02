@@ -1488,6 +1488,9 @@ def ensure_columns():
                     ("contractors", "approved_at", "TEXT DEFAULT ''"),
                     ("contractors", "rejection_reason", "TEXT DEFAULT ''"),
                     ("sub_measurements", "multiplier", "DOUBLE PRECISION DEFAULT 1"),
+                    ("sub_measurements", "section", "TEXT DEFAULT ''"),
+                    ("sub_measurements", "block_label", "TEXT DEFAULT ''"),
+                    ("sub_measurements", "group_ref", "TEXT DEFAULT ''"),
                     ("measurement_dimensions", "nom", "DOUBLE PRECISION"),
                     ("measurement_dimensions", "is_heading", "BOOLEAN DEFAULT FALSE"),
                     ("sub_bills", "bill_date", "TEXT DEFAULT ''"),
@@ -1685,6 +1688,9 @@ def migrate_sqlite():
             add_col("contractors", "approved_at", "TEXT DEFAULT ''")
             add_col("contractors", "rejection_reason", "TEXT DEFAULT ''")
             add_col("sub_measurements", "multiplier", "FLOAT DEFAULT 1")
+            add_col("sub_measurements", "section", "TEXT DEFAULT ''")
+            add_col("sub_measurements", "block_label", "TEXT DEFAULT ''")
+            add_col("sub_measurements", "group_ref", "TEXT DEFAULT ''")
             add_col("measurement_dimensions", "nom", "FLOAT")
             add_col("measurement_dimensions", "is_heading", "BOOLEAN DEFAULT 0")
             add_col("sub_bills", "bill_date", "TEXT DEFAULT ''")

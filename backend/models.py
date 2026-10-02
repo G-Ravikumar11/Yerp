@@ -2271,6 +2271,11 @@ class DBSubMeasurement(Base):
     # One block measured, several built alike: "Total Quantity for 4 Blocks".
     # The dimensions are of one; the entry is that many times what they come to.
     multiplier = Column(Float, default=1.0)
+    # Where the entry sits in the sheet it came from: its section ("I  Laying of tiles"), its block letter,
+    # and which blocks share one hold-back subtotal - so the book can be read like the sheet.
+    section = Column(String, default="")
+    block_label = Column(String, default="")
+    group_ref = Column(String, default="")
 
 
 class DBMeasurementDimension(Base):

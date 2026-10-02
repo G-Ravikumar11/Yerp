@@ -45,6 +45,9 @@ export interface MbEntry {
   remarks: string
   recorded_by_name: string
   billed: boolean
+  section?: string
+  block_label?: string
+  group_ref?: string
   dimensions: MbDimension[]
 }
 

@@ -26000,6 +26000,10 @@ class SubMeasurementIn(BaseModel):
     mb_ref: Optional[str] = ""
     location: Optional[str] = ""
     remarks: Optional[str] = ""
+    # Where it sat in the sheet it was imported from.
+    section: Optional[str] = ""
+    block_label: Optional[str] = ""
+    group_ref: Optional[str] = ""
 
 
 @app.get("/api/sub-mb/template.xlsx")
@@ -26056,6 +26060,8 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
         "multiplier": getattr(m, "multiplier", None) or 1,
         "mb_ref": m.mb_ref or "", "location": getattr(m, "location", "") or "", "remarks": m.remarks or "",
         "recorded_by_name": m.recorded_by_name or "", "billed": bool(m.sub_bill_id),
+        "section": getattr(m, "section", "") or "", "block_label": getattr(m, "block_label", "") or "",
+        "group_ref": getattr(m, "group_ref", "") or "",
         "dimensions": sub_dims.get(m.id, []),
     } for m in sub_rows]
     return {
@@ -26115,6 +26121,8 @@ def add_sub_measurement(db, client, order, item, body, actor_id, actor_name):
         measured_on=(body.measured_on or datetime.now().strftime("%Y-%m-%d")),
         mb_ref=(body.mb_ref or "").strip(), location=(body.location or "").strip()[:200],
         remarks=(body.remarks or "").strip(),
+        section=(body.section or "").strip()[:200], block_label=(body.block_label or "").strip()[:20],
+        group_ref=(body.group_ref or "").strip()[:40],
         recorded_by=actor_id, recorded_by_name=actor_name)
     db.add(entry)
     db.flush()
@@ -26316,7 +26324,9 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
                     for d in e["dims"]]
             body = SubMeasurementIn(item_id=item.id, dimensions=dims, multiplier=e["multiplier"],
                                     measured_on=when, mb_ref=("%s / %s" % (source, book["sheet"]))[:120],
-                                    location=e["location"], remarks="Imported from the measurement book")
+                                    location=e["location"], remarks="Imported from the measurement book",
+                                    section=("%s %s" % (sec["sno"], sec["description"])).strip(), block_label=e.get("letter") or "",
+                                    group_ref=("%d-%d" % (si, e["group"])) if e.get("group") else "")
             try:
                 # Each entry is flushed as it is written, so the ceiling check
                 # on the next one already counts it.
