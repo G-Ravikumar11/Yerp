@@ -1,7 +1,7 @@
 import { api, clickCell, clickText, launch, open, signIn, sleep } from './lib.mjs'
 
 // Choosing a unit in the schedule grid: with the mouse, with the keyboard, and typing one nobody listed.
-const { page, check, done } = await launch({ width: 1366, height: 768 })
+const { page, check, done } = await launch({ width: 1366, height: 1000 })
 await signIn(page)
 const vocab = (await api(page, 'GET', '/api/wo/vocabulary')).data
 const gang = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
@@ -18,11 +18,11 @@ const press = async (name) => {
   await page.mouse.click(p.x, p.y)
 }
 
-await clickCell(page, 0, 0, 1)
+await clickCell(page, 0, 0, 2)
 await page.keyboard.type('Shuttering'); await page.keyboard.press('Enter')
-await clickCell(page, 0, 1, 1)
+await clickCell(page, 0, 1, 2)
 await page.keyboard.type('Plastering'); await page.keyboard.press('Enter')
-await clickCell(page, 0, 2, 1)
+await clickCell(page, 0, 2, 2)
 await page.keyboard.type('Earth work'); await page.keyboard.press('Enter')
 
 await clickCell(page, 0, 0, col)
@@ -43,14 +43,15 @@ check('typing part of a unit and pressing Enter takes the match (cu -> cum)', (a
 
 await clickCell(page, 0, 2, col)
 await page.keyboard.press('F2')
-await page.keyboard.type('Lump sum')
+const odd = `Zz${Date.now() % 100000}`
+await page.keyboard.type(odd)
 await sleep(200)
 await page.keyboard.press('Enter')
 await sleep(300)
-check('a unit nobody listed can be typed and kept', (await cellOf(2)) === 'Lump sum', await cellOf(2))
+check('a unit nobody listed can be typed and kept', (await cellOf(2)) === odd, await cellOf(2))
 
 // Clicking inside the box while editing must not throw the edit away
-await clickCell(page, 0, 0, 1)
+await clickCell(page, 0, 0, 2)
 await page.keyboard.press('F2')
 await page.keyboard.type(' (upper floors)')
 const box = await page.evaluate(() => { const r = document.querySelector('[data-cell-editor] input').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })

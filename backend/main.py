@@ -20517,56 +20517,69 @@ OWNED_BY_AN_ORDER = {
 }
 
 
+_FK_CACHE = {}
+
+
+def _fk_map(db):
+    """Every foreign key in the live database, by the table it points at. Reading the schema is slow, so it is
+    kept until the set of tables changes - which is when it could have."""
+    from sqlalchemy import inspect as sa_inspect
+    bind = db.get_bind()
+    insp = sa_inspect(bind)
+    names = tuple(sorted(insp.get_table_names()))
+    key = (str(bind.url), names)
+    if key not in _FK_CACHE:
+        _FK_CACHE.clear()
+        graph = {}
+        for table in names:
+            nullable = {c["name"]: c.get("nullable", True) for c in insp.get_columns(table)}
+            pk = insp.get_pk_constraint(table).get("constrained_columns") or []
+            for fk in insp.get_foreign_keys(table):
+                cols = fk.get("constrained_columns", [])
+                if len(cols) == 1 and fk.get("referred_table"):
+                    graph.setdefault(fk["referred_table"], []).append((table, cols[0], nullable.get(cols[0], True), pk))
+        _FK_CACHE[key] = graph
+    return _FK_CACHE[key]
+
+
 def cascade_delete_referrers(db, parent, ids, _depth=0):
     """Everything in the live database that points at these rows, and what points at that, gone first.
 
     Read from the database's own constraints, so a link an older release left behind - or one a
     model never mentioned - cannot stop a delete. What belongs to the order is deleted; a record that
     merely mentions it (a stock issue, a diary day) is kept and unlinked."""
-    from sqlalchemy import inspect as sa_inspect, text, bindparam
+    from sqlalchemy import text, bindparam
     ids = list(ids)
     if not ids or _depth > 8:
         return
-    insp = sa_inspect(db.get_bind())
-    for table in insp.get_table_names():
-        for fk in insp.get_foreign_keys(table):
-            cols = fk.get("constrained_columns", [])
-            if fk.get("referred_table") != parent or len(cols) != 1:
-                continue
-            col = cols[0]
-            nullable = {c["name"]: c.get("nullable", True) for c in insp.get_columns(table)}.get(col, True)
-            where = "%s IN :ids" % col
-            bind = lambda sql: db.execute(text(sql).bindparams(bindparam("ids", expanding=True)), {"ids": ids})
-            if table == parent or (nullable and table not in OWNED_BY_AN_ORDER):
-                bind("UPDATE %s SET %s = NULL WHERE %s" % (table, col, where))
-                continue
-            pk = insp.get_pk_constraint(table).get("constrained_columns") or []
-            if len(pk) == 1:
-                kids = [r[0] for r in bind("SELECT %s FROM %s WHERE %s" % (pk[0], table, where)).fetchall()]
-                if kids:
-                    cascade_delete_referrers(db, table, kids, _depth + 1)
-            bind("DELETE FROM %s WHERE %s" % (table, where))
+    for table, col, nullable, pk in _fk_map(db).get(parent, []):
+        where = "%s IN :ids" % col
+        bind = lambda sql: db.execute(text(sql).bindparams(bindparam("ids", expanding=True)), {"ids": ids})
+        if table == parent or (nullable and table not in OWNED_BY_AN_ORDER):
+            bind("UPDATE %s SET %s = NULL WHERE %s" % (table, col, where))
+            continue
+        if len(pk) == 1:
+            kids = [r[0] for r in bind("SELECT %s FROM %s WHERE %s" % (pk[0], table, where)).fetchall()]
+            if kids:
+                cascade_delete_referrers(db, table, kids, _depth + 1)
+        bind("DELETE FROM %s WHERE %s" % (table, where))
 
 
 def sweep_referrers(db, parents):
-    """Whatever still points at rows about to be deleted, found in the live database itself -
-    not in the models - so a constraint left by an older release cannot stop a delete.
-    A column that may be empty is emptied; one that may not has its rows removed."""
-    from sqlalchemy import inspect as sa_inspect, text, bindparam
-    insp = sa_inspect(db.get_bind())
-    for table in insp.get_table_names():
-        nullable = {c["name"]: c.get("nullable", True) for c in insp.get_columns(table)}
-        for fk in insp.get_foreign_keys(table):
-            ids = parents.get(fk.get("referred_table"))
-            cols = fk.get("constrained_columns", [])
-            if not ids or len(cols) != 1 or table == fk.get("referred_table"):
+    """Whatever still points at rows about to be deleted. A column that may be empty is emptied; one that may
+    not has its rows removed."""
+    from sqlalchemy import text, bindparam
+    graph = _fk_map(db)
+    for parent, ids in parents.items():
+        ids = list(ids or [])
+        if not ids:
+            continue
+        for table, col, nullable, pk in graph.get(parent, []):
+            if table == parent:
                 continue
-            col = cols[0]
-            if nullable.get(col, True):
-                sql = "UPDATE %s SET %s = NULL WHERE %s IN :ids" % (table, col, col)
-            else:
-                sql = "DELETE FROM %s WHERE %s IN :ids" % (table, col)
-            db.execute(text(sql).bindparams(bindparam("ids", expanding=True)), {"ids": list(ids)})
+            sql = ("UPDATE %s SET %s = NULL WHERE %s IN :ids" if nullable else "DELETE FROM %s WHERE %s IN :ids") % (
+                (table, col, col) if nullable else (table, col))
+            db.execute(text(sql).bindparams(bindparam("ids", expanding=True)), {"ids": ids})
 
 
 def drop_files_of(db, attached_type, ids):

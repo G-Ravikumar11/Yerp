@@ -74,7 +74,8 @@ def test_the_purchase_order_and_the_gangs_bill_print_in_the_same_form(tenant):
     smeasure(tenant, order["id"], book(tenant, order["id"])["lines"][0]["item_id"], 10)
     sb = sraise(tenant, order["id"]).json()["bill"]
     _, text = pdf_text(tenant.get("/api/sub-bills/%d/document.pdf" % sb["id"]))
-    for words in ("SUB CONTRACTOR BILL", "retention (FSD) @ 5%", "NET AMOUNT PAYABLE", "Contractor Signature"):
+    # The gang's bill prints as its Certificate of Payment, with the abstract and measurement sheets behind it.
+    for words in ("CERTIFICATE OF PAYMENT", "Recovery of Retention @ 5 %", "Net Amount for Payment", "AMOUNT IN WORDS", "ABSTRACT SHEET"):
         assert words in text, words
 
 

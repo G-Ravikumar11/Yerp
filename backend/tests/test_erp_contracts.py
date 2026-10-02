@@ -250,7 +250,7 @@ def test_the_job_shows_what_was_sold_and_what_it_should_cost(tenant):
     assert costing["counts"]["work_orders"] == 1
 
 
-def test_an_approved_order_cannot_be_deleted(tenant):
+def test_an_approved_order_is_deleted_by_the_owner_with_what_hangs_off_it(tenant):
     job, wo = order_with_budget(tenant)
     # Raised by the owner, it waits for the owner's own sign-off.
     me = make_employee(tenant, password=PASSWORD,
@@ -259,7 +259,9 @@ def test_an_approved_order_cannot_be_deleted(tenant):
     tenant.post(f"/api/erp/work-orders/{wo['id']}/submit")
     assert tenant.post(f"/api/erp/work-orders/{wo['id']}/decide",
                        json={"decision": "approve"}).json()["status"] == "approved"
-    assert tenant.delete(f"/api/erp/work-orders/{wo['id']}").status_code == 409
+    # The owner may delete any work order; it takes everything attached with it.
+    assert tenant.delete(f"/api/erp/work-orders/{wo['id']}").status_code == 200
+    assert tenant.get(f"/api/erp/work-orders/{wo['id']}").status_code == 404
 
 
 def test_a_stranger_gets_nothing(client):
