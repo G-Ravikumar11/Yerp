@@ -3639,7 +3639,7 @@ def open_workbook(raw: bytes):
             400, "Excel workbooks are not supported on this server yet. "
                  "Save the sheet as CSV and upload that.")
     try:
-        return openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        return openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True, keep_links=False)
     except Exception as exc:
         raise HTTPException(400, "That workbook could not be opened (%s)." % exc)
 
@@ -26224,8 +26224,8 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
     raw = await file.read()
     try:
         import openpyxl
-        values = openpyxl.load_workbook(io.BytesIO(raw), data_only=True)
-        formulas = openpyxl.load_workbook(io.BytesIO(raw))
+        values = openpyxl.load_workbook(io.BytesIO(raw), data_only=True, keep_links=False)
+        formulas = openpyxl.load_workbook(io.BytesIO(raw), keep_links=False)
     except Exception:
         raise HTTPException(400, "That file could not be read as an Excel workbook (.xlsx).")
     names = values.sheetnames
@@ -37497,7 +37497,7 @@ async def import_registration_forms(request: Request, file: UploadFile = File(..
     raw = await file.read()
     try:
         import openpyxl
-        book = openpyxl.load_workbook(io.BytesIO(raw), data_only=True)
+        book = openpyxl.load_workbook(io.BytesIO(raw), data_only=True, keep_links=False)
     except Exception:
         raise HTTPException(400, "That file could not be read as an Excel workbook (.xlsx).")
     forms = sheet_forms.read_registration_forms(book)

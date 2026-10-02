@@ -16,7 +16,8 @@ const lineQty = (d: MbDimension) => {
 }
 const oneBlock = (e: MbEntry) => e.dimensions.reduce((n, d) => n + (lineQty(d) ?? 0), 0)
 /** The part of an entry held back for finishes, added up from its held-back line. */
-const heldOf = (e: MbEntry) => e.dimensions.filter((d) => HELD.test(d.particulars)).reduce((n, d) => n + Math.abs(lineQty(d) ?? 0), 0) * (e.multiplier || 1)
+// Entries are kept to the paisa (two decimals), so the part held back is shown the same way and adds up to the sheet.
+const heldOf = (e: MbEntry) => Math.round(e.dimensions.filter((d) => HELD.test(d.particulars)).reduce((n, d) => n + Math.abs(lineQty(d) ?? 0), 0) * (e.multiplier || 1) * 100) / 100
 const num = (v: number | null | undefined) => (v === null || v === undefined ? '' : formatQty(v))
 
 const COLS = 8

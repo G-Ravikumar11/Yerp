@@ -8,6 +8,8 @@ book is written, how the certificate adds up, and who signs it in what order.
 """
 import io
 import json
+import os
+import re
 
 import openpyxl
 
@@ -632,3 +634,13 @@ def test_a_block_already_in_the_book_is_left_out_and_a_stranger_is_named(tenant)
     res = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)},
                       data={"commit": "1", "mapping": json.dumps(mapping), "entries": json.dumps([[0, 0]])}).json()
     assert res["entries"] == 1 and res["skipped"] == []
+
+
+def test_no_workbook_is_loaded_with_its_cached_links():
+    """Real workbooks carry cached copies of other files they link to - one measurement book took 14 seconds
+    to read, nearly all of it spent on 41 such links. They hold nothing the app uses."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for name in ("main.py", "sheet_forms.py"):
+        text = open(os.path.join(here, "..", name), encoding="utf-8").read()
+        for call in re.findall(r"openpyxl\.load_workbook\([^\n]*\)", text):
+            assert "keep_links=False" in call, call

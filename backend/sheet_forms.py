@@ -345,6 +345,8 @@ def read_measurement_book(values, formulas=None):
     comes to exactly what the sheet says is payable.
     """
     head, cols = _mb_columns(values, formulas)
+    max_col = values.max_column      # asked once: on a big sheet every ask walks all of its cells
+    max_row = values.max_row
     if not head:
         raise ValueError("No heading row with Description and Total Quantity was found on '%s'." % values.title)
 
@@ -354,7 +356,7 @@ def read_measurement_book(values, formulas=None):
 
     meta = {}
     for r in range(1, head):
-        for c in range(1, min(values.max_column, 20) + 1):
+        for c in range(1, min(max_col, 20) + 1):
             text = _plain(_cell_value(values, formulas, r, c))
             low = text.lower()
             if not text:
@@ -393,7 +395,7 @@ def read_measurement_book(values, formulas=None):
         item["entries"].append(entry)
         pending.append(entry)
 
-    for r in range(head + 1, values.max_row + 1):
+    for r in range(head + 1, max_row + 1):
         desc = _plain(get(r, "description"))
         sno = get(r, "sno")
         sno_text = _plain(sno)
@@ -401,7 +403,7 @@ def read_measurement_book(values, formulas=None):
         figures = {f: _number(get(r, f)) for f in ("nos", "nom", "length", "width", "height")}
         given = {f: v for f, v in figures.items() if v is not None}
         total = _number(get(r, "total"))
-        row_text = " ".join(_plain(_cell_value(values, formulas, r, c)) for c in range(1, min(values.max_column, 14) + 1))
+        row_text = " ".join(_plain(_cell_value(values, formulas, r, c)) for c in range(1, min(max_col, 14) + 1))
 
         # Derived rows - the part held back, and what is to be paid - are the sheet's own arithmetic on the
         # totals above them, not measurements: read them for the payable figure, never as lines.
