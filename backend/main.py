@@ -26151,10 +26151,31 @@ def record_sub_measurement(order_id: int, body: SubMeasurementIn, request: Reque
                           else "the item", qty_text(ordered))}
 
 
-def mb_match_item(items, description):
-    """The order's item a section of the book is for, by its description:
-    the same words first, then one inside the other, then the most words in
-    common. None when nothing is close enough to say."""
+def mb_item_label(it):
+    """An item as it is named when somebody has to choose it: code, activity number, then the words."""
+    return " ".join(x for x in ((it.item_code or "").strip(), (it.activity_no or "").strip(),
+                                (it.item_description or "").split("\n")[0].strip()) if x)
+
+
+def mb_match_item(items, description, sno=""):
+    """The order's item a section of the book is for. By code first - the section's number or a
+    code written in its heading, against the item's code or activity number - then by its
+    description: the same words, one inside the other, then the most words in common.
+    None when nothing is close enough to say."""
+    def squash(t):
+        return re.sub(r"[^a-z0-9]+", "", (t or "").lower())
+    coded = [(it, {squash(it.item_code), squash(it.activity_no)} - {""}) for it in items]
+    # A serial number in the sheet is not an activity number - section "2" is not the order's line 2 -
+    # so only an item code is matched against it.
+    key = squash(sno)
+    if key and not key.isdigit():
+        hit = [it for it in items if squash(it.item_code) == key]
+        if len(hit) == 1:
+            return hit[0]
+    heading = {squash(w) for w in re.sub(r"[^a-z0-9]+", " ", (description or "").lower()).split()}
+    hit = [it for it, codes in coded if any(c in heading for c in codes if len(c) >= 3)]
+    if len(hit) == 1:
+        return hit[0]
     want = re.sub(r"[^a-z0-9]+", " ", (description or "").lower()).strip()
     if not want:
         return None
@@ -26225,13 +26246,12 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
     # The measure window reads a sheet to fill its own lines, so it asks for them to come back.
     want_dims = (include_dims or "0") in ("1", "true", "yes")
     for i, sec in enumerate(book["items"]):
-        item = by_id.get(chosen[i]) if i in chosen else mb_match_item(items, sec["description"])
+        item = by_id.get(chosen[i]) if i in chosen else mb_match_item(items, sec["description"], sec.get("sno") or "")
         if item is None:
             missing.append(sec["description"])
         sections.append({"index": i, "description": sec["description"], "sno": sec["sno"],
                          "item_id": item.id if item else None,
-                         "item": ("%s %s" % (item.activity_no or "", (item.item_description or "").split("\n")[0])).strip()
-                                 if item else "",
+                         "item": mb_item_label(item) if item else "",
                          "uom": item.uom if item else "", "quantity": sec["quantity"],
                          "entries": [{"location": e["location"], "multiplier": e["multiplier"],
                                       "lines": len([d for d in e["dims"] if not d["is_heading"]]),
@@ -26241,8 +26261,7 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
                                      for e in sec["entries"]]})
     preview = {"sheet": book["sheet"], "meta": book["meta"], "sections": sections,
                "warnings": book["warnings"],
-               "items": [{"id": it.id, "label": ("%s %s" % (it.activity_no or "", (it.item_description or "").split("\n")[0])).strip(),
-                          "uom": it.uom or ""} for it in items]}
+               "items": [{"id": it.id, "label": mb_item_label(it), "uom": it.uom or ""} for it in items]}
     if (commit or "0") not in ("1", "true", "yes"):
         return dict(preview, ok=True, committed=False)
     if missing:

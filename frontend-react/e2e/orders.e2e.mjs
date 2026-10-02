@@ -46,7 +46,7 @@ check('Save is offered once something changes', await page.$eval('main button', 
 // --- The schedule, typed into the grid -------------------------------------------------
 await clickText(page, 'button[role=tab]', 'Schedule')
 await page.waitForSelector('[role=grid]')
-await clickCell(page, 0, 0, 1) // description, first row
+await clickCell(page, 0, 0, 2) // description, first row
 await page.keyboard.type('Shuttering for slabs')
 await page.keyboard.press('Tab')
 await page.keyboard.type('sq')
@@ -55,9 +55,9 @@ await page.keyboard.type('12.5*40') // quantity as arithmetic
 await page.keyboard.press('Tab')
 await page.keyboard.type('410')
 await page.keyboard.press('Enter')
-check('quantity worked out from 12.5*40', (await cellText(page, 0, 0, 3)) === '500.000', await cellText(page, 0, 0, 3))
-check('the amount is worked out', (await cellText(page, 0, 0, 5)).includes('2,05,000'), await cellText(page, 0, 0, 5))
-await clickCell(page, 0, 1, 1)
+check('quantity worked out from 12.5*40', (await cellText(page, 0, 0, 4)) === '500.000', await cellText(page, 0, 0, 4))
+check('the amount is worked out', (await cellText(page, 0, 0, 6)).includes('2,05,000'), await cellText(page, 0, 0, 6))
+await clickCell(page, 0, 1, 2)
 await page.keyboard.type('Reinforcement steel Fe500D')
 await page.keyboard.press('Tab')
 await page.keyboard.type('MT')

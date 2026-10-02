@@ -507,3 +507,34 @@ def test_only_plain_arithmetic_in_a_sheet_is_worked_out():
     assert sheet_forms._arithmetic("+2.7-0.915-0.435") == 1.35
     for hostile in ("9**9**9**9", "A1+2", "__import__('os')", "1/0", "SUM(1,2)"):
         assert sheet_forms._arithmetic(hostile) is None
+
+
+def test_a_section_is_matched_by_the_item_code_written_in_its_heading(tenant):
+    order = draft(tenant, gst_rate=0)
+    res = tenant.put("/api/wo/orders/%d/boq" % order["id"], json={"lines": [
+        {"activity_no": "1", "item_code": "STR001", "item_description": "Wall finishing, level one", "uom": "Sqm", "quantity": 6000, "unit_rate": 6},
+        {"activity_no": "2", "item_code": "STR002", "item_description": "Packing of holes", "uom": "Sqm", "quantity": 6000, "unit_rate": 8}]})
+    order = fund_order(tenant, res.json()["order"])
+    tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
+    raw = mb_workbook().replace(b"x", b"x")
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(raw))
+    ws = wb.active
+    for row in ws.iter_rows():
+        for cell in row:
+            if cell.value == "BUFFERING WORKS":
+                cell.value = "STR002 BUFFERING WORKS"          # words that match no item, but the code does
+            if cell.value == "Hole packing":
+                cell.value = "STR001 Hole packing"
+    buf = io.BytesIO()
+    wb.save(buf)
+    pv = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", buf.getvalue())}).json()
+    assert [s["item"] for s in pv["sections"]] == ["STR002 2 Packing of holes", "STR001 1 Wall finishing, level one"]
+
+
+def test_a_serial_number_is_not_taken_for_an_activity_number(tenant):
+    """Section 2 of the sheet is not the order's line 2: only words or a code decide it."""
+    order = painting_order(tenant)
+    pv = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", mb_workbook())}).json()
+    assert [s["item"] for s in pv["sections"]] == ["1 Buffering works", "2 Hole Packing"]

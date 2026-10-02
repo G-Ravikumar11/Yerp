@@ -40,7 +40,7 @@ const subTarget = (orderId: number): MeasureTarget => ({ url: recordUrl(orderId)
  */
 export function MeasureModal({ orderId, order, jobCode, line, onClose, target }: { orderId: number; order?: MeasureOrder; jobCode?: string; line: MbLine | null; onClose: () => void; target?: MeasureTarget }) {
   return (
-    <Modal open={!!line} onOpenChange={(o) => !o && onClose()} size="xl" title={line ? `Measure ${line.activity_no} ${line.description}` : 'Measure'} description={line ? allowance(line, !!target?.client) : undefined}>
+    <Modal open={!!line} onOpenChange={(o) => !o && onClose()} size="xl" title={line ? `Measure ${[line.item_code, line.activity_no].filter(Boolean).join(" ")} ${line.description}` : 'Measure'} description={line ? allowance(line, !!target?.client) : undefined}>
       {line && <MeasureForm key={line.item_id} orderId={orderId} order={order} jobCode={jobCode} line={line} onClose={onClose} target={target ?? subTarget(orderId)} />}
     </Modal>
   )
@@ -125,7 +125,7 @@ function MeasureForm({ orderId, order, jobCode, line, onClose, target }: { order
         )}
         <ItemFacts line={line} />
       </div>
-      {!target.client && <SheetFill orderId={orderId} itemId={line.item_id} onUse={fromSheet} />}
+      {!target.client && <SheetFill orderId={orderId} itemId={line.item_id} itemName={[line.item_code, line.activity_no].filter(Boolean).join(" ") || line.description} onUse={fromSheet} />}
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <Tabs
           label="How it is measured"

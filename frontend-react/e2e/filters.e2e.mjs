@@ -4,17 +4,21 @@ import { api, approvedOrder, fill, launch, open, setValue, signIn, sleep } from 
 // and the item code beside every item in the book.
 const { page, check, done } = await launch()
 await signIn(page)
-const o = await approvedOrder(page, { subject: 'filters' })
+const o = await approvedOrder(page, { subject: 'filters', lines: [
+  { activity_no: '1.0', item_code: 'STR001', item_description: 'Shuttering for slabs and beams', uom: 'sqm', quantity: 1000, unit_rate: 410, tolerance_percent: 10 },
+  { activity_no: '2.0', item_code: 'STR002', item_description: 'Reinforcement steel', uom: 'MT', quantity: 20, unit_rate: 68000 },
+] })
 await api(page, 'POST', `/api/sub-mb/${o.id}/entries`, { item_id: o.items[0].item_id, quantity: 10, measured_on: '2026-11-15' })
 const text = () => page.$eval('main', (e) => e.textContent.replace(/\s+/g, ' '))
 
 await open(page, `/subcontractors/measurement-book?order=${o.id}`)
 await page.waitForSelector('table[aria-label="Items on the order"] tbody tr')
+check('the codes typed on the work order show in the book', (await text()).includes('STR001') && (await text()).includes('STR002'))
 check('the book lists an Item code column', (await page.$$eval('table[aria-label="Items on the order"] th', (h) => h.map((x) => x.textContent))).includes('Item code'))
 const rowsBefore = await page.$$eval('table[aria-label="Items on the order"] tbody tr', (r) => r.length)
 const searches = await page.$$('input[aria-label=Search]')
 check('the items have their own search, and the entries have theirs', searches.length >= 2, String(searches.length))
-await searches[0].type('Reinforcement')
+await searches[0].type('STR002')
 await sleep(300)
 const rowsAfter = await page.$$eval('table[aria-label="Items on the order"] tbody tr', (r) => r.length)
 check('searching narrows the items', rowsAfter > 0 && rowsAfter < rowsBefore, `${rowsBefore} -> ${rowsAfter}`)

@@ -29,7 +29,7 @@ type Found = { source: string; matched: boolean; sections: ImportSection[] }
  * Fill the lines from the measurement book as the site keeps it in Excel, instead of typing them.
  * The sheet is read but nothing is recorded: the lines land in the grid to be checked first.
  */
-export function SheetFill({ orderId, itemId, onUse }: { orderId: number; itemId: number; onUse: (entry: SheetEntry, source: string) => void }) {
+export function SheetFill({ orderId, itemId, itemName, onUse }: { orderId: number; itemId: number; itemName?: string; onUse: (entry: SheetEntry, source: string) => void }) {
   const input = useRef<HTMLInputElement>(null)
   const [reading, setReading] = useState(false)
   const [error, setError] = useState('')
@@ -85,7 +85,7 @@ export function SheetFill({ orderId, itemId, onUse }: { orderId: number; itemId:
       {found && (
         <div className="mt-3 rounded-lg border border-border bg-card p-3">
           <p className="mb-2 text-[13px] text-muted-foreground">
-            {found.matched ? 'This item is in the sheet more than once. Choose the entry to load:' : 'No section of the sheet matched this item. Choose the lines to load:'}
+            {found.matched ? 'This item is in the sheet more than once. Choose the entry to load:' : `Nothing in the sheet is named like ${itemName || 'this item'}. These are the sections it has - load one only if it is the same work:`}
           </p>
           <ul className="flex flex-col gap-1.5">
             {found.sections.flatMap((s) =>

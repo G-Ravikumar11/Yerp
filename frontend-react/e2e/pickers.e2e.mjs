@@ -17,30 +17,30 @@ const options = () => page.$$eval('[role=listbox] [role=option]', (o) => o.map((
 await open(page, `/subcontractors/work-orders/${head.id}`)
 await clickText(page, 'button[role=tab]', 'Schedule')
 await page.waitForSelector('[role=grid]')
-await clickCell(page, 0, 0, 1)
+await clickCell(page, 0, 0, 2)
 await page.keyboard.type(`Wiring ${stamp}`)
 await page.keyboard.press('Tab')
 // Unit: just click it, nothing typed
-await clickCell(page, 0, 0, 2)
+await clickCell(page, 0, 0, 3)
 await page.waitForSelector('[role=listbox] [role=option]', { timeout: 5000 })
 const units = await options()
 check('clicking the Unit cell lists every unit at once', units.length >= 5 && units.includes('Meters'), units.slice(0, 8).join(', '))
 await page.evaluate(() => [...document.querySelectorAll('[role=listbox] [role=option]')].find((o) => o.textContent.trim() === 'Meters').click())
 await sleep(200)
-check('choosing one fills the cell', (await cellText(page, 0, 0, 2)) === 'Meters', await cellText(page, 0, 0, 2))
+check('choosing one fills the cell', (await cellText(page, 0, 0, 3)) === 'Meters', await cellText(page, 0, 0, 3))
 // Leaving a picker without choosing keeps what it had
-await clickCell(page, 0, 0, 2)
-await page.waitForSelector('[role=listbox]')
 await clickCell(page, 0, 0, 3)
+await page.waitForSelector('[role=listbox]')
+await clickCell(page, 0, 0, 4)
 await sleep(200)
-check('looking at the list and clicking away leaves the unit as it was', (await cellText(page, 0, 0, 2)) === 'Meters', await cellText(page, 0, 0, 2))
+check('looking at the list and clicking away leaves the unit as it was', (await cellText(page, 0, 0, 3)) === 'Meters', await cellText(page, 0, 0, 3))
 check('and the list is closed', (await page.$$('[role=listbox]')).length === 0)
 await page.keyboard.type('1000')
 await page.keyboard.press('Tab')
 await page.keyboard.type('12')
 await page.keyboard.press('Enter')
 // Cost centre: click it
-const cc = 7
+const cc = 8
 {
   await clickCell(page, 0, 0, cc)
   await page.waitForSelector('[role=listbox]', { timeout: 5000 })

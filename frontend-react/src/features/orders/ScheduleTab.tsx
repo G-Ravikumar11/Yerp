@@ -90,6 +90,7 @@ export function ScheduleTab({
   const columns = useMemo<Column<LineRow>[]>(
     () => [
       { id: 'activity_no', header: 'Activity', hint: 'No.', width: 88, mono: true, pin: true, placeholder: '1.0' },
+      { id: 'item_code', header: 'Item code', hint: 'Shown in the Measurement Book', width: 120, mono: true, placeholder: 'STR001' },
       { id: 'item_description', header: 'Description of work', hint: 'What the gang is to do', width: 400, required: true, placeholder: 'What is the work?' },
       { id: 'uom', header: 'Unit', type: 'select', freeText: true, width: 96, options: vocab?.uoms ?? [], readOnly: (r) => r.is_header },
       {
