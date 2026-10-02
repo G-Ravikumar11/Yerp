@@ -9,13 +9,16 @@ import { useOrders, type Order } from '@/api/orders'
 import { useSession } from '@/lib/session'
 import { compactINR, formatINR } from '@/lib/utils'
 import { formatDate } from '@/lib/format'
+import { DeleteOrderDialog } from '@/features/deleteorder/DeleteOrderDialog'
+import { DeleteButton } from '@/features/deleteorder/DeleteButton'
 import { NewOrderModal } from './NewOrderModal'
 
 export default function OrdersPage() {
   const nav = useNavigate()
-  const { can } = useSession()
+  const { can, isOwner } = useSession()
   const orders = useOrders()
   const [creating, setCreating] = useState(false)
+  const [deleting, setDeleting] = useState<Order | null>(null)
 
   const filters = useListFilters(orders.data?.orders, {
     search: (o) => [o.wo_number, o.contractor, o.vendor_code, o.project, o.subject, o.work_type, o.department, o.status, o.net_order_value].join(' '),
@@ -56,6 +59,7 @@ export default function OrdersPage() {
     { id: 'value', header: 'Net value', align: 'right', sort: (o) => o.net_order_value, cell: (o) => formatINR(o.net_order_value) },
     { id: 'start', header: 'Starts', sort: (o) => o.commencement_date, cell: (o) => formatDate(o.commencement_date) || '-', hideBelow: 'xl' },
     { id: 'status', header: 'Status', sort: (o) => o.status, cell: (o) => <StatusBadge status={o.status} /> },
+    { id: 'del', header: '', align: 'right', width: '3.5rem', cell: (o) => (isOwner ? <DeleteButton label={o.wo_number} onClick={() => setDeleting(o)} /> : null) },
   ]
 
   return (
@@ -101,6 +105,7 @@ export default function OrdersPage() {
       />
 
       <NewOrderModal open={creating} onOpenChange={setCreating} />
+      <DeleteOrderDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)} kind="subcontract" id={deleting?.id ?? 0} number={deleting?.wo_number ?? ''} onDeleted={() => setDeleting(null)} />
     </>
   )
 }

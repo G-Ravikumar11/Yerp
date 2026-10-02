@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
 import { del, get } from '@/lib/api'
 
-/** The two kinds of work order: the ones given to gangs, and the ones received from clients. */
-export type OrderKind = 'subcontract' | 'client'
-const base = (kind: OrderKind, id: number) => (kind === 'subcontract' ? `/api/wo/orders/${id}` : `/api/erp/work-orders/${id}`)
+/** What can be deleted: a gang's work order, a client's, an RA bill, or a vendor with everything of theirs. */
+export type OrderKind = 'subcontract' | 'client' | 'bill' | 'vendor'
+const base = (kind: OrderKind, id: number) =>
+  kind === 'subcontract' ? `/api/wo/orders/${id}` : kind === 'client' ? `/api/erp/work-orders/${id}` : kind === 'bill' ? `/api/sub-bills/${id}` : `/api/wo/contractors/${id}`
 
 export interface DeletePreview {
   numbers: string[]

@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Download, FilePlus2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -9,12 +9,15 @@ import { billKeys, drawBill, useSubBills, withRunningTotals, type SubBill } from
 import { useOrders } from '@/api/orders'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
+import { DeleteOrderDialog } from '@/features/deleteorder/DeleteOrderDialog'
+import { DeleteButton } from '@/features/deleteorder/DeleteButton'
 import { formatDate } from '@/lib/format'
 import { compactINR, formatINR } from '@/lib/utils'
 
 export default function RaBillsPage() {
   const nav = useNavigate()
-  const { can } = useSession()
+  const { can, isOwner } = useSession()
+  const [deleting, setDeleting] = useState<SubBill | null>(null)
   const [params, setParams] = useSearchParams()
   const orderId = Number(params.get('order')) || 0
   const orders = useOrders()
@@ -72,6 +75,7 @@ export default function RaBillsPage() {
         </div>
       ),
     },
+    { id: 'del', header: '', align: 'right', width: '3.5rem', cell: (b) => (isOwner ? <DeleteButton label={b.number} onClick={() => setDeleting(b)} /> : null) },
   ]
 
   return (
@@ -125,6 +129,7 @@ export default function RaBillsPage() {
         onRowClick={(b) => nav(`/subcontractors/ra-bills/${b.id}`)}
         empty={filters.active ? 'Nothing matches those filters.' : "No bills yet. Measure the gang's work, then draw one up."}
       />
+      <DeleteOrderDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)} kind="bill" id={deleting?.id ?? 0} number={deleting?.number ?? ''} onDeleted={() => setDeleting(null)} />
     </>
   )
 }

@@ -6,6 +6,8 @@ import { plural } from '@/lib/format'
 
 const LABEL: Record<string, [string, string]> = {
   versions: ['version', 'versions'],
+  orders: ['work order', 'work orders'],
+  logins: ['portal login', 'portal logins'],
   items: ['schedule line', 'schedule lines'],
   lines: ['schedule line', 'schedule lines'],
   measurements: ['measurement', 'measurements'],
@@ -32,14 +34,14 @@ export function DeleteOrderDialog({ open, onOpenChange, kind, id, number, onDele
       onDeleted()
     },
   })
-  const goes = p ? Object.entries(p.counts).filter(([k, n]) => n > 0 && LABEL[k] && !(k === 'versions' && n === 1)).map(([k, n]) => plural(n, ...LABEL[k])) : []
+  const goes = p ? Object.entries(p.counts).filter(([k, n]) => n > 0 && LABEL[k] && !(k === 'versions' && n === 1)).map(([k, n]) => plural(n, ...(kind === 'bill' && k === 'lines' ? (['bill line', 'bill lines'] as [string, string]) : LABEL[k]))) : []
   const several = (p?.numbers.length ?? 0) > 1
   return (
     <Modal
       open={open}
       onOpenChange={onOpenChange}
       title={`Delete ${number}?`}
-      description="This takes it away from every screen. It cannot be undone."
+      description={kind === 'vendor' ? 'This takes the vendor and everything of theirs away from every screen. It cannot be undone.' : 'This takes it away from every screen. It cannot be undone.'}
       footer={
         <>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>Keep it</Button>
@@ -50,7 +52,7 @@ export function DeleteOrderDialog({ open, onOpenChange, kind, id, number, onDele
       {preview.isPending ? (
         <Skeleton className="h-16 w-full" />
       ) : preview.isError || !p ? (
-        <p className="text-sm text-danger">Could not check what this order is tied to. Try again.</p>
+        <p className="text-sm text-danger">Could not check what this is tied to. Try again.</p>
       ) : (
         <div className="grid gap-3 text-sm">
           {(p.warnings ?? []).length > 0 && (
@@ -61,7 +63,8 @@ export function DeleteOrderDialog({ open, onOpenChange, kind, id, number, onDele
           )}
           {several && <p>It was amended, so every version goes together: <strong>{p.numbers.join(', ')}</strong>.</p>}
           <p>{goes.length ? <>Along with it: <strong>{goes.join(', ')}</strong>.</> : 'Nothing else hangs off it.'}</p>
-          <p className="text-muted-foreground">Cancelling an order keeps its record. Delete only what should never have existed.</p>
+          {kind === 'bill' && <p>What the bill measured is free to be billed again.</p>}
+          <p className="text-muted-foreground">{kind === 'bill' ? 'Cancelling a bill keeps its record. Delete only what should never have existed.' : 'Cancelling keeps the record. Delete only what should never have existed.'}</p>
         </div>
       )}
     </Modal>

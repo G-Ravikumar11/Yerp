@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, CheckCircle2, Clock, Download, FileText, Save } from 'lucide-react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { ArrowLeft, CheckCircle2, Clock, Download, FileText, Save, Trash2 } from 'lucide-react'
+import { DeleteOrderDialog } from '@/features/deleteorder/DeleteOrderDialog'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, ConfirmDialog, Field, Input, Modal, NumField, Skeleton, Stat, StatGrid, StatusBadge, Textarea } from '@/components/ui'
 import { billKeys, editBill, moveBill, useSubBill, type BillEdit, type BillLine, type BillMove, type SubBill } from '@/api/subbills'
@@ -64,7 +65,9 @@ function Row({ label, value, strong, muted, negative, note }: { label: string; v
 }
 
 function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
-  const { can } = useSession()
+  const { can, isOwner } = useSession()
+  const nav = useNavigate()
+  const [deleting, setDeleting] = useState(false)
   const [f, setF] = useState(() => editFrom(bill))
   const [initial] = useState(() => JSON.stringify(editFrom(bill)))
   const dirty = JSON.stringify(f) !== initial
@@ -160,6 +163,11 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
             {has('CANCEL') && can('billing.manage') && (
               <Button variant="ghost" className="text-danger hover:bg-danger-soft hover:text-danger" onClick={() => setDialog('cancel')}>
                 Cancel bill
+              </Button>
+            )}
+            {isOwner && (
+              <Button variant="ghost" className="text-danger hover:bg-danger-soft hover:text-danger" onClick={() => setDeleting(true)}>
+                <Trash2 /> Delete
               </Button>
             )}
           </div>
@@ -368,6 +376,7 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
           <Input id="b-signer" value={gangName} onChange={(e) => setGangName(e.target.value)} autoFocus />
         </Field>
       </Modal>
+      <DeleteOrderDialog open={deleting} onOpenChange={setDeleting} kind="bill" id={bill.id} number={bill.number} onDeleted={() => nav(`/subcontractors/ra-bills?order=${bill.order_id}`)} />
       <PayModal docType="sub_bill" docId={bill.id} title={bill.number} open={paying} onOpenChange={(o) => { setPaying(o); if (!o) reseed() }} invalidate={[billKeys.all]} />
     </>
   )

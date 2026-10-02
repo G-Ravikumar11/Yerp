@@ -20813,7 +20813,7 @@ def vendor_delete_preview(con_id: int, request: Request, db: Session = Depends(g
     ids, bills, paid, logins = _vendor_report(db, client, con)
     warnings = ["%s has %s paid against it - those payments are deleted too." % (con.company_name, inr(paid))] if paid > 0 else []
     return {"numbers": [con.company_name], "blockers": [], "warnings": warnings, "can_delete": True,
-            "counts": {"versions": len(ids), "bills": bills, "logins": logins}}
+            "counts": {"orders": len(ids), "bills": bills, "logins": logins}}
 
 
 @app.delete("/api/wo/contractors/{con_id}")

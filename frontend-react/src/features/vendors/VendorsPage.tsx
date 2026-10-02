@@ -7,6 +7,8 @@ import { Badge, Button, ConfirmDialog } from '@/components/ui'
 import { decideVendor, importVendors, useVendors, vendorKeys, type Registration, type Vendor } from '@/api/vendors'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
+import { DeleteOrderDialog } from '@/features/deleteorder/DeleteOrderDialog'
+import { DeleteButton } from '@/features/deleteorder/DeleteButton'
 import { toast } from '@/stores/toast'
 import { VendorFormModal } from './VendorFormModal'
 
@@ -17,7 +19,8 @@ const REG: Record<Registration, { word: string; tone: 'success' | 'warning' | 'd
 }
 
 export default function VendorsPage() {
-  const { can } = useSession()
+  const { can, isOwner } = useSession()
+  const [deleting, setDeleting] = useState<Vendor | null>(null)
   const vendors = useVendors('', '')
   // Search, registration status and date: the same filters as the Work Orders list.
   const filters = useListFilters(vendors.data?.contractors, {
@@ -124,6 +127,7 @@ export default function VendorsPage() {
           <Button size="sm" variant="outline" asChild>
             <a href={`/api/wo/contractors/${v.id}/registration.xlsx`}>Excel</a>
           </Button>
+          {isOwner && <DeleteButton label={v.company_name} onClick={() => setDeleting(v)} />}
         </div>
       ),
     },
@@ -169,6 +173,7 @@ export default function VendorsPage() {
       />
 
       <VendorFormModal vendor={null} open={creating} onOpenChange={setCreating} />
+      <DeleteOrderDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)} kind="vendor" id={deleting?.id ?? 0} number={deleting?.company_name ?? ''} onDeleted={() => setDeleting(null)} />
       <VendorFormModal vendor={editing} open={!!editing} onOpenChange={(o) => !o && setEditing(null)} />
       <ConfirmDialog
         open={!!sendBack}
