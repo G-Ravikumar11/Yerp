@@ -18255,33 +18255,99 @@ def wo_or_404(db, client_id, order_id):
     row = db.query(models.DBSubcontractOrder).filter(
         models.DBSubcontractOrder.id == order_id,
         models.DBSubcontractOrder.client_id == client_id).first()
-    if not row or not wo_visible_to(db, row, STAFF_VIEWER.get()):
+    viewer = STAFF_VIEWER.get()
+    if row and viewer and not wo_visible_to(db, row, viewer):
+        # An order sent before routes existed has none until somebody looks; whoever is on it may then see it.
+        if (row.status or "") == "PROVISIONAL" and not wo_chain_rows(db, row.id):
+            ensure_wo_chain(db, db.query(models.DBClient).filter(models.DBClient.id == client_id).first(), row)
+    if not row or not wo_visible_to(db, row, viewer):
         raise HTTPException(404, "Work order not found")
     return row
+
+
+def wo_involved_ids(db, client_id, emp_id):
+    """The orders a member of staff has a hand in: made, sent or acted on by them, or with them on its
+    route to sign - and every version of such an order, so an amendment is not lost to the one who
+    raised the original."""
+    mine = {r[0] for r in db.query(models.DBSubcontractOrder.id).filter(
+        models.DBSubcontractOrder.client_id == client_id,
+        models.DBSubcontractOrder.submitted_by == emp_id).all()}
+    mine |= {r[0] for r in db.query(models.DBApprovalChain.entity_id).filter(
+        models.DBApprovalChain.entity_type == "subcontract_order",
+        models.DBApprovalChain.approver_id == emp_id).all()}
+    mine |= {r[0] for r in db.query(models.DBSubcontractApproval.order_id).filter(
+        models.DBSubcontractApproval.client_id == client_id,
+        models.DBSubcontractApproval.actor_id == emp_id).all()}
+    mine |= {r[0] for r in db.query(models.DBOrderAccess.order_id).filter(
+        models.DBOrderAccess.client_id == client_id, models.DBOrderAccess.employee_id == emp_id).all()}
+    # A bill to sign, or one they sent, brings its order with it.
+    on_bills = {r[0] for r in db.query(models.DBApprovalChain.entity_id).filter(
+        models.DBApprovalChain.entity_type == "sub_bill", models.DBApprovalChain.approver_id == emp_id).all()}
+    mine |= {r[0] for r in db.query(models.DBSubBill.order_id).filter(
+        models.DBSubBill.client_id == client_id,
+        or_(models.DBSubBill.submitted_by == emp_id, models.DBSubBill.id.in_(list(on_bills) or [0]))).all() if r[0]}
+    if not mine:
+        return set()
+    seen = set(mine)
+    while True:
+        more = {r[0] for r in db.query(models.DBSubcontractOrder.id).filter(
+            models.DBSubcontractOrder.client_id == client_id,
+            or_(models.DBSubcontractOrder.supersedes_id.in_(seen),
+                models.DBSubcontractOrder.id.in_(
+                    [r[0] for r in db.query(models.DBSubcontractOrder.supersedes_id).filter(
+                        models.DBSubcontractOrder.id.in_(seen)).all() if r[0]]))).all()} - seen
+        if not more:
+            return seen
+        seen |= more
+
+
+@app.get("/api/wo/orders/{order_id}/access")
+def wo_access_get(order_id: int, request: Request, db: Session = Depends(get_db)):
+    """Who may see this order besides the owner: the one who made it, those who sign it, and whoever
+    was let in. The owner and the maker choose the last."""
+    client = require_erp_read(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    viewer = STAFF_VIEWER.get()
+    if viewer and order.submitted_by != viewer:
+        raise HTTPException(403, "Only the owner, or whoever made the order, decides who sees it.")
+    shared = {r[0] for r in db.query(models.DBOrderAccess.employee_id).filter(models.DBOrderAccess.order_id == order.id).all()}
+    route = {r.approver_id for r in wo_chain_rows(db, order.id) if r.approver_id}
+    people = []
+    for e in db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id).order_by(models.DBEmployee.first_name).all():
+        if (e.status or "active") in GONE_STATUSES or e.id == order.submitted_by:
+            continue
+        people.append({"id": e.id, "name": ("%s %s" % (e.first_name or "", e.last_name or "")).strip(),
+                       "department": getattr(e, "department", "") or "", "shared": e.id in shared, "on_route": e.id in route})
+    return {"people": people}
+
+
+@app.put("/api/wo/orders/{order_id}/access")
+def wo_access_put(order_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    viewer = STAFF_VIEWER.get()
+    if viewer and order.submitted_by != viewer:
+        raise HTTPException(403, "Only the owner, or whoever made the order, decides who sees it.")
+    want = {int(i) for i in (body.get("employee_ids") or []) if str(i).isdigit() or isinstance(i, int)}
+    valid = {r[0] for r in db.query(models.DBEmployee.id).filter(models.DBEmployee.client_id == client.id, models.DBEmployee.id.in_(list(want) or [0])).all()}
+    db.query(models.DBOrderAccess).filter(models.DBOrderAccess.order_id == order.id).delete(synchronize_session=False)
+    for emp_id in sorted(valid):
+        db.add(models.DBOrderAccess(client_id=client.id, order_id=order.id, employee_id=emp_id))
+    log_audit(db, client.id, "subcontract_shared", "subcontract_order", order.id, order.wo_number or "",
+              "%d people" % len(valid), request)
+    db.commit()
+    return {"ok": True, "message": "%s is shared with %d %s." % (order.wo_number, len(valid), "person" if len(valid) == 1 else "people")}
 
 
 def wo_visible_to(db, order, emp_id):
     """Whether a member of staff may see this order.
 
-    A draft is its maker's work in progress: seen by them and by those above
-    them - a higher rank, or their manager up the reporting line - and not by
-    anybody below. The owner's own drafts are the owner's alone. Once it is
-    sent for approval it is the business's, and visible as any order is.
+    Only the ones they have a hand in: they made it, sent it, or have it to sign (now or already).
+    Nobody sees the business's whole book but the owner.
     """
-    if not emp_id or (order.status or "") != "DRAFT":
+    if not emp_id:
         return True
-    maker = order.submitted_by
-    if maker == emp_id:
-        return True
-    if not maker:
-        return False
-    me = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id).first()
-    them = db.query(models.DBEmployee).filter(models.DBEmployee.id == maker).first()
-    if not me or not them:
-        return False
-    if role_rank(me) > role_rank(them):
-        return True
-    return any(r["employee_id"] == emp_id for r in build_approval_chain(maker, order.client_id, db))
+    return order.id in wo_involved_ids(db, order.client_id, emp_id)
 
 
 def record_wo_action(db, client, order, actor_id, actor_name, action, was, comments=""):
@@ -18386,6 +18452,7 @@ def wo_dict(db, order, detail=False):
     job = by_id(db, models.DBJob, order.job_id)
     row = {
         "id": order.id, "wo_number": order.wo_number or "", "status": order.status,
+        "submitted_by": order.submitted_by,
         "amendment_no": order.amendment_no or 0, "supersedes_id": order.supersedes_id,
         "business_unit_id": order.business_unit_id, "business_unit": bu.name if bu else "",
         "contractor_id": order.contractor_id, "contractor": con.company_name if con else "",
@@ -19524,9 +19591,10 @@ def wo_list_orders(request: Request, status: str = "", q: str = "",
         query = query.filter(models.DBSubcontractOrder.contractor_id == contractor_id)
     if job_id:
         query = query.filter(models.DBSubcontractOrder.job_id == job_id)
-    rows = query.order_by(models.DBSubcontractOrder.id.desc()).limit(300).all()
     viewer = STAFF_VIEWER.get()
-    rows = [o for o in rows if wo_visible_to(db, o, viewer)]
+    if viewer:
+        query = query.filter(models.DBSubcontractOrder.id.in_(wo_involved_ids(db, client.id, viewer) or [0]))
+    rows = query.order_by(models.DBSubcontractOrder.id.desc()).limit(300).all()
     orders = [d for d in (wo_dict(db, o) for o in rows) if wo_matches(d, q)]
     counts = file_counts(db, client.id, "subcontract_order", [o["id"] for o in orders])
     for o in orders:
@@ -20516,7 +20584,7 @@ def wo_cancel(order_id: int, body: WoActionIn, request: Request,
 OWNED_BY_AN_ORDER = {
     "retention_releases", "measurement_dimensions", "material_recoveries", "sub_bill_lines", "sub_measurements",
     "sub_bills", "measurements", "ra_bills", "ra_bill_lines", "variation_orders", "variation_lines",
-    "work_order_lines", "bom_lines", "subcontract_items", "subcontract_terms", "subcontract_approvals",
+    "work_order_lines", "bom_lines", "subcontract_items", "subcontract_terms", "subcontract_approvals", "order_access",
 }
 
 
@@ -25963,9 +26031,26 @@ def sub_bill_or_404(db, client_id, bill_id):
     row = db.query(models.DBSubBill).filter(
         models.DBSubBill.id == bill_id,
         models.DBSubBill.client_id == client_id).first()
-    if not row:
+    if not row or not sub_bill_visible(db, row, STAFF_VIEWER.get()):
         raise HTTPException(404, "Bill not found")
     return row
+
+
+def sub_bill_visible_ids(db, client_id, emp_id):
+    """The bills a member of staff may see: those of orders they have a hand in, or that they sent or have to sign."""
+    orders = wo_involved_ids(db, client_id, emp_id)
+    ids = {r[0] for r in db.query(models.DBSubBill.id).filter(
+        models.DBSubBill.client_id == client_id,
+        or_(models.DBSubBill.order_id.in_(list(orders) or [0]), models.DBSubBill.submitted_by == emp_id)).all()}
+    ids |= {r[0] for r in db.query(models.DBApprovalChain.entity_id).filter(
+        models.DBApprovalChain.entity_type == "sub_bill", models.DBApprovalChain.approver_id == emp_id).all()}
+    return ids
+
+
+def sub_bill_visible(db, bill, emp_id):
+    if not emp_id:
+        return True
+    return bill.id in sub_bill_visible_ids(db, bill.client_id, emp_id)
 
 
 def rupees(val) -> float:
@@ -26625,6 +26710,9 @@ def list_sub_bills(request: Request, order_id: int = 0, db: Session = Depends(ge
     q = db.query(models.DBSubBill).filter(models.DBSubBill.client_id == client.id)
     if order_id:
         q = q.filter(models.DBSubBill.order_id == order_id)
+    viewer = STAFF_VIEWER.get()
+    if viewer:
+        q = q.filter(models.DBSubBill.id.in_(list(sub_bill_visible_ids(db, client.id, viewer)) or [0]))
     rows = [sub_bill_dict(db, b) for b in q.order_by(models.DBSubBill.id.desc()).limit(300).all()]
     live = [r for r in rows if r["status"] != "CANCELLED"]
     return {

@@ -105,6 +105,8 @@ await toastsGone(page)
 // --- 7. A member of staff amends: it goes up the line, and the owner may step in ---------------------------------------------
 const mgr = await api(page, 'POST', '/api/employees', { first_name: 'Mgr', last_name: `Flow${stamp}`, email: `mgr.flow.${stamp}@example.in`, password: 'Passw0rd-QA1', phone: '', job_title: 'Project manager', department_id: null, reports_to: null, level: 'L4', role: 'employee', permission_role: 'project_manager', site_ids: [], employment_type: 'full_time', pay_frequency: 'monthly', salary: 1, tax_rate: 0, start_date: '2026-01-01', emergency_contact: '', emergency_phone: '' })
 const pb = await api(page, 'POST', '/api/employees', { first_name: 'Plan', last_name: `Flow${stamp}`, email: `plan.flow.${stamp}@example.in`, password: 'Passw0rd-QA1', phone: '', job_title: 'Planning', department_id: null, reports_to: mgr.data.id, level: 'L2', role: 'employee', permission_role: 'planning_billing', site_ids: [], employment_type: 'full_time', pay_frequency: 'monthly', salary: 1, tax_rate: 0, start_date: '2026-01-01', emergency_contact: '', emergency_phone: '' })
+// Staff see only the orders they made or sign: the owner lets the planner in on this one.
+await api(page, 'PUT', `/api/wo/orders/${rev2}/access`, { employee_ids: [pb.data.id] })
 await api(page, 'POST', '/api/client/logout')
 await api(page, 'POST', '/api/employee/auth/login', { email: `plan.flow.${stamp}@example.in`, password: 'Passw0rd-QA1' })
 const staffRev = (await api(page, 'POST', `/api/wo/orders/${rev2}/amend`, {})).data.order

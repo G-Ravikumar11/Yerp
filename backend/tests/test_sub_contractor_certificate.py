@@ -408,6 +408,12 @@ def test_the_second_certificate_carries_the_first_as_upto_previous(tenant):
 
 # --- Who signs it, in turn ---------------------------------------------------------
 
+def share(tenant, order, *people):
+    """Staff see only the orders they made or sign; the owner lets the rest in."""
+    res = tenant.put("/api/wo/orders/%d/access" % order["id"], json={"employee_ids": [p["id"] for p in people]})
+    assert res.status_code == 200, res.text
+
+
 def test_a_bill_climbs_its_route_before_it_is_certified(tenant, portal):
     """Prepared by the QS, certified by the Head QS, approved by the site
     incharge - one signature at a time, each told when it is their turn."""
@@ -415,6 +421,7 @@ def test_a_bill_climbs_its_route_before_it_is_certified(tenant, portal):
     head_qs = staff(tenant, "project_manager")
     incharge = staff(tenant, "head_projects")
     order = live_order(tenant)
+    share(tenant, order, qs)
     item = book(tenant, order["id"])["lines"][0]["item_id"]
     measure(tenant, order["id"], item, 10)
 
@@ -458,6 +465,7 @@ def test_the_owner_can_stop_signing_every_bill(tenant, portal):
     qs = staff(tenant, "planning_billing")
     staff(tenant, "project_manager")
     order = live_order(tenant)
+    share(tenant, order, qs)
     item = book(tenant, order["id"])["lines"][0]["item_id"]
     measure(tenant, order["id"], item, 10)
     sign_in(portal, qs)
@@ -470,6 +478,7 @@ def test_sending_a_bill_back_at_any_step_returns_it_to_draft(tenant, portal):
     qs = staff(tenant, "planning_billing")
     head_qs = staff(tenant, "project_manager")
     order = live_order(tenant)
+    share(tenant, order, qs)
     item = book(tenant, order["id"])["lines"][0]["item_id"]
     measure(tenant, order["id"], item, 10)
     sign_in(portal, qs)
@@ -487,6 +496,7 @@ def test_the_owner_s_signature_is_the_last_word(tenant, portal):
     staff(tenant, "project_manager")
     staff(tenant, "head_projects")
     order = live_order(tenant)
+    share(tenant, order, qs)
     item = book(tenant, order["id"])["lines"][0]["item_id"]
     measure(tenant, order["id"], item, 10)
     sign_in(portal, qs)
@@ -684,3 +694,19 @@ def test_the_printed_measurement_sheets_follow_the_book_they_came_from(tenant):
     assert "365 sft - Block No. B24" in flat and "365 sft - Block No. B12" in flat
     assert "Total Qty To be paid" in flat and "Total Quantity before holding back" in flat
     assert re.search(r"Total Qty To be paid[^0-9]{0,12}190", flat), "the group comes to what the sheet says is payable"
+
+
+def test_staff_do_not_see_bills_of_orders_they_have_no_hand_in(tenant, portal):
+    qs = staff(tenant, "planning_billing")
+    clerk = staff(tenant, "planning_billing")
+    order = live_order(tenant)
+    share(tenant, order, qs)
+    item = book(tenant, order["id"])["lines"][0]["item_id"]
+    measure(tenant, order["id"], item, 10)
+    sign_in(portal, qs)
+    bill = raise_bill(portal, order["id"]).json()["bill"]
+    assert bill["id"] in [b["id"] for b in portal.get("/api/sub-bills").json()["bills"]]
+    sign_in(portal, clerk)
+    assert bill["id"] not in [b["id"] for b in portal.get("/api/sub-bills").json()["bills"]]
+    assert portal.get("/api/sub-bills/%d" % bill["id"]).status_code == 404
+    assert portal.get("/api/sub-mb/%d" % order["id"]).status_code == 404

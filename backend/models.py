@@ -1776,6 +1776,19 @@ class DBSubcontractTerm(Base):
     display_order = Column(Integer, default=0)
 
 
+class DBOrderAccess(Base):
+    """A member of staff the owner (or the one who made the order) has let see it, though they did not
+    make it and are not on its route - a site engineer who measures it, say."""
+    __tablename__ = "order_access"
+    __table_args__ = (UniqueConstraint("order_id", "employee_id", name="uq_order_access"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), index=True)
+    order_id = Column(Integer, ForeignKey("subcontract_orders.id"), index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), index=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
 class DBSubcontractApproval(Base):
     """Who did what to the order, and what they said about it."""
     __tablename__ = "subcontract_approvals"

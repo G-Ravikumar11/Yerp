@@ -76,6 +76,8 @@ export interface BillingSchedule {
 
 export interface Order {
   id: number
+  /** The member of staff who made it; blank for the owner. */
+  submitted_by?: number | null
   wo_number: string
   status: OrderStatus
   amendment_no: number

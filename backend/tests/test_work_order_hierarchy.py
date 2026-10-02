@@ -135,7 +135,7 @@ def test_placing_a_client_order_on_site_waits_for_its_approvals(tenant, portal):
 
 # --- Who may see a draft -------------------------------------------------------------
 
-def test_a_draft_is_seen_by_its_maker_and_those_above_not_below(tenant, portal):
+def test_staff_see_only_the_orders_they_made_or_have_to_sign_or_were_shown(tenant, portal):
     pm = person(tenant, "project_manager")
     qs = person(tenant, "planning_billing")
     site = person(tenant, "staff")
@@ -145,18 +145,29 @@ def test_a_draft_is_seen_by_its_maker_and_those_above_not_below(tenant, portal):
     assert portal.get("/api/wo/orders/%d" % owners["id"]).status_code == 404
     assert owners["id"] not in [o["id"] for o in portal.get("/api/wo/orders").json()["orders"]]
     assert portal.get("/api/wo/orders/%d/document.pdf" % owners["id"]).status_code == 404
-    # The planner's draft: theirs, and the project manager's to see - not the site's.
+    # The planner's draft: theirs alone - not their senior's, not the site's.
     mine = priced_order(portal)
     assert portal.get("/api/wo/orders/%d" % mine["id"]).status_code == 200
-    sign_in(portal, pm)
-    assert portal.get("/api/wo/orders/%d" % mine["id"]).status_code == 200
-    sign_in(portal, site)
-    assert portal.get("/api/wo/orders/%d" % mine["id"]).status_code == 404
+    assert mine["id"] in [o["id"] for o in portal.get("/api/wo/orders").json()["orders"]]
+    for other in (pm, site):
+        sign_in(portal, other)
+        assert portal.get("/api/wo/orders/%d" % mine["id"]).status_code == 404
+        assert mine["id"] not in [o["id"] for o in portal.get("/api/wo/orders").json()["orders"]]
     assert tenant.get("/api/wo/orders/%d" % mine["id"]).status_code == 200      # the owner sees all
-    # Once it is sent for approval it is the business's.
-    assert tenant.post("/api/wo/orders/%d/submit" % owners["id"], json={}).status_code == 200
+    # The maker can let someone in; nobody else but the owner can.
     sign_in(portal, qs)
-    assert portal.get("/api/wo/orders/%d" % owners["id"]).status_code == 200
+    assert portal.put("/api/wo/orders/%d/access" % mine["id"], json={"employee_ids": [site["id"]]}).status_code == 200
+    sign_in(portal, site)
+    assert portal.get("/api/wo/orders/%d" % mine["id"]).status_code == 200
+    assert portal.put("/api/wo/orders/%d/access" % mine["id"], json={"employee_ids": []}).status_code == 403
+    # Sending the owner's order for approval shows it to whoever has to sign it, and to no one else.
+    assert tenant.post("/api/wo/orders/%d/submit" % owners["id"], json={}).status_code == 200
+    on_route = {r["name"] for r in tenant.get("/api/wo/orders/%d" % owners["id"]).json()["order"]["approval_route"]}
+    for who in (qs, pm, site):
+        sign_in(portal, who)
+        name = "%s %s" % (who["first_name"], who["last_name"])
+        seen = portal.get("/api/wo/orders/%d" % owners["id"]).status_code == 200
+        assert seen == (name in on_route), name
 
 
 def test_a_bill_climbs_every_rank_before_it_is_approved(tenant, portal):

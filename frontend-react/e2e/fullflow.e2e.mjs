@@ -72,7 +72,8 @@ const ap2 = await api(page, 'POST', `/api/wo/orders/${oid}/approve`, { comments:
 check('the owner approves', ap2.status === 200 && (await order(oid)).status === 'APPROVED', JSON.stringify(ap2.data).slice(0, 160))
 check('and it leaves the inbox', !(await mine('subcontract_order', oid)))
 
-// 5. The site engineer measures
+// 5. The site engineer measures - once the owner has let them see the order
+await api(page, 'PUT', `/api/wo/orders/${oid}/access`, { employee_ids: [site.id, acct.id] })
 await who(site)
 const book = (await api(page, 'GET', `/api/sub-mb/${oid}`)).data
 const shut = book.lines.find((l) => l.activity_no === '1.0')

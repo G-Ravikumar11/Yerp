@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Copy, Download, FileText, Save, Trash2 } from 'lucide-react'
+import { ArrowLeft, Copy, Download, FileText, Save, Share2, Trash2 } from 'lucide-react'
+import { ShareOrderDialog } from './ShareOrderDialog'
 import { Badge, Button, ConfirmDialog, Skeleton, Stat, StatGrid, StatusBadge, Tabs } from '@/components/ui'
 import {
   copyOrder,
@@ -62,8 +63,9 @@ const MOVE_LABEL: Record<string, string> = { SUBMIT: 'Submit for approval', APPR
 
 function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
   const nav = useNavigate()
-  const { can, isOwner } = useSession()
+  const { can, isOwner, user } = useSession()
   const [deleting, setDeleting] = useState(false)
+  const [sharing, setSharing] = useState(false)
   const vocab = useOrderVocabulary()
 
   const [tab, setTab] = useState<Tab>('details')
@@ -194,6 +196,11 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
                 {label('AMEND')}
               </Button>
             )}
+            {(isOwner || (user?.employeeId && user.employeeId === order.submitted_by)) && (
+              <Button variant="outline" onClick={() => setSharing(true)}>
+                <Share2 /> Who can see it
+              </Button>
+            )}
             {isOwner && (
               <Button variant="ghost" className="text-danger hover:bg-danger-soft hover:text-danger" onClick={() => setDeleting(true)}>
                 <Trash2 /> Delete
@@ -311,6 +318,7 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
         loading={move.isPending}
         onConfirm={() => move.mutate({ action: 'execute' })}
       />
+      <ShareOrderDialog open={sharing} onOpenChange={setSharing} orderId={order.id} number={order.wo_number} />
       <DeleteOrderDialog open={deleting} onOpenChange={setDeleting} kind="subcontract" id={order.id} number={order.wo_number} onDeleted={() => nav('/subcontractors/work-orders')} />
     </>
   )
