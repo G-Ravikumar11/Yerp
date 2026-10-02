@@ -35944,14 +35944,31 @@ def sub_bill_certificate(db, client, bill):
     for m in entries:
         by_item.setdefault(m.item_id, []).append(m)
     mb_rows, k = [], 0
+    held_of = lambda lines_, mult: round(sum(abs(x["quantity"]) for x in (lines_ or []) if str(x.get("particulars") or "").lower().startswith("held back")) * mult, 2)
     for it in sorted((it for it in items if it.id in by_item), key=lambda x: order_of[x.id]):
         k += 1
         uom = it.uom or ""
         mb_rows.append({"kind": "item", "sno": str(k), "description": (it.item_description or "").split("\n")[0].upper()})
         item_total = 0.0
-        for j, m in enumerate(by_item[it.id]):
+        ents = by_item[it.id]
+        section, sec_total, sec_count = None, 0.0, 0
+
+        def close_section():
+            if section and sec_count > 1:
+                mb_rows.append({"kind": "total", "description": "Total - %s" % section, "label": "Total Quantity",
+                                "quantity": money(sec_total), "uom": uom})
+
+        for j, m in enumerate(ents):
             mult = getattr(m, "multiplier", None) or 1.0
-            letter = chr(ord("a") + j) if j < 26 else str(j + 1)
+            # An imported book keeps its own sections and block letters, so the printed sheet reads like the Excel it came from.
+            sec = (getattr(m, "section", "") or "").strip()
+            if sec and sec != section:
+                close_section()
+                parts = sec.split(" ", 1)
+                numeral = parts[0] if (len(parts) == 2 and re.match(r"^([IVXL]+|\d+)$", parts[0])) else ""
+                mb_rows.append({"kind": "item", "sno": numeral, "description": (parts[1] if numeral else sec).upper()})
+                section, sec_total, sec_count = (parts[1] if numeral else sec), 0.0, 0
+            letter = (getattr(m, "block_label", "") or "").strip() or (chr(ord("a") + j) if j < 26 else str(j + 1))
             place = (m.location or "").strip() or (m.mb_ref or "").strip() or ("Measured on %s" % d(m.measured_on))
             mb_rows.append({"kind": "entry", "sno": letter, "description": place})
             lines_ = dims.get(m.id) or []
@@ -35967,8 +35984,7 @@ def sub_bill_certificate(db, client, bill):
                                 "nos": (-nos if (dl["deduct"] and nos is not None) else nos),
                                 "nom": dl.get("nom"), "length": dl.get("length"), "width": dl.get("breadth"),
                                 "height": dl.get("depth"), "quantity": round(dl["quantity"], 3)})
-            one = round(sum(x["quantity"] for x in lines_ if not x.get("is_heading")), 3) if lines_ \
-                else money(money(m.quantity) / mult)
+            one = round(sum(x["quantity"] for x in lines_ if not x.get("is_heading")), 3) if lines_                 else money(money(m.quantity) / mult)
             if mult != 1:
                 mb_rows.append({"kind": "subtotal", "description": "Total Quantity for one Block",
                                 "label": "Total Quantity", "quantity": one, "uom": uom})
@@ -35978,7 +35994,24 @@ def sub_bill_certificate(db, client, bill):
                 mb_rows.append({"kind": "total", "description": "Total Quantity for %s" % place,
                                 "label": "Total Quantity", "quantity": money(m.quantity), "uom": uom})
             item_total += m.quantity or 0
-        if len(by_item[it.id]) > 1:
+            sec_total += m.quantity or 0
+            sec_count += 1
+            # Under a group of blocks that share one hold-back: what they came to, what is held, what is to be paid.
+            gref = (getattr(m, "group_ref", "") or "").strip()
+            nxt = ents[j + 1] if j + 1 < len(ents) else None
+            if gref and (nxt is None or (getattr(nxt, "group_ref", "") or "").strip() != gref):
+                grp = [x for x in ents if (getattr(x, "group_ref", "") or "").strip() == gref]
+                paid = money(sum(x.quantity or 0 for x in grp))
+                held = money(sum(held_of(dims.get(x.id), getattr(x, "multiplier", None) or 1.0) for x in grp))
+                if held > 0:
+                    mb_rows.append({"kind": "subtotal", "description": "Total Quantity before holding back",
+                                    "label": "Total Quantity", "quantity": money(paid + held), "uom": uom})
+                    mb_rows.append({"kind": "subtotal", "description": "Hold for Finishes & Handing over",
+                                    "label": "Held back", "quantity": -held, "uom": uom})
+                    mb_rows.append({"kind": "total", "description": "Total Qty To be paid",
+                                    "label": "Total Qty To be paid", "quantity": paid, "uom": uom})
+        close_section()
+        if len(ents) > 1 and not section:
             mb_rows.append({"kind": "total", "description": "Total - %s" % (it.item_description or "").split("\n")[0],
                             "label": "Total Quantity", "quantity": money(item_total), "uom": uom})
     mb = {"banner": [(company["name"].upper(), "banner")],

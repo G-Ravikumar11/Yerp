@@ -644,3 +644,25 @@ def test_no_workbook_is_loaded_with_its_cached_links():
         text = open(os.path.join(here, "..", name), encoding="utf-8").read()
         for call in re.findall(r"openpyxl\.load_workbook\([^\n]*\)", text):
             assert "keep_links=False" in call, call
+
+
+def test_the_printed_measurement_sheets_follow_the_book_they_came_from(tenant):
+    """Sections, block letters and the hold-back under a group of blocks print as they are written in the sheet."""
+    import pypdf
+    order = painting_order(tenant)
+    first = items_of(tenant, order["id"])[0]["item_id"]
+    raw = held_back_workbook()
+    pv = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)}).json()
+    res = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)},
+                      data={"commit": "1", "mapping": json.dumps({str(s["index"]): first for s in pv["sections"]})})
+    assert res.status_code == 200, res.text
+    bill = tenant.post("/api/sub-bills", json={"order_id": order["id"]})
+    assert bill.status_code == 200, bill.text
+    b = bill.json().get("bill") or bill.json()
+    pdf = tenant.get("/api/sub-bills/%d/document.pdf" % b["id"])
+    text = "\n".join((p.extract_text() or "") for p in pypdf.PdfReader(io.BytesIO(pdf.content)).pages)
+    flat = re.sub(r"\s+", " ", text)
+    assert "LAYING OF TILES" in flat and "INTERNAL PAINTING WORK" in flat, "each section has its own heading"
+    assert "365 sft - Block No. B24" in flat and "365 sft - Block No. B12" in flat
+    assert "Total Qty To be paid" in flat and "Total Quantity before holding back" in flat
+    assert re.search(r"Total Qty To be paid[^0-9]{0,12}190", flat), "the group comes to what the sheet says is payable"
