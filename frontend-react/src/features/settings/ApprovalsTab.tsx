@@ -9,13 +9,15 @@ function Rules() {
   const [below, setBelow] = useState(0)
   const [above, setAbove] = useState(0)
   const [ownerSigns, setOwnerSigns] = useState(false)
+  const [ownerSignsBills, setOwnerSignsBills] = useState(true)
   useEffect(() => {
     if (!q.data) return
     setBelow(q.data.auto_below)
     setAbove(q.data.finance_above)
     setOwnerSigns(q.data.owner_signs_work_orders)
+    setOwnerSignsBills(q.data.owner_signs_sub_bills)
   }, [q.data])
-  const save = useAction(() => saveApprovalRules({ auto_below: below, finance_above: above, owner_signs_work_orders: ownerSigns }), { invalidate: [settingsKeys.all, ['approvals']], success: 'Approval rules saved.' })
+  const save = useAction(() => saveApprovalRules({ auto_below: below, finance_above: above, owner_signs_work_orders: ownerSigns, owner_signs_sub_bills: ownerSignsBills }), { invalidate: [settingsKeys.all, ['approvals']], success: 'Approval rules saved.' })
   if (q.isPending) return <Skeleton className="h-40 w-full" />
   const cur = q.data?.currency ?? 'INR'
   return (
@@ -25,6 +27,7 @@ function Rules() {
         <Field label={`Finance limit (${cur})`} htmlFor="ar-above" hint={q.data?.has_finance_approver ? `Above this, ${q.data.finance_approver} is added.` : 'Above this, someone who can approve bills is added - nobody holds that yet.'}><NumField id="ar-above" value={above} onValue={setAbove} /></Field>
       </div>
       <label className="mt-4 flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={ownerSigns} onChange={(e) => setOwnerSigns(e.target.checked)} /><span>The owner signs every work order last<span className="block text-xs text-muted-foreground">Even when the managers have all approved it, it waits for the owner.</span></span></label>
+      <label className="mt-3 flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={ownerSignsBills} onChange={(e) => setOwnerSignsBills(e.target.checked)} /><span>The owner signs every RA bill last<span className="block text-xs text-muted-foreground">Even when the managers have all certified it, it waits for the owner. Bills already sent keep the route they were sent with.</span></span></label>
       <Button className="mt-4" loading={save.isPending} onClick={() => save.mutate()}>Save approval rules</Button>
     </Section>
   )

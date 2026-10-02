@@ -68,12 +68,13 @@ export interface ApprovalRules {
   auto_below: number
   finance_above: number
   owner_signs_work_orders: boolean
+  owner_signs_sub_bills: boolean
   currency: string
   finance_approver: string
   has_finance_approver: boolean
 }
 export const useApprovalRules = () => useQuery({ queryKey: k('rules'), queryFn: () => get<ApprovalRules>('/api/approval-rules') })
-export const saveApprovalRules = (b: { auto_below: number; finance_above: number; owner_signs_work_orders: boolean }) => put<{ message?: string }>('/api/approval-rules', b)
+export const saveApprovalRules = (b: { auto_below: number; finance_above: number; owner_signs_work_orders: boolean; owner_signs_sub_bills: boolean }) => put<{ message?: string }>('/api/approval-rules', b)
 
 export interface WhoApproves {
   owner: string

@@ -421,9 +421,10 @@ def test_a_bill_climbs_its_route_before_it_is_certified(tenant, portal):
     sign_in(portal, qs)
     bill = raise_bill(portal, order["id"]).json()["bill"]
     sent = portal.post("/api/sub-bills/%d/submit" % bill["id"], json={}).json()["bill"]
-    assert [s["name"] for s in sent["route"]] == [
+    assert [s["name"] for s in sent["route"][:2]] == [
         "%s %s" % (head_qs["first_name"], head_qs["last_name"]),
         "%s %s" % (incharge["first_name"], incharge["last_name"])]
+    assert sent["route"][-1]["owner"] and len(sent["route"]) == 3  # the owner signs last
     assert portal.post("/api/sub-bills/%d/certify" % bill["id"], json={}).status_code == 403
 
     sign_in(portal, incharge)
@@ -441,11 +442,28 @@ def test_a_bill_climbs_its_route_before_it_is_certified(tenant, portal):
     sign_in(portal, incharge)
     res = portal.post("/api/sub-bills/%d/certify" % bill["id"], json={})
     assert res.status_code == 200, res.text
+    assert res.json()["bill"]["status"] == "SUBMITTED"  # still waiting for the owner
+    res = tenant.post("/api/sub-bills/%d/certify" % bill["id"], json={})
+    assert res.status_code == 200, res.text
     done = res.json()["bill"]
     assert done["status"] == "CERTIFIED"
-    assert done["approved_by_name"] == "%s %s" % (incharge["first_name"], incharge["last_name"])
     assert done["submitted_by_name"] == "%s %s" % (qs["first_name"], qs["last_name"])
-    assert [s["status"] for s in done["route"]] == ["approved", "approved"]
+    assert [s["status"] for s in done["route"]] == ["approved", "approved", "approved"]
+
+
+def test_the_owner_can_stop_signing_every_bill(tenant, portal):
+    assert tenant.get("/api/approval-rules").json()["owner_signs_sub_bills"] is True
+    assert tenant.put("/api/approval-rules", json={"owner_signs_sub_bills": False}).status_code == 200
+    assert tenant.get("/api/approval-rules").json()["owner_signs_sub_bills"] is False
+    qs = staff(tenant, "planning_billing")
+    staff(tenant, "project_manager")
+    order = live_order(tenant)
+    item = book(tenant, order["id"])["lines"][0]["item_id"]
+    measure(tenant, order["id"], item, 10)
+    sign_in(portal, qs)
+    bill = raise_bill(portal, order["id"]).json()["bill"]
+    sent = portal.post("/api/sub-bills/%d/submit" % bill["id"], json={}).json()["bill"]
+    assert not any(s["owner"] for s in sent["route"])
 
 
 def test_sending_a_bill_back_at_any_step_returns_it_to_draft(tenant, portal):

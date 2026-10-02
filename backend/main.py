@@ -10632,6 +10632,7 @@ def get_approval_rules(request: Request, db: Session = Depends(get_db)):
         "auto_below": auto_below,
         "finance_above": finance_above,
         "owner_signs_work_orders": wo_owner_signs(db, client.id),
+        "owner_signs_sub_bills": sub_bill_owner_signs(db, client.id),
         "currency": client.currency or DEFAULT_CURRENCY,
         # Naming who would be added makes the rule checkable rather than
         # something that quietly does nothing because nobody holds the access.
@@ -10671,6 +10672,8 @@ def set_approval_rules(request: Request, body: dict = None, db: Session = Depend
 
     if "owner_signs_work_orders" in body:
         put_setting(db, client.id, WO_OWNER_SIGNS_KEY, "1" if body.get("owner_signs_work_orders") else "0")
+    if "owner_signs_sub_bills" in body:
+        put_setting(db, client.id, SUB_BILL_OWNER_SIGNS_KEY, "1" if body.get("owner_signs_sub_bills") else "0")
     for key, value in ((AUTO_BELOW_KEY, auto_below), (FINANCE_ABOVE_KEY, finance_above)):
         setting = db.query(models.DBSettings).filter(
             models.DBSettings.client_id == client.id,
@@ -26749,13 +26752,13 @@ def get_sub_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
 # it, then one person at each rank above, someone on the same site first -
 # and is certified only when the last of them signs. The owner may sign at
 # any point, and that is the last word; whether the owner must also sign
-# every gang bill is a setting, off unless switched on.
+# every gang bill is a setting, on unless switched off (Settings > Approval rules).
 
 SUB_BILL_OWNER_SIGNS_KEY = "sub_bill_owner_signs"
 
 
 def sub_bill_owner_signs(db, client_id):
-    return (tenant_setting(db, client_id, SUB_BILL_OWNER_SIGNS_KEY, "0") or "0") == "1"
+    return (tenant_setting(db, client_id, SUB_BILL_OWNER_SIGNS_KEY, "1") or "1") != "0"
 
 
 def sub_bill_chain_rows(db, bill_id):
