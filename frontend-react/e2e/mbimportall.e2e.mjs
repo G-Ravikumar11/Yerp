@@ -18,7 +18,7 @@ const lines = [
 const o = await approvedOrder(page, { subject: 'record all', lines })
 await open(page, `/subcontractors/measurement-book?order=${o.id}`)
 await page.waitForSelector('table[aria-label="Items on the order"] tbody tr')
-await page.evaluate(() => document.querySelector('table[aria-label="Items on the order"] tbody tr button').click())
+await page.evaluate(() => document.querySelector('table[aria-label="Items on the order"] tbody tr td:last-child button:last-child').click())
 await page.waitForSelector('input[aria-label="Excel file to read the lines from"]')
 await (await page.$('input[aria-label="Excel file to read the lines from"]')).uploadFile(xlsx)
 await page.waitForSelector('input[aria-label="Select every entry"]', { timeout: 15000 })

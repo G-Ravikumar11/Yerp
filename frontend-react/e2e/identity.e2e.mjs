@@ -10,7 +10,7 @@ const set = async (v) => {
   await api(page, 'PUT', '/api/client/logo', { logo_url: v.logo })
 }
 const brand = () => page.$eval('a[aria-label="Y ERP home"]', (e) => e.textContent)
-const notice = () => page.evaluate(() => [...document.querySelectorAll('[role=status]')].map((e) => e.textContent).find((t) => /Complete company details/.test(t)) || '')
+const notice = () => page.evaluate(() => [...document.querySelectorAll('[role=note]')].map((e) => e.textContent).find((t) => /Complete company details/.test(t)) || '')
 
 await set({ gstin: '', address: '', logo: '' })
 await page.evaluate(() => new Promise((res) => { const r = indexedDB.deleteDatabase('keyval-store'); r.onsuccess = r.onerror = r.onblocked = () => res() }))

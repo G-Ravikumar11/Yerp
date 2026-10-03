@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { api, get, del } from '@/lib/api'
+import { api, get, del, post } from '@/lib/api'
 import type { Order } from './orders'
 
 export interface MbLine {
@@ -15,6 +15,8 @@ export interface MbLine {
   max_quantity?: number
   measured_to_date?: number
   billed_to_date?: number
+  /** Measured, but held back from billing until released. */
+  held?: number
   unbilled?: number
   balance_to_measure?: number
   percent_measured?: number
@@ -48,6 +50,11 @@ export interface MbEntry {
   section?: string
   block_label?: string
   group_ref?: string
+  /** '' for work measured; 'hold' for work held back; 'release' for a hold put back. */
+  kind?: '' | 'hold' | 'release'
+  hold_of?: number | null
+  /** For a hold: how much of it is still held. */
+  held_remaining?: number
   dimensions: MbDimension[]
 }
 
@@ -55,7 +62,7 @@ export interface MbBook {
   order: Order
   lines: MbLine[]
   entries: MbEntry[]
-  summary: { ordered_value: number; measured_value: number; unbilled_value: number; lines_over_measured: number }
+  summary: { ordered_value: number; measured_value: number; unbilled_value: number; held_value?: number; lines_over_measured: number }
 }
 
 /** What is sent to record a measurement. Dimensions, when given, are the measurement. */
@@ -81,6 +88,8 @@ export function useMeasurementBook(orderId: number) {
 
 export const recordUrl = (orderId: number) => `/api/sub-mb/${orderId}/entries`
 export const deleteEntry = (id: number) => del<{ message: string }>(`/api/sub-mb/entries/${id}`)
+export const holdWork = (orderId: number, body: { item_id: number; reason: string; percent?: number; quantity?: number }) => post<{ message: string }>(`/api/sub-mb/${orderId}/holds`, body)
+export const releaseHold = (holdId: number, quantity?: number) => post<{ message: string }>(`/api/sub-mb/holds/${holdId}/release`, quantity ? { quantity } : {})
 
 /* --- The book as the site keeps it in Excel ------------------------------ */
 

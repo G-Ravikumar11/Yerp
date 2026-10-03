@@ -50,11 +50,17 @@ def _number(value):
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        return _sane(float(value))
     text = str(value).strip().replace(",", "")
     if re.match(r"^-?\d+(\.\d+)?$", text):
-        return float(text)
+        return _sane(float(text))
     return None
+
+
+def _sane(number):
+    """A figure no measurement book could hold - infinity, or past ten million - is no figure at all, so
+    it cannot carry a quantity out of range into the book or the bill."""
+    return number if number == number and abs(number) <= 1e7 else None
 
 
 def _plain(value):

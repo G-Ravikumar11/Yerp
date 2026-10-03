@@ -12,7 +12,7 @@ export function CompanyNotice() {
   const { data } = useIdentity()
   if (!isOwner || !data || data.missing.length === 0) return null
   return (
-    <div role="status" className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
+    <div role="note" className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
       <p className="flex items-start gap-2">
         <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
         <span>

@@ -89,7 +89,7 @@ check('a code that is not on the order is said plainly', (await text()).includes
 await page.keyboard.press('Escape')
 
 // --- Measure with dimensions --------------------------------------------------------------
-await page.click('table[aria-label="Items on the order"] tbody tr:first-child button')
+await page.click('table[aria-label="Items on the order"] tbody tr:first-child td:last-child button:last-child')
 await page.waitForSelector('[role=dialog] [role=grid]')
 await clickCell(page, 0, 0, 0, '[role=dialog]')
 await page.keyboard.type('Slab')
@@ -115,7 +115,7 @@ check('the entry appears in the book, and the item shows it measured', (await te
 // wait for the new one's tabs, and try once more if they never come.
 async function openFirstItem() {
   for (let attempt = 0; attempt < 2; attempt++) {
-    await page.evaluate(() => document.querySelector('table[aria-label="Items on the order"] tbody tr:first-child button')?.click())
+    await page.evaluate(() => document.querySelector('table[aria-label="Items on the order"] tbody tr:first-child td:last-child button:last-child')?.click())
     try {
       await page.waitForSelector('[role=dialog] button[role=tab]', { timeout: 4000 })
       return
@@ -188,7 +188,7 @@ await page.setOfflineMode(true)
 await page.evaluate(() => window.dispatchEvent(new Event('offline')))
 await sleep(300)
 check('going offline is shown in the top bar', (await page.$eval('header', (e) => e.textContent)).includes('Offline'))
-await page.click('table[aria-label="Items on the order"] tbody tr:nth-child(2) button')
+await page.click('table[aria-label="Items on the order"] tbody tr:nth-child(2) td:last-child button:last-child')
 await page.waitForSelector('[role=dialog]')
 await clickText(page, '[role=dialog] button[role=tab]', 'Just a total')
 await fill(page, '#m-total', '3')
@@ -211,7 +211,7 @@ check('the top bar goes quiet again', !(await page.$eval('header', (e) => e.text
 // --- Fill the lines from an Excel sheet, inside the measure window ----------------------------------------------------
 await open(page, `/subcontractors/measurement-book?order=${created.id}`)
 await page.waitForSelector('table[aria-label="Items on the order"] tbody tr')
-await page.click('table[aria-label="Items on the order"] tbody tr:first-child button')
+await page.click('table[aria-label="Items on the order"] tbody tr:first-child td:last-child button:last-child')
 await page.waitForSelector('[role=dialog] [role=grid]')
 check('the window offers the template to download', (await page.$('[role=dialog] a[href="/api/sub-mb/template.xlsx"]')) !== null)
 const bytes = await page.evaluate(async () => Array.from(new Uint8Array(await (await fetch('/api/sub-mb/template.xlsx', { credentials: 'include' })).arrayBuffer())))

@@ -1,0 +1,40 @@
+import { api, approvedOrder, clickText, fill, launch, measure, open, signIn, sleep, waitForToast, toastsGone } from './lib.mjs'
+
+// Hold part of the measured work back from billing, and release it.
+const { page, check, done } = await launch({ allow: [/^(409|400) /] })
+await signIn(page)
+const o = await approvedOrder(page, { subject: 'Hold it' })
+const item = o.items[0].item_id
+await measure(page, o.id, item, 100)
+const line = async () => (await api(page, 'GET', `/api/sub-mb/${o.id}`)).data.lines.find((l) => l.item_id === item)
+
+await open(page, `/subcontractors/measurement-book?order=${o.id}`)
+await page.waitForSelector('table[aria-label="Items on the order"] tbody tr')
+await clickText(page, 'table[aria-label="Items on the order"] tbody tr button', 'Hold')
+await page.waitForSelector('#h-percent')
+await fill(page, '#h-percent', '5')
+const dlg = () => page.$eval('[role=dialog]', (e) => e.textContent.replace(/\s+/g, ' '))
+check('the dialog works out what 5% holds (5 of 100)', /Holds\s*5\b/.test(await dlg()), (await dlg()).slice(0, 200))
+check('and will not hold without a reason', await page.evaluate(() => [...document.querySelectorAll('[role=dialog] button')].find((b) => b.textContent.includes('Hold it'))?.disabled))
+await fill(page, '#h-reason', 'Finishes and handing over')
+await clickText(page, '[role=dialog] button', 'Hold it')
+await waitForToast(page, 'held back')
+await page.waitForFunction(() => !document.querySelector('[role=dialog]'))
+await sleep(500)
+const l1 = await line()
+check('the book holds 5 and offers 95 for billing', l1.held === 5 && l1.unbilled === 95, JSON.stringify([l1.held, l1.unbilled]))
+const text = await page.$eval('main', (e) => e.textContent.replace(/\s+/g, ' '))
+check('the entry list shows the hold and its reason', /Held back/.test(text) && /Held/.test(text))
+check('the held-back figure is on the page', /Held back/.test(text))
+
+// The owner releases part of it.
+await toastsGone(page)
+await page.click('table[aria-label="Measurement entries"] button[aria-label="Release this hold"]')
+await page.waitForSelector('#r-qty')
+await fill(page, '#r-qty', '2')
+await clickText(page, '[role=dialog] button', 'Release')
+await waitForToast(page, 'released')
+await sleep(500)
+const l2 = await line()
+check('releasing 2 leaves 3 held and 97 to bill', l2.held === 3 && l2.unbilled === 97, JSON.stringify([l2.held, l2.unbilled]))
+await done()

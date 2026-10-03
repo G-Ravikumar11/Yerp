@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { FileDown, FileUp, Ruler, Trash2 } from 'lucide-react'
+import { FileDown, FileUp, Lock, LockOpen, Ruler, Trash2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
@@ -9,6 +9,7 @@ import { deleteEntry, mbKeys, useMeasurementBook, type MbEntry, type MbLine } fr
 import { useOrderVocabulary, useOrders, type Order } from '@/api/orders'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
+import { HoldModal, ReleaseModal } from './HoldModals'
 import { formatDate, formatQty } from '@/lib/format'
 import { cn, compactINR, formatINR } from '@/lib/utils'
 import { ImportBookModal } from './ImportBookModal'
@@ -102,6 +103,8 @@ export default function MeasurementBookPage() {
   const book = useMeasurementBook(chosen)
   const [measuring, setMeasuring] = useState<MbLine | null>(null)
   const [importing, setImporting] = useState(false)
+  const [holding, setHolding] = useState<MbLine | null>(null)
+  const [releasing, setReleasing] = useState<MbEntry | null>(null)
   // The entries are listed as they always were; the Excel-style layout is one tab away. The choice is remembered.
   const [view, setViewState] = useState<'sheet' | 'list'>(() => {
     try {
@@ -122,6 +125,9 @@ export default function MeasurementBookPage() {
   }
   const [removing, setRemoving] = useState<MbEntry | null>(null)
   const record = can('site.record') && measurable
+  // Billing staff and the owner hold work back; only the owner puts it back.
+  const canHold = can('billing.manage') && measurable
+  const { isOwner } = useSession()
 
   const remove = useAction((e: MbEntry) => deleteEntry(e.id), { invalidate: [mbKeys.all, ['subbills']], onSuccess: () => setRemoving(null), onError: () => setRemoving(null) })
 
@@ -168,6 +174,7 @@ export default function MeasurementBookPage() {
           </div>
         ),
     },
+    { id: 'held', header: 'Held', align: 'right', hideBelow: 'lg', cell: (l) => (l.is_header ? '' : l.held ? <span className="font-medium text-warning">{formatQty(l.held)}</span> : '') },
     { id: 'left', header: 'Still to do', align: 'right', hideBelow: 'md', cell: (l) => (l.is_header ? '' : formatQty(Math.max(0, l.balance_to_measure ?? 0))) },
     { id: 'billed', header: 'Billed', align: 'right', hideBelow: 'lg', cell: (l) => (l.is_header ? '' : formatQty(l.billed_to_date)) },
     { id: 'unbilled', header: 'Unbilled', align: 'right', hideBelow: 'lg', cell: (l) => (l.is_header ? '' : formatQty(l.unbilled)) },
@@ -177,10 +184,19 @@ export default function MeasurementBookPage() {
       header: '',
       align: 'right',
       cell: (l) =>
-        !l.is_header && record ? (
-          <Button size="sm" onClick={() => setMeasuring(l)}>
-            <Ruler /> Measure
-          </Button>
+        !l.is_header && (record || canHold) ? (
+          <div className="flex justify-end gap-1.5">
+            {canHold && (
+              <Button size="sm" variant="outline" onClick={() => setHolding(l)} disabled={(l.unbilled ?? 0) <= 0} title="Hold some of the measured work back from billing">
+                <Lock /> Hold
+              </Button>
+            )}
+            {record && (
+              <Button size="sm" onClick={() => setMeasuring(l)}>
+                <Ruler /> Measure
+              </Button>
+            )}
+          </div>
         ) : null,
     },
   ]
@@ -221,18 +237,37 @@ export default function MeasurementBookPage() {
     { id: 'qty', header: 'Quantity', align: 'right', sort: (e) => e.quantity, cell: (e) => <span className={cn('font-medium', e.quantity < 0 && 'text-danger')}>{formatQty(e.quantity)}</span> },
     { id: 'ref', header: 'Ref', hideBelow: 'xl', cell: (e) => <span className="font-mono text-xs">{e.mb_ref || '-'}</span> },
     { id: 'who', header: 'Recorded by', hideBelow: 'xl', cell: (e) => e.recorded_by_name },
-    { id: 'billed', header: '', cell: (e) => (e.billed ? <Badge tone="info">Billed</Badge> : null) },
+    {
+      id: 'billed',
+      header: '',
+      cell: (e) =>
+        e.kind === 'hold' ? (
+          <Badge tone={(e.held_remaining ?? 0) > 0 ? 'warning' : 'neutral'}>{(e.held_remaining ?? 0) > 0 ? 'Held' : 'Released'}</Badge>
+        ) : e.kind === 'release' ? (
+          <Badge tone="success">Released</Badge>
+        ) : e.billed ? (
+          <Badge tone="info">Billed</Badge>
+        ) : null,
+    },
     {
       id: 'del',
       header: '',
       align: 'right',
       width: '3rem',
-      cell: (e) =>
-        record && !e.billed ? (
+      cell: (e) => (
+        <div className="flex justify-end gap-1">
+          {e.kind === 'hold' && (e.held_remaining ?? 0) > 0 && isOwner && (
+            <Button variant="ghost" size="icon-sm" aria-label="Release this hold" title="Release this hold" onClick={(ev) => { ev.stopPropagation(); setReleasing(e) }}>
+              <LockOpen />
+            </Button>
+          )}
+          {record && !e.billed ? (
           <Button variant="ghost" size="icon-sm" aria-label="Remove this entry" onClick={(ev) => { ev.stopPropagation(); setRemoving(e) }}>
             <Trash2 />
           </Button>
-        ) : null,
+          ) : null}
+        </div>
+      ),
     },
   ]
 
@@ -337,10 +372,11 @@ export default function MeasurementBookPage() {
 
       {chosen > 0 && (
         <>
-          <StatGrid className="lg:grid-cols-4 xl:grid-cols-4">
+          <StatGrid className="lg:grid-cols-5 xl:grid-cols-5">
             <Stat label="Order value" value={compactINR(s?.ordered_value)} loading={book.isPending} />
             <Stat label="Work measured" value={compactINR(s?.measured_value)} loading={book.isPending} />
             <Stat label="Measured, not billed" value={compactINR(s?.unbilled_value)} loading={book.isPending} />
+            <Stat label="Held back" value={compactINR(s?.held_value)} tone={s?.held_value ? 'warning' : undefined} loading={book.isPending} />
             <Stat label="Items over the order" value={s?.lines_over_measured ?? 0} tone={s?.lines_over_measured ? 'danger' : undefined} loading={book.isPending} />
           </StatGrid>
 
@@ -366,7 +402,7 @@ export default function MeasurementBookPage() {
           <EntryDetail
             entry={opened}
             line={opened ? byItem.get(opened.item_id) : undefined}
-            canChange={record && !opened?.billed}
+            canChange={record && !opened?.billed && !opened?.kind}
             onClose={() => setOpened(null)}
             onEdit={(e) => {
               setOpened(null)
@@ -397,6 +433,8 @@ export default function MeasurementBookPage() {
             }}
           />
           <ImportBookModal orderId={chosen} open={importing} onOpenChange={setImporting} />
+          <HoldModal orderId={chosen} line={holding} onClose={() => setHolding(null)} />
+          <ReleaseModal entry={releasing} line={releasing ? byItem.get(releasing.item_id) : undefined} onClose={() => setReleasing(null)} />
           <ConfirmDialog
             open={!!removing}
             onOpenChange={(o) => !o && setRemoving(null)}

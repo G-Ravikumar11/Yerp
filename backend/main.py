@@ -20315,7 +20315,7 @@ def wo_revision_blockers(db, order):
         out.append("Lines measured or billed on %s are not on this revision: %s. Keep them - the quantity can come "
                    "down to what is done, not below." % (old.wo_number, ", ".join(
                        (i.activity_no or (i.item_description or "")[:40]) for i in missing)))
-    measured = sub_measured_to_date(db, old.id)
+    measured = sub_gross_measured(db, old.id)
     for o, n in [(i, mapping[i.id]) for i in old_items if i.id in mapping]:
         if money(measured.get(o.id, 0.0)) > item_ceiling(n) + 0.0001:
             out.append("%s is measured to %s but the revision orders %s." % (
@@ -20367,7 +20367,7 @@ def wo_take_over_history(db, client, revision):
                                  "on it - the quantity can come down to what is done, not below."
                                  % (old.wo_number, ", ".join((i.activity_no or (i.item_description or "")[:40])
                                                              for i in missing)))
-    measured = sub_measured_to_date(db, old.id)
+    measured = sub_gross_measured(db, old.id)
     short = [(i, mapping[i.id]) for i in old_items
              if i.id in mapping and money(measured.get(i.id, 0.0)) > item_ceiling(mapping[i.id]) + 0.0001]
     if short:
@@ -26265,7 +26265,8 @@ def sub_mb_template(request: Request, db: Session = Depends(get_db)):
 def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     order = wo_or_404(db, client.id, order_id)
-    measured = sub_measured_to_date(db, order.id)
+    held_now = sub_held_to_date(db, order.id)
+    measured = {k: v + held_now.get(k, 0.0) for k, v in sub_measured_to_date(db, order.id).items()}
     billed = sub_billed_to_date(db, order.id)
     lines = []
     for it in db.query(models.DBSubcontractItem).filter(
@@ -26278,6 +26279,7 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
             continue
         done = money(measured.get(it.id, 0.0))
         claimed = money(billed.get(it.id, 0.0))
+        held = money(held_now.get(it.id, 0.0))
         ordered = money(it.quantity)
         lines.append({
             "item_id": it.id, "activity_no": it.activity_no or "",
@@ -26286,8 +26288,8 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
             "uom": it.uom or "", "ordered_qty": ordered, "rate": unit_rate(it.unit_rate),
             "tolerance_percent": it.tolerance_percent or 0,
             "max_quantity": item_ceiling(it),
-            "measured_to_date": done, "billed_to_date": claimed,
-            "unbilled": money(done - claimed),
+            "measured_to_date": done, "billed_to_date": claimed, "held": held,
+            "unbilled": money(done - held - claimed),
             "balance_to_measure": money(ordered - done),
             "percent_measured": round(done / ordered * 100, 1) if ordered else 0.0,
             "over_measured": money(done - ordered) if done > ordered else 0.0,
@@ -26305,6 +26307,8 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
         "recorded_by_name": m.recorded_by_name or "", "billed": bool(m.sub_bill_id),
         "section": getattr(m, "section", "") or "", "block_label": getattr(m, "block_label", "") or "",
         "group_ref": getattr(m, "group_ref", "") or "",
+        "kind": getattr(m, "kind", "") or "", "hold_of": getattr(m, "hold_of", None),
+        "held_remaining": sub_hold_remaining(db, m) if getattr(m, "kind", "") == "hold" else 0.0,
         "dimensions": sub_dims.get(m.id, []),
     } for m in sub_rows]
     return {
@@ -26315,6 +26319,7 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
                                         for l in lines if not l.get("is_header"))),
             "unbilled_value": money(sum(l["unbilled"] * l["rate"]
                                         for l in lines if not l.get("is_header"))),
+            "held_value": money(sum(l["held"] * l["rate"] for l in lines if not l.get("is_header"))),
             "lines_over_measured": len([l for l in lines
                                         if not l.get("is_header") and l["over_measured"] > 0]),
         },
@@ -26348,7 +26353,7 @@ def add_sub_measurement(db, client, order, item, body, actor_id, actor_name):
     # commit the business to more than anybody signed for. A correction
     # (a negative entry) always goes in.
     if quantity > 0:
-        done = money(sub_measured_to_date(db, order.id).get(item.id, 0.0))
+        done = money(sub_gross_measured(db, order.id).get(item.id, 0.0))
         ceiling = item_ceiling(item)
         if money(done + quantity) > ceiling + 0.0001:
             raise HTTPException(
@@ -26595,6 +26600,14 @@ def delete_sub_measurement(entry_id: int, request: Request, db: Session = Depend
         models.DBSubMeasurement.client_id == client.id).first()
     if not entry:
         raise HTTPException(404, "Entry not found")
+    if (entry.kind or "") == "hold" and sub_hold_remaining(db, entry) < money(-(entry.quantity or 0.0)):
+        raise HTTPException(409, "Part of this hold has been released. Delete the release first.")
+    if not (entry.kind or ""):
+        held = sub_held_to_date(db, entry.order_id).get(entry.item_id, 0.0)
+        gross = sub_gross_measured(db, entry.order_id).get(entry.item_id, 0.0)
+        if held > 0 and (entry.quantity or 0.0) > 0 and gross - (entry.quantity or 0.0) < held - 0.0001:
+            raise HTTPException(409, "%s of this item is held back. Release or delete the hold before taking this "
+                                     "measurement away." % qty_text(held))
     bill = None
     if entry.sub_bill_id:
         # The owner may take a measurement off a bill that is still a draft; a sent bill has to be deleted first.
@@ -26626,6 +26639,8 @@ def update_sub_measurement(entry_id: int, body: SubMeasurementIn, request: Reque
         models.DBSubMeasurement.id == entry_id, models.DBSubMeasurement.client_id == client.id).first()
     if not entry:
         raise HTTPException(404, "Entry not found")
+    if (entry.kind or ""):
+        raise HTTPException(409, "A hold is placed or released from the Hold button, not edited.")
     order = wo_or_404(db, client.id, entry.order_id)
     item = db.query(models.DBSubcontractItem).filter(models.DBSubcontractItem.id == entry.item_id).first()
     bill = None
@@ -26644,7 +26659,7 @@ def update_sub_measurement(entry_id: int, body: SubMeasurementIn, request: Reque
     if not quantity:
         raise HTTPException(400, "A measurement of nothing is not a measurement")
     if quantity > 0 and item is not None:
-        done = money(sub_measured_to_date(db, order.id).get(item.id, 0.0) - (entry.quantity or 0.0))
+        done = money(sub_gross_measured(db, order.id).get(item.id, 0.0) - (entry.quantity or 0.0))
         ceiling = item_ceiling(item)
         if money(done + quantity) > ceiling + 0.0001:
             raise HTTPException(409, "%s: %s already measured elsewhere; %s would make %s against %s ordered%s. Amend the order to measure beyond it." % (
@@ -26666,6 +26681,132 @@ def update_sub_measurement(entry_id: int, body: SubMeasurementIn, request: Reque
               "%s %s" % (entry.activity_no or "", quantity), request)
     db.commit()
     return {"ok": True, "quantity": quantity, "message": "Entry updated."}
+
+
+# --- Holding part of the measured work -----------------------------------------------------------
+#
+# Work that is measured but not yet to be paid for - the share held for finishes and handing over,
+# say - is held in the book. A hold is an entry of its own that takes the quantity out of what can
+# be billed, with the reason beside it; releasing it puts the quantity back as a new entry, so the
+# next bill picks it up. The book keeps both, so what is held, and why, can always be read back.
+
+def sub_held_to_date(db, order_id):
+    """What is still held, by item: each hold less whatever has been released from it."""
+    held, released = {}, {}
+    for m in db.query(models.DBSubMeasurement).filter(
+            models.DBSubMeasurement.order_id == order_id,
+            models.DBSubMeasurement.kind.in_(("hold", "release"))).all():
+        if m.kind == "hold":
+            held[m.id] = (m.item_id, -(m.quantity or 0.0))
+        else:
+            released[m.hold_of] = released.get(m.hold_of, 0.0) + (m.quantity or 0.0)
+    out = {}
+    for hid, (item_id, qty) in held.items():
+        out[item_id] = out.get(item_id, 0.0) + max(0.0, qty - released.get(hid, 0.0))
+    return out
+
+
+def sub_gross_measured(db, order_id):
+    """What has been measured, held or not - the figure the order's ceiling is held against."""
+    net = sub_measured_to_date(db, order_id)
+    for item_id, qty in sub_held_to_date(db, order_id).items():
+        net[item_id] = net.get(item_id, 0.0) + qty
+    return net
+
+
+def sub_hold_remaining(db, hold):
+    got = sum((m.quantity or 0.0) for m in db.query(models.DBSubMeasurement).filter(
+        models.DBSubMeasurement.kind == "release", models.DBSubMeasurement.hold_of == hold.id).all())
+    return money(max(0.0, -(hold.quantity or 0.0) - got))
+
+
+@app.post("/api/sub-mb/{order_id}/holds")
+def hold_sub_measurement(order_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
+    """Hold some of an item's measured work back from billing: a quantity, or a percent of what is
+    measured and not yet billed (or of one entry), with the reason."""
+    client, actor_id, actor_name = wo_actor(request, db, "billing.manage")
+    order = wo_or_404(db, client.id, order_id)
+    if (order.status or "") not in ("APPROVED", "EXECUTED"):
+        raise HTTPException(409, "Nothing is measured against an order that has not been approved.")
+    item = db.query(models.DBSubcontractItem).filter(
+        models.DBSubcontractItem.id == int(body.get("item_id") or 0),
+        models.DBSubcontractItem.order_id == order.id).first()
+    if not item or item.is_header:
+        raise HTTPException(404, "That item is not on this order")
+    reason = (body.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(400, "Say why it is held - it is read back when it is released.")
+    net = money(sub_measured_to_date(db, order.id).get(item.id, 0.0))
+    billed = money(sub_billed_to_date(db, order.id).get(item.id, 0.0))
+    available = money(net - billed)
+    entry = None
+    if body.get("entry_id"):
+        entry = db.query(models.DBSubMeasurement).filter(
+            models.DBSubMeasurement.id == int(body["entry_id"]), models.DBSubMeasurement.order_id == order.id,
+            models.DBSubMeasurement.item_id == item.id).first()
+        if not entry or (entry.kind or ""):
+            raise HTTPException(404, "That measurement is not in this item's book")
+    try:
+        quantity = float(body.get("quantity") or 0)
+        percent = float(body.get("percent") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "The quantity and the percent have to be numbers.")
+    if percent:
+        if not 0 < percent <= 100:
+            raise HTTPException(400, "A percent to hold is between 0 and 100.")
+        base = (entry.quantity if entry else available) or 0.0
+        quantity = money(base * percent / 100.0)
+    quantity = money(quantity)
+    if quantity <= 0:
+        raise HTTPException(400, "Give a quantity or a percent to hold.")
+    if quantity > available + 0.0001:
+        raise HTTPException(409, "%s has %s measured and not yet billed, so %s cannot be held. Only work not yet "
+                                 "billed can be held." % (item.activity_no or "This item", available, quantity))
+    held = models.DBSubMeasurement(
+        client_id=client.id, order_id=order.id, item_id=item.id, activity_no=item.activity_no or "",
+        measured_on=(body.get("measured_on") or datetime.now().strftime("%Y-%m-%d"))[:10],
+        quantity=-quantity, kind="hold", mb_ref="HOLD",
+        location="Held back" + ((" from %s" % entry.location) if entry and entry.location else ""),
+        remarks=reason, recorded_by=actor_id, recorded_by_name=actor_name)
+    db.add(held)
+    log_audit(db, client.id, "sub_measurement_held", "subcontract_order", order.id, order.wo_number or "",
+              "%s %s: %s" % (item.activity_no or "", quantity, reason), request)
+    db.commit()
+    return {"ok": True, "id": held.id, "held": quantity,
+            "message": "%s %s held back from billing." % (qty_text(quantity), item.uom or "")}
+
+
+@app.post("/api/sub-mb/holds/{hold_id}/release")
+def release_sub_hold(hold_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """Put held work back into what can be billed. The owner's alone."""
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    hold = db.query(models.DBSubMeasurement).filter(
+        models.DBSubMeasurement.id == hold_id, models.DBSubMeasurement.client_id == client.id,
+        models.DBSubMeasurement.kind == "hold").first()
+    if not hold:
+        raise HTTPException(404, "Hold not found")
+    remaining = sub_hold_remaining(db, hold)
+    if remaining <= 0:
+        raise HTTPException(409, "That hold has already been released.")
+    try:
+        quantity = money(float((body or {}).get("quantity") or remaining))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "The quantity has to be a number.")
+    if quantity <= 0 or quantity > remaining + 0.0001:
+        raise HTTPException(400, "Release between nothing and %s." % remaining)
+    order = wo_or_404(db, client.id, hold.order_id)
+    item = db.query(models.DBSubcontractItem).filter(models.DBSubcontractItem.id == hold.item_id).first()
+    db.add(models.DBSubMeasurement(
+        client_id=client.id, order_id=order.id, item_id=hold.item_id, activity_no=hold.activity_no or "",
+        measured_on=datetime.now().strftime("%Y-%m-%d"), quantity=quantity, kind="release", hold_of=hold.id,
+        mb_ref="RELEASE", location="Hold released", remarks="Released: %s" % (hold.remarks or ""),
+        recorded_by=None, recorded_by_name=owner_label(db, client.id)))
+    log_audit(db, client.id, "sub_hold_released", "subcontract_order", order.id, order.wo_number or "",
+              "%s %s" % (hold.activity_no or "", quantity), request)
+    db.commit()
+    return {"ok": True, "released": quantity, "message": "%s %s released - it goes on the next bill." % (
+        qty_text(quantity), (item.uom if item else "") or "")}
 
 
 # --- The bills ---------------------------------------------------------------

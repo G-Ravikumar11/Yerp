@@ -2288,6 +2288,9 @@ class DBSubMeasurement(Base):
     # and which blocks share one hold-back subtotal - so the book can be read like the sheet.
     section = Column(String, default="")
     block_label = Column(String, default="")
+    # "" for work measured; "hold" for quantity held back from billing; "release" for a hold put back (hold_of).
+    kind = Column(String, default="")
+    hold_of = Column(Integer, nullable=True, index=True)
     group_ref = Column(String, default="")
 
 
