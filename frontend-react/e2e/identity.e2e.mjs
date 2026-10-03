@@ -19,7 +19,8 @@ await page.waitForSelector('a[aria-label="Y ERP home"]')
 await sleep(1200)
 const n1 = await notice()
 check('with details missing the owner is told, on any page, what documents lack', /logo/.test(n1), n1.slice(0, 200))
-check('the sidebar carries the company name', (await brand()).includes(unit.name), await brand())
+const named = (await api(page, 'GET', '/api/company/identity')).data.name
+check('the sidebar carries the company name', (await brand()).includes(named), await brand())
 
 await set({ gstin: '36AABCY1234H1ZX', address: 'Plot 12, Madhapur', logo: PNG })
 await page.evaluate(() => new Promise((res) => { const r = indexedDB.deleteDatabase('keyval-store'); r.onsuccess = r.onerror = r.onblocked = () => res() }))
