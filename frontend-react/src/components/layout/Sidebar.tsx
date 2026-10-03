@@ -19,15 +19,7 @@ function Brand({ collapsed }: { collapsed: boolean }) {
   const { data: company } = useIdentity()
   return (
     <NavLink to="/" className="flex items-center gap-3 rounded-lg px-1 outline-offset-4" aria-label="Y ERP home">
-      {company?.logo_url || company?.name ? (
-        <CompanyMark className="size-10" />
-      ) : (
-        <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-ember-300 to-ember-600 shadow-glow">
-          <svg viewBox="0 0 24 24" className="size-5 text-white" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M6 6l6 8 6-8M12 14v6" />
-          </svg>
-        </span>
-      )}
+      <CompanyMark className="size-10" />
       <AnimatePresence initial={false}>
         {!collapsed && (
           <motion.span

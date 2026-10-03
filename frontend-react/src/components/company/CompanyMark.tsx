@@ -11,15 +11,10 @@ export function CompanyMark({ className }: { className?: string }) {
       </span>
     )
   }
-  const letters = (data?.name || 'Y')
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase())
-    .join('')
+  // Not yet loaded, or no logo given: the Y, the same picture as the tab icon.
   return (
-    <span className={cn('grid shrink-0 place-items-center rounded-xl bg-gradient-to-br from-ember-300 to-ember-600 text-sm font-semibold text-white shadow-glow', className)} aria-hidden>
-      {letters}
+    <span className={cn('grid shrink-0 place-items-center overflow-hidden rounded-xl bg-white ring-1 ring-border', className)}>
+      <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="Y ERP" className="size-full object-contain" />
     </span>
   )
 }
