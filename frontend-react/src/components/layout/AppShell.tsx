@@ -55,12 +55,7 @@ export function AppShell() {
       >
         <Topbar />
         <main id="main" className="mx-auto w-full min-w-0 max-w-[1600px] overflow-x-clip px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-          <motion.div
-            key={pathname}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
-          >
+          <div key={pathname}>
             {gated && !isLoading && !isAnonymous && !pathname.startsWith('/settings') && <CompanyNotice />}
             {gated && isLoading ? (
               <div className="space-y-4" role="status" aria-label="Loading">
@@ -92,7 +87,7 @@ export function AppShell() {
               </Suspense>
               </PageErrorBoundary>
             )}
-          </motion.div>
+          </div>
         </main>
       </motion.div>
     </div>

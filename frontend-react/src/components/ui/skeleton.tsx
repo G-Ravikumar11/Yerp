@@ -1,16 +1,12 @@
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 
-/** A placeholder with a slow shimmer - shown where data is on its way. */
+/** A plain placeholder - shown where data is on its way. It holds still: a moving gleam read as a glitch. */
 export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       aria-hidden
-      className={cn(
-        'animate-shimmer rounded-md bg-[length:200%_100%]',
-        'bg-[linear-gradient(90deg,var(--muted)_25%,var(--accent)_37%,var(--muted)_63%)]',
-        className,
-      )}
+      className={cn('rounded-md bg-muted', className)}
       {...props}
     />
   )

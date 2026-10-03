@@ -161,7 +161,7 @@ export default function DesignSystem() {
         </div>
       </Section>
 
-      <Section title="Cards and loading" hint="Tiles lift to meet the pointer; skeletons shimmer where data is on its way.">
+      <Section title="Cards and loading" hint="Tiles lift to meet the pointer; skeletons hold still where data is on its way.">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <CardInteractive className="p-5">
             <p className="text-[13px] text-muted-foreground">Billed up to date</p>
