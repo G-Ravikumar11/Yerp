@@ -6,8 +6,7 @@
     <title>Y ERP · Civil contracting, end to end</title>
     <link rel="manifest" href="/manifest.webmanifest">
     <meta name="theme-color" content="#f8fafc">
-    <link rel="apple-touch-icon" href="/icons/icon-192.png">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+<text y='.9em' font-size='90'>⚡</text></svg>">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
@@ -121,6 +120,10 @@
         @keyframes spin { to { transform: rotate(360deg); } }
     </style>
     <link rel="stylesheet" href="mobile.css?v=43">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="alternate icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+    <link rel="shortcut icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 </head>
 <body>
     <div class="auth-container">
@@ -251,16 +254,24 @@
         // One door for the whole business. Whether this address belongs to the
         // account holder or to a member of staff is the server's business, not
         // something anyone should have to know before they can sign in.
-        fetch('/api/client/me').then(function(r) {
-            // Everyone lands on the new interface; the previous one stays at /app.html?old=1.
-            if (r.ok) { window.location.href = nextTarget('/next/'); return; }
-            return fetch('/api/employee/auth/me');
-        }).then(function(r) {
-            if (r && r.ok) { window.location.href = nextTarget('/next/'); return; }
-            return fetch('/api/superadmin/me');
-        }).then(function(r) {
-            if (r && r.ok) { window.location.href = '/superadmin.html'; }
-        }).catch(function() {});
+        if (params.get('signedout')) {
+            // Arrived from Sign out: end whatever sign-in this browser still holds, and show the form. The
+            // check below would otherwise sign the person straight back in on any that was left.
+            ['/api/client/logout', '/api/employee/auth/logout', '/api/portal/logout'].forEach(function (u) {
+                fetch(u, { method: 'POST' }).catch(function () {});
+            });
+        } else {
+            fetch('/api/client/me').then(function(r) {
+                // Everyone lands on the new interface; the previous one stays at /app.html?old=1.
+                if (r.ok) { window.location.href = nextTarget('/next/'); return; }
+                return fetch('/api/employee/auth/me');
+            }).then(function(r) {
+                if (r && r.ok) { window.location.href = nextTarget('/next/'); return; }
+                return fetch('/api/superadmin/me');
+            }).then(function(r) {
+                if (r && r.ok) { window.location.href = '/superadmin.html'; }
+            }).catch(function() {});
+        }
 
         async function signInAsOwner(email, password) {
             var res = await fetch('/api/client/login', {

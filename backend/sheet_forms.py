@@ -52,7 +52,12 @@ def _number(value):
         return None
     if isinstance(value, (int, float)):
         return _sane(float(value))
-    text = str(value).strip().replace(",", "")
+    text = str(value).strip()
+    # A comma with one or two digits after it and nothing else is a decimal comma ("12,5"): the Indian way of
+    # grouping puts three digits after the last comma, so it cannot be thousands.
+    if re.match(r"^-?\d+,\d{1,2}$", text):
+        text = text.replace(",", ".")
+    text = text.replace(",", "")
     if re.match(r"^-?\d+(\.\d+)?$", text):
         return _sane(float(text))
     return None

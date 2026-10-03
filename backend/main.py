@@ -832,9 +832,16 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
     log_login(db, client.id, body.email, "client", "password", request, "success")
     return {"message": "Logged in", "is_onboarded": client.is_onboarded, "company_name": client.company_name}
 
+def end_every_session(request: Request):
+    """Signing out ends every sign-in this browser holds - the owner's, a member's, a member of staff's and
+    a partner's. A browser can hold two at once (an owner who also tried a staff login), and ending only
+    the one the screen showed left the other to sign the person straight back in at the login page."""
+    request.session.clear()
+
+
 @app.post("/api/client/logout")
 def client_logout(request: Request):
-    request.session.pop("client_id", None)
+    end_every_session(request)
     return {"message": "Logged out"}
 
 @app.get("/api/client/me")
@@ -3899,8 +3906,19 @@ async def read_sheet_rows(upload: UploadFile, sheet: str = ""):
     raw = await upload.read()
     if len(raw) > 8_000_000:
         raise HTTPException(400, "That file is too large. Split it and upload in parts.")
+    if raw[:8] == import_guard.OLE_SIGNATURE:
+        # An old .xls, or a workbook with a password: neither can be read as text, and decoding them as a
+        # CSV gave a screen of unreadable codes for an error.
+        try:
+            import_guard.check_workbook_bytes(raw, upload.filename)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
 
     if looks_like_xlsx(raw):
+        try:
+            import_guard.check_workbook_bytes(raw, upload.filename)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
         table = read_xlsx_table(raw, sheet)
         # Remembered so a complaint further down can say which of a workbook's
         # tabs it was actually looking at. Being told a column is missing is
@@ -12196,6 +12214,7 @@ def employee_logout(request: Request, db: Session = Depends(get_db)):
     emp_id = request.session.get('employee_id')
     client_id = request.session.get('employee_client_id')
     if not emp_id:
+        end_every_session(request)
         return {"message": "Not logged in"}
     today = datetime.now().strftime("%Y-%m-%d")
     now_str = datetime.now().strftime("%H:%M:%S")
@@ -12228,8 +12247,7 @@ def employee_logout(request: Request, db: Session = Depends(get_db)):
         except Exception:
             pass
         db.commit()
-    request.session.pop('employee_id', None)
-    request.session.pop('employee_client_id', None)
+    end_every_session(request)
     return {"message": "Logged out", "total_hours": hours, "break_minutes": att.break_minutes if att else 0}
 
 @app.get("/api/employee/auth/me")
@@ -26504,11 +26522,17 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
         raise HTTPException(409, "Nothing is measured against an order that has not been approved.")
     raw = await file.read()
     try:
+        import_guard.check_workbook_bytes(raw, file.filename)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    try:
         import openpyxl
         values = openpyxl.load_workbook(io.BytesIO(raw), data_only=True, keep_links=False)
         formulas = openpyxl.load_workbook(io.BytesIO(raw), keep_links=False)
     except Exception:
-        raise HTTPException(400, "That file could not be read as an Excel workbook (.xlsx).")
+        raise HTTPException(400, "That file could not be read as an Excel workbook. Open it in Excel and save it again as .xlsx.")
+    if not values.sheetnames:
+        raise HTTPException(400, "That workbook has no sheets.")
     names = values.sheetnames
     pick = sheet if sheet in names else next((n for n in names if n.strip().upper().startswith("MB")), None)
     tried = [pick] if pick else names
@@ -34305,7 +34329,7 @@ def portal_login(body: PortalLoginIn, request: Request, db: Session = Depends(ge
 
 @app.post("/api/portal/logout")
 def portal_logout(request: Request):
-    request.session.pop("portal_user_id", None)
+    end_every_session(request)
     return {"ok": True}
 
 
@@ -35431,6 +35455,7 @@ def download_backup(request: Request, files: int = 0, db: Session = Depends(get_
 
 import form_pdf
 import identity
+import import_guard
 
 DOC_SIGNATORIES = (("prepared", "Prepared By", "QS"), ("proposed", "Proposed By", "GM"),
                    ("recommended", "Recommended By", "Project Coordinator"),
@@ -38031,10 +38056,14 @@ async def import_registration_forms(request: Request, file: UploadFile = File(..
     client, actor_id, actor_name = wo_actor(request, db, ("workorders.manage", "billing.manage"))
     raw = await file.read()
     try:
+        import_guard.check_workbook_bytes(raw, file.filename)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    try:
         import openpyxl
         book = openpyxl.load_workbook(io.BytesIO(raw), data_only=True, keep_links=False)
     except Exception:
-        raise HTTPException(400, "That file could not be read as an Excel workbook (.xlsx).")
+        raise HTTPException(400, "That file could not be read as an Excel workbook. Open it in Excel and save it again as .xlsx.")
     forms = sheet_forms.read_registration_forms(book)
     if not forms:
         raise HTTPException(400, "No Sub Contractor Registration Form was found in that workbook - "

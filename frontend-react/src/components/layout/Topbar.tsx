@@ -83,15 +83,18 @@ function UserChip() {
   if (isLoading) return <Skeleton className="h-9 w-28 rounded-lg" />
 
   const signOut = async () => {
-    try {
-      await post(user?.type === 'employee' ? '/api/employee/auth/logout' : '/api/client/logout')
-    } catch {
-      // Already signed out - or no signal - either way this device is done with them.
+    // Both: this browser may hold an owner's sign-in and a staff one, and the login page signs back in on either.
+    for (const path of user?.type === 'employee' ? ['/api/employee/auth/logout', '/api/client/logout'] : ['/api/client/logout', '/api/employee/auth/logout']) {
+      try {
+        await post(path)
+      } catch {
+        // Already signed out - or no signal - either way this device is done with them.
+      }
     }
     // What this device kept for them - the data, and any change not yet sent - goes too.
     useOffline.setState({ queue: [] })
     await forgetLocalData()
-    window.location.assign('/login.html')
+    window.location.assign('/login.html?signedout=1')
   }
 
   return (
