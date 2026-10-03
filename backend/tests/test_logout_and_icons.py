@@ -37,3 +37,14 @@ def test_the_y_icon_is_served_for_every_page(tenant):
         assert kind in res.headers.get("content-type", "") or kind == "icon", (path, res.headers.get("content-type"))
     for page in ("/login.html", "/employee-login.html", "/portal.html"):
         assert "/favicon.svg" in tenant.get(page).text, page
+
+
+def test_no_page_prints_leftover_icon_markup(tenant):
+    """The old inline icons were once cut in half, leaving a lightning bolt and a stray '">' on the page."""
+    import glob
+    import os
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "frontend", "*.html")
+    for path in glob.glob(here):
+        body = open(path, encoding="utf8").read()
+        assert "</text></svg>" not in body, path
+        assert "⚡" not in body.split("<body", 1)[-1], path
