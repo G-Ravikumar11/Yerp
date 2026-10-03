@@ -26324,9 +26324,12 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
             "percent_measured": round(done / ordered * 100, 1) if ordered else 0.0,
             "over_measured": money(done - ordered) if done > ordered else 0.0,
         })
+    # The newest entries first. A book imported from Excel runs to hundreds, so the cap is high, and the page
+    # is told when there are more than it was sent rather than quietly showing part of the book.
+    entries_total = db.query(models.DBSubMeasurement).filter(models.DBSubMeasurement.order_id == order.id).count()
     sub_rows = db.query(models.DBSubMeasurement).filter(
         models.DBSubMeasurement.order_id == order.id).order_by(
-            models.DBSubMeasurement.id.desc()).limit(400).all()
+            models.DBSubMeasurement.id.desc()).limit(3000).all()
     sub_dims = dimensions_for(db, [m.id for m in sub_rows],
                               models.DBMeasurementDimension.sub_measurement_id)
     entries = [{
@@ -26342,7 +26345,7 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
         "dimensions": sub_dims.get(m.id, []),
     } for m in sub_rows]
     return {
-        "order": wo_dict(db, order), "lines": lines, "entries": entries,
+        "order": wo_dict(db, order), "lines": lines, "entries": entries, "entries_total": entries_total,
         "summary": {
             "ordered_value": money(order.gross_amount),
             "measured_value": money(sum(l["measured_to_date"] * l["rate"]

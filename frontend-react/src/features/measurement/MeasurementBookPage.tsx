@@ -388,6 +388,11 @@ export default function MeasurementBookPage() {
             <h2 className="text-lg font-semibold">Measurement entries</h2>
             <Tabs label="How to show the entries" value={view} onChange={setView} items={[{ value: 'list', label: 'Entries' }, { value: 'sheet', label: 'Excel layout' }]} />
           </div>
+          {(book.data?.entries_total ?? 0) > entries.length && (
+            <p role="alert" className="mb-3 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-[13px]">
+              Showing the newest {entries.length} of {book.data?.entries_total} entries. Everything is still counted in the totals and the bill.
+            </p>
+          )}
           <FilterBar filters={filters} placeholder="Search entries..." />
           {view === 'sheet' ? <SheetView entries={filters.filtered} byItem={byItem} /> : <DataTable
             label="Measurement entries"

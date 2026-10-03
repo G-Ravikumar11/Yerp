@@ -62,6 +62,8 @@ export interface MbBook {
   order: Order
   lines: MbLine[]
   entries: MbEntry[]
+  /** How many entries the book holds; more than `entries` when the newest were sent and the rest left out. */
+  entries_total?: number
   summary: { ordered_value: number; measured_value: number; unbilled_value: number; held_value?: number; lines_over_measured: number }
 }
 
