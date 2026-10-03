@@ -23,12 +23,13 @@ import { formatINR } from '@/lib/utils'
 import { ApiError } from '@/lib/api'
 import { DeleteOrderDialog } from '@/features/deleteorder/DeleteOrderDialog'
 import { ApprovalTab } from './ApprovalTab'
+import { NextSteps, StepNav, type OrderTab } from './NextSteps'
 import { CostCentreModal } from './CostCentreModal'
 import { HeadForm, headFrom } from './HeadForm'
 import { linesFrom, ScheduleTab, toPayload } from './ScheduleTab'
 import { TermsTab } from './TermsTab'
 
-type Tab = 'details' | 'schedule' | 'terms' | 'approval'
+type Tab = OrderTab
 
 export default function OrderPage() {
   const { id } = useParams()
@@ -117,6 +118,7 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
       onSuccess: (res, m) => {
         setDialog(null)
         setOverride(false)
+        if (m.action === 'approve' || m.action === 'self-approve') setTab('next')
         if (m.action === 'amend') nav(`/subcontractors/work-orders/${res.order.id}`)
         else reseed()
       },
@@ -128,6 +130,9 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
 
   const copy = useAction(() => copyOrder(order.id), { invalidate: [orderKeys.all], onSuccess: (res) => nav(`/subcontractors/work-orders/${res.order.id}`) })
 
+  // Once signed, the steps that follow get a tab of their own.
+  const live = order.status === 'APPROVED' || order.status === 'EXECUTED'
+  const steps: OrderTab[] = live ? ['details', 'schedule', 'terms', 'approval', 'next'] : ['details', 'schedule', 'terms', 'approval']
   const budgetWarnings = order.budget_warnings ?? []
   const label = (s: string) => MOVE_LABEL[s] ?? s
 
@@ -249,6 +254,7 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
             { value: 'schedule', label: 'Schedule', count: lines.filter((l) => l.item_description.trim()).length },
             { value: 'terms', label: 'Conditions', count: terms.length },
             { value: 'approval', label: 'Approval' },
+            ...(live ? [{ value: 'next' as const, label: 'After approval' }] : []),
           ]}
         />
       </div>
@@ -259,6 +265,8 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
       )}
       {tab === 'terms' && <TermsTab terms={terms} onTerms={setTerms} disabled={!editable} vocab={vocab.data} />}
       {tab === 'approval' && <ApprovalTab order={order} />}
+      {tab === 'next' && <NextSteps order={order} canExecute={has('EXECUTE')} onExecute={() => setDialog('execute')} />}
+      <StepNav steps={steps} tab={tab} onGo={(t) => { setTab(t); window.scrollTo({ top: 0, behavior: 'smooth' }) }} dirty={!!editable && dirty} saving={save.isPending} onSave={() => save.mutateAsync()} />
 
       <CostCentreModal open={costCentre} onOpenChange={setCostCentre} jobId={order.job_id} />
 
