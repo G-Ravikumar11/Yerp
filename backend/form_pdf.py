@@ -48,6 +48,7 @@ if PDF_AVAILABLE:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import mm
+    from reportlab.pdfbase.pdfmetrics import stringWidth
     from reportlab.pdfgen import canvas as pdfcanvas
     from reportlab.platypus import (BaseDocTemplate, Frame, KeepTogether, PageBreak,
                                     PageTemplate, Paragraph, Table, TableStyle)
@@ -358,6 +359,10 @@ def _banner(block, st):
     return outer
 
 
+def _font(bold, italic):
+    return "Helvetica-BoldOblique" if bold and italic else "Helvetica-Bold" if bold else "Helvetica-Oblique" if italic else "Helvetica"
+
+
 def _grid(block, st):
     """A ruled sheet laid out cell for cell - the certificate of payment, the
     abstract, the measurement book - where the form is not a list of rows
@@ -373,8 +378,7 @@ def _grid(block, st):
     def style(bold, align, italic):
         key = (bold, align, italic)
         if key not in styles:
-            font = "Helvetica-BoldOblique" if bold and italic else \
-                "Helvetica-Bold" if bold else "Helvetica-Oblique" if italic else "Helvetica"
+            font = _font(bold, italic)
             styles[key] = ParagraphStyle("g%d" % len(styles), parent=base, fontName=font,
                                          alignment={"C": TA_CENTER, "R": TA_RIGHT}.get(align, 0))
         return styles[key]
@@ -383,28 +387,85 @@ def _grid(block, st):
     scale = _W() / float(sum(widths))
     widths = [w * scale for w in widths]
     head = int(block.get("head") or 0)
-    data = []
+    # Each cell as written: (text, bold, align, italic). Paragraphs are made per table, so a heading that
+    # is repeated is a fresh paragraph each time.
+    raw_rows = []
     for r, row in enumerate(block.get("rows") or []):
         cells = []
         for cell in list(row) + [""] * (len(widths) - len(row)):
             if isinstance(cell, dict):
-                text, bold, align, italic = cell.get("t", ""), cell.get("b", False), cell.get("a", "L"), cell.get("i", False)
+                cells.append((cell.get("t", ""), bool(cell.get("b", False)), cell.get("a", "L"), bool(cell.get("i", False))))
             else:
-                text, bold, align, italic = cell, r < head, "C" if r < head else "L", False
-            cells.append(Paragraph(_br(text), style(bool(bold), align, bool(italic))) if str(text or "") != "" else "")
-        data.append(cells[:len(widths)])
-    extra = [("SPAN", (c0, r0), (c1, r1)) for c0, r0, c1, r1 in block.get("spans") or []]
-    if head:
-        extra.append(("BACKGROUND", (0, 0), (-1, head - 1), colors.HexColor(SHADE)))
-    for r in block.get("shade") or []:
-        extra.append(("BACKGROUND", (0, r), (-1, r), colors.HexColor(SHADE)))
+                cells.append((cell, r < head, "C" if r < head else "L", False))
+        raw_rows.append(cells[:len(widths)])
+    spans = [tuple(x) for x in block.get("spans") or []]
+    shade = list(block.get("shade") or [])
     pad = 2 if small else 3
-    t = _box(data or [[""] * len(widths)], widths, extra, pad=pad)
-    if small:
-        t.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 1.2), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.6)]))
-    if head:
-        t.repeatRows = head
-    return t
+
+    def table(rows, row_ids):
+        """One table of the given source rows (their positions in the sheet), spans and shading re-based."""
+        place = {src: i for i, src in enumerate(row_ids)}
+        joined = {(r0, c0): sum(widths[c0:c1 + 1]) for c0, r0, c1, r1 in spans}
+        data, fast = [], []
+        for i, (src, cells) in enumerate(zip(row_ids, rows)):
+            out_row = []
+            for c, (t, b_, a_, i_) in enumerate(cells):
+                text = "" if t is None else str(t)
+                if text == "":
+                    out_row.append("")
+                    continue
+                room = joined.get((src, c), widths[c]) - 2 * pad - 2
+                if "\n" not in text and stringWidth(text, _font(b_, i_), base.fontSize) <= room:
+                    # One line that fits is drawn as plain text: a paragraph costs a hundred times as much to
+                    # lay out, and a long measurement book is thousands of cells.
+                    out_row.append(text)
+                    if b_ or i_:
+                        fast.append(("FONTNAME", (c, i), (c, i), _font(b_, i_)))
+                    if a_ in ("C", "R"):
+                        fast.append(("ALIGN", (c, i), (c, i), "CENTER" if a_ == "C" else "RIGHT"))
+                else:
+                    out_row.append(Paragraph(_br(text), style(b_, a_, i_)))
+            data.append(out_row)
+        extra = [("FONTSIZE", (0, 0), (-1, -1), base.fontSize), ("LEADING", (0, 0), (-1, -1), base.leading),
+                 ("TEXTCOLOR", (0, 0), (-1, -1), colors.black)] + fast
+        extra += [("SPAN", (c0, place[r0]), (c1, place[r1])) for c0, r0, c1, r1 in spans if r0 in place and r1 in place]
+        heads = [i for i, src in enumerate(row_ids) if src < head]
+        if heads:
+            extra.append(("BACKGROUND", (0, 0), (-1, len(heads) - 1), colors.HexColor(SHADE)))
+        for r in shade:
+            if r in place:
+                extra.append(("BACKGROUND", (0, place[r]), (-1, place[r]), colors.HexColor(SHADE)))
+        t = _box(data or [[""] * len(widths)], widths, extra, pad=pad)
+        if small:
+            t.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 1.2), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.6)]))
+        return t
+
+    total = len(raw_rows)
+    if total <= 60:
+        t = table(raw_rows, list(range(total)))
+        if head:
+            t.repeatRows = head
+        return t
+
+    # A long sheet is laid out in pieces. One table of a thousand rows is measured again from the top
+    # each time it is split across a page, which takes minutes; thirty rows at a time takes seconds.
+    # A piece never starts in the middle of a joined cell, and each carries the heading again.
+    def breakable(i):
+        return not any(r0 < i <= r1 for _, r0, _, r1 in spans)
+
+    pieces, start = [], head
+    while start < total:
+        end = min(total, start + 30)
+        while end < total and not breakable(end):
+            end += 1
+        pieces.append((start, end))
+        start = end
+    out = []
+    heads = list(range(head))
+    for lo, hi in pieces:
+        ids = heads + list(range(lo, hi))
+        out.append(table([raw_rows[i] for i in ids], ids))
+    return out
 
 
 def _flow(blocks, st):
@@ -414,7 +475,8 @@ def _flow(blocks, st):
         if kind == "banner":
             out.append(_banner(b, st))
         elif kind == "grid":
-            out.append(_grid(b, st))
+            made = _grid(b, st)
+            out.extend(made) if isinstance(made, list) else out.append(made)
         elif kind == "header":
             out.append(_header(b, st))
         elif kind == "party":

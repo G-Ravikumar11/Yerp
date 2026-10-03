@@ -18,6 +18,7 @@ This module reads those sheets into plain data and writes the same layouts
 back out, so what the app downloads is the paper people already sign. The
 arithmetic is the app's; nothing here decides a figure.
 """
+import copy
 import io
 
 import identity
@@ -544,6 +545,16 @@ def _styles():
 
 def _put(ws, st, row, col, value, bold=False, align=None, fmt=None, span=None, shade=False, box=True):
     c = ws.cell(row=row, column=col, value=value)
+    # Setting a font, border and fill on a cell costs a lookup in the workbook's style tables each, and a
+    # measurement book is tens of thousands of cells in a handful of looks. A cell that looks like one
+    # already made takes its style as it is.
+    key = None
+    if not span and (align is None or isinstance(align, str)):
+        key = (id(ws.parent), bold, align, fmt if (fmt and isinstance(value, (int, float))) else None, shade, box)
+        known = st.setdefault("_looks", {}).get(key)
+        if known is not None:
+            c._style = copy.copy(known)
+            return c
     if bold:
         c.font = st["bold"]
     c.alignment = st.get(align or "wrap") if isinstance(align or "wrap", str) else align
@@ -558,6 +569,8 @@ def _put(ws, st, row, col, value, bold=False, align=None, fmt=None, span=None, s
             cell.border = st["box"]
         if shade:
             cell.fill = st["shade"]
+    if key is not None:
+        st["_looks"][key] = copy.copy(c._style)
     return c
 
 

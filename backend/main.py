@@ -635,6 +635,10 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
     allow_headers=["Content-Type", "Authorization"],
 )
+# The lists and the app's own scripts are text and shrink to a tenth on the wire - the difference between a
+# page that opens and one that is waited for, on a site's mobile signal.
+from starlette.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 
 @app.exception_handler(IntegrityError)
 async def integrity_error_handler(request: Request, exc: IntegrityError):
@@ -12652,7 +12656,15 @@ def by_id(db, model, ident):
     """One row by its key. The session's own copy when this request has
     already loaded it - a list of forty bills on three orders asks for three
     orders, not forty - and one query when it has not."""
-    return db.get(model, ident) if ident else None
+    if not ident:
+        return None
+    # The session's own map holds rows only while something else does, so a list that asks for the same
+    # contractor forty times went to the database forty times. Keep what this request has read.
+    held = db.info.setdefault("by_id", {})
+    key = (model, ident)
+    if key not in held:
+        held[key] = db.get(model, ident)
+    return held[key]
 
 
 def job_label_for(db, job_id):
@@ -18478,6 +18490,24 @@ def wo_pending_with(db, client_id, raised_by=None):
     return names
 
 
+def wo_item_count(db, order_id):
+    """How many lines an order has: from the batch a list has already read, else one count."""
+    counts = db.info.get("wo_item_counts")
+    if counts is not None and order_id in counts:
+        return counts[order_id]
+    return db.query(models.DBSubcontractItem).filter(models.DBSubcontractItem.order_id == order_id).count()
+
+
+def prime_wo_item_counts(db, order_ids):
+    """Count the lines of many orders in one query, for a list that would otherwise count them one by one."""
+    ids = list(order_ids)
+    if not ids:
+        return
+    got = dict(db.query(models.DBSubcontractItem.order_id, func.count(models.DBSubcontractItem.id)).filter(
+        models.DBSubcontractItem.order_id.in_(ids)).group_by(models.DBSubcontractItem.order_id).all())
+    db.info["wo_item_counts"] = {i: got.get(i, 0) for i in ids}
+
+
 def wo_dict(db, order, detail=False):
     bu = by_id(db, models.DBBusinessUnit, order.business_unit_id)
     con = by_id(db, models.DBContractor, order.contractor_id)
@@ -18520,8 +18550,7 @@ def wo_dict(db, order, detail=False):
         "editable": order.status in WO_EDITABLE,
         "actions": sorted(WO_TRANSITIONS.get(order.status, {}).keys()),
         "provisional": order.status == "PROVISIONAL",
-        "item_count": db.query(models.DBSubcontractItem).filter(
-            models.DBSubcontractItem.order_id == order.id).count(),
+        "item_count": wo_item_count(db, order.id),
     }
     if detail:
         row["items"] = [wo_item_dict(i) for i in db.query(models.DBSubcontractItem).filter(
@@ -19627,6 +19656,7 @@ def wo_list_orders(request: Request, status: str = "", q: str = "",
     if viewer:
         query = query.filter(models.DBSubcontractOrder.id.in_(wo_involved_ids(db, client.id, viewer) or [0]))
     rows = query.order_by(models.DBSubcontractOrder.id.desc()).limit(300).all()
+    prime_wo_item_counts(db, [o.id for o in rows])
     orders = [d for d in (wo_dict(db, o) for o in rows) if wo_matches(d, q)]
     counts = file_counts(db, client.id, "subcontract_order", [o["id"] for o in orders])
     for o in orders:
