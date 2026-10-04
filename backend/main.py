@@ -31808,6 +31808,69 @@ def file_counts(db, client_id, attached_type, ids):
     return out
 
 
+# --- Deleting many at once ---------------------------------------------------------------------------------
+#
+# A list with hundreds of rows is cleared by ticking them, not by deleting one at a time. Each id goes through
+# the very same delete as the single one - the same rules, the same owner-only checks, the same everything-
+# attached-goes - and one that is refused or already gone does not stop the rest. The screen sends a few at
+# a time so a large clearing never waits on one long request.
+
+def run_bulk_delete(ids, delete_one, db):
+    done, gone, failed = 0, 0, []
+    seen = set()
+    for raw in list(ids or [])[:200]:
+        try:
+            i = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if i in seen:
+            continue
+        seen.add(i)
+        try:
+            delete_one(i)
+            done += 1
+        except HTTPException as exc:
+            db.rollback()
+            if exc.status_code == 404:
+                gone += 1               # already gone - an earlier version of the same order took it with it
+            else:
+                failed.append({"id": i, "reason": str(exc.detail)})
+        except IntegrityError as exc:
+            db.rollback()
+            failed.append({"id": i, "reason": "Could not delete it: %s" % str(getattr(exc, "orig", exc)).splitlines()[0][:200]})
+    parts = ["%d deleted" % done]
+    if gone:
+        parts.append("%d already gone" % gone)
+    if failed:
+        parts.append("%d refused" % len(failed))
+    return {"ok": not failed, "deleted": done, "gone": gone, "failed": failed, "message": ", ".join(parts) + "."}
+
+
+@app.post("/api/wo/orders/bulk-delete")
+def wo_bulk_delete(body: dict, request: Request, db: Session = Depends(get_db)):
+    return run_bulk_delete(body.get("ids"), lambda i: wo_delete_order_now(i, request, db), db)
+
+
+@app.post("/api/erp/work-orders/bulk-delete")
+def erp_bulk_delete(body: dict, request: Request, db: Session = Depends(get_db)):
+    return run_bulk_delete(body.get("ids"), lambda i: erp_delete_work_order(i, request, db), db)
+
+
+@app.post("/api/sub-bills/bulk-delete")
+def sub_bill_bulk_delete(body: dict, request: Request, db: Session = Depends(get_db)):
+    return run_bulk_delete(body.get("ids"), lambda i: sub_bill_delete(i, request, db), db)
+
+
+@app.post("/api/wo/contractors/bulk-delete")
+def vendor_bulk_delete(body: dict, request: Request, db: Session = Depends(get_db)):
+    return run_bulk_delete(body.get("ids"), lambda i: vendor_delete(i, request, db), db)
+
+
+@app.post("/api/sub-mb/entries/bulk-delete")
+def sub_measurement_bulk_delete(body: dict, request: Request, db: Session = Depends(get_db)):
+    return run_bulk_delete(body.get("ids"), lambda i: delete_sub_measurement(i, request, db), db)
+
+
 # --- Storage: what the database holds, and what can be cleared ------------------------------------------
 #
 # Photos, drawings and documents live in the database, so they are what makes it grow. Two kinds of thing

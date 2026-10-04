@@ -11,6 +11,7 @@ import { compactINR, formatINR } from '@/lib/utils'
 import { formatDate } from '@/lib/format'
 import { DeleteOrderDialog } from '@/features/deleteorder/DeleteOrderDialog'
 import { DeleteButton } from '@/features/deleteorder/DeleteButton'
+import { BulkBar, BulkDeleteDialog } from '@/components/data/BulkDelete'
 import { NewOrderModal } from './NewOrderModal'
 
 export default function OrdersPage() {
@@ -19,11 +20,14 @@ export default function OrdersPage() {
   const orders = useOrders()
   const [creating, setCreating] = useState(false)
   const [deleting, setDeleting] = useState<Order | null>(null)
+  const [picked, setPicked] = useState<Set<string | number>>(new Set())
+  const [clearing, setClearing] = useState(false)
 
   const filters = useListFilters(orders.data?.orders, {
     search: (o) => [o.wo_number, o.contractor, o.vendor_code, o.project, o.subject, o.work_type, o.department, o.status, o.net_order_value].join(' '),
     status: (o) => o.status,
     date: (o) => o.created_at,
+    facets: { project: { label: 'Projects', get: (o) => o.project }, gang: { label: 'Gangs', get: (o) => o.contractor }, trade: { label: 'Trades', get: (o) => o.department } },
   })
 
   const s = orders.data?.summary
@@ -94,8 +98,10 @@ export default function OrdersPage() {
 
       <FilterBar filters={filters} placeholder="Search by number, gang, project, work..." />
 
+      {isOwner && <BulkBar count={picked.size} noun="work order" shown={filters.filtered.length} onClear={() => setPicked(new Set())} onDelete={() => setClearing(true)} />}
       <DataTable
         label="Work orders"
+        selection={isOwner ? { selected: picked, onChange: setPicked } : undefined}
         rows={filters.filtered}
         columns={columns}
         rowKey={(o) => o.id}
@@ -105,6 +111,7 @@ export default function OrdersPage() {
       />
 
       <NewOrderModal open={creating} onOpenChange={setCreating} />
+      <BulkDeleteDialog open={clearing} onOpenChange={setClearing} kind="subcontract" noun="work order" ids={[...picked].map(Number)} onFinished={() => setPicked(new Set())} detail="Each goes with its revisions, schedule, measurements, RA bills and payments, from every screen. This cannot be undone." />
       <DeleteOrderDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)} kind="subcontract" id={deleting?.id ?? 0} number={deleting?.wo_number ?? ''} onDeleted={() => setDeleting(null)} />
     </>
   )

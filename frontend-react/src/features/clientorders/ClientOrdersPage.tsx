@@ -9,6 +9,7 @@ import { clientOrderKeys, decideClientOrder, placeClientOrder, useClientOrders, 
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { DeleteOrderDialog } from '@/features/deleteorder/DeleteOrderDialog'
+import { BulkBar, BulkDeleteDialog } from '@/components/data/BulkDelete'
 import { formatDate } from '@/lib/format'
 import { compactINR, formatINR } from '@/lib/utils'
 import { BudgetModal } from './BudgetModal'
@@ -37,6 +38,8 @@ function Stage({ o }: { o: ClientOrder }) {
 export default function ClientOrdersPage() {
   const { can, user, isOwner } = useSession()
   const [deleting, setDeleting] = useState<ClientOrder | null>(null)
+  const [picked, setPicked] = useState<Set<string | number>>(new Set())
+  const [clearing, setClearing] = useState(false)
   const orders = useClientOrders()
   const [creating, setCreating] = useState(false)
   const [fromFile, setFromFile] = useState(false)
@@ -51,6 +54,7 @@ export default function ClientOrdersPage() {
     search: (o) => [o.number, o.job_name, o.customer_name, o.reference, o.status].join(' '),
     status: (o) => o.status.toUpperCase(),
     date: (o) => o.order_date,
+    facets: { job: { label: 'Projects', get: (o) => o.job_name }, customer: { label: 'Customers', get: (o) => o.customer_name } },
   })
   const s = orders.data?.summary
 
@@ -228,8 +232,10 @@ export default function ClientOrdersPage() {
 
       <FilterBar filters={filters} placeholder="Search by number, job, customer or reference..." />
 
+      {isOwner && <BulkBar count={picked.size} noun="work order" shown={filters.filtered.length} onClear={() => setPicked(new Set())} onDelete={() => setClearing(true)} />}
       <DataTable
         label="Client work orders"
+        selection={isOwner ? { selected: picked, onChange: setPicked } : undefined}
         rows={filters.filtered}
         columns={columns}
         rowKey={(o) => o.id}
@@ -241,6 +247,7 @@ export default function ClientOrdersPage() {
       <NewClientOrderModal open={creating} onOpenChange={setCreating} staff={user?.type === 'employee'} onCreated={(o) => setBudgeting(o)} />
       <OrderSheetModal open={fromFile} onOpenChange={setFromFile} staff={user?.type === 'employee'} />
       <BudgetModal order={budgeting} onClose={() => setBudgeting(null)} />
+      <BulkDeleteDialog open={clearing} onOpenChange={setClearing} kind="client" noun="work order" ids={[...picked].map(Number)} onFinished={() => setPicked(new Set())} detail="Each goes with its measurements, RA bills, variations and budget. This cannot be undone." />
       <DeleteOrderDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)} kind="client" id={deleting?.id ?? 0} number={deleting?.number ?? ''} onDeleted={() => setDeleting(null)} />
       <RequisitionModal order={material} onClose={() => setMaterial(null)} />
       <OrderDetailModal order={viewing} onClose={() => setViewing(null)} />

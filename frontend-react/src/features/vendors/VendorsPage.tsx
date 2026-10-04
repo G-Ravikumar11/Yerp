@@ -8,6 +8,7 @@ import { decideVendor, importVendors, useVendors, vendorKeys, type Registration,
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { DeleteOrderDialog } from '@/features/deleteorder/DeleteOrderDialog'
+import { BulkBar, BulkDeleteDialog } from '@/components/data/BulkDelete'
 import { DeleteButton } from '@/features/deleteorder/DeleteButton'
 import { toast } from '@/stores/toast'
 import { VendorFormModal } from './VendorFormModal'
@@ -21,12 +22,15 @@ const REG: Record<Registration, { word: string; tone: 'success' | 'warning' | 'd
 export default function VendorsPage() {
   const { can, isOwner } = useSession()
   const [deleting, setDeleting] = useState<Vendor | null>(null)
+  const [picked, setPicked] = useState<Set<string | number>>(new Set())
+  const [clearing, setClearing] = useState(false)
   const vendors = useVendors('', '')
   // Search, registration status and date: the same filters as the Work Orders list.
   const filters = useListFilters(vendors.data?.contractors, {
     search: (v) => [v.company_name, v.vendor_code, v.nature_of_work, v.registered_project, v.pan, v.gst_number, v.city, v.state, v.contact_person, v.phone_number, v.bank_name].join(' '),
     status: (v) => REG[v.registration_status]?.word ?? v.registration_status,
     date: (v) => v.joining_date || v.created_at || '',
+    facets: { project: { label: 'Projects', get: (v) => v.registered_project }, work: { label: 'Work', get: (v) => v.nature_of_work }, city: { label: 'Cities', get: (v) => v.city } },
   })
   const [editing, setEditing] = useState<Vendor | null>(null)
   const [creating, setCreating] = useState(false)
@@ -163,8 +167,10 @@ export default function VendorsPage() {
 
       <FilterBar filters={filters} placeholder="Search by name, vendor code, work, GSTIN..." />
 
+      {isOwner && <BulkBar count={picked.size} noun="vendor" shown={filters.filtered.length} onClear={() => setPicked(new Set())} onDelete={() => setClearing(true)} />}
       <DataTable
         label="Vendors"
+        selection={isOwner ? { selected: picked, onChange: setPicked } : undefined}
         rows={filters.filtered}
         columns={columns}
         rowKey={(v) => v.id}
@@ -173,6 +179,7 @@ export default function VendorsPage() {
       />
 
       <VendorFormModal vendor={null} open={creating} onOpenChange={setCreating} />
+      <BulkDeleteDialog open={clearing} onOpenChange={setClearing} kind="vendor" noun="vendor" ids={[...picked].map(Number)} onFinished={() => setPicked(new Set())} detail="Each vendor goes with every work order, bill, measurement, payment and portal login of theirs. This cannot be undone." />
       <DeleteOrderDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)} kind="vendor" id={deleting?.id ?? 0} number={deleting?.company_name ?? ''} onDeleted={() => setDeleting(null)} />
       <VendorFormModal vendor={editing} open={!!editing} onOpenChange={(o) => !o && setEditing(null)} />
       <ConfirmDialog

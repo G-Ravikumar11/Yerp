@@ -8,6 +8,16 @@ export interface FilterOptions<T> {
   status?: (row: T) => string
   /** An ISO date (or a datetime); the range filters on its first ten characters. */
   date?: (row: T) => string
+  /** Further things to narrow by - the project, the gang, the trade - each a drop-down of what the list holds. */
+  facets?: Record<string, { label: string; get: (row: T) => string }>
+}
+
+export interface Facet {
+  key: string
+  label: string
+  value: string
+  options: string[]
+  set: (v: string) => void
 }
 
 export interface ListFilters<T> {
@@ -18,6 +28,7 @@ export interface ListFilters<T> {
   from: string
   to: string
   statuses: string[]
+  facets: Facet[]
   hasStatus: boolean
   hasDate: boolean
   active: boolean
@@ -37,9 +48,17 @@ export function useListFilters<T>(rows: readonly T[] | undefined, opts: FilterOp
   const [status, setStatus] = useState('')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
+  const [chosen, setChosen] = useState<Record<string, string>>({})
   const list = rows ?? []
+  const facetDefs = opts.facets ?? {}
 
   const statuses = useMemo(() => (opts.status ? [...new Set(list.map(opts.status).filter(Boolean))].sort() : []), [list, opts.status])
+
+  const facetOptions = useMemo(
+    () => Object.fromEntries(Object.entries(facetDefs).map(([k, d]) => [k, [...new Set(list.map(d.get).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))])),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [list],
+  )
 
   const filtered = useMemo(() => {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean)
@@ -51,6 +70,7 @@ export function useListFilters<T>(rows: readonly T[] | undefined, opts: FilterOp
         if (!words.every((w) => hay.includes(w))) return false
       }
       if (status && opts.status && opts.status(row) !== status) return false
+      for (const [k, d] of Object.entries(facetDefs)) if (chosen[k] && d.get(row) !== chosen[k]) return false
       if ((from || to) && opts.date) {
         const d = (opts.date(row) || '').slice(0, 10)
         if (!d || (from && d < from) || (to && d > to)) return false
@@ -58,7 +78,7 @@ export function useListFilters<T>(rows: readonly T[] | undefined, opts: FilterOp
       return true
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [list, q, status, from, to])
+  }, [list, q, status, from, to, chosen])
 
   return {
     filtered,
@@ -68,9 +88,12 @@ export function useListFilters<T>(rows: readonly T[] | undefined, opts: FilterOp
     from,
     to,
     statuses,
+    facets: Object.entries(facetDefs)
+      .map(([key, d]) => ({ key, label: d.label, value: chosen[key] ?? '', options: facetOptions[key] ?? [], set: (v: string) => setChosen((c) => ({ ...c, [key]: v })) }))
+      .filter((f) => f.options.length > 1 || f.value),
     hasStatus: statuses.length > 0,
     hasDate: !!opts.date,
-    active: !!(q || status || from || to),
+    active: !!(q || status || from || to || Object.values(chosen).some(Boolean)),
     setQ,
     setStatus,
     setFrom,
@@ -80,6 +103,7 @@ export function useListFilters<T>(rows: readonly T[] | undefined, opts: FilterOp
       setStatus('')
       setFrom('')
       setTo('')
+      setChosen({})
     },
   }
 }
@@ -96,6 +120,11 @@ export function FilterBar<T>({ filters, placeholder = 'Search...', children }: {
           <Select aria-label="Status" value={f.status} onChange={(e) => f.setStatus(e.target.value)} placeholder="All statuses" options={f.statuses.map((s) => ({ value: s, label: s.charAt(0) + s.slice(1).toLowerCase() }))} />
         </div>
       )}
+      {f.facets.map((x) => (
+        <div key={x.key} className="w-44">
+          <Select aria-label={x.label} value={x.value} onChange={(e) => x.set(e.target.value)} placeholder={`All ${x.label.toLowerCase()}`} options={x.options.map((o) => ({ value: o, label: o }))} />
+        </div>
+      ))}
       {f.hasDate && (
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <Input type="date" aria-label="From date" className="w-[9.5rem]" value={f.from} onChange={(e) => f.setFrom(e.target.value)} />

@@ -9,6 +9,7 @@ import { deleteEntry, mbKeys, useMeasurementBook, type MbEntry, type MbLine } fr
 import { useOrderVocabulary, useOrders, type Order } from '@/api/orders'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
+import { BulkBar, BulkDeleteDialog } from '@/components/data/BulkDelete'
 import { HoldModal, ReleaseModal } from './HoldModals'
 import { formatDate, formatQty } from '@/lib/format'
 import { cn, compactINR, formatINR } from '@/lib/utils'
@@ -104,6 +105,8 @@ export default function MeasurementBookPage() {
   const [measuring, setMeasuring] = useState<MbLine | null>(null)
   const [importing, setImporting] = useState(false)
   const [holding, setHolding] = useState<MbLine | null>(null)
+  const [picked, setPicked] = useState<Set<string | number>>(new Set())
+  const [clearing, setClearing] = useState(false)
   const [releasing, setReleasing] = useState<MbEntry | null>(null)
   // The entries are listed as they always were; the Excel-style layout is one tab away. The choice is remembered.
   const [view, setViewState] = useState<'sheet' | 'list'>(() => {
@@ -138,6 +141,11 @@ export default function MeasurementBookPage() {
     search: (e) => [e.activity_no, byItem.get(e.item_id)?.item_code, byItem.get(e.item_id)?.description, e.location, e.mb_ref, e.remarks, e.recorded_by_name, e.dimensions.map((d) => d.particulars).join(' ')].join(' '),
     status: (e) => (e.billed ? 'Billed' : 'Not billed'),
     date: (e) => e.measured_on,
+    facets: {
+      item: { label: 'Items', get: (e) => [byItem.get(e.item_id)?.item_code, e.activity_no, byItem.get(e.item_id)?.description].filter(Boolean).join(' ').slice(0, 60) },
+      who: { label: 'Recorded by', get: (e) => e.recorded_by_name },
+      kind: { label: 'Kinds', get: (e) => (e.kind === 'hold' ? 'Holds' : e.kind === 'release' ? 'Releases' : 'Measured') },
+    },
   })
   // Each item of the order: by code, activity or words, and by how far the work has got.
   const progress = (l: MbLine) => (l.is_header ? '' : l.over_measured ? 'Over measured' : !l.measured_to_date ? 'Not started' : (l.balance_to_measure ?? 0) <= 0 ? 'Complete' : 'In progress')
@@ -394,10 +402,12 @@ export default function MeasurementBookPage() {
             </p>
           )}
           <FilterBar filters={filters} placeholder="Search entries..." />
+          {record && view === 'list' && <BulkBar count={picked.size} noun="entry" shown={filters.filtered.filter((e) => !e.billed).length} onClear={() => setPicked(new Set())} onDelete={() => setClearing(true)} />}
           {view === 'sheet' ? <SheetView entries={filters.filtered} byItem={byItem} /> : <DataTable
             label="Measurement entries"
             rows={filters.filtered}
             columns={entryColumns}
+            selection={record ? { selected: picked, onChange: setPicked, canSelect: (e) => !e.billed } : undefined}
             onRowClick={setOpened}
             rowKey={(e) => e.id}
             loading={book.isPending}
@@ -438,6 +448,7 @@ export default function MeasurementBookPage() {
             }}
           />
           <ImportBookModal orderId={chosen} open={importing} onOpenChange={setImporting} />
+          <BulkDeleteDialog open={clearing} onOpenChange={setClearing} kind="entry" noun="entry" ids={[...picked].map(Number)} onFinished={() => setPicked(new Set())} detail="Each measurement is taken out of the book and off any draft bill it was on. Measurements on a sent bill stay. This cannot be undone." />
           <HoldModal orderId={chosen} line={holding} onClose={() => setHolding(null)} />
           <ReleaseModal entry={releasing} line={releasing ? byItem.get(releasing.item_id) : undefined} onClose={() => setReleasing(null)} />
           <ConfirmDialog

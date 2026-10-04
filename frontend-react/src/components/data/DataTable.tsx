@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Card, SkeletonRows } from '@/components/ui'
@@ -25,8 +25,16 @@ const alignment = { left: 'text-left', right: 'text-right tabular', center: 'tex
  * keyboard-openable rows, and a proper empty and loading state. Lists that are
  * edited in place use the data grid; this is for reading and picking.
  */
+/** Ticking rows to act on them together - delete, say. Only the rows `canSelect` allows have a box. */
+export interface Selection<T> {
+  selected: ReadonlySet<string | number>
+  onChange: (next: Set<string | number>) => void
+  canSelect?: (row: T) => boolean
+}
+
 export function DataTable<T>({
   rows,
+  selection,
   columns,
   rowKey,
   onRowClick,
@@ -38,6 +46,7 @@ export function DataTable<T>({
   className,
 }: {
   rows: readonly T[]
+  selection?: Selection<T>
   columns: readonly TableColumn<T>[]
   rowKey: (row: T, index: number) => string | number
   onRowClick?: (row: T) => void
@@ -49,6 +58,13 @@ export function DataTable<T>({
   className?: string
 }) {
   const [sort, setSort] = useState<{ id: string; dir: 1 | -1 } | null>(null)
+  const selectable = useMemo(() => (selection ? rows.flatMap((r, i) => (!selection.canSelect || selection.canSelect(r) ? [rowKey(r, i)] : [])) : []), [rows, selection, rowKey])
+  const ticked = selection ? selectable.filter((k) => selection.selected.has(k)).length : 0
+  const all = selectable.length > 0 && ticked === selectable.length
+  const head = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (head.current) head.current.indeterminate = ticked > 0 && !all
+  }, [ticked, all])
 
   const sorted = useMemo(() => {
     const col = sort && columns.find((c) => c.id === sort.id)
@@ -68,6 +84,18 @@ export function DataTable<T>({
         <table aria-label={label} className="w-full min-w-max border-collapse text-[13.5px]">
           <thead className="bg-surface">
             <tr>
+              {selection && (
+                <th scope="col" className="w-10 border-b border-border px-4 py-2.5">
+                  <input
+                    ref={head}
+                    type="checkbox"
+                    aria-label="Select every row"
+                    checked={all}
+                    disabled={selectable.length === 0}
+                    onChange={(e) => selection.onChange(e.target.checked ? new Set([...selection.selected, ...selectable]) : new Set([...selection.selected].filter((k) => !selectable.includes(k))))}
+                  />
+                </th>
+              )}
               {columns.map((c) => {
                 const on = sort?.id === c.id
                 return (
@@ -118,6 +146,23 @@ export function DataTable<T>({
                   rowClassName?.(row),
                 )}
               >
+                {selection && (
+                  <td className="w-10 px-4 py-3 align-middle" onClick={(e) => e.stopPropagation()}>
+                    {(!selection.canSelect || selection.canSelect(row)) && (
+                      <input
+                        type="checkbox"
+                        aria-label="Select this row"
+                        checked={selection.selected.has(rowKey(row, i))}
+                        onChange={(e) => {
+                          const next = new Set(selection.selected)
+                          if (e.target.checked) next.add(rowKey(row, i))
+                          else next.delete(rowKey(row, i))
+                          selection.onChange(next)
+                        }}
+                      />
+                    )}
+                  </td>
+                )}
                 {columns.map((c) => (
                   <td key={c.id} className={cn('px-4 py-3 align-middle', alignment[c.align ?? 'left'], c.hideBelow && hide[c.hideBelow], c.className)}>
                     {c.cell(row, i)}

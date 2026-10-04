@@ -9,7 +9,7 @@ await open(page, '/subcontractors/vendors')
 await page.waitForSelector('table[aria-label=Vendors] tbody tr')
 const rows = () => page.$$eval('table[aria-label=Vendors] tbody tr', (r) => r.length)
 const before = await rows()
-check('the register lists gangs with their vendor codes', before > 0 && /[A-Z]{2}-?\d+/.test(await page.$eval('table[aria-label=Vendors] tbody tr td', (e) => e.textContent)), `${before} vendors`)
+check('the register lists gangs with their vendor codes', before > 0 && /[A-Z]{2}-?\d+/.test(await page.$eval('table[aria-label=Vendors] tbody tr td:nth-child(2)', (e) => e.textContent)), `${before} vendors`)
 
 // --- Register one, with a document ------------------------------------------------------------
 const png = join(tmpdir(), 'e2e-gst.png')

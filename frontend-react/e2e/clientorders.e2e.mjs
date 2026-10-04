@@ -93,7 +93,7 @@ await page.waitForFunction(() => !document.querySelector('[role=dialog]'))
 await toastsGone(page)
 
 // --- The order in full ------------------------------------------------------------------------------------------------------
-await page.click(`${row} td:nth-child(2)`)
+await page.click(`${row} td:nth-child(3)`)
 await page.waitForSelector('[role=dialog]')
 const d = await dialogText()
 check('clicking a row opens what was sold, the budget and the margin', d.includes(fgCode) && d.includes(rmCode) && d.includes('margin 60%'), d.slice(0, 200))

@@ -10,6 +10,7 @@ import { useOrders } from '@/api/orders'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { DeleteOrderDialog } from '@/features/deleteorder/DeleteOrderDialog'
+import { BulkBar, BulkDeleteDialog } from '@/components/data/BulkDelete'
 import { DeleteButton } from '@/features/deleteorder/DeleteButton'
 import { formatDate } from '@/lib/format'
 import { compactINR, formatINR } from '@/lib/utils'
@@ -18,6 +19,8 @@ export default function RaBillsPage() {
   const nav = useNavigate()
   const { can, isOwner } = useSession()
   const [deleting, setDeleting] = useState<SubBill | null>(null)
+  const [picked, setPicked] = useState<Set<string | number>>(new Set())
+  const [clearing, setClearing] = useState(false)
   const [params, setParams] = useSearchParams()
   const orderId = Number(params.get('order')) || 0
   const orders = useOrders()
@@ -31,6 +34,7 @@ export default function RaBillsPage() {
     search: (b) => [b.number, b.contractor, b.vendor_code, b.project, b.status, b.net_payable, b.work_name].join(' '),
     status: (b) => b.status,
     date: (b) => b.bill_date,
+    facets: { project: { label: 'Projects', get: (b) => b.project }, gang: { label: 'Gangs', get: (b) => b.contractor }, order: { label: 'Work orders', get: (b) => b.order } },
   })
 
   const s = bills.data?.summary
@@ -120,8 +124,10 @@ export default function RaBillsPage() {
       </StatGrid>
 
       <FilterBar filters={filters} placeholder="Search by bill, gang, project..." />
+      {isOwner && <BulkBar count={picked.size} noun="bill" shown={filters.filtered.length} onClear={() => setPicked(new Set())} onDelete={() => setClearing(true)} />}
       <DataTable
         label="RA bills"
+        selection={isOwner ? { selected: picked, onChange: setPicked } : undefined}
         rows={filters.filtered}
         columns={columns}
         rowKey={(b) => b.id}
@@ -129,6 +135,7 @@ export default function RaBillsPage() {
         onRowClick={(b) => nav(`/subcontractors/ra-bills/${b.id}`)}
         empty={filters.active ? 'Nothing matches those filters.' : "No bills yet. Measure the gang's work, then draw one up."}
       />
+      <BulkDeleteDialog open={clearing} onOpenChange={setClearing} kind="bill" noun="bill" ids={[...picked].map(Number)} onFinished={() => setPicked(new Set())} detail="Each goes with its approvals and payments. What each measured becomes free to bill again. This cannot be undone." />
       <DeleteOrderDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)} kind="bill" id={deleting?.id ?? 0} number={deleting?.number ?? ''} onDeleted={() => setDeleting(null)} />
     </>
   )
