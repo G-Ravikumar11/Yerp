@@ -21,6 +21,9 @@ await page.waitForSelector('select[aria-label="Send every section with no item t
 const first = await page.$eval('select[aria-label="Send every section with no item to"]', (s) => s.options[1].value)
 await page.select('select[aria-label="Send every section with no item to"]', first)
 await sleep(500)
+// different works onto the one item are confirmed, not assumed
+const clash = await page.$('[role=dialog] [role=alert] input[type=checkbox]')
+if (clash) await clash.click()
 await clickText(page, '[role=dialog] button', 'Record it in the book')
 await page.waitForFunction(() => !document.querySelector('[role=dialog]'), { timeout: 15000 })
 await sleep(1200)
@@ -34,7 +37,7 @@ check('the sections are shown with their headings', /I\s*Laying of tiles/.test(t
 check('each block is shown under its letter and place', /A\s*365 sft - Block No\. B24/.test(t) && /B\s*365 sft - Block No\. B12/.test(t))
 check('with its lines and the block total', t.includes('Living Room') && t.includes('Total quantity for one block'))
 check('a block built several times says so', /Total quantity for 4 blocks/.test(t))
-check('the hold-back is shown, and what is left to pay', t.includes('Held back for finishes and handing over') && t.includes('Total quantity to be paid') && /before holding back/.test(t))
+check('the hold-back is shown, and what is left to pay', /held/i.test(t) && t.includes('Total quantity to be paid') && /before holding back/.test(t))
 check('the group comes to what the sheet says (190)', /to be paid\s*190/.test(t), (t.match(/to be paid.{0,14}/g) || []).join(' | '))
 check('and the grand total is what is payable (370)', /after [\d.,]+ held back\)\s*370/.test(t), t.slice(-140))
 await clickText(page, '[role=tab]', 'Entries')

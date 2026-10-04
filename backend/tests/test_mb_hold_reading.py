@@ -48,7 +48,13 @@ def read(rows):
 
 
 def payable(b):
-    return round(sum(e["quantity"] for i in b["items"] for e in i["entries"]), 3)
+    """What the sheet pays: the measurement less what it holds back."""
+    return round(sum(e["payable"] for i in b["items"] for e in i["entries"]), 3)
+
+
+def no_line_written_into_the_measurement(b):
+    return not any(d.get("holdback") or str(d.get("particulars") or "").lower().startswith("held back")
+                   for i in b["items"] for e in i["entries"] for d in e["dims"])
 
 
 def block(name, n, tail):
@@ -66,8 +72,11 @@ def test_hold_over_total_payable_and_two_blocks_under_one_item():
     b = read(rows)
     entries = b["items"][0]["entries"]
     assert [e["location"] for e in entries] == ["365 SFT-Block", "430 SFT-Block"]
-    assert [round(e["quantity"], 3) for e in entries] == [90.0, 144.0]
+    assert [round(e["quantity"], 3) for e in entries] == [100.0, 160.0]          # measured, as the sheet wrote it
     assert [e["held_back"] for e in entries] == [10.0, 16.0]
+    assert [e["payable"] for e in entries] == [90.0, 144.0]
+    assert [h["percent"] for h in b["holds"]] == [10.0, 10.0]
+    assert no_line_written_into_the_measurement(b)
     assert not b["warnings"]
 
 
@@ -113,7 +122,7 @@ def test_a_sheet_whose_total_ignores_a_line_is_said_and_the_sheets_hold_percent_
     assert "not a figure" in joined and "totals 60" in joined, b["warnings"]
 
 
-def test_the_held_back_line_names_the_quantity_it_is_taken_from():
+def test_the_hold_is_kept_apart_from_the_blocks_so_their_totals_match_the_sheet():
     rows = [["1", "Slab"], ["a", "Block B19"]] + lines(5) + [
         [None, "Total Quantity for one Block", None, None, None, None, None, None, 100.0],
         [None, "Total Quantity for 4 Blocks", None, None, None, None, None, None, 400.0],
@@ -122,9 +131,11 @@ def test_the_held_back_line_names_the_quantity_it_is_taken_from():
         [None, "Total Qty To be paid", None, None, None, None, None, None, 180.0]]
     b = read(rows)
     e = b["items"][0]["entries"][0]
-    held = next(d for d in e["dims"] if d.get("holdback"))
-    assert abs(e["quantity"] - 180.0) < 0.01
-    assert "55% of 100" in held["particulars"], held["particulars"]       # a block's own figure, not the four-block total
+    assert e["one"] == 100.0 and e["quantity"] == 400.0                    # one block and four blocks, as the sheet says
+    assert no_line_written_into_the_measurement(b)
+    assert abs(e["payable"] - 180.0) < 0.01 and abs(e["held_back"] - 220.0) < 0.01
+    h = b["holds"][0]
+    assert h["percent"] == 55.0 and "Hold for Finishes" in h["reason"] and abs(h["held"] - 220.0) < 0.01
 
 
 @pytest.mark.parametrize("seed", range(25))
@@ -170,8 +181,9 @@ def test_the_demo_bill_that_lost_its_hold_now_pays_what_the_sheet_pays(tenant):
     b = sheet_forms.read_measurement_book(wb["MB-1"], wf["MB-1"])
     entries = b["items"][0]["entries"]
     assert [e["location"] for e in entries] == ["365 SFT-Block", "430 SFT-Block"]
-    assert abs(entries[0]["quantity"] - 6353.46) < 0.01                       # the sheet's own payable
-    assert abs(entries[1]["quantity"] - 7902.115) < 0.01                      # 10% of what its lines come to
+    assert abs(entries[0]["quantity"] - 7059.4) < 0.01                        # measured, as the sheet wrote it
+    assert abs(entries[0]["payable"] - 6353.46) < 0.01                        # the sheet's own payable
+    assert abs(entries[1]["payable"] - 7902.115) < 0.01                       # 10% held of what its lines come to
     assert any("not a figure" in w for w in b["warnings"])                     # row 224's '`'
     # and through the whole import into an order
     order = live_order(tenant, pay_advance=False)
@@ -180,7 +192,8 @@ def test_the_demo_bill_that_lost_its_hold_now_pays_what_the_sheet_pays(tenant):
                       data={"commit": "0"})
     assert res.status_code == 200, res.text
     sec = res.json()["sections"][0]
-    assert [round(x["quantity"], 1) for x in sec["entries"]] == [6353.5, 7902.1]
+    assert [round(x["payable"], 1) for x in sec["entries"]] == [6353.5, 7902.1]
+    assert [round(x["quantity"], 1) for x in sec["entries"]] == [7059.4, 8780.1]
     assert item
 
 
@@ -203,9 +216,14 @@ def test_importing_the_demo_bill_gives_a_bill_that_holds_what_the_sheet_holds(te
                        data={"commit": "1", "mapping": '{"0": %d}' % item})
     assert done.status_code == 200, done.text
     line = book(tenant, order["id"])["lines"][0]
-    assert abs(line["measured_to_date"] - 14255.575) < 0.01, line["measured_to_date"]
+    assert abs(line["measured_to_date"] - 15839.528) < 0.01, line["measured_to_date"]   # measured
+    assert abs(line["held"] - 1583.953) < 0.02 and abs(line["unbilled"] - 14255.575) < 0.02   # held, and what can be billed
     bill = tenant.post("/api/sub-bills", json={"order_id": order["id"]}).json()["bill"]
     pdf = tenant.get("/api/sub-bills/%d/document.pdf" % bill["id"])
     text = " ".join((p.extract_text() or "") for p in pypdf.PdfReader(io.BytesIO(pdf.content)).pages)
     text = " ".join(text.split())
-    assert "(10% of 7059.4)" in text and "(10% of 8780.128)" in text, text[text.find("Held"):text.find("Held") + 300]
+    # the blocks print as the sheet measured them; the hold once under each, in the sheet's words
+    assert "7,059.4" in text and "8,780.13" in text, text[:400]
+    assert text.count("I INTERNAL HOLE PACKING") == 1, "a section heading prints once, not before every block"
+    assert text.count("Hold 10 % for hsnding over") == 2, text[text.find("Hold"):text.find("Hold") + 300]
+    assert "Total Qty To be paid" in text and "6,353.46" in text

@@ -15,7 +15,8 @@ import { sendOrQueue } from '@/stores/offline'
 import { toast } from '@/stores/toast'
 import { dimColumns } from './dimensions'
 import { ItemFacts } from './ItemFacts'
-import { SheetFill, toDimLine, type SheetEntry } from './SheetFill'
+import { SheetFill, toDimLine } from './SheetFill'
+import { SheetBlocks, type Loaded } from './SheetBlocks'
 
 type Mode = 'dims' | 'total'
 
@@ -64,6 +65,8 @@ function MeasureForm({ orderId, order, jobCode, line, entry, onClose, target }: 
   const [calcLabel, setCalcLabel] = useState('')
   const [calcText, setCalcText] = useState('')
   const [witness, setWitness] = useState('')
+  // Blocks loaded from a sheet, checked in the grid before anything is recorded.
+  const [loaded, setLoaded] = useState<Loaded | null>(null)
 
   const one = mode === 'dims' ? dimTotal(dims) : total
   const quantity = Math.round(one * blocks * 1000) / 1000
@@ -115,31 +118,34 @@ function MeasureForm({ orderId, order, jobCode, line, entry, onClose, target }: 
     setCalcText('')
   }
 
-  /** Lines read from a sheet replace what is in the grid; nothing is recorded until the person says so. */
-  const fromSheet = (entry: SheetEntry, source: string) => {
-    setMode('dims')
-    setDims(entry.dims.map(toDimLine))
-    setBlocks(entry.multiplier > 0 ? entry.multiplier : 1)
-    if (entry.location) setWhere(entry.location)
-    if (!ref) setRef(source)
-    toast.success(`${entry.dims.filter((d) => !d.is_heading).length} lines loaded from the sheet. Check them, then record.`)
+  const facts = (
+    <div className="mb-4 rounded-lg border border-border bg-muted/40 p-3" aria-label="The work order being measured">
+      {order && (
+        <p className="mb-2 flex flex-wrap items-baseline gap-x-2 text-[13px]">
+          <span className="font-mono font-semibold">{order.wo_number}</span>
+          {jobCode && <span className="rounded bg-primary-soft px-1.5 py-0.5 font-mono text-[11px] text-primary">{jobCode}</span>}
+          <span className="text-muted-foreground">
+            {order.contractor || 'no gang'} · {order.project}
+          </span>
+        </p>
+      )}
+      <ItemFacts line={line} />
+    </div>
+  )
+
+  if (loaded) {
+    return (
+      <div>
+        {facts}
+        <SheetBlocks orderId={orderId} line={line} loaded={loaded} onDone={onClose} onDiscard={() => setLoaded(null)} />
+      </div>
+    )
   }
 
   return (
     <div>
-      <div className="mb-4 rounded-lg border border-border bg-muted/40 p-3" aria-label="The work order being measured">
-        {order && (
-          <p className="mb-2 flex flex-wrap items-baseline gap-x-2 text-[13px]">
-            <span className="font-mono font-semibold">{order.wo_number}</span>
-            {jobCode && <span className="rounded bg-primary-soft px-1.5 py-0.5 font-mono text-[11px] text-primary">{jobCode}</span>}
-            <span className="text-muted-foreground">
-              {order.contractor || 'no gang'} · {order.project}
-            </span>
-          </p>
-        )}
-        <ItemFacts line={line} />
-      </div>
-      {!target.client && !entry && <SheetFill orderId={orderId} itemId={line.item_id} room={(line.max_quantity ?? Infinity) - (line.measured_to_date ?? 0)} onRecorded={onClose} itemName={[line.item_code, line.activity_no].filter(Boolean).join(" ") || line.description} onUse={fromSheet} />}
+      {facts}
+      {!target.client && !entry && <SheetFill orderId={orderId} itemId={line.item_id} itemName={[line.item_code, line.activity_no].filter(Boolean).join(' ') || line.description} onLoad={setLoaded} />}
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <Tabs
           label="How it is measured"

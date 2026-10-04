@@ -23,31 +23,42 @@ const num = (v: number | null | undefined) => (v === null || v === undefined ? '
 const COLS = 8
 const sum = (list: MbEntry[], f: (e: MbEntry) => number) => list.reduce((n, e) => n + f(e), 0)
 
-/** The footer under a group of blocks that share one hold-back: before, held, and to be paid. */
-function GroupFooter({ group }: { group: MbEntry[] }) {
-  const paid = sum(group, (e) => e.quantity)
-  const held = sum(group, heldOf)
+/**
+ * The footer under a group of blocks that share one hold: what they measured, what is held in the sheet's own
+ * words, and what is to be paid. (A book imported before holds were kept apart carries the hold as a line in
+ * each block; it is added up from those lines.)
+ */
+function GroupFooter({ group, holds }: { group: MbEntry[]; holds: MbEntry[] }) {
+  const measured = sum(group, (e) => e.quantity)
+  const legacy = sum(group, heldOf)
+  const held = holds.length ? sum(holds, (h) => -h.quantity) : legacy
   if (held <= 0) return null
+  const before = holds.length ? measured : measured + legacy
   return (
     <>
       <tr className="border-t border-border bg-muted/50">
         <td className="px-3 py-1 pl-9" colSpan={COLS - 1}>Total quantity, before holding back</td>
-        <td className="tabular px-3 py-1 text-right">{formatQty(paid + held)}</td>
+        <td className="tabular px-3 py-1 text-right">{formatQty(before)}</td>
       </tr>
-      <tr className="bg-muted/50">
-        <td className="px-3 py-1 pl-9" colSpan={COLS - 1}>Held back for finishes and handing over</td>
-        <td className="tabular px-3 py-1 text-right text-danger">−{formatQty(held)}</td>
-      </tr>
+      {(holds.length ? holds : [null]).map((h, i) => (
+        <tr key={h?.id ?? i} className="bg-warning-soft/60">
+          <td className="px-3 py-1 pl-9" colSpan={COLS - 1}>
+            {h?.remarks || 'Held back for finishes and handing over'}
+            {h && (h.held_remaining ?? -h.quantity) < -h.quantity - 0.0001 && <span className="ml-2 text-xs text-muted-foreground">({formatQty(-h.quantity - (h.held_remaining ?? 0))} since released)</span>}
+          </td>
+          <td className="tabular px-3 py-1 text-right text-danger">−{formatQty(h ? -h.quantity : held)}</td>
+        </tr>
+      ))}
       <tr className="bg-muted/50 font-semibold">
         <td className="px-3 py-1 pl-9" colSpan={COLS - 1}>Total quantity to be paid</td>
-        <td className="tabular px-3 py-1 text-right">{formatQty(paid)}</td>
+        <td className="tabular px-3 py-1 text-right">{formatQty(before - held)}</td>
       </tr>
     </>
   )
 }
 
 /** One entry: its lettered heading, its lines as the site wrote them, and its totals. */
-function Block({ e, uom, groupEnd, group }: { e: MbEntry; uom: string; groupEnd: boolean; group: MbEntry[] }) {
+function Block({ e, uom, groupEnd, group, holds }: { e: MbEntry; uom: string; groupEnd: boolean; group: MbEntry[]; holds: MbEntry[] }) {
   // An entry written as a total, with no dimensions, is one line of its own.
   const measured = e.dimensions.some((d) => !d.is_heading)
   const one = measured ? oneBlock(e) : e.quantity / (e.multiplier || 1)
@@ -63,7 +74,7 @@ function Block({ e, uom, groupEnd, group }: { e: MbEntry; uom: string; groupEnd:
       </tr>
       {!measured && (
         <tr>
-          <td className="px-3 py-0.5 pl-9 text-muted-foreground">Measured as a total</td>
+          <td className="px-3 py-0.5 pl-9 text-muted-foreground">{e.kind ? e.remarks || (e.kind === 'hold' ? 'Held back' : 'Hold released') : 'Measured as a total'}</td>
           <td className="px-2 py-0.5 text-muted-foreground">{uom}</td>
           <td colSpan={5} />
           <td className="tabular px-3 py-0.5 text-right">{formatQty(one)}</td>
@@ -95,7 +106,7 @@ function Block({ e, uom, groupEnd, group }: { e: MbEntry; uom: string; groupEnd:
           <td className="tabular px-3 py-1 text-right">{formatQty(e.quantity)}</td>
         </tr>
       )}
-      {groupEnd && <GroupFooter group={group} />}
+      {groupEnd && <GroupFooter group={group} holds={holds} />}
     </>
   )
 }
@@ -106,7 +117,11 @@ function Block({ e, uom, groupEnd, group }: { e: MbEntry; uom: string; groupEnd:
  */
 export function SheetView({ entries, byItem }: { entries: MbEntry[]; byItem: Map<number, MbLine> }) {
   if (!entries.length) return <p className="py-10 text-center text-sm text-muted-foreground">Nothing measured yet.</p>
-  const chrono = [...entries].sort((a, b) => a.id - b.id)
+  const all = [...entries].sort((a, b) => a.id - b.id)
+  // A hold recorded for a group of blocks shows once, under the group - not as a block of its own.
+  const grouped = new Set(all.filter((e) => !e.kind && e.group_ref).map((e) => `${e.item_id}|${e.group_ref}`))
+  const holdsOf = (e: MbEntry) => all.filter((h) => h.kind === 'hold' && h.item_id === e.item_id && h.group_ref === e.group_ref)
+  const chrono = all.filter((e) => !(e.kind === 'hold' && e.group_ref && grouped.has(`${e.item_id}|${e.group_ref}`)))
   const sectionOf = (e: MbEntry) => e.section || (byItem.get(e.item_id) ? `${byItem.get(e.item_id)?.activity_no ?? ''} ${byItem.get(e.item_id)?.description ?? ''}`.trim() : 'Measured')
   const sections: { name: string; entries: MbEntry[] }[] = []
   for (const e of chrono) {
@@ -115,7 +130,7 @@ export function SheetView({ entries, byItem }: { entries: MbEntry[]; byItem: Map
     if (last && last.name === name) last.entries.push(e)
     else sections.push({ name, entries: [e] })
   }
-  const grandHeld = sum(chrono, heldOf)
+  const grandHeld = sum(chrono, heldOf) + sum(all.filter((e) => e.kind === 'hold'), (h) => -h.quantity) - sum(all.filter((e) => e.kind === 'release'), (r) => r.quantity)
   return (
     <div aria-label="Measurement sheet" className="overflow-x-auto rounded-xl border border-border">
       <table className="w-full min-w-[56rem] border-collapse text-[13px]">
@@ -140,17 +155,17 @@ export function SheetView({ entries, byItem }: { entries: MbEntry[]; byItem: Map
               {sec.entries.map((e, i) => {
                 const next = sec.entries[i + 1]
                 const groupEnd = !!e.group_ref && (!next || next.group_ref !== e.group_ref)
-                return <Block key={e.id} e={e} uom={byItem.get(e.item_id)?.uom ?? ''} groupEnd={groupEnd} group={sec.entries.filter((x) => x.group_ref === e.group_ref)} />
+                return <Block key={e.id} e={e} uom={byItem.get(e.item_id)?.uom ?? ''} groupEnd={groupEnd} group={sec.entries.filter((x) => x.group_ref === e.group_ref && !x.kind)} holds={groupEnd ? holdsOf(e) : []} />
               })}
               <tr className="border-t-2 border-border bg-surface font-semibold">
                 <td colSpan={COLS - 1} className="px-3 py-2">Total for this section{sec.entries.length > 1 ? ` (${sec.entries.length} entries)` : ''}</td>
-                <td className="tabular px-3 py-2 text-right">{formatQty(sum(sec.entries, (e) => e.quantity))}</td>
+                <td className="tabular px-3 py-2 text-right">{formatQty(sum(sec.entries, (e) => e.quantity) + sum(sec.entries.filter((e) => e.group_ref && !e.kind && sec.entries.indexOf(e) === sec.entries.map((x) => x.group_ref).lastIndexOf(e.group_ref)), (e) => sum(holdsOf(e), (h) => h.quantity)))}</td>
               </tr>
             </Fragment>
           ))}
           <tr className="border-t-2 border-border bg-primary-soft text-[14px] font-semibold">
             <td colSpan={COLS - 1} className="px-3 py-2.5">Total quantity to be paid{grandHeld > 0 ? ` (after ${formatQty(grandHeld)} held back)` : ''}</td>
-            <td className="tabular px-3 py-2.5 text-right">{formatQty(sum(chrono, (e) => e.quantity))}</td>
+            <td className="tabular px-3 py-2.5 text-right">{formatQty(sum(all, (e) => e.quantity))}</td>
           </tr>
         </tbody>
       </table>

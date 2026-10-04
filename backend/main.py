@@ -503,6 +503,8 @@ async def lifespan(app: FastAPI):
                       ("vendor document names", fill_document_names),
                       ("super admin", ensure_super_admin)):
         ok = _boot_step(label, fn) and ok
+    if ok:
+        convert_legacy_holds_all()
     DB_READY["ok"] = ok
     if ok:
         DB_READY["error"] = ""
@@ -26509,7 +26511,8 @@ def mb_match_item(items, description, sno=""):
 async def import_sub_measurement_book(order_id: int, request: Request, file: UploadFile = File(...),
                                       commit: str = Form("0"), mapping: str = Form(""),
                                       sheet: str = Form(""), measured_on: str = Form(""), include_dims: str = Form("0"),
-                                      entries: str = Form(""), allow_duplicates: str = Form("0"), db: Session = Depends(get_db)):
+                                      entries: str = Form(""), allow_duplicates: str = Form("0"), same_item_ok: str = Form("0"),
+                                      db: Session = Depends(get_db)):
     """The measurement book as the site keeps it in Excel - S.No, Description,
     UoM, No's, NoM, Length, Width, Height, Total Quantity - read into the
     gang's book. Each section of the sheet is matched to an item on the order
@@ -26589,29 +26592,53 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
                          "item_id": item.id if item else None,
                          "item": mb_item_label(item) if item else "",
                          "uom": item.uom if item else "", "quantity": sec["quantity"],
+                         "held": sec.get("held", 0.0), "payable": sec.get("payable", sec["quantity"]),
+                         "rate": unit_rate(item.unit_rate) if item else 0.0,
+                         "holds": [dict(h, held=round(sum(e["held_back"] for e in sec["entries"] if e.get("group") == h["group"]), 3))
+                                   for h in book.get("holds", []) if any(e.get("group") == h["group"] for e in sec["entries"])],
                          "entries": [{"location": e["location"], "multiplier": e["multiplier"],
                                       "lines": len([d for d in e["dims"] if not d["is_heading"]]),
                                       "one_block": e["one"], "quantity": e["quantity"],
-                                      "stated": e.get("stated_total"),
-                                      "held_back": e.get("held_back", 0.0), "full_quantity": e.get("full_quantity", e["quantity"]),
+                                      "stated": e.get("stated_total"), "group": e.get("group"),
+                                      "held_back": e.get("held_back", 0.0), "payable": e.get("payable", e["quantity"]),
+                                      "full_quantity": e["quantity"],
                                       "already_in_book": bool(plain_place(e["location"]) and book_of(item.id if item else None, plain_place(e["location"])) is not None),
                                       "already_quantity": money(book_of(item.id if item else None, plain_place(e["location"]))) if plain_place(e["location"]) and book_of(item.id if item else None, plain_place(e["location"])) is not None else None,
                                       **({"dims": e["dims"]} if want_dims else {})}
                                      for e in sec["entries"]]})
+    # Different works in the sheet put onto one item of the order are named, and not recorded until the person
+    # says they are one item: three works at one rate is how a bill comes out at three crore.
+    squash = lambda t: re.sub(r"[^a-z0-9]+", "", (t or "").lower())
+    wanted = {a for a, _ in picked} if picked is not None else None
+    by_target = {}
+    for row in sections:
+        if row["item_id"] and (wanted is None or row["index"] in wanted):
+            by_target.setdefault(row["item_id"], []).append(row)
+    conflicts = [{"item_id": iid, "item": rows[0]["item"],
+                  "sections": [{"index": r["index"], "description": r["description"], "quantity": r["quantity"]} for r in rows]}
+                 for iid, rows in by_target.items() if len({squash(r["description"]) for r in rows}) > 1]
     preview = {"sheet": book["sheet"], "meta": book["meta"], "sections": sections,
-               "warnings": book["warnings"],
-               "items": [{"id": it.id, "label": mb_item_label(it), "uom": it.uom or ""} for it in items]}
+               "warnings": book["warnings"], "conflicts": conflicts,
+               "items": [{"id": it.id, "label": mb_item_label(it), "uom": it.uom or "", "rate": unit_rate(it.unit_rate)} for it in items]}
     if (commit or "0") not in ("1", "true", "yes"):
         return dict(preview, ok=True, committed=False)
     needed = [d for i, d in missing if picked is None or i in {a for a, _ in picked}]
     if needed:
         raise HTTPException(400, "Say which item on the order these are for: " + "; ".join(needed[:5]))
+    if conflicts and (same_item_ok or "0") not in ("1", "true", "yes"):
+        c = conflicts[0]
+        raise HTTPException(409, "%s different works in the sheet are all set to %s: %s. Put each on its own item, or confirm "
+                                 "they are all this one item." % (len(c["sections"]), c["item"] or "one item",
+                                                                   "; ".join(x["description"] for x in c["sections"][:4])))
     when = (measured_on or book["meta"].get("date") or datetime.now().strftime("%Y-%m-%d"))[:10]
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", when):
         when = datetime.now().strftime("%Y-%m-%d")
     written = 0
     skipped = []
     source = os.path.basename(file.filename or "workbook")
+    # Blocks that share one hold are tied together by a reference no other import can repeat.
+    batch = uuid.uuid4().hex[:6]
+    held_for = {}
     for si, (sec, row) in enumerate(zip(book["items"], sections)):
         if picked is not None and not any(a == si for a, _ in picked):
             continue
@@ -26631,7 +26658,7 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
                                     measured_on=when, mb_ref=("%s / %s" % (source, book["sheet"]))[:120],
                                     location=e["location"], remarks="Imported from the measurement book",
                                     section=("%s %s" % (sec["sno"], sec["description"])).strip(), block_label=e.get("letter") or "",
-                                    group_ref=("%d-%d" % (si, e["group"])) if e.get("group") else "")
+                                    group_ref=("%s-%d-%d" % (batch, si, e["group"])) if e.get("group") else "")
             try:
                 # Each entry is flushed as it is written, so the ceiling check
                 # on the next one already counts it.
@@ -26641,6 +26668,23 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
                 raise HTTPException(exc.status_code, "%s - nothing was imported. %s" % (
                     e["location"] or sec["description"], exc.detail))
             written += 1
+            if e.get("held_back"):
+                key = (si, e["group"])
+                held_for.setdefault(key, {"item": item, "sec": sec, "held": 0.0})["held"] += e["held_back"]
+    # What the sheet holds back is recorded once per group of blocks, as a hold beside the measurement - the
+    # measurement itself stays as the sheet wrote it - and the owner releases it onto a later bill.
+    reasons = {h["group"]: h["reason"] for h in book.get("holds", [])}
+    for (si, g), h in held_for.items():
+        qty = money(h["held"])
+        if qty <= 0:
+            continue
+        db.add(models.DBSubMeasurement(
+            client_id=client.id, order_id=order.id, item_id=h["item"].id, activity_no=h["item"].activity_no or "",
+            measured_on=when, quantity=-qty, kind="hold", mb_ref=("%s / %s" % (source, book["sheet"]))[:120],
+            location="Held back", remarks=reasons.get(g, "Held back for finishes and handing over")[:300],
+            recorded_by=actor_id, recorded_by_name=actor_name,
+            section=("%s %s" % (h["sec"]["sno"], h["sec"]["description"])).strip(), group_ref="%s-%d-%d" % (batch, si, g)))
+    db.flush()
     log_audit(db, client.id, "sub_mb_imported", "subcontract_order", order.id, order.wo_number or "",
               "%s: %d entries" % (source, written), request)
     db.commit()
@@ -26722,6 +26766,12 @@ def update_sub_measurement(entry_id: int, body: SubMeasurementIn, request: Reque
             raise HTTPException(409, "%s: %s already measured elsewhere; %s would make %s against %s ordered%s. Amend the order to measure beyond it." % (
                 item.activity_no or "Item", done, quantity, money(done + quantity), money(item.quantity),
                 " (+%g%% tolerance = %s)" % (item.tolerance_percent, ceiling) if item.tolerance_percent else ""))
+    held_now = sub_held_to_date(db, order.id).get(item.id, 0.0) if item is not None else 0.0
+    if held_now > 0:
+        gross_after = sub_gross_measured(db, order.id).get(item.id, 0.0) - (entry.quantity or 0.0) + quantity
+        if gross_after < held_now - 0.0001:
+            raise HTTPException(409, "%s of this item is held back, so its measurement cannot come below that. "
+                                     "Release or delete the hold first." % qty_text(held_now))
     entry.quantity, entry.multiplier = quantity, multiplier
     entry.measured_on = body.measured_on or entry.measured_on
     entry.mb_ref = (body.mb_ref or "").strip()
@@ -26738,6 +26788,169 @@ def update_sub_measurement(entry_id: int, body: SubMeasurementIn, request: Reque
               "%s %s" % (entry.activity_no or "", quantity), request)
     db.commit()
     return {"ok": True, "quantity": quantity, "message": "Entry updated."}
+
+
+class SubMeasureBatchEntry(BaseModel):
+    location: Optional[str] = ""
+    multiplier: Optional[float] = 1
+    dimensions: Optional[List[DimensionIn]] = None
+    quantity: Optional[float] = 0
+    section: Optional[str] = ""
+    block_label: Optional[str] = ""
+    group: Optional[str] = ""
+
+
+class SubMeasureBatchHold(BaseModel):
+    group: Optional[str] = ""
+    quantity: float
+    reason: str
+
+
+class SubMeasureBatchIn(BaseModel):
+    item_id: int
+    measured_on: Optional[str] = ""
+    mb_ref: Optional[str] = ""
+    remarks: Optional[str] = ""
+    entries: List[SubMeasureBatchEntry]
+    holds: Optional[List[SubMeasureBatchHold]] = None
+
+
+@app.post("/api/sub-mb/{order_id}/entries/batch")
+def record_sub_measurements_batch(order_id: int, body: SubMeasureBatchIn, request: Request, db: Session = Depends(get_db)):
+    """Several blocks checked together in the grid, recorded as one entry each - and what the sheet holds back
+    on them, recorded once per group as a hold. All of it goes in, or none of it does."""
+    client, actor_id, actor_name = wo_actor(request, db, "site.record")
+    order = wo_or_404(db, client.id, order_id)
+    if (order.status or "") not in ("APPROVED", "EXECUTED"):
+        raise HTTPException(409, "Nothing is measured against an order that has not been approved.")
+    item = db.query(models.DBSubcontractItem).filter(
+        models.DBSubcontractItem.id == body.item_id, models.DBSubcontractItem.order_id == order.id).first()
+    if not item or item.is_header:
+        raise HTTPException(404, "That item is not on this order")
+    if not body.entries:
+        raise HTTPException(400, "There is nothing to record.")
+    if len(body.entries) > 500:
+        raise HTTPException(400, "Record at most 500 blocks at a time.")
+    batch = uuid.uuid4().hex[:6]
+    ref = lambda g: ("%s-%s" % (batch, g))[:60] if g else ""
+    written = 0
+    for n, e in enumerate(body.entries, 1):
+        one = SubMeasurementIn(item_id=item.id, dimensions=e.dimensions, quantity=e.quantity or 0, multiplier=e.multiplier,
+                               measured_on=body.measured_on, mb_ref=body.mb_ref, location=e.location, remarks=body.remarks,
+                               section=e.section, block_label=e.block_label, group_ref=ref(e.group))
+        try:
+            add_sub_measurement(db, client, order, item, one, actor_id, actor_name)
+        except HTTPException as exc:
+            db.rollback()
+            raise HTTPException(exc.status_code, "Block %d (%s) - nothing was recorded. %s" % (
+                n, e.location or "no name", exc.detail))
+        written += 1
+    held_total = 0.0
+    for h in body.holds or []:
+        qty = money(h.quantity or 0)
+        if qty <= 0:
+            continue
+        if not (h.reason or "").strip():
+            db.rollback()
+            raise HTTPException(400, "Say why it is held.")
+        held_total = money(held_total + qty)
+        db.add(models.DBSubMeasurement(
+            client_id=client.id, order_id=order.id, item_id=item.id, activity_no=item.activity_no or "",
+            measured_on=(body.measured_on or datetime.now().strftime("%Y-%m-%d"))[:10], quantity=-qty, kind="hold",
+            mb_ref=(body.mb_ref or "")[:120], location="Held back", remarks=h.reason.strip()[:300],
+            recorded_by=actor_id, recorded_by_name=actor_name, group_ref=ref(h.group)))
+    if held_total:
+        db.flush()
+        net = money(sub_measured_to_date(db, order.id).get(item.id, 0.0))
+        billed = money(sub_billed_to_date(db, order.id).get(item.id, 0.0))
+        if net - billed < -0.0001:
+            db.rollback()
+            raise HTTPException(409, "More is held back than is measured and not yet billed. Nothing was recorded.")
+    log_audit(db, client.id, "sub_measurement_recorded", "subcontract_order", order.id, order.wo_number or "",
+              "%d blocks against %s%s" % (written, item.activity_no or "the item", (", %s held" % held_total) if held_total else ""), request)
+    db.commit()
+    return {"ok": True, "entries": written, "held": held_total,
+            "message": "%d block%s recorded%s." % (written, "" if written == 1 else "s",
+                                                  (", %s %s held back" % (qty_text(held_total), item.uom or "")) if held_total else "")}
+
+
+# --- Books imported before holds were kept apart -------------------------------------------------------------
+#
+# An import once wrote the sheet's hold into each block as a line - "Held back for finishes and handing over
+# (55% of 7059.4)" - so the printed block came to less than the sheet says. Those lines are taken out, the block
+# is put back to what the sheet measured, and the hold is recorded once for its group. The quantity billed does
+# not change. An entry on a bill that has been sent is left as it is.
+
+LEGACY_HOLD_PREFIX = "Held back for finishes and handing over ("
+
+
+def convert_legacy_holds(db, client_id=None):
+    q = db.query(models.DBMeasurementDimension).filter(
+        models.DBMeasurementDimension.sub_measurement_id.isnot(None),
+        models.DBMeasurementDimension.particulars.like(LEGACY_HOLD_PREFIX + "%"))
+    lines = q.all()
+    by_entry = {}
+    for d in lines:
+        by_entry.setdefault(d.sub_measurement_id, []).append(d)
+    converted, skipped, groups = 0, set(), {}
+    for entry_id, dl in by_entry.items():
+        m = db.query(models.DBSubMeasurement).filter(models.DBSubMeasurement.id == entry_id).first()
+        if not m or (client_id and m.client_id != client_id) or (getattr(m, "kind", "") or ""):
+            continue
+        if m.sub_bill_id:
+            bill = db.query(models.DBSubBill).filter(models.DBSubBill.id == m.sub_bill_id).first()
+            if bill and (bill.status or "") != "DRAFT":
+                skipped.add(bill.number or str(bill.id))
+                continue
+        mult = getattr(m, "multiplier", None) or 1.0
+        cut = sum(abs(d.quantity or 0) for d in dl)
+        held = money(cut * mult)
+        pct = re.search(r"\(([0-9.]+)%", dl[0].particulars or "")
+        for d in dl:
+            db.delete(d)
+        m.quantity = money((m.quantity or 0) + held)
+        key = (m.client_id, m.order_id, m.item_id, (getattr(m, "group_ref", "") or "").strip() or "e%d" % m.id,
+               m.mb_ref or "", m.sub_bill_id)
+        g = groups.setdefault(key, {"entry": m, "held": 0.0, "entries": [], "pct": pct.group(1) if pct else ""})
+        g["held"] = money(g["held"] + held)
+        g["entries"].append(m)
+        converted += 1
+    for key, g in groups.items():
+        first = g["entry"]
+        new_ref = ("cv%d-%s" % (first.id, key[3]))[:60]
+        for m in g["entries"]:
+            m.group_ref = new_ref
+        db.add(models.DBSubMeasurement(
+            client_id=first.client_id, order_id=first.order_id, item_id=first.item_id, activity_no=first.activity_no or "",
+            measured_on=first.measured_on, quantity=-g["held"], kind="hold", mb_ref=first.mb_ref or "",
+            location="Held back", remarks="Held back for finishes and handing over%s" % ((" - %s%% held" % g["pct"]) if g["pct"] else ""),
+            recorded_by=first.recorded_by, recorded_by_name=first.recorded_by_name,
+            section=getattr(first, "section", "") or "", group_ref=new_ref, sub_bill_id=first.sub_bill_id))
+    if converted:
+        db.flush()
+    return {"converted": converted, "holds": len(groups), "left_on_sent_bills": sorted(skipped)}
+
+
+def convert_legacy_holds_all():
+    """At start-up: books imported the old way are put right. A failure is logged and never stops the server."""
+    try:
+        with SessionLocal() as db:
+            out = convert_legacy_holds(db)
+            db.commit()
+            if out["converted"]:
+                logger.info("Old imported holds put right: %s", out)
+    except Exception:
+        logger.exception("Could not put right the old imported holds")
+
+
+@app.post("/api/sub-mb/convert-old-holds")
+def convert_old_holds(request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    out = convert_legacy_holds(db, client.id)
+    db.commit()
+    return dict(out, ok=True, message="%d entries put right%s." % (
+        out["converted"], ("; left as sent: %s" % ", ".join(out["left_on_sent_bills"])) if out["left_on_sent_bills"] else ""))
 
 
 # --- Holding part of the measured work -----------------------------------------------------------
@@ -31868,7 +32081,17 @@ def vendor_bulk_delete(body: dict, request: Request, db: Session = Depends(get_d
 
 @app.post("/api/sub-mb/entries/bulk-delete")
 def sub_measurement_bulk_delete(body: dict, request: Request, db: Session = Depends(get_db)):
-    return run_bulk_delete(body.get("ids"), lambda i: delete_sub_measurement(i, request, db), db)
+    ids = []
+    for raw_id in list(body.get("ids") or [])[:200]:
+        try:
+            ids.append(int(raw_id))
+        except (TypeError, ValueError):
+            continue
+    kinds = dict(db.query(models.DBSubMeasurement.id, models.DBSubMeasurement.kind).filter(
+        models.DBSubMeasurement.id.in_(ids or [0])).all())
+    rank = {"release": 0, "hold": 1}
+    ids.sort(key=lambda i: rank.get(kinds.get(i) or "", 2))
+    return run_bulk_delete(ids, lambda i: delete_sub_measurement(i, request, db), db)
 
 
 # --- Storage: what the database holds, and what can be cleared ------------------------------------------
@@ -36642,7 +36865,15 @@ def sub_bill_certificate(db, client, bill):
     dims = dimensions_for(db, [m.id for m in entries], models.DBMeasurementDimension.sub_measurement_id)
     order_of = {it.id: i for i, it in enumerate(items)}
     by_item = {}
+    # A hold recorded for a group of blocks is printed once, under that group - not as a block of its own.
+    grouped = {(m.item_id, (getattr(m, "group_ref", "") or "").strip()) for m in entries
+               if not (getattr(m, "kind", "") or "") and (getattr(m, "group_ref", "") or "").strip()}
+    group_holds = {}
     for m in entries:
+        key = (m.item_id, (getattr(m, "group_ref", "") or "").strip())
+        if (getattr(m, "kind", "") or "") == "hold" and key in grouped:
+            group_holds.setdefault(key, []).append(m)
+            continue
         by_item.setdefault(m.item_id, []).append(m)
     mb_rows, k = [], 0
     held_of = lambda lines_, mult: round(sum(abs(x["quantity"]) for x in (lines_ or []) if str(x.get("particulars") or "").lower().startswith("held back")) * mult, 2)
@@ -36653,6 +36884,7 @@ def sub_bill_certificate(db, client, bill):
         item_total = 0.0
         ents = by_item[it.id]
         section, sec_total, sec_count = None, 0.0, 0
+        sec_key = None
 
         def close_section():
             if section and sec_count > 1:
@@ -36663,8 +36895,9 @@ def sub_bill_certificate(db, client, bill):
             mult = getattr(m, "multiplier", None) or 1.0
             # An imported book keeps its own sections and block letters, so the printed sheet reads like the Excel it came from.
             sec = (getattr(m, "section", "") or "").strip()
-            if sec and sec != section:
+            if sec and sec != sec_key:
                 close_section()
+                sec_key = sec
                 parts = sec.split(" ", 1)
                 numeral = parts[0] if (len(parts) == 2 and re.match(r"^([IVXL]+|\d+)$", parts[0])) else ""
                 mb_rows.append({"kind": "item", "sno": numeral, "description": (parts[1] if numeral else sec).upper()})
@@ -36702,6 +36935,21 @@ def sub_bill_certificate(db, client, bill):
             nxt = ents[j + 1] if j + 1 < len(ents) else None
             if gref and (nxt is None or (getattr(nxt, "group_ref", "") or "").strip() != gref):
                 grp = [x for x in ents if (getattr(x, "group_ref", "") or "").strip() == gref]
+                holds_here = group_holds.get((it.id, gref), [])
+                if holds_here:
+                    measured_here = money(sum(x.quantity or 0 for x in grp))
+                    for h in holds_here:
+                        mb_rows.append({"kind": "subtotal", "description": "Total Quantity before holding back",
+                                        "label": "Total Quantity", "quantity": measured_here, "uom": uom})
+                        mb_rows.append({"kind": "subtotal", "description": (h.remarks or "Held back for finishes and handing over")[:160],
+                                        "label": "Held back", "quantity": money(h.quantity), "uom": uom})
+                        measured_here = money(measured_here + (h.quantity or 0))
+                        item_total += h.quantity or 0
+                        sec_total += h.quantity or 0
+                    mb_rows.append({"kind": "total", "description": "Total Qty To be paid",
+                                    "label": "Total Qty To be paid", "quantity": measured_here, "uom": uom})
+                    continue
+                # A book imported before holds were kept apart carries the hold as a line in each block.
                 paid = money(sum(x.quantity or 0 for x in grp))
                 held = money(sum(held_of(dims.get(x.id), getattr(x, "multiplier", None) or 1.0) for x in grp))
                 if held > 0:

@@ -154,6 +154,11 @@ export default function MeasurementBookPage() {
     status: progress,
   })
   const s = book.data?.summary
+  // Releases and holds go before the measurements they were held from, so a large clearing is never refused halfway.
+  const kindOf = new Map(entries.map((e) => [e.id, e.kind ?? '']))
+  const rank = (id: number) => ({ release: 0, hold: 1 } as Record<string, number>)[kindOf.get(id) ?? ''] ?? 2
+  // Entries imported before holds were kept apart, still on a bill that has been sent (the rest were put right).
+  const oldWay = entries.filter((e) => e.dimensions.some((d) => d.particulars.startsWith('Held back for finishes and handing over ('))).length
 
   const itemColumns: TableColumn<MbLine>[] = [
     { id: 'code', header: 'Item code', width: '7rem', cell: (l) => <span className="font-mono text-[13px] font-semibold">{l.is_header ? '' : l.item_code || '-'}</span> },
@@ -401,6 +406,11 @@ export default function MeasurementBookPage() {
               Showing the newest {entries.length} of {book.data?.entries_total} entries. Everything is still counted in the totals and the bill.
             </p>
           )}
+          {oldWay > 0 && (
+            <p role="note" className="mb-3 rounded-lg border border-border bg-muted/40 px-3 py-2 text-[13px] text-muted-foreground">
+              {oldWay} {oldWay === 1 ? 'entry was' : 'entries were'} imported before holds were kept apart and {oldWay === 1 ? 'is' : 'are'} on a bill already sent, so {oldWay === 1 ? 'it keeps' : 'they keep'} the hold as a line inside the block. To have the blocks match the sheet, delete that bill and import again.
+            </p>
+          )}
           <FilterBar filters={filters} placeholder="Search entries..." />
           {record && view === 'list' && <BulkBar count={picked.size} noun="entry" shown={filters.filtered.filter((e) => !e.billed).length} onClear={() => setPicked(new Set())} onDelete={() => setClearing(true)} />}
           {view === 'sheet' ? <SheetView entries={filters.filtered} byItem={byItem} /> : <DataTable
@@ -448,7 +458,7 @@ export default function MeasurementBookPage() {
             }}
           />
           <ImportBookModal orderId={chosen} open={importing} onOpenChange={setImporting} />
-          <BulkDeleteDialog open={clearing} onOpenChange={setClearing} kind="entry" noun="entry" ids={[...picked].map(Number)} onFinished={() => setPicked(new Set())} detail="Each measurement is taken out of the book and off any draft bill it was on. Measurements on a sent bill stay. This cannot be undone." />
+          <BulkDeleteDialog open={clearing} onOpenChange={setClearing} kind="entry" noun="entry" ids={[...picked].map(Number).sort((a, b) => rank(a) - rank(b))} onFinished={() => setPicked(new Set())} detail="Each measurement is taken out of the book and off any draft bill it was on. Measurements on a sent bill stay. This cannot be undone." />
           <HoldModal orderId={chosen} line={holding} onClose={() => setHolding(null)} />
           <ReleaseModal entry={releasing} line={releasing ? byItem.get(releasing.item_id) : undefined} onClose={() => setReleasing(null)} />
           <ConfirmDialog

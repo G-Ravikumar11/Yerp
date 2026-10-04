@@ -436,6 +436,7 @@ def read_measurement_book(values, formulas=None):
     # lines: the arithmetic that says which of them is the hold and which the payable.
     last_sub = {"row": 0, "value": None}
     since_sub = []
+    since_text = []
 
     def close():
         nonlocal entry
@@ -478,6 +479,10 @@ def read_measurement_book(values, formulas=None):
                                  for _, h in since_sub)
             if is_hold or re.match(r"(?i)^release\b", text_here):
                 since_sub.append((r, total))
+                words = desc or next((t for t in (_plain(_cell_value(values, formulas, r, c)) for c in range(1, min(max_col, 14) + 1))
+                                      if len(t) > 3 and _number(t) is None), "")
+                if words:
+                    since_text.append(words)
                 m = PERCENT.search(text_here)
                 if is_hold and m and sub_value:
                     held_label.append((r, float(m.group(1)), sub_value, total))
@@ -490,10 +495,12 @@ def read_measurement_book(values, formulas=None):
                 pending.clear()
                 close()
                 if group:
-                    groups.append((r, group, total, sub_value if (sub_value and sub_value >= total - 0.011) else None))
+                    groups.append((r, group, total, sub_value if (sub_value and sub_value >= total - 0.011) else None,
+                                   (since_text[0] if since_text else "") or desc))
                 else:
                     warnings.append("Row %d: a 'to be paid' figure with no entry above it was left out." % r)
                 since_sub.clear()
+                since_text.clear()
                 last_sub["value"] = None
                 continue
         if not desc and not given and not sno_text:
@@ -502,6 +509,7 @@ def read_measurement_book(values, formulas=None):
             if total is not None and not re.search(r"(?i)for\s+(\d+(?:\.\d+)?)\s+blocks?|for\s+one\s+block", row_text):
                 last_sub["row"], last_sub["value"] = r, total
                 since_sub.clear()
+                since_text.clear()
             m = re.search(r"(?i)for\s+(\d+(?:\.\d+)?)\s+blocks?", row_text)
             if entry is not None:
                 if m:
@@ -582,7 +590,8 @@ def read_measurement_book(values, formulas=None):
             if not e["location"]:
                 # An entry the sheet gives no place to is named by the first heading inside it ("365 SFT-Block ( B24, B21 & B19)").
                 e["location"] = _norm(next((d["particulars"] for d in e["dims"] if d["is_heading"] and d["particulars"]), ""))
-    for number, (row, group, pay, stated) in enumerate(groups, 1):
+    holds = []
+    for number, (row, group, pay, stated, said) in enumerate(groups, 1):
         for e in group:
             e["group"] = number         # blocks under one subtotal share one hold-back
         full = round(sum(e["quantity"] for e in group), 3)
@@ -600,19 +609,24 @@ def read_measurement_book(values, formulas=None):
             share = pay / full if full else 1.0          # the same share of every entry under that subtotal
         if not full or share >= 1 - 0.00001:
             continue
+        percent = round((1 - share) * 100, 2)
         for e in group:
-            mine = e["quantity"] * share
-            cut = round(e["one"] - mine / e["multiplier"], 3)
-            if cut <= 0:
-                continue
-            base = e["one"]            # the line is taken off one block, so its percent is of one block
-            e["dims"].append({
-                "particulars": "Held back for finishes and handing over (%g%% of %s)" % (round((1 - share) * 100, 2), round(base, 3)),
-                "is_heading": False, "nos": cut, "nom": None, "length": None, "breadth": None, "depth": None,
-                "deduct": True, "quantity": -cut, "remarks": "", "holdback": True})
-            e["full_quantity"], e["held_back"] = e["quantity"], round(e["quantity"] - mine, 3)
-            e["one"] = round(e["one"] - cut, 3)
-            e["quantity"] = round(e["one"] * e["multiplier"], 3)
+            e["held_back"] = round(e["quantity"] * (1 - share), 3)
+            e["payable"] = round(e["quantity"] - e["held_back"], 3)
+        reason = _norm(said) or "Held back for finishes and handing over"
+        if re.match(r"(?i)^release\b", reason):
+            # A release names the stages paid for ("Putty 40% & Primer 10%"); what is held is said beside it.
+            reason = "%s - %g%% held" % (reason, percent)
+        elif not any(abs(float(p) - percent) < 0.01 for p in PERCENT.findall(reason)):
+            # The row's own percent is not what its figures hold ("Hold 5 %" over a 10% calculation): the figure is
+            # what is held, so that is what the reason says.
+            reason = "%s - %g%% held" % (_norm(PERCENT.sub("", reason)).replace("  ", " "), percent)
+        holds.append({"group": number, "row": row, "reason": reason[:300], "percent": percent, "full": full,
+                      "held": round(sum(e["held_back"] for e in group), 3), "payable": round(sum(e["payable"] for e in group), 3)})
+    for it in items:
+        for e in it["entries"]:
+            e.setdefault("held_back", 0.0)
+            e.setdefault("payable", e["quantity"])
     # A hold's label can say one percent while its figures hold another ("Hold 5 %" over a 10% calculation).
     for row, said, sub_value, held in held_label:
         actual = held / sub_value * 100 if sub_value else None
@@ -621,7 +635,10 @@ def read_measurement_book(values, formulas=None):
                 row, said, round(actual, 2), round(sub_value, 3)))
     for it in items:
         it["quantity"] = round(sum(e["quantity"] for e in it["entries"]), 3)
-    return {"sheet": values.title, "meta": meta, "items": [i for i in items if i["entries"]], "warnings": warnings}
+        it["held"] = round(sum(e["held_back"] for e in it["entries"]), 3)
+        it["payable"] = round(sum(e["payable"] for e in it["entries"]), 3)
+    return {"sheet": values.title, "meta": meta, "items": [i for i in items if i["entries"]], "warnings": warnings,
+            "holds": holds}
 
 
 # --- The RA bill, three sheets --------------------------------------------------

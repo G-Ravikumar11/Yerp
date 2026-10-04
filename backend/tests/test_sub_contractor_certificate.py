@@ -582,9 +582,12 @@ def test_only_the_ticked_entries_are_recorded_and_all_can_go_to_one_item(tenant)
     assert res.status_code == 200, res.text
     assert res.json()["entries"] == 1
     assert len(book(tenant, order["id"])["entries"]) == 1
-    # every section sent to the one item
+    # every section sent to the one item: different works on one item are asked about first
+    refused = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)},
+                          data={"commit": "1", "allow_duplicates": "1", "mapping": json.dumps({"0": first, "1": first})})
+    assert refused.status_code == 409 and "different works" in refused.json()["detail"]
     res = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)},
-                      data={"commit": "1", "allow_duplicates": "1", "mapping": json.dumps({"0": first, "1": first})})
+                      data={"commit": "1", "allow_duplicates": "1", "same_item_ok": "1", "mapping": json.dumps({"0": first, "1": first})})
     assert res.status_code == 200, res.text
     assert res.json()["entries"] == 2
     assert len([e for e in book(tenant, order["id"])["entries"] if e["item_id"] == first]) == 2
@@ -636,12 +639,12 @@ def test_held_back_rows_set_the_quantity_to_bill_and_are_never_measurements():
     assert book["warnings"] == []
     tiles, painting = book["items"][0]["entries"], book["items"][0]["entries"]
     entries = [e for it in book["items"] for e in it["entries"]]
-    assert [round(e["quantity"], 2) for e in entries] == [95.0, 95.0, 180.0]      # 190 shared over two blocks; 45% of 400
-    assert sum(e["quantity"] for e in entries[:2]) == 190
-    assert round(entries[2]["full_quantity"], 2) == 400 and round(entries[2]["held_back"], 2) == 220
-    assert not any("Release" in d["particulars"] and not d.get("holdback") for e in entries for d in e["dims"]), \
-        "a 'release / to be paid' row is not a line of the next block"
-    assert all(any(d.get("holdback") for d in e["dims"]) for e in entries)
+    assert [round(e["quantity"], 2) for e in entries] == [100.0, 100.0, 400.0]    # measured, as the sheet wrote it
+    assert [round(e["payable"], 2) for e in entries] == [95.0, 95.0, 180.0]      # 190 shared over two blocks; 45% of 400
+    assert round(entries[2]["held_back"], 2) == 220
+    assert not any("Release" in d["particulars"] for e in entries for d in e["dims"]), "a release row is not a line of the next block"
+    assert not any(d.get("holdback") for e in entries for d in e["dims"]), "the hold is not written into the measurement"
+    assert [h["percent"] for h in book["holds"]] == [5.0, 55.0]
 
 
 def test_a_block_already_in_the_book_is_left_out_and_a_stranger_is_named(tenant):
@@ -655,12 +658,12 @@ def test_a_block_already_in_the_book_is_left_out_and_a_stranger_is_named(tenant)
     assert any("ALN INFRA DEVELOPERS" in w for w in pv["warnings"]), "a sheet from another contractor is said, not silent"
     mapping = {str(s["index"]): first for s in pv["sections"]}
     res = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)},
-                      data={"commit": "1", "mapping": json.dumps(mapping)}).json()
+                      data={"commit": "1", "same_item_ok": "1", "mapping": json.dumps(mapping)}).json()
     assert res["entries"] == 2 and res["skipped"] == ["365 sft - Block No. B24"]
     assert "already in the book" in res["message"]
     # ticking it by hand is a decision, and goes in
     res = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)},
-                      data={"commit": "1", "mapping": json.dumps(mapping), "entries": json.dumps([[0, 0]])}).json()
+                      data={"commit": "1", "same_item_ok": "1", "mapping": json.dumps(mapping), "entries": json.dumps([[0, 0]])}).json()
     assert res["entries"] == 1 and res["skipped"] == []
 
 
@@ -682,7 +685,7 @@ def test_the_printed_measurement_sheets_follow_the_book_they_came_from(tenant):
     raw = held_back_workbook()
     pv = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)}).json()
     res = tenant.post("/api/sub-mb/%d/import" % order["id"], files={"file": ("mb.xlsx", raw)},
-                      data={"commit": "1", "mapping": json.dumps({str(s["index"]): first for s in pv["sections"]})})
+                      data={"commit": "1", "same_item_ok": "1", "mapping": json.dumps({str(s["index"]): first for s in pv["sections"]})})
     assert res.status_code == 200, res.text
     bill = tenant.post("/api/sub-bills", json={"order_id": order["id"]})
     assert bill.status_code == 200, bill.text
@@ -694,6 +697,8 @@ def test_the_printed_measurement_sheets_follow_the_book_they_came_from(tenant):
     assert "365 sft - Block No. B24" in flat and "365 sft - Block No. B12" in flat
     assert "Total Qty To be paid" in flat and "Total Quantity before holding back" in flat
     assert re.search(r"Total Qty To be paid[^0-9]{0,12}190", flat), "the group comes to what the sheet says is payable"
+    assert re.search(r"Total Quantity before holding back[^0-9]{0,30}200", flat), "and before the hold, what the blocks measured"
+    assert "(5% of" not in flat, "no hold line is written inside a block"
 
 
 def test_staff_do_not_see_bills_of_orders_they_have_no_hand_in(tenant, portal):

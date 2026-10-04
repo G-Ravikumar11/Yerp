@@ -89,6 +89,7 @@ export function useMeasurementBook(orderId: number) {
 }
 
 export const recordUrl = (orderId: number) => `/api/sub-mb/${orderId}/entries`
+export const batchUrl = (orderId: number) => `/api/sub-mb/${orderId}/entries/batch`
 export const deleteEntry = (id: number) => del<{ message: string }>(`/api/sub-mb/entries/${id}`)
 export const holdWork = (orderId: number, body: { item_id: number; reason: string; percent?: number; quantity?: number }) => post<{ message: string }>(`/api/sub-mb/${orderId}/holds`, body)
 export const releaseHold = (holdId: number, quantity?: number) => post<{ message: string }>(`/api/sub-mb/holds/${holdId}/release`, quantity ? { quantity } : {})
@@ -107,6 +108,16 @@ export interface ImportDim {
   deduct: boolean
 }
 
+/** What the sheet holds back on a group of its blocks, in its own words. */
+export interface ImportHold {
+  group: number
+  reason: string
+  percent: number
+  full: number
+  held: number
+  payable: number
+}
+
 export interface ImportSection {
   index: number
   description: string
@@ -114,8 +125,13 @@ export interface ImportSection {
   item_id: number | null
   item: string
   uom: string
+  /** Measured, as the sheet's lines come to. */
   quantity: number
-  entries: { location: string; multiplier: number; lines: number; one_block: number; quantity: number; stated: number | null; held_back?: number; full_quantity?: number; already_in_book?: boolean; already_quantity?: number | null; dims?: ImportDim[] }[]
+  held?: number
+  payable?: number
+  rate?: number
+  holds?: ImportHold[]
+  entries: { location: string; multiplier: number; lines: number; one_block: number; quantity: number; stated: number | null; group?: number | null; held_back?: number; payable?: number; full_quantity?: number; already_in_book?: boolean; already_quantity?: number | null; dims?: ImportDim[] }[]
 }
 
 export interface ImportPreview {
@@ -125,12 +141,14 @@ export interface ImportPreview {
   meta: { work_name?: string; contractor?: string; date?: string }
   sections: ImportSection[]
   warnings: string[]
-  items: { id: number; label: string; uom: string }[]
+  /** Different works of the sheet set to one item of the order. */
+  conflicts?: { item_id: number; item: string; sections: { index: number; description: string; quantity: number }[] }[]
+  items: { id: number; label: string; uom: string; rate?: number }[]
   entries?: number
   message?: string
 }
 
-export function importBook(orderId: number, file: File, opts: { commit: boolean; mapping?: Record<number, number | null>; measuredOn?: string; includeDims?: boolean; entries?: [number, number][]; allowDuplicates?: boolean }) {
+export function importBook(orderId: number, file: File, opts: { commit: boolean; mapping?: Record<number, number | null>; measuredOn?: string; includeDims?: boolean; entries?: [number, number][]; allowDuplicates?: boolean; sameItemOk?: boolean }) {
   const form = new FormData()
   form.append('file', file)
   form.append('commit', opts.commit ? '1' : '0')
@@ -139,5 +157,6 @@ export function importBook(orderId: number, file: File, opts: { commit: boolean;
   if (opts.includeDims) form.append('include_dims', '1')
   if (opts.entries) form.append('entries', JSON.stringify(opts.entries))
   if (opts.allowDuplicates) form.append('allow_duplicates', '1')
+  if (opts.sameItemOk) form.append('same_item_ok', '1')
   return api<ImportPreview>(`/api/sub-mb/${orderId}/import`, { method: 'POST', body: form })
 }
