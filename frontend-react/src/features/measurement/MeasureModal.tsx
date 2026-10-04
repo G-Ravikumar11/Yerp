@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { DataGrid } from '@/components/grid'
 import { Button, Field, Input, Modal, NumField, Tabs } from '@/components/ui'
-import { mbKeys, recordUrl, type MbEntry, type MbLine } from '@/api/mb'
+import { batchUrl, mbKeys, recordUrl, type MbEntry, type MbLine } from '@/api/mb'
+import { useSession } from '@/lib/session'
 /** The work order as the window shows it: its number, who it is with, and where. */
 export interface MeasureOrder {
   wo_number: string
@@ -67,11 +68,21 @@ function MeasureForm({ orderId, order, jobCode, line, entry, onClose, target }: 
   const [witness, setWitness] = useState('')
   // Blocks loaded from a sheet, checked in the grid before anything is recorded.
   const [loaded, setLoaded] = useState<Loaded | null>(null)
+  // Part of what is measured held back from billing - for finishes and handing over, say - recorded with it.
+  const { can } = useSession()
+  const canHold = !target.client && !entry && can('billing.manage')
+  const [holding, setHolding] = useState(false)
+  const [holdBy, setHoldBy] = useState<'percent' | 'quantity'>('percent')
+  const [holdPct, setHoldPct] = useState(5)
+  const [holdQty, setHoldQty] = useState(0)
+  const [holdWhy, setHoldWhy] = useState('Held back for finishes and handing over')
 
   const one = mode === 'dims' ? dimTotal(dims) : total
   const quantity = Math.round(one * blocks * 1000) / 1000
   const after = (line.measured_to_date ?? 0) - (entry?.quantity ?? 0) + quantity
   const over = quantity > 0 && after > (line.max_quantity ?? Infinity) + 0.0001
+  const held = canHold && holding ? Math.round((holdBy === 'percent' ? (quantity * holdPct) / 100 : holdQty) * 1000) / 1000 : 0
+  const holdBad = held < 0 || (held > 0 && held > quantity + 0.0001) || (held > 0 && !holdWhy.trim())
 
   const save = useAction(
     async () => {
@@ -90,10 +101,15 @@ function MeasureForm({ orderId, order, jobCode, line, entry, onClose, target }: 
             }
           : { quantity: total }),
       }
+      // With a hold, the measurement and its hold go in together, the hold tied to this entry so it prints under it.
+      const withHold = held > 0
+      const one = { location: where, multiplier: blocks, ...(mode === 'dims' ? { dimensions: body.dimensions } : { quantity: total }) }
       const sent = await sendOrQueue<{ message: string }>({
         method: entry ? 'PUT' : 'POST',
-        url: entry ? `/api/sub-mb/entries/${entry.id}` : target.url,
-        body,
+        url: entry ? `/api/sub-mb/entries/${entry.id}` : withHold ? batchUrl(orderId) : target.url,
+        body: withHold
+          ? { item_id: line.item_id, measured_on: on, mb_ref: ref, remarks, entries: [{ ...one, group: 'h' }], holds: [{ group: 'h', quantity: held, reason: holdWhy.trim() }] }
+          : body,
         label: `${entry ? 'Changed' : 'Measured'} ${formatQty(quantity)} ${line.uom ?? ''} against ${line.activity_no}`.trim(),
       })
       if (sent.queued) {
@@ -187,6 +203,33 @@ function MeasureForm({ orderId, order, jobCode, line, entry, onClose, target }: 
         </div>
       )}
 
+      {canHold && (
+        <div aria-label="Hold back" className={`mt-4 rounded-lg border p-3 ${holding ? 'border-warning/50 bg-warning-soft' : 'border-dashed border-border'}`}>
+          <label className="flex items-center gap-2 text-[13px] font-medium">
+            <input type="checkbox" aria-label="Hold part of this back" checked={holding} onChange={(e) => setHolding(e.target.checked)} />
+            Hold part of this back from billing
+            <span className="font-normal text-muted-foreground">- kept in the book, left off the bill until it is released</span>
+          </label>
+          {holding && (
+            <div className="mt-3 grid gap-3 sm:grid-cols-[auto_8rem_minmax(0,1fr)] sm:items-end">
+              <Tabs label="Hold by" value={holdBy} onChange={setHoldBy} items={[{ value: 'percent', label: 'A percent' }, { value: 'quantity', label: 'A quantity' }]} />
+              {holdBy === 'percent' ? (
+                <Field label="Percent" htmlFor="m-hold-pct">
+                  <NumField id="m-hold-pct" value={holdPct} onValue={(n) => setHoldPct(Math.max(0, Math.min(100, n)))} />
+                </Field>
+              ) : (
+                <Field label={`Quantity (${line.uom ?? ''})`} htmlFor="m-hold-qty">
+                  <NumField id="m-hold-qty" value={holdQty} onValue={(n) => setHoldQty(Math.max(0, n))} />
+                </Field>
+              )}
+              <Field label="Why it is held" htmlFor="m-hold-why">
+                <Input id="m-hold-why" value={holdWhy} onChange={(e) => setHoldWhy(e.target.value)} />
+              </Field>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {target.client ? (
           <Field label="Witnessed by" htmlFor="m-witness" hint="Who saw it measured.">
@@ -220,13 +263,19 @@ function MeasureForm({ orderId, order, jobCode, line, entry, onClose, target }: 
             {formatQty(quantity)} <span className="text-base font-normal text-muted-foreground">{line.uom}</span>
           </p>
           {over && <p className="mt-0.5 text-xs text-danger">That takes the item to {formatQty(after)}, past the {formatQty(line.max_quantity)} the order allows.</p>}
+          {held > 0 && (
+            <p aria-label="Held from this entry" className="mt-0.5 text-[13px] tabular">
+              Held <strong>{formatQty(held)}</strong> · to be paid <strong>{formatQty(Math.round((quantity - held) * 1000) / 1000)}</strong>
+            </p>
+          )}
+          {holdBad && <p className="mt-0.5 text-xs text-danger">{held > quantity ? 'More is held than is measured.' : 'Say why it is held.'}</p>}
         </div>
         <div className="flex items-center gap-2">
           {save.error && <p role="alert" className="max-w-md text-right text-[13px] text-danger">{save.error.message}</p>}
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button loading={save.isPending} disabled={quantity === 0} onClick={() => save.mutate()}>
+          <Button loading={save.isPending} disabled={quantity === 0 || holdBad} onClick={() => save.mutate()}>
             {entry ? 'Save the change' : 'Record it in the book'}
           </Button>
         </div>
