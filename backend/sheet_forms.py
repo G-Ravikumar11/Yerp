@@ -341,6 +341,15 @@ def _mb_columns(values, formulas, max_scan=30):
     return None, {}
 
 
+# Rows that are the sheet's own arithmetic on a total - never measurements. A sheet may call the quantity it is
+# billed at "to be paid", "payable", "net quantity", "billable"...; and the part kept back "hold", "held",
+# "retention", "withheld". Whatever the words, a payable figure is also recognised by the arithmetic: it is the
+# total less the hold.
+PAYABLE_WORDS = re.compile(r"(?i)to\s*be\s*paid|payable|net\s+(?:qty|quantity)|billable|for\s+billing|to\s+pay\b")
+HOLD_WORDS = re.compile(r"(?i)\bhold(?:ing)?\b|\bheld\b|retain|retention|withh[eo]ld")
+PERCENT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+
+
 def read_measurement_book(values, formulas=None):
     """The measurement book on a sheet, as items, the entries under each and
     their dimension lines.
@@ -389,8 +398,44 @@ def read_measurement_book(values, formulas=None):
 
     items, warnings = [], []
     item = entry = None
+    # The sheet's arithmetic, read ahead: a subtotal followed by two stated figures that add back up to it is a
+    # total, the part held and what is payable - whatever the rows are called.
+    forced = {}
+    seq = []
+    for r in range(head + 1, max_row + 1):
+        d = _plain(get(r, "description"))
+        if any(_number(get(r, f)) is not None for f in ("nos", "nom", "length", "width", "height")):
+            seq.append(None)                         # a measured line: nothing stated after it belongs to what came before
+            continue
+        t = _number(get(r, "total"))
+        if t is not None and d:
+            seq.append((r, d.lower(), t))
+    for i, entry_row in enumerate(seq):
+        if not entry_row or not entry_row[1].startswith("total") or re.search(r"(?i)for\s+(\d+(?:\.\d+)?\s+)?blocks?|for\s+one\s+block", entry_row[1]):
+            continue
+        sub = entry_row[2]
+        ahead = []
+        for nxt in seq[i + 1:i + 4]:
+            if nxt is None:
+                break
+            ahead.append(nxt)
+        for a in range(len(ahead)):
+            for b in range(a + 1, len(ahead)):
+                (ra, la, h), (rb, lb, p) = ahead[a], ahead[b]
+                if not (0.011 < h < sub and 0 < p < sub and abs(sub - h - p) <= 0.011):
+                    continue
+                if la.startswith("total") and not HOLD_WORDS.search(la):
+                    continue
+                if lb.startswith("total") and not PAYABLE_WORDS.search(lb):
+                    continue
+                forced.setdefault(ra, "hold")
+                forced.setdefault(rb, "payable")
     # Entries not yet covered by a "to be paid" row, and the groups that have been.
-    pending, groups = [], []
+    pending, groups, held_label = [], [], []
+    # The latest subtotal the sheet states ("Total Quantity"), and the figures stated since it that are not
+    # lines: the arithmetic that says which of them is the hold and which the payable.
+    last_sub = {"row": 0, "value": None}
+    since_sub = []
 
     def close():
         nonlocal entry
@@ -422,19 +467,41 @@ def read_measurement_book(values, formulas=None):
 
         # Derived rows - the part held back, and what is to be paid - are the sheet's own arithmetic on the
         # totals above them, not measurements: read them for the payable figure, never as lines.
-        if total is not None and not given and re.search(r"(?i)hold\s*\d+(?:\.\d+)?\s*%|to\s+be\s+paid|^release\b", (desc + " " + row_text).strip()):
-            if re.search(r"(?i)to\s+be\s+paid", row_text) and total:
+        text_here = (desc + " " + row_text).strip()
+        if total is not None and not given:
+            sub_value = last_sub["value"]
+            is_payable = bool(PAYABLE_WORDS.search(text_here)) or forced.get(r) == "payable"
+            is_hold = (bool(HOLD_WORDS.search(text_here)) and not is_payable and not low.startswith("total")) or forced.get(r) == "hold"
+            if not is_payable and not is_hold and sub_value and not low.startswith("total") and not re.match(r"(?i)^release\b", text_here):
+                # No telltale words: it is the payable if it is the subtotal less something stated since.
+                is_payable = any(0.011 < h < sub_value and abs(sub_value - h - total) <= 0.011 and 0 < total < sub_value
+                                 for _, h in since_sub)
+            if is_hold or re.match(r"(?i)^release\b", text_here):
+                since_sub.append((r, total))
+                m = PERCENT.search(text_here)
+                if is_hold and m and sub_value:
+                    held_label.append((r, float(m.group(1)), sub_value, total))
+                continue
+            if is_payable and total:
                 # It covers every entry since the last such row: one block, or several under one subtotal.
                 group = [e for e in pending if e["dims"]]
+                if entry is not None and entry["dims"] and entry not in group:
+                    group.append(entry)
                 pending.clear()
+                close()
                 if group:
-                    groups.append((r, group, total))
+                    groups.append((r, group, total, sub_value if (sub_value and sub_value >= total - 0.011) else None))
                 else:
                     warnings.append("Row %d: a 'to be paid' figure with no entry above it was left out." % r)
-            continue
+                since_sub.clear()
+                last_sub["value"] = None
+                continue
         if not desc and not given and not sno_text:
             continue
         if low.startswith("total"):
+            if total is not None and not re.search(r"(?i)for\s+(\d+(?:\.\d+)?)\s+blocks?|for\s+one\s+block", row_text):
+                last_sub["row"], last_sub["value"] = r, total
+                since_sub.clear()
             m = re.search(r"(?i)for\s+(\d+(?:\.\d+)?)\s+blocks?", row_text)
             if entry is not None:
                 if m:
@@ -487,6 +554,12 @@ def read_measurement_book(values, formulas=None):
         for v in clean.values():
             qty *= v
         qty = round(qty, 3)
+        shown = get(r, "total")
+        if total is None and shown is not None and _plain(shown) not in ("", "-"):
+            # The sheet's own total for this line is not a figure ("`", "#REF!"): its subtotal leaves the line out,
+            # while the dimensions say what it comes to.
+            warnings.append("Row %d (%s): the total cell holds '%s', not a figure. The lines come to %s%s, which "
+                            "the sheet's own totals leave out." % (r, desc or "no description", _plain(shown), "-" if sign < 0 else "", qty))
         if not qty:
             warnings.append("Row %d (%s) comes to nothing and was left out." % (r, desc or "no description"))
             continue
@@ -509,28 +582,43 @@ def read_measurement_book(values, formulas=None):
             if not e["location"]:
                 # An entry the sheet gives no place to is named by the first heading inside it ("365 SFT-Block ( B24, B21 & B19)").
                 e["location"] = _norm(next((d["particulars"] for d in e["dims"] if d["is_heading"] and d["particulars"]), ""))
-    for number, (row, group, pay) in enumerate(groups, 1):
+    for number, (row, group, pay, stated) in enumerate(groups, 1):
         for e in group:
             e["group"] = number         # blocks under one subtotal share one hold-back
         full = round(sum(e["quantity"] for e in group), 3)
-        if pay > full + 0.011:
-            warnings.append("Row %d: the sheet says %s is to be paid but the lines come to %s, so the lines are used." % (row, round(pay, 3), full))
+        if stated and 0 < pay <= stated + 0.011:
+            # The hold is the sheet's own rule - what it keeps back of what it totals - and it is that share
+            # of the lines that is held, even when the sheet's total and its lines differ.
+            share = min(1.0, pay / stated)
+            if abs(stated - full) > 0.011:
+                warnings.append("Row %d: the sheet totals %s but its lines come to %s. The sheet's hold (%g%%) was applied to the lines." % (
+                    row, round(stated, 3), full, round((1 - share) * 100, 2)))
+        else:
+            if pay > full + 0.011:
+                warnings.append("Row %d: the sheet says %s is to be paid but the lines come to %s, so the lines are used." % (row, round(pay, 3), full))
+                continue
+            share = pay / full if full else 1.0          # the same share of every entry under that subtotal
+        if not full or share >= 1 - 0.00001:
             continue
-        if not full or pay >= full - 0.0005:
-            continue
-        share = pay / full          # the same share of every entry under that subtotal
         for e in group:
             mine = e["quantity"] * share
             cut = round(e["one"] - mine / e["multiplier"], 3)
             if cut <= 0:
                 continue
+            base = e["one"]            # the line is taken off one block, so its percent is of one block
             e["dims"].append({
-                "particulars": "Held back for finishes and handing over (%g%% of %s)" % (round((1 - share) * 100, 2), e["quantity"]),
+                "particulars": "Held back for finishes and handing over (%g%% of %s)" % (round((1 - share) * 100, 2), round(base, 3)),
                 "is_heading": False, "nos": cut, "nom": None, "length": None, "breadth": None, "depth": None,
                 "deduct": True, "quantity": -cut, "remarks": "", "holdback": True})
             e["full_quantity"], e["held_back"] = e["quantity"], round(e["quantity"] - mine, 3)
             e["one"] = round(e["one"] - cut, 3)
             e["quantity"] = round(e["one"] * e["multiplier"], 3)
+    # A hold's label can say one percent while its figures hold another ("Hold 5 %" over a 10% calculation).
+    for row, said, sub_value, held in held_label:
+        actual = held / sub_value * 100 if sub_value else None
+        if actual is not None and abs(actual - said) > 0.51:
+            warnings.append("Row %d says %g%% is held but its figure is %g%% of %s. The figure was used." % (
+                row, said, round(actual, 2), round(sub_value, 3)))
     for it in items:
         it["quantity"] = round(sum(e["quantity"] for e in it["entries"]), 3)
     return {"sheet": values.title, "meta": meta, "items": [i for i in items if i["entries"]], "warnings": warnings}

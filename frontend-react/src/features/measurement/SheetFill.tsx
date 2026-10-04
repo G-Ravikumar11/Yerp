@@ -24,7 +24,7 @@ export const toDimLine = (d: ImportDim): DimLine => ({
   heading: !!d.is_heading,
 })
 
-type Found = { source: string; matched: boolean; sections: ImportSection[] }
+type Found = { source: string; matched: boolean; sections: ImportSection[]; warnings: string[] }
 
 /**
  * Fill the lines from the measurement book as the site keeps it in Excel, instead of typing them.
@@ -68,7 +68,7 @@ export function SheetFill({ orderId, itemId, itemName, room, onUse, onRecorded }
       const shown = mine.length ? mine : out.sections
       // Nothing is loaded for the person: even a sheet with one matching entry is listed, and it is
       // loaded or recorded only when they choose it.
-      setFound({ source, matched: mine.length > 0, sections: shown })
+      setFound({ source, matched: mine.length > 0, sections: shown, warnings: out.warnings ?? [] })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'That file could not be read.')
     } finally {
@@ -109,6 +109,13 @@ export function SheetFill({ orderId, itemId, itemName, room, onUse, onRecorded }
           <p className="mb-2 text-[13px] text-muted-foreground">
             {found.matched ? 'The sheet has these entries for this item. Click one to load it into the grid, or tick several to record together:' : `Nothing in the sheet is named like ${itemName || 'this item'}. These are the sections it has - load one only if it is the same work:`}
           </p>
+          {found.warnings.length > 0 && (
+            <ul role="alert" aria-label="What the sheet says about itself" className="mb-2 list-disc rounded-md bg-warning-soft px-5 py-2 text-[13px] text-warning">
+              {found.warnings.map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
+          )}
           {review && (
             <div aria-label="Check before recording">
               <p className="mb-2 text-[13px] font-medium">Check these {ticked.size} entries. Nothing is saved until you press Record.</p>

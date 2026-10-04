@@ -34,7 +34,7 @@ from authlib.integrations.starlette_client import OAuth
 from sqladmin import Admin, ModelView
 from sqladmin.authentication import AuthenticationBackend
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 from sqlalchemy.exc import IntegrityError
 import database
 from database import engine, get_db, SessionLocal, ensure_columns, migrate_sqlite
@@ -31694,14 +31694,14 @@ def store_file(db, client_id, upload, data, *, job_id, attached_type, attached_i
         name = (os.path.splitext(name)[0] or "photo")[:195] + ".jpg"
     thumb = made_thumb or thumb
     sha = hashlib.sha256(data).hexdigest()
-    same = db.query(models.DBFile).filter(models.DBFile.client_id == client_id, models.DBFile.sha256 == sha,
-                                          models.DBFile.blob_of.is_(None)).first()
+    same = db.query(models.DBFile.id).filter(models.DBFile.client_id == client_id, models.DBFile.sha256 == sha,
+                                             models.DBFile.blob_of.is_(None)).first()
     f = models.DBFile(client_id=client_id, job_id=job_id, kind=kind, attached_type=attached_type,
                       attached_id=attached_id, name=name, content_type=ctype, size=len(data),
                       original_size=original, sha256=sha,
                       # Kept once: a second record holding the same file reads the first one's bytes.
                       data=None if same is not None else data,
-                      blob_of=same.id if same is not None else None,
+                      blob_of=same[0] if same is not None else None,
                       thumb=None if same is not None else (thumb if thumb and len(thumb) < 400 * 1024 else None),
                       caption=(caption or "").strip()[:300], taken_on=(taken_on or "")[:10],
                       uploaded_by_name=by)
@@ -31808,8 +31808,112 @@ def file_counts(db, client_id, attached_type, ids):
     return out
 
 
-def _file_or_404(db, client_id, fid):
-    f = db.query(models.DBFile).filter(models.DBFile.id == fid, models.DBFile.client_id == client_id).first()
+# --- Storage: what the database holds, and what can be cleared ------------------------------------------
+#
+# Photos, drawings and documents live in the database, so they are what makes it grow. Two kinds of thing
+# are no use to anyone: files whose record has been deleted (their bytes stayed behind), and bell alerts
+# long since read. The owner is shown both, with what clearing them frees, and clears them on purpose.
+
+OLD_ALERT_DAYS = 90
+
+
+def storage_orphan_files(db, client_id):
+    """Files kept against a record that no longer exists: [(id, size)]."""
+    rows = db.query(models.DBFile.id, models.DBFile.attached_type, models.DBFile.attached_id, models.DBFile.size,
+                    models.DBFile.blob_of).filter(models.DBFile.client_id == client_id).all()
+    pinned = {r[0] for r in db.query(models.DBDrawingRevision.file_id).filter(
+        models.DBDrawingRevision.file_id.isnot(None)).all()}
+    gone, seen = [], {}
+    for fid, atype, aid, size, blob_of in rows:
+        if not aid or fid in pinned:
+            continue
+        key = (atype or "job", aid)
+        if key not in seen:
+            try:
+                attachment_target(db, client_id, key[0], key[1])
+                seen[key] = False
+            except HTTPException as exc:
+                # Only a record that is not there counts; a kind this does not know is left alone.
+                seen[key] = exc.status_code == 404
+        if seen[key]:
+            gone.append((fid, 0 if blob_of else (size or 0)))
+    # A file that a living one reads its bytes from has to stay, whatever it was kept against.
+    dead = {fid for fid, _ in gone}
+    if dead:
+        alive_readers = {r[0] for r in db.query(models.DBFile.blob_of).filter(
+            models.DBFile.client_id == client_id, models.DBFile.blob_of.in_(list(dead)),
+            ~models.DBFile.id.in_(list(dead))).all()}
+        gone = [(fid, size) for fid, size in gone if fid not in alive_readers]
+    return gone
+
+
+def storage_old_alerts(db, client_id):
+    cutoff = (datetime.now() - timedelta(days=OLD_ALERT_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    return [r[0] for r in db.query(models.DBAlert.id).filter(
+        models.DBAlert.client_id == client_id, models.DBAlert.created_at < cutoff).all()]
+
+
+@app.get("/api/storage")
+def storage_report(request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    kinds = {}
+    for kind, n, size in db.query(models.DBFile.kind, sqlfunc.count(models.DBFile.id),
+                                  sqlfunc.coalesce(sqlfunc.sum(models.DBFile.size), 0)).filter(
+            models.DBFile.client_id == client.id, models.DBFile.blob_of.is_(None)).group_by(models.DBFile.kind).all():
+        kinds[kind or "document"] = {"count": n, "bytes": int(size or 0)}
+    orphans = storage_orphan_files(db, client.id)
+    alerts = storage_old_alerts(db, client.id)
+    return {
+        "files": {"count": sum(v["count"] for v in kinds.values()), "bytes": sum(v["bytes"] for v in kinds.values()), "by_kind": kinds},
+        "clean": [
+            {"key": "orphan_files", "label": "Files whose record was deleted",
+             "detail": "Photos, drawings and documents kept against a work order, diary day or other record that no longer exists.",
+             "count": len(orphans), "bytes": sum(s for _, s in orphans)},
+            {"key": "old_alerts", "label": "Old alerts on the bell",
+             "detail": "Alerts older than %d days." % OLD_ALERT_DAYS, "count": len(alerts), "bytes": 0},
+        ],
+    }
+
+
+@app.post("/api/storage/clean")
+def storage_clean(body: dict, request: Request, db: Session = Depends(get_db)):
+    """Clear what the owner chose from the storage report. Irreversible, so only what the report listed."""
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    keys = set(body.get("keys") or [])
+    freed, removed = 0, {}
+    if "orphan_files" in keys:
+        gone = storage_orphan_files(db, client.id)
+        ids = [i for i, _ in gone]
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            sweep_referrers(db, {"project_files": chunk})
+            db.query(models.DBFile).filter(models.DBFile.id.in_(chunk)).delete(synchronize_session=False)
+        freed += sum(s for _, s in gone)
+        removed["orphan_files"] = len(ids)
+    if "old_alerts" in keys:
+        ids = storage_old_alerts(db, client.id)
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            sweep_referrers(db, {"office_alerts": chunk})
+            db.query(models.DBAlert).filter(models.DBAlert.id.in_(chunk)).delete(synchronize_session=False)
+        removed["old_alerts"] = len(ids)
+    if removed:
+        log_audit(db, client.id, "storage_cleaned", "company", client.id, "", ", ".join("%s %d" % kv for kv in removed.items()), request)
+    db.commit()
+    return {"ok": True, "removed": removed, "freed_bytes": freed,
+            "message": "Cleared %s." % (", ".join("%d %s" % (n, k.replace("_", " ")) for k, n in removed.items()) or "nothing")}
+
+
+def _file_or_404(db, client_id, fid, bytes_too=False):
+    """A file's row. Its bytes - up to 15 MB, and its picture copy - are left on the database unless asked for:
+    most things done to a file (removing it, listing it) never need them, and each one was fetched over the
+    network for nothing."""
+    q = db.query(models.DBFile).filter(models.DBFile.id == fid, models.DBFile.client_id == client_id)
+    if not bytes_too:
+        q = q.options(defer(models.DBFile.data), defer(models.DBFile.thumb))
+    f = q.first()
     if not f:
         raise HTTPException(404, "File not found")
     return f
@@ -31818,7 +31922,7 @@ def _file_or_404(db, client_id, fid):
 @app.get("/api/files/{fid}")
 def get_file(fid: int, request: Request, download: int = 0, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
-    f = _file_or_404(db, client.id, fid)
+    f = _file_or_404(db, client.id, fid, bytes_too=True)
     inline = not download and ((f.content_type or "").startswith("image/") or f.content_type == "application/pdf")
     disp = '%s; filename="%s"' % ("inline" if inline else "attachment",
                                   re.sub(r'[^A-Za-z0-9._ -]', "_", f.name or "file"))
@@ -31829,7 +31933,11 @@ def get_file(fid: int, request: Request, download: int = 0, db: Session = Depend
 @app.get("/api/files/{fid}/thumb")
 def get_file_thumb(fid: int, request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
-    f = _file_or_404(db, client.id, fid)
+    # The picture copy only; the full file is read below if there is no copy.
+    f = db.query(models.DBFile).options(defer(models.DBFile.data)).filter(
+        models.DBFile.id == fid, models.DBFile.client_id == client.id).first()
+    if not f:
+        raise HTTPException(404, "File not found")
     small = file_bytes(db, f, thumb=True)
     body = small or (file_bytes(db, f) if (f.content_type or "").startswith("image/") else b"")
     return StreamingResponse(io.BytesIO(body or b""), media_type="image/jpeg" if small else (f.content_type or "image/jpeg"),
@@ -31848,11 +31956,14 @@ def delete_file(fid: int, request: Request, db: Session = Depends(get_db)):
     if db.query(models.DBDrawingRevision).filter(models.DBDrawingRevision.file_id == f.id).first():
         raise HTTPException(409, "That file is a drawing revision on the register; it stays as issued.")
     log_audit(db, client.id, "file_removed", f.attached_type, f.attached_id or 0, f.name, "", request)
-    readers = db.query(models.DBFile).filter(models.DBFile.blob_of == f.id).order_by(models.DBFile.id).all()
+    # Most files are read by no other record: that is found out from ids alone, before any bytes are touched.
+    reader_ids = [r[0] for r in db.query(models.DBFile.id).filter(models.DBFile.blob_of == f.id).order_by(models.DBFile.id).all()]
+    readers = (db.query(models.DBFile).options(defer(models.DBFile.data), defer(models.DBFile.thumb))
+               .filter(models.DBFile.id.in_(reader_ids)).order_by(models.DBFile.id).all()) if reader_ids else []
     if readers:
         # Another record keeps the same file: it becomes the stored copy.
         heir = readers[0]
-        heir.data, heir.thumb, heir.blob_of = f.data, f.thumb, None
+        heir.data, heir.thumb, heir.blob_of = f.data, f.thumb, None   # (the bytes are read only now, when they have to move)
         for r in readers[1:]:
             r.blob_of = heir.id
     db.delete(f)
