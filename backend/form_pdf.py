@@ -50,7 +50,7 @@ if PDF_AVAILABLE:
     from reportlab.lib.units import mm
     from reportlab.pdfbase.pdfmetrics import stringWidth
     from reportlab.pdfgen import canvas as pdfcanvas
-    from reportlab.platypus import (BaseDocTemplate, Frame, KeepTogether, PageBreak,
+    from reportlab.platypus import (BaseDocTemplate, Flowable, Frame, KeepTogether, PageBreak,
                                     PageTemplate, Paragraph, Table, TableStyle)
     from reportlab.graphics.shapes import Drawing
     from reportlab.graphics.barcode.qr import QrCodeWidget
@@ -449,25 +449,54 @@ def _grid(block, st):
             t.repeatRows = head
         return t
 
-    # A long sheet is laid out in pieces. One table of a thousand rows is measured again from the top
-    # each time it is split across a page, which takes minutes; thirty rows at a time takes seconds.
-    # A piece never starts in the middle of a joined cell, and each carries the heading again.
+    # A long sheet is laid out in pieces. One table of a thousand rows is measured again from the top each time
+    # it is split across a page, which takes minutes; a dozen rows at a time takes seconds. Each piece carries
+    # the heading above it only when it falls at the top of a page, so the heading is where a reader expects it
+    # and never in the middle of one. A piece is never split, and never starts inside a joined cell.
     def breakable(i):
         return not any(r0 < i <= r1 for _, r0, _, r1 in spans)
 
+    heads = list(range(head))
+    head_table = table([raw_rows[i] for i in heads], heads) if head else None
     pieces, start = [], head
     while start < total:
-        end = min(total, start + 30)
+        end = min(total, start + 12)
         while end < total and not breakable(end):
             end += 1
         pieces.append((start, end))
         start = end
     out = []
-    heads = list(range(head))
-    for lo, hi in pieces:
-        ids = heads + list(range(lo, hi))
-        out.append(table([raw_rows[i] for i in ids], ids))
+    for n, (lo, hi) in enumerate(pieces):
+        ids = list(range(lo, hi))
+        out.append(_GridPiece(table([raw_rows[i] for i in ids], ids), head_table, always=(n == 0)))
     return out
+
+
+class _GridPiece(Flowable if PDF_AVAILABLE else object):
+    """A few rows of a long sheet, with the sheet's heading drawn above them when they start a page."""
+
+    def __init__(self, body, head, always=False):
+        Flowable.__init__(self)
+        self.body, self.head, self.always = body, head, always
+        self._with_head = False
+        self._hh = 0
+
+    def wrap(self, aW, aH):
+        frame = getattr(self, "_frame", None)
+        self._with_head = bool(self.head is not None and (self.always or (frame is not None and getattr(frame, "_atTop", False))))
+        bw, bh = self.body.wrap(aW, aH)
+        self._hh = self.head.wrap(aW, aH)[1] if self._with_head else 0
+        self.width, self.height = bw, bh + self._hh
+        return self.width, self.height
+
+    def split(self, aW, aH):
+        return []
+
+    def draw(self):
+        bh = self.height - self._hh
+        self.body.drawOn(self.canv, 0, 0)
+        if self._with_head:
+            self.head.drawOn(self.canv, 0, bh)
 
 
 def _flow(blocks, st):
