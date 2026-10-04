@@ -218,6 +218,11 @@ const bytes = await page.evaluate(async () => Array.from(new Uint8Array(await (a
 const sheet = join(tmpdir(), 'e2e-mb-template.xlsx')
 writeFileSync(sheet, Buffer.from(bytes))
 await (await page.$('input[aria-label="Excel file to read the lines from"]')).uploadFile(sheet)
+// Nothing is loaded for the person: the sheet's entry is listed, and loads when it is clicked.
+await page.waitForFunction(() => /Block C-3/.test(document.querySelector('[role=dialog]')?.textContent ?? ''), { timeout: 10000 })
+await sleep(300)
+check('a sheet with one matching entry is listed, not loaded by itself', (await page.$eval('#m-where', (e) => e.value)) === '')
+await page.click('[role=dialog] button[title^="Load just this one"]')
 await page.waitForFunction(() => document.querySelector('#m-where')?.value.includes('Block C-3'), { timeout: 10000 })
 const rows = await page.$$eval('[role=dialog] [role=grid] [role=row]', (rs) => rs.slice(1, 4).map((r) => r.querySelector('[role=gridcell]')?.textContent.trim()))
 check('importing the sheet fills the lines from it', rows[0] === 'Slab' && rows[1] === 'Beam', rows.join(' | '))

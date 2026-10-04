@@ -66,9 +66,9 @@ export function SheetFill({ orderId, itemId, itemName, room, onUse, onRecorded }
       const source = `${file.name} / ${out.sheet}`.slice(0, 120)
       const mine = out.sections.filter((s) => s.item_id === itemId)
       const shown = mine.length ? mine : out.sections
-      const only = mine.length === 1 && mine[0].entries.length === 1 ? mine[0].entries[0] : null
-      if (only?.dims?.length) onUse({ location: only.location, multiplier: only.multiplier, dims: only.dims }, source)
-      else setFound({ source, matched: mine.length > 0, sections: shown })
+      // Nothing is loaded for the person: even a sheet with one matching entry is listed, and it is
+      // loaded or recorded only when they choose it.
+      setFound({ source, matched: mine.length > 0, sections: shown })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'That file could not be read.')
     } finally {
@@ -107,7 +107,7 @@ export function SheetFill({ orderId, itemId, itemName, room, onUse, onRecorded }
       {found && (
         <div className="mt-3 rounded-lg border border-border bg-card p-3">
           <p className="mb-2 text-[13px] text-muted-foreground">
-            {found.matched ? 'This item is in the sheet more than once. Choose the entry to load:' : `Nothing in the sheet is named like ${itemName || 'this item'}. These are the sections it has - load one only if it is the same work:`}
+            {found.matched ? 'The sheet has these entries for this item. Click one to load it into the grid, or tick several to record together:' : `Nothing in the sheet is named like ${itemName || 'this item'}. These are the sections it has - load one only if it is the same work:`}
           </p>
           {review && (
             <div aria-label="Check before recording">
