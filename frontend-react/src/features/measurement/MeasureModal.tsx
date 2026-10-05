@@ -9,7 +9,7 @@ export interface MeasureOrder {
   contractor: string
   project: string
 }
-import { blankDim, dimTotal, evalCalc, type DimLine } from '@/lib/measure'
+import { blankDim, dimTotal, evalCalc, toApiDims, type DimLine } from '@/lib/measure'
 import { formatQty, today } from '@/lib/format'
 import { useAction } from '@/lib/mutate'
 import { sendOrQueue } from '@/stores/offline'
@@ -95,9 +95,7 @@ function MeasureForm({ orderId, order, jobCode, line, entry, onClose, target }: 
         ...(target.client ? { witnessed_by: witness } : { multiplier: blocks }),
         ...(mode === 'dims'
           ? {
-              dimensions: dims
-                .filter((d) => d.particulars.trim() || [d.nos, d.nom, d.length, d.breadth, d.depth].some((v) => v !== null))
-                .map((d) => ({ particulars: d.particulars, nos: d.nos, nom: d.nom, length: d.length, breadth: d.breadth, depth: d.depth, deduct: d.deduct, is_heading: d.heading })),
+              dimensions: toApiDims(dims),
             }
           : { quantity: total }),
       }

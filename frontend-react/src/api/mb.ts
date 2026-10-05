@@ -131,7 +131,7 @@ export interface ImportSection {
   payable?: number
   rate?: number
   holds?: ImportHold[]
-  entries: { location: string; multiplier: number; lines: number; one_block: number; quantity: number; stated: number | null; group?: number | null; held_back?: number; payable?: number; full_quantity?: number; already_in_book?: boolean; already_quantity?: number | null; dims?: ImportDim[] }[]
+  entries: { location: string; letter?: string; multiplier: number; lines: number; one_block: number; quantity: number; stated: number | null; group?: number | null; held_back?: number; payable?: number; full_quantity?: number; already_in_book?: boolean; already_quantity?: number | null; dims?: ImportDim[] }[]
 }
 
 export interface ImportPreview {

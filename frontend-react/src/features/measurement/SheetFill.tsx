@@ -50,7 +50,8 @@ export function SheetFill({ orderId, itemId, itemName, onLoad }: { orderId: numb
         dims: (e.dims ?? []).map(toDimLine),
         group,
         section: `${sec.sno} ${sec.description}`.trim(),
-        letter: '',
+        work: sec.description,
+        letter: e.letter ?? '',
       }
     })
     onLoad({ blocks, holds, source: found.source })

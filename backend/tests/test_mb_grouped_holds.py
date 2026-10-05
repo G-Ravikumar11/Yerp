@@ -120,3 +120,33 @@ def test_clearing_entries_with_their_hold_works_in_any_order(tenant):
     ids = [e["id"] for e in sorted(book(tenant, order["id"])["entries"], key=lambda e: e["kind"] or "")]   # the measurement first
     out = tenant.post("/api/sub-mb/entries/bulk-delete", json={"ids": ids}).json()
     assert out["deleted"] == 2 and not out["failed"], out
+
+
+def test_only_billing_staff_and_the_master_record_a_hold_with_the_blocks(tenant, portal):
+    from test_sub_contractor_certificate import share, sign_in, staff
+    order, item = setup(tenant)
+    site = staff(tenant, "staff")
+    share(tenant, order, site)
+    sign_in(portal, site)
+    body = {"item_id": item, "entries": [{"location": "A", "dimensions": dims(100), "group": "g"}]}
+    refused = portal.post("/api/sub-mb/%d/entries/batch" % order["id"], json=dict(body, holds=[{"group": "g", "quantity": 10, "reason": "held"}]))
+    assert refused.status_code in (401, 403), refused.text
+    assert book(tenant, order["id"])["entries"] == []
+    assert portal.post("/api/sub-mb/%d/entries/batch" % order["id"], json=body).status_code == 200
+
+
+def test_deleting_contractor_measurements_leaves_client_measurement_photos_alone(tenant):
+    import database
+    import models
+    order, item = setup(tenant)
+    tenant.post("/api/sub-mb/%d/entries" % order["id"], json={"item_id": item, "quantity": 5})
+    entry = book(tenant, order["id"])["entries"][0]
+    cid = tenant.get("/api/client/me").json()["id"]
+    with database.SessionLocal() as db:
+        db.add(models.DBFile(client_id=cid, kind="photo", attached_type="measurement", attached_id=entry["id"],
+                             name="client.jpg", content_type="image/jpeg", size=3, data=b"abc"))
+        db.commit()
+    assert tenant.delete("/api/sub-mb/entries/%d" % entry["id"]).status_code == 200
+    with database.SessionLocal() as db:
+        assert db.query(models.DBFile).filter(models.DBFile.attached_type == "measurement",
+                                              models.DBFile.attached_id == entry["id"]).count() == 1

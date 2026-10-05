@@ -120,7 +120,19 @@ export function SheetView({ entries, byItem }: { entries: MbEntry[]; byItem: Map
   const all = [...entries].sort((a, b) => a.id - b.id)
   // A hold recorded for a group of blocks shows once, under the group - not as a block of its own.
   const grouped = new Set(all.filter((e) => !e.kind && e.group_ref).map((e) => `${e.item_id}|${e.group_ref}`))
-  const holdsOf = (e: MbEntry) => all.filter((h) => h.kind === 'hold' && h.item_id === e.item_id && h.group_ref === e.group_ref)
+  const holdsBy = new Map<string, MbEntry[]>()
+  for (const h of all) {
+    if (h.kind !== 'hold') continue
+    const k = `${h.item_id}|${h.group_ref}`
+    holdsBy.set(k, [...(holdsBy.get(k) ?? []), h])
+  }
+  const holdsOf = (e: MbEntry) => holdsBy.get(`${e.item_id}|${e.group_ref}`) ?? []
+  // A section's total: its entries, and each group's hold once, under the group's last block.
+  const sectionTotal = (list: MbEntry[]) => {
+    const last = new Map<string, MbEntry>()
+    for (const e of list) if (e.group_ref && !e.kind) last.set(e.group_ref, e)
+    return sum(list, (e) => e.quantity) + sum([...last.values()], (e) => sum(holdsOf(e), (h) => h.quantity))
+  }
   const chrono = all.filter((e) => !(e.kind === 'hold' && e.group_ref && grouped.has(`${e.item_id}|${e.group_ref}`)))
   const sectionOf = (e: MbEntry) => e.section || (byItem.get(e.item_id) ? `${byItem.get(e.item_id)?.activity_no ?? ''} ${byItem.get(e.item_id)?.description ?? ''}`.trim() : 'Measured')
   const sections: { name: string; entries: MbEntry[] }[] = []
@@ -159,7 +171,7 @@ export function SheetView({ entries, byItem }: { entries: MbEntry[]; byItem: Map
               })}
               <tr className="border-t-2 border-border bg-surface font-semibold">
                 <td colSpan={COLS - 1} className="px-3 py-2">Total for this section{sec.entries.length > 1 ? ` (${sec.entries.length} entries)` : ''}</td>
-                <td className="tabular px-3 py-2 text-right">{formatQty(sum(sec.entries, (e) => e.quantity) + sum(sec.entries.filter((e) => e.group_ref && !e.kind && sec.entries.indexOf(e) === sec.entries.map((x) => x.group_ref).lastIndexOf(e.group_ref)), (e) => sum(holdsOf(e), (h) => h.quantity)))}</td>
+                <td className="tabular px-3 py-2 text-right">{formatQty(sectionTotal(sec.entries))}</td>
               </tr>
             </Fragment>
           ))}

@@ -20853,7 +20853,7 @@ def wo_delete_order_now(order_id, request, db):
         drop_alerts_about(db, "sub_bill", bill_ids)
     if sub_meas:
         drop(db.query(models.DBMeasurementDimension).filter(models.DBMeasurementDimension.sub_measurement_id.in_(sub_meas)))
-        drop_files_of(db, "measurement", sub_meas)
+        drop_files_of(db, "sub_measurement", sub_meas)
     drop(db.query(models.DBMaterialRecovery).filter(models.DBMaterialRecovery.order_id.in_(ids)))
     drop(db.query(models.DBSubMeasurement).filter(models.DBSubMeasurement.order_id.in_(ids)))
     drop(db.query(models.DBSubBill).filter(models.DBSubBill.order_id.in_(ids)))
@@ -26599,7 +26599,7 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
                          "entries": [{"location": e["location"], "multiplier": e["multiplier"],
                                       "lines": len([d for d in e["dims"] if not d["is_heading"]]),
                                       "one_block": e["one"], "quantity": e["quantity"],
-                                      "stated": e.get("stated_total"), "group": e.get("group"),
+                                      "stated": e.get("stated_total"), "group": e.get("group"), "letter": e.get("letter") or "",
                                       "held_back": e.get("held_back", 0.0), "payable": e.get("payable", e["quantity"]),
                                       "full_quantity": e["quantity"],
                                       "already_in_book": bool(plain_place(e["location"]) and book_of(item.id if item else None, plain_place(e["location"])) is not None),
@@ -26719,7 +26719,7 @@ def delete_sub_measurement(entry_id: int, request: Request, db: Session = Depend
                 "Delete that bill first." if _is_owner(request, db) else "Ask the Master, or record a correcting entry instead."))
     db.query(models.DBMeasurementDimension).filter(
         models.DBMeasurementDimension.sub_measurement_id == entry.id).delete()
-    drop_files_of(db, "measurement", [entry.id])
+    drop_files_of(db, "sub_measurement", [entry.id])
     db.delete(entry)
     db.flush()
     if bill is not None:
@@ -26831,6 +26831,8 @@ def record_sub_measurements_batch(order_id: int, body: SubMeasureBatchIn, reques
         raise HTTPException(400, "There is nothing to record.")
     if len(body.entries) > 500:
         raise HTTPException(400, "Record at most 500 blocks at a time.")
+    if any((h.quantity or 0) > 0 for h in body.holds or []):
+        wo_actor(request, db, "billing.manage")
     batch = uuid.uuid4().hex[:6]
     ref = lambda g: ("%s-%s" % (batch, g))[:60] if g else ""
     written = 0
@@ -26935,7 +26937,14 @@ def convert_legacy_holds_all():
     """At start-up: books imported the old way are put right. A failure is logged and never stops the server."""
     try:
         with SessionLocal() as db:
+            done = db.query(models.DBSettings).filter(models.DBSettings.client_id.is_(None),
+                                                      models.DBSettings.key == "legacy_holds_converted").first()
+            if done:
+                return
             out = convert_legacy_holds(db)
+            if not out["converted"]:
+                db.add(models.DBSettings(client_id=None, key="legacy_holds_converted", value="1",
+                                         description="Old imports with the hold written into the blocks were put right"))
             db.commit()
             if out["converted"]:
                 logger.info("Old imported holds put right: %s", out)

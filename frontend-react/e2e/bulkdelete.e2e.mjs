@@ -26,6 +26,16 @@ await page.click('table[aria-label="Work orders"] thead input[aria-label="Select
 await sleep(200)
 const bar = await page.$eval('[aria-label="Selected rows"]', (e) => e.textContent.replace(/\s+/g, ' '))
 check('ticking the heading box selects every row shown, and says how many', /6 work orders selected/.test(bar), bar)
+// narrowing the list drops the ticks on rows it hides - Delete never reaches rows out of sight
+await fill(page, 'input[aria-label="Search"]', `Bulk ${stamp} ${made[0].number}`)
+await sleep(400)
+const narrowed = await page.$eval('[aria-label="Selected rows"]', (e) => e.textContent.replace(/\s+/g, ' '))
+check('a search that hides ticked rows unticks them', /1 work order selected/.test(narrowed), narrowed)
+await fill(page, 'input[aria-label="Search"]', `Bulk ${stamp}`)
+await sleep(400)
+await page.click('table[aria-label="Work orders"] thead input[aria-label="Select every row"]')
+await sleep(200)
+check('ticking the heading box again selects all six', /6 work orders selected/.test(await page.$eval('[aria-label="Selected rows"]', (e) => e.textContent)))
 // untick one: five go
 await page.click('table[aria-label="Work orders"] tbody tr:first-child input[aria-label="Select this row"]')
 await sleep(200)

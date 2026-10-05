@@ -47,6 +47,12 @@ export function dimQty(line: DimLine): number | null {
   return signed === 0 ? 0 : signed
 }
 
+/** The lines as the server takes them: a line with neither words nor a figure is left out. */
+export const toApiDims = (lines: readonly DimLine[]) =>
+  lines
+    .filter((d) => d.particulars.trim() || [d.nos, d.nom, d.length, d.breadth, d.depth].some((v) => v !== null))
+    .map((d) => ({ particulars: d.particulars, nos: d.nos, nom: d.nom, length: d.length, breadth: d.breadth, depth: d.depth, deduct: d.deduct, is_heading: d.heading }))
+
 export function dimTotal(lines: readonly DimLine[]): number {
   const sum = lines.reduce((total, l) => total + (dimQty(l) ?? 0), 0)
   return Math.round(sum * 1000) / 1000

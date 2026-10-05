@@ -37,7 +37,7 @@ export function BulkDeleteDialog({ open, onOpenChange, kind, noun, ids, onFinish
   const [typed, setTyped] = useState('')
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState(0)
-  const [outcome, setOutcome] = useState<{ deleted: number; gone: number; failed: { id: number; reason: string }[] } | null>(null)
+  const [outcome, setOutcome] = useState<{ deleted: number; gone: number; failed: { id: number; reason: string }[]; left: number; broke: string } | null>(null)
   const stop = useRef(false)
   const many = ids.length >= 5
   const ready = !many || typed.trim().toUpperCase() === 'DELETE'
@@ -48,7 +48,8 @@ export function BulkDeleteDialog({ open, onOpenChange, kind, noun, ids, onFinish
       setTyped('')
       setOutcome(null)
       setProgress(0)
-      if (outcome) onFinished()
+      // The ticks are cleared only when every row was tried; rows that were deleted drop off the list by themselves.
+      if (outcome && !outcome.left) onFinished()
     }
     onOpenChange(o)
   }
@@ -57,7 +58,7 @@ export function BulkDeleteDialog({ open, onOpenChange, kind, noun, ids, onFinish
     stop.current = false
     setRunning(true)
     setOutcome(null)
-    const total = { deleted: 0, gone: 0, failed: [] as { id: number; reason: string }[] }
+    const total = { deleted: 0, gone: 0, failed: [] as { id: number; reason: string }[], left: ids.length, broke: '' }
     const size = BATCH[kind]
     try {
       for (let at = 0; at < ids.length && !stop.current; at += size) {
@@ -65,10 +66,12 @@ export function BulkDeleteDialog({ open, onOpenChange, kind, noun, ids, onFinish
         total.deleted += res.deleted
         total.gone += res.gone
         total.failed.push(...res.failed)
+        total.left = Math.max(0, ids.length - (at + size))
         setProgress(Math.min(ids.length, at + size))
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Deleting stopped.')
+      total.broke = e instanceof Error ? e.message : 'Deleting stopped.'
+      toast.error(total.broke)
     } finally {
       setRunning(false)
       setOutcome(total)
@@ -107,8 +110,13 @@ export function BulkDeleteDialog({ open, onOpenChange, kind, noun, ids, onFinish
         <div className="grid gap-2 text-sm" aria-live="polite">
           <p>
             <strong>{outcome.deleted}</strong> deleted{outcome.gone ? `, ${outcome.gone} already gone` : ''}
-            {stop.current && ids.length > progress ? `. Stopped with ${ids.length - progress} left ticked.` : '.'}
+            {outcome.left ? `. Stopped with ${outcome.left} not tried - they are still there and still ticked.` : '.'}
           </p>
+          {outcome.broke && (
+            <p role="alert" className="text-danger">
+              {outcome.broke}
+            </p>
+          )}
           {outcome.failed.length > 0 && (
             <div role="alert" className="rounded-lg border border-danger/40 bg-danger-soft px-3 py-2 text-danger">
               <p className="font-medium">{outcome.failed.length} could not be deleted:</p>

@@ -3,7 +3,8 @@ import { X } from 'lucide-react'
 import { DataGrid } from '@/components/grid'
 import { Button, Field, Input, NumField } from '@/components/ui'
 import { batchUrl, mbKeys, type MbLine } from '@/api/mb'
-import { blankDim, dimTotal, type DimLine } from '@/lib/measure'
+import { blankDim, dimTotal, toApiDims, type DimLine } from '@/lib/measure'
+import { useSession } from '@/lib/session'
 import { formatQty, today } from '@/lib/format'
 import { useAction } from '@/lib/mutate'
 import { sendOrQueue } from '@/stores/offline'
@@ -20,6 +21,8 @@ export interface LoadedBlock {
   group: string
   /** The sheet's section it came from: "II Internal Painting Work". */
   section: string
+  /** The work that section describes, without its number: "Internal Painting Work". */
+  work: string
   letter: string
 }
 
@@ -37,10 +40,6 @@ export interface Loaded {
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000
 const blockTotal = (b: LoadedBlock) => round3(dimTotal(b.dims) * (b.multiplier || 1))
-const sendable = (dims: DimLine[]) =>
-  dims
-    .filter((d) => d.particulars.trim() || [d.nos, d.nom, d.length, d.breadth, d.depth].some((v) => v !== null))
-    .map((d) => ({ particulars: d.particulars, nos: d.nos, nom: d.nom, length: d.length, breadth: d.breadth, depth: d.depth, deduct: d.deduct, is_heading: d.heading }))
 
 /**
  * The blocks ticked in the sheet, each in the grid as the sheet wrote it - its lines in the No's, NoM, L, B, H
@@ -55,6 +54,8 @@ export function SheetBlocks({ orderId, line, loaded, onDone, onDiscard }: { orde
   const [remarks, setRemarks] = useState('Imported from the measurement book')
   const [sameOk, setSameOk] = useState(false)
   const columns = useMemo(() => dimColumns, [])
+  // Holding work back is for billing staff and the Master, as the Hold button is.
+  const mayHold = useSession().can('billing.manage')
 
   const groupTotal = (g: string) => round3(blocks.filter((b) => b.group === g).reduce((n, b) => n + blockTotal(b), 0))
   const heldOf = (g: string) => (holds[g] && holds[g].percent > 0 ? round3((groupTotal(g) * holds[g].percent) / 100) : 0)
@@ -64,8 +65,10 @@ export function SheetBlocks({ orderId, line, loaded, onDone, onDiscard }: { orde
   const room = (line.max_quantity ?? Infinity) - (line.measured_to_date ?? 0)
   const over = measured > room + 0.0001
   // Different works of the sheet going onto one item of the order are asked about, not assumed.
-  const works = [...new Set(blocks.map((b) => b.section.replace(/^\S+\s+/, '').trim().toLowerCase()).filter(Boolean))]
+  const works = [...new Set(blocks.map((b) => b.work.trim().toLowerCase()).filter(Boolean))]
   const mixed = works.length > 1
+
+  const holdBlocked = held > 0 && !mayHold
 
   const update = (key: string, patch: Partial<LoadedBlock>) => setBlocks((list) => list.map((b) => (b.key === key ? { ...b, ...patch } : b)))
 
@@ -76,7 +79,7 @@ export function SheetBlocks({ orderId, line, loaded, onDone, onDiscard }: { orde
         measured_on: on,
         mb_ref: ref,
         remarks,
-        entries: blocks.map((b) => ({ location: b.location, multiplier: b.multiplier || 1, dimensions: sendable(b.dims), section: b.section, block_label: b.letter, group: b.group })),
+        entries: blocks.map((b) => ({ location: b.location, multiplier: b.multiplier || 1, dimensions: toApiDims(b.dims), section: b.section, block_label: b.letter, group: b.group })),
         holds: groups.filter((g) => heldOf(g) > 0).map((g) => ({ group: g, quantity: heldOf(g), reason: holds[g].reason.trim() || `Held back - ${holds[g].percent}% held` })),
       }
       const sent = await sendOrQueue<{ message: string }>({ method: 'POST', url: batchUrl(orderId), body, label: `${blocks.length} blocks measured against ${line.activity_no}` })
@@ -193,12 +196,17 @@ export function SheetBlocks({ orderId, line, loaded, onDone, onDiscard }: { orde
           {Number.isFinite(room) && <p className={over ? 'text-danger' : 'text-muted-foreground'}>{over ? `That is more than the ${formatQty(Math.max(0, room))} still allowed on this item - amend the order or leave some out.` : `${formatQty(Math.max(0, room))} still allowed on this item.`}</p>}
         </div>
         <div className="flex items-center gap-2">
+          {holdBlocked && (
+            <p role="alert" className="max-w-md text-right text-[13px] text-danger">
+              The sheet holds {formatQty(held)} back. Only billing staff or the Master can record a hold - set Held (%) to 0, or ask them to record it.
+            </p>
+          )}
           {save.error && (
             <p role="alert" className="max-w-md text-right text-[13px] text-danger">
               {save.error.message}
             </p>
           )}
-          <Button loading={save.isPending} disabled={!blocks.length || measured === 0 || (mixed && !sameOk)} onClick={() => save.mutate()}>
+          <Button loading={save.isPending} disabled={!blocks.length || measured === 0 || (mixed && !sameOk) || holdBlocked} onClick={() => save.mutate()}>
             Record {blocks.length} {blocks.length === 1 ? 'block' : 'blocks'}
           </Button>
         </div>

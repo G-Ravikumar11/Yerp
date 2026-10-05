@@ -58,7 +58,22 @@ export function DataTable<T>({
   className?: string
 }) {
   const [sort, setSort] = useState<{ id: string; dir: 1 | -1 } | null>(null)
-  const selectable = useMemo(() => (selection ? rows.flatMap((r, i) => (!selection.canSelect || selection.canSelect(r) ? [rowKey(r, i)] : [])) : []), [rows, selection, rowKey])
+  // The page passes `selection` and `rowKey` afresh on every render; what can be ticked changes only with the rows.
+  const latest = useRef({ rowKey, canSelect: selection?.canSelect })
+  latest.current = { rowKey, canSelect: selection?.canSelect }
+  const on = !!selection
+  const selectable = useMemo(() => {
+    const { rowKey: key, canSelect } = latest.current
+    return on ? rows.flatMap((r, i) => (!canSelect || canSelect(r) ? [key(r, i)] : [])) : []
+  }, [rows, on])
+  // A row the filters no longer show is no longer ticked: Delete acts on what is in front of you, never on rows out of sight.
+  useEffect(() => {
+    if (!selection || loading || selection.selected.size === 0) return
+    const shown = new Set(selectable)
+    const kept = [...selection.selected].filter((k) => shown.has(k))
+    if (kept.length !== selection.selected.size) selection.onChange(new Set(kept))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectable, loading])
   const ticked = selection ? selectable.filter((k) => selection.selected.has(k)).length : 0
   const all = selectable.length > 0 && ticked === selectable.length
   const head = useRef<HTMLInputElement>(null)

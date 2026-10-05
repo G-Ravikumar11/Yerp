@@ -227,3 +227,35 @@ def test_importing_the_demo_bill_gives_a_bill_that_holds_what_the_sheet_holds(te
     assert text.count("I INTERNAL HOLE PACKING") == 1, "a section heading prints once, not before every block"
     assert text.count("Hold 10 % for hsnding over") == 2, text[text.find("Hold"):text.find("Hold") + 300]
     assert "Total Qty To be paid" in text and "6,353.46" in text
+
+
+def test_work_named_like_a_hold_is_measured_not_held():
+    """'Retaining wall' and 'Holding down bolts' are work, written as a single total with no dimensions."""
+    rows = [["1", "Civil"], [None, "Block A"]] + lines(2) + [
+        [None, "Retaining wall plaster", None, None, None, None, None, None, 120.0],
+        [None, "Holding down bolts", None, None, None, None, None, None, 25.0]]
+    b = read(rows)
+    assert b["items"][0]["entries"][0]["quantity"] == 40 + 120 + 25
+    assert not b["holds"]
+
+
+def test_a_subtotal_followed_by_more_blocks_is_not_the_base_of_the_hold():
+    rows = [["1", "Slab"], [None, "Block A"]] + lines(5) + [
+        [None, "Total Quantity for Block A", None, None, None, None, None, None, 100.0],
+        [None, "Block B"]] + lines(2, 12.5) + [
+        [None, "Hold 50 %", None, None, None, None, None, None, 75.0],
+        [None, "Total Qty To be paid", None, None, None, None, None, None, 75.0]]
+    b = read(rows)
+    assert payable(b) == 75.0, b["warnings"]
+    assert b["holds"][0]["percent"] == 50.0
+
+
+def test_lump_sum_lines_of_the_next_block_are_not_read_as_a_hold():
+    rows = [["1", "Slab"], [None, "Block A"]] + lines(5) + [
+        [None, "Total Quantity", None, None, None, None, None, None, 100.0],
+        [None, "Block B"],
+        [None, "Waterproofing", None, None, None, None, None, None, 40.0],
+        [None, "Grouting", None, None, None, None, None, None, 60.0]]
+    b = read(rows)
+    total = round(sum(e["quantity"] for e in b["items"][0]["entries"]), 3)
+    assert total == 200.0 and not b["holds"], (total, b["holds"])

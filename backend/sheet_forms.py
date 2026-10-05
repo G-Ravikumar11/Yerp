@@ -346,7 +346,7 @@ def _mb_columns(values, formulas, max_scan=30):
 # "retention", "withheld". Whatever the words, a payable figure is also recognised by the arithmetic: it is the
 # total less the hold.
 PAYABLE_WORDS = re.compile(r"(?i)to\s*be\s*paid|payable|net\s+(?:qty|quantity)|billable|for\s+billing|to\s+pay\b")
-HOLD_WORDS = re.compile(r"(?i)\bhold(?:ing)?\b|\bheld\b|retain|retention|withh[eo]ld")
+HOLD_WORDS = re.compile(r"(?i)\bhold\b|\bheld\b|\bretention\b|\bwithh[eo]ld\b")
 PERCENT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 
 
@@ -364,9 +364,10 @@ def read_measurement_book(values, formulas=None):
 
     Some books hold part of the work back: under the totals there are rows such as
     "Hold 5 % for Finishes & Handing over" and "Total Qty To be paid - 45%". Those are
-    not measurements. The "to be paid" figure is the quantity the entry is billed at,
-    and the difference is recorded as one held-back deduction line, so the entry
-    comes to exactly what the sheet says is payable.
+    not measurements. The entries keep the quantity the sheet measured; each group
+    of blocks is given the share the sheet holds back (`held_back`, `payable`), and
+    the holds are returned beside the items (`holds`), to be recorded as holds - never
+    as a line inside a block.
     """
     head, cols = _mb_columns(values, formulas)
     max_col = values.max_column      # asked once: on a big sheet every ask walks all of its cells
@@ -410,6 +411,8 @@ def read_measurement_book(values, formulas=None):
         t = _number(get(r, "total"))
         if t is not None and d:
             seq.append((r, d.lower(), t))
+        elif d:
+            seq.append(None)                         # a heading or a new block: what follows is not the hold of what came before
     for i, entry_row in enumerate(seq):
         if not entry_row or not entry_row[1].startswith("total") or re.search(r"(?i)for\s+(\d+(?:\.\d+)?\s+)?blocks?|for\s+one\s+block", entry_row[1]):
             continue
@@ -472,7 +475,8 @@ def read_measurement_book(values, formulas=None):
         if total is not None and not given:
             sub_value = last_sub["value"]
             is_payable = bool(PAYABLE_WORDS.search(text_here)) or forced.get(r) == "payable"
-            is_hold = (bool(HOLD_WORDS.search(text_here)) and not is_payable and not low.startswith("total")) or forced.get(r) == "hold"
+            is_hold = (bool(HOLD_WORDS.search(text_here)) and bool(PERCENT.search(text_here)) and not is_payable
+                       and not low.startswith("total")) or forced.get(r) == "hold"
             if not is_payable and not is_hold and sub_value and not low.startswith("total") and not re.match(r"(?i)^release\b", text_here):
                 # No telltale words: it is the payable if it is the subtotal less something stated since.
                 is_payable = any(0.011 < h < sub_value and abs(sub_value - h - total) <= 0.011 and 0 < total < sub_value
@@ -571,6 +575,9 @@ def read_measurement_book(values, formulas=None):
         if not qty:
             warnings.append("Row %d (%s) comes to nothing and was left out." % (r, desc or "no description"))
             continue
+        last_sub["value"] = None
+        since_sub.clear()
+        since_text.clear()
         entry["dims"].append({
             "particulars": desc, "is_heading": False,
             "nos": clean.get("nos"), "nom": clean.get("nom"), "length": clean.get("length"),
