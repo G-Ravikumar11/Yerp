@@ -33,11 +33,11 @@ export function WipeWorkOrders() {
   if (q.isError) return null
   const p = q.data
   return (
-    <Section title="Delete all work orders" description="A full reset of work orders: gang orders and client orders, with their measurements, bills, payments, receipts, retention and files. There is no undo.">
+    <Section title="Delete all work orders" description="A full reset of work orders: contractor orders and client orders, with their measurements, bills, payments, receipts, retention and files. There is no undo.">
       {q.isPending || !p ? <Skeleton className="h-16 w-full" /> : (
         <>
           <p className="text-sm text-muted-foreground">
-            {p.subcontract} gang order{p.subcontract === 1 ? '' : 's'} with {p.sub_bills} bill{p.sub_bills === 1 ? '' : 's'}, and {p.client} client order{p.client === 1 ? '' : 's'} with {p.ra_bills} RA bill{p.ra_bills === 1 ? '' : 's'}.
+            {p.subcontract} contractor order{p.subcontract === 1 ? '' : 's'} with {p.sub_bills} bill{p.sub_bills === 1 ? '' : 's'}, and {p.client} client order{p.client === 1 ? '' : 's'} with {p.ra_bills} RA bill{p.ra_bills === 1 ? '' : 's'}.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <a className={buttonVariants({ variant: 'outline' })} href="/api/backup?files=1" download><Download /> Download a backup first</a>

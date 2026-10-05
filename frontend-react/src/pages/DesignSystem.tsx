@@ -207,7 +207,7 @@ export default function DesignSystem() {
           }
         >
           <Field label="Reason" htmlFor="ds-reason">
-            <Textarea id="ds-reason" placeholder="Gang left site..." autoFocus />
+            <Textarea id="ds-reason" placeholder="Contractor left site..." autoFocus />
           </Field>
         </Modal>
       </Section>

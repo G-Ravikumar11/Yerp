@@ -141,7 +141,7 @@ function MeasureForm({ orderId, order, jobCode, line, entry, onClose, target }: 
           <span className="font-mono font-semibold">{order.wo_number}</span>
           {jobCode && <span className="rounded bg-primary-soft px-1.5 py-0.5 font-mono text-[11px] text-primary">{jobCode}</span>}
           <span className="text-muted-foreground">
-            {order.contractor || 'no gang'} · {order.project}
+            {order.contractor || 'no contractor'} · {order.project}
           </span>
         </p>
       )}

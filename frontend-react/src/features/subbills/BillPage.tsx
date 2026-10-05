@@ -157,7 +157,7 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
             {has('PAY') && can('bills.pay') && <Button onClick={() => setPaying(true)}>Pay</Button>}
             {bill.status !== 'DRAFT' && bill.status !== 'CANCELLED' && !bill.accepted_by_name && can('billing.manage') && (
               <Button variant="outline" size="sm" onClick={() => setDialog('accept')}>
-                Gang accepted
+                Contractor accepted
               </Button>
             )}
             {has('CANCEL') && can('billing.manage') && (
@@ -360,7 +360,7 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
         onOpenChange={(o) => !o && setDialog(null)}
         size="sm"
         title="Accepted for the sub contractor"
-        description="The gang has signed the certificate. Recorded from the signed copy."
+        description="The contractor has signed the certificate. Recorded from the signed copy."
         footer={
           <>
             <Button variant="ghost" onClick={() => setDialog(null)}>
@@ -372,7 +372,7 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
           </>
         }
       >
-        <Field label="Who signed for them?" htmlFor="b-signer" hint="Blank: the gang's contact person.">
+        <Field label="Who signed for them?" htmlFor="b-signer" hint="Blank: the contractor's contact person.">
           <Input id="b-signer" value={gangName} onChange={(e) => setGangName(e.target.value)} autoFocus />
         </Field>
       </Modal>

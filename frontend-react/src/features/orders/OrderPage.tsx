@@ -274,7 +274,7 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
         open={dialog === 'approve' || dialog === 'self-approve'}
         onOpenChange={(o) => !o && setDialog(null)}
         title={dialog === 'self-approve' ? 'Approve and issue this order?' : `Approve ${order.wo_number}?`}
-        description={dialog === 'self-approve' ? 'You are raising and signing it yourself. It is checked as any order is, and the history says so.' : `${formatINR(order.net_order_value)} to ${order.contractor || 'the gang'}.`}
+        description={dialog === 'self-approve' ? 'You are raising and signing it yourself. It is checked as any order is, and the history says so.' : `${formatINR(order.net_order_value)} to ${order.contractor || 'the contractor'}.`}
         confirmLabel="Approve"
         reason={{ label: budgetWarnings.length && override ? 'Why is the allocation being exceeded?' : 'Note (optional)', required: !!budgetWarnings.length && override }}
         loading={move.isPending}

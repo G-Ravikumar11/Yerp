@@ -91,7 +91,7 @@ function Form({ job, day, onClose }: { job: number; day: DiaryDetail | null; onC
           {labour.map((l, i) => (
             <div key={i} className="grid grid-cols-2 gap-2 sm:grid-cols-[1.2fr_1.2fr_.7fr_.7fr_.8fr]">
               <Select aria-label={`Trade ${i + 1}`} value={l.trade} onChange={(e) => edit(labour, setLabour, i, { trade: e.target.value })} options={TRADES.map((t) => ({ value: t, label: t }))} />
-              <Input aria-label={`Agency ${i + 1}`} value={l.agency} placeholder="Own or the gang" onChange={(e) => edit(labour, setLabour, i, { agency: e.target.value })} />
+              <Input aria-label={`Agency ${i + 1}`} value={l.agency} placeholder="Own or the contractor" onChange={(e) => edit(labour, setLabour, i, { agency: e.target.value })} />
               <NumField aria-label={`Headcount ${i + 1}`} placeholder="Heads" className={num} value={l.headcount} onValue={(n) => edit(labour, setLabour, i, { headcount: n })} />
               <NumField aria-label={`Hours ${i + 1}`} placeholder="Hours" className={num} value={l.hours} onValue={(n) => edit(labour, setLabour, i, { hours: n })} />
               <NumField aria-label={`Rate ${i + 1}`} placeholder="Rate" className={num} value={l.rate} onValue={(n) => edit(labour, setLabour, i, { rate: n })} />

@@ -47,13 +47,13 @@ export function HeadForm({ head, onChange, disabled, order }: { head: OrderHead;
       <Card className="lg:col-span-2">
         <CardHeader>
           <CardTitle>Who and where</CardTitle>
-          <CardDescription>The company issuing it, the gang it is for, and the project it is charged to.</CardDescription>
+          <CardDescription>The company issuing it, the contractor it is for, and the project it is charged to.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <Field label="Issued by" htmlFor="h-unit" hint="Its logo, GSTIN and PAN print on the order.">
             <Select id="h-unit" disabled={disabled} value={head.business_unit_id ?? ''} onChange={(e) => onChange({ business_unit_id: id(e.target.value) })} placeholder="Choose" options={(units.data ?? []).map((u) => ({ value: u.id, label: u.name }))} />
           </Field>
-          <Field label="Sub contractor" htmlFor="h-con" hint="Only registered gangs can be issued an order.">
+          <Field label="Sub contractor" htmlFor="h-con" hint="Only registered contractors can be issued an order.">
             <Select id="h-con" disabled={disabled} value={head.contractor_id ?? ''} onChange={(e) => onChange({ contractor_id: id(e.target.value) })} placeholder="Choose" options={gang.map((c) => ({ value: c.id, label: c.company_name + (c.vendor_code ? ` (${c.vendor_code})` : '') }))} />
           </Field>
           <Field label="Project" htmlFor="h-job" hint="Its budget is what this order is held against.">
@@ -104,7 +104,7 @@ export function HeadForm({ head, onChange, disabled, order }: { head: OrderHead;
       <Card>
         <CardHeader>
           <CardTitle>Tax, retention and advance</CardTitle>
-          <CardDescription>How the gang is paid on every RA bill against this order.</CardDescription>
+          <CardDescription>How the contractor is paid on every RA bill against this order.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <Field label="GST" htmlFor="h-gst">

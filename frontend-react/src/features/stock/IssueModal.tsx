@@ -67,10 +67,10 @@ function Form({ onClose }: { onClose: () => void }) {
         </table>
       </div>
       <p className="mt-2 flex items-center justify-between text-sm"><span className="text-danger" role="alert">{over ? 'One line asks for more than the store holds.' : ''}</span><span>Value <strong className="tabular">{formatINR(total)}</strong></span></p>
-      <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={charge} onChange={(e) => setCharge(e.target.checked)} /> Charge it to a gang (recover from their next bill)</label>
+      <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={charge} onChange={(e) => setCharge(e.target.checked)} /> Charge it to a contractor (recover from their next bill)</label>
       {charge && (
         <div className="mt-3 grid gap-4 sm:grid-cols-2">
-          <Field label="Recover from" htmlFor="is-gang"><Select id="is-gang" value={gang} placeholder="Choose the gang's work order" onChange={(e) => setGang(e.target.value)} options={(gangs.data ?? []).map((o) => ({ value: o.id, label: `${o.wo_number} - ${o.contractor}` }))} /></Field>
+          <Field label="Recover from" htmlFor="is-gang"><Select id="is-gang" value={gang} placeholder="Choose the contractor's work order" onChange={(e) => setGang(e.target.value)} options={(gangs.data ?? []).map((o) => ({ value: o.id, label: `${o.wo_number} - ${o.contractor}` }))} /></Field>
           <Field label="Mark-up %" htmlFor="is-markup"><NumField id="is-markup" value={markup} onValue={setMarkup} /></Field>
         </div>
       )}

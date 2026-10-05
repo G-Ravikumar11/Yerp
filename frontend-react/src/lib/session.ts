@@ -48,7 +48,7 @@ async function resolveSession(): Promise<SessionUser | null> {
         company: owner.company_name || '',
         permissions: [],
         employeeId: null,
-        roleLabel: 'Owner',
+        roleLabel: 'Master',
         department: '',
       }
     }

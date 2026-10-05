@@ -86,7 +86,7 @@ export default function QualityPage() {
     { id: 'raised', header: 'Raised', hideBelow: 'lg', sort: (n) => n.raised_on, cell: (n) => formatDate(n.raised_on) },
     { id: 'where', header: 'Where', hideBelow: 'md', cell: (n) => n.location },
     { id: 'what', header: 'What', cell: (n) => <div className="max-w-80"><span className="line-clamp-2">{n.description}</span>{n.closure_note && <div className="text-xs text-success">Closed: {n.closure_note}</div>}</div> },
-    { id: 'owner', header: 'Owner', hideBelow: 'lg', cell: (n) => n.responsible },
+    { id: 'owner', header: 'Responsible', hideBelow: 'lg', cell: (n) => n.responsible },
     { id: 'by', header: 'By', hideBelow: 'lg', cell: (n) => <span className={n.overdue ? 'font-semibold text-danger' : ''}>{formatDate(n.target_date)}</span> },
     { id: 'st', header: 'Status', cell: (n) => <Badge tone={n.overdue ? 'danger' : n.status === 'OPEN' ? 'warning' : 'success'} dot>{n.status === 'OPEN' ? (n.overdue ? 'Late' : 'Open') : 'Closed'}</Badge> },
     {

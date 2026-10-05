@@ -340,4 +340,4 @@ def test_an_owner_working_alone_is_named_as_the_approver(tenant):
     order = priced(tenant)
     tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
     out = tenant.get("/api/wo/orders/%d" % order["id"]).json()["order"]
-    assert len(out["pending_with"]) == 1 and "(owner)" in out["pending_with"][0]
+    assert len(out["pending_with"]) == 1 and "(Master)" in out["pending_with"][0]

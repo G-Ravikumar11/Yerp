@@ -73,7 +73,7 @@ export function NcrModal({ job, from, open, onClose, onRaised }: { job: number; 
       <div className="grid gap-4 sm:grid-cols-2">
         {!from && <Field label="What is not as specified" htmlFor="nc-what" className="sm:col-span-2"><Textarea id="nc-what" rows={2} value={what} onChange={(e) => setWhat(e.target.value)} /></Field>}
         {!from && <Field label="Where" htmlFor="nc-where"><Input id="nc-where" value={where} onChange={(e) => setWhere(e.target.value)} /></Field>}
-        <Field label="Who puts it right" htmlFor="nc-who"><Input id="nc-who" value={who} placeholder="The gang, the supplier..." onChange={(e) => setWho(e.target.value)} /></Field>
+        <Field label="Who puts it right" htmlFor="nc-who"><Input id="nc-who" value={who} placeholder="The contractor, the supplier..." onChange={(e) => setWho(e.target.value)} /></Field>
         <Field label="By when" htmlFor="nc-by"><Input id="nc-by" type="date" value={by} onChange={(e) => setBy(e.target.value)} /></Field>
         <Field label="How serious" htmlFor="nc-major"><Select id="nc-major" value={major} onChange={(e) => setMajor(e.target.value)} options={[{ value: 'Minor', label: 'Minor' }, { value: 'Major', label: 'Major' }]} /></Field>
       </div>

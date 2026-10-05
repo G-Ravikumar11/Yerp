@@ -23,7 +23,7 @@ function InviteModal({ onClose, onDone }: { onClose: () => void; onDone: (r: Inv
   const send = useAction(() => invitePartner({ party_type: type, party_id: Number(party), name, email }), { invalidate: [settingsKeys.all], onSuccess: (r) => { onDone(r); onClose() } })
   const kinds = [{ value: 'contractor', label: 'Subcontractor' }, { value: 'supplier', label: 'Supplier' }]
   return (
-    <Modal open onOpenChange={(o) => !o && onClose()} title="Give a partner a login" description="One person at a gang or supplier. They see only their own orders, bills and statements."
+    <Modal open onOpenChange={(o) => !o && onClose()} title="Give a partner a login" description="One person at a contractor or supplier. They see only their own orders, bills and statements."
       footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button loading={send.isPending} disabled={!party || !email.trim()} onClick={() => send.mutate()}>Send invite</Button></>}>
       <div className="grid gap-4">
         <Field label="Kind" htmlFor="pa-type"><Select id="pa-type" options={kinds} value={type} onChange={(e) => { setType(e.target.value); setParty('') }} /></Field>

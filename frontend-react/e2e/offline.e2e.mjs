@@ -52,7 +52,7 @@ await sleep(1500)
 check('the app opens with no signal', (await page.$eval('main h1', (e) => e.textContent)).includes('Work Orders'))
 const rowsOffline = await page.$$eval('table[aria-label="Work orders"] tbody tr', (r) => r.length)
 check('and shows the last-known work orders', rowsOffline === rowsOnline && rowsOffline > 0, `${rowsOffline} of ${rowsOnline}`)
-check('the person is still recognised (not sent to sign in)', (await page.$eval('header', (e) => e.textContent)).includes('Owner') && !page.url().includes('login'))
+check('the person is still recognised (not sent to sign in)', (await page.$eval('header', (e) => e.textContent)).includes('Master') && !page.url().includes('login'))
 check('the top bar says it is offline', (await page.$eval('header', (e) => e.textContent)).includes('Offline'))
 
 await page.goto(BASE + '/next/subcontractors/measurement-book', { waitUntil: 'domcontentloaded' })

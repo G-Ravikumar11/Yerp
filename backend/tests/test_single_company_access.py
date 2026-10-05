@@ -52,7 +52,7 @@ def test_a_second_company_cannot_sign_itself_up(tenant, single_company):
         "email": "someone@else.com", "password": "Passw0rdTest",
         "company_name": "Somebody Else Ltd"})
     assert res.status_code == 403
-    assert "owner" in res.json()["detail"].lower()
+    assert "master" in res.json()["detail"].lower()
 
 
 def test_the_refusal_says_how_to_actually_get_in(tenant, single_company):

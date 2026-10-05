@@ -28,7 +28,7 @@ check('what we owe is listed with its own stats and ageing', (await main()).incl
 await clickText(page, 'button[role=tab]', 'Retention')
 await page.waitForSelector('table[aria-label="Retention held by clients"]')
 await sleep(400)
-check('retention shows what clients hold and what we hold from gangs', (await main()).includes('Client is holding') && (await main()).includes('Held by us, from gangs'))
+check('retention shows what clients hold and what we hold from contractors', (await main()).includes('Client is holding') && (await main()).includes('Held by us, from contractors'))
 
 // Release some of what a client is holding
 await clickText(page, 'table[aria-label="Retention held by clients"] button', 'Release')

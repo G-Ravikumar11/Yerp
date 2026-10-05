@@ -316,7 +316,7 @@ def test_somebody_with_nobody_above_them_goes_to_the_owner(tenant):
     sign_in(tenant, top)
     result = raise_bill(tenant)
     assert result["status"] == "pending"
-    assert "owner" in result["next_approver"]
+    assert "Master" in result["next_approver"]
     sign_out(tenant)
 
     inbox = tenant.get("/api/approvals/inbox").json()

@@ -33,7 +33,7 @@ const sampleBoq = (): BoqLine[] => [
 
 const boqColumns: Column<BoqLine>[] = [
   { id: 'activity', header: 'Activity', hint: 'No.', width: 96, mono: true, pin: true, placeholder: '5.0' },
-  { id: 'description', header: 'Description of work', hint: 'What the gang is to do', width: 380, required: true, placeholder: 'What is the work?' },
+  { id: 'description', header: 'Description of work', hint: 'What the contractor is to do', width: 380, required: true, placeholder: 'What is the work?' },
   { id: 'uom', header: 'UoM', type: 'select', options: UOMS, width: 96 },
   {
     id: 'qty',

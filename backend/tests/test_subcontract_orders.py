@@ -215,7 +215,7 @@ def test_a_manager_approves_and_it_goes_up_to_the_owner(tenant):
                       json={"comments": "Rates checked against budget"})
     assert res.status_code == 200, res.text
     assert res.json()["order"]["status"] == "PROVISIONAL"
-    assert "owner" in " ".join(res.json()["order"]["pending_with"])
+    assert "Master" in " ".join(res.json()["order"]["pending_with"])
     as_owner(tenant)
     res = tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
     assert res.json()["order"]["status"] == "APPROVED"

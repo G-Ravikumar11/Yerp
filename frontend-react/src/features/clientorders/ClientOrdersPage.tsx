@@ -201,7 +201,7 @@ export default function ClientOrdersPage() {
       <PageHeader
         eyebrow="Clients"
         title="Client Work Orders"
-        description="Orders received from clients: the work we are paid for. Its budget, measurement and RA bills hang off it. Orders we give to gangs are under Subcontractors."
+        description="Orders received from clients: the work we are paid for. Its budget, measurement and RA bills hang off it. Orders we give to contractors are under Subcontractors."
         actions={
           <>
             <Button variant="outline" asChild>

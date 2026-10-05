@@ -158,7 +158,7 @@ def test_the_head_of_projects_goes_to_the_owner(tenant, portal):
     sign_in(portal, head)
     res = portal.post("/api/employee/purchase-orders", json={"supplier_name": "Tata", "amount": 400000.0})
     assert res.json()["status"] == "pending"
-    assert "owner" in res.json()["next_approver"]
+    assert "Master" in res.json()["next_approver"]
     items = inbox(tenant)
     assert [i for i in items if i["kind"] == "step" and i["mine"]]
     # The owner's own queue reads it as an order, not as a bill.

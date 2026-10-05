@@ -27,7 +27,7 @@ export default function OrdersPage() {
     search: (o) => [o.wo_number, o.contractor, o.vendor_code, o.project, o.subject, o.work_type, o.department, o.status, o.net_order_value].join(' '),
     status: (o) => o.status,
     date: (o) => o.created_at,
-    facets: { project: { label: 'Projects', get: (o) => o.project }, gang: { label: 'Gangs', get: (o) => o.contractor }, trade: { label: 'Trades', get: (o) => o.department } },
+    facets: { project: { label: 'Projects', get: (o) => o.project }, gang: { label: 'Contractors', get: (o) => o.contractor }, trade: { label: 'Trades', get: (o) => o.department } },
   })
 
   const s = orders.data?.summary
@@ -71,7 +71,7 @@ export default function OrdersPage() {
       <PageHeader
         eyebrow="Subcontractors"
         title="Work Orders"
-        description="What each gang has been asked to build, at what rate, and who has signed for it."
+        description="What each contractor has been asked to build, at what rate, and who has signed for it."
         actions={
           <>
             <Button variant="outline" asChild>
@@ -96,7 +96,7 @@ export default function OrdersPage() {
         <Stat label="Committed value" value={compactINR(s?.value)} loading={orders.isPending} />
       </StatGrid>
 
-      <FilterBar filters={filters} placeholder="Search by number, gang, project, work..." />
+      <FilterBar filters={filters} placeholder="Search by number, contractor, project, work..." />
 
       {isOwner && <BulkBar count={picked.size} noun="work order" shown={filters.filtered.length} onClear={() => setPicked(new Set())} onDelete={() => setClearing(true)} />}
       <DataTable

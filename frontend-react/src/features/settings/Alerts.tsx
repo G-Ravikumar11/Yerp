@@ -33,7 +33,7 @@ export function Alerts() {
   return (
     <Section title="Alerts" description="Say who is told by email or WhatsApp when something happens. The bell always shows them.">
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Email to" htmlFor="al-emails" hint={d.email_ready ? 'Sent from the Gmail connected to this account.' : 'Gmail is not connected, so these are not sent yet.'}><Input id="al-emails" placeholder="owner@..., accounts@..." value={emails} onChange={(e) => setEmails(e.target.value)} /></Field>
+        <Field label="Email to" htmlFor="al-emails" hint={d.email_ready ? 'Sent from the Gmail connected to this account.' : 'Gmail is not connected, so these are not sent yet.'}><Input id="al-emails" placeholder="Master@..., accounts@..." value={emails} onChange={(e) => setEmails(e.target.value)} /></Field>
         <Field label="WhatsApp to" htmlFor="al-wa" hint={d.whatsapp_ready ? 'Sent through your WhatsApp Business number.' : 'Needs a WhatsApp Business number, below.'}><Input id="al-wa" placeholder="98480 12345, ..." value={wa} onChange={(e) => setWa(e.target.value)} /></Field>
       </div>
       <div className="mt-4 overflow-x-auto">

@@ -86,7 +86,7 @@ export function WorkOrderPicker<T extends PickerOrder>({ orders, value, onChange
           <span className="flex min-w-0 flex-1 items-baseline gap-2">
             <span className="shrink-0 whitespace-nowrap font-mono text-[13px] font-semibold">{current.wo_number}</span>
             {jobCode(current) && <span className="shrink-0 rounded bg-primary-soft px-1.5 py-0.5 font-mono text-[11px] text-primary">{jobCode(current)}</span>}
-            <span className="truncate text-muted-foreground">{current.contractor || 'no gang'}</span>
+            <span className="truncate text-muted-foreground">{current.contractor || 'no contractor'}</span>
             {tagOf(current) && <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{tagOf(current)}</span>}
           </span>
         ) : (
@@ -105,9 +105,9 @@ export function WorkOrderPicker<T extends PickerOrder>({ orders, value, onChange
               aria-expanded
               aria-controls={listId}
               aria-activedescendant={shown[active] ? `${listId}-${active}` : undefined}
-              aria-label="Find a work order by number, job code, project or gang"
+              aria-label="Find a work order by number, job code, project or contractor"
               value={q}
-              placeholder="Work order no., job code, project or gang"
+              placeholder="Work order no., job code, project or contractor"
               onChange={(e) => {
                 setQ(e.target.value)
                 setActive(0)
@@ -149,7 +149,7 @@ export function WorkOrderPicker<T extends PickerOrder>({ orders, value, onChange
                     <span className="shrink-0 whitespace-nowrap font-mono text-[13px] font-semibold">{o.wo_number}</span>
                     {jobCode(o) && <span className="shrink-0 rounded bg-primary-soft px-1.5 py-0.5 font-mono text-[11px] text-primary">{jobCode(o)}</span>}
                     {tagOf(o) && <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{tagOf(o)}</span>}
-                    <span className="truncate text-[13px]">{o.contractor || 'no gang'}</span>
+                    <span className="truncate text-[13px]">{o.contractor || 'no contractor'}</span>
                   </span>
                   <span className="block truncate text-xs text-muted-foreground">
                     {o.project}

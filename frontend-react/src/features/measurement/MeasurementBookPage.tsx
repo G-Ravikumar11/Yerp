@@ -289,7 +289,7 @@ export default function MeasurementBookPage() {
       <PageHeader
         eyebrow="Subcontractors"
         title="Measurement Book"
-        description="What the gang has built, measured line by line. Only measured work can be billed, and nothing is billed twice."
+        description="What the contractor has built, measured line by line. Only measured work can be billed, and nothing is billed twice."
         actions={
           <>
             <Button variant="outline" asChild>

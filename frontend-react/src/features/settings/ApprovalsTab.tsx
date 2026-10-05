@@ -26,8 +26,8 @@ function Rules() {
         <Field label={`Sign-off limit (${cur})`} htmlFor="ar-below" hint="Costs below this need nobody to approve them."><NumField id="ar-below" value={below} onValue={setBelow} /></Field>
         <Field label={`Finance limit (${cur})`} htmlFor="ar-above" hint={q.data?.has_finance_approver ? `Above this, ${q.data.finance_approver} is added.` : 'Above this, someone who can approve bills is added - nobody holds that yet.'}><NumField id="ar-above" value={above} onValue={setAbove} /></Field>
       </div>
-      <label className="mt-4 flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={ownerSigns} onChange={(e) => setOwnerSigns(e.target.checked)} /><span>The owner signs every work order last<span className="block text-xs text-muted-foreground">Even when the managers have all approved it, it waits for the owner.</span></span></label>
-      <label className="mt-3 flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={ownerSignsBills} onChange={(e) => setOwnerSignsBills(e.target.checked)} /><span>The owner signs every RA bill last<span className="block text-xs text-muted-foreground">Even when the managers have all certified it, it waits for the owner. Bills already sent keep the route they were sent with.</span></span></label>
+      <label className="mt-4 flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={ownerSigns} onChange={(e) => setOwnerSigns(e.target.checked)} /><span>The Master signs every work order last<span className="block text-xs text-muted-foreground">Even when the managers have all approved it, it waits for the Master.</span></span></label>
+      <label className="mt-3 flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={ownerSignsBills} onChange={(e) => setOwnerSignsBills(e.target.checked)} /><span>The Master signs every RA bill last<span className="block text-xs text-muted-foreground">Even when the managers have all certified it, it waits for the Master. Bills already sent keep the route they were sent with.</span></span></label>
       <Button className="mt-4" loading={save.isPending} onClick={() => save.mutate()}>Save approval rules</Button>
     </Section>
   )
@@ -44,7 +44,7 @@ function Routes() {
               <p className="text-sm font-medium">{r.what}</p>
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {r.people.length ? r.people.map((p) => <Badge key={p.name} tone="neutral">{p.name}{p.department ? ` · ${p.department}` : ''}</Badge>) : <span className="text-xs text-warning">Nobody holds this right yet.</span>}
-                <Badge tone="info">{q.data.owner} (owner, last)</Badge>
+                <Badge tone="info">{q.data.owner} (Master, last)</Badge>
               </div>
             </li>
           ))}

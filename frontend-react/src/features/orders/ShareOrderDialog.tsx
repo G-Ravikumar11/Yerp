@@ -29,7 +29,7 @@ export function ShareOrderDialog({ open, onOpenChange, orderId, number }: { open
       open={open}
       onOpenChange={onOpenChange}
       title={`Who can see ${number}?`}
-      description="The owner, the one who made it and those who sign it always can. Tick anyone else who needs it - to measure it, bill it or read it."
+      description="The Master, the one who made it and those who sign it always can. Tick anyone else who needs it - to measure it, bill it or read it."
       footer={
         <>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -40,7 +40,7 @@ export function ShareOrderDialog({ open, onOpenChange, orderId, number }: { open
       {q.isPending ? (
         <Skeleton className="h-24 w-full" />
       ) : q.isError ? (
-        <p className="text-sm text-danger">Only the owner, or whoever made the order, can change this.</p>
+        <p className="text-sm text-danger">Only the Master, or whoever made the order, can change this.</p>
       ) : q.data!.people.length === 0 ? (
         <p className="text-sm text-muted-foreground">There is no other staff to share it with.</p>
       ) : (

@@ -54,7 +54,7 @@ export default function DiaryPage() {
       {(labour.data?.by_trade.length ?? 0) > 0 && (
         <section aria-label="Who has been on this site" className="mt-6 rounded-xl border border-border bg-card p-4 shadow-card">
           <h2 className="text-sm font-semibold">Who has been on this site</h2>
-          <p className="mb-3 text-[13px] text-muted-foreground">{labour.data?.summary.mandays} mandays over {labour.data?.summary.days_worked} working days - average gang {labour.data?.summary.average_gang} - {formatINR(labour.data?.summary.labour_cost)} in wages - {labour.data?.summary.rain_hours} hours of rain</p>
+          <p className="mb-3 text-[13px] text-muted-foreground">{labour.data?.summary.mandays} mandays over {labour.data?.summary.days_worked} working days - average labour strength {labour.data?.summary.average_gang} - {formatINR(labour.data?.summary.labour_cost)} in wages - {labour.data?.summary.rain_hours} hours of rain</p>
           {labour.data?.by_trade.map((t) => (
             <div key={t.trade} className="mb-2">
               <div className="flex justify-between text-[13px]"><span>{t.trade}</span><span className="text-muted-foreground">{t.mandays} md - {formatINR(t.cost)}</span></div>

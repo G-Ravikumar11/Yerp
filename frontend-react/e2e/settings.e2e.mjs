@@ -93,7 +93,7 @@ await clickText(page, 'main button', 'Save approval rules')
 await waitForToast(page, 'finance limit')
 check('a finance limit under the sign-off limit is refused', true)
 await toastsGone(page)
-check('who approves what is spelled out', (await main()).includes('Leave') && (await main()).includes('owner, last'))
+check('who approves what is spelled out', (await main()).includes('Leave') && (await main()).includes('Master, last'))
 const domainBefore = (await api(page, 'GET', '/api/hr/org-domain')).data.domain
 await fill(page, '#org-domain', `qa${stamp}.example.in`)
 await save('Save domain', 'domain saved')

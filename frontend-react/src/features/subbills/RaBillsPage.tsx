@@ -34,7 +34,7 @@ export default function RaBillsPage() {
     search: (b) => [b.number, b.contractor, b.vendor_code, b.project, b.status, b.net_payable, b.work_name].join(' '),
     status: (b) => b.status,
     date: (b) => b.bill_date,
-    facets: { project: { label: 'Projects', get: (b) => b.project }, gang: { label: 'Gangs', get: (b) => b.contractor }, order: { label: 'Work orders', get: (b) => b.order } },
+    facets: { project: { label: 'Projects', get: (b) => b.project }, gang: { label: 'Contractors', get: (b) => b.contractor }, order: { label: 'Work orders', get: (b) => b.order } },
   })
 
   const s = bills.data?.summary
@@ -49,7 +49,7 @@ export default function RaBillsPage() {
     { id: 'no', header: 'Bill', sort: (b) => b.number, cell: (b) => <span className="font-mono text-[13px] font-medium">{b.number}</span> },
     {
       id: 'who',
-      header: 'Gang',
+      header: 'Contractor',
       cell: (b) => (
         <div className="max-w-xs">
           <div className="truncate font-medium">
@@ -110,20 +110,20 @@ export default function RaBillsPage() {
           value={orderId || ''}
           onChange={(e) => setParams(e.target.value ? { order: e.target.value } : {})}
           placeholder="All work orders"
-          options={usable.map((o) => ({ value: o.id, label: `${o.wo_number} - ${o.contractor || 'no gang'} · ${o.project}` }))}
+          options={usable.map((o) => ({ value: o.id, label: `${o.wo_number} - ${o.contractor || 'no contractor'} · ${o.project}` }))}
         />
       </div>
 
       <StatGrid className="xl:grid-cols-6">
         {orderId > 0 && <Stat label="Billed up to date" value={compactINR(upToDate)} loading={bills.isPending} />}
-        <Stat label="Claimed by the gang" value={compactINR(s?.claimed)} loading={bills.isPending} />
+        <Stat label="Claimed by the contractor" value={compactINR(s?.claimed)} loading={bills.isPending} />
         <Stat label="Awaiting certification" value={s?.awaiting_certification ?? 0} tone={s?.awaiting_certification ? 'warning' : undefined} loading={bills.isPending} />
         <Stat label="Certified, unpaid" value={compactINR(s?.certified_unpaid)} loading={bills.isPending} />
         <Stat label="Retention we hold" value={compactINR(s?.retention_held)} loading={bills.isPending} />
         <Stat label="Paid out" value={compactINR(s?.paid)} loading={bills.isPending} />
       </StatGrid>
 
-      <FilterBar filters={filters} placeholder="Search by bill, gang, project..." />
+      <FilterBar filters={filters} placeholder="Search by bill, contractor, project..." />
       {isOwner && <BulkBar count={picked.size} noun="bill" shown={filters.filtered.length} onClear={() => setPicked(new Set())} onDelete={() => setClearing(true)} />}
       <DataTable
         label="RA bills"
@@ -133,7 +133,7 @@ export default function RaBillsPage() {
         rowKey={(b) => b.id}
         loading={bills.isPending}
         onRowClick={(b) => nav(`/subcontractors/ra-bills/${b.id}`)}
-        empty={filters.active ? 'Nothing matches those filters.' : "No bills yet. Measure the gang's work, then draw one up."}
+        empty={filters.active ? 'Nothing matches those filters.' : "No bills yet. Measure the contractor's work, then draw one up."}
       />
       <BulkDeleteDialog open={clearing} onOpenChange={setClearing} kind="bill" noun="bill" ids={[...picked].map(Number)} onFinished={() => setPicked(new Set())} detail="Each goes with its approvals and payments. What each measured becomes free to bill again. This cannot be undone." />
       <DeleteOrderDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)} kind="bill" id={deleting?.id ?? 0} number={deleting?.number ?? ''} onDeleted={() => setDeleting(null)} />

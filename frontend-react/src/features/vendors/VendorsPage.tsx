@@ -142,7 +142,7 @@ export default function VendorsPage() {
       <PageHeader
         eyebrow="Subcontractors"
         title="Vendor Register"
-        description="Every gang with its vendor code and its Sub Contractor Registration Form. No order is issued to a gang whose form is not signed off."
+        description="Every contractor with its vendor code and its Sub Contractor Registration Form. No order is issued to a contractor whose form is not signed off."
         actions={
           <>
             <Button variant="outline" asChild>

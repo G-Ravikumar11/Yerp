@@ -37,7 +37,7 @@ export function Team() {
   const roleOptions = [{ value: 'admin', label: 'Admin' }, { value: 'viewer', label: 'Viewer' }]
   const cols: TableColumn<TeamMember>[] = [
     { id: 'who', header: 'Person', sort: (m) => m.name || m.email, cell: (m) => <div><p className="font-medium">{m.name || m.email}</p>{m.name && <p className="text-xs text-muted-foreground">{m.email}</p>}</div> },
-    { id: 'role', header: 'Role', cell: (m) => m.is_account_owner ? <Badge tone="info">Owner</Badge> : owner ? <Select aria-label={`Role of ${m.email}`} className="h-8 w-28" options={roleOptions} value={m.role} onChange={(e) => change.mutate({ id: m.id, body: { role: e.target.value }, msg: 'Role changed' })} /> : <Badge>{m.role}</Badge> },
+    { id: 'role', header: 'Role', cell: (m) => m.is_account_owner ? <Badge tone="info">Master</Badge> : owner ? <Select aria-label={`Role of ${m.email}`} className="h-8 w-28" options={roleOptions} value={m.role} onChange={(e) => change.mutate({ id: m.id, body: { role: e.target.value }, msg: 'Role changed' })} /> : <Badge>{m.role}</Badge> },
     { id: 'st', header: 'Status', cell: (m) => !m.is_active ? <Badge tone="danger" dot>Suspended</Badge> : m.accepted ? <Badge tone="success" dot>Active</Badge> : <Badge tone="warning" dot>Invite not used</Badge> },
     { id: 'last', header: 'Last sign-in', hideBelow: 'md', cell: (m) => m.last_login ? formatDate(m.last_login.slice(0, 10)) : 'Never' },
     { id: 'act', header: '', align: 'right', cell: (m) => m.is_account_owner || !owner ? null : (
@@ -47,7 +47,7 @@ export function Team() {
       </div>) },
   ]
   return (
-    <Section title="Team" description="Colleagues who sign in to the owner's side with their own password." actions={owner && <Button size="sm" onClick={() => setInviting(true)}><UserPlus /> Add a colleague</Button>}>
+    <Section title="Team" description="Colleagues who sign in to the Master's side with their own password." actions={owner && <Button size="sm" onClick={() => setInviting(true)}><UserPlus /> Add a colleague</Button>}>
       {q.isPending ? <Skeleton className="h-24 w-full" /> : <DataTable label="Team" rows={q.data?.members ?? []} columns={cols} rowKey={(m) => m.id} empty="No one yet." />}
       {inviting && <InviteModal onClose={() => setInviting(false)} />}
       <ConfirmDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)} title={`Remove ${removing?.name || removing?.email}?`} description="They will not be able to sign in. Anything they did stays on record." confirmLabel="Remove" tone="danger" loading={remove.isPending} onConfirm={() => { if (removing) remove.mutate(removing.id) }} />

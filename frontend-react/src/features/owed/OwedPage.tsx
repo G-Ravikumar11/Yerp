@@ -58,7 +58,7 @@ export default function OwedPage() {
 
   const posCols = (gang: boolean): TableColumn<Position>[] => [
     { id: 'order', header: 'Order', cell: (p) => <div><span className="font-mono text-[13px] font-semibold">{p.order_number || '-'}</span><div className="text-xs text-muted-foreground">{p.project}</div></div> },
-    { id: 'party', header: gang ? 'Gang' : 'Client', cell: (p) => p.party || '-' },
+    { id: 'party', header: gang ? 'Contractor' : 'Client', cell: (p) => p.party || '-' },
     { id: 'held', header: 'Held', hideBelow: 'md', align: 'right', cell: (p) => <span className={money}>{formatINR(p.held)}</span> },
     { id: 'rel', header: 'Released', hideBelow: 'md', align: 'right', cell: (p) => <span className={money}>{formatINR(p.released)}</span> },
     { id: 'bal', header: 'Still held', align: 'right', cell: (p) => <span className={`${money} font-bold`}>{formatINR(p.balance)}</span> },
@@ -73,7 +73,7 @@ export default function OwedPage() {
 
   const relCols: TableColumn<Release>[] = [
     { id: 'no', header: 'Release', cell: (r) => <div><span className="font-mono text-[13px] font-semibold">{r.number}</span><div className="text-xs text-muted-foreground">{formatDate(r.release_on)} · {r.stage}</div></div> },
-    { id: 'party', header: 'Party', cell: (r) => <div>{r.party || '-'}<div className="text-xs text-muted-foreground">{r.side === 'client' ? 'client' : 'gang'} · {r.order_number}</div></div> },
+    { id: 'party', header: 'Party', cell: (r) => <div>{r.party || '-'}<div className="text-xs text-muted-foreground">{r.side === 'client' ? 'client' : 'contractor'} · {r.order_number}</div></div> },
     { id: 'amt', header: 'Amount', hideBelow: 'md', align: 'right', cell: (r) => <span className={money}>{formatINR(r.amount)}</span> },
     { id: 'net', header: 'With GST', align: 'right', cell: (r) => <div className={`${money} font-bold`}>{formatINR(r.net_amount)}<div className="text-xs font-normal text-muted-foreground">GST {formatINR(r.gst_amount)}</div></div> },
     { id: 'out', header: 'Outstanding', hideBelow: 'lg', align: 'right', cell: (r) => <span className={money}>{formatINR(r.outstanding)}</span> },
@@ -129,13 +129,13 @@ export default function OwedPage() {
             <Stat label="Client is holding" value={compactINR(t?.client_held)} loading={ret.isPending} />
             <Stat label="On finished jobs" value={compactINR(t?.client_on_finished)} loading={ret.isPending} />
             <Stat label="Released, still to receive" value={compactINR(t?.client_to_receive)} loading={ret.isPending} />
-            <Stat label="We hold from gangs" value={compactINR(t?.contractor_held)} loading={ret.isPending} />
-            <Stat label="Gangs due back" value={compactINR(t?.contractor_dlp_over)} tone={t?.contractor_dlp_over ? 'warning' : undefined} loading={ret.isPending} />
+            <Stat label="We hold from contractors" value={compactINR(t?.contractor_held)} loading={ret.isPending} />
+            <Stat label="Contractors due back" value={compactINR(t?.contractor_dlp_over)} tone={t?.contractor_dlp_over ? 'warning' : undefined} loading={ret.isPending} />
           </StatGrid>
           <h2 className="mb-3 text-lg font-semibold">Held by clients</h2>
           <DataTable label="Retention held by clients" rows={positions.filter((p) => p.side === 'client')} columns={posCols(false)} rowKey={(p) => `c-${p.order_id}`} loading={ret.isPending} empty="Nothing held back yet. Retention appears once a bill is certified." className="mb-8" />
-          <h2 className="mb-3 text-lg font-semibold">Held by us, from gangs</h2>
-          <DataTable label="Retention held from gangs" rows={positions.filter((p) => p.side === 'contractor')} columns={posCols(true)} rowKey={(p) => `g-${p.order_id}`} loading={ret.isPending} empty="No gang has retention with us." className="mb-8" />
+          <h2 className="mb-3 text-lg font-semibold">Held by us, from contractors</h2>
+          <DataTable label="Retention held from contractors" rows={positions.filter((p) => p.side === 'contractor')} columns={posCols(true)} rowKey={(p) => `g-${p.order_id}`} loading={ret.isPending} empty="No contractor has retention with us." className="mb-8" />
           <h2 className="mb-3 text-lg font-semibold">Releases</h2>
           <DataTable label="Retention releases" rows={ret.data?.releases ?? []} columns={relCols} rowKey={(r) => r.id} loading={ret.isPending} empty="No retention released yet." />
         </>

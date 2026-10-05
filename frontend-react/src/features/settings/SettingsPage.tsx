@@ -22,7 +22,7 @@ export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>('company')
   return (
     <>
-      <PageHeader eyebrow="Owner" title="Settings" description="The company on paper, who signs what, who can sign in, and where alerts go." />
+      <PageHeader eyebrow="Master" title="Settings" description="The company on paper, who signs what, who can sign in, and where alerts go." />
       <div className="mb-6"><Tabs label="Settings sections" value={tab} onChange={setTab} items={TABS} /></div>
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>
         {tab === 'company' && <CompanyTab />}

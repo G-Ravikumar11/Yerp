@@ -84,7 +84,7 @@ export function NextSteps({ order, canExecute, onExecute }: { order: Order; canE
         </p>
         <ol className="divide-y divide-border" aria-label="Steps after approval">
           <Step done title="Approved" action={<Badge tone="success">{order.approved_at ? 'Signed' : 'Live'}</Badge>}>
-            {formatINR(order.net_order_value)} to {order.contractor || 'the gang'}.
+            {formatINR(order.net_order_value)} to {order.contractor || 'the contractor'}.
           </Step>
           <Step
             done={order.status === 'EXECUTED'}
@@ -97,7 +97,7 @@ export function NextSteps({ order, canExecute, onExecute }: { order: Order; canE
               ) : undefined
             }
           >
-            {order.status === 'EXECUTED' ? 'The gang has signed and returned it.' : 'When the gang returns the signed copy, mark it executed. Billing and measuring do not wait for it.'}
+            {order.status === 'EXECUTED' ? 'The contractor has signed and returned it.' : 'When the contractor returns the signed copy, mark it executed. Billing and measuring do not wait for it.'}
           </Step>
           <Step
             done={measured}

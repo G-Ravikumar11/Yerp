@@ -775,7 +775,7 @@ def client_register(body: ClientRegister, request: Request, db: Session = Depend
     if not ALLOW_SELF_REGISTRATION and db.query(models.DBClient).count():
         raise HTTPException(
             status_code=403,
-            detail="This system is already set up. Ask the owner to add you as "
+            detail="This system is already set up. Ask the Master to add you as "
                    "an employee - staff sign in with the account they are given, "
                    "not by registering.")
 
@@ -5475,7 +5475,7 @@ def get_approval_chain_history(entity_type, entity_id, db):
             "notes": s.notes or "",
             "decided_at": s.decided_at or "",
             "approver_name": f"{approver.first_name} {approver.last_name}".strip() if approver
-                             else ("Owner" if s.approver_id is None else "Unknown"),
+                             else ("Master" if s.approver_id is None else "Unknown"),
             "approver_level": s.level,
             "approver_role": approver.role if approver else "",
             "submitter_name": f"{submitter.first_name} {submitter.last_name}".strip() if submitter else "",
@@ -5635,7 +5635,7 @@ def owner_confirms_own(db, client_id, doc, entity_type, request, actor=""):
     doc.current_approval_step = 1
     set_approval_display_status(doc, entity_type, "pending")
     log_audit(db, client_id, f"{entity_type}_submitted_for_approval", entity_type, doc.id,
-              getattr(doc, "number", str(doc.id)), "Raised by the owner - waits for the owner's own sign-off",
+              getattr(doc, "number", str(doc.id)), "Raised by the Master - waits for the Master's own sign-off",
               request, user_name=actor)
     db.commit()
     # No bell for it: the owner has just sent it, and it is in their Approvals.
@@ -5685,7 +5685,7 @@ def start_approval(db, client_id, doc, entity_type, submitted_by, request, actor
         # above - not as a shortcut past the people who are.
         if raised_by_owner(db, client_id, submitted_by):
             return finish_approval(db, client_id, doc, entity_type, submitted_by, request, actor,
-                                   "Approved: raised by the owner.")
+                                   "Approved: raised by the Master.")
         chain = hierarchy_chain(db, client_id, submitted_by, APPROVE_RIGHT.get(entity_type, "bills.approve"),
                                 getattr(doc, "job_id", None), owner_signs=False)
     if not chain:
@@ -5697,7 +5697,7 @@ def start_approval(db, client_id, doc, entity_type, submitted_by, request, actor
         if raised_by_owner(db, client_id, submitted_by):
             return finish_approval(
                 db, client_id, doc, entity_type, submitted_by, request, actor,
-                "Approved: raised by the owner.")
+                "Approved: raised by the Master.")
         up = ladder_approver(db, client_id, submitted_by, entity_type,
                              getattr(doc, "job_id", None))
         chain = [chain_rung(up)] if up else []
@@ -5945,7 +5945,7 @@ def get_pending_approvals(request: Request, db: Session = Depends(get_db)):
             "total_steps": total_steps,
             "approved_steps": approved_steps,
             "approver_name": f"{approver.first_name} {approver.last_name}".strip() if approver
-                             else ("Owner" if s.approver_id is None else "Unknown"),
+                             else ("Master" if s.approver_id is None else "Unknown"),
             "approver_level": s.level,
             "submitter_name": f"{submitter.first_name} {submitter.last_name}".strip() if submitter else "Unknown",
             "created_at": s.created_at,
@@ -7961,7 +7961,7 @@ def current_role(request: Request, db: Session) -> str:
 def require_owner(request: Request, db: Session):
     if current_role(request, db) != "owner":
         raise HTTPException(status_code=403,
-                            detail="Only the account owner can do that")
+                            detail="Only the account Master can do that")
 
 
 def member_to_dict(m, is_owner=False):
@@ -8025,9 +8025,9 @@ def invite_member(body: TeamInvite, background_tasks: BackgroundTasks,
     role = (body.role or "admin").strip().lower()
     if role not in ("admin", "viewer"):
         raise HTTPException(status_code=400,
-                            detail="Role must be admin or viewer. There is one owner.")
+                            detail="Role must be admin or viewer. There is one Master.")
     if email == (client.email or "").lower():
-        raise HTTPException(status_code=400, detail="That is the account owner's address")
+        raise HTTPException(status_code=400, detail="That is the account Master's address")
     if db.query(models.DBTeamMember).filter(
         models.DBTeamMember.client_id == client.id,
         sqlfunc.lower(models.DBTeamMember.email) == email,
@@ -9850,7 +9850,7 @@ PERMISSION_ROLES = [
         "code": "head_projects", "label": "Head projects", "rank": 4,
         "description": "Over every project: a project manager's rights on all of "
                        "them plus purchase and stores, and the last approval before "
-                       "the owner.",
+                       "the Master.",
         "permissions": _PROJECT_MANAGER + ["purchase.manage", "stores.manage"],
     },
     # The first presets, before the list followed the departments. Still
@@ -9884,7 +9884,7 @@ PERMISSION_ROLES = [
                         "customers.manage", "subcontracts.approve"] + _SPLIT_OUT,
     },
     {
-        "code": "owner", "label": "Owner", "rank": 5,
+        "code": "owner", "label": "Master", "rank": 5,
         "description": "Full access to everything in the portal.",
         "permissions": sorted(PERMISSION_KEYS),
     },
@@ -18373,7 +18373,7 @@ def wo_access_get(order_id: int, request: Request, db: Session = Depends(get_db)
     order = wo_or_404(db, client.id, order_id)
     viewer = STAFF_VIEWER.get()
     if viewer and order.submitted_by != viewer:
-        raise HTTPException(403, "Only the owner, or whoever made the order, decides who sees it.")
+        raise HTTPException(403, "Only the Master, or whoever made the order, decides who sees it.")
     shared = {r[0] for r in db.query(models.DBOrderAccess.employee_id).filter(models.DBOrderAccess.order_id == order.id).all()}
     route = {r.approver_id for r in wo_chain_rows(db, order.id) if r.approver_id}
     people = []
@@ -18391,7 +18391,7 @@ def wo_access_put(order_id: int, body: dict, request: Request, db: Session = Dep
     order = wo_or_404(db, client.id, order_id)
     viewer = STAFF_VIEWER.get()
     if viewer and order.submitted_by != viewer:
-        raise HTTPException(403, "Only the owner, or whoever made the order, decides who sees it.")
+        raise HTTPException(403, "Only the Master, or whoever made the order, decides who sees it.")
     want = {int(i) for i in (body.get("employee_ids") or []) if str(i).isdigit() or isinstance(i, int)}
     valid = {r[0] for r in db.query(models.DBEmployee.id).filter(models.DBEmployee.client_id == client.id, models.DBEmployee.id.in_(list(want) or [0])).all()}
     db.query(models.DBOrderAccess).filter(models.DBOrderAccess.order_id == order.id).delete(synchronize_session=False)
@@ -18505,7 +18505,7 @@ def wo_pending_with(db, client_id, raised_by=None):
         # owner working alone that nobody could sign their own order - with
         # the Approve button right there on the same screen.
         owner = db.query(models.DBClient).filter(models.DBClient.id == client_id).first()
-        names.append("%s (owner)" % ((owner.contact_name or owner.email or "the account holder")
+        names.append("%s (Master)" % ((owner.contact_name or owner.email or "the account holder")
                                      if owner else "the account holder"))
     return names
 
@@ -18815,7 +18815,7 @@ def wo_document_payload(db, client, order):
     doc["signatures"] = [
         {"role": "Prepared by", "name": prepared_by, "for": "Billing Engineer"},
         {"role": "Approved by", "name": approved_by, "for": "Project Head"},
-        {"role": "For and on behalf of", "name": doc["company"], "for": "The Owner"},
+        {"role": "For and on behalf of", "name": doc["company"], "for": "The Master"},
         {"role": "Accepted by", "name": doc["contractor"], "for": "The Contractor"},
     ]
     return doc
@@ -20584,13 +20584,13 @@ def wo_self_approve(order_id: int, body: WoActionIn, request: Request,
     """
     client = get_client_user(request, db)
     order = wo_or_404(db, client.id, order_id)
-    actor_name = client.contact_name or client.company_name or "Owner"
+    actor_name = client.contact_name or client.company_name or "Master"
     if order.status == "DRAFT":
-        wo_apply(db, client, order, "SUBMIT", None, actor_name, "Raised by the owner", quiet=True)
+        wo_apply(db, client, order, "SUBMIT", None, actor_name, "Raised by the Master", quiet=True)
     wo_apply(db, client, order, "APPROVE", None, actor_name,
-             (body.comments or "").strip() or "Approved by the owner", override=bool(body.override), quiet=True)
+             (body.comments or "").strip() or "Approved by the Master", override=bool(body.override), quiet=True)
     log_audit(db, client.id, "subcontract_self_approved", "subcontract_order", order.id,
-              order.wo_number, "approved by the owner as issued", request)
+              order.wo_number, "approved by the Master as issued", request)
     db.commit()
     db.refresh(order)
     return {"order": wo_dict(db, order, detail=True),
@@ -20931,7 +20931,7 @@ def sub_bill_delete(bill_id: int, request: Request, db: Session = Depends(get_db
     drop_alerts_about(db, "sub_bill", [bill.id])
     cascade_delete_referrers(db, "sub_bills", [bill.id])
     drop(db.query(models.DBSubBill).filter(models.DBSubBill.id == bill.id))
-    log_audit(db, client.id, "sub_bill_deleted", "sub_bill", bill_id, number, "Deleted by the owner", request)
+    log_audit(db, client.id, "sub_bill_deleted", "sub_bill", bill_id, number, "Deleted by the Master", request)
     db.commit()
     return {"ok": True, "message": "%s deleted. What it measured is free to be billed again." % number}
 
@@ -26716,7 +26716,7 @@ def delete_sub_measurement(entry_id: int, request: Request, db: Session = Depend
         if not (bill and (bill.status or "") == "DRAFT" and _is_owner(request, db)):
             raise HTTPException(409, "This measurement is on %s, which has been %s. %s" % (
                 bill.number if bill else "a bill", ((bill.status if bill else "") or "sent").lower(),
-                "Delete that bill first." if _is_owner(request, db) else "Ask the owner, or record a correcting entry instead."))
+                "Delete that bill first." if _is_owner(request, db) else "Ask the Master, or record a correcting entry instead."))
     db.query(models.DBMeasurementDimension).filter(
         models.DBMeasurementDimension.sub_measurement_id == entry.id).delete()
     drop_files_of(db, "measurement", [entry.id])
@@ -27376,11 +27376,11 @@ def sub_bill_decide(db, client, bill, actor_id, actor_name, approve, comments=""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     if not owner and approve and bill.submitted_by and bill.submitted_by == actor_id:
         raise HTTPException(403, "You prepared this bill, so somebody else has to certify it. It is waiting with %s."
-                                 % (sub_bill_step_name(db, step) or "the owner"))
+                                 % (sub_bill_step_name(db, step) or "the Master"))
     if not owner and (step is None or step.approver_id != actor_id):
         later = any(r.approver_id == actor_id and r.status == "pending" for r in sub_bill_chain_rows(db, bill.id))
         raise HTTPException(403, "%s is waiting with %s.%s" % (
-            bill.number, sub_bill_step_name(db, step) or "the owner",
+            bill.number, sub_bill_step_name(db, step) or "the Master",
             " It comes to you after that." if later else " It is not on your list to certify."))
     if not approve:
         if step is not None:
@@ -27392,7 +27392,7 @@ def sub_bill_decide(db, client, bill, actor_id, actor_name, approve, comments=""
                 if row.approver_id is None:
                     row.status, row.notes, row.decided_at = "approved", (comments or "").strip(), now
                 else:
-                    row.status, row.notes, row.decided_at = "skipped", "Signed over by the owner", now
+                    row.status, row.notes, row.decided_at = "skipped", "Signed over by the Master", now
         if not any(r.approver_id is None and r.status == "approved" for r in sub_bill_chain_rows(db, bill.id)):
             # The owner signing a bill whose route never reached them: their
             # signature goes on it as the last word all the same.
@@ -27561,11 +27561,11 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
     if move in ("SUBMIT", "CERTIFY"):
         con = db.query(models.DBContractor).filter(models.DBContractor.id == bill.contractor_id).first() \
             if bill.contractor_id else None
-        gang = (con.company_name if con else "") or "the gang"
+        gang = (con.company_name if con else "") or "the contractor"
         if move == "SUBMIT":
             step = sub_bill_current_step(db, bill)
             notify(db, client.id, "sub_bill_submitted", "%s from %s is waiting to be certified" % (bill.number, gang),
-                   "%s of work billed - with %s." % (inr(bill.this_bill), sub_bill_step_name(db, step) or "the owner"),
+                   "%s of work billed - with %s." % (inr(bill.this_bill), sub_bill_step_name(db, step) or "the Master"),
                    view="subbills-view", ref_type="sub_bill", ref_id=bill.id, severity="action")
             if step is not None and step.approver_id:
                 notify_employee(db, client.id, step.approver_id, "Subcontractor bill awaiting your certification",
@@ -28585,7 +28585,7 @@ def _doc_for(db, client_id, doc_type, doc_id):
     if doc_type == "sub_bill":
         b = sub_bill_or_404(db, client_id, doc_id)
         if b.status not in ("CERTIFIED", "PAID"):
-            raise HTTPException(409, "%s is %s. A gang is paid against a certified bill."
+            raise HTTPException(409, "%s is %s. A contractor is paid against a certified bill."
                                      % (b.number, (b.status or "").lower()))
         con = db.query(models.DBContractor).filter(
             models.DBContractor.id == b.contractor_id).first() if b.contractor_id else None
@@ -31120,7 +31120,7 @@ def attention_elsewhere(db, client_id, jobs, today):
             "kind": "plant", "severity": "action", "value": 0.0, "count": len(due),
             "view": "equipment-view",
             "title": "Plant past its service or papers",
-            "detail": "%s%s. A machine that breaks on site stops the gang with it." % (
+            "detail": "%s%s. A machine that breaks on site stops the contractor with it." % (
                 ", ".join(a.name or a.code for a in due[:3]),
                 " and %d more" % (len(due) - 3) if len(due) > 3 else ""),
         })
@@ -32427,8 +32427,8 @@ def drawing_status(did: int, body: DrawingStatusIn, request: Request, db: Sessio
 NOTIFY_KINDS = {
     "ra_bill_submitted": "An RA bill is waiting to be certified",
     "ra_bill_certified": "An RA bill has been certified",
-    "sub_bill_submitted": "A gang's bill is waiting to be certified",
-    "sub_bill_certified": "A gang's bill has been certified",
+    "sub_bill_submitted": "A contractor's bill is waiting to be certified",
+    "sub_bill_certified": "A contractor's bill has been certified",
     "subcontract_submitted": "A subcontract order is waiting for approval",
     "variation_submitted": "A variation is waiting for approval",
     "variation_approved": "A variation has been agreed",
@@ -32436,7 +32436,7 @@ NOTIFY_KINDS = {
     "money_out": "Money paid out",
     "qc_failed": "A quality check failed or an NCR was raised",
     "safety_incident": "A safety incident or near miss was reported",
-    "retention_released": "Retention was released - to claim, or to pay a gang",
+    "retention_released": "Retention was released - to claim, or to pay a contractor",
     "portal_invoice": "A supplier sent an invoice through the partner portal",
     "chat_mention": "Somebody was named in a project chat",
     "daily_digest": "The morning list of what needs looking at",
@@ -33714,7 +33714,7 @@ def create_release(body: RetentionReleaseIn, request: Request, db: Session = Dep
     ours, or against the gang's for their side."""
     side = (body.side or "").strip().lower()
     if side not in ("client", "contractor"):
-        raise HTTPException(400, "Is this retention the client holds, or retention we hold from a gang?")
+        raise HTTPException(400, "Is this retention the client holds, or retention we hold from a contractor?")
     # Owing a gang money is a decision, as certifying their bill is.
     client, actor_id, actor_name = wo_actor(
         request, db, ("billing.manage", "accounts.manage") if side == "client" else "subcontracts.approve")
@@ -33768,7 +33768,7 @@ def create_release(body: RetentionReleaseIn, request: Request, db: Session = Dep
                "%s released at %s on %s, %s with GST." % (inr(amount), stage.lower(), pos["project"], inr(r.net_amount)),
                view="money-view", ref_type="retention_release", ref_id=r.id, severity="money")
     else:
-        notify(db, client.id, "retention_released", "%s - retention due to %s" % (r.number, pos["party"] or "the gang"),
+        notify(db, client.id, "retention_released", "%s - retention due to %s" % (r.number, pos["party"] or "the contractor"),
                "%s released at %s on %s, %s with GST." % (inr(amount), stage.lower(), pos["order_number"], inr(r.net_amount)),
                view="money-view", ref_type="retention_release", ref_id=r.id, severity="action")
     db.refresh(r)
@@ -33898,7 +33898,7 @@ def release_attention(db, client_id, today):
         return []
     return [{"kind": "retention_gangs", "severity": "action",
              "value": money(sum(p["balance"] for p in over)), "count": len(over),
-             "view": "money-view", "title": "Gangs' retention due back",
+             "view": "money-view", "title": "Contractors' retention due back",
              "detail": "%s held on %d order%s whose defects period has run out."
                        % (inr(sum(p["balance"] for p in over)), len(over), "" if len(over) == 1 else "s")}]
 
@@ -35064,7 +35064,7 @@ def einvoice_release_payload(db, client, r):
     line, the retention given back, at the rate the release was taxed at."""
     problems = []
     if r.side != "client":
-        problems.append("a gang's release is their invoice to us, not ours")
+        problems.append("a contractor's release is their invoice to us, not ours")
     if r.status not in ("CERTIFIED", "PAID"):
         problems.append("the release is %s" % (r.status or "").lower())
     job = db.query(models.DBJob).filter(models.DBJob.id == r.job_id).first()
@@ -35404,13 +35404,13 @@ def chat_actor(request, db):
         m = db.query(models.DBTeamMember).filter(models.DBTeamMember.id == member_id).first()
         if m:
             return client, "member:%d" % m.id, (m.name or m.email or "Office")
-    return client, "owner:%d" % client.id, (client.contact_name or client.company_name or "Owner")
+    return client, "owner:%d" % client.id, (client.contact_name or client.company_name or "Master")
 
 
 def chat_people(db, client_id):
     """Everybody who can be named in a thread."""
     c = db.query(models.DBClient).filter(models.DBClient.id == client_id).first()
-    out = [{"key": "owner:%d" % c.id, "name": c.contact_name or c.company_name or "Owner", "role": "Owner"}] if c else []
+    out = [{"key": "owner:%d" % c.id, "name": c.contact_name or c.company_name or "Master", "role": "Master"}] if c else []
     out += [{"key": "member:%d" % m.id, "name": m.name or m.email, "role": "Office"}
             for m in db.query(models.DBTeamMember).filter(models.DBTeamMember.client_id == client_id,
                                                           models.DBTeamMember.is_active.is_(True)).all()]
@@ -37766,7 +37766,7 @@ def ladder_approver(db, client_id, submitted_by, entity_type, job_id=None):
 def owner_label(db, client_id):
     client = by_id(db, models.DBClient, client_id)
     name = ((client.contact_name or "").strip() or (client.email or "").strip()) if client else ""
-    return "%s (owner)" % name if name else "the owner"
+    return "%s (Master)" % name if name else "the Master"
 
 
 def chain_rung(emp, db=None, client_id=None):
@@ -37794,7 +37794,7 @@ def owner_signs_own(db, client_id, doc, entity_type, request, actor):
     if doc.approval_status == "approved":
         raise HTTPException(status_code=409, detail="Already approved")
     return finish_approval(db, client_id, doc, entity_type, None, request, actor,
-                           "Approved: raised by the owner.")
+                           "Approved: raised by the Master.")
 
 
 # --- Reading the inbox ----------------------------------------------------------
@@ -38089,7 +38089,7 @@ def approvals_decide(body: ApprovalDecisionIn, request: Request, db: Session = D
                 them = db.query(models.DBEmployee).filter(models.DBEmployee.id == leave.employee_id).first()
                 if not them or them.reports_to != emp.id:
                     raise HTTPException(403, "Only their own manager or HR decides this leave.")
-        who = employee_name(emp) if emp else (client.contact_name or "Owner")
+        who = employee_name(emp) if emp else (client.contact_name or "Master")
         return decide_leave(db, client.id, leave, decision, who, request)
     raise HTTPException(400, "Unknown kind of approval")
 
@@ -38785,11 +38785,11 @@ def wo_decide_step(db, client, order, actor_id, actor_name, approve, comments=""
     owner = actor_id is None
     if not owner and approve and order.submitted_by == actor_id:
         raise HTTPException(403, "You raised this order, so somebody else has to approve it. "
-                                 "It is waiting with " + (wo_step_name(db, step) or "the owner") + ".")
+                                 "It is waiting with " + (wo_step_name(db, step) or "the Master") + ".")
     if not owner and (step is None or step.approver_id != actor_id):
         later = any(r.approver_id == actor_id and r.status == "pending" for r in wo_chain_rows(db, order.id))
         raise HTTPException(403, "%s is waiting with %s.%s" % (
-            order.wo_number, wo_step_name(db, step) or "the owner",
+            order.wo_number, wo_step_name(db, step) or "the Master",
             " It comes to you after that." if later else " It is not on your list to approve."))
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     if not approve:
@@ -38807,7 +38807,7 @@ def wo_decide_step(db, client, order, actor_id, actor_name, approve, comments=""
                 if row.approver_id is None:
                     row.status, row.notes, row.decided_at = "approved", (comments or "").strip(), now
                 else:
-                    row.status, row.notes, row.decided_at = "skipped", "Signed over by the owner", now
+                    row.status, row.notes, row.decided_at = "skipped", "Signed over by the Master", now
     elif step is not None:
         step.status, step.notes, step.decided_at = "approved", (comments or "").strip(), now
     db.flush()

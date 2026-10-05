@@ -9,7 +9,7 @@ import { formatINR } from '@/lib/utils'
 export function ReleaseModal({ position, stages, onClose }: { position: Position | null; stages: string[]; onClose: () => void }) {
   const client = position?.side === 'client'
   return (
-    <Modal open={!!position} onOpenChange={(o) => !o && onClose()} title={position ? (client ? `Claim retention back from ${position.party || 'the client'}` : `Release retention to ${position.party || 'the gang'}`) : 'Release'}>
+    <Modal open={!!position} onOpenChange={(o) => !o && onClose()} title={position ? (client ? `Claim retention back from ${position.party || 'the client'}` : `Release retention to ${position.party || 'the contractor'}`) : 'Release'}>
       {position && <Form key={`${position.side}-${position.order_id}`} p={position} stages={stages} onClose={onClose} />}
     </Modal>
   )
