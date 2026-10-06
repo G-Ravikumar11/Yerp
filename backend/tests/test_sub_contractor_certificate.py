@@ -263,7 +263,9 @@ def mb_workbook():
     for r, row in enumerate(rows, 6):
         for c, v in enumerate(row, 1):
             if v is not None:
-                ws.cell(row=r, column=c, value=v)
+                cell = ws.cell(row=r, column=c, value=v)
+                if isinstance(v, str) and v.startswith("="):
+                    cell.data_type = "f"        # a real formula, as a person's own workbook has - the app never writes one
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -626,7 +628,9 @@ def held_back_workbook():
     for r, row in enumerate(rows, 6):
         for c, v in enumerate(row, 1):
             if v is not None:
-                ws.cell(row=r, column=c, value=v)
+                cell = ws.cell(row=r, column=c, value=v)
+                if isinstance(v, str) and v.startswith("="):
+                    cell.data_type = "f"        # a real formula, as a person's own workbook has - the app never writes one
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

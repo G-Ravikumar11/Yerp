@@ -22,7 +22,7 @@ interface OfflineState {
   syncing: boolean
   queue: QueuedRequest[]
   setOnline: (online: boolean) => void
-  enqueue: (req: Pick<QueuedRequest, 'method' | 'url' | 'body' | 'label'>) => QueuedRequest
+  enqueue: (req: Pick<QueuedRequest, 'method' | 'url' | 'body' | 'label'> & { id?: string }) => QueuedRequest
   discard: (id: string) => void
   retry: (id: string) => void
   flush: () => Promise<void>
@@ -48,7 +48,7 @@ export const useOffline = create<OfflineState>()(
       },
 
       enqueue: (req) => {
-        const item: QueuedRequest = { ...req, id: uid(), createdAt: Date.now(), status: 'waiting' }
+        const item: QueuedRequest = { ...req, id: req.id ?? uid(), createdAt: Date.now(), status: 'waiting' }
         set((s) => ({ queue: [...s.queue, item] }))
         return item
       },
@@ -73,7 +73,8 @@ export const useOffline = create<OfflineState>()(
         try {
           for (const item of get().queue.filter((q) => q.status === 'waiting')) {
             try {
-              await api(item.url, { method: item.method, body: item.body })
+              // The same key it was first sent with: if that first try did reach the server, this one is answered, not made again.
+              await api(item.url, { method: item.method, body: item.body, headers: { 'Idempotency-Key': item.id } })
               set((s) => ({ queue: s.queue.filter((q) => q.id !== item.id) }))
               sent++
             } catch (e) {
@@ -138,16 +139,19 @@ export function watchConnection() {
  */
 export async function sendOrQueue<T>(req: Pick<QueuedRequest, 'method' | 'url' | 'body' | 'label'>): Promise<{ queued: true } | { queued: false; result: T }> {
   const state = useOffline.getState()
+  // One key for this change however many times it is sent: a reply lost on a weak signal looks like a request that
+  // never arrived, and sending it again later must not make it twice.
+  const id = uid()
   if (!state.online) {
-    state.enqueue(req)
+    state.enqueue({ ...req, id })
     return { queued: true }
   }
   try {
-    return { queued: false, result: await api<T>(req.url, { method: req.method, body: req.body }) }
+    return { queued: false, result: await api<T>(req.url, { method: req.method, body: req.body, headers: { 'Idempotency-Key': id } }) }
   } catch (e) {
     if (e instanceof ApiError) throw e
     useOffline.getState().setOnline(false)
-    useOffline.getState().enqueue(req)
+    useOffline.getState().enqueue({ ...req, id })
     return { queued: true }
   }
 }

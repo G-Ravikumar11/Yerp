@@ -69,6 +69,8 @@ def test_formulas_that_were_never_calculated_are_worked_out(tenant):
     ws["F8"] = "=6+6.5"
     ws["G8"] = "=4*2"
     ws["I10"] = "=SUM(I8:I9)"
+    for ref in ("F8", "G8", "I10"):
+        ws[ref].data_type = "f"             # real formulas, as a person's own workbook has - the app never writes one
     res = commit(tenant, order, dump(wb), **match_first_item(tenant, order))
     assert res.status_code == 200, res.text
     assert quantity_in_book(tenant, order) == 114.4

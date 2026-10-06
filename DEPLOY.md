@@ -46,7 +46,7 @@ itself, so the app stops instead.
 | `APP_BASE_URL` | Password-reset and invoice links are built from it. Set it to the public URL. |
 | `COOKIE_SECURE=true` | Sessions over HTTPS only. |
 | `CORS_ORIGINS` | The public URL. |
-| `ADMIN_PASSWORD`, `SUPERADMIN_EMAILS`, `SUPERADMIN_PASSWORD` | `ADMIN_PASSWORD` guards `/admin`, which has direct table access. It defaults to `admin`. |
+| `ADMIN_PASSWORD`, `SUPERADMIN_EMAILS`, `SUPERADMIN_PASSWORD` | `ADMIN_PASSWORD` guards `/admin`, which has direct table access; unset or `admin` keeps the panel shut. `SUPERADMIN_EMAILS` names who may enter the platform console (nobody is let in by default); `SUPERADMIN_PASSWORD` sets their password when it is first given or changed - a password changed in the console afterwards is kept. |
 
 Everything else in `backend/.env.example` is optional — Google sign-in, Gmail
 sending, Groq for the AI features, and the payment gateways. Each one is

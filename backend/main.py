@@ -38,6 +38,18 @@ from sqlalchemy.orm import Session, defer
 from sqlalchemy.exc import IntegrityError
 import database
 from database import engine, get_db, SessionLocal, ensure_columns, migrate_sqlite
+import openpyxl.cell.cell as _xl_cell
+
+_bind_cell_value = _xl_cell.Cell._bind_value
+
+
+def _bind_text_not_formula(self, value):
+    _bind_cell_value(self, value)
+    if self.data_type == "f":
+        self.data_type = "s"
+
+
+_xl_cell.Cell._bind_value = _bind_text_not_formula
 import httpx
 import models
 
@@ -54,27 +66,25 @@ os.environ.setdefault("TZ", "IST-5:30")
 if hasattr(time, "tzset"):
     time.tzset()
 
+def default_from_email():
+    """The address mail is said to come from: the company's own, never a stranger's."""
+    return (os.getenv("FROM_EMAIL", "") or "").strip() or "no-reply@localhost"
+
+
 def hash_password(password: str) -> str:
-    salt = hashlib.sha256(os.urandom(32)).hexdigest().encode()
-    pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100000)
-    return salt.hex() + ':' + pwd_hash.hex()
+    return models.hash_password(password)
+
 
 def verify_password(password: str, stored: str) -> bool:
-    """Constant-time check that tolerates legacy/absent hashes instead of
-    raising. An unsplittable value used to blow up with a ValueError and
-    surface as a 500 rather than a failed login."""
-    if not stored or not password:
-        return False
-    if ':' not in stored:
-        # Pre-PBKDF2 records stored a bare sha256 digest.
-        return secrets.compare_digest(hashlib.sha256(password.encode()).hexdigest(), stored)
-    try:
-        salt_hex, pwd_hash_hex = stored.split(':', 1)
-        salt = bytes.fromhex(salt_hex)
-    except (ValueError, TypeError):
-        return False
-    pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100000)
-    return secrets.compare_digest(pwd_hash.hex(), pwd_hash_hex)
+    return models.verify_password(password, stored)
+
+
+def upgrade_password_hash(row, column, password):
+    """A password that has just been proved right is stored again in today's form, if it was stored in an older,
+    weaker one (the caller commits)."""
+    if models.needs_rehash(getattr(row, column, "")):
+        setattr(row, column, models.hash_password(password))
+
 
 def log_login(db, client_id, email, user_type="client", login_type="password", request=None, status="success"):
     ip = ""
@@ -625,11 +635,6 @@ class SendInvoiceEmail(BaseModel):
     logo_data: Optional[str] = ""
     pdf_data: Optional[str] = ""
 
-class TestEmail(BaseModel):
-    to_email: str
-    subject: str
-    body: str
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("CORS_ORIGINS", "").split(",") if os.getenv("CORS_ORIGINS") else [],
@@ -641,6 +646,53 @@ app.add_middleware(
 # page that opens and one that is waited for, on a site's mobile signal.
 from starlette.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
+
+# The largest request body each kind of address accepts. A signed-in upload may be a 40 MB photo; a login form
+# is a few hundred bytes, and the public application form takes its attachments (6 x 5 MB, as text) and no more.
+BODY_LIMIT_DEFAULT = 64 * 1024 * 1024
+BODY_LIMIT_FORMS = 64 * 1024
+BODY_LIMIT_APPLICATION = 16 * 1024 * 1024
+SMALL_FORM_PATHS = ("/api/client/login", "/api/client/register", "/api/client/forgot-password",
+                    "/api/client/reset-password", "/api/employee/auth/login", "/api/employee/forgot-password",
+                    "/api/portal/login", "/api/portal/accept-invite", "/api/superadmin/login")
+
+
+def body_limit_for(path):
+    if path in SMALL_FORM_PATHS:
+        return BODY_LIMIT_FORMS
+    if path.startswith("/api/recruitment/form/"):
+        return BODY_LIMIT_APPLICATION
+    return BODY_LIMIT_DEFAULT
+
+
+class BodyLimitMiddleware:
+    """Refuses a request body over its limit - from its declared length, or as it streams in."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope["method"] in ("GET", "HEAD", "OPTIONS"):
+            return await self.app(scope, receive, send)
+        limit = body_limit_for(scope["path"])
+        declared = dict(scope["headers"]).get(b"content-length", b"")
+        if declared.isdigit() and int(declared) > limit:
+            await JSONResponse(status_code=413, content={"detail": "That is too large to send."})(scope, receive, send)
+            return
+        seen = [0]
+
+        async def counted():
+            message = await receive()
+            if message["type"] == "http.request":
+                seen[0] += len(message.get("body", b""))
+                if seen[0] > limit:
+                    raise HTTPException(status_code=413, detail="That is too large to send.")
+            return message
+
+        await self.app(scope, counted, send)
+
+
+app.add_middleware(BodyLimitMiddleware)
 
 @app.exception_handler(IntegrityError)
 async def integrity_error_handler(request: Request, exc: IntegrityError):
@@ -680,6 +732,47 @@ def cached_read(key, build, ttl=60):
         _READ_CACHE.clear()
     _READ_CACHE[key] = (version, now + ttl, value)
     return value
+
+
+_IDEM_LOCKS = {}
+
+
+@app.middleware("http")
+async def idempotency_middleware(request: Request, call_next):
+    """A change that carries an Idempotency-Key is made once: sent again with the same key - because the answer
+    never reached the phone, and the app kept it to send later - it is answered with the first answer."""
+    key = (request.headers.get("idempotency-key") or "").strip()[:80]
+    if not key or request.method not in WRITE_METHODS or not request.url.path.startswith("/api/"):
+        return await call_next(request)
+    scope = "%s %s" % (request.method, request.url.path)
+    lock = _IDEM_LOCKS.setdefault(key, asyncio.Lock())
+    try:
+        async with lock:
+            with SessionLocal() as db:
+                hit = db.query(models.DBIdempotency).filter(
+                    models.DBIdempotency.key == key, models.DBIdempotency.scope == scope).first()
+                if hit:
+                    return Response(content=hit.body or b"", status_code=hit.status,
+                                    headers=dict(json.loads(hit.headers or "{}"), **{"Idempotent-Replay": "true"}))
+            response = await call_next(request)
+            if not 200 <= response.status_code < 300:
+                return response
+            body = b"".join([chunk async for chunk in response.body_iterator])
+            headers = {k: v for k, v in response.headers.items() if k.lower() in ("content-type", "content-encoding")}
+            if len(body) <= 2_000_000:
+                try:
+                    with SessionLocal() as db:
+                        db.query(models.DBIdempotency).filter(models.DBIdempotency.created_at < (
+                            datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")).delete()
+                        db.add(models.DBIdempotency(key=key, scope=scope, status=response.status_code,
+                                                    headers=json.dumps(headers), body=body))
+                        db.commit()
+                except Exception:
+                    logger.exception("Could not keep the answer to a repeatable request")
+            return Response(content=body, status_code=response.status_code, headers=headers)
+    finally:
+        if len(_IDEM_LOCKS) > 2000:
+            _IDEM_LOCKS.clear()
 
 
 # How long each request spends in the database and how many trips it makes. A screen that is slow on the hosted
@@ -787,12 +880,13 @@ def get_client_user(request: Request, db: Session):
     # route that touches tenant data resolves the tenant through this function,
     # so there is one place to get right instead of two hundred to remember.
     member_id = request.session.get("member_id")
-    if member_id and request.method in WRITE_METHODS:
+    if member_id:
         member = db.query(models.DBTeamMember).filter(
-            models.DBTeamMember.id == member_id).first()
+            models.DBTeamMember.id == member_id, models.DBTeamMember.client_id == client.id).first()
         if not member or not member.is_active:
-            raise HTTPException(status_code=403, detail="Your access has been removed")
-        if member.role == "viewer":
+            request.session.clear()
+            raise HTTPException(status_code=401, detail="Your access has been removed")
+        if member.role == "viewer" and request.method in WRITE_METHODS:
             raise HTTPException(status_code=403,
                                 detail="Your account has read-only access.")
     return client
@@ -835,6 +929,8 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
     if rate_limiter.is_rate_limited(f"login:{ip}", max_requests=10, window=60):
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
     client = db.query(models.DBClient).filter(models.DBClient.email == body.email).first()
+    if client and verify_password(body.password, client.password_hash):
+        upgrade_password_hash(client, "password_hash", body.password)
     if not client or not verify_password(body.password, client.password_hash):
         # Not the account owner - it may be one of their colleagues.
         member = db.query(models.DBTeamMember).filter(
@@ -842,6 +938,7 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
         ).first()
         if (member and member.is_active and member.password_hash
                 and verify_password(body.password, member.password_hash)):
+            upgrade_password_hash(member, "password_hash", body.password)
             owner = db.query(models.DBClient).filter(
                 models.DBClient.id == member.client_id).first()
             if not owner or not owner.is_active:
@@ -940,7 +1037,7 @@ def save_logo(body: LogoUpdate, request: Request, db: Session = Depends(get_db))
 
 def ensure_super_admin():
     with SessionLocal() as db:
-        env_emails = [e.strip().lower() for e in os.getenv("SUPERADMIN_EMAILS", "hello@billing.com").split(",") if e.strip()]
+        env_emails = [e.strip().lower() for e in os.getenv("SUPERADMIN_EMAILS", "").split(",") if e.strip()]
         existing_all = db.query(models.DBSuperAdmin).all()
         existing_emails = {e.email.strip().lower() for e in existing_all if e.email}
         for em in env_emails:
@@ -949,8 +1046,19 @@ def ensure_super_admin():
                 existing_emails.add(em)
         pwd = os.getenv("SUPERADMIN_PASSWORD", "")
         if pwd:
+            # The variable sets the password when it is first given or changed; a password changed in the panel
+            # since then stays - it used to be put back from the variable at every restart.
+            fingerprint = hashlib.sha256(pwd.encode()).hexdigest()
+            mark = db.query(models.DBSettings).filter(models.DBSettings.client_id.is_(None),
+                                                      models.DBSettings.key == "superadmin_env_password").first()
+            changed = not mark or mark.value != fingerprint
             for sa in db.query(models.DBSuperAdmin).all():
-                sa.password_hash = hash_password(pwd)
+                if changed or not sa.password_hash:
+                    sa.password_hash = hash_password(pwd)
+            if not mark:
+                db.add(models.DBSettings(client_id=None, key="superadmin_env_password", value=fingerprint))
+            elif changed:
+                mark.value = fingerprint
         db.commit()
         logger.info("Super admin setup complete (%d admins)", len(env_emails))
 
@@ -1389,8 +1497,6 @@ def get_stored_refresh_token(db: Session, client_id: int = None):
             return setting.value
     # Fallback to global token (no client_id) for backward compat
     setting = q.filter(models.DBSettings.client_id == None).first()
-    if not setting:
-        setting = q.first()
     return setting.value if setting else None
 
 def validate_email_address(email: str) -> bool:
@@ -1413,7 +1519,8 @@ def prepare_email_message(to_email, subject, body_text, html_body, from_email, l
     msg['To'] = to_email
     msg['Reply-To'] = from_email
     msg['Date'] = datetime.now().strftime('%a, %d %b %Y %H:%M:%S %z')
-    msg['List-Unsubscribe'] = '<mailto:hello@billing.com?subject=unsubscribe>'
+    if (os.getenv("FROM_EMAIL", "") or "").strip():
+        msg['List-Unsubscribe'] = '<mailto:%s?subject=unsubscribe>' % os.getenv("FROM_EMAIL").strip()
     msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
 
     alt_part = MIMEMultipart('alternative')
@@ -1848,7 +1955,7 @@ def send_invoice_email(number: str, background_tasks: BackgroundTasks, request: 
         raise HTTPException(status_code=400, detail=f"Invalid email address: {inv.email}")
 
     user = request.session.get('user', {})
-    from_email = os.getenv("FROM_EMAIL", "hello@billing.com")
+    from_email = default_from_email()
     if not from_email:
         raise HTTPException(status_code=400, detail="No sender email configured.")
 
@@ -1865,7 +1972,7 @@ def send_invoice_email(number: str, background_tasks: BackgroundTasks, request: 
     cur = (inv.currency or settings_map.get("currency") or (inv_client.currency if inv_client else "") or DEFAULT_CURRENCY).upper()
     cur_symbol = currency_symbol(cur)
 
-    sender_name = os.getenv("FROM_NAME", "Billing")
+    sender_name = os.getenv("FROM_NAME", "Y ERP")
     from_header = f"{company_name} <{from_email}>"
     subject = f"Invoice {inv.number} from {company_name}"
 
@@ -2464,6 +2571,15 @@ def allocate_job_number(db, client_id) -> str:
     return "JOB-0001"
 
 
+def owned_or_404(db, model, client_id, ident, what):
+    """An id that arrived in a request body, checked to be this company's before it is stored."""
+    if not ident:
+        return None
+    if not db.query(model.id).filter(model.id == ident, model.client_id == client_id).first():
+        raise HTTPException(status_code=404, detail="%s not found" % what)
+    return ident
+
+
 def job_or_404(db, client_id, job_id):
     job = db.query(models.DBJob).filter(
         models.DBJob.id == job_id, models.DBJob.client_id == client_id).first()
@@ -2796,7 +2912,7 @@ def create_job(body: JobIn, request: Request, db: Session = Depends(get_db)):
         retention_percent=clamp_percent(body.retention_percent),
         currency=(body.currency or client.currency or "").upper(),
         reference=(body.reference or "").strip(),
-        manager_id=body.manager_id,
+        manager_id=owned_or_404(db, models.DBEmployee, client.id, body.manager_id, "Project manager"),
         state_code=(body.state_code or "").strip(),
     )
     db.add(job)
@@ -2845,7 +2961,7 @@ def update_job(job_id: int, body: JobIn, request: Request, db: Session = Depends
     job.budget = validate_job_money("Budget", body.budget)
     job.retention_percent = clamp_percent(body.retention_percent)
     job.reference = (body.reference or "").strip()
-    job.manager_id = body.manager_id
+    job.manager_id = owned_or_404(db, models.DBEmployee, client.id, body.manager_id, "Project manager")
     if was_open and job.status == "complete" and not job.completed_at:
         job.completed_at = datetime.now().strftime("%Y-%m-%d")
     log_audit(db, client.id, "job_updated", "job", job.id, job.number, job.status, request)
@@ -6820,17 +6936,6 @@ def disconnect_gmail(request: Request, db: Session = Depends(get_db)):
         db.commit()
     return {"ok": True, "message": "Gmail disconnected. Re-authorize with your Google account."}
 
-# --- Test Email Endpoint (for demos) ---
-
-@app.post("/api/send-test-email")
-def send_test_email(test: TestEmail, background_tasks: BackgroundTasks, request: Request, db: Session = Depends(get_db)):
-    from_email = os.getenv("FROM_EMAIL", "hello@billing.com")
-    sender_name = os.getenv("FROM_NAME", "Billing")
-    from_header = f"{sender_name} <{from_email}>"
-
-    background_tasks.add_task(send_email_background, test.to_email, test.subject, test.body, from_header)
-    return {"message": f"Email queued for delivery to {test.to_email}"}
-
 # --- Invoice Management ---
 
 @app.delete("/api/invoices/{number}")
@@ -7575,7 +7680,7 @@ def job_overdue_reminders(db, now):
         </body></html>
         """
 
-        from_email = os.getenv("FROM_EMAIL", "hello@billing.com")
+        from_email = default_from_email()
         # Recorded before sending, and the unique index means a second worker
         # racing this cannot send the same rung twice.
         db.add(models.DBInvoiceReminder(
@@ -7634,7 +7739,7 @@ def job_interview_reminders(db, now):
         client = db.query(models.DBClient).filter(
             models.DBClient.id == iv.client_id).first()
         company = (client.company_name if client else "") or "the team"
-        from_email = os.getenv("FROM_EMAIL", "hello@billing.com")
+        from_email = default_from_email()
         where = iv.meeting_link or iv.location or (
             "a video call" if iv.mode == "video" else iv.mode)
 
@@ -7745,6 +7850,11 @@ def invoice_reminders(number: str, request: Request, db: Session = Depends(get_d
 RESET_TOKEN_TTL_MINUTES = 60
 
 
+def validated_staff_password(password):
+    validate_password_strength(password)
+    return password
+
+
 def validate_password_strength(password: str):
     """One rule, shared by registering and resetting, so the two cannot drift."""
     if len(password or "") < 8:
@@ -7809,7 +7919,7 @@ def issue_reset_token(db, user_type, subject_id, ip=""):
 def reset_email_bodies(link, who, minutes):
     """The same wording for both, so there is one thing to keep right."""
     text_body = (
-        f"Hello,\n\nSomeone asked to reset the password for {who} on Billing.\n\n"
+        f"Hello,\n\nSomeone asked to reset the password for {who} on Y ERP.\n\n"
         f"Open this link to choose a new one:\n{link}\n\n"
         f"The link works once and expires in {minutes} minutes.\n"
         "If this was not you, ignore this email - your password has not changed.\n"
@@ -7883,13 +7993,13 @@ def forgot_password(body: ForgotPasswordIn, background_tasks: BackgroundTasks,
     base = (os.getenv("APP_BASE_URL") or str(request.base_url)).rstrip("/")
     link = f"{base}/reset-password.html?token={token}"
     company = client.company_name or "your account"
-    from_email = os.getenv("FROM_EMAIL", "hello@billing.com")
+    from_email = default_from_email()
 
     text_body, html_body = reset_email_bodies(link, company, RESET_TOKEN_TTL_MINUTES)
 
     background_tasks.add_task(
-        send_email_background, client.email, "Reset your Billing password",
-        text_body, f"Billing <{from_email}>", html_body, None, "", "",
+        send_email_background, client.email, "Reset your password",
+        text_body, f"Y ERP <{from_email}>", html_body, None, "", "",
         client_id=client.id,
     )
     return generic
@@ -7976,7 +8086,7 @@ def employee_forgot_password(body: ForgotPasswordIn, background_tasks: Backgroun
     if not email:
         return generic
 
-    emp = db.query(models.DBEmployee).filter(models.DBEmployee.email.ilike(email)).first()
+    emp = db.query(models.DBEmployee).filter(sqlfunc.lower(models.DBEmployee.email) == email).first()
     # Someone with no password set has never signed in; there is nothing to reset.
     if not emp or not emp.password_hash or emp.status == "terminated":
         return generic
@@ -7988,11 +8098,11 @@ def employee_forgot_password(body: ForgotPasswordIn, background_tasks: Backgroun
     link = f"{base}/reset-password.html?token={token}&portal=employee"
     who = f"{emp.first_name} {emp.last_name}".strip() or emp.email
     text_body, html_body = reset_email_bodies(link, who, RESET_TOKEN_TTL_MINUTES)
-    from_email = os.getenv("FROM_EMAIL", "hello@billing.com")
+    from_email = default_from_email()
 
     background_tasks.add_task(
-        send_email_background, emp.email, "Reset your Billing password",
-        text_body, f"Billing <{from_email}>", html_body, None, "", "",
+        send_email_background, emp.email, "Reset your password",
+        text_body, f"Y ERP <{from_email}>", html_body, None, "", "",
         client_id=emp.client_id,
     )
     return generic
@@ -8112,10 +8222,10 @@ def invite_member(body: TeamInvite, background_tasks: BackgroundTasks,
     text_body, html_body = reset_email_bodies(link, who, RESET_TOKEN_TTL_MINUTES)
     text_body = text_body.replace("Someone asked to reset the password for",
                                   "You have been invited to")
-    from_email = os.getenv("FROM_EMAIL", "hello@billing.com")
+    from_email = default_from_email()
     background_tasks.add_task(
-        send_email_background, email, f"You have been added to {who} on Billing",
-        text_body, f"Billing <{from_email}>", html_body, None, "", "",
+        send_email_background, email, f"You have been added to {who} on Y ERP",
+        text_body, f"Y ERP <{from_email}>", html_body, None, "", "",
         client_id=client.id)
 
     return member_to_dict(member)
@@ -9501,7 +9611,7 @@ def send_quote_email(number: str, background_tasks: BackgroundTasks, request: Re
     if not validate_email_address(q.email):
         raise HTTPException(status_code=400, detail=f"Invalid email address: {q.email}")
 
-    from_email = os.getenv("FROM_EMAIL", "hello@billing.com")
+    from_email = default_from_email()
     if not from_email:
         raise HTTPException(status_code=400, detail="No sender email configured.")
 
@@ -10441,6 +10551,7 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     role = validate_role(body.role)
     permission_role = validate_permission_role(body.permission_role)
     reports_to = validate_manager(db, client.id, None, body.reports_to)
+    owned_or_404(db, models.DBDepartment, client.id, body.department_id, "Department")
 
     max_num = db.query(sqlfunc.coalesce(sqlfunc.max(models.DBEmployee.id), 0)).filter(models.DBEmployee.client_id == client.id).scalar()
     emp_number = employee_code or f"EMP-{max_num + 1:04d}"
@@ -10460,7 +10571,7 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
         tax_id=body.tax_id,
         emergency_contact=body.emergency_contact, emergency_phone=body.emergency_phone,
         start_date=body.start_date, status="onboarding",
-        password_hash=models.hash_password(body.password) if body.password else "",
+        password_hash=models.hash_password(validated_staff_password(body.password)) if body.password else "",
     )
     db.add(emp)
     db.flush()
@@ -10734,8 +10845,7 @@ def reset_employee_password(emp_id: int, body: dict, request: Request, db: Sessi
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
     new_pass = body.get("password", "")
-    if not new_pass or len(new_pass) < 4:
-        raise HTTPException(status_code=400, detail="Password must be at least 4 characters")
+    validate_password_strength(new_pass)
     emp.password_hash = models.hash_password(new_pass)
     db.commit()
     return {"message": "Password updated successfully"}
@@ -11637,8 +11747,8 @@ def send_payslip_email(ps_id: int, request: Request, background_tasks: Backgroun
     company_phone = settings_map.get("phone_number", "") or client.phone_number or ""
     company_address = settings_map.get("company_address", "") or client.address or ""
 
-    from_email = os.getenv("FROM_EMAIL", "hello@billing.com")
-    sender_name = os.getenv("FROM_NAME", "Billing")
+    from_email = default_from_email()
+    sender_name = os.getenv("FROM_NAME", "Y ERP")
     from_header = f"{sender_name} <{from_email}>"
     subject = f"Payslip {ps.number} from {company_name}"
 
@@ -11718,7 +11828,7 @@ Best regards,
 <div style="padding:24px 40px;background-color:#f8fafc;border-top:1px solid #e2e8f0;text-align:center;">
 <p style="font-size:13px;color:#94a3b8;margin:0;">Thank you for your hard work!</p>
 <p style="font-size:12px;color:#64748b;margin:4px 0 0 0;">{esc(company_name)}</p>
-<p style="font-size:11px;color:#94a3b8;margin:12px 0 0 0;"><a href="mailto:hello@billing.com?subject=unsubscribe" style="color:#94a3b8;">Unsubscribe</a> from these notifications</p>
+<p style="font-size:11px;color:#94a3b8;margin:12px 0 0 0;"><a href="mailto:{from_email}?subject=unsubscribe" style="color:#94a3b8;">Unsubscribe</a> from these notifications</p>
 </div>
 </div>
 </div><img src="{request.base_url}api/payslip/track/open/{ps.tracking_id}" width="1" height="1" style="display:none;" alt="">
@@ -12143,6 +12253,7 @@ def set_employee_password(emp_id: int, request: Request, body: dict = None, db: 
         raise HTTPException(status_code=404, detail="Employee not found")
     if not body or not body.get("password"):
         raise HTTPException(status_code=400, detail="Password required")
+    validate_password_strength(body["password"])
     emp.password_hash = models.hash_password(body["password"])
     db.commit()
     return {"message": "Password set successfully"}
@@ -12198,13 +12309,14 @@ def employee_login(request: Request, body: dict = None, db: Session = Depends(ge
     if not body or not body.get("email") or not body.get("password"):
         raise HTTPException(status_code=400, detail="Email and password required")
     email = body["email"].strip().lower()
-    emp = db.query(models.DBEmployee).filter(models.DBEmployee.email.ilike(email)).first()
+    emp = db.query(models.DBEmployee).filter(sqlfunc.lower(models.DBEmployee.email) == email).first()
     if not emp:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not emp.password_hash:
         raise HTTPException(status_code=401, detail="Password not set. Contact your administrator.")
     if not models.verify_password(body["password"], emp.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    upgrade_password_hash(emp, "password_hash", body["password"])
     if emp.status in ("terminated",):
         raise HTTPException(status_code=403, detail="Account deactivated")
     # One identity per session. Signing in as staff ends any owner session in
@@ -14280,7 +14392,7 @@ def email_candidate(sub_id: int, request: Request, background_tasks: BackgroundT
         subject = subject or default_subject
         text_body = text_body or default_body
 
-    from_email = os.getenv("FROM_EMAIL", "hello@billing.com")
+    from_email = default_from_email()
     company = client.company_name or "Recruitment"
     html_body = (
         '<div style="font-family:Arial,Helvetica,sans-serif;color:#1e293b;line-height:1.6;'
@@ -15819,7 +15931,8 @@ def create_document_requirement(request: Request, body: DocumentRequirementIn, d
         doc_type=body.doc_type or "other", is_mandatory=bool(body.is_mandatory),
         due_days=due_days, applies_to=applies,
         requires_expiry=bool(body.requires_expiry), expiry_reminder_days=reminder,
-        department_id=body.department_id if applies == "department" else None,
+        department_id=owned_or_404(db, models.DBDepartment, client.id, body.department_id, "Department")
+        if applies == "department" else None,
         level=level if applies == "level" else "",
         is_active=bool(body.is_active), sort_order=int(body.sort_order or 0),
     )
@@ -15855,7 +15968,8 @@ def update_document_requirement(req_id: int, request: Request, body: DocumentReq
     row.requires_expiry = bool(body.requires_expiry)
     row.expiry_reminder_days = reminder
     row.applies_to = applies
-    row.department_id = body.department_id if applies == "department" else None
+    row.department_id = owned_or_404(db, models.DBDepartment, client.id, body.department_id, "Department") \
+        if applies == "department" else None
     row.level = level if applies == "level" else ""
     row.is_active = bool(body.is_active)
     row.sort_order = int(body.sort_order or 0)
@@ -17650,7 +17764,10 @@ class MeetingSignaling:
 signaling = MeetingSignaling()
 
 @app.get("/meeting", response_class=HTMLResponse)
-async def meeting_page():
+async def meeting_page(request: Request):
+    if not (request.session.get("client_id") or request.session.get("employee_id")
+            or request.session.get("portal_user_id")):
+        return RedirectResponse("/login.html")
     html_path = os.path.join(frontend_path, "meeting.html")
     if os.path.exists(html_path):
         with open(html_path, "r") as f:
@@ -17659,8 +17776,17 @@ async def meeting_page():
 
 @app.websocket("/ws/meeting/{room_id}")
 async def meeting_websocket(websocket: WebSocket, room_id: str):
-    user_id = websocket.query_params.get("user_id", str(uuid.uuid4())[:8])
-    display_name = websocket.query_params.get("name", "Guest")
+    sess = websocket.session
+    if not (sess.get("client_id") or sess.get("employee_id") or sess.get("portal_user_id")):
+        await websocket.close(code=1008)
+        return
+    user_id = websocket.query_params.get("user_id", str(uuid.uuid4())[:8])[:40]
+    display_name = websocket.query_params.get("name", "Guest")[:60]
+    here = signaling.connections.get(room_id, [])
+    if (any(c["user_id"] == user_id for c in here) or len(here) >= 20
+            or (not here and len(signaling.connections) >= 200)):
+        await websocket.close(code=1008)
+        return
 
     await signaling.connect(websocket, room_id, user_id)
     room = meeting_rooms[room_id]
@@ -19149,10 +19275,11 @@ def wo_contractor_document(con_id: int, key: str, request: Request, db: Session 
     m = re.match(r"^data:([^;]+);base64,(.+)$", entry["data"], re.DOTALL)
     if not m:
         raise HTTPException(500, "That file could not be read back.")
-    mime, raw = m.group(1), base64.b64decode(m.group(2))
-    name = entry.get("name") or (key + ".bin")
-    return StreamingResponse(io.BytesIO(raw), media_type=mime,
-        headers={"Content-Disposition": 'inline; filename="%s"' % name})
+    media, raw = served_type(m.group(1)), base64.b64decode(m.group(2))
+    name = re.sub(r'[^A-Za-z0-9._ -]', "_", entry.get("name") or (key + ".bin"))
+    return StreamingResponse(io.BytesIO(raw), media_type=media,
+        headers=dict(file_headers(media), **{
+            "Content-Disposition": '%s; filename="%s"' % ("inline" if media != "application/octet-stream" else "attachment", name)}))
 
 
 @app.get("/api/wo/contractors")
@@ -19231,6 +19358,8 @@ def contractor_form_fields(con, body, fill_blanks_only=False):
             data = v["data"]
             if not re.match(r"^data:[\w./+-]+;base64,", data):
                 raise HTTPException(400, "That does not look like an uploaded file.")
+            if data[5:data.index(";")].lower() not in DOCUMENT_UPLOAD_TYPES:
+                raise HTTPException(400, "Send the document as a PDF or a photo (JPG or PNG).")
             if len(data) > 7_000_000:
                 raise HTTPException(400, "That file is too large - keep it under 5 MB.")
             cur[k] = {"name": (v.get("name") or "")[:200], "data": data}
@@ -22057,6 +22186,10 @@ def write_ra_bill_lines(db, bill, claimable):
             rate=unit_rate(l.rate), amount=money(this * unit_rate(l.rate)),
             display_order=index))
     db.flush()
+    prior = billed_qty_to_date(db, bill.work_order_id, exclude_bill_id=bill.id)
+    rates = {l.id: unit_rate(l.rate) for l in db.query(models.DBWorkOrderLine).filter(
+        models.DBWorkOrderLine.work_order_id == bill.work_order_id).all()}
+    bill.previously_billed = money(sum(money(q) * rates.get(lid, 0.0) for lid, q in prior.items()))
     return recost_ra_bill(db, bill)
 
 
@@ -22472,8 +22605,8 @@ def raise_ra_bill(body: RABillIn, request: Request, db: Session = Depends(get_db
             409, "Nothing has been measured since the last bill. Record the "
                  "work in the measurement book first.")
 
-    seq = db.query(models.DBRABill).filter(
-        models.DBRABill.work_order_id == wo.id).count() + 1
+    seq = (db.query(func.max(models.DBRABill.sequence)).filter(
+        models.DBRABill.work_order_id == wo.id).scalar() or 0) + 1
     bill = models.DBRABill(
         client_id=client.id, work_order_id=wo.id, job_id=wo.job_id,
         number="%s/RA-%02d" % (wo.number or "WO", seq), sequence=seq,
@@ -23375,8 +23508,12 @@ VO_TRANSITIONS = {
 
 
 def next_vo_number(db, work_order):
-    n = db.query(models.DBVariationOrder).filter(
-        models.DBVariationOrder.work_order_id == work_order.id).count() + 1
+    n = (db.query(func.max(models.DBVariationOrder.sequence)).filter(
+        models.DBVariationOrder.work_order_id == work_order.id).scalar() or 0) + 1
+    while db.query(models.DBVariationOrder.id).filter(
+            models.DBVariationOrder.client_id == work_order.client_id,
+            models.DBVariationOrder.number == "%s/VO-%02d" % (work_order.number or "WO", n)).first():
+        n += 1
     return "%s/VO-%02d" % (work_order.number or "WO", n), n
 
 
@@ -24776,7 +24913,7 @@ def update_diary(diary_id: int, body: DiaryIn, request: Request,
         if val is not None:
             setattr(diary, field, val.strip())
     if body.work_order_id is not None:
-        diary.work_order_id = body.work_order_id or None
+        diary.work_order_id = owned_or_404(db, models.DBWorkOrder, client.id, body.work_order_id, "Work order")
     _replace_diary_lines(db, diary, body.labour, body.plant)
     db.commit()
     db.refresh(diary)
@@ -26262,6 +26399,11 @@ def recost_sub_bill(db, bill):
         models.DBSubBillLine.sub_bill_id == bill.id).all()
     this_bill = money(sum(l.amount or 0 for l in lines))
     bill.this_bill = this_bill
+    if bill.id:
+        # An earlier bill cancelled since this one was drawn up has handed its work to it: it is no longer "claimed before".
+        bill.previously_billed = money(sum(b.this_bill or 0 for b in db.query(models.DBSubBill).filter(
+            models.DBSubBill.order_id == bill.order_id, models.DBSubBill.id < bill.id,
+            models.DBSubBill.status != "CANCELLED").all()))
     bill.gross_to_date = money((bill.previously_billed or 0) + this_bill)
     bill.debit_notes = money(getattr(bill, "debit_notes", 0) or 0)
     gross = rupees(this_bill - bill.debit_notes)
@@ -26801,6 +26943,7 @@ def delete_sub_measurement(entry_id: int, request: Request, db: Session = Depend
         models.DBSubMeasurement.client_id == client.id).first()
     if not entry:
         raise HTTPException(404, "Entry not found")
+    wo_or_404(db, client.id, entry.order_id)        # an order they cannot see is an entry they cannot see
     if (entry.kind or "") == "hold" and sub_hold_remaining(db, entry) < money(-(entry.quantity or 0.0)):
         raise HTTPException(409, "Part of this hold has been released. Delete the release first.")
     if not (entry.kind or ""):
@@ -27265,6 +27408,8 @@ def list_sub_bills(request: Request, order_id: int = 0, db: Session = Depends(ge
     viewer = STAFF_VIEWER.get()
     if viewer:
         q = q.filter(models.DBSubBill.id.in_(list(sub_bill_visible_ids(db, client.id, viewer)) or [0]))
+    every = q.with_entities(models.DBSubBill.status, models.DBSubBill.this_bill, models.DBSubBill.net_payable,
+                            models.DBSubBill.retention_amount, models.DBSubBill.order_id).all()
     bills = q.order_by(models.DBSubBill.id.desc()).limit(300).all()
     prime(db, models.DBSubcontractOrder, [b.order_id for b in bills])
     prime(db, models.DBContractor, [b.contractor_id for b in bills])
@@ -27272,18 +27417,19 @@ def list_sub_bills(request: Request, order_id: int = 0, db: Session = Depends(ge
     prime_chains(db, "sub_bill", [b.id for b in bills])
     prime(db, models.DBEmployee, [r.approver_id for b in bills for r in sub_bill_chain_rows(db, b.id)])
     rows = [sub_bill_dict(db, b) for b in bills]
-    live = [r for r in rows if r["status"] != "CANCELLED"]
+    seen_orders = {e.order_id for e in every}
+    released = money(sum(r.amount or 0 for r in _live_releases(db, client.id, "contractor")
+                         if (not order_id or r.sub_order_id == order_id)
+                         and (not viewer or r.sub_order_id in seen_orders)))
     return {
         "bills": rows,
         "summary": {
-            "claimed": money(sum(r["this_bill"] for r in live)),
-            "awaiting_certification": len([r for r in rows if r["status"] == "SUBMITTED"]),
-            "certified_unpaid": money(sum(r["net_payable"] for r in rows
-                                          if r["status"] == "CERTIFIED")),
-            "retention_held": money(sum(r["retention_amount"] for r in rows
-                                        if r["status"] in ("CERTIFIED", "PAID"))
-                                    - contractor_released(db, client.id, order_id)),
-            "paid": money(sum(r["net_payable"] for r in rows if r["status"] == "PAID")),
+            "claimed": money(sum(e.this_bill or 0 for e in every if (e.status or "DRAFT") != "CANCELLED")),
+            "awaiting_certification": len([e for e in every if e.status == "SUBMITTED"]),
+            "certified_unpaid": money(sum(e.net_payable or 0 for e in every if e.status == "CERTIFIED")),
+            "retention_held": money(sum(e.retention_amount or 0 for e in every
+                                        if e.status in ("CERTIFIED", "PAID")) - released),
+            "paid": money(sum(e.net_payable or 0 for e in every if e.status == "PAID")),
         },
     }
 
@@ -27306,7 +27452,12 @@ def create_sub_bill(body: SubBillIn, request: Request, db: Session = Depends(get
             409, "Nothing has been measured since the last bill. Record the work "
                  "in the measurement book first.")
 
-    seq = db.query(models.DBSubBill).filter(models.DBSubBill.order_id == order.id).count() + 1
+    seq = (db.query(func.max(models.DBSubBill.sequence)).filter(
+        models.DBSubBill.order_id == order.id).scalar() or 0) + 1
+    while db.query(models.DBSubBill.id).filter(
+            models.DBSubBill.client_id == client.id,
+            models.DBSubBill.number == "%s/RA-%02d" % (order.wo_number or "SC", seq)).first():
+        seq += 1
     prior = money(sum(b.this_bill or 0 for b in db.query(models.DBSubBill).filter(
         models.DBSubBill.order_id == order.id,
         models.DBSubBill.status != "CANCELLED").all()))
@@ -27912,7 +28063,7 @@ def create_estimate(body: EstimateIn, request: Request, db: Session = Depends(ge
     if not (body.title or "").strip():
         raise HTTPException(400, "Give the tender a name.")
     est = models.DBEstimate(
-        client_id=client.id, job_id=body.job_id,
+        client_id=client.id, job_id=owned_or_404(db, models.DBJob, client.id, body.job_id, "Project"),
         number=next_sequence_number(db, models.DBEstimate, client.id, "EST-"),
         title=body.title.strip(), customer_name=(body.customer_name or "").strip(),
         tender_reference=(body.tender_reference or "").strip(), due_on=(body.due_on or ""),
@@ -27945,7 +28096,7 @@ def update_estimate(est_id: int, body: EstimateIn, request: Request,
     est.tender_reference = (body.tender_reference or "").strip()
     est.due_on = body.due_on or ""
     if body.job_id is not None:
-        est.job_id = body.job_id or None
+        est.job_id = owned_or_404(db, models.DBJob, client.id, body.job_id, "Project")
     if body.overhead_percent is not None:
         est.overhead_percent = money(body.overhead_percent)
     if body.profit_percent is not None:
@@ -28835,7 +28986,7 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
         party_name = (body.party_name or "").strip()
         if not party_name:
             raise HTTPException(400, "Who is this from or to?")
-        party_id, job_id, doc_number = None, body.job_id, ""
+        party_id, job_id, doc_number = None, owned_or_404(db, models.DBJob, client.id, body.job_id, "Project"), ""
 
     e = models.DBMoneyEntry(
         client_id=client.id, number=next_money_number(db, client.id, direction),
@@ -31847,6 +31998,25 @@ def eway_cancel(eid: int, body: EwayCancelIn, request: Request, db: Session = De
 
 FILE_MAX_BYTES = 15 * 1024 * 1024
 FILE_IMAGE_IN_MAX_BYTES = 40 * 1024 * 1024      # a photo as the camera took it, before it is made smaller
+INLINE_SAFE_TYPES = ("image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf")
+# What a person may attach to a contractor's registration form.
+DOCUMENT_UPLOAD_TYPES = ("application/pdf", "image/jpeg", "image/png", "image/webp")
+
+
+def served_type(content_type):
+    """The type a stored file is served as. A file that says it is a page or a vector picture (which can carry
+    a script) is served as plain bytes, so opening it can never run anything in the app."""
+    c = (content_type or "").split(";")[0].strip().lower()
+    return c if c in INLINE_SAFE_TYPES else "application/octet-stream"
+
+
+def file_headers(media):
+    h = {"X-Content-Type-Options": "nosniff"}
+    if media != "application/pdf":
+        h["Content-Security-Policy"] = "default-src 'none'; sandbox"
+    return h
+
+
 FILE_TYPES = ("image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf",
               "image/vnd.dwg", "application/acad", "application/dxf", "image/vnd.dxf",
               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -32004,6 +32174,8 @@ def store_file(db, client_id, upload, data, *, job_id, attached_type, attached_i
     name = (upload.filename or "file").strip()[:200]
     ctype = (upload.content_type or "application/octet-stream").lower()
     ext = os.path.splitext(name.lower())[1]
+    if any(w in ctype for w in ("svg", "html", "xml", "javascript")) or ext in (".svg", ".html", ".htm", ".xml", ".js"):
+        raise HTTPException(400, "A photo, a PDF, a drawing (DWG/DXF) or an Excel or Word file.")
     if ctype not in FILE_TYPES and ext not in FILE_EXTENSIONS:
         raise HTTPException(400, "A photo, a PDF, a drawing (DWG/DXF) or an Excel or Word file.")
     if not data:
@@ -32324,11 +32496,13 @@ def _file_or_404(db, client_id, fid, bytes_too=False):
 def get_file(fid: int, request: Request, download: int = 0, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     f = _file_or_404(db, client.id, fid, bytes_too=True)
-    inline = not download and ((f.content_type or "").startswith("image/") or f.content_type == "application/pdf")
+    media = served_type(f.content_type)
+    inline = not download and media != "application/octet-stream"
     disp = '%s; filename="%s"' % ("inline" if inline else "attachment",
                                   re.sub(r'[^A-Za-z0-9._ -]', "_", f.name or "file"))
-    return StreamingResponse(io.BytesIO(file_bytes(db, f) or b""), media_type=f.content_type or "application/octet-stream",
-                             headers={"Content-Disposition": disp, "Cache-Control": "private, max-age=86400"})
+    return StreamingResponse(io.BytesIO(file_bytes(db, f) or b""), media_type=media,
+                             headers=dict(file_headers(media), **{"Content-Disposition": disp,
+                                                                  "Cache-Control": "private, max-age=86400"}))
 
 
 @app.get("/api/files/{fid}/thumb")
@@ -32341,8 +32515,11 @@ def get_file_thumb(fid: int, request: Request, db: Session = Depends(get_db)):
         raise HTTPException(404, "File not found")
     small = file_bytes(db, f, thumb=True)
     body = small or (file_bytes(db, f) if (f.content_type or "").startswith("image/") else b"")
-    return StreamingResponse(io.BytesIO(body or b""), media_type="image/jpeg" if small else (f.content_type or "image/jpeg"),
-                             headers={"Cache-Control": "private, max-age=86400"})
+    media = "image/jpeg" if small else served_type(f.content_type)
+    if not media.startswith("image/"):
+        media, body = "image/jpeg", b""
+    return StreamingResponse(io.BytesIO(body or b""), media_type=media,
+                             headers=dict(file_headers(media), **{"Cache-Control": "private, max-age=86400"}))
 
 
 @app.delete("/api/files/{fid}")
@@ -34660,7 +34837,7 @@ def _send_invite(background_tasks, db, client, u, link):
             "statement in one place.\n\nSet your password here (the link works for %d days):\n%s\n"
             % (company, PORTAL_INVITE_DAYS, link))
     background_tasks.add_task(send_email_background, u.email, "%s - your partner portal" % company, body,
-                              "%s <%s>" % (company, os.getenv("FROM_EMAIL", "hello@billing.com")),
+                              "%s <%s>" % (company, default_from_email()),
                               None, None, "", "", client_id=client.id)
     return True
 
@@ -34828,6 +35005,7 @@ def portal_login(body: PortalLoginIn, request: Request, db: Session = Depends(ge
         log_login(db, u.client_id if u else None, email, "partner", "password", request, "failed")
         db.commit()
         raise HTTPException(401, "That email and password do not match.")
+    upgrade_password_hash(u, "password_hash", body.password)
     if not u.is_active:
         raise HTTPException(403, "Your access has been removed. Ask the office if you need it back.")
     # The company and the party must both still be live before a session exists.

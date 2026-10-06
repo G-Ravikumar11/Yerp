@@ -4,22 +4,50 @@ from database import Base
 from datetime import datetime
 import uuid
 import hashlib
+import hmac
 import os
 
 
+# How many rounds a new password hash takes. Tests lower it so the suite is not spent hashing.
+PASSWORD_ITERATIONS = int(os.getenv("PASSWORD_ITERATIONS", "600000"))
+_HASH_PREFIX = "pbkdf2_sha256$"
+
+
 def hash_password(password: str) -> str:
-    salt = hashlib.sha256(os.urandom(32)).hexdigest().encode()
-    pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100000)
-    return salt.hex() + ':' + pwd_hash.hex()
+    salt = os.urandom(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, PASSWORD_ITERATIONS)
+    return "%s%d$%s$%s" % (_HASH_PREFIX, PASSWORD_ITERATIONS, salt.hex(), digest.hex())
 
 
 def verify_password(password: str, stored: str) -> bool:
-    if ':' not in stored:
-        return hashlib.sha256(password.encode()).hexdigest() == stored
-    salt_hex, pwd_hash_hex = stored.split(':')
-    salt = bytes.fromhex(salt_hex)
-    pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100000)
-    return pwd_hash.hex() == pwd_hash_hex
+    """Whether a password matches what is stored. Reads today's form, the 100,000-round form earlier releases
+    wrote ("salt:hash"), and the bare sha256 older still; an empty or unreadable value is simply a no."""
+    if not stored or not password:
+        return False
+    try:
+        if stored.startswith(_HASH_PREFIX):
+            _, rounds, salt_hex, want = stored.split("$")
+            got = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt_hex), int(rounds)).hex()
+        elif ":" in stored:
+            salt_hex, want = stored.split(":", 1)
+            got = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt_hex), 100000).hex()
+        else:
+            got, want = hashlib.sha256(password.encode()).hexdigest(), stored
+    except (ValueError, TypeError):
+        return False
+    return hmac.compare_digest(got, want)
+
+
+def needs_rehash(stored: str) -> bool:
+    """Whether a stored password is in an older or weaker form than a new one would be."""
+    if not stored:
+        return False
+    if not stored.startswith(_HASH_PREFIX):
+        return True
+    try:
+        return int(stored.split("$")[1]) < PASSWORD_ITERATIONS
+    except (IndexError, ValueError):
+        return True
 
 
 class DBClient(Base):
@@ -3433,3 +3461,17 @@ class DBThreadRead(Base):
     thread_id = Column(Integer, ForeignKey("project_threads.id"), nullable=False, index=True)
     reader = Column(String, default="", index=True)
     last_read_id = Column(Integer, default=0)
+
+
+class DBIdempotency(Base):
+    """The answer given to a change sent with an Idempotency-Key, so that sending it again does not make it twice."""
+    __tablename__ = "idempotent_requests"
+    __table_args__ = (UniqueConstraint("key", "scope", name="uq_idempotent_key"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String, nullable=False, index=True)
+    scope = Column(String, nullable=False)
+    status = Column(Integer, default=200)
+    headers = Column(Text, default="")
+    body = Column(LargeBinary)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"), index=True)

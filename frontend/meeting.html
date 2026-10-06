@@ -464,7 +464,12 @@ function joinMeeting() {
     roomId = document.getElementById('join-room').value.trim() || genRoomId();
     document.getElementById('landing-page').classList.add('hidden');
     document.getElementById('meeting-room').classList.add('active');
-    document.getElementById('meeting-id-display').innerHTML = roomId + '<span class="text-xs text-gray-300 ml-1 hidden md:inline">(Click to copy)</span>';
+    var idBox = document.getElementById('meeting-id-display');
+    idBox.textContent = roomId;
+    var hint = document.createElement('span');
+    hint.className = 'text-xs text-gray-300 ml-1 hidden md:inline';
+    hint.textContent = '(Click to copy)';
+    idBox.appendChild(hint);
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
         showToast('Screen sharing is not supported on this device. Present from a desktop or Android.', 'info');
     }
