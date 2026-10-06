@@ -211,6 +211,7 @@
             if (error === 'google_unknown') msg = 'No account here uses that Google address. Ask whoever set up your access.';
             if (error === 'account_disabled') msg = 'That account has been disabled.';
             if (error === 'google_unconfigured') msg = 'Google sign-in is not set up on this server yet.';
+            if (error === 'gmail_sign_in_first') msg = 'Sign in first, then connect Gmail from inside the app.';
             document.getElementById('error-msg').textContent = msg;
             document.getElementById('error-msg').style.display = 'block';
         }

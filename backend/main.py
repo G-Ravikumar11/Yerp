@@ -6240,90 +6240,65 @@ async def login(request: Request, role: str = "client", portal: str = None):
         redirect_uri = redirect_uri.replace('http://', 'https://', 1)
     return await oauth.google.authorize_redirect(request, redirect_uri, access_type='offline', prompt='consent')
 
+def superadmin_google_emails():
+    """The addresses allowed to sign in to the platform console with Google: only those named in
+    SUPERADMIN_EMAILS. A row in the table is not enough - one was once made for a default address on
+    somebody else's domain."""
+    return {e.strip().lower() for e in os.getenv("SUPERADMIN_EMAILS", "").split(",") if e.strip()}
+
+
 @app.get("/api/auth/callback")
 async def auth_callback(request: Request, db: Session = Depends(get_db)):
+    """Back from Google with permission to send mail as the company.
+
+    It attaches that Gmail to the company already signed in, and nothing else: it never signs anybody in as
+    somebody else and never creates an account. (It used to create a new company for any Google address it
+    did not know, which let anyone with a Gmail account into the system.) Signing in with Google is
+    /api/auth/google/start."""
     try:
         token = await oauth.google.authorize_access_token(request)
     except Exception as e:
         logger.error(f"Google token exchange failed: {e}")
         return RedirectResponse(url="/login.html?error=auth_failed")
-    user = token.get('userinfo')
-    access_token = token.get('access_token')
+    user = token.get('userinfo') or {}
     refresh_token = token.get('refresh_token')
     oauth_role = request.session.pop('oauth_role', 'client')
+    oauth_portal = request.session.pop('oauth_portal', 'invoicing')
+    target_dashboard = "/next/people/employees" if oauth_portal == "hr" else "/next/"
+    google_email = (user.get('email') or '').strip().lower()
+    verified = user.get("email_verified") is not False
 
-    try:
-        if user:
-            request.session['user'] = dict(user)
-            request.session['access_token'] = access_token
-            if refresh_token:
-                request.session['refresh_token'] = refresh_token
+    if oauth_role == 'superadmin':
+        sa_user = db.query(models.DBSuperAdmin).filter(
+            sqlfunc.lower(models.DBSuperAdmin.email) == google_email).first() \
+            if google_email and verified and google_email in superadmin_google_emails() else None
+        if sa_user:
+            request.session['superadmin_id'] = sa_user.id
+            log_login(db, None, google_email, "superadmin", "google", request, "success")
+            return RedirectResponse(url="/superadmin.html")
+        log_login(db, None, google_email or "superadmin", "superadmin", "google", request, "failed")
+        return RedirectResponse(url="/superadmin-login.html?error=not_admin")
 
-            oauth_portal = request.session.pop('oauth_portal', 'invoicing')
-            target_dashboard = "/next/people/employees" if oauth_portal == "hr" else "/next/"
-
-            google_email = user.get('email', '')
-
-            if oauth_role == 'superadmin' and google_email:
-                sa_user = db.query(models.DBSuperAdmin).filter(models.DBSuperAdmin.email == google_email).first()
-                if sa_user:
-                    request.session['superadmin_id'] = sa_user.id
-                    log_login(db, None, google_email, "superadmin", "google", request, "success")
-                    return RedirectResponse(url="/superadmin.html")
-                else:
-                    log_login(db, None, google_email, "superadmin", "google", request, "failed")
-                    return RedirectResponse(url="/superadmin-login.html?error=not_admin")
-
-            if google_email:
-                sa_check = db.query(models.DBSuperAdmin).filter(models.DBSuperAdmin.email == google_email).first()
-                if sa_check:
-                    return RedirectResponse(url="/superadmin-login.html")
-                existing_client = db.query(models.DBClient).filter(models.DBClient.email == google_email).first()
-                if existing_client:
-                    client_id = existing_client.id
-                    request.session['client_id'] = client_id
-                    log_login(db, client_id, google_email, "client", "google", request, "success")
-                else:
-                    new_client = models.DBClient(
-                        email=google_email,
-                        password_hash=hash_password(secrets.token_hex(16)),
-                        company_name=user.get('name', ''),
-                        contact_name=user.get('name', ''),
-                        is_onboarded=False,
-                    )
-                    db.add(new_client)
-                    db.flush()
-                    client_id = new_client.id
-                    request.session['client_id'] = client_id
-                    log_login(db, client_id, google_email, "client", "google", request, "success")
-
-                # Save refresh token per-client
-                if refresh_token and client_id:
-                    try:
-                        setting = db.query(models.DBSettings).filter(
-                            models.DBSettings.key == "GOOGLE_REFRESH_TOKEN",
-                            models.DBSettings.client_id == client_id
-                        ).first()
-                        if not setting:
-                            setting = models.DBSettings(key="GOOGLE_REFRESH_TOKEN", value=refresh_token, client_id=client_id)
-                            db.add(setting)
-                        else:
-                            setting.value = refresh_token
-                        db.commit()
-                    except Exception as e:
-                        logger.error(f"Failed to save refresh token: {e}")
-
-                if existing_client:
-                    if existing_client.is_onboarded:
-                        return RedirectResponse(url=target_dashboard)
-                    else:
-                        return RedirectResponse(url="/onboard.html")
-                else:
-                    return RedirectResponse(url="/onboard.html")
-    except Exception as e:
-        logger.error(f"Callback processing failed: {e}")
-        return RedirectResponse(url="/login.html?error=callback_failed")
-
+    client_id = request.session.get("client_id")
+    if not client_id or not db.query(models.DBClient).filter(models.DBClient.id == client_id).first():
+        return RedirectResponse(url="/login.html?error=gmail_sign_in_first")
+    # Who the Gmail belongs to, for the screen that says which address mail goes out from. Never the tokens:
+    # the session lives in a cookie, and a cookie is no place for the key to somebody's mailbox.
+    request.session['user'] = {"email": google_email, "name": user.get("name", "")}
+    if refresh_token:
+        try:
+            setting = db.query(models.DBSettings).filter(
+                models.DBSettings.key == "GOOGLE_REFRESH_TOKEN",
+                models.DBSettings.client_id == client_id
+            ).first()
+            if not setting:
+                db.add(models.DBSettings(key="GOOGLE_REFRESH_TOKEN", value=refresh_token, client_id=client_id))
+            else:
+                setting.value = refresh_token
+            log_audit(db, client_id, "gmail_connected", "client", client_id, google_email, "", request)
+            db.commit()
+        except Exception as e:
+            logger.error(f"Failed to save refresh token: {e}")
     return RedirectResponse(url=target_dashboard)
 
 
@@ -6353,7 +6328,7 @@ def google_status():
 
 
 @app.get("/api/auth/google/start")
-async def google_signin_start(request: Request, next: str = "/next/"):
+async def google_signin_start(request: Request, next: str = "/next/", who: str = ""):
     if not google_configured():
         # Back to the sign-in page with something readable, rather than a raw
         # server error. Somebody can reach this from a stale tab long after the
@@ -6361,6 +6336,8 @@ async def google_signin_start(request: Request, next: str = "/next/"):
         return RedirectResponse("/login.html?error=google_unconfigured")
     # Only a path on this site, so the redirect cannot be pointed elsewhere.
     request.session["google_next"] = next if next.startswith("/") and not next.startswith("//") else "/next/"
+    # The partner portal has its own door: a partner signs in there, never into the office's app.
+    request.session["google_for"] = "portal" if who == "portal" else ""
     redirect_uri = str(request.url_for("google_signin_callback"))
     if redirect_uri.startswith("http://") and "localhost" not in redirect_uri:
         redirect_uri = redirect_uri.replace("http://", "https://", 1)
@@ -6385,16 +6362,34 @@ async def google_signin_callback(request: Request, db: Session = Depends(get_db)
         token = await oauth.google.authorize_access_token(request)
     except Exception:
         logger.exception("Google sign-in failed at the token exchange")
-        return RedirectResponse("/login.html?error=google_failed")
+        page = "/portal.html" if request.session.pop("google_for", "") == "portal" else "/login.html"
+        return RedirectResponse(page + "?error=google_failed")
 
+    portal = request.session.pop("google_for", "") == "portal"
+    page = "/portal.html" if portal else "/login.html"
     info = token.get("userinfo") or {}
     email = (info.get("email") or "").strip().lower()
     if not email:
-        return RedirectResponse("/login.html?error=google_no_email")
+        return RedirectResponse(page + "?error=google_no_email")
     if info.get("email_verified") is False:
-        return RedirectResponse("/login.html?error=google_unverified")
+        return RedirectResponse(page + "?error=google_unverified")
 
     target = request.session.pop("google_next", "/next/")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if portal:
+        u = db.query(models.DBPortalUser).filter(sqlfunc.lower(models.DBPortalUser.email) == email,
+                                                 models.DBPortalUser.is_active.is_(True)).first()
+        if not u:
+            log_login(db, None, email, "partner", "google", request, status="failed")
+            db.commit()
+            return RedirectResponse("/portal.html?error=google_unknown")
+        client = db.query(models.DBClient).filter(models.DBClient.id == u.client_id).first()
+        party, _ = portal_party(db, u.client_id, u.party_type, u.party_id)
+        if not client or not client.is_active or not party or party.is_active is False:
+            return RedirectResponse("/portal.html?error=account_disabled")
+        _portal_signed_in(request, db, u, method="google")
+        return RedirectResponse("/portal.html")
 
     client = db.query(models.DBClient).filter(
         sqlfunc.lower(models.DBClient.email) == email).first()
@@ -6404,15 +6399,35 @@ async def google_signin_callback(request: Request, db: Session = Depends(get_db)
         request.session.pop("employee_id", None)
         request.session.pop("employee_client_id", None)
         request.session.pop("portal_user_id", None)
+        request.session.pop("member_id", None)
         request.session["client_id"] = client.id
         log_login(db, client.id, email, "client", "google", request)
         return RedirectResponse(target if client.is_onboarded else "/onboard.html")
+
+    # A colleague on the Master's team: signing in with the Google account their invite went to is as good as
+    # accepting it.
+    member = db.query(models.DBTeamMember).filter(
+        sqlfunc.lower(models.DBTeamMember.email) == email, models.DBTeamMember.is_active.is_(True)).first()
+    if member:
+        owner = db.query(models.DBClient).filter(models.DBClient.id == member.client_id).first()
+        if not owner or not owner.is_active:
+            return RedirectResponse("/login.html?error=account_disabled")
+        for k in ("employee_id", "employee_client_id", "portal_user_id"):
+            request.session.pop(k, None)
+        request.session["client_id"] = owner.id
+        request.session["member_id"] = member.id
+        member.accepted_at = member.accepted_at or now
+        member.last_login = now
+        log_login(db, owner.id, member.email, "member", "google", request, "success")
+        db.commit()
+        return RedirectResponse(target)
 
     emp = db.query(models.DBEmployee).filter(
         sqlfunc.lower(models.DBEmployee.email) == email).first()
     if emp and emp.status != "terminated":
         request.session.pop("client_id", None)
         request.session.pop("member_id", None)
+        request.session.pop("portal_user_id", None)
         request.session["employee_id"] = emp.id
         request.session["employee_client_id"] = emp.client_id
         log_login(db, emp.client_id, email, "employee", "google", request)
@@ -6769,8 +6784,9 @@ def logout(request: Request):
 
 @app.get("/api/gmail/status")
 def gmail_status(request: Request, db: Session = Depends(get_db)):
+    # Which mailbox the company sends from is the company's business, not anybody's who asks.
+    client_id = get_client_user(request, db).id
     user = request.session.get('user')
-    client_id = request.session.get('client_id')
     refresh_token = get_stored_refresh_token(db, client_id=client_id)
     # Try to get the authorized Gmail email from the refresh token owner
     gmail_email = None
@@ -34751,14 +34767,14 @@ def switch_portal_access(user_id: int, action: str, request: Request, db: Sessio
 
 # --- Signing in ----------------------------------------------------------------
 
-def _portal_signed_in(request, db, u):
+def _portal_signed_in(request, db, u, method="password"):
     # One identity per browser: a portal session must never ride on top of
     # an office one, or the office's rights would answer for the partner.
     for k in ("client_id", "member_id", "employee_id", "employee_client_id"):
         request.session.pop(k, None)
     request.session["portal_user_id"] = u.id
     u.last_login = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_login(db, u.client_id, u.email, "partner", "password", request, "success")
+    log_login(db, u.client_id, u.email, "partner", method, request, "success")
     db.commit()
 
 

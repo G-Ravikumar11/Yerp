@@ -26,7 +26,31 @@ function post(path, data) {
     return api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data || {}) });
 }
 
+// Google sign-in: offered only when the server can complete it, and only to a partner already given a login.
+var GOOGLE_ERRORS = {
+    google_failed: 'Google sign-in did not complete. Try again.',
+    google_no_email: 'Google did not share an email address.',
+    google_unverified: 'That Google address is not verified.',
+    google_unknown: 'No partner login uses that Google address. Ask the office to open the portal to it.',
+    account_disabled: 'This login is no longer open. Ask the office.'
+};
+
+function pGoogle() {
+    location = '/api/auth/google/start?who=portal';
+}
+
 async function pStart() {
+    api('/api/auth/google/status').then(function (r) {
+        if (r.ok && r.body.configured) {
+            document.querySelectorAll('.p-google').forEach(function (b) { b.classList.remove('hidden'); });
+        }
+    });
+    var error = new URLSearchParams(location.search).get('error');
+    if (error) {
+        var m = document.getElementById('pl-msg');
+        m.className = 'msg bad';
+        m.textContent = GOOGLE_ERRORS[error] || 'Something went wrong. Try again.';
+    }
     var token = new URLSearchParams(location.search).get('invite');
     if (token) {
         var r = await api('/api/portal/invite?token=' + encodeURIComponent(token));

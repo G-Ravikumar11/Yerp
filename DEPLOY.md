@@ -52,6 +52,26 @@ Everything else in `backend/.env.example` is optional — Google sign-in, Gmail
 sending, Groq for the AI features, and the payment gateways. Each one is
 inactive until configured and says so plainly rather than failing.
 
+### Sign in with Google
+
+The "Continue with Google" button appears on `/login.html` (the Master, team
+members, staff) and `/portal.html` (partners) once two variables are set. It
+signs in only addresses that already have a login here - it never creates one.
+
+1. Google Cloud Console → APIs & Services → OAuth consent screen: External,
+   app name, support email; add the scopes `openid`, `email`, `profile`
+   (and `gmail.send` if mail should go out through Gmail). Publish the app
+   (or add each person as a test user while it is in testing).
+2. Credentials → Create credentials → OAuth client ID → Web application.
+   Authorised redirect URIs, both:
+   `https://<your-app>/api/auth/google/callback` (sign-in) and
+   `https://<your-app>/api/auth/callback` (Gmail sending).
+3. Railway → Variables: `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` from
+   that client. Redeploy.
+
+The platform console's Google sign-in admits only addresses listed in
+`SUPERADMIN_EMAILS`.
+
 ## How it starts
 
 `railway.json` sets the start command and points the healthcheck at
