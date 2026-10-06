@@ -23,7 +23,7 @@ export function useProjects() {
     queryKey: ['projects', 'mine', staff],
     enabled: !!user,
     queryFn: async () => {
-      const d = await get<{ jobs?: Project[] } | Project[]>(staff ? '/api/employee/jobs' : '/api/jobs')
+      const d = await get<{ jobs?: Project[] } | Project[]>(staff ? '/api/employee/jobs' : '/api/jobs?costing=false')
       return Array.isArray(d) ? d : (d.jobs ?? [])
     },
   })

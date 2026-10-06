@@ -682,15 +682,50 @@ def cached_read(key, build, ttl=60):
     return value
 
 
+# How long each request spends in the database and how many trips it makes. A screen that is slow on the hosted
+# database is nearly always one making a trip per row; this names it in the logs (and in the browser's Network
+# tab, as Server-Timing) instead of leaving it to be guessed at.
+REQUEST_DB = contextvars.ContextVar("request_db", default=None)
+SLOW_REQUEST_MS = int(os.getenv("SLOW_REQUEST_MS", "1500"))
+from sqlalchemy import event as sa_event  # noqa: E402
+
+
+@sa_event.listens_for(engine, "before_cursor_execute")
+def _db_trip_start(conn, cursor, statement, parameters, context, executemany):
+    conn.info.setdefault("trip_started", []).append(time.perf_counter())
+
+
+@sa_event.listens_for(engine, "after_cursor_execute")
+def _db_trip_end(conn, cursor, statement, parameters, context, executemany):
+    started = conn.info.get("trip_started")
+    took = time.perf_counter() - started.pop() if started else 0.0
+    tally = REQUEST_DB.get()
+    if tally is not None:
+        tally[0] += 1
+        tally[1] += took
+
+
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
+    tally = [0, 0.0]
+    REQUEST_DB.set(tally)
+    began = time.perf_counter()
     response = await call_next(request)
     path = request.url.path
+    if path.startswith("/api/"):
+        total_ms = (time.perf_counter() - began) * 1000
+        response.headers["Server-Timing"] = 'db;dur=%.0f;desc="%d queries", app;dur=%.0f' % (
+            tally[1] * 1000, tally[0], total_ms)
+        if total_ms > SLOW_REQUEST_MS or tally[0] > 200:
+            logger.warning("Slow %s %s: %.0f ms, %d database queries taking %.0f ms",
+                           request.method, path, total_ms, tally[0], tally[1] * 1000)
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         _WRITE_VERSION[0] += 1
     if path.endswith(".html") or path == "/":
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
+    elif path.startswith("/next/assets/"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     elif path.endswith((".js", ".css")):
         # Revalidate rather than trusting a cached copy. Versioned URLs cover
         # the normal case, but a browser holding an older script alongside a
@@ -2459,26 +2494,42 @@ def invoice_total(inv) -> float:
     return money((inv.paid or 0) + (inv.due or 0))
 
 
+def hourly_rates(db, client_id):
+    """Each person's hourly rate, read once per request."""
+    held = db.info.setdefault("hourly_rates", {})
+    if client_id not in held:
+        held[client_id] = {e.id: (e.hourly_rate or 0.0) for e in db.query(
+            models.DBEmployee.id, models.DBEmployee.hourly_rate).filter(models.DBEmployee.client_id == client_id).all()}
+    return held[client_id]
+
+
 def labour_cost_for_job(db, client_id, job_id):
     """Hours booked to a job, costed at each person's hourly rate.
 
     Salaried people have no hourly rate, so their time shows as hours with no
     money against it rather than as a guess at what an hour of them costs.
     """
-    rows = db.query(models.DBAttendance).filter(
-        models.DBAttendance.client_id == client_id,
-        models.DBAttendance.job_id == job_id,
-    ).all()
+    rows = on_job(db, models.DBAttendance, client_id, job_id)
     if not rows:
         return 0.0, 0.0
-    rates = {
-        e.id: (e.hourly_rate or 0.0)
-        for e in db.query(models.DBEmployee).filter(
-            models.DBEmployee.client_id == client_id).all()
-    }
+    rates = hourly_rates(db, client_id)
     hours = sum(r.total_hours or 0.0 for r in rows)
     cost = sum((r.total_hours or 0.0) * rates.get(r.employee_id, 0.0) for r in rows)
     return money(cost), round(hours, 2)
+
+
+def on_job(db, model, client_id, job_id):
+    """A project's rows of one kind. A list of every project sets db.info["by_job"], and then each table is read
+    once and grouped, rather than queried again for every project on the list."""
+    pre = db.info.get("by_job")
+    if pre is None:
+        return db.query(model).filter(model.client_id == client_id, model.job_id == job_id).all()
+    if model not in pre:
+        groups = {}
+        for r in db.query(model).filter(model.client_id == client_id).all():
+            groups.setdefault(r.job_id, []).append(r)
+        pre[model] = groups
+    return pre[model].get(job_id, [])
 
 
 def job_costing(db, client_id, job):
@@ -2489,18 +2540,12 @@ def job_costing(db, client_id, job):
     delivery, and ignoring open POs would show a job as profitable right up to
     the day the invoices land.
     """
-    invoices = db.query(models.DBInvoice).filter(
-        models.DBInvoice.client_id == client_id,
-        models.DBInvoice.job_id == job.id,
-    ).all()
+    invoices = on_job(db, models.DBInvoice, client_id, job.id)
     live_invoices = [i for i in invoices if i.status != "Void"]
     invoiced = money(sum(invoice_total(i) for i in live_invoices))
     received = money(sum(i.paid or 0 for i in live_invoices))
 
-    bills = db.query(models.DBBill).filter(
-        models.DBBill.client_id == client_id,
-        models.DBBill.job_id == job.id,
-    ).all()
+    bills = on_job(db, models.DBBill, client_id, job.id)
     # A rejected cost is not a cost; it was refused.
     real_bills = [b for b in bills if (b.approval_status or "none") != "rejected"
                   and b.status != "Cancelled"]
@@ -2508,11 +2553,8 @@ def job_costing(db, client_id, job):
     unpaid = money(sum((b.total or 0) - (b.amount_paid or 0) for b in real_bills))
 
     billed_po_ids = {b.purchase_order_id for b in real_bills if b.purchase_order_id}
-    orders = db.query(models.DBPurchaseOrder).filter(
-        models.DBPurchaseOrder.client_id == client_id,
-        models.DBPurchaseOrder.job_id == job.id,
-        models.DBPurchaseOrder.approval_status == "approved",
-    ).all()
+    orders = [o for o in on_job(db, models.DBPurchaseOrder, client_id, job.id)
+              if o.approval_status == "approved"]
     committed = money(sum(o.total or 0 for o in orders
                           if o.id not in billed_po_ids
                           and o.status not in ("Closed", "Cancelled")))
@@ -2523,26 +2565,30 @@ def job_costing(db, client_id, job):
     # BOM is what that scope is budgeted to cost. Both are forward-looking:
     # they say what the job is worth and what it should take, before any of it
     # has been invoiced or bought.
-    work_orders = db.query(models.DBWorkOrder).filter(
-        models.DBWorkOrder.client_id == client_id,
-        models.DBWorkOrder.job_id == job.id).all()
+    work_orders = on_job(db, models.DBWorkOrder, client_id, job.id)
     live_orders = [o for o in work_orders if (o.approval_status or "none") != "rejected"]
     ordered = money(sum(o.total_value or 0 for o in live_orders))
-    budgeted = money(sum(
-        b.amount or 0 for b in db.query(models.DBBomLine).filter(
-            models.DBBomLine.work_order_id.in_([o.id for o in live_orders])).all()
-    )) if live_orders else 0.0
+    if not live_orders:
+        budgeted = 0.0
+    elif db.info.get("by_job") is not None:
+        pre = db.info["by_job"]
+        if "bom" not in pre:
+            pre["bom"] = dict(db.query(models.DBBomLine.work_order_id,
+                                       func.coalesce(func.sum(models.DBBomLine.amount), 0.0)).filter(
+                models.DBBomLine.client_id == client_id).group_by(models.DBBomLine.work_order_id).all())
+        budgeted = money(sum(float(pre["bom"].get(o.id) or 0) for o in live_orders))
+    else:
+        budgeted = money(sum(
+            b.amount or 0 for b in db.query(models.DBBomLine).filter(
+                models.DBBomLine.work_order_id.in_([o.id for o in live_orders])).all()))
 
     quoted = money(job.quoted_value or 0)
     if not quoted and ordered:
         quoted = ordered
     if not quoted:
         # Fall back to what was actually quoted for this job and accepted.
-        accepted = db.query(models.DBQuote).filter(
-            models.DBQuote.client_id == client_id,
-            models.DBQuote.job_id == job.id,
-            models.DBQuote.status.in_(["Accepted", "Invoiced"]),
-        ).all()
+        accepted = [q for q in on_job(db, models.DBQuote, client_id, job.id)
+                    if q.status in ("Accepted", "Invoiced")]
         quoted = money(sum(q.total or 0 for q in accepted))
 
     total_cost = money(spent + labour)
@@ -2599,9 +2645,7 @@ def job_to_dict(db, job, costing=False):
         "created_at": job.created_at or "",
     }
     if job.manager_id:
-        mgr = db.query(models.DBEmployee).filter(
-            models.DBEmployee.id == job.manager_id).first()
-        row["manager_name"] = employee_name(mgr)
+        row["manager_name"] = employee_name(by_id(db, models.DBEmployee, job.manager_id))
     else:
         row["manager_name"] = ""
     if costing:
@@ -2650,7 +2694,7 @@ def validate_job_money(name, value):
 
 
 @app.get("/api/jobs")
-def list_jobs(request: Request, status: str = "", q: str = "", open_only: bool = False,
+def list_jobs(request: Request, status: str = "", q: str = "", open_only: bool = False, costing: bool = True,
               db: Session = Depends(get_db)):
     client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage"))
     query = db.query(models.DBJob).filter(models.DBJob.client_id == client.id)
@@ -2666,7 +2710,10 @@ def list_jobs(request: Request, status: str = "", q: str = "", open_only: bool =
             models.DBJob.site_address.ilike(f"%{q}%"),
         ))
     jobs = query.order_by(models.DBJob.id.desc()).all()
-    return {"jobs": [job_to_dict(db, j, costing=True) for j in jobs]}
+    prime(db, models.DBEmployee, [j.manager_id for j in jobs])
+    if costing:
+        db.info["by_job"] = {}      # each table read once for every project, not once per project
+    return {"jobs": [job_to_dict(db, j, costing=costing) for j in jobs]}
 
 
 @app.get("/api/jobs/{job_id}")
@@ -12687,6 +12734,46 @@ def by_id(db, model, ident):
     return held[key]
 
 
+def prime(db, model, ids):
+    """Read many rows by key in one query, into the store by_id answers from - for a list that would otherwise
+    fetch the contractor, the project and the unit of every row one at a time (one round trip to the database
+    each, which on a hosted database is what made long lists slow)."""
+    held = db.info.setdefault("by_id", {})
+    want = sorted({i for i in ids if i and (model, i) not in held})
+    for at in range(0, len(want), 500):
+        part = want[at:at + 500]
+        for row in db.query(model).filter(model.id.in_(part)).all():
+            held[(model, row.id)] = row
+        for i in part:
+            held.setdefault((model, i), None)
+
+
+def prime_chains(db, entity_type, ids):
+    """The approval routes of many documents in one query, for a list that shows each one's route."""
+    store = db.info.setdefault("chains", {})
+    want = [i for i in set(ids) if i and (entity_type, i) not in store]
+    for i in want:
+        store[(entity_type, i)] = []
+    for at in range(0, len(want), 500):
+        for row in db.query(models.DBApprovalChain).filter(
+                models.DBApprovalChain.entity_type == entity_type,
+                models.DBApprovalChain.entity_id.in_(want[at:at + 500])).order_by(models.DBApprovalChain.step).all():
+            store[(entity_type, row.entity_id)].append(row)
+
+
+def chain_rows(db, entity_type, entity_id):
+    store = db.info.get("chains")
+    if store is not None and (entity_type, entity_id) in store:
+        return store[(entity_type, entity_id)]
+    return db.query(models.DBApprovalChain).filter(
+        models.DBApprovalChain.entity_type == entity_type,
+        models.DBApprovalChain.entity_id == entity_id).order_by(models.DBApprovalChain.step).all()
+
+
+def forget_chain(db, entity_type, entity_id):
+    (db.info.get("chains") or {}).pop((entity_type, entity_id), None)
+
+
 def job_label_for(db, job_id):
     if not job_id:
         return ""
@@ -18320,11 +18407,16 @@ def wo_or_404(db, client_id, order_id):
         models.DBSubcontractOrder.id == order_id,
         models.DBSubcontractOrder.client_id == client_id).first()
     viewer = STAFF_VIEWER.get()
-    if row and viewer and not wo_visible_to(db, row, viewer):
-        # An order sent before routes existed has none until somebody looks; whoever is on it may then see it.
-        if (row.status or "") == "PROVISIONAL" and not wo_chain_rows(db, row.id):
+    if row and viewer:
+        # What this person may see, worked out once - it takes several queries.
+        seen = wo_involved_ids(db, client_id, viewer)
+        if row.id not in seen and (row.status or "") == "PROVISIONAL" and not wo_chain_rows(db, row.id):
+            # An order sent before routes existed has none until somebody looks; whoever is on it may then see it.
             ensure_wo_chain(db, db.query(models.DBClient).filter(models.DBClient.id == client_id).first(), row)
-    if not row or not wo_visible_to(db, row, viewer):
+            seen = wo_involved_ids(db, client_id, viewer)
+        if row.id not in seen:
+            row = None
+    if not row:
         raise HTTPException(404, "Work order not found")
     return row
 
@@ -19599,9 +19691,10 @@ class WoActionIn(BaseModel):
 def wo_vocabulary(request: Request, db: Session = Depends(get_db)):
     """Everything the wizard needs to populate its pickers in one call."""
     client = require_erp_read(request, db)
+    # Seeded first: its save would otherwise make every project already read go back to the database again.
+    seed_work_types(db, client.id)
     jobs = db.query(models.DBJob).filter(
         models.DBJob.client_id == client.id).order_by(models.DBJob.id.desc()).all()
-    seed_work_types(db, client.id)
     types = db.query(models.DBWorkType).filter(
         models.DBWorkType.client_id == client.id,
         models.DBWorkType.status == "active").order_by(
@@ -19677,6 +19770,9 @@ def wo_list_orders(request: Request, status: str = "", q: str = "",
         query = query.filter(models.DBSubcontractOrder.id.in_(wo_involved_ids(db, client.id, viewer) or [0]))
     rows = query.order_by(models.DBSubcontractOrder.id.desc()).limit(300).all()
     prime_wo_item_counts(db, [o.id for o in rows])
+    prime(db, models.DBBusinessUnit, [o.business_unit_id for o in rows])
+    prime(db, models.DBContractor, [o.contractor_id for o in rows])
+    prime(db, models.DBJob, [o.job_id for o in rows])
     orders = [d for d in (wo_dict(db, o) for o in rows) if wo_matches(d, q)]
     counts = file_counts(db, client.id, "subcontract_order", [o["id"] for o in orders])
     for o in orders:
@@ -21257,21 +21353,16 @@ def job_money(db, client_id, job, pre=None):
     A purchase order drops out of `committed` the moment a bill references it,
     so the same spend is never counted in both.
     """
-    wos = db.query(models.DBWorkOrder).filter(
-        models.DBWorkOrder.client_id == client_id,
-        models.DBWorkOrder.job_id == job.id).all()
+    pre = pre or preload_pnl_for_job(db, client_id, job.id)
+    wos = pre["wos"].get(job.id, [])
     live_wos = [w for w in wos if (w.approval_status or "none") != "rejected"]
     wo_ids = [w.id for w in live_wos]
 
     sold = money(sum(w.total_value or 0 for w in live_wos))
-    budgeted = money(sum(
-        b.amount or 0 for b in db.query(models.DBBomLine).filter(
-            models.DBBomLine.work_order_id.in_(wo_ids)).all())) if wo_ids else 0.0
+    budgeted = money(sum(pre["bom"].get(i, 0.0) for i in wo_ids)) if wo_ids else 0.0
 
     # --- what has actually been incurred ---------------------------------
-    bills = db.query(models.DBBill).filter(
-        models.DBBill.client_id == client_id,
-        models.DBBill.job_id == job.id).all()
+    bills = pre["bills"].get(job.id, [])
     real_bills = [b for b in bills
                   if (b.approval_status or "none") != "rejected"
                   and (b.status or "") != "Cancelled"]
@@ -21279,13 +21370,8 @@ def job_money(db, client_id, job, pre=None):
     paid = money(sum(b.amount_paid or 0 for b in real_bills))
     awaiting = len([b for b in bills if (b.approval_status or "") == "pending"])
 
-    attendance = db.query(models.DBAttendance).filter(
-        models.DBAttendance.client_id == client_id,
-        models.DBAttendance.job_id == job.id).all()
-    rates = {}
-    if attendance:
-        rates = {e.id: (e.hourly_rate or 0.0) for e in db.query(models.DBEmployee).filter(
-            models.DBEmployee.client_id == client_id).all()}
+    attendance = pre["attendance"].get(job.id, [])
+    rates = hourly_rates(db, client_id) if attendance else {}
     labour_hours = round(sum(a.total_hours or 0.0 for a in attendance), 2)
     staff_time = money(sum((a.total_hours or 0.0) * rates.get(a.employee_id, 0.0)
                            for a in attendance))
@@ -21294,16 +21380,13 @@ def job_money(db, client_id, job, pre=None):
     # account so the two screens say the same thing: this one read only
     # supplier bills and clock-in hours, and a job with a gang bill, a signed
     # diary and cement issued from the store showed nothing incurred at all.
-    pre = pre or preload_pnl_for_job(db, client_id, job.id)
     pnl = project_pnl(db, client_id, job, pre=pre)
     c = pnl["cost"]
     labour = money(c["labour"] + staff_time)
     incurred = money(c["incurred"] + staff_time)
 
     # --- what is promised on top of it -----------------------------------
-    pos = db.query(models.DBPurchaseOrder).filter(
-        models.DBPurchaseOrder.client_id == client_id,
-        models.DBPurchaseOrder.job_id == job.id).all()
+    pos = pre["pos"].get(job.id, [])
     # Once a bill names the order, the spend is in `incurred`. Leaving the
     # order in as well counted it twice and made every project look worse the
     # closer it got to finishing.
@@ -21313,17 +21396,12 @@ def job_money(db, client_id, job, pre=None):
                 and p.id not in billed_po_ids]
     committed = money(sum(p.total or 0 for p in open_pos))
 
-    subs = db.query(models.DBSubcontractOrder).filter(
-        models.DBSubcontractOrder.client_id == client_id,
-        models.DBSubcontractOrder.job_id == job.id).all()
+    subs = pre["subs"].get(job.id, [])
     live_subs = [x for x in subs if (x.status or "") not in ("CANCELLED", "AMENDED")]
     # What the gangs have still to bill. Their bills are incurred already;
     # counting the whole order on top counted every rupee billed twice.
     gang_billed = {}
-    for b in db.query(models.DBSubBill).filter(
-            models.DBSubBill.client_id == client_id,
-            models.DBSubBill.job_id == job.id,
-            models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all():
+    for b in pre["sub"].get(job.id, []):
         gang_billed[b.order_id] = money(gang_billed.get(b.order_id, 0.0) + (b.this_bill or 0))
     subcontracted = money(sum(max(0.0, (x.gross_amount or x.net_order_value or 0)
                                   - gang_billed.get(x.id, 0.0)) for x in live_subs))
@@ -21349,15 +21427,11 @@ def job_money(db, client_id, job, pre=None):
     cost_to_complete = money(forecast_cost - incurred)
 
     # --- the customer side ------------------------------------------------
-    invoices = [i for i in db.query(models.DBInvoice).filter(
-        models.DBInvoice.client_id == client_id,
-        models.DBInvoice.job_id == job.id).all() if (i.status or "") != "Void"]
+    invoices = [i for i in pre["invoices"].get(job.id, []) if (i.status or "") != "Void"]
     # Certified RA bills are this business's invoices; counting only the
     # invoice module left every project "not yet invoiced".
-    ra = db.query(models.DBRABill).filter(
-        models.DBRABill.client_id == client_id, models.DBRABill.job_id == job.id,
-        models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all()
-    settled = settled_amounts(db, client_id)
+    ra = pre["ra"].get(job.id, [])
+    settled = pre["settled"]
     ra_received = money(sum(
         (b.net_payable or 0) if (b.status == "PAID" and not settled.get(("ra_bill", b.id)))
         else settled.get(("ra_bill", b.id), 0.0) for b in ra))
@@ -21377,7 +21451,7 @@ def job_money(db, client_id, job, pre=None):
     retention_percent = float(job.retention_percent or 0)
     # Released retention is no longer held: it is a claim of its own, owed
     # until it is received.
-    rels = [r for r in _live_releases(db, client_id, "client") if r.job_id == job.id]
+    rels = pre["released"].get(job.id, [])
     retention_held = money(sum(invoice_total(i) for i in invoices) * retention_percent / 100
                            + sum(b.retention_amount or 0 for b in ra)
                            - sum(r.amount or 0 for r in rels))
@@ -24906,6 +24980,11 @@ def preload_pnl_for_job(db, client_id, job_id):
         "equipment": {job_id: equipment_cost_by_job(db, client_id).get(job_id, 0.0)},
         "recovered": material_recovered_by_job(db, client_id, job_id),
         "stocked": stocked_share_of_bills(db, client_id),
+        "attendance": one(db.query(models.DBAttendance).filter(
+            models.DBAttendance.client_id == client_id, models.DBAttendance.job_id == job_id).all()),
+        "subs": one(db.query(models.DBSubcontractOrder).filter(
+            models.DBSubcontractOrder.client_id == client_id, models.DBSubcontractOrder.job_id == job_id).all()),
+        "settled": settled_amounts(db, client_id),
     }
 
 
@@ -24956,6 +25035,11 @@ def preload_pnl(db, client_id):
         "equipment": equipment_cost_by_job(db, client_id),
         "recovered": material_recovered_by_job(db, client_id),
         "stocked": stocked_share_of_bills(db, client_id),
+        "attendance": by_job(db.query(models.DBAttendance).filter(
+            models.DBAttendance.client_id == client_id).all()),
+        "subs": by_job(db.query(models.DBSubcontractOrder).filter(
+            models.DBSubcontractOrder.client_id == client_id).all()),
+        "settled": settled_amounts(db, client_id),
     }
 
 
@@ -25351,6 +25435,8 @@ def payables(request: Request, db: Session = Depends(get_db)):
     contractors = {c.id: c for c in db.query(models.DBContractor).filter(
         models.DBContractor.client_id == client.id).all()}
     settled = settled_amounts(db, client.id)
+    terms_of = dict(db.query(models.DBSubcontractOrder.id, models.DBSubcontractOrder.payment_days).filter(
+        models.DBSubcontractOrder.client_id == client.id).all())
     for r in db.query(models.DBSubBill).filter(
             models.DBSubBill.client_id == client.id,
             models.DBSubBill.status == "CERTIFIED").all():
@@ -25358,8 +25444,7 @@ def payables(request: Request, db: Session = Depends(get_db)):
         if outstanding <= 0:
             continue
         # The order says how many days after certification the gang is paid.
-        terms = db.query(models.DBSubcontractOrder.payment_days).filter(
-            models.DBSubcontractOrder.id == r.order_id).scalar() or 0
+        terms = terms_of.get(r.order_id) or 0
         due = days_after(r.certified_at, terms)
         bucket, days = ageing_bucket(due or r.certified_at, today)
         buckets[bucket] = money(buckets[bucket] + outstanding)
@@ -25381,8 +25466,7 @@ def payables(request: Request, db: Session = Depends(get_db)):
         outstanding = money((rel.net_amount or 0) - settled.get(("retention_release", rel.id), 0.0))
         if outstanding <= 0:
             continue
-        terms = db.query(models.DBSubcontractOrder.payment_days).filter(
-            models.DBSubcontractOrder.id == rel.sub_order_id).scalar() or 0
+        terms = terms_of.get(rel.sub_order_id) or 0
         due = days_after(rel.release_on, terms)
         bucket, days = ageing_bucket(due or rel.release_on, today)
         buckets[bucket] = money(buckets[bucket] + outstanding)
@@ -27165,7 +27249,13 @@ def list_sub_bills(request: Request, order_id: int = 0, db: Session = Depends(ge
     viewer = STAFF_VIEWER.get()
     if viewer:
         q = q.filter(models.DBSubBill.id.in_(list(sub_bill_visible_ids(db, client.id, viewer)) or [0]))
-    rows = [sub_bill_dict(db, b) for b in q.order_by(models.DBSubBill.id.desc()).limit(300).all()]
+    bills = q.order_by(models.DBSubBill.id.desc()).limit(300).all()
+    prime(db, models.DBSubcontractOrder, [b.order_id for b in bills])
+    prime(db, models.DBContractor, [b.contractor_id for b in bills])
+    prime(db, models.DBJob, [b.job_id for b in bills])
+    prime_chains(db, "sub_bill", [b.id for b in bills])
+    prime(db, models.DBEmployee, [r.approver_id for b in bills for r in sub_bill_chain_rows(db, b.id)])
+    rows = [sub_bill_dict(db, b) for b in bills]
     live = [r for r in rows if r["status"] != "CANCELLED"]
     return {
         "bills": rows,
@@ -27302,12 +27392,11 @@ def sub_bill_owner_signs(db, client_id):
 
 
 def sub_bill_chain_rows(db, bill_id):
-    return db.query(models.DBApprovalChain).filter(
-        models.DBApprovalChain.entity_type == "sub_bill",
-        models.DBApprovalChain.entity_id == bill_id).order_by(models.DBApprovalChain.step).all()
+    return chain_rows(db, "sub_bill", bill_id)
 
 
 def sub_bill_start_chain(db, client_id, bill, submitter_id):
+    forget_chain(db, "sub_bill", bill.id)
     db.query(models.DBApprovalChain).filter(
         models.DBApprovalChain.entity_type == "sub_bill",
         models.DBApprovalChain.entity_id == bill.id).delete(synchronize_session=False)
@@ -30806,11 +30895,12 @@ def schedule_overview(request: Request, db: Session = Depends(get_db)):
     """Every live project's planned against actual, worst first."""
     client = require_erp_read(request, db)
     out = []
+    planned = {r[0] for r in db.query(models.DBScheduleActivity.job_id).filter(
+        models.DBScheduleActivity.client_id == client.id).distinct().all()}
     for job in db.query(models.DBJob).filter(models.DBJob.client_id == client.id).all():
         if (job.status or "") in (JOB_FINISHED, "cancelled"):
             continue
-        if not db.query(models.DBScheduleActivity.id).filter(
-                models.DBScheduleActivity.job_id == job.id).first():
+        if job.id not in planned:
             continue
         v = schedule_view(db, client.id, job)
         out.append(dict(v["summary"], job_id=job.id, number=job.number, name=job.name))
@@ -36558,37 +36648,53 @@ def employee_today(request: Request, db: Session = Depends(get_db)):
     me = "employee:%d" % emp.id
     sites, waiting = [], []
     signoff = employee_can(emp, "site.signoff")
+    ids = [j.id for j in jobs] or [0]
+    cid = emp.client_id
+    diaries = {d.job_id: d for d in db.query(models.DBSiteDiary).filter(
+        models.DBSiteDiary.client_id == cid, models.DBSiteDiary.job_id.in_(ids),
+        models.DBSiteDiary.diary_date == today).all()}
+    permits_of = {}
+    for p in db.query(models.DBWorkPermit).filter(models.DBWorkPermit.client_id == cid,
+                                                  models.DBWorkPermit.job_id.in_(ids),
+                                                  models.DBWorkPermit.status == "ACTIVE").all():
+        permits_of.setdefault(p.job_id, []).append(p)
+    incidents_of = dict(db.query(models.DBSafetyIncident.job_id, func.count(models.DBSafetyIncident.id)).filter(
+        models.DBSafetyIncident.client_id == cid, models.DBSafetyIncident.job_id.in_(ids),
+        models.DBSafetyIncident.status == "OPEN").group_by(models.DBSafetyIncident.job_id).all())
+    inspections_of = dict(db.query(models.DBInspection.job_id, func.count(models.DBInspection.id)).filter(
+        models.DBInspection.client_id == cid, models.DBInspection.job_id.in_(ids),
+        ~models.DBInspection.result.in_(("PASSED", "FAILED"))).group_by(models.DBInspection.job_id).all())
+    threads = db.query(models.DBProjectThread.id, models.DBProjectThread.job_id).filter(
+        models.DBProjectThread.client_id == cid, models.DBProjectThread.job_id.in_(ids),
+        models.DBProjectThread.closed.is_(False)).all()
+    unread_of = {}
+    if threads:
+        tids = [t.id for t in threads]
+        read_upto = dict(db.query(models.DBThreadRead.thread_id, models.DBThreadRead.last_read_id).filter(
+            models.DBThreadRead.thread_id.in_(tids), models.DBThreadRead.reader == me).all())
+        job_of_thread = {t.id: t.job_id for t in threads}
+        for tid, mid in db.query(models.DBProjectMessage.thread_id, models.DBProjectMessage.id).filter(
+                models.DBProjectMessage.thread_id.in_(tids), models.DBProjectMessage.author != me,
+                models.DBProjectMessage.deleted.is_(False)).all():
+            if mid > (read_upto.get(tid) or 0):
+                unread_of[job_of_thread[tid]] = unread_of.get(job_of_thread[tid], 0) + 1
+    drafts_of = dict(db.query(models.DBSiteDiary.job_id, func.count(models.DBSiteDiary.id)).filter(
+        models.DBSiteDiary.client_id == cid, models.DBSiteDiary.job_id.in_(ids),
+        models.DBSiteDiary.status == "DRAFT", models.DBSiteDiary.diary_date < today).group_by(
+            models.DBSiteDiary.job_id).all()) if signoff else {}
     for j in jobs:
-        diary = db.query(models.DBSiteDiary).filter(models.DBSiteDiary.client_id == emp.client_id,
-                                                    models.DBSiteDiary.job_id == j.id,
-                                                    models.DBSiteDiary.diary_date == today).first()
-        permits = db.query(models.DBWorkPermit).filter(models.DBWorkPermit.client_id == emp.client_id,
-                                                       models.DBWorkPermit.job_id == j.id,
-                                                       models.DBWorkPermit.status == "ACTIVE").all()
+        diary = diaries.get(j.id)
+        permits = permits_of.get(j.id, [])
         overdue = [p for p in permits if (p.valid_to or "") and p.valid_to[:16] < now]
-        incidents = db.query(models.DBSafetyIncident).filter(models.DBSafetyIncident.client_id == emp.client_id,
-                                                             models.DBSafetyIncident.job_id == j.id,
-                                                             models.DBSafetyIncident.status == "OPEN").count()
-        inspections = db.query(models.DBInspection).filter(models.DBInspection.client_id == emp.client_id,
-                                                           models.DBInspection.job_id == j.id,
-                                                           ~models.DBInspection.result.in_(("PASSED", "FAILED"))).count()
-        unread = 0
-        for t in db.query(models.DBProjectThread).filter(models.DBProjectThread.client_id == emp.client_id,
-                                                         models.DBProjectThread.job_id == j.id,
-                                                         models.DBProjectThread.closed.is_(False)).all():
-            unread += db.query(models.DBProjectMessage).filter(
-                models.DBProjectMessage.thread_id == t.id, models.DBProjectMessage.author != me,
-                models.DBProjectMessage.deleted.is_(False),
-                models.DBProjectMessage.id > _last_read(db, t.id, me)).count()
+        incidents = incidents_of.get(j.id, 0)
+        inspections = inspections_of.get(j.id, 0)
+        unread = unread_of.get(j.id, 0)
         sites.append({"job_id": j.id, "number": j.number or "", "name": j.name or "",
                       "diary": ({"id": diary.id, "status": diary.status} if diary else None),
                       "permits_live": len(permits), "permits_overdue": len(overdue),
                       "incidents_open": incidents, "inspections_open": inspections, "unread": unread})
         if signoff:
-            drafts = db.query(models.DBSiteDiary).filter(models.DBSiteDiary.client_id == emp.client_id,
-                                                         models.DBSiteDiary.job_id == j.id,
-                                                         models.DBSiteDiary.status == "DRAFT",
-                                                         models.DBSiteDiary.diary_date < today).count()
+            drafts = drafts_of.get(j.id, 0)
             if drafts:
                 waiting.append({"kind": "diary", "job_id": j.id, "view": "diary-view",
                                 "text": "%d diary day%s on %s to sign off" % (drafts, "" if drafts == 1 else "s", j.name)})
@@ -37877,16 +37983,19 @@ def approval_inbox(db, client, emp):
 
     # 2. Subcontract work orders waiting for approval.
     if can("subcontracts.approve"):
-        for o in db.query(models.DBSubcontractOrder).filter(
-                models.DBSubcontractOrder.client_id == client.id,
-                models.DBSubcontractOrder.status == "PROVISIONAL").order_by(models.DBSubcontractOrder.id).all():
+        waiting = db.query(models.DBSubcontractOrder).filter(
+            models.DBSubcontractOrder.client_id == client.id,
+            models.DBSubcontractOrder.status == "PROVISIONAL").order_by(models.DBSubcontractOrder.id).all()
+        prime_chains(db, "subcontract_order", [o.id for o in waiting])
+        prime(db, models.DBContractor, [o.contractor_id for o in waiting])
+        prime(db, models.DBJob, [o.job_id for o in waiting])
+        for o in waiting:
             ensure_wo_chain(db, client, o)
             step = wo_current_step(db, o)
             if emp is not None and (step is None or step.approver_id != emp.id):
                 continue
             route = wo_chain_rows(db, o.id)
-            con = db.query(models.DBContractor).filter(models.DBContractor.id == o.contractor_id).first() \
-                if o.contractor_id else None
+            con = by_id(db, models.DBContractor, o.contractor_id)
             job = _job_of(db, o.job_id)
             sent = db.query(models.DBSubcontractApproval).filter(
                 models.DBSubcontractApproval.order_id == o.id,
@@ -37949,16 +38058,21 @@ def approval_inbox(db, client, emp):
 
     # 4. Subcontractor bills, climbing their route to be certified.
     if can("subcontracts.approve"):
-        for b in db.query(models.DBSubBill).filter(
-                models.DBSubBill.client_id == client.id,
-                models.DBSubBill.status == "SUBMITTED").order_by(models.DBSubBill.id).all():
+        sent = db.query(models.DBSubBill).filter(
+            models.DBSubBill.client_id == client.id,
+            models.DBSubBill.status == "SUBMITTED").order_by(models.DBSubBill.id).all()
+        prime_chains(db, "sub_bill", [b.id for b in sent])
+        prime(db, models.DBContractor, [b.contractor_id for b in sent])
+        prime(db, models.DBJob, [b.job_id for b in sent])
+        prime(db, models.DBEmployee, [r.approver_id for b in sent for r in sub_bill_chain_rows(db, b.id)]
+              + [b.submitted_by for b in sent])
+        for b in sent:
             ensure_sub_bill_chain(db, b)
             step = sub_bill_current_step(db, b)
             if emp is not None and (step is None or step.approver_id != emp.id):
                 continue
             route = sub_bill_chain_rows(db, b.id)
-            con = db.query(models.DBContractor).filter(models.DBContractor.id == b.contractor_id).first() \
-                if b.contractor_id else None
+            con = by_id(db, models.DBContractor, b.contractor_id)
             job = _job_of(db, b.job_id)
             items.append(_row(
                 "sub_bill", "Subcontractor bill", b.id, b.number, b.this_bill,
@@ -38710,12 +38824,11 @@ def hierarchy_chain(db, client_id, submitter_id, right, job_id=None, owner_signs
 
 
 def wo_chain_rows(db, order_id):
-    return db.query(models.DBApprovalChain).filter(
-        models.DBApprovalChain.entity_type == "subcontract_order",
-        models.DBApprovalChain.entity_id == order_id).order_by(models.DBApprovalChain.step).all()
+    return chain_rows(db, "subcontract_order", order_id)
 
 
 def wo_start_chain(db, client, order, submitter_id):
+    forget_chain(db, "subcontract_order", order.id)
     db.query(models.DBApprovalChain).filter(
         models.DBApprovalChain.entity_type == "subcontract_order",
         models.DBApprovalChain.entity_id == order.id).delete(synchronize_session=False)

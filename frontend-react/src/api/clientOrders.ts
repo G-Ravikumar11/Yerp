@@ -79,7 +79,7 @@ export interface JobOption {
 export const useJobOptions = (staff: boolean) =>
   useQuery({
     queryKey: ['jobs', 'options', staff],
-    queryFn: async () => (await get<{ jobs: JobOption[] }>(staff ? '/api/employee/jobs' : '/api/jobs?open_only=true')).jobs ?? [],
+    queryFn: async () => (await get<{ jobs: JobOption[] }>(staff ? '/api/employee/jobs' : '/api/jobs?open_only=true&costing=false')).jobs ?? [],
     staleTime: 5 * 60_000,
   })
 
