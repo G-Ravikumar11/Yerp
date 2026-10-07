@@ -181,3 +181,42 @@ def test_an_extra_item_with_no_number_is_numbered_after_its_variation(tenant):
     tenant.post("/api/boq-variations/%d/approve" % v["id"], json={})
     got = current_lines(tenant, boq)
     assert got["V1/1"]["description"] == "Rock breaking" and got["V1/2"]["description"] == "Dewatering"
+
+
+# --- on the client's printed bill --------------------------------------------------------------------------------------
+
+def test_the_clients_printed_bill_lists_the_variations_agreed_on_its_order(tenant):
+    import io
+    import re
+    import openpyxl
+    import pypdf
+    from conftest import owner_places
+    from test_measurement_and_ra_bills import measure, line_of, raise_bill
+    boq, lines, _ = ready(tenant)
+    order = tenant.post("/api/boqs/%d/client-order" % boq["id"], json={}).json()["work_order"]
+    # a client order is approved against a material budget
+    rm = tenant.post("/api/erp/items/bulk", json={"items": [{"kind": "RM", "item_name": "Cement for the works", "units_of_measure": "Nos"}]}).json()["codes"][0]
+    first = tenant.get("/api/erp/work-orders/%d" % order["id"]).json()["lines"][0]
+    assert tenant.post("/api/erp/bom/build", json={"work_order_id": order["id"], "lines": [
+        {"fg_code": first["fg_code"], "rm_code": rm, "qty": 10, "rate": 50}]}).status_code == 200
+    owner_places(tenant, order["id"])
+    measure(tenant, order["id"], line_of(tenant, order["id"]), 10)
+    before = raise_bill(tenant, order["id"]).json()["bill"]
+    plain = pypdf.PdfReader(io.BytesIO(tenant.get("/api/ra-bills/%d/document.pdf" % before["id"]).content))
+    assert "VARIATIONS AGREED" not in " ".join(p.extract_text() or "" for p in plain.pages), "no variation, no section"
+
+    v = variation(tenant, boq, [{"kind": "quantity", "boq_key": lines["1.2"]["key"], "change_qty": 30},
+                                {"kind": "extra", "description": "Anti-termite treatment", "uom": "sqm", "change_qty": 200, "rate": 60}],
+                  reason="Client asked for treatment").json()["variation"]
+    tenant.post("/api/boq-variations/%d/submit" % v["id"])
+    assert tenant.post("/api/boq-variations/%d/approve" % v["id"], json={}).status_code == 200
+
+    pdf = tenant.get("/api/ra-bills/%d/document.pdf" % before["id"])
+    flat = re.sub(r"\s+", " ", " ".join(p.extract_text() or "" for p in pypdf.PdfReader(io.BytesIO(pdf.content)).pages))
+    assert "VARIATIONS AGREED ON THIS ORDER" in flat and "BV-01" in flat and "Client asked for treatment" in flat
+    assert "Anti-termite treatment" in flat
+    assert "Order value as first placed" in flat and "14,72,800.00" in flat      # 1,472,800 as first placed
+    assert "Order value as varied" in flat and "17,30,800.00" in flat            # + 30 x 8,200 + 200 x 60 = 2,58,000
+    x = tenant.get("/api/ra-bills/%d/export.xlsx" % before["id"])
+    cells = [str(c.value) for ws in openpyxl.load_workbook(io.BytesIO(x.content)).worksheets for row in ws.iter_rows() for c in row if c.value]
+    assert any("variations agreed" in c and "BV-01" in c for c in cells)

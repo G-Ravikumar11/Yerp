@@ -22883,6 +22883,7 @@ def ra_bill_xlsx(bill_id: int, request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     bill = ra_bill_or_404(db, client.id, bill_id)
     d = ra_bill_dict(db, bill, detail=True)
+    varied = order_variations(db, bill)
     rows = [[l["fg_code"], l["description"], l["uom"], l["ordered_qty"],
              l["measured_to_date"], l["previously_billed_qty"], l["this_bill_qty"],
              l["rate"], l["amount"]] for l in d["lines"]]
@@ -22894,8 +22895,11 @@ def ra_bill_xlsx(bill_id: int, request: Request, db: Session = Depends(get_db)):
                   ["No: " + d["number"] + "   (" + d["status"] + ")"],
                   ["Work order: " + d["work_order"]],
                   ["Project: " + d["project"]],
-                  ["Period to: " + d["period_to"]],
-                  []],
+                  ["Period to: " + d["period_to"]]]
+                 + ([["Order value as first placed: %s; variations agreed: %s (%s); as varied: %s" % (
+                     inr(varied["original"]), inr(sum(x["value"] for x in varied["variations"])),
+                     ", ".join(x["number"] for x in varied["variations"]), inr(varied["varied"]))]] if varied else [])
+                 + [[]],
         closing=[[], ["", "", "", "", "", "", "", "This bill", d["this_bill"]],
                  ["", "", "", "", "", "", "", "Retention @ %s%%" % d["retention_percent"],
                   -d["retention_amount"]],
@@ -36585,6 +36589,39 @@ def wo_form_spec(db, client, order):
 
 
 
+def order_variations(db, bill):
+    """The variations to the BOQ agreed on the order a client bill is against, as they stood on the bill's date:
+    the order's value as first placed, each variation up to that date, and the value as varied. None when the
+    order was not drawn from a BOQ or has no approved variation."""
+    wo = db.query(models.DBWorkOrder).filter(models.DBWorkOrder.id == bill.work_order_id).first()
+    if not wo or not wo.boq_id:
+        return None
+    every = db.query(models.DBBoqVariation).filter(models.DBBoqVariation.boq_id == wo.boq_id,
+                                                   models.DBBoqVariation.status == "APPROVED").order_by(models.DBBoqVariation.id).all()
+    if not every:
+        return None
+    if (bill.status or "") in ("CERTIFIED", "PAID"):
+        cutoff = ((bill.certified_at or "") or bill.created_at or "")[:10]
+    else:
+        cutoff = datetime.now().strftime("%Y-%m-%d")
+    original = money((wo.total_value or 0) - sum(v.value or 0 for v in every))
+    out = []
+    for v in every:
+        if (v.approved_at or "")[:10] > cutoff:
+            continue
+        lines = db.query(models.DBBoqVariationLine).filter(models.DBBoqVariationLine.variation_id == v.id).order_by(
+            models.DBBoqVariationLine.display_order, models.DBBoqVariationLine.id).all()
+        what = "; ".join(
+            ("%s %s%s" % (l.sno or "", l.description.split("\n")[0][:40],
+                          (" (+%g)" % l.change_qty) if l.kind == "quantity" else (" (new, %g %s)" % (l.change_qty, l.uom)))).strip()
+            for l in lines[:6]) + ("; ..." if len(lines) > 6 else "")
+        out.append({"number": (v.number or "").rsplit("/", 1)[-1], "date": (v.approved_at or "")[:10], "reason": v.reason or "",
+                    "what": what, "value": money(v.value)})
+    if not out:
+        return None
+    return {"original": original, "variations": out, "varied": money(original + sum(x["value"] for x in out))}
+
+
 def ra_form_spec(db, client, bill):
     """The client RA bill in the same form: the bill's own box, the client's,
     the abstract of work, the deductions and tax down the right, the figure in
@@ -36657,6 +36694,17 @@ def ra_form_spec(db, client, bill):
         {"type": "words", "label": "Rupees", "text": _words(b["net_payable"])},
         {"type": "pairs", "rows": [("SAC", WORKS_CONTRACT_SAC + " - works contract services")], "label_width": 42},
     ]
+    varied = order_variations(db, bill)
+    if varied:
+        blocks += [
+            {"type": "band", "text": "VARIATIONS AGREED ON THIS ORDER"},
+            {"type": "table", "columns": [("Ref", 12, "L"), ("Agreed", 16, "C"), ("What changed", 82, "L"), ("Value", 22, "R")],
+             "rows": [[x["number"], form_pdf.date_text(x["date"]), (x["reason"] + (" - " if x["reason"] else "") + x["what"]).strip(),
+                       form_pdf.plain_number(x["value"])] for x in varied["variations"]],
+             "totals": [("TOTAL VARIATIONS", form_pdf.plain_number(sum(x["value"] for x in varied["variations"])), True)]},
+            {"type": "pairs", "label_width": 62, "rows": [("Order value as first placed", form_pdf.inr(varied["original"])),
+                                                           ("Order value as varied", form_pdf.inr(varied["varied"]))]},
+        ]
     if irn:
         blocks.append({"type": "qr", "data": irn.signed_qr, "lines": [
             "e-Invoice registered with the GST Invoice Registration Portal",
