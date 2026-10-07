@@ -1,3 +1,6 @@
+import { writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { api, approvedOrder, clickText, fill, launch, measure, open, setValue, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
 
 const { page, check, done } = await launch({ allow: [/409 POST \/api\/sub-bills/] })
@@ -41,6 +44,20 @@ await waitForToast(page, 'saved')
 await sleep(400)
 const saved = (await api(page, 'GET', `/api/sub-bills/${bill1}`)).data
 check('the certificate boxes were saved', saved.work_name === 'E2E shuttering, tower C' && saved.hsn_sac === '995469' && saved.bill_date === '2026-11-30')
+await toastsGone(page)
+// --- the contractor's own bill is attached before the bill can be sent ---------------------------------------------------
+check("Submit waits for the contractor's own bill", await page.evaluate(() => [...document.querySelectorAll('main button')].find((b) => b.textContent.trim() === 'Submit')?.disabled === true))
+const pdf = join(tmpdir(), 'their_bill.pdf')
+writeFileSync(pdf, ['%PDF-1.4', '1 0 obj<<>>endobj', 'trailer<<>>', '%%EOF'].join('\n'))
+await fill(page, '#scan-amount', '41000')
+await (await page.$("input[aria-label=\"The contractor's bill\"]")).uploadFile(pdf)
+await waitForToast(page, 'is attached to')
+await page.waitForFunction(() => document.querySelector('main')?.textContent.includes('their_bill.pdf'))
+check('it is attached, with the amount it claims, and the amounts agree', /Their bill:/.test(await page.$eval('main', (m) => m.textContent)) && /the amounts agree/.test(await page.$eval('main', (m) => m.textContent)))
+await clickText(page, 'main button', 'Compare side by side')
+await page.waitForSelector('[role=dialog] iframe')
+check('the two can be read side by side', (await page.$$('[role=dialog] iframe')).length === 2)
+await page.keyboard.press('Escape')
 await toastsGone(page)
 await clickText(page, 'main button', 'Submit')
 await sleep(1200)

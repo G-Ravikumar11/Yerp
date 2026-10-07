@@ -1,4 +1,4 @@
-import { api, approvedOrder, clickText, launch, measure, open, signIn, sleep } from './lib.mjs'
+import { attachHardCopy, api, approvedOrder, clickText, launch, measure, open, signIn, sleep } from './lib.mjs'
 
 // Every measurement entry has a code, and a bill can be drawn for chosen entries only.
 const { page, check, done } = await launch({ allow: [/^(403|404|409) /] })
@@ -31,6 +31,7 @@ const got = (await api(page, 'GET', `/api/sub-bills/${bill}`)).data
 check('and it claims only that entry', got.lines.length === 1 && got.lines[0].this_bill_qty === 3 && got.entry_mode === 'chosen', JSON.stringify(got.lines.map((l) => l.this_bill_qty)))
 
 // --- the dialog on the RA bills screen: choose entries again, once the first bill is done ------------------------------
+await attachHardCopy(page, bill)
 await api(page, 'POST', `/api/sub-bills/${bill}/submit`, {})
 await api(page, 'POST', `/api/sub-bills/${bill}/certify`, {})
 await open(page, `/subcontractors/ra-bills?order=${order.id}`)

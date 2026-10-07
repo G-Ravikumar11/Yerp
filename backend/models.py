@@ -2417,6 +2417,15 @@ class DBSubBill(Base):
     bill_date = Column(String, default="")
     # "" for a bill of everything measured and not yet billed; "chosen" for one drawn from entries picked for it.
     entry_mode = Column(String, default="")
+    # The contractor's own bill, on paper, scanned and attached before this one is sent up for approval so the
+    # approvers can read the two side by side - and the amount of work it claims, to check ours against.
+    scan_file_id = Column(Integer, nullable=True)
+    scan_name = Column(String, default="")
+    scan_type = Column(String, default="")
+    scan_size = Column(Integer, default=0)
+    scan_amount = Column(Float, nullable=True)
+    scan_by_name = Column(String, default="")
+    scan_at = Column(String, default="")
     work_type = Column(String, default="")           # 3.3 Type of Work
     work_name = Column(String, default="")           # Name of the Work, on the abstract and the book
     hsn_sac = Column(String, default="")             # 3.2 HSN/SAC

@@ -6,6 +6,7 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, ConfirmDialog, Field, Input, Modal, NumField, Skeleton, Stat, StatGrid, StatusBadge, Textarea } from '@/components/ui'
 import { billKeys, editBill, moveBill, useSubBill, type BillEdit, type BillLine, type BillMove, type SubBill } from '@/api/subbills'
 import { PayModal } from '@/features/money/PayModal'
+import { HardCopy } from './HardCopy'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { ApiError } from '@/lib/api'
@@ -144,7 +145,12 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
               </Button>
             )}
             {has('SUBMIT') && can('billing.manage') && (
-              <Button loading={move.isPending && move.variables?.action === 'submit'} onClick={() => move.mutate({ action: 'submit' })}>
+              <Button
+                loading={move.isPending && move.variables?.action === 'submit'}
+                disabled={!!bill.scan_required && !bill.hardcopy}
+                title={bill.scan_required && !bill.hardcopy ? "Attach the contractor's own bill first" : undefined}
+                onClick={() => move.mutate({ action: 'submit' })}
+              >
                 Submit
               </Button>
             )}
@@ -199,6 +205,8 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
               }
             />
           </div>
+
+          <HardCopy bill={bill} canAttach={can('billing.manage')} onChanged={reseed} />
 
           {!!bill.entries?.length && (
             <div>

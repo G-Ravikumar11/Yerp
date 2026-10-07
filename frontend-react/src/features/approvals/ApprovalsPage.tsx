@@ -133,6 +133,13 @@ export default function ApprovalsPage() {
                                 </a>
                               </Button>
                             )}
+                            {i.scan && (
+                              <Button size="sm" variant="ghost" asChild>
+                                <a href={i.scan} target="_blank" rel="noopener">
+                                  <FileText /> Their bill
+                                </a>
+                              </Button>
+                            )}
                             {(i.mine || owner) && (
                               <>
                                 <Button size="sm" variant="outline" onClick={() => setPending({ item: i, mode: 'reject' })}>

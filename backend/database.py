@@ -1499,6 +1499,13 @@ def ensure_columns():
                     ("subcontract_items", "boq_key", "TEXT DEFAULT ''"),
                     ("work_orders", "boq_id", "INTEGER"),
                     ("sub_bills", "entry_mode", "TEXT DEFAULT ''"),
+                    ("sub_bills", "scan_file_id", "INTEGER"),
+                    ("sub_bills", "scan_name", "TEXT DEFAULT ''"),
+                    ("sub_bills", "scan_type", "TEXT DEFAULT ''"),
+                    ("sub_bills", "scan_size", "INTEGER DEFAULT 0"),
+                    ("sub_bills", "scan_amount", "DOUBLE PRECISION"),
+                    ("sub_bills", "scan_by_name", "TEXT DEFAULT ''"),
+                    ("sub_bills", "scan_at", "TEXT DEFAULT ''"),
                     ("measurement_dimensions", "nom", "DOUBLE PRECISION"),
                     ("measurement_dimensions", "is_heading", "BOOLEAN DEFAULT FALSE"),
                     ("sub_bills", "bill_date", "TEXT DEFAULT ''"),
@@ -1707,6 +1714,13 @@ def migrate_sqlite():
             add_col("subcontract_items", "boq_key", "TEXT DEFAULT ''")
             add_col("work_orders", "boq_id", "INTEGER")
             add_col("sub_bills", "entry_mode", "TEXT DEFAULT ''")
+            add_col("sub_bills", "scan_file_id", "INTEGER")
+            add_col("sub_bills", "scan_name", "TEXT DEFAULT ''")
+            add_col("sub_bills", "scan_type", "TEXT DEFAULT ''")
+            add_col("sub_bills", "scan_size", "INTEGER DEFAULT 0")
+            add_col("sub_bills", "scan_amount", "FLOAT")
+            add_col("sub_bills", "scan_by_name", "TEXT DEFAULT ''")
+            add_col("sub_bills", "scan_at", "TEXT DEFAULT ''")
             add_col("measurement_dimensions", "nom", "FLOAT")
             add_col("measurement_dimensions", "is_heading", "BOOLEAN DEFAULT 0")
             add_col("sub_bills", "bill_date", "TEXT DEFAULT ''")

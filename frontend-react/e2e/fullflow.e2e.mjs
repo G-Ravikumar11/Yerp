@@ -1,4 +1,4 @@
-import { api, launch, signIn } from './lib.mjs'
+import { attachHardCopy, api, launch, signIn } from './lib.mjs'
 
 // The whole chain, with the people who really do each step: a planner drafts a work order, the project
 // manager and then the owner approve it, a site engineer measures, the planner bills, the same two sign
@@ -93,6 +93,7 @@ const bill = await api(page, 'POST', '/api/sub-bills', { order_id: oid, period_f
 check('the planner draws up the bill from the book', bill.status === 200, JSON.stringify(bill.data).slice(0, 160))
 const bid = bill.data.bill?.id ?? bill.data.id
 check('a second bill cannot be opened while one is', (await api(page, 'POST', '/api/sub-bills', { order_id: oid })).status === 409)
+await attachHardCopy(page, bid)
 const sb = await api(page, 'POST', `/api/sub-bills/${bid}/submit`, {})
 check('sent for certification', sb.status === 200 && sb.data.bill.status === 'SUBMITTED', JSON.stringify(sb.data).slice(0, 160))
 const bd = (await api(page, 'GET', `/api/sub-bills/${bid}`)).data.bill ?? (await api(page, 'GET', `/api/sub-bills/${bid}`)).data
@@ -126,6 +127,7 @@ await who(planner)
 const bill2 = await api(page, 'POST', '/api/sub-bills', { order_id: oid, period_from: '2026-12-01', period_to: '2026-12-31' })
 const bd2 = bill2.data.bill ?? bill2.data
 check('a second bill carries only the new work, 300 x 410 = 123,000', bill2.status === 200 && Math.round(bd2.this_bill) === 123000, JSON.stringify(bd2).slice(0, 160))
+await attachHardCopy(page, bd2.id)
 const sb2 = await api(page, 'POST', `/api/sub-bills/${bd2.id}/submit`, {})
 check('the second bill is sent up', sb2.status === 200 && sb2.data.bill.status === 'SUBMITTED')
 await who(null)

@@ -90,6 +90,9 @@ export interface SubBill {
   site?: string
   /** 'chosen' when the bill was drawn from entries picked for it; the entries it carries (detail only). */
   entry_mode?: '' | 'chosen'
+  /** The contractor's own bill, attached before this one is sent; and whether one must be. */
+  scan_required?: boolean
+  hardcopy?: { name: string; type: string; size: number; amount: number | null; by: string; at: string; difference: number | null } | null
   entries?: { id: number; code: string; kind: string; quantity: number; activity_no: string; location: string; measured_on: string }[]
   order_detail?: { number: string; subject: string; value: number; retention_percent: number; commencement_date: string; completion_date: string }
 }

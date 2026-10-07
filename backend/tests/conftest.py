@@ -25,6 +25,8 @@ os.environ["ALLOW_SELF_REGISTRATION"] = "1"
 os.environ.setdefault("COOKIE_SECURE", "false")
 os.environ.setdefault("SUPERADMIN_PASSWORD", "TestSuper123")
 os.environ.setdefault("SUPERADMIN_EMAILS", "hello@billing.com")
+# The suite's bills have no paper behind them; the rule that one must is tested where it matters.
+os.environ.setdefault("REQUIRE_BILL_SCAN", "0")
 # Hashing a password costs real time on purpose; the suite hashes thousands.
 os.environ.setdefault("PASSWORD_ITERATIONS", "1000")
 # Tests drive run_due_jobs() directly; a loop ticking in the background would

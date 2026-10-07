@@ -1,4 +1,4 @@
-import { allToasts, api, approvedOrder, clickText, launch, measure, open, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
+import { attachHardCopy, allToasts, api, approvedOrder, clickText, launch, measure, open, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
 
 // The whole life of a work order, as the owner meets it: raise it, approve it, measure and bill it, then amend it
 // (twice, by two different routes) and see that every revision can go for approval, or be approved by the owner
@@ -25,6 +25,7 @@ check('an order the owner raised and approved is live', (await order(base.id)).s
 
 // --- 2. A bill certified on it, and one still open ---------------------------------------------------------------------------------------
 const bill1 = (await api(page, 'POST', '/api/sub-bills', { order_id: base.id })).data.bill
+await attachHardCopy(page, bill1.id)
 await api(page, 'POST', `/api/sub-bills/${bill1.id}/submit`, {})
 const cert = await api(page, 'POST', '/api/approvals/decide', { kind: 'sub_bill', id: bill1.id, decision: 'approve', note: '', override: false })
 check('a bill is certified against the order', cert.status === 200, JSON.stringify(cert.data).slice(0, 100))

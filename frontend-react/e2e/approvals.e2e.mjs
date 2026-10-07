@@ -1,4 +1,4 @@
-import { api, approvedOrder, clickText, launch, measure, open, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
+import { attachHardCopy, api, approvedOrder, clickText, launch, measure, open, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
 
 const { page, check, done } = await launch({ allow: [/400 POST \/api\/approvals\/decide/] })
 await signIn(page)
@@ -22,6 +22,7 @@ if (sent.status !== 200) throw new Error('could not submit: ' + JSON.stringify(s
 const order = await approvedOrder(page, { subject: 'E2E approvals bill' })
 await measure(page, order.id, order.items[0].item_id, 40)
 const bill = (await api(page, 'POST', '/api/sub-bills', { order_id: order.id })).data.bill
+await attachHardCopy(page, bill.id)
 await api(page, 'POST', `/api/sub-bills/${bill.id}/submit`, {})
 
 await open(page, '/approvals')

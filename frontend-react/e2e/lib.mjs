@@ -230,3 +230,14 @@ export const measure = (page, orderId, itemId, quantity) => api(page, 'POST', `/
 
 /** Every toast on screen, so a test can say what the person was told. */
 export const allToasts = (page) => page.evaluate(() => [...document.querySelectorAll('[aria-live=polite] [role=status], [aria-live=polite] [role=alert]')].map((e) => e.textContent.trim()))
+
+/** The contractor's own bill, attached to a draft bill the way the screen does - a bill cannot be sent without it. */
+export function attachHardCopy(page, billId, amount = '') {
+  return page.evaluate(async (billId, amount) => {
+    const form = new FormData()
+    form.append('file', new Blob(['%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF'], { type: 'application/pdf' }), 'their_bill.pdf')
+    form.append('amount', String(amount))
+    const res = await fetch(`/api/sub-bills/${billId}/hardcopy`, { method: 'POST', credentials: 'include', body: form })
+    return res.status
+  }, billId, amount)
+}
