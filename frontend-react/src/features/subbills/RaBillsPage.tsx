@@ -5,9 +5,9 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
 import { Button, Select, Stat, StatGrid, StatusBadge } from '@/components/ui'
-import { billKeys, drawBill, useSubBills, withRunningTotals, type SubBill } from '@/api/subbills'
+import { useSubBills, withRunningTotals, type SubBill } from '@/api/subbills'
+import { DrawBillDialog } from './DrawBillDialog'
 import { useOrders } from '@/api/orders'
-import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { DeleteOrderDialog } from '@/features/deleteorder/DeleteOrderDialog'
 import { BulkBar, BulkDeleteDialog } from '@/components/data/BulkDelete'
@@ -40,10 +40,7 @@ export default function RaBillsPage() {
   const s = bills.data?.summary
   const upToDate = rows.filter((b) => b.status !== 'CANCELLED').reduce((m, b) => Math.max(m, b.gross_to_date), 0)
 
-  const draw = useAction(() => drawBill(orderId), {
-    invalidate: [billKeys.all],
-    onSuccess: (r) => nav(`/subcontractors/ra-bills/${r.bill.id}`),
-  })
+  const [drawing, setDrawing] = useState(false)
 
   const columns: TableColumn<SubBill>[] = [
     { id: 'no', header: 'Bill', sort: (b) => b.number, cell: (b) => <span className="font-mono text-[13px] font-medium">{b.number}</span> },
@@ -96,7 +93,7 @@ export default function RaBillsPage() {
               </a>
             </Button>
             {can('billing.manage') && orderId > 0 && chosen && (chosen.status === 'APPROVED' || chosen.status === 'EXECUTED') && (
-              <Button loading={draw.isPending} onClick={() => draw.mutate()}>
+              <Button onClick={() => setDrawing(true)}>
                 <FilePlus2 /> Draw up a bill
               </Button>
             )}
@@ -135,6 +132,7 @@ export default function RaBillsPage() {
         onRowClick={(b) => nav(`/subcontractors/ra-bills/${b.id}`)}
         empty={filters.active ? 'Nothing matches those filters.' : "No bills yet. Measure the contractor's work, then draw one up."}
       />
+      <DrawBillDialog orderId={orderId} open={drawing} onOpenChange={setDrawing} onDrawn={(id) => nav(`/subcontractors/ra-bills/${id}`)} />
       <BulkDeleteDialog open={clearing} onOpenChange={setClearing} kind="bill" noun="bill" ids={[...picked].map(Number)} onFinished={() => setPicked(new Set())} detail="Each goes with its approvals and payments. What each measured becomes free to bill again. This cannot be undone." />
       <DeleteOrderDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)} kind="bill" id={deleting?.id ?? 0} number={deleting?.number ?? ''} onDeleted={() => setDeleting(null)} />
     </>

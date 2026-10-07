@@ -503,6 +503,27 @@ def fill_document_names():
         db.close()
 
 
+def backfill_entry_codes():
+    """Entries recorded before they had codes are numbered, oldest first, after any that already have one."""
+    with SessionLocal() as db:
+        orders = [r[0] for r in db.query(models.DBSubMeasurement.order_id).filter(
+            or_(models.DBSubMeasurement.code.is_(None), models.DBSubMeasurement.code == "")).distinct().all()]
+        for order_id in orders:
+            wo = db.query(models.DBSubcontractOrder.wo_number).filter(
+                models.DBSubcontractOrder.id == order_id).scalar() or "MB"
+            top = db.query(func.max(models.DBSubMeasurement.code_no)).filter(
+                models.DBSubMeasurement.order_id == order_id).scalar() or 0
+            for m in db.query(models.DBSubMeasurement).filter(
+                    models.DBSubMeasurement.order_id == order_id,
+                    or_(models.DBSubMeasurement.code.is_(None), models.DBSubMeasurement.code == "")).order_by(
+                        models.DBSubMeasurement.id).all():
+                top += 1
+                m.code_no, m.code = top, "%s/MB-%03d" % (wo, top)
+            db.query(models.DBSubcontractOrder).filter(models.DBSubcontractOrder.id == order_id).update(
+                {"mb_code_seq": top}, synchronize_session=False)
+        db.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ok = True
@@ -515,6 +536,7 @@ async def lifespan(app: FastAPI):
         ok = _boot_step(label, fn) and ok
     if ok:
         convert_legacy_holds_all()
+        _boot_step("number the entries of the measurement book", backfill_entry_codes)
     DB_READY["ok"] = ok
     if ok:
         DB_READY["error"] = ""
@@ -26509,6 +26531,7 @@ def sub_bill_dict(db, bill, detail=False):
         "approved_by_name": getattr(bill, "approved_by_name", "") or "",
         "accepted_by_name": getattr(bill, "accepted_by_name", "") or "",
         "accepted_at": getattr(bill, "accepted_at", "") or "",
+        "entry_mode": bill.entry_mode or "",
     }
     if (bill.status or "") == "SUBMITTED":
         ensure_sub_bill_chain(db, bill)
@@ -26528,6 +26551,11 @@ def sub_bill_dict(db, bill, detail=False):
         } for l in db.query(models.DBSubBillLine).filter(
             models.DBSubBillLine.sub_bill_id == bill.id).order_by(
                 models.DBSubBillLine.display_order, models.DBSubBillLine.id).all()]
+        row["entries"] = [{"id": m.id, "code": m.code or "", "kind": m.kind or "", "quantity": money(m.quantity),
+                           "activity_no": m.activity_no or "", "location": m.location or "", "measured_on": m.measured_on or ""}
+                          for m in db.query(models.DBSubMeasurement).filter(
+                              models.DBSubMeasurement.sub_bill_id == bill.id).order_by(
+                                  models.DBSubMeasurement.code_no, models.DBSubMeasurement.id).limit(500).all()]
         row["our"] = our_party(db, bill.client_id)
         row["contractor_detail"] = ({"name": con.company_name or "", "gstin": con.gst_number or "",
                                      "pan": con.pan or "", "address": con.address or "",
@@ -26618,7 +26646,7 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
     sub_dims = dimensions_for(db, [m.id for m in sub_rows],
                               models.DBMeasurementDimension.sub_measurement_id)
     entries = [{
-        "id": m.id, "item_id": m.item_id, "activity_no": m.activity_no or "",
+        "id": m.id, "code": m.code or "", "item_id": m.item_id, "activity_no": m.activity_no or "",
         "measured_on": m.measured_on or "", "quantity": money(m.quantity),
         "multiplier": getattr(m, "multiplier", None) or 1,
         "mb_ref": m.mb_ref or "", "location": getattr(m, "location", "") or "", "remarks": m.remarks or "",
@@ -27358,6 +27386,8 @@ def release_sub_hold(hold_id: int, request: Request, body: dict = None, db: Sess
 
 class SubBillIn(BaseModel):
     order_id: int
+    # Bill only these entries of the measurement book (by id) instead of everything measured and not yet billed.
+    entry_ids: Optional[List[int]] = None
     period_from: Optional[str] = ""
     period_to: Optional[str] = ""
     advance_recovery: Optional[float] = None
@@ -27402,11 +27432,76 @@ def sub_claimable_lines(db, order, exclude_bill_id=None):
     return out
 
 
-def draw_sub_bill_lines(db, bill, order):
+def chosen_entries_for_bill(db, order, entry_ids):
+    """The entries a bill for chosen entries takes: the ones asked for; the whole group of blocks that shares a
+    hold with any of them (a hold is on the group, so the group is billed together); and that group's holds and
+    their releases. Refuses an entry that is not in this order's book or is already on a bill."""
+    rows = db.query(models.DBSubMeasurement).filter(models.DBSubMeasurement.order_id == order.id).all()
+    by_id = {r.id: r for r in rows}
+    chosen = {}
+    for i in entry_ids:
+        r = by_id.get(i)
+        if r is None:
+            raise HTTPException(404, "Entry %s is not in this order's measurement book." % i)
+        if r.sub_bill_id:
+            raise HTTPException(409, "%s is already on a bill." % (r.code or "Entry %s" % i))
+        chosen[r.id] = r
+    groups = {(r.item_id, r.group_ref) for r in chosen.values() if r.group_ref}
+    for r in rows:
+        if r.group_ref and (r.item_id, r.group_ref) in groups and not r.sub_bill_id:
+            chosen[r.id] = r
+    holds = {r.id for r in chosen.values() if r.kind == "hold"}
+    for r in rows:
+        if r.kind == "release" and r.hold_of in holds and not r.sub_bill_id:
+            chosen[r.id] = r
+    return list(chosen.values())
+
+
+def chosen_claims(db, order, entries, exclude_bill_id=None):
+    """(item, measured to date, billed before, this claim) for the items the entries touch. The claim is what the
+    entries come to, and may not be nothing or more than the item has left to bill."""
+    measured = sub_measured_to_date(db, order.id)
+    billed = sub_billed_to_date(db, order.id, exclude_bill_id)
+    claim = {}
+    for e in entries:
+        claim[e.item_id] = money(claim.get(e.item_id, 0.0) + (e.quantity or 0.0))
+    out = []
+    for it in db.query(models.DBSubcontractItem).filter(
+            models.DBSubcontractItem.order_id == order.id,
+            models.DBSubcontractItem.id.in_(list(claim) or [0])).order_by(
+                models.DBSubcontractItem.display_order, models.DBSubcontractItem.id).all():
+        this = claim[it.id]
+        done = money(measured.get(it.id, 0.0))
+        prior = money(billed.get(it.id, 0.0))
+        label = it.activity_no or "Item"
+        if this <= 0:
+            raise HTTPException(409, "%s: the entries chosen come to nothing to bill. Choose the work itself, "
+                                     "not only a hold on it." % label)
+        if this > money(done - prior) + 0.0001:
+            raise HTTPException(409, "%s: those entries come to %s but only %s is left to bill - some of it is held "
+                                     "back or already billed. Release the hold, or include it in the choice."
+                                % (label, this, money(done - prior)))
+        out.append((it, done, prior, this))
+    return out
+
+
+def draw_sub_bill_lines(db, bill, order, entry_ids=None):
     db.query(models.DBSubBillLine).filter(
         models.DBSubBillLine.sub_bill_id == bill.id).delete()
-    for i, (it, done, prior, this) in enumerate(
-            sub_claimable_lines(db, order, exclude_bill_id=bill.id)):
+    if entry_ids is not None or (bill.entry_mode or "") == "chosen":
+        # A bill of chosen entries keeps exactly those, however long it waits - nothing measured since joins it.
+        if entry_ids is not None:
+            entries = chosen_entries_for_bill(db, order, entry_ids)
+        else:
+            entries = db.query(models.DBSubMeasurement).filter(models.DBSubMeasurement.sub_bill_id == bill.id).all()
+        claims = chosen_claims(db, order, entries, exclude_bill_id=bill.id)
+        bill.entry_mode = "chosen"
+        ids = [e.id for e in entries]
+        db.query(models.DBSubMeasurement).filter(models.DBSubMeasurement.id.in_(ids or [0])).update(
+            {"sub_bill_id": bill.id}, synchronize_session=False)
+    else:
+        claims = sub_claimable_lines(db, order, exclude_bill_id=bill.id)
+    for i, (it, done, prior, this) in enumerate(claims):
         rate = unit_rate(it.unit_rate)
         db.add(models.DBSubBillLine(
             sub_bill_id=bill.id, item_id=it.id, activity_no=it.activity_no or "",
@@ -27414,11 +27509,12 @@ def draw_sub_bill_lines(db, bill, order):
             ordered_qty=money(it.quantity), measured_to_date=done,
             previously_billed_qty=prior, this_bill_qty=this, rate=rate,
             amount=money(this * rate), display_order=i))
-    # Pin the measurements this bill claims.
-    db.query(models.DBSubMeasurement).filter(
-        models.DBSubMeasurement.order_id == order.id,
-        models.DBSubMeasurement.sub_bill_id.is_(None)).update(
-            {"sub_bill_id": bill.id}, synchronize_session=False)
+    if (bill.entry_mode or "") != "chosen":
+        # Pin the measurements this bill claims.
+        db.query(models.DBSubMeasurement).filter(
+            models.DBSubMeasurement.order_id == order.id,
+            models.DBSubMeasurement.sub_bill_id.is_(None)).update(
+                {"sub_bill_id": bill.id}, synchronize_session=False)
     db.flush()
 
 
@@ -27470,7 +27566,10 @@ def create_sub_bill(body: SubBillIn, request: Request, db: Session = Depends(get
         raise HTTPException(
             409, "%s is still open on this order. Finish or cancel it before "
                  "raising another." % open_bill.number)
-    if not sub_claimable_lines(db, order):
+    if body.entry_ids is not None:
+        if not body.entry_ids:
+            raise HTTPException(400, "Choose at least one entry of the measurement book to bill.")
+    elif not sub_claimable_lines(db, order):
         raise HTTPException(
             409, "Nothing has been measured since the last bill. Record the work "
                  "in the measurement book first.")
@@ -27512,7 +27611,7 @@ def create_sub_bill(body: SubBillIn, request: Request, db: Session = Depends(get
         labour_cess_percent=order.labour_cess_percent or 0)
     db.add(bill)
     db.flush()
-    draw_sub_bill_lines(db, bill, order)
+    draw_sub_bill_lines(db, bill, order, entry_ids=body.entry_ids)
     recost_sub_bill(db, bill)
     bill.advance_recovery = sub_advance_recovery(db, order, bill, body.advance_recovery)
     recost_sub_bill(db, bill)
@@ -27823,9 +27922,10 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
             raise HTTPException(400, "Say why it is going back.")
         sub_bill_decide(db, client, bill, actor_id, actor_name, False, comments)
         bill.remarks = comments
-        db.query(models.DBSubMeasurement).filter(
-            models.DBSubMeasurement.sub_bill_id == bill.id).update(
-                {"sub_bill_id": None}, synchronize_session=False)
+        if (bill.entry_mode or "") != "chosen":     # a bill of chosen entries goes back with the same entries
+            db.query(models.DBSubMeasurement).filter(
+                models.DBSubMeasurement.sub_bill_id == bill.id).update(
+                    {"sub_bill_id": None}, synchronize_session=False)
     elif move == "PAY":
         bill.paid_at = now
         bill.paid_reference = (body.get("reference") or "").strip()

@@ -1493,6 +1493,10 @@ def ensure_columns():
                     ("sub_measurements", "group_ref", "TEXT DEFAULT ''"),
                     ("sub_measurements", "kind", "TEXT DEFAULT ''"),
                     ("sub_measurements", "hold_of", "INTEGER"),
+                    ("sub_measurements", "code", "TEXT DEFAULT ''"),
+                    ("sub_measurements", "code_no", "INTEGER"),
+                    ("subcontract_orders", "mb_code_seq", "INTEGER DEFAULT 0"),
+                    ("sub_bills", "entry_mode", "TEXT DEFAULT ''"),
                     ("measurement_dimensions", "nom", "DOUBLE PRECISION"),
                     ("measurement_dimensions", "is_heading", "BOOLEAN DEFAULT FALSE"),
                     ("sub_bills", "bill_date", "TEXT DEFAULT ''"),
@@ -1695,6 +1699,10 @@ def migrate_sqlite():
             add_col("sub_measurements", "group_ref", "TEXT DEFAULT ''")
             add_col("sub_measurements", "kind", "TEXT DEFAULT ''")
             add_col("sub_measurements", "hold_of", "INTEGER")
+            add_col("sub_measurements", "code", "TEXT DEFAULT ''")
+            add_col("sub_measurements", "code_no", "INTEGER")
+            add_col("subcontract_orders", "mb_code_seq", "INTEGER DEFAULT 0")
+            add_col("sub_bills", "entry_mode", "TEXT DEFAULT ''")
             add_col("measurement_dimensions", "nom", "FLOAT")
             add_col("measurement_dimensions", "is_heading", "BOOLEAN DEFAULT 0")
             add_col("sub_bills", "bill_date", "TEXT DEFAULT ''")

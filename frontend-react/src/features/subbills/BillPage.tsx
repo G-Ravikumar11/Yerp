@@ -200,6 +200,26 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
             />
           </div>
 
+          {!!bill.entries?.length && (
+            <div>
+              <h2 className="mb-3 text-lg font-semibold">
+                Measurement entries on this bill
+                {bill.entry_mode === 'chosen' && <span className="ml-2 text-sm font-normal text-muted-foreground">drawn from the entries chosen for it</span>}
+              </h2>
+              <DataTable
+                label="Entries on this bill"
+                rows={bill.entries}
+                rowKey={(e) => e.id}
+                columns={[
+                  { id: 'code', header: 'Entry', cell: (e) => <span className="font-mono text-xs font-medium">{e.code || `#${e.id}`}</span> },
+                  { id: 'where', header: 'Where', cell: (e) => (e.kind === 'hold' ? 'Held back' : e.kind === 'release' ? 'Released' : e.location || '-') },
+                  { id: 'item', header: 'Item', cell: (e) => e.activity_no },
+                  { id: 'qty', header: 'Quantity', align: 'right', cell: (e) => <span className={e.quantity < 0 ? 'text-danger' : ''}>{e.quantity}</span> },
+                ]}
+              />
+            </div>
+          )}
+
           <Card>
             <CardHeader>
               <CardTitle>The certificate</CardTitle>

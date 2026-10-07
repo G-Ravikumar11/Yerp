@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { FileDown, FileUp, Lock, LockOpen, Ruler, Trash2 } from 'lucide-react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { FileDown, FileUp, Lock, LockOpen, Receipt, Ruler, Trash2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
 import { Badge, Button, ConfirmDialog, Select, Stat, StatGrid, Tabs } from '@/components/ui'
+import { billKeys, drawBill } from '@/api/subbills'
 import { deleteEntry, mbKeys, useMeasurementBook, type MbEntry, type MbLine } from '@/api/mb'
 import { useOrderVocabulary, useOrders, type Order } from '@/api/orders'
 import { useAction } from '@/lib/mutate'
@@ -132,6 +133,15 @@ export default function MeasurementBookPage() {
   const canHold = can('billing.manage') && measurable
   const { isOwner } = useSession()
 
+  const nav = useNavigate()
+  // Bill just the ticked entries: a bill drawn for them alone, the rest left for a later one.
+  const billThese = useAction(() => drawBill(chosen, [...picked].map(Number)), {
+    invalidate: [billKeys.all, mbKeys.all],
+    onSuccess: (r) => {
+      setPicked(new Set())
+      nav(`/subcontractors/ra-bills/${r.bill.id}`)
+    },
+  })
   const remove = useAction((e: MbEntry) => deleteEntry(e.id), { invalidate: [mbKeys.all, ['subbills']], onSuccess: () => setRemoving(null), onError: () => setRemoving(null) })
 
   const lines = book.data?.lines ?? []
@@ -215,6 +225,7 @@ export default function MeasurementBookPage() {
   ]
 
   const entryColumns: TableColumn<MbEntry>[] = [
+    { id: 'code', header: 'Entry', sort: (e) => e.code ?? '', cell: (e) => <span className="whitespace-nowrap font-mono text-xs font-medium">{e.code ? e.code.slice(e.code.lastIndexOf('/') + 1) : '-'}</span> },
     { id: 'date', header: 'Date', sort: (e) => e.measured_on, cell: (e) => formatDate(e.measured_on) },
     {
       id: 'item',
@@ -412,7 +423,7 @@ export default function MeasurementBookPage() {
             </p>
           )}
           <FilterBar filters={filters} placeholder="Search entries..." />
-          {record && view === 'list' && <BulkBar count={picked.size} noun="entry" shown={filters.filtered.filter((e) => !e.billed).length} onClear={() => setPicked(new Set())} onDelete={() => setClearing(true)} />}
+          {record && view === 'list' && <BulkBar count={picked.size} noun="entry" shown={filters.filtered.filter((e) => !e.billed).length} onClear={() => setPicked(new Set())} onDelete={() => setClearing(true)} actions={can('billing.manage') && measurable ? <Button size="sm" loading={billThese.isPending} onClick={() => billThese.mutate()}><Receipt /> Bill {picked.size}</Button> : undefined} />}
           {view === 'sheet' ? <SheetView entries={filters.filtered} byItem={byItem} /> : <DataTable
             label="Measurement entries"
             rows={filters.filtered}

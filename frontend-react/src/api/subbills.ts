@@ -88,6 +88,9 @@ export interface SubBill {
   place_of_supply_name?: string
   material_recovered?: number
   site?: string
+  /** 'chosen' when the bill was drawn from entries picked for it; the entries it carries (detail only). */
+  entry_mode?: '' | 'chosen'
+  entries?: { id: number; code: string; kind: string; quantity: number; activity_no: string; location: string; measured_on: string }[]
   order_detail?: { number: string; subject: string; value: number; retention_percent: number; commencement_date: string; completion_date: string }
 }
 
@@ -127,7 +130,8 @@ export function useSubBill(id: number) {
   return useQuery({ queryKey: billKeys.one(id), queryFn: () => get<SubBill>(`/api/sub-bills/${id}`), enabled: id > 0 })
 }
 
-export const drawBill = (orderId: number) => post<{ bill: SubBill; message: string }>('/api/sub-bills', { order_id: orderId })
+/** Draw up a bill: everything measured and not yet billed, or only the entries of the measurement book given. */
+export const drawBill = (orderId: number, entryIds?: number[]) => post<{ bill: SubBill; message: string }>('/api/sub-bills', { order_id: orderId, ...(entryIds ? { entry_ids: entryIds } : {}) })
 export const editBill = (id: number, edit: Partial<BillEdit>) => put<{ bill: SubBill; message: string }>(`/api/sub-bills/${id}`, edit)
 
 export interface BillMove {

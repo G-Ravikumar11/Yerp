@@ -28,7 +28,7 @@ export function EntryDetail({ entry, line, canChange, onEdit, onRemove, onClose 
   const one = e ? (measured ? entryOneBlock(e) : e.quantity / (e.multiplier || 1)) : 0
   const title = e ? `${[line?.item_code, e.activity_no].filter(Boolean).join(' ')} ${line?.description ?? ''}` : 'Measurement'
   return (
-    <Modal open={!!e} onOpenChange={(o) => !o && onClose()} size="xl" title={title} description={e ? [e.location, formatDate(e.measured_on), e.mb_ref].filter(Boolean).join(' · ') : undefined}>
+    <Modal open={!!e} onOpenChange={(o) => !o && onClose()} size="xl" title={title} description={e ? [e.code, e.location, formatDate(e.measured_on), e.mb_ref].filter(Boolean).join(' · ') : undefined}>
       {e && (
         <div>
           {measured ? (

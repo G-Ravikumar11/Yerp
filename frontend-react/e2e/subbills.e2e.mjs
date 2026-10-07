@@ -12,13 +12,18 @@ check('the RA bills screen opens on the chosen order', (await text()).includes('
 
 // --- Nothing measured, nothing to bill ---------------------------------------------------
 await clickText(page, 'main button', 'Draw up a bill')
+await page.waitForSelector('[role=dialog]')
+await clickText(page, '[role=dialog] button', 'Draw up the bill')
 await waitForToast(page, 'Nothing has been measured')
+await page.keyboard.press('Escape')
 check('a bill cannot be drawn before anything is measured, and it says so', true)
 await toastsGone(page)
 
 // --- The first bill ------------------------------------------------------------------------
 await measure(page, order.id, item.item_id, 100) // 100 sqm at 410 = 41,000
 await clickText(page, 'main button', 'Draw up a bill')
+await page.waitForSelector('[role=dialog]')
+await clickText(page, '[role=dialog] button', 'Draw up the bill')
 await page.waitForFunction(() => /RA-\d+$/.test(document.querySelector('main h1')?.textContent.trim() ?? ''))
 const bill1 = Number(page.url().match(/ra-bills\/(\d+)/)[1])
 const num1 = await page.$eval('main h1', (e) => e.textContent.trim())
@@ -68,6 +73,8 @@ await measure(page, order.id, item.item_id, 50) // +50 sqm = 20,500
 await open(page, `/subcontractors/ra-bills?order=${order.id}`)
 await page.waitForSelector('table[aria-label="RA bills"] tbody tr')
 await clickText(page, 'main button', 'Draw up a bill')
+await page.waitForSelector('[role=dialog]')
+await clickText(page, '[role=dialog] button', 'Draw up the bill')
 await page.waitForFunction((id) => /ra-bills\/\d+/.test(location.pathname) && !location.pathname.endsWith('/' + id), {}, bill1)
 const bill2 = Number(page.url().match(/ra-bills\/(\d+)/)[1])
 await page.waitForFunction(() => /RA-02/.test(document.querySelector('main h1')?.textContent ?? ''))

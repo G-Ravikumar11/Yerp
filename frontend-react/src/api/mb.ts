@@ -37,6 +37,8 @@ export interface MbDimension {
 
 export interface MbEntry {
   id: number
+  /** The entry's own code, "WO/2026-27/STP/001/MB-007". */
+  code?: string
   item_id: number
   activity_no: string
   measured_on: string

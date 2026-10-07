@@ -1663,6 +1663,8 @@ class DBSubcontractOrder(Base):
     __tablename__ = "subcontract_orders"
 
     id = Column(Integer, primary_key=True, index=True)
+    # The last measurement-entry code number given on this order: it only goes up, so no code is ever reused.
+    mb_code_seq = Column(Integer, default=0)
     client_id = Column(Integer, ForeignKey("clients.id"), index=True)
     wo_number = Column(String, default="", index=True)
     status = Column(String, default="DRAFT", index=True)
@@ -2320,6 +2322,10 @@ class DBSubMeasurement(Base):
     kind = Column(String, default="")
     hold_of = Column(Integer, nullable=True, index=True)
     group_ref = Column(String, default="")
+    # The entry's own code, "WO/2026-27/STP/001/MB-007": numbered in the order they are recorded, one series for
+    # each order, never reused after an entry is deleted. Given when the entry is saved (see below).
+    code = Column(String, default="", index=True)
+    code_no = Column(Integer, nullable=True)
 
 
 class DBMeasurementDimension(Base):
@@ -2404,6 +2410,8 @@ class DBSubBill(Base):
 
     # The Certificate of Payment's own boxes.
     bill_date = Column(String, default="")
+    # "" for a bill of everything measured and not yet billed; "chosen" for one drawn from entries picked for it.
+    entry_mode = Column(String, default="")
     work_type = Column(String, default="")           # 3.3 Type of Work
     work_name = Column(String, default="")           # Name of the Work, on the abstract and the book
     hsn_sac = Column(String, default="")             # 3.2 HSN/SAC
@@ -3461,6 +3469,34 @@ class DBThreadRead(Base):
     thread_id = Column(Integer, ForeignKey("project_threads.id"), nullable=False, index=True)
     reader = Column(String, default="", index=True)
     last_read_id = Column(Integer, default=0)
+
+
+def _give_entry_its_code(mapper, connection, target):
+    """Every measurement entry - work, hold or release - gets the next code of its order as it is saved."""
+    if target.code:
+        return
+    from sqlalchemy import select, func
+    from sqlalchemy.orm import object_session
+    session = object_session(target)
+    seen = session.info.setdefault("entry_code_no", {}) if session is not None else {}
+    last = seen.get(target.order_id)
+    if last is None:
+        last = max(connection.execute(select(func.max(DBSubMeasurement.code_no)).where(
+            DBSubMeasurement.order_id == target.order_id)).scalar() or 0,
+            connection.execute(select(DBSubcontractOrder.mb_code_seq).where(
+                DBSubcontractOrder.id == target.order_id)).scalar() or 0)
+    number = last + 1
+    seen[target.order_id] = number
+    connection.execute(DBSubcontractOrder.__table__.update().where(
+        DBSubcontractOrder.id == target.order_id).values(mb_code_seq=number))
+    wo = connection.execute(select(DBSubcontractOrder.wo_number).where(
+        DBSubcontractOrder.id == target.order_id)).scalar() or "MB"
+    target.code_no = number
+    target.code = "%s/MB-%03d" % (wo, number)
+
+
+from sqlalchemy import event as _sa_event  # noqa: E402
+_sa_event.listen(DBSubMeasurement, "before_insert", _give_entry_its_code)
 
 
 class DBIdempotency(Base):

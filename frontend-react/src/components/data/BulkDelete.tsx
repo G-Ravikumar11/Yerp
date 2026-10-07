@@ -10,7 +10,7 @@ import { toast } from '@/stores/toast'
  * The strip that appears over a list once rows are ticked: how many, a way to clear the ticks, and Delete.
  * "Select all" is the box in the table's heading - it ticks every row the filters leave showing.
  */
-export function BulkBar({ count, noun, shown, onClear, onDelete }: { count: number; noun: string; shown: number; onClear: () => void; onDelete: () => void }) {
+export function BulkBar({ count, noun, shown, onClear, onDelete, actions }: { count: number; noun: string; shown: number; onClear: () => void; onDelete: () => void; actions?: React.ReactNode }) {
   if (count === 0) return null
   return (
     <div role="region" aria-label="Selected rows" className="sticky top-16 z-10 mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-primary/40 bg-primary-soft px-4 py-2.5 text-sm">
@@ -21,7 +21,8 @@ export function BulkBar({ count, noun, shown, onClear, onDelete }: { count: numb
       <Button size="sm" variant="ghost" onClick={onClear}>
         Clear
       </Button>
-      <Button size="sm" variant="danger" className="ml-auto" onClick={onDelete}>
+      <span className="ml-auto flex items-center gap-2">{actions}</span>
+      <Button size="sm" variant="danger" onClick={onDelete}>
         <Trash2 /> Delete {count}
       </Button>
     </div>
