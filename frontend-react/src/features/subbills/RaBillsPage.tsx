@@ -34,7 +34,7 @@ export default function RaBillsPage() {
     search: (b) => [b.number, b.contractor, b.vendor_code, b.project, b.status, b.net_payable, b.work_name].join(' '),
     status: (b) => b.status,
     date: (b) => b.bill_date,
-    facets: { project: { label: 'Projects', get: (b) => b.project }, gang: { label: 'Contractors', get: (b) => b.contractor }, order: { label: 'Work orders', get: (b) => b.order } },
+    facets: { project: { label: 'Projects', get: (b) => b.project }, gang: { label: 'Contractors', get: (b) => b.contractor } },
   })
 
   const s = bills.data?.summary
@@ -102,6 +102,7 @@ export default function RaBillsPage() {
       />
 
       <div className="mb-6 max-w-2xl">
+        <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Work order</span>
         <Select
           aria-label="Work order"
           value={orderId || ''}
