@@ -50,4 +50,14 @@ const g2 = (await api(page, 'GET', `/api/sub-bills/${second}`)).data
 check('the second bill takes the third entry and leaves the second', g2.lines[0].this_bill_qty === 7 && g2.entries.length === 1 && g2.entries[0].code === entries[2].code, JSON.stringify(g2.entries))
 const book = (await api(page, 'GET', `/api/sub-mb/${order.id}`)).data.entries
 check('the entry not chosen is still free to bill', book.find((e) => e.id === entries[1].id).billed === false)
+// --- with "All work orders" showing, the work order is chosen inside the dialog ----------------------------------------------------
+await open(page, '/subcontractors/ra-bills')
+await page.waitForSelector('table[aria-label="RA bills"]')
+check('Draw up a bill is there even before a work order is chosen', await page.evaluate(() => [...document.querySelectorAll('main button')].some((b) => b.textContent.trim() === 'Draw up a bill')))
+await clickText(page, 'main button', 'Draw up a bill')
+await page.waitForSelector('[role=dialog] select[aria-label="Work order to bill"]')
+const off = () => page.evaluate(() => [...document.querySelectorAll('[role=dialog] button')].find((b) => b.textContent.trim() === 'Draw up the bill')?.disabled)
+check('it cannot be drawn until the work order is chosen', (await off()) === true)
+await page.select('[role=dialog] select[aria-label="Work order to bill"]', String(order.id))
+check('and can once it is', (await off()) === false)
 await done()

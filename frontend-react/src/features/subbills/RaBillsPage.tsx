@@ -92,7 +92,7 @@ export default function RaBillsPage() {
                 <Download /> Register
               </a>
             </Button>
-            {can('billing.manage') && orderId > 0 && chosen && (chosen.status === 'APPROVED' || chosen.status === 'EXECUTED') && (
+            {can('billing.manage') && (!orderId || (chosen && (chosen.status === 'APPROVED' || chosen.status === 'EXECUTED'))) && (
               <Button onClick={() => setDrawing(true)}>
                 <FilePlus2 /> Draw up a bill
               </Button>
@@ -132,7 +132,7 @@ export default function RaBillsPage() {
         onRowClick={(b) => nav(`/subcontractors/ra-bills/${b.id}`)}
         empty={filters.active ? 'Nothing matches those filters.' : "No bills yet. Measure the contractor's work, then draw one up."}
       />
-      <DrawBillDialog orderId={orderId} open={drawing} onOpenChange={setDrawing} onDrawn={(id) => nav(`/subcontractors/ra-bills/${id}`)} />
+      <DrawBillDialog orderId={orderId} orders={usable.filter((o) => o.status === 'APPROVED' || o.status === 'EXECUTED').map((o) => ({ value: o.id, label: `${o.wo_number} - ${o.contractor || 'no contractor'} · ${o.project}` }))} open={drawing} onOpenChange={setDrawing} onDrawn={(id) => nav(`/subcontractors/ra-bills/${id}`)} />
       <BulkDeleteDialog open={clearing} onOpenChange={setClearing} kind="bill" noun="bill" ids={[...picked].map(Number)} onFinished={() => setPicked(new Set())} detail="Each goes with its approvals and payments. What each measured becomes free to bill again. This cannot be undone." />
       <DeleteOrderDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)} kind="bill" id={deleting?.id ?? 0} number={deleting?.number ?? ''} onDeleted={() => setDeleting(null)} />
     </>

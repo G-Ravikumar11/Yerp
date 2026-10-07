@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { Button, Modal, Skeleton } from '@/components/ui'
+import { useEffect, useMemo, useState } from 'react'
+import { Button, Modal, Select, Skeleton } from '@/components/ui'
 import { billKeys, drawBill } from '@/api/subbills'
 import { mbKeys, useMeasurementBook } from '@/api/mb'
 import { useAction } from '@/lib/mutate'
@@ -11,12 +11,20 @@ import { cn } from '@/lib/utils'
  * ticked here. Entries that share a hold are billed together - the hold is on the group - so ticking one block
  * brings its group with it.
  */
-export function DrawBillDialog({ orderId, open, onOpenChange, onDrawn }: { orderId: number; open: boolean; onOpenChange: (o: boolean) => void; onDrawn: (billId: number) => void }) {
+export function DrawBillDialog({ orderId: fixed, orders, open, onOpenChange, onDrawn }: { orderId: number; orders: { value: number; label: string }[]; open: boolean; onOpenChange: (o: boolean) => void; onDrawn: (billId: number) => void }) {
+  // With no work order chosen on the page, it is chosen here.
+  const [chosen, setChosen] = useState('')
+  const orderId = fixed || Number(chosen) || 0
   const book = useMeasurementBook(open ? orderId : 0)
   const [mode, setMode] = useState<'all' | 'chosen'>('all')
   const [ticked, setTicked] = useState<Set<number>>(new Set())
+  // What is not yet billed changes as bills are drawn: ask afresh each time the dialog opens or the order changes.
+  const refetch = book.refetch
+  useEffect(() => {
+    if (open && orderId) void refetch()
+  }, [open, orderId, refetch])
   const byItem = useMemo(() => new Map((book.data?.lines ?? []).map((l) => [l.item_id, l])), [book.data])
-  const open_ = useMemo(() => (book.data?.entries ?? []).filter((e) => !e.billed).sort((a, b) => a.id - b.id), [book.data])
+  const open_ = useMemo(() => (book.isFetching ? [] : (book.data?.entries ?? [])).filter((e) => !e.billed).sort((a, b) => a.id - b.id), [book.data])
 
   const draw = useAction(() => drawBill(orderId, mode === 'chosen' ? [...ticked] : undefined), {
     invalidate: [billKeys.all, mbKeys.all],
@@ -47,13 +55,16 @@ export function DrawBillDialog({ orderId, open, onOpenChange, onDrawn }: { order
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button loading={draw.isPending} disabled={mode === 'chosen' && ticked.size === 0} onClick={() => draw.mutate()}>
+          <Button loading={draw.isPending} disabled={!orderId || (mode === 'chosen' && ticked.size === 0)} onClick={() => draw.mutate()}>
             {mode === 'chosen' ? `Draw up a bill for ${ticked.size} ${ticked.size === 1 ? 'entry' : 'entries'}` : 'Draw up the bill'}
           </Button>
         </>
       }
     >
       <div className="grid gap-4">
+        {!fixed && (
+          <Select aria-label="Work order to bill" value={chosen} onChange={(e) => { setChosen(e.target.value); setTicked(new Set()) }} placeholder="Choose the work order to bill" options={orders} />
+        )}
         <div role="radiogroup" aria-label="What goes on the bill" className="grid gap-2 text-sm sm:grid-cols-2">
           {(
             [
@@ -73,6 +84,8 @@ export function DrawBillDialog({ orderId, open, onOpenChange, onDrawn }: { order
 
         {mode === 'chosen' &&
           (book.isPending ? (
+            <Skeleton className="h-40 w-full" />
+          ) : book.isFetching ? (
             <Skeleton className="h-40 w-full" />
           ) : open_.length === 0 ? (
             <p className="rounded-lg border border-border px-3 py-6 text-center text-sm text-muted-foreground">Everything measured is on a bill already.</p>
