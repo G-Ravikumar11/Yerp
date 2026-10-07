@@ -44,6 +44,9 @@ const REQUIRED: [keyof Vendor, string][] = [
   ['bank_ifsc', 'IFSC code'],
 ]
 
+/** The documents that must be attached: the PAN card and the Aadhaar card. */
+const REQUIRED_DOCS = ['pan', 'aadhaar']
+
 const readFile = (file: File) =>
   new Promise<string>((resolve, reject) => {
     const r = new FileReader()
@@ -122,7 +125,8 @@ function Form({ vendor, onClose }: { vendor: Vendor | null; onClose: () => void 
       onSubmit={(e) => {
         e.preventDefault()
         const missing = REQUIRED.filter(([k]) => !String(f[k] ?? '').trim()).map(([, label]) => label)
-        if (missing.length) return toast.error(`The form still needs: ${missing.join(', ')}.`)
+        const noDoc = VENDOR_DOCS.filter((d) => REQUIRED_DOCS.includes(d.key) && !files[d.key] && !vendor?.document_files?.[d.key]).map((d) => `the ${d.label.replace(/^[A-Z]\) /, '')} to be attached`)
+        if (missing.length || noDoc.length) return toast.error(`The form still needs: ${[...missing, ...noDoc].join(', ')}.`)
         save.mutate()
       }}
       className="grid gap-x-4 gap-y-4 sm:grid-cols-2"
@@ -202,6 +206,7 @@ function Form({ vendor, onClose }: { vendor: Vendor | null; onClose: () => void 
               <label className="flex items-center gap-2.5 font-medium">
                 <input type="checkbox" checked={(f.documents ?? []).includes(d.key)} onChange={(e) => toggleDoc(d.key, e.target.checked)} className="size-4 accent-[var(--primary)]" />
                 {d.label}
+                {REQUIRED_DOCS.includes(d.key) && <span className="text-danger"> *</span>}
               </label>
               <div className="mt-1.5 flex items-center gap-2 pl-6">
                 <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-input px-2.5 py-1 text-xs font-medium transition-colors hover:bg-accent">

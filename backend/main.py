@@ -18687,6 +18687,7 @@ def wo_item_dict(i):
             "display_order": i.display_order or 0,
             "is_header": bool(i.is_header),
             "tolerance_percent": i.tolerance_percent or 0,
+            "boq_key": i.boq_key or "",
             "max_quantity": item_ceiling(i)}
 
 
@@ -19831,6 +19832,8 @@ class BoqLineIn(BaseModel):
     cost_centre: Optional[str] = ""
     is_header: Optional[bool] = False
     tolerance_percent: Optional[float] = 0
+    # The line of the project BOQ it is part of.
+    boq_key: Optional[str] = ""
 
 
 class BoqIn(BaseModel):
@@ -19899,7 +19902,7 @@ def wo_copy_lines(db, source, target):
             unit_rate=i.unit_rate, total_amount=i.total_amount,
             budget_id=i.budget_id, cost_centre=i.cost_centre,
             display_order=i.display_order, is_header=bool(i.is_header),
-            tolerance_percent=i.tolerance_percent or 0))
+            tolerance_percent=i.tolerance_percent or 0, boq_key=i.boq_key or ""))
     for t in db.query(models.DBSubcontractTerm).filter(
             models.DBSubcontractTerm.order_id == source.id).all():
         db.add(models.DBSubcontractTerm(
@@ -20384,15 +20387,18 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
             uom="" if header else (line.uom or "").strip(), quantity=qty, unit_rate=rate,
             total_amount=money(qty * rate), is_header=header, tolerance_percent=tolerance,
             budget_id=None if header else wo_valid_budget_id(db, client.id, order, line.budget_id),
-            cost_centre=(line.cost_centre or "").strip(), display_order=index))
+            cost_centre=(line.cost_centre or "").strip(), display_order=index,
+            boq_key=(line.boq_key or "").strip()[:40] if not header else ""))
         kept += 1
 
     db.flush()
     recost_order(db, order)
     db.commit()
     db.refresh(order)
-    return {"order": wo_dict(db, order, detail=True),
-            "message": "%d line%s saved. Gross %s." % (kept, "" if kept == 1 else "s", inr(order.gross_amount))}
+    over = boq_over_allotments(db, client.id, [(l.boq_key or "").strip() for l in body.lines])
+    return {"order": wo_dict(db, order, detail=True), "warnings": over,
+            "message": "%d line%s saved. Gross %s.%s" % (kept, "" if kept == 1 else "s", inr(order.gross_amount),
+                                                        (" Over the BOQ - " + "; ".join(over) + ".") if over else "")}
 
 
 @app.put("/api/wo/orders/{order_id}/terms")
@@ -39274,6 +39280,585 @@ def wo_decide_step(db, client, order, actor_id, actor_name, approve, comments=""
                             format_money_plain(order.net_order_value), actor_name),
                         link="/next/approvals")
     return nxt
+
+
+# ============================================================================
+# THE PROJECT BOQ
+#
+# The client's bill of quantities for a project, kept once: sections, items and sub-items as their sheet
+# numbers them, with revisions (R0 tender, R1 award, R2 after variations). Everything else hangs off it: the
+# client's work order is drawn from it, a gang's order takes its lines (each keeps the line's key), and the
+# tracker adds it all up per line - what the client pays, what the gangs are given, executed, billed.
+#
+# Item codes come from the item master's own single series, so a line is matched to the item it already is, or
+# issued a new code, and nobody types one.
+# ============================================================================
+
+BOQ_KINDS = ("section", "item", "sub", "note")
+BOQ_PRICED = ("item", "sub")
+BOQ_NOT_LIVE = ("CANCELLED", "AMENDED", "REJECTED")
+BOQ_IMPORT_ALIASES = {
+    "sno": ["slno", "sl", "srno", "sr", "sno", "serialno", "itemno", "no", "activityno", "boqno", "refno"],
+    "code": ["itemcode", "code", "boqcode", "sku", "productcode", "scheduleitemno"],
+    "description": ["description", "itemdescription", "particulars", "descriptionofwork", "descriptionofitem",
+                    "workdescription", "natureofwork", "scopeofwork", "itemofwork"],
+    "uom": ["uom", "unit", "units", "unitofmeasure", "unitsofmeasure", "measure"],
+    "quantity": ["qty", "quantity", "boqqty", "volume", "quantities"],
+    "rate": ["rate", "unitrate", "price", "unitprice", "rateinrs", "rates"],
+    "amount": ["amount", "totalamount", "amountinrs", "value", "amt", "total"],
+    "remarks": ["remarks", "notes", "specification", "spec"],
+}
+
+
+class ProjectBoqLineIn(BaseModel):
+    key: Optional[str] = ""
+    kind: Optional[str] = "item"
+    sno: Optional[str] = ""
+    description: Optional[str] = ""
+    uom: Optional[str] = ""
+    quantity: Optional[float] = 0
+    rate: Optional[float] = 0
+    code: Optional[str] = ""
+    item_code: Optional[str] = ""
+    remarks: Optional[str] = ""
+
+
+class ProjectBoqLinesIn(BaseModel):
+    lines: List[ProjectBoqLineIn]
+    # Give every priced line without one an item code from the master: matched to an item of the same name, or issued.
+    issue_codes: Optional[bool] = False
+
+
+class ProjectBoqIn(BaseModel):
+    job_id: int
+    title: Optional[str] = ""
+
+
+def boq_or_404(db, client_id, boq_id):
+    row = db.query(models.DBBoq).filter(models.DBBoq.id == boq_id, models.DBBoq.client_id == client_id).first()
+    if not row:
+        raise HTTPException(404, "BOQ not found")
+    return row
+
+
+def boq_revision_of(db, boq, rev_no=None):
+    want = boq.current_rev if rev_no is None else rev_no
+    rev = db.query(models.DBBoqRevision).filter(
+        models.DBBoqRevision.boq_id == boq.id, models.DBBoqRevision.rev_no == want).first()
+    if not rev:
+        raise HTTPException(404, "That revision of the BOQ does not exist")
+    return rev
+
+
+def boq_amount(kind, qty, rate):
+    return money((qty or 0) * (rate or 0)) if kind in BOQ_PRICED else 0.0
+
+
+def boq_line_dict(l):
+    return {"id": l.id, "key": l.key, "kind": l.kind, "sno": l.sno or "", "description": l.description or "",
+            "uom": l.uom or "", "quantity": money(l.quantity), "rate": unit_rate(l.rate), "amount": money(l.amount),
+            "code": l.code or "", "item_code": l.item_code or "", "remarks": l.remarks or ""}
+
+
+def boq_lines_with_subtotals(db, rev):
+    """The revision's lines in order, each section carrying what its items come to, and the grand total."""
+    lines = db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id).order_by(
+        models.DBBoqLine.display_order, models.DBBoqLine.id).all()
+    out, section, total = [], None, 0.0
+    for l in lines:
+        d = boq_line_dict(l)
+        if l.kind == "section":
+            section = d
+            d["subtotal"] = 0.0
+        elif l.kind in BOQ_PRICED:
+            total += l.amount or 0
+            if section is not None:
+                section["subtotal"] = money(section["subtotal"] + (l.amount or 0))
+        out.append(d)
+    return out, money(total)
+
+
+def boq_revisions_list(db, boq):
+    return [{"rev_no": r.rev_no, "label": r.label or "R%d" % r.rev_no, "note": r.note or "", "status": r.status,
+             "created_by_name": r.created_by_name or "", "created_at": r.created_at or "", "issued_at": r.issued_at or ""}
+            for r in db.query(models.DBBoqRevision).filter(models.DBBoqRevision.boq_id == boq.id).order_by(
+                models.DBBoqRevision.rev_no).all()]
+
+
+def boq_head(db, boq, rev=None):
+    job = by_id(db, models.DBJob, boq.job_id)
+    rev = rev or boq_revision_of(db, boq)
+    count, total = db.query(func.count(models.DBBoqLine.id), func.coalesce(func.sum(models.DBBoqLine.amount), 0.0)).filter(
+        models.DBBoqLine.revision_id == rev.id, models.DBBoqLine.kind.in_(BOQ_PRICED)).one()
+    return {"id": boq.id, "number": boq.number or "", "title": boq.title or "", "job_id": boq.job_id,
+            "project": ("%s %s" % (job.number, job.name)).strip() if job else "",
+            "customer": (job.customer_name if job else "") or "",
+            "current_rev": boq.current_rev, "revision": rev.label or "R%d" % rev.rev_no, "status": rev.status,
+            "items": count, "total": money(total), "created_at": boq.created_at or ""}
+
+
+def boq_new_key():
+    return uuid.uuid4().hex[:12]
+
+
+def boq_kind_of(sno, description, quantity, rate):
+    """What a row of a client's sheet is: a priced item (or sub-item), a section heading, or a note."""
+    sno, text = (sno or "").strip().rstrip(".)"), (description or "").strip()
+    if quantity or rate:
+        sub = bool(re.match(r"^(\d+(\.\d+)*[.\-\s]*)?\(?([a-z]|[ivx]{1,4})$", sno)) and not re.match(r"^\d+(\.\d+)*$", sno)
+        return "sub" if sub else "item"
+    if text.isupper() and len(text) < 160:
+        return "section"                                  # a heading shouted in capitals
+    if re.match(r"^([A-Z]{1,3}|[IVXL]+|\d+)$", sno):
+        return "section" if len(text) < 160 else "note"   # lettered, roman or whole-numbered: a section
+    return "note" if (len(text) > 60 or text.endswith(".")) else "section"
+
+
+def boq_save_lines(db, boq, rev, rows, issue_codes, client_id):
+    """Replace a revision's lines with the rows given (keeping each row's key, giving new rows one)."""
+    db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id).delete()
+    kept, seen = [], set()
+    for index, r in enumerate(rows):
+        text = (r.description or "").strip()
+        if not text:
+            continue
+        kind = r.kind if r.kind in BOQ_KINDS else "item"
+        qty = money(r.quantity or 0) if kind in BOQ_PRICED else 0.0
+        rate = unit_rate(r.rate or 0) if kind in BOQ_PRICED else 0.0
+        if qty < 0 or rate < 0:
+            raise HTTPException(400, "Line %d: quantity and rate cannot be negative." % (index + 1))
+        key = (r.key or "").strip()[:40]
+        if not key or key in seen:
+            key = boq_new_key()
+        seen.add(key)
+        line = models.DBBoqLine(
+            boq_id=boq.id, revision_id=rev.id, key=key, kind=kind, sno=(r.sno or "").strip()[:30],
+            description=text, uom=(r.uom or "").strip()[:20] if kind in BOQ_PRICED else "", quantity=qty, rate=rate,
+            amount=boq_amount(kind, qty, rate), code=(r.code or "").strip()[:60],
+            item_code=(r.item_code or "").strip().upper()[:40] if kind in BOQ_PRICED else "",
+            remarks=(r.remarks or "").strip(), display_order=len(kept))
+        db.add(line)
+        kept.append(line)
+    db.flush()
+    issued = 0
+    if issue_codes:
+        issued = boq_issue_codes(db, client_id, kept)
+    return kept, issued
+
+
+def boq_issue_codes(db, client_id, lines):
+    """Every priced line without an item code gets one: the code of the master item of the same name that no other
+    line of this BOQ uses, or a newly issued finished-goods code. Returns how many were given."""
+    in_use = {l.item_code for l in lines if l.item_code}
+    by_name = {}
+    for it in db.query(models.DBItem).filter(models.DBItem.client_id == client_id, models.DBItem.kind == "FG").all():
+        by_name.setdefault(re.sub(r"\s+", " ", (it.item_name or "")).strip().lower(), []).append(it)
+    claimed, given = set(), 0
+    for l in lines:
+        if l.kind not in BOQ_PRICED or l.item_code:
+            continue
+        name = re.sub(r"\s+", " ", (l.description or "").split("\n")[0]).strip()[:200]
+        match = next((i for i in by_name.get(name.lower(), []) if i.item_code not in in_use), None)
+        if match is None:
+            match = build_item(db, client_id, ItemIn(
+                kind="FG", item_name=name, description=(l.description or "").strip(),
+                units_of_measure=canonical_unit(l.uom) or "Nos"), claimed)
+            db.flush()
+            by_name.setdefault(name.lower(), []).append(match)
+        l.item_code = match.item_code
+        in_use.add(match.item_code)
+        given += 1
+    return given
+
+
+@app.get("/api/boqs")
+def boq_list(request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    rows = db.query(models.DBBoq).filter(models.DBBoq.client_id == client.id).order_by(models.DBBoq.id.desc()).all()
+    return {"boqs": [boq_head(db, b) for b in rows]}
+
+
+@app.post("/api/boqs")
+def boq_create(body: ProjectBoqIn, request: Request, db: Session = Depends(get_db)):
+    client, _, actor_name = wo_actor(request, db)
+    job = job_or_404(db, client.id, body.job_id)
+    if db.query(models.DBBoq).filter(models.DBBoq.client_id == client.id, models.DBBoq.job_id == job.id).first():
+        raise HTTPException(409, "%s already has a BOQ. Open it, or add a revision." % job.name)
+    boq = models.DBBoq(client_id=client.id, job_id=job.id, number=next_sequence_number(db, models.DBBoq, client.id, "BOQ-"),
+                       title=(body.title or "").strip() or ("BOQ - %s" % job.name), created_by_name=actor_name)
+    db.add(boq)
+    db.flush()
+    db.add(models.DBBoqRevision(boq_id=boq.id, rev_no=0, label="R0 - Tender", status="OPEN", created_by_name=actor_name))
+    log_audit(db, client.id, "boq_created", "boq", boq.id, boq.number, job.name, request)
+    db.commit()
+    return {"boq": boq_head(db, boq), "message": "%s opened for %s." % (boq.number, job.name)}
+
+
+@app.get("/api/boqs/{boq_id}")
+def boq_get(boq_id: int, request: Request, rev: Optional[int] = None, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    boq = boq_or_404(db, client.id, boq_id)
+    revision = boq_revision_of(db, boq, rev)
+    lines, total = boq_lines_with_subtotals(db, revision)
+    return {"boq": boq_head(db, boq, revision), "revisions": boq_revisions_list(db, boq), "lines": lines, "total": total,
+            "editable": revision.status == "OPEN" and revision.rev_no == boq.current_rev}
+
+
+@app.put("/api/boqs/{boq_id}/lines")
+def boq_set_lines(boq_id: int, body: ProjectBoqLinesIn, request: Request, db: Session = Depends(get_db)):
+    """Save the BOQ as it is on screen: the lines are replaced as a whole, as the grid holds them."""
+    client, _, _ = wo_actor(request, db)
+    boq = boq_or_404(db, client.id, boq_id)
+    rev = boq_revision_of(db, boq)
+    if rev.status != "OPEN":
+        raise HTTPException(409, "%s is issued and cannot be changed. Start a new revision to change it." % (rev.label or "R%d" % rev.rev_no))
+    if len(body.lines) > 5000:
+        raise HTTPException(400, "A BOQ of more than 5,000 lines is split by section before it is saved.")
+    kept, issued = boq_save_lines(db, boq, rev, body.lines, bool(body.issue_codes), client.id)
+    log_audit(db, client.id, "boq_saved", "boq", boq.id, boq.number, "%d lines" % len(kept), request)
+    db.commit()
+    lines, total = boq_lines_with_subtotals(db, rev)
+    return {"boq": boq_head(db, boq, rev), "lines": lines, "total": total,
+            "message": "%d line%s saved, %s%s." % (len(kept), "" if len(kept) == 1 else "s", inr(total),
+                                                     (" - %d item code%s given" % (issued, "" if issued == 1 else "s")) if issued else "")}
+
+
+@app.post("/api/boqs/{boq_id}/revisions")
+def boq_new_revision(boq_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
+    """Issue the revision being worked on (locking it) and open the next one as a copy."""
+    client, _, actor_name = wo_actor(request, db)
+    boq = boq_or_404(db, client.id, boq_id)
+    cur = boq_revision_of(db, boq)
+    if cur.status == "OPEN":
+        cur.status = "ISSUED"
+        cur.issued_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if (body.get("issued_label") or "").strip():
+            cur.label = body["issued_label"].strip()[:60]
+    nxt = models.DBBoqRevision(boq_id=boq.id, rev_no=cur.rev_no + 1, status="OPEN", created_by_name=actor_name,
+                               label=((body.get("label") or "").strip()[:60] or "R%d" % (cur.rev_no + 1)),
+                               note=(body.get("note") or "").strip())
+    db.add(nxt)
+    db.flush()
+    for l in db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == cur.id).order_by(models.DBBoqLine.display_order).all():
+        db.add(models.DBBoqLine(boq_id=boq.id, revision_id=nxt.id, key=l.key, kind=l.kind, sno=l.sno, description=l.description,
+                                uom=l.uom, quantity=l.quantity, rate=l.rate, amount=l.amount, code=l.code,
+                                item_code=l.item_code, remarks=l.remarks, display_order=l.display_order))
+    boq.current_rev = nxt.rev_no
+    log_audit(db, client.id, "boq_revised", "boq", boq.id, boq.number, nxt.label, request)
+    db.commit()
+    return {"boq": boq_head(db, boq, nxt), "message": "%s issued. %s is open for changes." % (cur.label or "R%d" % cur.rev_no, nxt.label)}
+
+
+@app.get("/api/boqs/{boq_id}/changes")
+def boq_changes(boq_id: int, request: Request, frm: int = 0, to: Optional[int] = None, db: Session = Depends(get_db)):
+    """What changed between two revisions: lines added, removed, and changed in quantity, rate or words."""
+    client = require_erp_read(request, db)
+    boq = boq_or_404(db, client.id, boq_id)
+    a, b = boq_revision_of(db, boq, frm), boq_revision_of(db, boq, to)
+    get = lambda rev: {l.key: l for l in db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id).all()}
+    old, new = get(a), get(b)
+    label = lambda l: ("%s %s" % (l.sno, (l.description or "").split("\n")[0][:70])).strip()
+    out = []
+    for k, l in new.items():
+        if k not in old:
+            out.append({"change": "added", "line": label(l), "amount": money(l.amount)})
+            continue
+        o, diffs = old[k], []
+        for field, name in (("quantity", "quantity"), ("rate", "rate"), ("description", "description"), ("uom", "unit")):
+            if (getattr(o, field) or "") != (getattr(l, field) or ""):
+                diffs.append("%s %s -> %s" % (name, getattr(o, field), getattr(l, field)))
+        if diffs:
+            out.append({"change": "changed", "line": label(l), "detail": "; ".join(diffs), "amount": money(l.amount - o.amount)})
+    for k, l in old.items():
+        if k not in new:
+            out.append({"change": "removed", "line": label(l), "amount": -money(l.amount)})
+    return {"from": a.label or "R%d" % a.rev_no, "to": b.label or "R%d" % b.rev_no, "changes": out,
+            "difference": money(sum(c["amount"] for c in out))}
+
+
+@app.post("/api/boqs/{boq_id}/import")
+async def boq_import(boq_id: int, request: Request, file: UploadFile = File(...), sheet: str = Form(""),
+                     db: Session = Depends(get_db)):
+    """Read the client's BOQ sheet as they sent it and hand it back as lines, without saving: they land in the grid to be
+    read against the file, and the ordinary save commits them. The sheet's own amounts are checked against its lines."""
+    client, _, _ = wo_actor(request, db)
+    boq = boq_or_404(db, client.id, boq_id)
+    if boq_revision_of(db, boq).status != "OPEN":
+        raise HTTPException(409, "Open a new revision first: the current one is issued.")
+    header, body = await read_sheet_rows(file, sheet)
+    mapping, unmapped = map_headers_with(header, BOQ_IMPORT_ALIASES)
+    # A client's sheet often has a title block above its headings: the heading row is the first that names both a
+    # description and a quantity.
+    if not {"description", "quantity"} <= set(mapping.values()):
+        everything = [(0, header)] + list(body)
+        for at, (_, row) in enumerate(everything[:40]):
+            m, u = map_headers_with(row, BOQ_IMPORT_ALIASES)
+            if {"description", "quantity"} <= set(m.values()):
+                header, mapping, unmapped, body = row, m, u, everything[at + 1:]
+                break
+    fields = set(mapping.values())
+    if "description" not in fields or "quantity" not in fields:
+        raise HTTPException(400, "No description and quantity columns found. Expected headings such as 'Description of work' "
+                                 "and 'Qty'. Found: %s.%s" % (", ".join(sorted(fields)) or "nothing", sheet_note()))
+    lines, warnings, skipped, running = [], [], 0, 0.0
+    for row in rows_from(header, body, mapping):
+        text = (row.get("description") or "").strip()
+        qty, rate = money(sheet_number(row.get("quantity"))), unit_rate(sheet_number(row.get("rate")))
+        stated = sheet_number(row.get("amount")) if row.get("amount") else None
+        if not text:
+            skipped += 1
+            continue
+        if re.match(r"^(grand\s+)?total\b|^sub\s*-?\s*total\b|^carried|^brought", text.lower()):
+            if stated and re.match(r"^grand", text.lower()) and abs(stated - running) > 1:
+                warnings.append("The sheet's grand total is %s but its lines come to %s." % (inr(stated), inr(running)))
+            skipped += 1
+            continue
+        if stated and not rate and qty:
+            rate = unit_rate(stated / qty)           # a sheet with an amount and no rate: the rate is what it implies
+        kind = boq_kind_of(row.get("sno"), text, qty, rate)
+        if kind in BOQ_PRICED:
+            running += qty * rate
+            if stated and abs(stated - qty * rate) > 1:
+                warnings.append("Row %s: %s x %s is %s but the sheet says %s." % (
+                    row.get("_line"), qty, rate, inr(qty * rate), inr(stated)))
+        lines.append({"key": "", "kind": kind, "sno": (row.get("sno") or "").strip(), "description": text,
+                      "uom": (row.get("uom") or "").strip() if kind in BOQ_PRICED else "", "quantity": qty if kind in BOQ_PRICED else 0,
+                      "rate": rate if kind in BOQ_PRICED else 0, "amount": money(qty * rate) if kind in BOQ_PRICED else 0,
+                      "code": (row.get("code") or "").strip(), "item_code": "", "remarks": (row.get("remarks") or "").strip()})
+    if not any(l["kind"] in BOQ_PRICED for l in lines):
+        raise HTTPException(400, "Nothing on that sheet read as a priced line." + sheet_note())
+    return {"lines": lines[:5000], "read_as": mapping_report(header, mapping), "ignored_columns": unmapped,
+            "skipped_rows": skipped, "warnings": warnings[:50], "total": money(running),
+            "message": "%d line(s) read, %s. Check them against the sheet, then save." % (len(lines), inr(running))}
+
+
+@app.post("/api/boqs/from-estimate/{estimate_id}")
+def boq_from_estimate(estimate_id: int, request: Request, db: Session = Depends(get_db)):
+    """A tender that was won becomes the project's BOQ, R0: its items, quantities and quoted rates."""
+    client, _, actor_name = wo_actor(request, db)
+    est = estimate_or_404(db, client.id, estimate_id)
+    if not est.job_id:
+        raise HTTPException(409, "Attach the tender to its project first.")
+    if db.query(models.DBBoq).filter(models.DBBoq.client_id == client.id, models.DBBoq.job_id == est.job_id).first():
+        raise HTTPException(409, "That project already has a BOQ.")
+    boq = models.DBBoq(client_id=client.id, job_id=est.job_id, number=next_sequence_number(db, models.DBBoq, client.id, "BOQ-"),
+                       title=est.title or "BOQ", created_by_name=actor_name)
+    db.add(boq)
+    db.flush()
+    rev = models.DBBoqRevision(boq_id=boq.id, rev_no=0, label="R0 - Tender %s" % (est.number or ""), status="OPEN", created_by_name=actor_name)
+    db.add(rev)
+    db.flush()
+    n = 0
+    for i in db.query(models.DBEstimateItem).filter(models.DBEstimateItem.estimate_id == est.id).order_by(
+            models.DBEstimateItem.display_order, models.DBEstimateItem.id).all():
+        qty, rate = money(i.quantity), unit_rate(i.quoted_rate)
+        db.add(models.DBBoqLine(boq_id=boq.id, revision_id=rev.id, key=boq_new_key(), kind="item", sno=i.item_no or "",
+                                description=i.description or "", uom=i.uom or "", quantity=qty, rate=rate,
+                                amount=money(qty * rate), item_code=(i.fg_code or "").upper(), display_order=n))
+        n += 1
+    log_audit(db, client.id, "boq_from_tender", "boq", boq.id, boq.number, est.number or "", request)
+    db.commit()
+    return {"boq": boq_head(db, boq, rev), "message": "%s opened from %s with %d lines." % (boq.number, est.number, n)}
+
+
+@app.post("/api/boqs/{boq_id}/client-order")
+def boq_make_client_order(boq_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
+    """The client's work order, drawn from the BOQ: its priced lines, in the item codes the BOQ gave them."""
+    client = require_workorder_access(request, db)
+    boq = boq_or_404(db, client.id, boq_id)
+    made = db.query(models.DBWorkOrder).filter(models.DBWorkOrder.boq_id == boq.id).first()
+    if made:
+        raise HTTPException(409, "%s was already made from this BOQ." % made.number)
+    rev = boq_revision_of(db, boq)
+    priced = [l for l in db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id,
+                                                          models.DBBoqLine.kind.in_(BOQ_PRICED)).order_by(models.DBBoqLine.display_order).all()
+              if (l.quantity or 0) > 0]
+    if not priced:
+        raise HTTPException(409, "The BOQ has no priced lines yet.")
+    missing = [l for l in priced if not l.item_code]
+    if missing:
+        raise HTTPException(409, "%d line%s still without an item code (first: %s). Save the BOQ with 'give new lines item codes' first."
+                            % (len(missing), " is" if len(missing) == 1 else "s are", missing[0].sno or missing[0].description[:30]))
+    out = erp_build_work_order(WorkOrderIn(
+        job_id=boq.job_id, reference=(body.get("reference") or "")[:60], notes=(body.get("notes") or "").strip() or "From %s %s" % (boq.number, rev.label or ""),
+        lines=[DocLineIn(code=l.item_code, qty=l.quantity, rate=l.rate, description=(l.description or "").split("\n")[0][:300]) for l in priced]),
+        request, db)
+    wo = db.query(models.DBWorkOrder).filter(models.DBWorkOrder.id == out["work_order"]["id"]).first()
+    wo.boq_id = boq.id
+    db.commit()
+    return {"work_order": out["work_order"], "message": "%s created from %s." % (wo.number, boq.number)}
+
+
+def boq_given_to_gangs(db, client_id, keys=None):
+    """{boq key: what the gangs have been given against it}, from the orders that are still alive."""
+    q = db.query(models.DBSubcontractItem, models.DBSubcontractOrder).join(
+        models.DBSubcontractOrder, models.DBSubcontractOrder.id == models.DBSubcontractItem.order_id).filter(
+        models.DBSubcontractOrder.client_id == client_id, models.DBSubcontractItem.boq_key != "",
+        models.DBSubcontractItem.boq_key.isnot(None), models.DBSubcontractOrder.status.notin_(BOQ_NOT_LIVE))
+    if keys is not None:
+        q = q.filter(models.DBSubcontractItem.boq_key.in_(list(keys) or [""]))
+    out = {}
+    for it, order in q.all():
+        g = out.setdefault(it.boq_key, {"qty": 0.0, "cost": 0.0, "items": [], "orders": []})
+        g["qty"] += it.quantity or 0
+        g["cost"] += it.total_amount or 0
+        g["items"].append(it.id)
+        if order.wo_number not in g["orders"]:
+            g["orders"].append(order.wo_number)
+    return out
+
+
+def boq_over_allotments(db, client_id, keys):
+    """Words for each BOQ line the given keys name whose gang orders now add up to more than the BOQ quantity."""
+    keys = {k for k in keys if k}
+    if not keys:
+        return []
+    given = boq_given_to_gangs(db, client_id, keys)
+    current = {}
+    for boq in db.query(models.DBBoq).filter(models.DBBoq.client_id == client_id).all():
+        rev = db.query(models.DBBoqRevision.id).filter(
+            models.DBBoqRevision.boq_id == boq.id, models.DBBoqRevision.rev_no == boq.current_rev).first()
+        if rev:
+            current[rev[0]] = boq.id
+    out = []
+    for l in db.query(models.DBBoqLine).filter(models.DBBoqLine.key.in_(list(keys)),
+                                               models.DBBoqLine.revision_id.in_(list(current) or [0])).all():
+        g = given.get(l.key)
+        if g and g["qty"] > (l.quantity or 0) + 0.0001:
+            out.append("%s: %s given to gangs against %s in the BOQ" % (l.sno or l.description[:30], money(g["qty"]), money(l.quantity)))
+    return out
+
+
+@app.get("/api/boqs/{boq_id}/available")
+def boq_available(boq_id: int, request: Request, db: Session = Depends(get_db)):
+    """The BOQ's priced lines with how much of each is still to be given to a gang - for adding lines to an order."""
+    client = require_erp_read(request, db)
+    boq = boq_or_404(db, client.id, boq_id)
+    rev = boq_revision_of(db, boq)
+    given = boq_given_to_gangs(db, client.id)
+    rows = []
+    for l in db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id).order_by(models.DBBoqLine.display_order).all():
+        if l.kind == "section":
+            rows.append({"kind": "section", "sno": l.sno or "", "description": l.description})
+        elif l.kind in BOQ_PRICED:
+            g = given.get(l.key, {"qty": 0.0})
+            rows.append({"kind": l.kind, "key": l.key, "sno": l.sno or "", "description": l.description, "uom": l.uom or "",
+                         "item_code": l.item_code or "", "quantity": money(l.quantity), "rate": unit_rate(l.rate),
+                         "given": money(g["qty"]), "left": money(max(0.0, (l.quantity or 0) - g["qty"]))})
+    return {"boq": boq_head(db, boq, rev), "lines": rows}
+
+
+@app.get("/api/boqs/{boq_id}/tracker")
+def boq_tracker(boq_id: int, request: Request, db: Session = Depends(get_db)):
+    """Per BOQ line: the client's quantity and rate, what the gangs have been given (and at what rate), what they have
+    executed and billed, what the client has been billed, and the flags worth looking at."""
+    client = require_items_access(request, db, ("reports.view",))
+    boq = boq_or_404(db, client.id, boq_id)
+    rev = boq_revision_of(db, boq)
+    lines = db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id).order_by(models.DBBoqLine.display_order).all()
+    given = boq_given_to_gangs(db, client.id, {l.key for l in lines if l.kind in BOQ_PRICED})
+    item_ids = [i for g in given.values() for i in g["items"]]
+    done = dict(db.query(models.DBSubMeasurement.item_id, func.coalesce(func.sum(models.DBSubMeasurement.quantity), 0.0)).filter(
+        models.DBSubMeasurement.item_id.in_(item_ids or [0])).group_by(models.DBSubMeasurement.item_id).all())
+    billed = dict(db.query(models.DBSubBillLine.item_id, func.coalesce(func.sum(models.DBSubBillLine.this_bill_qty), 0.0)).join(
+        models.DBSubBill, models.DBSubBill.id == models.DBSubBillLine.sub_bill_id).filter(
+        models.DBSubBillLine.item_id.in_(item_ids or [0]), models.DBSubBill.status != "CANCELLED").group_by(models.DBSubBillLine.item_id).all())
+    # The client's side: orders drawn from this BOQ, by item code.
+    client_done, client_billed = {}, {}
+    for wo in db.query(models.DBWorkOrder).filter(models.DBWorkOrder.boq_id == boq.id).all():
+        m, b = measured_to_date(db, wo.id), billed_qty_to_date(db, wo.id)
+        for wl in db.query(models.DBWorkOrderLine).filter(models.DBWorkOrderLine.work_order_id == wo.id).all():
+            code = (wl.fg_code or "").upper()
+            client_done[code] = client_done.get(code, 0.0) + m.get(wl.id, 0.0)
+            client_billed[code] = client_billed.get(code, 0.0) + b.get(wl.id, 0.0)
+    rows, flags = [], {"no_gang": 0, "over_allotted": 0, "loss": 0, "over_executed": 0}
+    totals = {"value": 0.0, "given_cost": 0.0, "client_billed": 0.0, "gang_billed": 0.0}
+    for l in lines:
+        if l.kind == "section":
+            rows.append({"kind": "section", "sno": l.sno or "", "description": l.description})
+            continue
+        if l.kind not in BOQ_PRICED:
+            continue
+        g = given.get(l.key, {"qty": 0.0, "cost": 0.0, "items": [], "orders": []})
+        gang_rate = unit_rate(g["cost"] / g["qty"]) if g["qty"] else 0.0
+        executed = money(sum(done.get(i, 0.0) for i in g["items"]))
+        gang_billed = money(sum(billed.get(i, 0.0) for i in g["items"]))
+        code = (l.item_code or "").upper()
+        c_done, c_billed = money(client_done.get(code, 0.0)), money(client_billed.get(code, 0.0))
+        row_flags = []
+        if (l.quantity or 0) > 0 and not g["qty"]:
+            row_flags.append("no_gang")
+        if g["qty"] > (l.quantity or 0) + 0.0001:
+            row_flags.append("over_allotted")
+        if g["qty"] and gang_rate > (l.rate or 0) + 0.0001:
+            row_flags.append("loss")
+        if max(executed, c_done) > (l.quantity or 0) + 0.0001:
+            row_flags.append("over_executed")
+        for f in row_flags:
+            flags[f] += 1
+        totals["value"] += l.amount or 0
+        totals["given_cost"] += g["cost"]
+        totals["client_billed"] += c_billed * (l.rate or 0)
+        totals["gang_billed"] += gang_billed * gang_rate
+        rows.append({"kind": l.kind, "key": l.key, "sno": l.sno or "", "description": l.description, "uom": l.uom or "",
+                     "item_code": l.item_code or "", "quantity": money(l.quantity), "rate": unit_rate(l.rate), "amount": money(l.amount),
+                     "given": money(g["qty"]), "gang_rate": gang_rate, "gang_cost": money(g["cost"]), "orders": g["orders"],
+                     "left_to_give": money(max(0.0, (l.quantity or 0) - g["qty"])),
+                     "executed": executed, "gang_billed": gang_billed, "client_executed": c_done, "client_billed": c_billed,
+                     "margin_percent": round(((l.rate or 0) - gang_rate) / l.rate * 100, 1) if g["qty"] and l.rate else None,
+                     "percent_done": round(max(executed, c_done) / l.quantity * 100, 1) if l.quantity else 0.0,
+                     "flags": row_flags})
+    return {"boq": boq_head(db, boq, rev), "rows": rows, "flags": flags,
+            "totals": {k: money(v) for k, v in totals.items()}}
+
+
+@app.get("/api/boqs/{boq_id}/export.xlsx")
+def boq_export(boq_id: int, request: Request, rev: Optional[int] = None, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    boq = boq_or_404(db, client.id, boq_id)
+    revision = boq_revision_of(db, boq, rev)
+    lines, total = boq_lines_with_subtotals(db, revision)
+    head = boq_head(db, boq, revision)
+    rows = []
+    for l in lines:
+        if l["kind"] == "section":
+            rows.append((l["sno"], "", "", l["description"].upper(), "", "", "", l["subtotal"]))
+        elif l["kind"] == "note":
+            rows.append(("", "", "", l["description"], "", "", "", ""))
+        else:
+            rows.append((l["sno"], l["code"], l["item_code"], l["description"], l["uom"], l["quantity"], l["rate"], l["amount"]))
+    return sheet_response(("S.No", "Client code", "Item code", "Description", "UoM", "Qty", "Rate", "Amount"), rows,
+                          "boq_%s.xlsx" % re.sub(r"[^A-Za-z0-9]+", "_", head["number"]),
+                          preamble=_pre(client, "BILL OF QUANTITIES", ("Project", head["project"]), ("Revision", head["revision"]),
+                                        ("BOQ", head["number"])),
+                          closing=[(), ("Total", "", "", "", "", "", "", total)])
+
+
+@app.post("/api/wo/orders/{order_id}/boq-lines")
+def wo_add_boq_lines(order_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
+    """Lines of the project BOQ, ready to go into a gang order's schedule: pick them by key, give the quantity and the
+    gang's rate. Returns them as schedule lines (nothing saved) with a warning where a line would be over-allotted."""
+    client, _, _ = wo_actor(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    wanted = body.get("lines") or []
+    keys = [str(w.get("key") or "") for w in wanted]
+    found = {l.key: l for l in db.query(models.DBBoqLine).join(models.DBBoq, models.DBBoq.id == models.DBBoqLine.boq_id).filter(
+        models.DBBoq.client_id == client.id, models.DBBoqLine.key.in_(keys or [""])).all()}
+    given = boq_given_to_gangs(db, client.id, set(keys))
+    out, warn = [], []
+    for w in wanted:
+        l = found.get(str(w.get("key") or ""))
+        if not l or l.kind not in BOQ_PRICED:
+            continue
+        qty = money(w.get("quantity") if w.get("quantity") is not None else l.quantity)
+        rate = unit_rate(w.get("rate") if w.get("rate") is not None else l.rate)
+        out.append({"boq_key": l.key, "activity_no": l.sno or "", "item_code": l.item_code or "",
+                    "item_description": l.description, "technical_spec": l.remarks or "", "uom": l.uom or "",
+                    "quantity": qty, "unit_rate": rate})
+        total = (given.get(l.key) or {"qty": 0.0})["qty"] + qty
+        if total > (l.quantity or 0) + 0.0001:
+            warn.append("%s: %s would be given in all against %s in the BOQ" % (l.sno or l.description[:30], money(total), money(l.quantity)))
+    return {"lines": out, "warnings": warn}
 
 
 # Serve frontend

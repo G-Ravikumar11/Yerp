@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { FileUp, Landmark, Layers } from 'lucide-react'
+import { FileUp, Landmark, Layers, ListTree } from 'lucide-react'
 import { DataGrid, type Column } from '@/components/grid'
 import { Badge, Button, ConfirmDialog, Select } from '@/components/ui'
 import { chargeBudget, importSchedule, orderKeys, type Order, type OrderItem, type Vocabulary } from '@/api/orders'
@@ -7,6 +7,7 @@ import { useAction } from '@/lib/mutate'
 import { formatINR } from '@/lib/utils'
 import { toast } from '@/stores/toast'
 import { ApiError } from '@/lib/api'
+import { BoqPicker } from './BoqPicker'
 
 /** One line of the schedule as it is edited: numbers may be blank, the cost centre is a choice by id. */
 export interface LineRow {
@@ -20,9 +21,11 @@ export interface LineRow {
   tolerance_percent: number | null
   budget_id: string
   is_header: boolean
+  /** The line of the project BOQ it came from. */
+  boq_key: string
 }
 
-export const blankLine = (): LineRow => ({ activity_no: '', item_code: '', item_description: '', technical_spec: '', uom: '', quantity: null, unit_rate: null, tolerance_percent: null, budget_id: '', is_header: false })
+export const blankLine = (): LineRow => ({ activity_no: '', item_code: '', item_description: '', technical_spec: '', uom: '', quantity: null, unit_rate: null, tolerance_percent: null, budget_id: '', is_header: false, boq_key: '' })
 
 export const linesFrom = (o: Order): LineRow[] =>
   (o.items ?? []).map((i) => ({
@@ -36,6 +39,7 @@ export const linesFrom = (o: Order): LineRow[] =>
     tolerance_percent: i.tolerance_percent || null,
     budget_id: i.budget_id ? String(i.budget_id) : '',
     is_header: i.is_header,
+    boq_key: i.boq_key ?? '',
   }))
 
 /** What the server takes: every line with a description, numbers filled in, the cost centre as an id. */
@@ -53,6 +57,7 @@ export const toPayload = (rows: LineRow[]): Partial<OrderItem>[] =>
       tolerance_percent: r.is_header ? 0 : (r.tolerance_percent ?? 0),
       budget_id: r.is_header || !r.budget_id ? null : Number(r.budget_id),
       is_header: r.is_header,
+      boq_key: r.boq_key || '',
     }))
 
 const amount = (r: LineRow) => (r.is_header || !r.quantity || !r.unit_rate ? null : Math.round(r.quantity * r.unit_rate * 100) / 100)
@@ -86,6 +91,7 @@ export function ScheduleTab({
   const file = useRef<HTMLInputElement>(null)
   const [chargeTo, setChargeTo] = useState('')
   const [pending, setPending] = useState<File | null>(null)
+  const [picking, setPicking] = useState(false)
 
   const columns = useMemo<Column<LineRow>[]>(
     () => [
@@ -195,6 +201,11 @@ export function ScheduleTab({
             <Button variant="ghost" size="sm" asChild>
               <a href="/api/wo/boq/template">Template</a>
             </Button>
+            {order.job_id ? (
+              <Button variant="outline" size="sm" onClick={() => setPicking(true)}>
+                <ListTree /> From the project BOQ
+              </Button>
+            ) : null}
             <span className="mx-1 hidden h-5 w-px bg-border sm:block" aria-hidden />
             {order.job_id ? (
               <>
@@ -247,6 +258,13 @@ export function ScheduleTab({
         maxHeight={520}
         rowClassName={(r) => (r.is_header ? 'font-semibold bg-surface/50' : undefined)}
         emptyText="There are no lines on this order."
+      />
+      <BoqPicker
+        orderId={order.id}
+        jobId={order.job_id ?? 0}
+        open={picking}
+        onOpenChange={setPicking}
+        onAdd={(added) => onRows([...rows.filter((r) => r.item_description.trim()), ...added.map((l) => ({ ...blankLine(), ...l }) as LineRow)])}
       />
       <ConfirmDialog
         open={!!pending}

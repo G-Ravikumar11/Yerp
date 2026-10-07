@@ -594,6 +594,8 @@ class DBWorkOrder(Base):
     submitted_by = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
     current_approval_step = Column(Integer, default=0)
     rejection_reason = Column(String, default="")
+    # The project BOQ this order's scope and rates were drawn from.
+    boq_id = Column(Integer, ForeignKey("boqs.id"), nullable=True, index=True)
 
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
@@ -1793,6 +1795,9 @@ class DBSubcontractItem(Base):
     # How far the measured quantity may run past the ordered one before the
     # order has to be amended. Nought means exactly what was ordered.
     tolerance_percent = Column(Float, default=0.0)
+    # The line of the project BOQ this is part of (its stable key), so what is given to gangs can be added up
+    # against what the client's BOQ allows.
+    boq_key = Column(String, default="", index=True)
 
 
 class DBSubcontractTerm(Base):
@@ -3511,3 +3516,59 @@ class DBIdempotency(Base):
     headers = Column(Text, default="")
     body = Column(LargeBinary)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"), index=True)
+
+
+class DBBoq(Base):
+    """The client's bill of quantities for one project: the master every order and bill hangs off.
+
+    One per project. It has revisions - R0 tender, R1 award, R2 after variations - and the lines belong to a
+    revision, so what the BOQ said when an order was placed is never overwritten by what it says now.
+    """
+    __tablename__ = "boqs"
+    __table_args__ = (UniqueConstraint("client_id", "job_id", name="uq_client_job_boq"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    number = Column(String, index=True)                       # BOQ-0001
+    title = Column(String, default="")
+    current_rev = Column(Integer, default=0)
+    created_by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBBoqRevision(Base):
+    __tablename__ = "boq_revisions"
+    __table_args__ = (UniqueConstraint("boq_id", "rev_no", name="uq_boq_revision"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    boq_id = Column(Integer, ForeignKey("boqs.id"), nullable=False, index=True)
+    rev_no = Column(Integer, default=0)
+    label = Column(String, default="")                        # "R1 - Award"
+    note = Column(Text, default="")
+    status = Column(String, default="OPEN")                   # OPEN (being edited) | ISSUED (locked)
+    created_by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    issued_at = Column(String, default="")
+
+
+class DBBoqLine(Base):
+    """A line of a BOQ revision: a section heading, a priced item, a priced sub-item, or a note."""
+    __tablename__ = "boq_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    boq_id = Column(Integer, ForeignKey("boqs.id"), nullable=False, index=True)
+    revision_id = Column(Integer, ForeignKey("boq_revisions.id"), nullable=False, index=True)
+    # Stays the same on a line through every revision, so a change can be followed and orders can point at it.
+    key = Column(String, nullable=False, index=True)
+    kind = Column(String, default="item")                     # section | item | sub | note
+    sno = Column(String, default="")                          # 1.1, 1.1.a - the client's own numbering
+    description = Column(Text, default="")
+    uom = Column(String, default="")
+    quantity = Column(Float, default=0.0)
+    rate = Column(Float, default=0.0)
+    amount = Column(Float, default=0.0)
+    code = Column(String, default="")                         # the client's own item code, if their sheet has one
+    item_code = Column(String, default="", index=True)        # ours, from the item master
+    remarks = Column(Text, default="")
+    display_order = Column(Integer, default=0)

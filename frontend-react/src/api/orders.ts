@@ -19,6 +19,8 @@ export interface OrderItem {
   display_order: number
   is_header: boolean
   tolerance_percent: number
+  /** The line of the project BOQ this is part of. */
+  boq_key?: string
   /** Ordered plus its tolerance: the most that may be measured. */
   max_quantity: number
 }

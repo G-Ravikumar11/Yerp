@@ -59,6 +59,7 @@ export const NAV: NavEntry[] = [
       { label: 'Site Diary', path: '/projects/diary' },
       { label: 'Project Chat', path: '/projects/chat' },
       { label: 'Equipment & Plant', path: '/projects/equipment' },
+      { label: 'BOQ', path: '/projects/boq', perm: 'workorders.manage|reports.view' },
       { label: 'Project Profit', path: '/projects/profit', perm: 'reports.view' },
       { label: 'Cost by Project', path: '/projects/costs', perm: 'reports.view' },
     ],
