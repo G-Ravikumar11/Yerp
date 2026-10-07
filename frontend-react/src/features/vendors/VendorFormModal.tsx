@@ -32,6 +32,18 @@ const blank = (): Partial<Vendor> => ({
   declaration_signed: false,
 })
 
+/** What a sub contractor cannot be registered without: who and where they are, how to reach and pay them, and the PAN their TDS is filed under. */
+const REQUIRED: [keyof Vendor, string][] = [
+  ['company_name', 'name of the sub contractor'],
+  ['contact_person', 'name of the contact person'],
+  ['phone_number', 'telephone number'],
+  ['address', 'address'],
+  ['pan', 'PAN'],
+  ['bank_name', 'bank name'],
+  ['bank_account', 'bank account number'],
+  ['bank_ifsc', 'IFSC code'],
+]
+
 const readFile = (file: File) =>
   new Promise<string>((resolve, reject) => {
     const r = new FileReader()
@@ -109,12 +121,13 @@ function Form({ vendor, onClose }: { vendor: Vendor | null; onClose: () => void 
     <form
       onSubmit={(e) => {
         e.preventDefault()
-        if (!f.company_name?.trim()) return toast.error('The form needs the name of the sub contractor.')
+        const missing = REQUIRED.filter(([k]) => !String(f[k] ?? '').trim()).map(([, label]) => label)
+        if (missing.length) return toast.error(`The form still needs: ${missing.join(', ')}.`)
         save.mutate()
       }}
       className="grid gap-x-4 gap-y-4 sm:grid-cols-2"
     >
-      <Field label="Project" htmlFor="v-project" className="sm:col-span-2">
+      <Field label="Project (optional)" htmlFor="v-project" className="sm:col-span-2">
         <Input id="v-project" value={f.registered_project ?? ''} onChange={set('registered_project')} placeholder="The project they were taken on for" />
       </Field>
       <Field label="Vendor code" htmlFor="v-code" hint="Next in the series if left blank.">
@@ -128,7 +141,7 @@ function Form({ vendor, onClose }: { vendor: Vendor | null; onClose: () => void 
       <Field label="Name of the sub contractor *" htmlFor="v-name" className="sm:col-span-2">
         <Input id="v-name" value={f.company_name ?? ''} onChange={set('company_name')} placeholder="M/s ..." autoFocus />
       </Field>
-      <Field label="Residential address" htmlFor="v-address" className="sm:col-span-2">
+      <Field label="Residential address *" htmlFor="v-address" className="sm:col-span-2">
         <Textarea id="v-address" value={f.address ?? ''} onChange={set('address')} rows={2} />
       </Field>
       <Field label="Pin code" htmlFor="v-pin">
@@ -143,22 +156,22 @@ function Form({ vendor, onClose }: { vendor: Vendor | null; onClose: () => void 
       <Field label="Nature of work" htmlFor="v-nature">
         <Input id="v-nature" value={f.nature_of_work ?? ''} onChange={set('nature_of_work')} placeholder="Putty and painting works" />
       </Field>
-      <Field label="Tel no." htmlFor="v-phone">
+      <Field label="Tel no. *" htmlFor="v-phone">
         <Input id="v-phone" type="tel" value={f.phone_number ?? ''} onChange={set('phone_number')} />
       </Field>
-      <Field label="E-mail" htmlFor="v-email">
+      <Field label="E-mail (optional)" htmlFor="v-email">
         <Input id="v-email" type="email" value={f.email ?? ''} onChange={set('email')} />
       </Field>
-      <Field label="Name of contact person" htmlFor="v-contact">
+      <Field label="Name of contact person *" htmlFor="v-contact">
         <Input id="v-contact" value={f.contact_person ?? ''} onChange={set('contact_person')} />
       </Field>
       <Field label="Type of entity" htmlFor="v-entity">
         <Input id="v-entity" value={f.entity_type ?? ''} onChange={set('entity_type')} placeholder="Individual, proprietorship, firm..." />
       </Field>
-      <Field label="PAN" htmlFor="v-pan">
+      <Field label="PAN *" htmlFor="v-pan">
         <Input id="v-pan" value={f.pan ?? ''} onChange={upper('pan')} className="font-mono uppercase" placeholder="AFVPF9080M" />
       </Field>
-      <Field label="GST Reg No" htmlFor="v-gst">
+      <Field label="GST Reg No" hint="Optional. Without one, an order to them cannot be worth more than ₹19,50,000." htmlFor="v-gst">
         <Input id="v-gst" value={f.gst_number ?? ''} onChange={upper('gst_number')} className="font-mono uppercase" placeholder="37AAAPR1234C1Z5" />
       </Field>
       <Field label="Aadhaar" htmlFor="v-aadhaar">
@@ -166,16 +179,16 @@ function Form({ vendor, onClose }: { vendor: Vendor | null; onClose: () => void 
       </Field>
 
       <Section>2. Bank details</Section>
-      <Field label="Bank name" htmlFor="v-bank">
+      <Field label="Bank name *" htmlFor="v-bank">
         <Input id="v-bank" value={f.bank_name ?? ''} onChange={set('bank_name')} />
       </Field>
       <Field label="Branch" htmlFor="v-branch">
         <Input id="v-branch" value={f.bank_branch ?? ''} onChange={set('bank_branch')} />
       </Field>
-      <Field label="Account no" htmlFor="v-account">
+      <Field label="Account no *" htmlFor="v-account">
         <Input id="v-account" value={f.bank_account ?? ''} onChange={set('bank_account')} className="font-mono" inputMode="numeric" />
       </Field>
-      <Field label="IFSC code" htmlFor="v-ifsc">
+      <Field label="IFSC code *" htmlFor="v-ifsc">
         <Input id="v-ifsc" value={f.bank_ifsc ?? ''} onChange={upper('bank_ifsc')} className="font-mono uppercase" />
       </Field>
 

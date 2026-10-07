@@ -20685,6 +20685,23 @@ def wo_take_over_history(db, client, revision):
     return old
 
 
+# A sub contractor with no GST registration may not be given an order worth more than this.
+UNREGISTERED_VENDOR_LIMIT = 1950000.0
+
+
+def unregistered_vendor_breach(db, order):
+    """The reason an order may not go ahead because its contractor has no GSTIN and the order is too big, or None."""
+    con = by_id(db, models.DBContractor, order.contractor_id)
+    if con is None or (con.gst_number or "").strip():
+        return None
+    value = money(order.gross_amount or 0)
+    if value <= UNREGISTERED_VENDOR_LIMIT:
+        return None
+    return ("%s has no GST registration, so an order to them cannot be worth more than %s - this one is %s. "
+            "Add their GSTIN to their registration form, or bring the order down." % (
+                con.company_name, inr(UNREGISTERED_VENDOR_LIMIT), inr(value)))
+
+
 def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
              override=False, quiet=False):
     """One door for every state change, so the rules cannot disagree."""
@@ -20703,6 +20720,9 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
         if missing:
             raise HTTPException(
                 400, "This order still needs " + ", ".join(missing) + ".")
+        too_big = unregistered_vendor_breach(db, order)
+        if too_big:
+            raise HTTPException(409, too_big)
         order.submitted_by = actor_id
     elif action == "REJECT":
         if not (comments or "").strip():
@@ -20721,6 +20741,9 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
         # An order is issued only to a sub contractor whose registration form
         # has been signed off - otherwise the gang is taken on by whoever
         # typed their name, PAN and bank account.
+        too_big = unregistered_vendor_breach(db, order)
+        if too_big:
+            raise HTTPException(409, too_big)
         con = db.query(models.DBContractor).filter(models.DBContractor.id == order.contractor_id).first() \
             if order.contractor_id else None
         if con is not None and (con.registration_status or "APPROVED") != "APPROVED":

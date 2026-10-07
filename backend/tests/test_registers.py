@@ -77,10 +77,15 @@ def test_the_register_filters_by_quarter(tenant):
 
 def test_a_deductee_without_a_pan_is_called_out(tenant):
     unit = tenant.post("/api/wo/business-units", json={"name": "YP", "code": "YP"}).json()
-    con = tenant.post("/api/wo/contractors", json={"company_name": "Unregistered Gang"}).json()
+    # Registered with a GSTIN so the order may be this size; the tax numbers are cleared once it has been billed.
+    con = tenant.post("/api/wo/contractors", json={"company_name": "Unregistered Gang", "gst_number": "36AAAPB1234C1Z5"}).json()
     job = tenant.post("/api/jobs", json={"name": "Site", "customer_name": "X"}).json()
     order, bill = certified_sub_bill(tenant, business_unit_id=unit["id"],
                                      contractor_id=con["id"], job_id=job["id"])
+    with main.SessionLocal() as db:
+        c = db.query(main.models.DBContractor).get(con["id"])
+        c.gst_number, c.pan = "", ""
+        db.commit()
     reg = tenant.get("/api/registers/tds").json()
     assert reg["deducted"][0]["missing_pan"] is True
     assert reg["summary"]["deductees_without_pan"] == 1
