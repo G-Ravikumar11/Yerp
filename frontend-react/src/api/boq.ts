@@ -142,3 +142,73 @@ export function importBoq(id: number, file: File) {
 }
 export const pullBoqLines = (orderId: number, lines: { key: string; quantity: number; rate: number }[]) =>
   post<{ lines: Record<string, unknown>[]; warnings: string[] }>(`/api/wo/orders/${orderId}/boq-lines`, { lines })
+
+/* --- Variations to the BOQ -------------------------------------------------------------------- */
+
+export type VariationStatus = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'CANCELLED'
+
+export interface VariationLine {
+  id?: number
+  kind: 'quantity' | 'extra'
+  boq_key: string
+  section_key: string
+  sno: string
+  description: string
+  uom: string
+  old_qty: number
+  change_qty: number
+  new_qty?: number
+  rate: number
+  amount: number
+  remarks: string
+}
+
+export interface BoqVariation {
+  id: number
+  number: string
+  boq_id: number
+  boq: string
+  project: string
+  status: VariationStatus
+  reason: string
+  value: number
+  basis_rev: string
+  applied_rev: string
+  raised_by_name: string
+  approved_by_name: string
+  approved_at: string
+  rejection_reason: string
+  actions: ('SUBMIT' | 'APPROVE' | 'REJECT' | 'CANCEL')[]
+  editable: boolean
+  created_at: string
+  route: { step: number; name: string; owner: boolean; status: string; notes: string; decided_at: string }[]
+  waiting_on: string
+  lines?: VariationLine[]
+}
+
+export interface VariationInput {
+  kind: 'quantity' | 'extra'
+  boq_key: string
+  section_key: string
+  sno: string
+  description: string
+  uom: string
+  change_qty: number
+  rate: number | null
+  remarks: string
+}
+
+export const variationKeys = { all: ['boq-variations'] as const, list: (boqId: number) => ['boq-variations', 'list', boqId] as const, one: (id: number) => ['boq-variations', 'one', id] as const }
+
+export const useBoqVariations = (boqId: number) =>
+  useQuery({
+    queryKey: variationKeys.list(boqId),
+    enabled: boqId > 0,
+    queryFn: () => get<{ variations: BoqVariation[]; summary: { raised: number; awaiting_approval: number; approved_value: number; pending_value: number } }>(`/api/boq-variations?boq_id=${boqId}`),
+  })
+export const useBoqVariation = (id: number) => useQuery({ queryKey: variationKeys.one(id), enabled: id > 0, queryFn: () => get<BoqVariation>(`/api/boq-variations/${id}`) })
+export const suggestVariation = (boqId: number) => get<{ lines: VariationLine[]; value: number }>(`/api/boq-variations/suggest/${boqId}`)
+export const createVariation = (boqId: number, reason: string, lines: VariationInput[]) => post<{ variation: BoqVariation; message: string }>('/api/boq-variations', { boq_id: boqId, reason, lines })
+export const updateVariation = (id: number, reason: string, lines: VariationInput[]) => put<{ variation: BoqVariation; message: string }>(`/api/boq-variations/${id}`, { reason, lines })
+export const moveVariation = (id: number, action: 'submit' | 'approve' | 'reject' | 'cancel', comments = '') => post<{ variation: BoqVariation; message: string }>(`/api/boq-variations/${id}/${action}`, { comments })
+export const deleteVariation = (id: number) => api<{ message: string }>(`/api/boq-variations/${id}`, { method: 'DELETE' })

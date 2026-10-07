@@ -38437,6 +38437,25 @@ def approval_inbox(db, client, emp):
                 view="vendors-view", pdf="/api/wo/contractors/%d/registration.pdf" % c.id,
                 warnings=[w for w in (("No bank account on the form" if not c.bank_account else ""),) if w]))
 
+    # 4b. Variations to the BOQ, climbing their route.
+    if can("subcontracts.approve"):
+        sent = db.query(models.DBBoqVariation).filter(
+            models.DBBoqVariation.client_id == client.id, models.DBBoqVariation.status == "SUBMITTED").order_by(models.DBBoqVariation.id).all()
+        prime_chains(db, "boq_variation", [v.id for v in sent])
+        for v in sent:
+            step = bv_current_step(db, v)
+            if emp is not None and (step is None or step.approver_id != emp.id):
+                continue
+            job = _job_of(db, v.job_id)
+            items.append(_row(
+                "boq_variation", "BOQ variation", v.id, v.number, v.value,
+                party=(job.customer_name if job else "") or "",
+                project=(("%s %s" % (job.number or "", job.name or "")).strip() if job else ""),
+                raised_by=v.raised_by_name or "", since=v.updated_at or "", what=(v.reason or "")[:200], view="boq-view",
+                doc_type="boq_variation", doc_id=v.boq_id,
+                mine=emp is not None or step is None or step.approver_id is None,
+                waiting_on=sub_bill_step_name(db, step)))
+
     # 5. Variations waiting to be agreed.
     if can("subcontracts.approve"):
         for v in db.query(models.DBVariationOrder).filter(
@@ -38529,6 +38548,8 @@ def approvals_decide(body: ApprovalDecisionIn, request: Request, db: Session = D
     if kind == "contractor":
         return decide_contractor_registration(body.id, "approve" if decision == "approve" else "reject",
                                               request, {"comments": note}, db)
+    if kind == "boq_variation":
+        return act_on_boq_variation(body.id, "approve" if decision == "approve" else "reject", request, {"comments": note}, db)
     if kind == "variation":
         return act_on_variation(body.id, decision, request, {"comments": note}, db)
     if kind == "leave":
@@ -39753,7 +39774,10 @@ def boq_tracker(boq_id: int, request: Request, db: Session = Depends(get_db)):
     """Per BOQ line: the client's quantity and rate, what the gangs have been given (and at what rate), what they have
     executed and billed, what the client has been billed, and the flags worth looking at."""
     client = require_items_access(request, db, ("reports.view",))
-    boq = boq_or_404(db, client.id, boq_id)
+    return boq_tracker_data(db, client, boq_or_404(db, client.id, boq_id))
+
+
+def boq_tracker_data(db, client, boq):
     rev = boq_revision_of(db, boq)
     lines = db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id).order_by(models.DBBoqLine.display_order).all()
     given = boq_given_to_gangs(db, client.id, {l.key for l in lines if l.kind in BOQ_PRICED})
@@ -39859,6 +39883,404 @@ def wo_add_boq_lines(order_id: int, body: dict, request: Request, db: Session = 
         if total > (l.quantity or 0) + 0.0001:
             warn.append("%s: %s would be given in all against %s in the BOQ" % (l.sno or l.description[:30], money(total), money(l.quantity)))
     return {"lines": out, "warnings": warn}
+
+
+# ============================================================================
+# VARIATIONS TO THE BOQ
+#
+# Quantities that ran past the BOQ and items it never had, each with a rate, agreed on a route of approvers.
+# Approving one moves the BOQ to its next revision with the changes in it - the lines are changed or added, new
+# items get their item codes - and any client work order drawn from the BOQ is raised to match.
+# ============================================================================
+
+BV_TRANSITIONS = {
+    "DRAFT":     {"SUBMIT": "SUBMITTED", "CANCEL": "CANCELLED"},
+    "SUBMITTED": {"APPROVE": "APPROVED", "REJECT": "DRAFT", "CANCEL": "CANCELLED"},
+    "APPROVED":  {},
+    "CANCELLED": {},
+}
+
+
+class BoqVariationLineIn(BaseModel):
+    kind: Optional[str] = "quantity"
+    boq_key: Optional[str] = ""
+    section_key: Optional[str] = ""
+    sno: Optional[str] = ""
+    description: Optional[str] = ""
+    uom: Optional[str] = ""
+    change_qty: Optional[float] = 0
+    rate: Optional[float] = None
+    remarks: Optional[str] = ""
+
+
+class BoqVariationIn(BaseModel):
+    boq_id: Optional[int] = None
+    reason: Optional[str] = ""
+    lines: List[BoqVariationLineIn]
+
+
+def boq_variation_or_404(db, client_id, vid):
+    row = db.query(models.DBBoqVariation).filter(
+        models.DBBoqVariation.id == vid, models.DBBoqVariation.client_id == client_id).first()
+    if not row:
+        raise HTTPException(404, "Variation not found")
+    return row
+
+
+def bv_next_number(db, boq):
+    n = (db.query(func.max(models.DBBoqVariation.sequence)).filter(models.DBBoqVariation.boq_id == boq.id).scalar() or 0) + 1
+    while db.query(models.DBBoqVariation.id).filter(models.DBBoqVariation.client_id == boq.client_id,
+                                                    models.DBBoqVariation.number == "%s/BV-%02d" % (boq.number, n)).first():
+        n += 1
+    return "%s/BV-%02d" % (boq.number, n), n
+
+
+def bv_write_lines(db, boq, vo, rows):
+    """The variation's lines as they are given, checked against the BOQ as it stands now, with what the BOQ already
+    says filled in where the person left it blank (description, unit and - for a quantity - its rate)."""
+    rev = boq_revision_of(db, boq)
+    by_key = {l.key: l for l in db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id).all()}
+    db.query(models.DBBoqVariationLine).filter(models.DBBoqVariationLine.variation_id == vo.id).delete()
+    seen, kept = set(), 0
+    for index, r in enumerate(rows):
+        kind = r.kind if r.kind in ("quantity", "extra") else "quantity"
+        change = money(r.change_qty or 0)
+        label = "Line %d" % (index + 1)
+        if kind == "quantity":
+            line = by_key.get(r.boq_key or "")
+            if not line or line.kind not in BOQ_PRICED:
+                raise HTTPException(400, "%s: choose the BOQ line whose quantity changes." % label)
+            if r.boq_key in seen:
+                raise HTTPException(400, "%s: %s is on this variation twice." % (label, line.sno or line.description[:30]))
+            seen.add(r.boq_key)
+            if not change:
+                raise HTTPException(400, "%s: say how much is added to (or taken from) %s." % (label, line.sno or line.description[:30]))
+            if money((line.quantity or 0) + change) < 0:
+                raise HTTPException(400, "%s: that would take %s below nothing." % (label, line.sno or line.description[:30]))
+            rate = unit_rate(r.rate if r.rate is not None else line.rate)
+            db.add(models.DBBoqVariationLine(
+                variation_id=vo.id, kind="quantity", boq_key=line.key, sno=line.sno or "", description=line.description,
+                uom=line.uom or "", old_qty=money(line.quantity), change_qty=change, rate=rate, amount=money(change * rate),
+                remarks=(r.remarks or "").strip(), display_order=index))
+        else:
+            text = (r.description or "").strip()
+            if not text:
+                raise HTTPException(400, "%s: an extra item needs its description." % label)
+            if change <= 0:
+                raise HTTPException(400, "%s: an extra item needs a quantity." % label)
+            rate = unit_rate(r.rate or 0)
+            if rate <= 0:
+                raise HTTPException(400, "%s: an extra item needs its rate." % label)
+            if r.section_key and (by_key.get(r.section_key) is None or by_key[r.section_key].kind != "section"):
+                raise HTTPException(400, "%s: that section is not in the BOQ." % label)
+            db.add(models.DBBoqVariationLine(
+                variation_id=vo.id, kind="extra", section_key=(r.section_key or ""), sno=(r.sno or "").strip()[:30],
+                description=text, uom=(r.uom or "").strip()[:20], old_qty=0.0, change_qty=change, rate=rate,
+                amount=money(change * rate), remarks=(r.remarks or "").strip(), display_order=index))
+        kept += 1
+    if not kept:
+        raise HTTPException(400, "A variation needs at least one line.")
+    db.flush()
+    vo.value = money(sum(l.amount or 0 for l in db.query(models.DBBoqVariationLine).filter(
+        models.DBBoqVariationLine.variation_id == vo.id).all()))
+    vo.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def bv_dict(db, vo, detail=False):
+    boq = db.query(models.DBBoq).filter(models.DBBoq.id == vo.boq_id).first()
+    job = by_id(db, models.DBJob, vo.job_id)
+    revs = {r.rev_no: (r.label or "R%d" % r.rev_no) for r in db.query(models.DBBoqRevision).filter(models.DBBoqRevision.boq_id == vo.boq_id).all()}
+    row = {"id": vo.id, "number": vo.number or "", "boq_id": vo.boq_id, "boq": boq.number if boq else "",
+           "project": ("%s %s" % (job.number, job.name)).strip() if job else "", "status": vo.status or "DRAFT",
+           "reason": vo.reason or "", "value": money(vo.value), "basis_rev": revs.get(vo.basis_rev, "R%d" % (vo.basis_rev or 0)),
+           "applied_rev": revs.get(vo.applied_rev, "") if vo.applied_rev is not None else "",
+           "raised_by_name": vo.raised_by_name or "", "approved_by_name": vo.approved_by_name or "",
+           "approved_at": vo.approved_at or "", "rejection_reason": vo.rejection_reason or "",
+           "actions": sorted(BV_TRANSITIONS.get(vo.status or "DRAFT", {}).keys()),
+           "editable": (vo.status or "DRAFT") == "DRAFT", "created_at": vo.created_at or ""}
+    route = bv_route(db, vo)
+    row["route"] = route
+    row["waiting_on"] = next((r["name"] for r in route if r["status"] == "waiting"), "")
+    if detail:
+        row["lines"] = [{"id": l.id, "kind": l.kind, "boq_key": l.boq_key or "", "section_key": l.section_key or "",
+                         "sno": l.sno or "", "description": l.description or "", "uom": l.uom or "",
+                         "old_qty": money(l.old_qty), "change_qty": money(l.change_qty), "new_qty": money((l.old_qty or 0) + (l.change_qty or 0)),
+                         "rate": unit_rate(l.rate), "amount": money(l.amount), "remarks": l.remarks or ""}
+                        for l in db.query(models.DBBoqVariationLine).filter(models.DBBoqVariationLine.variation_id == vo.id).order_by(
+                            models.DBBoqVariationLine.display_order, models.DBBoqVariationLine.id).all()]
+    return row
+
+
+# --- the approval route (the same kind as a bill's: those above the person who raised it, then the Master) ---
+
+def bv_chain_rows(db, vid):
+    return chain_rows(db, "boq_variation", vid)
+
+
+def bv_start_chain(db, client_id, vo, submitter_id):
+    forget_chain(db, "boq_variation", vo.id)
+    db.query(models.DBApprovalChain).filter(
+        models.DBApprovalChain.entity_type == "boq_variation", models.DBApprovalChain.entity_id == vo.id).delete(synchronize_session=False)
+    if submitter_id and not raised_by_owner(db, client_id, submitter_id):
+        rungs = hierarchy_chain(db, client_id, submitter_id, "subcontracts.approve", vo.job_id, owner_signs=True)
+    else:
+        rungs = []
+    rungs = rungs or [chain_rung(None, db, client_id)]
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for i, rung in enumerate(rungs, 1):
+        db.add(models.DBApprovalChain(client_id=client_id, entity_type="boq_variation", entity_id=vo.id, employee_id=submitter_id,
+                                      approver_id=rung["employee_id"], level=rung["level"], step=i, status="pending", created_at=now))
+    db.flush()
+
+
+def bv_current_step(db, vo):
+    """The step it waits at; an approver who has left or lost the right is passed over, not left to block it."""
+    for row in bv_chain_rows(db, vo.id):
+        if row.status != "pending":
+            continue
+        if row.approver_id is None:
+            return row
+        emp = by_id(db, models.DBEmployee, row.approver_id)
+        if emp and (emp.status or "active") not in GONE_STATUSES and employee_can(emp, "subcontracts.approve"):
+            return row
+        row.status, row.notes = "skipped", "No longer able to approve"
+        row.decided_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return None
+
+
+def bv_route(db, vo):
+    rows = bv_chain_rows(db, vo.id)
+    current = bv_current_step(db, vo) if (vo.status or "") == "SUBMITTED" else None
+    return [{"step": r.step, "name": sub_bill_step_name(db, r), "owner": r.approver_id is None,
+             "status": "waiting" if current is not None and r.id == current.id else r.status,
+             "notes": r.notes or "", "decided_at": r.decided_at or ""} for r in rows]
+
+
+def bv_decide(db, client, vo, actor_id, actor_name, approve, comments=""):
+    """One signature on a variation. Returns True when it was the last one needed."""
+    step = bv_current_step(db, vo)
+    owner = actor_id is None
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if not owner and vo.raised_by and vo.raised_by == actor_id:
+        raise HTTPException(403, "You raised this variation, so somebody else has to approve it. It is waiting with %s."
+                            % (sub_bill_step_name(db, step) or "the Master"))
+    if not owner and (step is None or step.approver_id != actor_id):
+        raise HTTPException(403, "%s is waiting with %s." % (vo.number, sub_bill_step_name(db, step) or "the Master"))
+    if not approve:
+        if step is not None:
+            step.status, step.notes, step.decided_at = "rejected", (comments or "").strip(), now
+        return False
+    if owner:
+        for row in bv_chain_rows(db, vo.id):
+            if row.status == "pending":
+                if row.approver_id is None:
+                    row.status, row.notes, row.decided_at = "approved", (comments or "").strip(), now
+                else:
+                    row.status, row.notes, row.decided_at = "skipped", "Signed over by the Master", now
+        db.flush()
+        return True
+    step.status, step.notes, step.decided_at = "approved", (comments or "").strip(), now
+    db.flush()
+    return bv_current_step(db, vo) is None
+
+
+def bv_apply(db, client, boq, vo):
+    """Move the BOQ to its next revision with the variation's changes in it, and raise the client's work order to match."""
+    cur = boq_revision_of(db, boq)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if cur.status == "OPEN":
+        cur.status, cur.issued_at = "ISSUED", now
+    nxt = models.DBBoqRevision(boq_id=boq.id, rev_no=cur.rev_no + 1, status="OPEN", created_by_name=vo.raised_by_name or "",
+                               label="R%d - %s" % (cur.rev_no + 1, (vo.number or "").rsplit("/", 1)[-1]), note=vo.reason or "")
+    db.add(nxt)
+    db.flush()
+    copies = []
+    for l in db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == cur.id).order_by(models.DBBoqLine.display_order).all():
+        copies.append(models.DBBoqLine(boq_id=boq.id, revision_id=nxt.id, key=l.key, kind=l.kind, sno=l.sno, description=l.description,
+                                       uom=l.uom, quantity=l.quantity, rate=l.rate, amount=l.amount, code=l.code,
+                                       item_code=l.item_code, remarks=l.remarks))
+    by_key = {c.key: c for c in copies}
+    added = []
+    for vl in db.query(models.DBBoqVariationLine).filter(models.DBBoqVariationLine.variation_id == vo.id).order_by(
+            models.DBBoqVariationLine.display_order, models.DBBoqVariationLine.id).all():
+        if vl.kind == "quantity":
+            line = by_key.get(vl.boq_key)
+            if line is None:
+                raise HTTPException(409, "%s is no longer in the BOQ, so this variation cannot be applied. Send it back and correct it."
+                                    % (vl.sno or vl.description[:30]))
+            line.quantity = money((line.quantity or 0) + vl.change_qty)
+            if line.quantity < 0:
+                raise HTTPException(409, "%s would fall below nothing. Send it back and correct it." % (vl.sno or vl.description[:30]))
+            line.amount = money(line.quantity * (line.rate or 0))
+        else:
+            # An extra item with no number of its own is numbered after the variation that brought it: V1/1, V1/2.
+            new = models.DBBoqLine(boq_id=boq.id, revision_id=nxt.id, key=boq_new_key(), kind="item",
+                                   sno=vl.sno or "V%d/%d" % (vo.sequence or 1, len(added) + 1),
+                                   description=vl.description, uom=vl.uom, quantity=money(vl.change_qty), rate=unit_rate(vl.rate),
+                                   amount=money(vl.change_qty * vl.rate), remarks=vl.remarks or "")
+            at = len(copies)
+            if vl.section_key and vl.section_key in by_key:
+                at = copies.index(by_key[vl.section_key]) + 1
+                while at < len(copies) and copies[at].kind != "section":
+                    at += 1                                   # the end of that section
+            copies.insert(at, new)
+            added.append(new)
+    for i, l in enumerate(copies):
+        l.display_order = i
+        db.add(l)
+    db.flush()
+    boq_issue_codes(db, client.id, copies)                    # the extra items get their codes from the item master
+    boq.current_rev = nxt.rev_no
+    # The client's work order drawn from this BOQ follows it.
+    for wo in db.query(models.DBWorkOrder).filter(models.DBWorkOrder.boq_id == boq.id, models.DBWorkOrder.status != "Closed").all():
+        lines = db.query(models.DBWorkOrderLine).filter(models.DBWorkOrderLine.work_order_id == wo.id).all()
+        for vl in db.query(models.DBBoqVariationLine).filter(models.DBBoqVariationLine.variation_id == vo.id).all():
+            if vl.kind == "quantity":
+                code = (by_key[vl.boq_key].item_code or "").upper()
+                wl = next((x for x in lines if (x.fg_code or "").upper() == code and code), None)
+                if wl:
+                    wl.qty = money((wl.qty or 0) + vl.change_qty)
+                    wl.amount = money(wl.qty * (wl.rate or 0))
+        for new in added:
+            if new.item_code and not any((x.fg_code or "").upper() == new.item_code.upper() for x in lines):
+                db.add(models.DBWorkOrderLine(work_order_id=wo.id, fg_code=new.item_code, item_name=new.description.split("\n")[0][:200],
+                                              description=new.description.split("\n")[0][:300], qty=new.quantity, uom=new.uom,
+                                              rate=new.rate, amount=new.amount))
+        db.flush()
+        wo.total_value = money(sum(money(x.amount) for x in db.query(models.DBWorkOrderLine).filter(
+            models.DBWorkOrderLine.work_order_id == wo.id).all()))
+    vo.applied_rev = nxt.rev_no
+    return nxt
+
+
+@app.get("/api/boq-variations")
+def bv_list(request: Request, boq_id: int = 0, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    q = db.query(models.DBBoqVariation).filter(models.DBBoqVariation.client_id == client.id)
+    if boq_id:
+        q = q.filter(models.DBBoqVariation.boq_id == boq_id)
+    rows = [bv_dict(db, v) for v in q.order_by(models.DBBoqVariation.id.desc()).limit(300).all()]
+    return {"variations": rows, "summary": {
+        "raised": len(rows), "awaiting_approval": len([r for r in rows if r["status"] == "SUBMITTED"]),
+        "approved_value": money(sum(r["value"] for r in rows if r["status"] == "APPROVED")),
+        "pending_value": money(sum(r["value"] for r in rows if r["status"] in ("DRAFT", "SUBMITTED")))}}
+
+
+@app.get("/api/boq-variations/suggest/{boq_id}")
+def bv_suggest(boq_id: int, request: Request, db: Session = Depends(get_db)):
+    """The lines the work already done calls for: every BOQ line executed past its quantity, at its rate."""
+    client = require_items_access(request, db, ("reports.view", "workorders.manage"))
+    boq = boq_or_404(db, client.id, boq_id)
+    out = []
+    for r in boq_tracker_data(db, client, boq)["rows"]:
+        if r["kind"] in BOQ_PRICED and "over_executed" in (r.get("flags") or []):
+            done = max(r["executed"], r["client_executed"])
+            extra = money(done - r["quantity"])
+            out.append({"kind": "quantity", "boq_key": r["key"], "sno": r["sno"], "description": r["description"], "uom": r["uom"],
+                        "old_qty": r["quantity"], "change_qty": extra, "rate": r["rate"], "amount": money(extra * r["rate"])})
+    return {"lines": out, "value": money(sum(l["amount"] for l in out))}
+
+
+@app.post("/api/boq-variations")
+def bv_create(body: BoqVariationIn, request: Request, db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db)
+    boq = boq_or_404(db, client.id, body.boq_id or 0)
+    rev = boq_revision_of(db, boq)
+    if not db.query(models.DBBoqLine.id).filter(models.DBBoqLine.revision_id == rev.id, models.DBBoqLine.kind.in_(BOQ_PRICED)).first():
+        raise HTTPException(409, "The BOQ has no priced lines yet - there is nothing to vary.")
+    number, seq = bv_next_number(db, boq)
+    vo = models.DBBoqVariation(client_id=client.id, boq_id=boq.id, job_id=boq.job_id, number=number, sequence=seq, status="DRAFT",
+                               reason=(body.reason or "").strip(), basis_rev=boq.current_rev, raised_by=actor_id, raised_by_name=actor_name)
+    db.add(vo)
+    db.flush()
+    bv_write_lines(db, boq, vo, body.lines)
+    log_audit(db, client.id, "boq_variation_raised", "boq", boq.id, boq.number, "%s %s" % (number, inr(vo.value)), request)
+    db.commit()
+    return {"variation": bv_dict(db, vo, detail=True), "message": "%s drawn up - %s." % (number, inr(vo.value))}
+
+
+@app.get("/api/boq-variations/{vid}")
+def bv_get(vid: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return bv_dict(db, boq_variation_or_404(db, client.id, vid), detail=True)
+
+
+@app.put("/api/boq-variations/{vid}")
+def bv_update(vid: int, body: BoqVariationIn, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    vo = boq_variation_or_404(db, client.id, vid)
+    if (vo.status or "DRAFT") != "DRAFT":
+        raise HTTPException(409, "Only a draft variation can be changed. Send it back first.")
+    boq = boq_or_404(db, client.id, vo.boq_id)
+    vo.reason = (body.reason or "").strip()
+    vo.basis_rev = boq.current_rev
+    bv_write_lines(db, boq, vo, body.lines)
+    db.commit()
+    return {"variation": bv_dict(db, vo, detail=True), "message": "%s saved - %s." % (vo.number, inr(vo.value))}
+
+
+@app.delete("/api/boq-variations/{vid}")
+def bv_delete(vid: int, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db)
+    vo = boq_variation_or_404(db, client.id, vid)
+    if (vo.status or "DRAFT") != "DRAFT":
+        raise HTTPException(409, "Only a draft can be deleted. Cancel it instead.")
+    db.query(models.DBBoqVariationLine).filter(models.DBBoqVariationLine.variation_id == vo.id).delete()
+    db.delete(vo)
+    db.commit()
+    return {"ok": True, "message": "Draft removed."}
+
+
+@app.post("/api/boq-variations/{vid}/{action}")
+def act_on_boq_variation(vid: int, action: str, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    client, actor_id, actor_name = wo_actor(request, db, ("workorders.manage", "subcontracts.approve"))
+    vo = boq_variation_or_404(db, client.id, vid)
+    boq = boq_or_404(db, client.id, vo.boq_id)
+    move = (action or "").upper()
+    allowed = BV_TRANSITIONS.get(vo.status or "DRAFT", {})
+    if move not in allowed:
+        raise HTTPException(409, "A %s variation cannot be %s." % ((vo.status or "draft").lower(), past_tense(move)))
+    body = body or {}
+    comments = (body.get("comments") or "").strip()
+    require_items_access(request, db, "subcontracts.approve" if move in ("APPROVE", "REJECT") else "workorders.manage")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if move == "SUBMIT":
+        if not db.query(models.DBBoqVariationLine.id).filter(models.DBBoqVariationLine.variation_id == vo.id).first():
+            raise HTTPException(409, "There is nothing on this variation to submit.")
+        bv_start_chain(db, client.id, vo, actor_id)
+        vo.raised_by, vo.raised_by_name = actor_id, actor_name if actor_id else (vo.raised_by_name or actor_name)
+    elif move == "REJECT":
+        if not comments:
+            raise HTTPException(400, "Say why it is going back.")
+        bv_decide(db, client, vo, actor_id, actor_name, False, comments)
+        vo.rejection_reason = comments
+    elif move == "APPROVE":
+        if not bv_decide(db, client, vo, actor_id, actor_name, True, comments):
+            vo.updated_at = now
+            db.commit()
+            step = bv_current_step(db, vo)
+            return {"ok": True, "variation": bv_dict(db, vo, detail=True),
+                    "message": "Signed. %s now waits with %s." % (vo.number, sub_bill_step_name(db, step))}
+        bv_apply(db, client, boq, vo)
+        vo.approved_by_name = actor_name if actor_id else owner_label(db, client.id)
+        vo.approved_at = now
+    was, vo.status = vo.status, allowed[move]
+    vo.updated_at = now
+    log_audit(db, client.id, "boq_variation_%s" % move.lower(), "boq", boq.id, vo.number or "", "%s -> %s %s" % (was, vo.status, comments), request)
+    db.commit()
+    if move in ("SUBMIT", "APPROVE"):
+        step = bv_current_step(db, vo) if move == "SUBMIT" else None
+        notify(db, client.id, "boq_variation_submitted" if move == "SUBMIT" else "boq_variation_approved",
+               ("%s is waiting for approval" if move == "SUBMIT" else "%s agreed - the BOQ is now %s") % ((vo.number,) if move == "SUBMIT" else (vo.number, "R%d" % boq.current_rev)),
+               "%s of change to %s." % (inr(vo.value), boq.number), view="boq-view", ref_type="boq_variation", ref_id=vo.id,
+               severity="action" if move == "SUBMIT" else "money")
+        if step is not None and step.approver_id:
+            notify_employee(db, client.id, step.approver_id, "BOQ variation awaiting your approval",
+                            "%s - %s." % (vo.number, inr(vo.value)), link="/next/approvals")
+        db.commit()
+    db.refresh(vo)
+    return {"ok": True, "variation": bv_dict(db, vo, detail=True),
+            "message": "%s is now %s%s." % (vo.number, vo.status.lower(), (" - the BOQ is " + (boq_revision_of(db, boq).label or "")) if move == "APPROVE" else "")}
 
 
 # Serve frontend

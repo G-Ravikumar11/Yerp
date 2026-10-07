@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
-import { Download, FileUp, GitBranch, Save, ShoppingCart } from 'lucide-react'
+import { useParams, useSearchParams } from 'react-router-dom'
+import { Download, FileUp, GitBranch, Plus, Save, ShoppingCart } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataGrid, type Column } from '@/components/grid'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
@@ -10,6 +10,7 @@ import {
   importBoq,
   makeClientOrder,
   newRevision,
+  useBoqVariations,
   saveBoqLines,
   useBoq,
   useBoqChanges,
@@ -24,6 +25,7 @@ import { useSession } from '@/lib/session'
 import { formatQty } from '@/lib/format'
 import { cn, compactINR, formatINR } from '@/lib/utils'
 import { toast } from '@/stores/toast'
+import { VariationDialog } from './VariationDialog'
 
 /** A line as the grid holds it: figures may be blank. */
 interface Row {
@@ -62,15 +64,18 @@ const KINDS = [
 
 const FLAG_TEXT: Record<BoqFlag, string> = { no_gang: 'No gang yet', over_allotted: 'Given past the BOQ', loss: 'Gang rate above ours', over_executed: 'Executed past the BOQ' }
 
-type Tab = 'boq' | 'tracker' | 'revisions'
+type Tab = 'boq' | 'tracker' | 'variations' | 'revisions'
 
 export default function BoqPage() {
   const id = Number(useParams().id)
   const { can } = useSession()
-  const [tab, setTab] = useState<Tab>('boq')
+  const [params] = useSearchParams()
+  const [tab, setTab] = useState<Tab>(params.get('tab') === 'variations' ? 'variations' : 'boq')
+  const [varying, setVarying] = useState<{ id: number | null } | null>(null)
   const [viewing, setViewing] = useState<number | undefined>(undefined)
   const book = useBoq(id, viewing)
   const tracker = useTracker(id, tab === 'tracker')
+  const variations = useBoqVariations(id)
   const [rows, setRows] = useState<Row[]>([])
   const [dirty, setDirty] = useState(false)
   const [issue, setIssue] = useState(true)
@@ -187,6 +192,7 @@ export default function BoqPage() {
           items={[
             { value: 'boq', label: 'BOQ' },
             { value: 'tracker', label: 'Tracker' },
+            { value: 'variations', label: 'Variations', count: variations.data?.summary.raised },
             { value: 'revisions', label: 'Revisions', count: book.data?.revisions.length },
           ]}
         />
@@ -243,6 +249,39 @@ export default function BoqPage() {
       )}
 
       {tab === 'tracker' && <TrackerView rows={tracker.data?.rows ?? []} flags={tracker.data?.flags} totals={tracker.data?.totals} loading={tracker.isPending} denied={tracker.isError} />}
+
+      {tab === 'variations' && (
+        <div className="grid gap-4">
+          <StatGrid>
+            <Stat label="Awaiting approval" value={variations.data?.summary.awaiting_approval ?? 0} tone={variations.data?.summary.awaiting_approval ? 'warning' : undefined} loading={variations.isPending} />
+            <Stat label="Approved, added to the BOQ" value={compactINR(variations.data?.summary.approved_value)} loading={variations.isPending} />
+            <Stat label="Raised, not yet approved" value={compactINR(variations.data?.summary.pending_value)} loading={variations.isPending} />
+          </StatGrid>
+          <div>
+            {can('workorders.manage') && viewing === undefined && (
+              <Button onClick={() => setVarying({ id: null })}>
+                <Plus /> New variation
+              </Button>
+            )}
+          </div>
+          <DataTable
+            label="Variations"
+            rows={variations.data?.variations ?? []}
+            rowKey={(x) => x.id}
+            loading={variations.isPending}
+            onRowClick={(x) => setVarying({ id: x.id })}
+            empty="No variations. Raise one when work runs past the BOQ or an item the BOQ never had is asked for."
+            columns={[
+              { id: 'no', header: 'Variation', width: '9rem', cell: (x) => <span className="font-mono text-[13px] font-semibold">{x.number.slice(x.number.lastIndexOf('/') + 1)}</span> },
+              { id: 'why', header: 'Why', cell: (x) => <div className="max-w-sm truncate" title={x.reason}>{x.reason || '-'}</div> },
+              { id: 'basis', header: 'Against', hideBelow: 'md', cell: (x) => x.basis_rev },
+              { id: 'val', header: 'Adds', align: 'right', cell: (x) => <span className={cn('font-semibold', x.value < 0 && 'text-danger')}>{formatINR(x.value)}</span> },
+              { id: 'st', header: 'Status', cell: (x) => <div><Badge tone={x.status === 'APPROVED' ? 'success' : x.status === 'SUBMITTED' ? 'warning' : x.status === 'CANCELLED' ? 'danger' : 'neutral'}>{x.status.toLowerCase()}</Badge>{x.status === 'SUBMITTED' && x.waiting_on && <div className="mt-1 text-xs text-muted-foreground">with {x.waiting_on}</div>}{x.applied_rev && <div className="mt-1 text-xs text-muted-foreground">made {x.applied_rev}</div>}</div> },
+            ]}
+          />
+          <VariationDialog boqId={id} id={varying?.id ?? null} lines={book.data?.lines ?? []} open={!!varying} onOpenChange={(o) => !o && setVarying(null)} />
+        </div>
+      )}
 
       {tab === 'revisions' && (
         <div className="grid gap-5">

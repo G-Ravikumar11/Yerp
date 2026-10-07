@@ -21,6 +21,8 @@ export interface ApprovalItem {
   mine: boolean
   waiting_on: string
   warnings: string[]
+  /** For a variation to the BOQ: the BOQ it belongs to. */
+  doc_id?: number
   overrun?: boolean
   budget?: string[]
 }
@@ -57,6 +59,8 @@ export function hrefFor(i: ApprovalItem): { to: string; external: boolean } {
       return { to: `/subcontractors/ra-bills/${i.id}`, external: false }
     case 'contractor':
       return { to: '/subcontractors/vendors', external: false }
+    case 'boq_variation':
+      return { to: `/projects/boq/${i.doc_id ?? ''}?tab=variations`, external: false }
     case 'ra_bill':
       return { to: `/clients/measurement?bill=${i.id}`, external: false }
     default:
