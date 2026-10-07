@@ -21445,6 +21445,14 @@ def erp_work_order_xlsx(wo_id: int, request: Request, db: Session = Depends(get_
     rows = [[l["fg_code"], l["item_name"], l["description"], l["uom"],
              l["qty"], l["rate"], l["amount"]] for l in detail.get("lines", [])]
     closing = [[], ["", "", "", "", "", "Order value", detail["total_value"]]]
+    varied = wo_variations(db, wo, datetime.now().strftime("%Y-%m-%d"))
+    if varied:
+        closing += [[], ["VARIATIONS AGREED ON THIS ORDER", "", "", "", "", "", "%d agreed" % len(varied["variations"])],
+                    ["Ref", "Agreed", "What changed", "", "", "", "Value"]]
+        closing += [[x["number"], x["date"], (x["reason"] + (" - " if x["reason"] else "") + x["what"]).strip(), "", "", "", x["value"]]
+                    for x in varied["variations"]]
+        closing += [["", "", "Order value as first placed", "", "", "", varied["original"]],
+                    ["", "", "Order value as varied", "", "", "", varied["varied"]]]
     if detail.get("budgeted"):
         closing += [["", "", "", "", "", "Budgeted cost", detail["budget_cost"]],
                     ["", "", "", "", "", "Margin", detail["margin"]]]
@@ -36594,16 +36602,22 @@ def order_variations(db, bill):
     the order's value as first placed, each variation up to that date, and the value as varied. None when the
     order was not drawn from a BOQ or has no approved variation."""
     wo = db.query(models.DBWorkOrder).filter(models.DBWorkOrder.id == bill.work_order_id).first()
+    if (bill.status or "") in ("CERTIFIED", "PAID"):
+        cutoff = ((bill.certified_at or "") or bill.created_at or "")[:10]
+    else:
+        cutoff = datetime.now().strftime("%Y-%m-%d")
+    return wo_variations(db, wo, cutoff)
+
+
+def wo_variations(db, wo, cutoff):
+    """The variations agreed on a client order drawn from a BOQ, up to a date: the order's value as first placed, each
+    variation, and the value as varied. None for an order with no BOQ or no approved variation by then."""
     if not wo or not wo.boq_id:
         return None
     every = db.query(models.DBBoqVariation).filter(models.DBBoqVariation.boq_id == wo.boq_id,
                                                    models.DBBoqVariation.status == "APPROVED").order_by(models.DBBoqVariation.id).all()
     if not every:
         return None
-    if (bill.status or "") in ("CERTIFIED", "PAID"):
-        cutoff = ((bill.certified_at or "") or bill.created_at or "")[:10]
-    else:
-        cutoff = datetime.now().strftime("%Y-%m-%d")
     original = money((wo.total_value or 0) - sum(v.value or 0 for v in every))
     out = []
     for v in every:

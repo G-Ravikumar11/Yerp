@@ -220,3 +220,31 @@ def test_the_clients_printed_bill_lists_the_variations_agreed_on_its_order(tenan
     x = tenant.get("/api/ra-bills/%d/export.xlsx" % before["id"])
     cells = [str(c.value) for ws in openpyxl.load_workbook(io.BytesIO(x.content)).worksheets for row in ws.iter_rows() for c in row if c.value]
     assert any("variations agreed" in c and "BV-01" in c for c in cells)
+
+
+def test_the_clients_work_order_prints_its_variations_too(tenant):
+    import io
+    import re
+    import openpyxl
+    import pypdf
+    boq, lines, _ = ready(tenant)
+    order = tenant.post("/api/boqs/%d/client-order" % boq["id"], json={}).json()["work_order"]
+
+    def printed():
+        pdf = tenant.get("/api/erp/work-orders/%d/export.pdf" % order["id"])
+        assert pdf.status_code == 200, pdf.text[:200]
+        return re.sub(r"\s+", " ", " ".join(p.extract_text() or "" for p in pypdf.PdfReader(io.BytesIO(pdf.content)).pages))
+
+    assert "VARIATIONS AGREED" not in printed()
+    v = variation(tenant, boq, [{"kind": "quantity", "boq_key": lines["1.2"]["key"], "change_qty": 30},
+                                {"kind": "extra", "description": "Anti-termite treatment", "uom": "sqm", "change_qty": 200, "rate": 60}],
+                  reason="Client asked for treatment").json()["variation"]
+    tenant.post("/api/boq-variations/%d/submit" % v["id"])
+    tenant.post("/api/boq-variations/%d/approve" % v["id"], json={})
+    text = printed()
+    assert "VARIATIONS AGREED ON THIS ORDER" in text and "BV-01" in text and "Client asked for treatment" in text
+    assert "Order value as first placed" in text and "14,72,800" in text and "17,30,800" in text
+    x = tenant.get("/api/erp/work-orders/%d/export.xlsx" % order["id"])
+    cells = [str(c.value) for ws in openpyxl.load_workbook(io.BytesIO(x.content)).worksheets for row in ws.iter_rows() for c in row if c.value is not None]
+    numbers = [float(c) for c in cells if re.fullmatch(r"-?\d+(\.\d+)?", c)]
+    assert "VARIATIONS AGREED ON THIS ORDER" in cells and "Order value as varied" in cells and 1730800.0 in numbers
