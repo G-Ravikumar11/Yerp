@@ -841,8 +841,9 @@ def _mb_sheet(ws, st, cert):
             _put(ws, st, r, 2, row.get("description") or "", bold=True)
             if kind == "heading":
                 ws.cell(row=r, column=2).font = Font(bold=True, italic=True)
-            for c in range(3, 11):
+            for c in range(3, 10):
                 _put(ws, st, r, c, "")
+            _put(ws, st, r, 10, row.get("code") or "", bold=True, align="centre")
         elif kind in ("subtotal", "total"):
             _put(ws, st, r, 1, "")
             _put(ws, st, r, 2, row.get("description") or "", bold=True)

@@ -37128,6 +37128,11 @@ def _bill_figures(bill):
             "cess": cess, "ded": money(adv + other + ret + tds + cess), "net": money(bill.net_payable)}
 
 
+def short_entry_code(entry):
+    """The part of an entry's code that is its own number, "MB-007": on a bill the book's number is in the heading."""
+    return (getattr(entry, "code", "") or "").rsplit("/", 1)[-1]
+
+
 def sub_bill_certificate(db, client, bill):
     """The gang's RA bill as the three sheets it is signed on - the Top Sheet
     (certificate of payment), AB-1 (abstract) and MB-1 (measurement book) -
@@ -37336,7 +37341,7 @@ def sub_bill_certificate(db, client, bill):
                 section, sec_total, sec_count = (parts[1] if numeral else sec), 0.0, 0
             letter = (getattr(m, "block_label", "") or "").strip() or (chr(ord("a") + j) if j < 26 else str(j + 1))
             place = (m.location or "").strip() or (m.mb_ref or "").strip() or ("Measured on %s" % d(m.measured_on))
-            mb_rows.append({"kind": "entry", "sno": letter, "description": place})
+            mb_rows.append({"kind": "entry", "sno": letter, "description": place, "code": short_entry_code(m)})
             lines_ = dims.get(m.id) or []
             if not lines_:
                 mb_rows.append({"kind": "dim", "description": m.remarks or "As measured", "uom": uom,
@@ -37373,7 +37378,8 @@ def sub_bill_certificate(db, client, bill):
                     for h in holds_here:
                         mb_rows.append({"kind": "subtotal", "description": "Total Quantity before holding back",
                                         "label": "Total Quantity", "quantity": measured_here, "uom": uom})
-                        mb_rows.append({"kind": "subtotal", "description": (h.remarks or "Held back for finishes and handing over")[:160],
+                        mb_rows.append({"kind": "subtotal", "description": ((h.remarks or "Held back for finishes and handing over")[:150]
+                                                                           + ((" [%s]" % short_entry_code(h)) if short_entry_code(h) else "")),
                                         "label": "Held back", "quantity": money(h.quantity), "uom": uom})
                         measured_here = money(measured_here + (h.quantity or 0))
                         item_total += h.quantity or 0
@@ -37398,7 +37404,9 @@ def sub_bill_certificate(db, client, bill):
     mb = {"banner": [(company["name"].upper(), "banner")],
           "meta": [("Name of the Work :- %s" % (b["work_name"] or "").upper(), ""),
                    ("Name of the contractor :- %s" % con_name, "Bill Period: %s" % period),
-                   ("Bill no :- %02d (Measurements)" % seq, "Date :- %s" % d(b["bill_date"]))],
+                   ("Bill no :- %02d (Measurements)" % seq, "Date :- %s" % d(b["bill_date"])),
+                   ("Measurement book no. :- %s/MB" % (order.wo_number if order else ""),
+                    "Entries on this bill :- %d" % len([m for m in entries if not (getattr(m, "kind", "") or "")]))],
           "rows": mb_rows,
           "signatures": [("CONTRACTOR", con_name, ""),
                          ("MEASURED BY", ", ".join(n for n, _ in measurers), "Site Engineer"),
@@ -37503,7 +37511,10 @@ def sub_bill_form_spec(db, client, bill):
     for row in m["rows"]:
         kind = row["kind"]
         r = len(mb_rows)
-        if kind in ("item", "entry"):
+        if kind == "entry":
+            mb_rows.append([{"t": row.get("sno") or "", "a": "C", "b": True}, {"t": row["description"], "b": True},
+                            "", "", "", "", "", "", "", {"t": row.get("code") or "", "b": True, "a": "C"}])
+        elif kind == "item":
             mb_rows.append([{"t": row.get("sno") or "", "a": "C", "b": True}, {"t": row["description"], "b": True}])
         elif kind == "heading":
             mb_rows.append(["", {"t": row["description"], "b": True, "i": True}])

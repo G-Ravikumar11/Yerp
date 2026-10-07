@@ -160,3 +160,33 @@ def test_billing_everything_still_works_as_before(tenant):
     add(tenant, order, item, 5)
     bill = draw(tenant, order).json()["bill"]
     assert bill["entry_mode"] == "" and qty_of(bill) == [8] and len(bill["entries"]) == 2
+
+
+# --- on the printed bill ---------------------------------------------------------------------------------------------
+
+def test_the_printed_bill_carries_each_entrys_code_and_the_books_number(tenant):
+    import io
+    import re
+    import pypdf
+    order, item = setup(tenant)
+    add(tenant, order, item, 3, location="Block A")
+    add(tenant, order, item, 5, location="Block B")
+    a, b = entries(tenant, order)
+    bill = draw(tenant, order, [b["id"]]).json()["bill"]            # only the second entry
+    pdf = tenant.get("/api/sub-bills/%d/document.pdf" % bill["id"])
+    flat = re.sub(r"\s+", " ", " ".join((p.extract_text() or "") for p in pypdf.PdfReader(io.BytesIO(pdf.content)).pages))
+    assert "Measurement book no. :- %s/MB" % order["wo_number"] in flat
+    assert "Entries on this bill :- 1" in flat
+    assert "MB-002" in flat and "MB-001" not in flat
+
+
+def test_the_excel_bill_carries_the_codes_too(tenant):
+    import io
+    import openpyxl
+    order, item = setup(tenant)
+    add(tenant, order, item, 3, location="Block A")
+    bill = draw(tenant, order).json()["bill"]
+    wb = openpyxl.load_workbook(io.BytesIO(tenant.get("/api/sub-bills/%d/export.xlsx" % bill["id"]).content))
+    cells = [c.value for row in wb["MB-1"].iter_rows() for c in row if c.value]
+    assert "MB-001" in cells
+    assert any(str(v).startswith("Measurement book no. :-") for v in cells)

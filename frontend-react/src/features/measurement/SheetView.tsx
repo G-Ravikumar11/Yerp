@@ -69,6 +69,7 @@ function Block({ e, uom, groupEnd, group, holds }: { e: MbEntry; uom: string; gr
           <span className="mr-2 inline-block min-w-5 text-muted-foreground">{e.block_label}</span>
           {e.location || 'Measured'}
           <span className="ml-3 text-xs font-normal text-muted-foreground">{formatDate(e.measured_on)}</span>
+          {e.code && <span className="ml-3 font-mono text-xs font-normal text-muted-foreground">{e.code.slice(e.code.lastIndexOf('/') + 1)}</span>}
           {e.billed && <Badge tone="info" className="ml-2">Billed</Badge>}
         </td>
       </tr>
