@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink, useLocation, useMatch } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDown, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -45,32 +45,29 @@ function LinkItem({ to, label, icon: Icon, collapsed }: { to: string; label: str
   const inbox = useInbox()
   // Approvals says how many are waiting on this person.
   const badge = to === '/approvals' ? (inbox.data?.mine ?? 0) : 0
+  // The class is a plain string, not NavLink's function form: the tooltip wraps this link and merges its className,
+  // which turns a function into its own source text and leaves the link unstyled.
+  const isActive = !!useMatch({ path: to, end: true })
   return (
     <Tooltip content={label} disabled={!collapsed}>
       <NavLink
         to={to}
         end
-        className={({ isActive }) =>
-          cn(itemBase, 'h-10', isActive ? 'text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground')
-        }
+        className={cn(itemBase, 'h-10', collapsed && 'justify-center px-0', isActive ? 'text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
       >
-        {({ isActive }) => (
-          <>
-            {isActive && (
-              <motion.span
-                layoutId="nav-active"
-                className="absolute inset-0 rounded-lg bg-primary-soft ring-1 ring-primary/25"
-                transition={{ type: 'spring', stiffness: 500, damping: 38 }}
-              />
-            )}
-            <Icon className={cn('relative size-[18px] shrink-0', isActive && 'text-primary')} />
-            {!collapsed && <span className="relative truncate">{label}</span>}
-            {badge > 0 && (
-              <span className={cn('tabular relative grid min-w-5 place-items-center rounded-full bg-primary px-1.5 text-[11px] font-semibold text-primary-foreground', collapsed ? 'absolute right-1.5 top-1' : 'ml-auto')} aria-label={`${badge} waiting`}>
-                {badge}
-              </span>
-            )}
-          </>
+        {isActive && (
+          <motion.span
+            layoutId="nav-active"
+            className="absolute inset-0 rounded-lg bg-primary-soft ring-1 ring-primary/25"
+            transition={{ type: 'spring', stiffness: 500, damping: 38 }}
+          />
+        )}
+        <Icon className={cn('relative size-[18px] shrink-0', isActive && 'text-primary')} />
+        {!collapsed && <span className="relative truncate">{label}</span>}
+        {badge > 0 && (
+          <span className={cn('tabular relative grid min-w-5 place-items-center rounded-full bg-primary px-1.5 text-[11px] font-semibold text-primary-foreground', collapsed ? 'absolute right-1.5 top-1' : 'ml-auto')} aria-label={`${badge} waiting`}>
+            {badge}
+          </span>
         )}
       </NavLink>
     </Tooltip>
@@ -98,7 +95,7 @@ function Group({ group, collapsed }: { group: NavGroup; collapsed: boolean }) {
             toggleSidebar()
             setGroup(group.id, true)
           }}
-          className={cn(itemBase, 'h-10 w-full', active ? 'bg-primary-soft text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
+          className={cn(itemBase, 'h-10 w-full justify-center px-0', active ? 'bg-primary-soft text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
           aria-label={group.label}
         >
           <Icon className="size-[18px] shrink-0" />
