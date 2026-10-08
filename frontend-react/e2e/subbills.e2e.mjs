@@ -64,6 +64,17 @@ await sleep(1200)
 const submitted = (await api(page, 'GET', `/api/sub-bills/${bill1}`)).data
 check('submitting sends it up for certification', submitted.status === 'SUBMITTED', submitted.status)
 check('a submitted bill can no longer be edited on screen', (await page.$('#b-name:not([disabled])')) === null)
+// the hard copy can still be taken off, or swapped, on a bill that has been sent - until it is paid
+await clickText(page, 'main button', 'Remove')
+await page.waitForSelector('[role=dialog]')
+await clickText(page, '[role=dialog] button', 'Remove the hard copy')
+await waitForToast(page, 'Removed')
+await sleep(500)
+check('the hard copy can be removed from a bill that has been sent', (await api(page, 'GET', `/api/sub-bills/${bill1}`)).data.hardcopy === null)
+await toastsGone(page)
+await (await page.$('input[aria-label="Hard copy"]')).uploadFile(pdf)
+await waitForToast(page, 'is attached to')
+await toastsGone(page)
 
 // --- Certify, then pay ---------------------------------------------------------------------------------
 await toastsGone(page)

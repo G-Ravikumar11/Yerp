@@ -7,12 +7,12 @@ import { useAction } from '@/lib/mutate'
  * Money set aside on a project for one kind of cost. Every priced line of an
  * order is charged to one, and the order is checked against what is left.
  */
-export function CostCentreModal({ open, onOpenChange, jobId }: { open: boolean; onOpenChange: (o: boolean) => void; jobId: number | null }) {
+export function CostCentreModal({ open, onOpenChange, jobId, orderId }: { open: boolean; onOpenChange: (o: boolean) => void; jobId: number | null; orderId?: number }) {
   const [name, setName] = useState('')
   const [code, setCode] = useState('')
   const [amount, setAmount] = useState(0)
 
-  const create = useAction(() => createBudget(jobId!, { name, code, allocated_amount: amount }), {
+  const create = useAction(() => createBudget(jobId!, { name, code, allocated_amount: amount, order_id: orderId }), {
     invalidate: [orderKeys.all],
     onSuccess: () => {
       setName('')

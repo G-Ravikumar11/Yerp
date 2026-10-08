@@ -19615,6 +19615,21 @@ class ProjectBudgetIn(BaseModel):
     department: Optional[str] = ""
     allocated_amount: float = 0
     notes: Optional[str] = ""
+    # The order the budget is being set from, when it is - so the limit on a contractor without GST reaches it too.
+    order_id: Optional[int] = None
+
+
+def budget_breaks_vendor_limit(db, client_id, order_id, allocated):
+    """Stop a budget set from an order whose contractor has no GSTIN from going over what that contractor may be given."""
+    if not order_id:
+        return
+    order = wo_or_404(db, client_id, order_id)
+    con = by_id(db, models.DBContractor, order.contractor_id)
+    if con is None or (con.gst_number or "").strip() or money(allocated or 0) <= UNREGISTERED_VENDOR_LIMIT:
+        return
+    raise HTTPException(409, "%s has no GST registration, so the budget set from their order cannot be more than %s - this one is %s. "
+                             "Add their GSTIN to their registration form, or bring the budget down." % (
+                                 con.company_name, inr(UNREGISTERED_VENDOR_LIMIT), inr(allocated)))
 
 
 def wo_committed_by_budget(db, client_id, exclude_order_id=None):
@@ -19751,6 +19766,7 @@ def wo_create_budget(job_id: int, body: ProjectBudgetIn, request: Request,
     name = (body.name or "").strip()
     if not name:
         raise HTTPException(400, "The cost centre needs a name")
+    budget_breaks_vendor_limit(db, client.id, body.order_id, body.allocated_amount)
     budget = models.DBProjectBudget(
         client_id=client.id, job_id=job_id, name=name,
         code=(body.code or "").strip().upper(),
@@ -19776,6 +19792,7 @@ def wo_update_budget(budget_id: int, body: ProjectBudgetIn, request: Request,
     if not budget:
         raise HTTPException(404, "Cost centre not found")
     wanted = money(body.allocated_amount or 0)
+    budget_breaks_vendor_limit(db, client.id, body.order_id, wanted)
     committed = wo_committed_by_budget(db, client.id).get(budget.id, 0.0)
     if wanted > 0 and wanted < committed:
         raise HTTPException(
@@ -27698,8 +27715,8 @@ def sub_bill_attach_hardcopy(bill_id: int, request: Request, file: UploadFile = 
     approval; with the amount of work it shows, so the bill in the app can be checked against it. Attaching again replaces it."""
     client, actor_id, actor_name = wo_actor(request, db, "billing.manage")
     bill = sub_bill_or_404(db, client.id, bill_id)
-    if (bill.status or "DRAFT") != "DRAFT":
-        raise HTTPException(409, "The hard copy goes on before the bill is sent. Send the bill back to draft to change it.")
+    if (bill.status or "DRAFT") in ("PAID", "CANCELLED"):
+        raise HTTPException(409, "A bill that is %s keeps the hard copy it has." % bill.status.lower())
     name = (file.filename or "bill").strip()
     ctype = (file.content_type or "").lower()
     if ctype not in HARDCOPY_TYPES and os.path.splitext(name.lower())[1] not in (".pdf", ".jpg", ".jpeg", ".png"):
@@ -27743,8 +27760,11 @@ def sub_bill_hardcopy(bill_id: int, request: Request, db: Session = Depends(get_
 def sub_bill_remove_hardcopy(bill_id: int, request: Request, db: Session = Depends(get_db)):
     client, _, _ = wo_actor(request, db, "billing.manage")
     bill = sub_bill_or_404(db, client.id, bill_id)
-    if (bill.status or "DRAFT") != "DRAFT":
-        raise HTTPException(409, "The hard copy stays with a bill that has been sent.")
+    if (bill.status or "DRAFT") in ("PAID", "CANCELLED"):
+        raise HTTPException(409, "A bill that is %s keeps the hard copy it has." % bill.status.lower())
+    if not bill.scan_file_id:
+        raise HTTPException(404, "No hard copy has been attached to this bill.")
+    log_audit(db, client.id, "sub_bill_hardcopy_removed", "sub_bill", bill.id, bill.number or "", bill.scan_name or "", request)
     drop_files_of(db, "sub_bill_scan", [bill.id])
     bill.scan_file_id, bill.scan_name, bill.scan_type, bill.scan_size = None, "", "", 0
     bill.scan_amount, bill.scan_by_name, bill.scan_at = None, "", ""

@@ -262,7 +262,7 @@ export const saveSchedule = (id: number, lines: Partial<OrderItem>[]) => put<Ord
 export const saveTerms = (id: number, terms: OrderTerm[]) => put<OrderReply>(`/api/wo/orders/${id}/terms`, { terms })
 export const copyOrder = (id: number) => post<OrderReply>(`/api/wo/orders/${id}/copy`)
 export const chargeBudget = (id: number, budgetId: number, onlyBlank: boolean) => post<OrderReply>(`/api/wo/orders/${id}/charge-budget`, { budget_id: budgetId, only_blank: onlyBlank })
-export const createBudget = (jobId: number, b: { name: string; code?: string; allocated_amount: number }) => post<{ id: number; message: string }>(`/api/wo/projects/${jobId}/budgets`, b)
+export const createBudget = (jobId: number, b: { name: string; code?: string; allocated_amount: number; order_id?: number }) => post<{ id: number; message: string }>(`/api/wo/projects/${jobId}/budgets`, b)
 
 export interface Move {
   action: 'submit' | 'approve' | 'reject' | 'execute' | 'cancel' | 'amend' | 'self-approve'

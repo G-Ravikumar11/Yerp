@@ -61,12 +61,17 @@ def test_attaching_again_replaces_it_and_only_one_copy_is_kept(tenant):
         assert db.query(models.DBFile).filter(models.DBFile.attached_type == "sub_bill_scan", models.DBFile.attached_id == bill["id"]).count() == 1
 
 
-def test_once_sent_it_cannot_be_changed_but_stays_when_the_bill_is_sent_back(tenant):
+def test_it_can_be_replaced_or_removed_until_the_bill_is_paid_and_stays_when_sent_back(tenant):
     bill = a_draft(tenant)
     attach(tenant, bill, amount="68000")
     tenant.post("/api/sub-bills/%d/submit" % bill["id"], json={})
-    assert attach(tenant, bill, "other.pdf").status_code == 409
-    assert tenant.delete("/api/sub-bills/%d/hardcopy" % bill["id"]).status_code == 409
+    assert attach(tenant, bill, "other.pdf").status_code == 200
+    assert attach(tenant, bill, "their_bill.pdf").status_code == 200
+    gone = tenant.delete("/api/sub-bills/%d/hardcopy" % bill["id"])
+    assert gone.status_code == 200
+    assert tenant.get("/api/sub-bills/%d" % bill["id"]).json()["hardcopy"] is None
+    assert tenant.delete("/api/sub-bills/%d/hardcopy" % bill["id"]).status_code == 404
+    attach(tenant, bill, "their_bill.pdf")
     back = tenant.post("/api/sub-bills/%d/reject" % bill["id"], json={"comments": "Quantities differ"}).json()["bill"]
     assert back["status"] == "DRAFT" and back["hardcopy"]["name"] == "their_bill.pdf"
     assert tenant.post("/api/sub-bills/%d/submit" % bill["id"], json={}).status_code == 200

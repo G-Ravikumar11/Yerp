@@ -268,7 +268,7 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
       {tab === 'next' && <NextSteps order={order} canExecute={has('EXECUTE')} onExecute={() => setDialog('execute')} />}
       <StepNav steps={steps} tab={tab} onGo={(t) => { setTab(t); window.scrollTo({ top: 0, behavior: 'smooth' }) }} dirty={!!editable && dirty} saving={save.isPending} onSave={() => save.mutateAsync()} />
 
-      <CostCentreModal open={costCentre} onOpenChange={setCostCentre} jobId={order.job_id} />
+      <CostCentreModal open={costCentre} onOpenChange={setCostCentre} jobId={order.job_id} orderId={order.id} />
 
       <ConfirmDialog
         open={dialog === 'approve' || dialog === 'self-approve'}

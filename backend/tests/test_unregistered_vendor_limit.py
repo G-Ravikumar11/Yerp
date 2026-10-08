@@ -43,3 +43,22 @@ def test_the_cap_is_met_the_moment_gst_is_added(tenant):
     assert tenant.put("/api/wo/contractors/%d" % con["id"], json={
         "company_name": "Later Registered Works", "pan": "AAAPB1234C", "gst_number": "36AAAPB1234C1Z5"}).status_code == 200
     assert tenant.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 200
+
+
+def test_without_gst_the_budget_set_from_their_order_is_capped_too(tenant):
+    con = contractor(tenant, "Budget No GST Works")
+    order = draft(tenant, contractor_id=con["id"])
+    job = order["job_id"]
+    too_big = tenant.post("/api/wo/projects/%d/budgets" % job, json={"name": "Shuttering", "code": "FBN", "allocated_amount": 1966666, "order_id": order["id"]})
+    assert too_big.status_code == 409
+    assert "19,50,000" in too_big.json()["detail"] and "Budget No GST Works" in too_big.json()["detail"]
+    within = tenant.post("/api/wo/projects/%d/budgets" % job, json={"name": "Shuttering", "code": "FBN", "allocated_amount": 1950000, "order_id": order["id"]})
+    assert within.status_code == 200, within.text
+    # A budget set from the project, not from an order, is the project's own business.
+    assert tenant.post("/api/wo/projects/%d/budgets" % job, json={"name": "Whole project", "code": "ALL", "allocated_amount": 9000000}).status_code == 200
+
+
+def test_with_gst_the_budget_set_from_their_order_has_no_cap(tenant):
+    con = contractor(tenant, "Budget Registered Works", gst="36AAAPB1234C1Z5")
+    order = draft(tenant, contractor_id=con["id"])
+    assert tenant.post("/api/wo/projects/%d/budgets" % order["job_id"], json={"name": "Shuttering", "code": "FBN", "allocated_amount": 1966666, "order_id": order["id"]}).status_code == 200

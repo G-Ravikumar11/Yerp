@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { Columns2, FileUp, Paperclip, Trash2 } from 'lucide-react'
-import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input, Modal } from '@/components/ui'
+import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, ConfirmDialog, Input, Modal } from '@/components/ui'
 import { api } from '@/lib/api'
 import { billKeys, type SubBill } from '@/api/subbills'
 import { useAction } from '@/lib/mutate'
@@ -23,7 +23,9 @@ export function HardCopy({ bill, canAttach, onChanged }: { bill: SubBill; canAtt
   const [comparing, setComparing] = useState(false)
   const h = bill.hardcopy
   const url = `/api/sub-bills/${bill.id}/hardcopy`
-  const draft = bill.status === 'DRAFT'
+  // Until the bill is paid (or cancelled) the paper can be swapped for a better scan, or taken off; the audit trail records it.
+  const draft = bill.status !== 'PAID' && bill.status !== 'CANCELLED'
+  const [removing, setRemoving] = useState(false)
 
   const put = useAction((f: File) => attach(bill.id, f, amount), { invalidate: [billKeys.all], success: (r) => r.message, onSuccess: onChanged })
   const remove = useAction(() => api<{ message: string }>(`/api/sub-bills/${bill.id}/hardcopy`, { method: 'DELETE' }), { invalidate: [billKeys.all], onSuccess: onChanged })
@@ -81,7 +83,7 @@ export function HardCopy({ bill, canAttach, onChanged }: { bill: SubBill; canAtt
                 <FileUp /> {h ? 'Replace it' : 'Attach the hard copy'}
               </Button>
               {h && (
-                <Button variant="ghost" size="sm" loading={remove.isPending} onClick={() => remove.mutate()}>
+                <Button variant="ghost" size="sm" loading={remove.isPending} onClick={() => setRemoving(true)}>
                   <Trash2 /> Remove
                 </Button>
               )}
@@ -94,6 +96,19 @@ export function HardCopy({ bill, canAttach, onChanged }: { bill: SubBill; canAtt
           )}
         </div>
       </CardContent>
+      <ConfirmDialog
+        open={removing}
+        onOpenChange={setRemoving}
+        title="Remove the hard copy?"
+        description={`${h?.name ?? 'It'} comes off ${bill.number}.${bill.status !== 'DRAFT' ? ' The bill has been sent, so whoever approves it will no longer see it until another is attached.' : ''}`}
+        confirmLabel="Remove the hard copy"
+        tone="danger"
+        loading={remove.isPending}
+        onConfirm={async () => {
+          await remove.mutateAsync()
+          setRemoving(false)
+        }}
+      />
       {h && (
         <Modal open={comparing} onOpenChange={setComparing} size="xl" title={`${bill.number}: the bill and its hard copy`} description="The bill drawn up from the measurement book, and the hard copy of the same bill.">
           <div className="grid gap-3 lg:grid-cols-2">
