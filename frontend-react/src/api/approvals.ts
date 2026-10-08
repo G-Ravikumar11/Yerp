@@ -23,7 +23,7 @@ export interface ApprovalItem {
   warnings: string[]
   /** For a variation to the BOQ: the BOQ it belongs to. */
   doc_id?: number
-  /** For a contractor's bill: their own bill as it came on paper. */
+  /** For a contractor's RA bill: the hard copy of it, as it came on paper. */
   scan?: string
   overrun?: boolean
   budget?: string[]

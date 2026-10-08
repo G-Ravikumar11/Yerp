@@ -16,7 +16,7 @@ function attach(id: number, file: File, amount: string) {
   return api<{ bill: SubBill; message: string }>(`/api/sub-bills/${id}/hardcopy`, { method: 'POST', body: form })
 }
 
-/** The contractor's own bill as it came on paper, scanned: attached before the bill is sent, read beside ours by whoever approves it. */
+/** The hard copy of this same RA bill, the paper it was signed on, scanned: attached before the bill is sent, read beside the bill in the app by whoever approves it. */
 export function HardCopy({ bill, canAttach, onChanged }: { bill: SubBill; canAttach: boolean; onChanged: () => void }) {
   const file = useRef<HTMLInputElement>(null)
   const [amount, setAmount] = useState(() => (bill.hardcopy?.amount != null ? String(bill.hardcopy.amount) : ''))
@@ -35,9 +35,9 @@ export function HardCopy({ bill, canAttach, onChanged }: { bill: SubBill; canAtt
     <Card className={cn(!h && bill.scan_required && 'border-warning/50')}>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Paperclip className="size-4" /> The contractor&apos;s own bill
+          <Paperclip className="size-4" /> Hard copy
         </CardTitle>
-        <CardDescription>{h ? 'Read it beside this bill before approving: the figures and the quantities should agree.' : bill.scan_required ? 'Attach their bill, as it came on paper (a PDF, or a photo of it), before sending this for approval.' : 'Optional: their bill as it came on paper.'}</CardDescription>
+        <CardDescription>{h ? 'Read it beside this bill before approving: the figures and the quantities should agree.' : bill.scan_required ? 'Attach the hard copy of this RA bill (a PDF, or a photo of it) before sending it for approval.' : 'Optional: the hard copy of this RA bill, as a PDF or a photo.'}</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">
         {h ? (
@@ -50,7 +50,7 @@ export function HardCopy({ bill, canAttach, onChanged }: { bill: SubBill; canAtt
             </span>
             {h.amount != null && (
               <span className="tabular">
-                Their bill: <strong>{formatINR(h.amount)}</strong> of work
+                Hard copy: <strong>{formatINR(h.amount)}</strong> of work
               </span>
             )}
             {h.difference != null && <Badge tone={differs ? 'danger' : 'success'}>{differs ? `this bill is ${formatINR(Math.abs(h.difference))} ${h.difference > 0 ? 'more' : 'less'}` : 'the amounts agree'}</Badge>}
@@ -61,7 +61,7 @@ export function HardCopy({ bill, canAttach, onChanged }: { bill: SubBill; canAtt
             <>
               <div className="w-56">
                 <label htmlFor="scan-amount" className="mb-1 block text-xs text-muted-foreground">
-                  Amount of work on their bill (optional)
+                  Amount of work on the hard copy (optional)
                 </label>
                 <Input id="scan-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Before tax" />
               </div>
@@ -70,7 +70,7 @@ export function HardCopy({ bill, canAttach, onChanged }: { bill: SubBill; canAtt
                 type="file"
                 hidden
                 accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
-                aria-label="The contractor's bill"
+                aria-label="Hard copy"
                 onChange={(e) => {
                   const f = e.target.files?.[0]
                   e.target.value = ''
@@ -78,7 +78,7 @@ export function HardCopy({ bill, canAttach, onChanged }: { bill: SubBill; canAtt
                 }}
               />
               <Button variant={h ? 'outline' : 'primary'} size="sm" loading={put.isPending} onClick={() => file.current?.click()}>
-                <FileUp /> {h ? 'Replace it' : 'Attach their bill'}
+                <FileUp /> {h ? 'Replace it' : 'Attach the hard copy'}
               </Button>
               {h && (
                 <Button variant="ghost" size="sm" loading={remove.isPending} onClick={() => remove.mutate()}>
@@ -95,20 +95,20 @@ export function HardCopy({ bill, canAttach, onChanged }: { bill: SubBill; canAtt
         </div>
       </CardContent>
       {h && (
-        <Modal open={comparing} onOpenChange={setComparing} size="xl" title={`${bill.number}: ours and theirs`} description="The bill drawn up from the measurement book, and the contractor's own bill as they sent it.">
+        <Modal open={comparing} onOpenChange={setComparing} size="xl" title={`${bill.number}: the bill and its hard copy`} description="The bill drawn up from the measurement book, and the hard copy of the same bill.">
           <div className="grid gap-3 lg:grid-cols-2">
             <div>
-              <p className="mb-1 text-[13px] font-medium">This bill - {formatINR(bill.this_bill)} of work</p>
+              <p className="mb-1 text-[13px] font-medium">Bill in the app - {formatINR(bill.this_bill)} of work</p>
               <iframe title="This bill" src={`/api/sub-bills/${bill.id}/document.pdf`} className="h-[65vh] w-full rounded-lg border border-border bg-white" />
             </div>
             <div>
-              <p className="mb-1 text-[13px] font-medium">Their bill{h.amount != null ? ` - ${formatINR(h.amount)} of work` : ''}</p>
+              <p className="mb-1 text-[13px] font-medium">Hard copy{h.amount != null ? ` - ${formatINR(h.amount)} of work` : ''}</p>
               {isImage(h.type) ? (
                 <div className="h-[65vh] overflow-auto rounded-lg border border-border bg-white">
-                  <img src={url} alt="The contractor's bill" className="w-full" />
+                  <img src={url} alt="Hard copy" className="w-full" />
                 </div>
               ) : (
-                <iframe title="The contractor's bill" src={url} className="h-[65vh] w-full rounded-lg border border-border bg-white" />
+                <iframe title="Hard copy" src={url} className="h-[65vh] w-full rounded-lg border border-border bg-white" />
               )}
             </div>
           </div>

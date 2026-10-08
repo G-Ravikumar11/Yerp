@@ -1,4 +1,4 @@
-"""A contractor's bill is attached as it came on paper before it is sent for approval, and the approvers read the two together."""
+"""The hard copy of an RA bill is attached as it came on paper before it is sent for approval, and the approvers read the two together."""
 import pytest
 
 import main
@@ -78,7 +78,7 @@ def test_the_approver_is_shown_the_paper_and_told_when_the_two_disagree(tenant):
     tenant.post("/api/sub-bills/%d/submit" % bill["id"], json={})
     item = [i for i in tenant.get("/api/approvals/inbox").json()["items"] if i["kind"] == "sub_bill"][0]
     assert item["scan"].endswith("/hardcopy") and tenant.get(item["scan"]).status_code == 200
-    assert item["warnings"] and "Their bill says" in item["warnings"][0]
+    assert item["warnings"] and "The hard copy says" in item["warnings"][0]
 
 
 def test_a_matching_amount_raises_no_warning(tenant):

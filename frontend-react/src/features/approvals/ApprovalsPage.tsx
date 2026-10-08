@@ -136,7 +136,7 @@ export default function ApprovalsPage() {
                             {i.scan && (
                               <Button size="sm" variant="ghost" asChild>
                                 <a href={i.scan} target="_blank" rel="noopener">
-                                  <FileText /> Their bill
+                                  <FileText /> Hard copy
                                 </a>
                               </Button>
                             )}

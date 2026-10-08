@@ -2417,7 +2417,7 @@ class DBSubBill(Base):
     bill_date = Column(String, default="")
     # "" for a bill of everything measured and not yet billed; "chosen" for one drawn from entries picked for it.
     entry_mode = Column(String, default="")
-    # The contractor's own bill, on paper, scanned and attached before this one is sent up for approval so the
+    # The hard copy of this same bill, on paper, scanned and attached before this one is sent up for approval so the
     # approvers can read the two side by side - and the amount of work it claims, to check ours against.
     scan_file_id = Column(Integer, nullable=True)
     scan_name = Column(String, default="")

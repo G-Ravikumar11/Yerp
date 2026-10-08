@@ -27694,8 +27694,8 @@ def sub_advance_recovery(db, order, bill, asked=None):
 @app.post("/api/sub-bills/{bill_id}/hardcopy")
 def sub_bill_attach_hardcopy(bill_id: int, request: Request, file: UploadFile = File(...), amount: str = Form(""),
                              db: Session = Depends(get_db)):
-    """The contractor's own bill, on paper and scanned (a PDF, or a photo of it), attached before the bill is sent for
-    approval; with the amount of work their bill claims, so ours can be checked against it. Attaching again replaces it."""
+    """The hard copy of this same bill, on paper and scanned (a PDF, or a photo of it), attached before the bill is sent for
+    approval; with the amount of work it shows, so the bill in the app can be checked against it. Attaching again replaces it."""
     client, actor_id, actor_name = wo_actor(request, db, "billing.manage")
     bill = sub_bill_or_404(db, client.id, bill_id)
     if (bill.status or "DRAFT") != "DRAFT":
@@ -27703,25 +27703,25 @@ def sub_bill_attach_hardcopy(bill_id: int, request: Request, file: UploadFile = 
     name = (file.filename or "bill").strip()
     ctype = (file.content_type or "").lower()
     if ctype not in HARDCOPY_TYPES and os.path.splitext(name.lower())[1] not in (".pdf", ".jpg", ".jpeg", ".png"):
-        raise HTTPException(400, "Attach the contractor's bill as a PDF, or a photo of it (JPG or PNG).")
+        raise HTTPException(400, "Attach the hard copy as a PDF, or a photo of it (JPG or PNG).")
     if ctype not in HARDCOPY_TYPES:
         ctype = {".pdf": "application/pdf", ".png": "image/png"}.get(os.path.splitext(name.lower())[1], "image/jpeg")
     claimed = None
     if (amount or "").strip():
         claimed = money(sheet_number(amount))
         if claimed < 0:
-            raise HTTPException(400, "The amount on their bill cannot be negative.")
+            raise HTTPException(400, "The amount on the hard copy cannot be negative.")
     data = file.file.read()
     drop_files_of(db, "sub_bill_scan", [bill.id])
     stored = store_file(db, client.id, types.SimpleNamespace(filename=name, content_type=ctype), data, job_id=bill.job_id, attached_type="sub_bill_scan", attached_id=bill.id,
-                        kind="document", caption="Contractor's hard-copy bill for %s" % bill.number, by=actor_name)
+                        kind="document", caption="Hard copy of %s" % bill.number, by=actor_name)
     bill.scan_file_id, bill.scan_name, bill.scan_type, bill.scan_size = stored.id, stored.name, stored.content_type, stored.size
     bill.scan_amount, bill.scan_by_name = claimed, actor_name
     bill.scan_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_audit(db, client.id, "sub_bill_hardcopy", "sub_bill", bill.id, bill.number or "", stored.name, request)
     db.commit()
     db.refresh(bill)
-    return {"ok": True, "bill": sub_bill_dict(db, bill, detail=True), "message": "The contractor's bill is attached to %s." % bill.number}
+    return {"ok": True, "bill": sub_bill_dict(db, bill, detail=True), "message": "The hard copy is attached to %s." % bill.number}
 
 
 @app.get("/api/sub-bills/{bill_id}/hardcopy")
@@ -27991,7 +27991,7 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
                                        "PAY": "bills.pay"}.get(move, "billing.manage"))
     if move == "SUBMIT":
         if bill_scan_required() and not bill.scan_file_id:
-            raise HTTPException(409, "Attach the contractor's own bill (the hard copy, as a PDF or a photo) before sending this for "
+            raise HTTPException(409, "Attach the hard copy of this bill (as a PDF or a photo) before sending it for "
                                      "approval, so whoever approves it can read the two side by side.")
         # Redrawn from the book on the way out, so anything measured since
         # the draft was opened is on it.
@@ -38561,7 +38561,7 @@ def approval_inbox(db, client, emp):
                      (" Step %d of %d." % (step.step, len(route)) if step is not None and len(route) > 1 else ""),
                 view="subbills-view", pdf="/api/sub-bills/%d/document.pdf" % b.id,
                 scan=("/api/sub-bills/%d/hardcopy" % b.id) if b.scan_file_id else "",
-                warnings=(["Their bill says %s of work; this one claims %s" % (inr(b.scan_amount), inr(b.this_bill))]
+                warnings=(["The hard copy says %s of work; this bill claims %s" % (inr(b.scan_amount), inr(b.this_bill))]
                           if b.scan_amount is not None and abs((b.this_bill or 0) - b.scan_amount) > 0.5 else []),
                 mine=emp is not None or step is None or step.approver_id is None,
                 waiting_on=sub_bill_step_name(db, step),

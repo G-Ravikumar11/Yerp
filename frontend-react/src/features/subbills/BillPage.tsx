@@ -148,7 +148,7 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
               <Button
                 loading={move.isPending && move.variables?.action === 'submit'}
                 disabled={!!bill.scan_required && !bill.hardcopy}
-                title={bill.scan_required && !bill.hardcopy ? "Attach the contractor's own bill first" : undefined}
+                title={bill.scan_required && !bill.hardcopy ? "Attach the hard copy first" : undefined}
                 onClick={() => move.mutate({ action: 'submit' })}
               >
                 Submit
