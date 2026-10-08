@@ -8,7 +8,7 @@ is introduced rather than after a customer reports a slow page.
 import pytest
 from sqlalchemy import event
 
-import database
+from app import db as database
 import main
 from conftest import make_employee, make_invoice
 

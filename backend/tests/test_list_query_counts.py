@@ -7,7 +7,7 @@ the count may not grow with them.
 import pytest
 from sqlalchemy import event
 
-import database
+from app import db as database
 from test_subcontractor_bills import live_order, measure, raise_bill
 
 LISTS = ["/api/wo/orders", "/api/sub-bills", "/api/jobs", "/api/jobs?costing=false", "/api/costs/by-project",

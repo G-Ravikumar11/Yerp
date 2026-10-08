@@ -3,7 +3,7 @@ that succeeded used to look identical. These cover the reporting that makes the
 difference visible."""
 import pytest
 
-import database
+from app import db as database
 import main
 
 

@@ -129,7 +129,7 @@ def test_removing_an_entry_removes_its_dimensions(tenant):
     assert tenant.delete("/api/mb/entries/%d" % e["id"]).status_code == 200
     assert book(tenant, wo["id"])["entries"] == []
     import main
-    from database import SessionLocal
+    from app.db import SessionLocal
     db = SessionLocal()
     try:
         assert db.query(main.models.DBMeasurementDimension).filter(

@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import main
-import models
+from app import models
 from test_partner_portal import gang_with_a_certified_bill, invite as portal_invite
 from test_subcontract_orders import staff
 from test_team import invite as team_invite

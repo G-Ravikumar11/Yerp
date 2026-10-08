@@ -535,7 +535,7 @@ def test_the_gang_accepts_the_certificate_from_its_own_login(tenant, portal):
 def test_only_plain_arithmetic_in_a_sheet_is_worked_out():
     """=2.1+0.75+0.75 is a length written the way the book writes it; a
     formula that is anything more is not guessed at, nor run."""
-    import sheet_forms
+    from app.documents import sheet_forms
     assert sheet_forms._arithmetic("2.1+0.75+0.75") == 3.6
     assert sheet_forms._arithmetic("+2.7-0.915-0.435") == 1.35
     for hostile in ("9**9**9**9", "A1+2", "__import__('os')", "1/0", "SUM(1,2)"):
@@ -637,7 +637,7 @@ def held_back_workbook():
 
 
 def test_held_back_rows_set_the_quantity_to_bill_and_are_never_measurements():
-    import sheet_forms
+    from app.documents import sheet_forms
     wb = openpyxl.load_workbook(io.BytesIO(held_back_workbook()), data_only=True)
     book = sheet_forms.read_measurement_book(wb.active, wb.active)
     assert book["warnings"] == []
@@ -675,10 +675,13 @@ def test_no_workbook_is_loaded_with_its_cached_links():
     """Real workbooks carry cached copies of other files they link to - one measurement book took 14 seconds
     to read, nearly all of it spent on 41 such links. They hold nothing the app uses."""
     here = os.path.dirname(os.path.abspath(__file__))
-    for name in ("main.py", "sheet_forms.py"):
-        text = open(os.path.join(here, "..", name), encoding="utf-8").read()
-        for call in re.findall(r"openpyxl\.load_workbook\([^\n]*\)", text):
-            assert "keep_links=False" in call, call
+    for dirpath, _, files in os.walk(os.path.join(here, "..", "app")):
+        for name in files:
+            if not name.endswith(".py"):
+                continue
+            text = open(os.path.join(dirpath, name), encoding="utf-8").read()
+            for call in re.findall(r"openpyxl\.load_workbook\([^\n]*\)", text):
+                assert "keep_links=False" in call, call
 
 
 def test_the_printed_measurement_sheets_follow_the_book_they_came_from(tenant):

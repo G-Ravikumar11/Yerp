@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import pytest
 
 import main
-import models
+from app import models
 from conftest import make_employee
 
 

@@ -322,7 +322,7 @@ def test_rebuild_reports_drift_when_something_bypassed_the_door(tenant):
     """A balance written to by anything other than a movement is a bug, and
     the rebuild is how it is found."""
     from main import models as _m
-    import database
+    from app import db as database
     code = rm_item(tenant)
     receive(tenant, code, 100, 50)
     db = database.SessionLocal()

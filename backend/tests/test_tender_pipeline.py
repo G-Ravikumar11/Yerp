@@ -38,7 +38,7 @@ def test_the_estimates_outcome_is_the_tenders(tenant):
     l = lead(tenant)
     eid = tenant.post("/api/leads/%d/estimate" % l["id"]).json()["estimate_id"]
     import main
-    from database import SessionLocal
+    from app.db import SessionLocal
     db = SessionLocal()
     try:
         e = db.query(main.models.DBEstimate).filter(main.models.DBEstimate.id == eid).first()
@@ -66,7 +66,7 @@ def test_the_hit_rate(tenant):
     tenant.post("/api/leads/%d/status" % a["id"], json={"status": "LOST", "lost_reason": "price"})
     # B won outside an estimate: a small job priced on the phone.
     import main
-    from database import SessionLocal
+    from app.db import SessionLocal
     db = SessionLocal()
     try:
         x = db.query(main.models.DBLead).filter(main.models.DBLead.id == b["id"]).first()

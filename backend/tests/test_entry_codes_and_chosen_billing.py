@@ -1,6 +1,6 @@
 """Every measurement entry has its own code, and a bill can be drawn for chosen entries only."""
 import main
-import models
+from app import models
 from test_delete_work_order import book, live_order
 
 

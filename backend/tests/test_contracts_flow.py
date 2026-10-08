@@ -340,7 +340,8 @@ def test_the_owner_needs_no_grant(tenant):
 def test_an_order_placed_before_approvals_is_sent_now(tenant):
     """Orders placed under the old rule sit as "Placed" with no signature;
     they are sent for approval rather than refused as already placed."""
-    import database, models
+    from app import db as database
+    from app import models
     wo = build_order(tenant, place=False)
     db = database.SessionLocal()
     row = db.query(models.DBWorkOrder).filter(models.DBWorkOrder.id == wo["id"]).first()

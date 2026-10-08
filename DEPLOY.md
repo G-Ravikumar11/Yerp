@@ -92,7 +92,7 @@ so a fresh deploy needs no migration step and an existing one upgrades itself.
 
 Nothing is seeded. A newly deployed instance has no clients, no employees and
 no data of any kind — the first person to register creates the first tenancy.
-`backend/seed_demo.py` exists for local demonstration only and is never run
+`backend/scripts/seed_demo.py` exists for local demonstration only and is never run
 automatically; do not run it against production.
 
 ## Checking a deploy

@@ -21,7 +21,8 @@ def test_a_certified_bill_nobody_has_paid(tenant):
     tenant.post("/api/ra-bills/%d/certify" % b["id"], json={})
     # Certified today it is not yet late; the list must not cry wolf.
     assert "ra_receivable" not in kinds(tenant)
-    import database, models
+    from app import db as database
+    from app import models
     s = database.SessionLocal()
     try:
         s.query(models.DBRABill).filter(models.DBRABill.id == b["id"]).update(

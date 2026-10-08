@@ -170,8 +170,8 @@ def test_tax_rates_require_a_session(client):
 
 def test_a_tenant_still_on_the_uk_list_is_moved_to_gst(tenant):
     """The UK VAT list was handed out, never chosen; an untouched one goes."""
-    import database
-    import models
+    from app import db as database
+    from app import models
     s = database.SessionLocal()
     try:
         client = s.query(models.DBClient).order_by(models.DBClient.id.desc()).first()

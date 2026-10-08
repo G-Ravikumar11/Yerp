@@ -136,8 +136,8 @@ def test_only_billing_staff_and_the_master_record_a_hold_with_the_blocks(tenant,
 
 
 def test_deleting_contractor_measurements_leaves_client_measurement_photos_alone(tenant):
-    import database
-    import models
+    from app import db as database
+    from app import models
     order, item = setup(tenant)
     tenant.post("/api/sub-mb/%d/entries" % order["id"], json={"item_id": item, "quantity": 5})
     entry = book(tenant, order["id"])["entries"][0]

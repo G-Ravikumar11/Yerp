@@ -1,8 +1,8 @@
 """Removing a file is quick and does not read it; the owner can see what is taking space and clear what is no use."""
 from datetime import datetime, timedelta
 
-import database
-import models
+from app import db as database
+from app import models
 from test_project_files import JPEG, PDF, diary_day, job, upload
 
 

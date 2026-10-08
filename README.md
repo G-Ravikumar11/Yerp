@@ -136,8 +136,42 @@ SQLite file; set one to point at Postgres.
 A seeded demo with sample data:
 
 ```bash
-python backend/run_demo.py
+python backend/scripts/run_demo.py
 ```
+
+## How the backend is arranged
+
+`backend/main.py` is only the entry point (`uvicorn main:app`). Everything else is the `app` package:
+
+```
+backend/
+  main.py          entry point; also lets scripts and tests say main.<name> for anything in app
+  app/
+    bootstrap.py   builds the application, in the order it has to happen in
+    core/          what every part relies on: configuration, security, who is calling, money,
+                   dates, files, notifications, the scheduler, the middleware
+    models/        every table, one file per area (accounts, invoicing, hr, subcontracts ...)
+    db/            the connection (session.py) and keeping older databases current (migrations.py)
+    schemas/       what each endpoint is sent, one file per area
+    services/      the rules and workings behind the endpoints, one file per area
+    routers/       the endpoints themselves, one file per area
+    validators/    checks on what people enter
+    constants/     the fixed lists, limits and statuses each area works to
+    documents/     printed and Excel documents: letterhead, forms, the PDF drawing code
+    integrations/  outside services (the language model)
+  scripts/         seed_demo.py, run_demo.py and one-off tools
+  tests/
+```
+
+An area has the same name in `routers/`, `services/`, `schemas/` and `constants/`, so the code
+behind an endpoint is easy to find: `/api/sub-bills` is in `routers/subcontract_billing.py`,
+and what it calls is in `services/subcontract_billing.py`.
+
+Some services call each other (an order needs its approvals, approvals need the order). Where two
+modules need each other, the names one of them only uses while running are imported at the bottom
+of its file, under a comment saying so, so the file can still be read from the top. Everything else
+imports at the top as usual. Importing any part of the package builds the whole application first,
+in the same order the server uses, so a script can import a single service and get it fully wired.
 
 ## Tests
 
@@ -160,8 +194,8 @@ silently falling back to a local file that vanishes on the next deploy.
 
 Adding a column to an existing table is **three** edits, not one:
 
-1. the model in `backend/models.py`
-2. the Postgres list in `ensure_columns()` in `backend/database.py`
+1. the model, in its area's file under `backend/app/models/`
+2. the Postgres list in `ensure_columns()` in `backend/app/db/migrations.py`
 3. the SQLite list in `migrate_sqlite()` in the same file
 
 Miss 2 or 3 and the tests still pass — they build their database fresh — while

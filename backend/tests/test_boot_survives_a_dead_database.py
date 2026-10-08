@@ -12,6 +12,7 @@ which is what takes the instance out of rotation and what somebody reads
 when they go looking.
 """
 import main
+from _patching import patch_app  # noqa: E402
 
 
 def test_every_start_up_step_is_survivable():
@@ -37,7 +38,7 @@ def test_the_health_check_takes_no_database_dependency():
 def test_the_health_check_answers_503_when_the_database_is_unreachable(client, monkeypatch):
     from sqlalchemy import create_engine
     dead = create_engine("postgresql://nobody:nothing@127.0.0.1:1/none")
-    monkeypatch.setattr(main, "engine", dead)
+    patch_app(monkeypatch, "engine", dead)
     res = client.get("/api/health")
     assert res.status_code == 503
     assert res.json()["database"] == "unavailable"

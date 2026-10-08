@@ -55,7 +55,8 @@ def test_a_bill_is_a_cost(tenant):
 def test_hours_worked_on_site_are_a_cost(tenant, portal):
     """The hours are already recorded and already priced on the jobs board.
     Cost by Project was the one place that ignored them."""
-    import database, models
+    from app import db as database
+    from app import models
     job = make_job(tenant)
     hand = staff(tenant, hourly_rate=400.0)
 
@@ -88,7 +89,8 @@ def test_an_order_stops_being_a_commitment_once_its_bill_arrives(tenant):
 
     # A bill may only be matched to an approved order, which is the situation
     # this is about: the order approved, the bill against it arrived.
-    import database, models
+    from app import db as database
+    from app import models
     session = database.SessionLocal()
     try:
         row = session.query(models.DBPurchaseOrder).filter(

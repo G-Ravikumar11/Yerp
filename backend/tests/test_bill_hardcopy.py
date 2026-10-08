@@ -2,7 +2,7 @@
 import pytest
 
 import main
-import models
+from app import models
 from test_delete_work_order import book, live_order
 
 PDF = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF"

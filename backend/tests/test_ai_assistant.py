@@ -8,6 +8,7 @@ import pytest
 
 import main
 from conftest import make_employee, make_invoice
+from _patching import patch_app  # noqa: E402
 
 
 @pytest.fixture
@@ -29,7 +30,7 @@ def test_context_contains_the_tenants_real_figures(client, account):
     make_employee(tenant, first_name="Nina", last_name="Patel")
     tenant.post("/api/departments", json={"name": "Engineering"})
 
-    import database
+    from app import db as database
     with database.SessionLocal() as db:
         cl = db.query(main.models.DBClient).filter(
             main.models.DBClient.email == account["email"]
@@ -51,7 +52,7 @@ def test_context_is_scoped_to_one_tenant(client, account):
     client.post("/api/client/register", json={"email": "other-ai@example.com", "password": "Passw0rdTest"})
     client.post("/api/client/login", json={"email": "other-ai@example.com", "password": "Passw0rdTest"})
 
-    import database
+    from app import db as database
     with database.SessionLocal() as db:
         other = db.query(main.models.DBClient).filter(
             main.models.DBClient.email == "other-ai@example.com"
@@ -69,7 +70,7 @@ def test_assistant_answers_from_context(tenant, monkeypatch):
         seen["system"] = messages[0]["content"]
         return "You are owed £1,440.00 across 1 overdue invoice."
 
-    monkeypatch.setattr(main, "llm_chat", fake)
+    patch_app(monkeypatch, "llm_chat", fake)
     res = tenant.post("/api/ai/assistant", json={"question": "How much am I owed?"})
     assert res.status_code == 200
     assert res.json()["available"] is True
@@ -78,7 +79,7 @@ def test_assistant_answers_from_context(tenant, monkeypatch):
 
 
 def test_assistant_degrades_when_the_model_is_down(tenant, monkeypatch):
-    monkeypatch.setattr(main, "llm_chat", lambda *a, **k: None)
+    patch_app(monkeypatch, "llm_chat", lambda *a, **k: None)
     res = tenant.post("/api/ai/assistant", json={"question": "How much am I owed?"})
     assert res.status_code == 200
     assert res.json()["available"] is False
@@ -133,7 +134,7 @@ def test_as_list_accepts_list_or_text(value, expected):
 
 
 def test_job_description_handles_a_list_description(tenant, monkeypatch):
-    monkeypatch.setattr(main, "llm_json", lambda *a, **k: {
+    patch_app(monkeypatch, "llm_json", lambda *a, **k: {
         "description": ["First paragraph.", "Second paragraph."],
         "requirements": ["Python", "SQL"],
     })
@@ -150,7 +151,7 @@ def test_job_description_needs_a_title(tenant):
 
 
 def test_interview_questions_normalise_bare_strings(tenant, monkeypatch):
-    monkeypatch.setattr(main, "llm_json", lambda *a, **k: {
+    patch_app(monkeypatch, "llm_json", lambda *a, **k: {
         "questions": ["Tell me about a hard bug.", {"question": "Why us?", "area": "role fit"}],
     })
     res = tenant.post("/api/ai/interview-questions", json={"job_title": "Engineer"})
@@ -165,7 +166,7 @@ def test_describe_item_needs_input(tenant):
 
 
 def test_describe_item_strips_model_quoting(tenant, monkeypatch):
-    monkeypatch.setattr(main, "llm_chat", lambda *a, **k: '"Website bug fixing over three days."')
+    patch_app(monkeypatch, "llm_chat", lambda *a, **k: '"Website bug fixing over three days."')
     res = tenant.post("/api/ai/describe-item", json={"text": "fixed bugs 3 days"})
     assert res.json()["description"] == "Website bug fixing over three days."
 
@@ -188,12 +189,12 @@ def test_assistant_is_billed_only_on_a_real_answer(client, account, superadmin, 
         "email": account["email"], "password": account["password"],
     })
 
-    monkeypatch.setattr(main, "llm_chat", lambda *a, **k: None)
+    patch_app(monkeypatch, "llm_chat", lambda *a, **k: None)
     before = tenant.get("/api/wallet").json()["balance"]
     tenant.post("/api/ai/assistant", json={"question": "anything"})
     assert tenant.get("/api/wallet").json()["balance"] == before, "no answer, no charge"
 
-    monkeypatch.setattr(main, "llm_chat", lambda *a, **k: "You have 3 employees.")
+    patch_app(monkeypatch, "llm_chat", lambda *a, **k: "You have 3 employees.")
     tenant.post("/api/ai/assistant", json={"question": "how many staff?"})
     after = tenant.get("/api/wallet").json()["balance"]
     assert round(before - after, 2) == 0.10, "a real answer is billed"

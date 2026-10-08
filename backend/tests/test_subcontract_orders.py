@@ -412,7 +412,7 @@ def test_the_pdf_is_named_after_the_order(tenant):
 def test_the_pdf_runs_to_more_than_one_page(tenant):
     """The letter, the schedule, the clauses and the signatures do not fit on
     one sheet, and each of them starts on its own."""
-    import wo_pdf
+    from app.documents import wo_pdf
     order = priced(tenant)
     tenant.put("/api/wo/orders/%d/terms" % order["id"], json={"terms": [
         {"clause_category": "Mode of Measurement", "clause_text": "As per IS 1200."}]})
@@ -458,7 +458,7 @@ def test_the_document_names_who_approved_it(tenant, client):
 def test_amounts_are_grouped_the_way_they_are_read():
     """Lakhs and crores. Western grouping on the same number reads as a
     different amount at a glance, on a document somebody signs."""
-    import wo_pdf
+    from app.documents import wo_pdf
     assert wo_pdf.inr(1234567.5) == "12,34,567.50"
     assert wo_pdf.inr(100) == "100.00"
     assert wo_pdf.inr(-45000) == "(45,000.00)"
@@ -466,7 +466,7 @@ def test_amounts_are_grouped_the_way_they_are_read():
 
 
 def test_dates_print_the_way_a_site_reads_them():
-    import wo_pdf
+    from app.documents import wo_pdf
     assert wo_pdf._date("2026-09-01") == "01/09/2026"
     assert wo_pdf._date("") == ""
 
@@ -713,7 +713,7 @@ def test_neither_is_taken_off_the_order_value(tenant):
 
 
 def test_the_deductions_are_stated_on_the_document(tenant):
-    import wo_pdf
+    from app.documents import wo_pdf
     order = draft(tenant, retention_percent=5, mobilization_advance_percent=10,
                   advance_recovery_percent=20)
     tenant.put("/api/wo/orders/%d/boq" % order["id"], json=BOQ)
@@ -843,7 +843,7 @@ def test_a_dimension_written_with_an_angle_bracket_survives(tenant):
 
 
 def test_a_formatted_scope_still_prints(tenant):
-    import wo_pdf
+    from app.documents import wo_pdf
     order = draft(tenant, scope_of_work=(
         "<p>Steel &amp; cement issued free.</p><ul><li>Excavation</li>"
         "<li>Raft and walls</li></ul>"))
@@ -853,14 +853,14 @@ def test_a_formatted_scope_still_prints(tenant):
 
 
 def test_an_ampersand_does_not_break_the_page(tenant):
-    import wo_pdf
+    from app.documents import wo_pdf
     assert "&amp;" in wo_pdf._rich("steel & cement")
     assert wo_pdf._rich("steel &amp; cement").count("amp") == 1
 
 
 def test_a_scope_beginning_with_b_or_r_keeps_its_letters(tenant):
     """The leading break is stripped as a tag, not as characters."""
-    import wo_pdf
+    from app.documents import wo_pdf
     assert wo_pdf._rich("<p>brick work</p>").startswith("brick work")
 
 
@@ -875,7 +875,7 @@ def test_the_business_unit_prints_its_own_letterhead(tenant):
 
 
 def test_a_logo_that_will_not_decode_does_not_stop_the_order_printing(tenant):
-    import wo_pdf
+    from app.documents import wo_pdf
     unit = tenant.post("/api/wo/business-units", json={
         "name": "Y Projects North",
         "logo_url": "data:image/png;base64,not-really-a-png"}).json()
@@ -888,7 +888,7 @@ def test_a_logo_that_will_not_decode_does_not_stop_the_order_printing(tenant):
 def test_a_document_with_nothing_on_it_still_renders(tenant):
     """A Table built from no rows raises rather than drawing nothing, and took
     the whole document down with it."""
-    import wo_pdf
+    from app.documents import wo_pdf
     bare = {"wo_number": "WO/2026-27/GEN/001", "status": "DRAFT",
             "business_unit_detail": {}, "contractor_detail": {}, "contractor": "",
             "items": [], "terms": [], "signatures": [], "gross_amount": 0,
@@ -901,6 +901,6 @@ def test_a_document_with_nothing_on_it_still_renders(tenant):
 def test_a_remote_logo_is_not_fetched_to_print_it(tenant):
     """Printing must not turn into a request this server makes to a URL
     somebody typed into a form."""
-    import wo_pdf
+    from app.documents import wo_pdf
     assert wo_pdf._logo("https://example.com/logo.png") is None
     assert wo_pdf._logo("") is None

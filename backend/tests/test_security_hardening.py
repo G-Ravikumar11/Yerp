@@ -9,7 +9,7 @@ from starlette.websockets import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 import main
-import models
+from app import models
 from conftest import as_owner
 from test_delete_work_order import book, live_order
 from test_subcontract_orders import staff, sign_in, PASSWORD

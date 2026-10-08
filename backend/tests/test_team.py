@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 import pytest
 
 import main
-import models
+from app import models
 
 
 @pytest.fixture(autouse=True)

@@ -4,19 +4,20 @@ from datetime import datetime
 
 import pytest
 
-import database
+from app import db as database
 import main
 from test_measurement_and_ra_bills import placed_order, book, measure
+from _patching import patch_app  # noqa: E402
 
 
 @pytest.fixture
 def sent(monkeypatch):
     """What would have gone out, without anything going out."""
     out = {"email": [], "whatsapp": []}
-    monkeypatch.setattr(main, "NOTIFY_SYNC", True)
-    monkeypatch.setattr(main, "send_email_background",
+    patch_app(monkeypatch, "NOTIFY_SYNC", True)
+    patch_app(monkeypatch, "send_email_background",
                         lambda to, subject, body, frm, **k: out["email"].append((to, subject)) or (True, ""))
-    monkeypatch.setattr(main, "_send_whatsapp_for",
+    patch_app(monkeypatch, "_send_whatsapp_for",
                         lambda pid, tok, number, text: out["whatsapp"].append((number, text)) or True)
     return out
 

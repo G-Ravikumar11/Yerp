@@ -7,6 +7,7 @@ actually be billed when the model does produce something.
 import pytest
 
 import main
+from _patching import patch_app  # noqa: E402
 
 
 @pytest.fixture
@@ -53,7 +54,7 @@ SCREEN_PAYLOAD = {
 def test_no_charge_when_the_model_is_unavailable(priced_account, monkeypatch):
     """With no API key llm_json returns None. The endpoint still answers, but
     nothing was produced, so nothing is billed."""
-    monkeypatch.setattr(main, "llm_json", lambda *a, **k: None)
+    patch_app(monkeypatch, "llm_json", lambda *a, **k: None)
     tenant = priced_account["client"]
     before = balance(tenant)
     res = tenant.post("/api/ai/screen-resume", json=SCREEN_PAYLOAD)
@@ -70,7 +71,7 @@ def test_no_charge_for_an_invalid_request(priced_account):
 
 
 def test_no_charge_when_there_is_nothing_to_screen(priced_account, monkeypatch):
-    monkeypatch.setattr(main, "llm_json", lambda *a, **k: {"score": 90})
+    patch_app(monkeypatch, "llm_json", lambda *a, **k: {"score": 90})
     tenant = priced_account["client"]
     before = balance(tenant)
     res = tenant.post("/api/ai/screen-resume", json={"job_title": "Engineer"})
@@ -80,7 +81,7 @@ def test_no_charge_when_there_is_nothing_to_screen(priced_account, monkeypatch):
 
 def test_charge_lands_when_the_model_answers(priced_account, monkeypatch):
     """The positive case: a real result is billed, and the debit persists."""
-    monkeypatch.setattr(main, "llm_json", lambda *a, **k: {
+    patch_app(monkeypatch, "llm_json", lambda *a, **k: {
         "score": 82, "summary": "Strong match", "strengths": ["Python"],
         "weaknesses": [], "recommendation": "Interview",
     })
@@ -116,7 +117,7 @@ def test_refused_before_the_upstream_call_when_out_of_credit(client, account, su
         called["n"] += 1
         return {"score": 50}
 
-    monkeypatch.setattr(main, "llm_json", spy)
+    patch_app(monkeypatch, "llm_json", spy)
 
     tenant = account["client"]
     tenant.post("/api/client/login", json={
@@ -138,7 +139,7 @@ def test_free_allowance_means_no_charge(client, account, superadmin, monkeypatch
                    json={"unit_price": 0.40, "free_allowance": 5})
     superadmin.post("/api/superadmin/logout")
 
-    monkeypatch.setattr(main, "llm_json", lambda *a, **k: {"score": 70})
+    patch_app(monkeypatch, "llm_json", lambda *a, **k: {"score": 70})
     tenant = account["client"]
     tenant.post("/api/client/login", json={
         "email": account["email"], "password": account["password"],
@@ -150,5 +151,5 @@ def test_free_allowance_means_no_charge(client, account, superadmin, monkeypatch
 
 def test_llm_returns_none_without_a_key():
     """The guard that makes every AI feature degrade instead of erroring."""
-    import llm
+    from app.integrations import llm
     assert llm.llm_chat([{"role": "user", "content": "hi"}]) is None or llm.GROQ_API_KEY

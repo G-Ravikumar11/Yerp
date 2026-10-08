@@ -121,7 +121,7 @@ def test_a_link_no_model_knows_about_does_not_stop_a_delete(tenant):
     """An older release can leave a table pointing at a bill. The delete reads the database's own
     constraints, so that row goes with the bill instead of blocking it."""
     from sqlalchemy import text
-    from database import engine
+    from app.db import engine
     order = live_order(tenant, pay_advance=False)
     bill = raise_a_bill(tenant, order)
     with engine.begin() as conn:

@@ -4,8 +4,8 @@ import base64
 import json
 from datetime import datetime, timedelta
 
-import database
-import models
+from app import db as database
+from app import models
 from test_einvoice import ready_bill
 
 

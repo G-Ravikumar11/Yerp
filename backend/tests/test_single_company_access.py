@@ -11,6 +11,7 @@ import pytest
 from conftest import make_employee
 
 import main
+from _patching import patch_app  # noqa: E402
 
 
 PASSWORD = "Crew1234"
@@ -39,7 +40,7 @@ def single_company(monkeypatch):
     The suite turns self-registration on for itself, because every module
     builds its own company. These tests are about the install that does not.
     """
-    monkeypatch.setattr(main, "ALLOW_SELF_REGISTRATION", False)
+    patch_app(monkeypatch, "ALLOW_SELF_REGISTRATION", False)
 
 
 def test_a_second_company_cannot_sign_itself_up(tenant, single_company):

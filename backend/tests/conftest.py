@@ -35,9 +35,9 @@ os.environ.setdefault("SCHEDULER_ENABLED", "0")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-import database  # noqa: E402
+from app import db as database  # noqa: E402
 import main  # noqa: E402
-import models  # noqa: E402
+from app import models  # noqa: E402
 
 
 @pytest.fixture(scope="session", autouse=True)

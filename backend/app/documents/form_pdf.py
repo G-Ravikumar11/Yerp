@@ -1,0 +1,623 @@
+"""Documents in the ruled, boxed form the trade signs.
+
+A work order, an RA bill, a purchase order - on a site in India they arrive
+as one printed form: a grid of boxes, the company and its GSTIN top left, the
+document's number and dates in a box top right, the party with their PAN and
+GSTIN underneath, the schedule ruled line by line, the total stated in figures
+and in words, the taxes and the payment terms in their own boxes, and a row of
+signatures across the bottom. Contractors, clients and gangs read that layout
+without looking for anything; a document laid out any other way gets queried.
+
+So there is one engine and every document is a description handed to it: a
+list of blocks, top to bottom, each drawn as a ruled box the full width of the
+page, butted against the one above. A new document is a new description, not
+new drawing code.
+
+    {"type": "header", "company": {...}, "title": "WORK ORDER", "facts": [(label, value)]}
+    {"type": "party", "label": ..., "name": ..., "address": ..., "facts": [(label, value)]}
+    {"type": "pairs", "rows": [(label, value), ...], "cols": 1 | 2}
+    {"type": "band", "text": ...}                      a shaded title bar
+    {"type": "table", "columns": [(title, width_mm, "L"|"C"|"R")], "rows": [[...]],
+                      "totals": [(label, value, bold)]}
+    {"type": "words", "label": "Rupees", "text": ...}
+    {"type": "text", "text": ..., "style": "body" | "small" | "bold"}
+    {"type": "terms", "rows": [(label, value)], "label_width": mm}
+    {"type": "sums", "rows": [(label, amount, bold)]}  figures down the right
+    {"type": "qr", "data": ..., "lines": [...]}        e-invoice registration
+    {"type": "signatures", "boxes": [(role, name)]}
+    {"type": "numbered", "items": [...]}               conditions, numbered
+    {"type": "banner", "lines": [(text, style)]}       centred title lines, as a sheet's head
+    {"type": "grid", "widths": [mm], "rows": [[cell]], "head": n, "spans": [(c0, r0, c1, r1)],
+                     "size": "small"}                  any ruled sheet, cell for cell
+    {"type": "page_break"}
+
+The page is A4, the grid black, the type Helvetica - it prints the same on the
+office laser and a site photocopier, and a photocopy of a photocopy is still
+legible, which is what happens to these.
+"""
+import io
+import re
+import threading
+
+from app.documents.wo_pdf import (PDF_AVAILABLE, _IMPORT_ERROR, _draw_watermark, _logo, inr,  # noqa: F401
+                    _date)
+
+if PDF_AVAILABLE:
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    from reportlab.pdfgen import canvas as pdfcanvas
+    from reportlab.platypus import (BaseDocTemplate, Flowable, Frame, KeepTogether, PageBreak,
+                                    PageTemplate, Paragraph, Table, TableStyle)
+    from reportlab.graphics.shapes import Drawing
+    from reportlab.graphics.barcode.qr import QrCodeWidget
+else:  # pragma: no cover
+    mm = 72.0 / 25.4
+
+MARGIN = 14 * mm
+WIDTH = 182 * mm            # A4 less the two margins
+_PAGE = threading.local()    # this build's writing width: portrait, or a wide report on its side
+
+
+def _W():
+    return getattr(_PAGE, "width", WIDTH)
+GRID = 0.6                  # line weight of the ruling
+SHADE = "#d9d9d9"           # the grey of a band or a table head
+
+
+def _esc(value):
+    text = "" if value is None else str(value)
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _br(value):
+    return "<br/>".join(_esc(x) for x in str(value or "").splitlines())
+
+
+def _styles():
+    base = dict(fontName="Helvetica", fontSize=8.6, leading=10.6, textColor=colors.black)
+    return {
+        "body": ParagraphStyle("body", **base),
+        "small": ParagraphStyle("small", **dict(base, fontSize=7.4, leading=9.2)),
+        "bold": ParagraphStyle("bold", **dict(base, fontName="Helvetica-Bold")),
+        "label": ParagraphStyle("label", **dict(base, fontName="Helvetica-Bold")),
+        "right": ParagraphStyle("right", **dict(base, alignment=TA_RIGHT)),
+        "rightbold": ParagraphStyle("rightbold", **dict(base, fontName="Helvetica-Bold", alignment=TA_RIGHT)),
+        "centre": ParagraphStyle("centre", **dict(base, alignment=TA_CENTER)),
+        "centrebold": ParagraphStyle("centrebold", **dict(base, fontName="Helvetica-Bold", alignment=TA_CENTER)),
+        "title": ParagraphStyle("title", **dict(base, fontName="Helvetica-Bold", fontSize=13.5,
+                                                 leading=16, alignment=TA_CENTER)),
+        "band": ParagraphStyle("band", **dict(base, fontName="Helvetica-Bold", fontSize=10,
+                                                leading=12.5, alignment=TA_CENTER)),
+        "company": ParagraphStyle("company", **dict(base, fontName="Helvetica-Bold", fontSize=10.5,
+                                                      leading=13)),
+        "banner": ParagraphStyle("banner", **dict(base, fontName="Helvetica-Bold", fontSize=12.5,
+                                                    leading=15, alignment=TA_CENTER)),
+        "heading": ParagraphStyle("heading", **dict(base, fontName="Helvetica-Bold", fontSize=9.6,
+                                                      leading=12)),
+    }
+
+
+def _box(data, widths, extra=None, pad=3):
+    """A ruled box the width of the page."""
+    t = Table(data, colWidths=widths)
+    style = [("BOX", (0, 0), (-1, -1), GRID, colors.black),
+             ("INNERGRID", (0, 0), (-1, -1), GRID, colors.black),
+             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+             ("LEFTPADDING", (0, 0), (-1, -1), pad), ("RIGHTPADDING", (0, 0), (-1, -1), pad),
+             ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5)]
+    t.setStyle(TableStyle(style + list(extra or [])))
+    return t
+
+
+def _pairs_table(rows, st, label_w, value_w, shade_labels=False, bold_rows=()):
+    data = [[Paragraph(_esc(k) + (" :" if k and not str(k).endswith(":") else ""), st["label"]),
+             Paragraph(_br(v), st["bold"] if k in bold_rows else st["body"])] for k, v in rows]
+    extra = [("BACKGROUND", (0, 0), (0, -1), colors.HexColor(SHADE))] if shade_labels else []
+    return _box(data, [label_w, value_w], extra)
+
+
+def _header(block, st):
+    c = block.get("company") or {}
+    lines = [Paragraph(_esc(c.get("name", "")).upper(), st["company"])]
+    for line in (c.get("address") or "").splitlines():
+        if line.strip():
+            lines.append(Paragraph(_esc(line.strip()), st["body"]))
+    for label, key in (("GSTIN No.", "gstin"), ("PAN No.", "pan"), ("STATE", "state")):
+        if c.get(key):
+            lines.append(Paragraph("%s : %s" % (label, _esc(c[key])), st["body"]))
+    # Fitted inside its own 38 mm column, so a wide logo cannot run into the
+    # title box beside it.
+    logo = _picture(c.get("logo_url"), 34 * mm, 20 * mm)
+    facts = [[Paragraph(_esc(block.get("title", "")), st["title"]), ""]]
+    for k, v in block.get("facts") or []:
+        facts.append([Paragraph(_esc(k) + " :", st["label"]), Paragraph(_esc(v), st["body"])])
+    right = Table(facts, colWidths=[24 * mm, 42 * mm])
+    right.setStyle(TableStyle([
+        ("SPAN", (0, 0), (1, 0)), ("LINEBELOW", (0, 0), (-1, -1), GRID, colors.black),
+        ("LINEBELOW", (0, -1), (-1, -1), 0, colors.white),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
+    flush = [("LEFTPADDING", (-1, 0), (-1, 0), 0), ("RIGHTPADDING", (-1, 0), (-1, 0), 0),
+             ("TOPPADDING", (-1, 0), (-1, 0), 0), ("BOTTOMPADDING", (-1, 0), (-1, 0), 0),
+             ("VALIGN", (0, 0), (-1, -1), "TOP")]
+    if not logo:
+        # No mark on file: the company takes the width rather than leave an empty box.
+        return _box([[lines, right]], [_W() - 66 * mm, 66 * mm], flush)
+    return _box([[lines, logo, right]], [_W() - 104 * mm, 38 * mm, 66 * mm],
+                flush + [("ALIGN", (1, 0), (1, 0), "CENTER"), ("VALIGN", (1, 0), (1, 0), "MIDDLE")])
+
+
+def _party(block, st):
+    left = [Paragraph("<b>%s :</b> %s" % (_esc(block.get("label", "")), _esc(block.get("name", ""))), st["body"])]
+    if block.get("address"):
+        left.append(Paragraph(_br(block["address"]), st["body"]))
+    facts = block.get("facts") or []
+    right = _pairs_table(facts, st, 24 * mm, 42 * mm) if facts else ""
+    if facts:
+        right.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0, colors.white),
+                                   ("LINEBEFORE", (1, 0), (1, -1), 0, colors.white)]))
+    return _box([[left, right]], [_W() - 66 * mm, 66 * mm],
+                [("VALIGN", (0, 0), (-1, -1), "TOP"),
+                 ("LEFTPADDING", (1, 0), (1, 0), 0), ("RIGHTPADDING", (1, 0), (1, 0), 0),
+                 ("TOPPADDING", (1, 0), (1, 0), 0), ("BOTTOMPADDING", (1, 0), (1, 0), 0)])
+
+
+def _pairs(block, st):
+    rows = block.get("rows") or []
+    if block.get("cols", 1) == 2:
+        data, pair = [], None
+        for k, v in rows:
+            cell = [Paragraph(_esc(k) + " :", st["label"]), Paragraph(_br(v), st["body"])]
+            if pair is None:
+                pair = cell
+            else:
+                data.append(pair + cell)
+                pair = None
+        if pair is not None:
+            data.append(pair + ["", ""])
+        half = (_W() - 60 * mm) / 2.0
+        return _box(data, [30 * mm, half, 30 * mm, half])
+    lw = (block.get("label_width") or 42) * mm
+    if block.get("aside"):
+        # Label and value on the left, the right-hand column left open - the
+        # contact rows under the party box, as the order form rules them.
+        data = [[Paragraph(_esc(k) + " :", st["label"]), Paragraph(_br(v), st["body"]), ""] for k, v in rows]
+        return _box(data or [["", "", ""]], [lw, _W() - lw - 66 * mm, 66 * mm],
+                    [("SPAN", (2, 0), (2, -1))])
+    return _pairs_table(rows, st, lw, _W() - lw)
+
+
+def _table(block, st):
+    cols = block["columns"]
+    widths = [w * mm for _, w, _ in cols]
+    scale = _W() / float(sum(widths))
+    widths = [w * scale for w in widths]
+    align = {"L": st["body"], "C": st["centre"], "R": st["right"]}
+    head = [Paragraph(_esc(t), st["centrebold"]) for t, _, _ in cols]
+    data = [head]
+    for row in block.get("rows") or []:
+        data.append([Paragraph(_br(v), align[a]) for v, (_, _, a) in zip(row, cols)])
+    if not block.get("rows"):
+        data.append([Paragraph("-", st["centre"])] + [""] * (len(cols) - 1))
+    extra = [("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(SHADE)), ("VALIGN", (0, 1), (-1, -1), "TOP")]
+    # Totals laid under their own columns: a label, then each figure where its
+    # column is - "Mandays 10 ... Amount 9,000" rather than one number for both.
+    for foot in block.get("foot") or []:
+        first = next((i for i, v in enumerate(foot) if str(v).strip()), None)
+        if first is None:
+            continue
+        nxt = next((i for i in range(first + 1, len(foot)) if str(foot[i]).strip()), len(cols))
+        label_end = max(first, nxt - 1)
+        row = [Paragraph(_esc(foot[first]), st["rightbold"])] + [""] * (label_end - first)
+        row = [""] * first + row
+        for i in range(label_end + 1, len(cols)):
+            v = foot[i] if i < len(foot) else ""
+            row.append(Paragraph(_esc(v), st["rightbold"] if cols[i][2] == "R" else st["bold"]))
+        data.append(row[:len(cols)])
+        r = len(data) - 1
+        if label_end > first:
+            extra.append(("SPAN", (first, r), (label_end, r)))
+    for label, value, bold in block.get("totals") or []:
+        data.append([Paragraph(_esc(label), st["rightbold"] if bold else st["right"])] + [""] * (len(cols) - 2)
+                    + [Paragraph(_esc(value), st["rightbold"] if bold else st["right"])])
+        r = len(data) - 1
+        extra.append(("SPAN", (0, r), (len(cols) - 2, r)))
+    t = _box(data, widths, extra)
+    t.repeatRows = 1
+    return t
+
+
+def _sums(block, st):
+    data = [[Paragraph(_esc(label), st["rightbold"] if bold else st["right"]),
+             Paragraph(_esc(value), st["rightbold"] if bold else st["right"])]
+            for label, value, bold in block.get("rows") or []]
+    return _box(data, [_W() - 40 * mm, 40 * mm])
+
+
+def _qr(block, st):
+    lines = [Paragraph(_br(x), st["small"]) for x in block.get("lines") or []]
+    size = 30 * mm
+    w = QrCodeWidget(block.get("data") or "")
+    b = w.getBounds()
+    d = Drawing(size, size, transform=[size / (b[2] - b[0]), 0, 0, size / (b[3] - b[1]), 0, 0])
+    d.add(w)
+    return _box([[lines, d]], [_W() - 36 * mm, 36 * mm],
+                [("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("ALIGN", (1, 0), (1, 0), "CENTER")])
+
+
+def _picture(value, max_w, max_h):
+    """A signature or a seal carried in the document as a data: URI, scaled
+    into its box. Anything that will not decode prints as a blank for a pen."""
+    if not value or not str(value).startswith("data:image"):
+        return None
+    try:
+        import base64
+        from reportlab.lib.utils import ImageReader
+        from reportlab.platypus import Image
+        raw = base64.b64decode(str(value).partition(",")[2], validate=False)
+        reader = ImageReader(io.BytesIO(raw))
+        w, h = reader.getSize()
+        if not w or not h:
+            return None
+        scale = min(max_h / float(h), max_w / float(w))
+        return Image(io.BytesIO(raw), width=w * scale, height=h * scale)
+    except Exception:
+        return None
+
+
+def _signatures(block, st):
+    """The signature row. A box is (role, name) or (role, name, signature
+    picture); the block's seal goes on the authorised signatory's box."""
+    boxes = block.get("boxes") or []
+    if not boxes:
+        return None
+    w = _W() / len(boxes)
+    seal_value = block.get("seal") or ""
+    cells = []
+    for box in boxes:
+        role, name = box[0], box[1]
+        image = box[2] if len(box) > 2 else ""
+        authorised = (role or "").strip().lower().startswith("authori")
+        seal = _picture(seal_value, 16 * mm, 15 * mm) if (seal_value and authorised) else None
+        sign = _picture(image, (w - 20 * mm) if seal else (w - 6 * mm), 12 * mm) if image else None
+        if seal:
+            middle = [Table([[seal, sign or ""]], colWidths=[17 * mm, w - 23 * mm],
+                            style=[("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("ALIGN", (1, 0), (1, 0), "CENTER"),
+                                   ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                                   ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)])]
+        elif sign:
+            sign.hAlign = "CENTER"
+            middle = [sign]
+        else:
+            middle = [Paragraph("&nbsp;", st["body"]), Paragraph("&nbsp;", st["body"])]
+        cells.append([Paragraph(_esc(role), st["centrebold"])] + middle +
+                     [Paragraph(_br(name or ""), st["centre"])])
+    return _box([cells], [w] * len(boxes), [("VALIGN", (0, 0), (-1, -1), "TOP"),
+                                            ("TOPPADDING", (0, 0), (-1, -1), 4),
+                                            ("BOTTOMPADDING", (0, 0), (-1, -1), 4)])
+
+
+def _numbered(block, st):
+    data = [[Paragraph("%d. %s" % (i, _br(item)), st["body"])] for i, item in enumerate(block.get("items") or [], 1)]
+    for extra in block.get("closing") or []:
+        data.append([Paragraph(_br(extra), st["body"])])
+    # One ruled box with the conditions as paragraphs inside it, no lines
+    # between them - as the order form sets its general conditions.
+    t = Table(data or [[""]], colWidths=[_W()])
+    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), GRID, colors.black),
+                           ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                           ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                           ("TOPPADDING", (0, 0), (-1, -1), 3.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5)]))
+    return t
+
+
+def _banner(block, st):
+    """The head of a sheet as the office's workbooks set it: the company in
+    capitals, its address and GSTIN, the project, centred one under another,
+    and the sheet's own title in a shaded band beneath."""
+    rows, extra = [], []
+    for text, style in block.get("lines") or []:
+        rows.append([Paragraph(_esc(text), st.get(style) or st["centre"])])
+        if style == "band":
+            extra.append(("BACKGROUND", (0, len(rows) - 1), (0, len(rows) - 1), colors.HexColor(SHADE)))
+            extra.append(("LINEABOVE", (0, len(rows) - 1), (0, len(rows) - 1), GRID, colors.black))
+    # The company's mark sits in the first lines beside the name, the rest of the band keeps the full width.
+    logo = _picture(block.get("logo"), 26 * mm, 10 * mm)
+    t = Table(rows or [[""]], colWidths=[_W()])
+    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), GRID, colors.black),
+                           ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                           ("TOPPADDING", (0, 0), (-1, -1), 1.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)] + extra))
+    if not logo or not rows:
+        return t
+    # Lines above the first band are the company's head: set them beside the logo.
+    head = [i for i, (_, style) in enumerate(block.get("lines") or []) if style == "band"]
+    top = head[0] if head else len(rows)
+    if top == 0:
+        return t
+    upper = Table(rows[:top], colWidths=[_W() - 36 * mm])
+    upper.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                               ("TOPPADDING", (0, 0), (-1, -1), 1.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
+    lower = Table(rows[top:], colWidths=[_W()]) if rows[top:] else None
+    if lower is not None:
+        lower.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                   ("TOPPADDING", (0, 0), (-1, -1), 1.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                                   ]
+                                  + [("BACKGROUND", (0, i - top), (0, i - top), colors.HexColor(SHADE))
+                                     for i in head if i >= top]
+                                  + [("LINEABOVE", (0, i - top), (0, i - top), GRID, colors.black) for i in head if i >= top]))
+    outer = Table([[upper, logo]] + ([[lower, ""]] if lower is not None else []), colWidths=[_W() - 36 * mm, 36 * mm])
+    outer.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), GRID, colors.black),
+                               ("ALIGN", (1, 0), (1, 0), "CENTER"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                               ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                               ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                               # the mark keeps clear of the ruled lines above and below it
+                               ("TOPPADDING", (1, 0), (1, 0), 2 * mm), ("BOTTOMPADDING", (1, 0), (1, 0), 2 * mm)]
+                              + ([("SPAN", (0, 1), (1, 1))] if lower is not None else [])))
+    return outer
+
+
+def _font(bold, italic):
+    return "Helvetica-BoldOblique" if bold and italic else "Helvetica-Bold" if bold else "Helvetica-Oblique" if italic else "Helvetica"
+
+
+def _grid(block, st):
+    """A ruled sheet laid out cell for cell - the certificate of payment, the
+    abstract, the measurement book - where the form is not a list of rows
+    under one heading but boxes of different widths joined across.
+
+    A cell is text, or {"t": text, "b": bold, "a": "L"|"C"|"R", "i": italic}.
+    The first `head` rows are the heading: shaded, and repeated on every page
+    the sheet runs to."""
+    small = block.get("size") == "small"
+    base = st["small"] if small else st["body"]
+    styles = {}
+
+    def style(bold, align, italic):
+        key = (bold, align, italic)
+        if key not in styles:
+            font = _font(bold, italic)
+            styles[key] = ParagraphStyle("g%d" % len(styles), parent=base, fontName=font,
+                                         alignment={"C": TA_CENTER, "R": TA_RIGHT}.get(align, 0))
+        return styles[key]
+
+    widths = [w * mm for w in block["widths"]]
+    scale = _W() / float(sum(widths))
+    widths = [w * scale for w in widths]
+    head = int(block.get("head") or 0)
+    # Each cell as written: (text, bold, align, italic). Paragraphs are made per table, so a heading that
+    # is repeated is a fresh paragraph each time.
+    raw_rows = []
+    for r, row in enumerate(block.get("rows") or []):
+        cells = []
+        for cell in list(row) + [""] * (len(widths) - len(row)):
+            if isinstance(cell, dict):
+                cells.append((cell.get("t", ""), bool(cell.get("b", False)), cell.get("a", "L"), bool(cell.get("i", False))))
+            else:
+                cells.append((cell, r < head, "C" if r < head else "L", False))
+        raw_rows.append(cells[:len(widths)])
+    spans = [tuple(x) for x in block.get("spans") or []]
+    shade = list(block.get("shade") or [])
+    pad = 2 if small else 3
+
+    def table(rows, row_ids):
+        """One table of the given source rows (their positions in the sheet), spans and shading re-based."""
+        place = {src: i for i, src in enumerate(row_ids)}
+        joined = {(r0, c0): sum(widths[c0:c1 + 1]) for c0, r0, c1, r1 in spans}
+        data, fast = [], []
+        for i, (src, cells) in enumerate(zip(row_ids, rows)):
+            out_row = []
+            for c, (t, b_, a_, i_) in enumerate(cells):
+                text = "" if t is None else str(t)
+                if text == "":
+                    out_row.append("")
+                    continue
+                room = joined.get((src, c), widths[c]) - 2 * pad - 2
+                if "\n" not in text and stringWidth(text, _font(b_, i_), base.fontSize) <= room:
+                    # One line that fits is drawn as plain text: a paragraph costs a hundred times as much to
+                    # lay out, and a long measurement book is thousands of cells.
+                    out_row.append(text)
+                    if b_ or i_:
+                        fast.append(("FONTNAME", (c, i), (c, i), _font(b_, i_)))
+                    if a_ in ("C", "R"):
+                        fast.append(("ALIGN", (c, i), (c, i), "CENTER" if a_ == "C" else "RIGHT"))
+                else:
+                    out_row.append(Paragraph(_br(text), style(b_, a_, i_)))
+            data.append(out_row)
+        extra = [("FONTSIZE", (0, 0), (-1, -1), base.fontSize), ("LEADING", (0, 0), (-1, -1), base.leading),
+                 ("TEXTCOLOR", (0, 0), (-1, -1), colors.black)] + fast
+        extra += [("SPAN", (c0, place[r0]), (c1, place[r1])) for c0, r0, c1, r1 in spans if r0 in place and r1 in place]
+        heads = [i for i, src in enumerate(row_ids) if src < head]
+        if heads:
+            extra.append(("BACKGROUND", (0, 0), (-1, len(heads) - 1), colors.HexColor(SHADE)))
+        for r in shade:
+            if r in place:
+                extra.append(("BACKGROUND", (0, place[r]), (-1, place[r]), colors.HexColor(SHADE)))
+        t = _box(data or [[""] * len(widths)], widths, extra, pad=pad)
+        if small:
+            t.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 1.2), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.6)]))
+        return t
+
+    total = len(raw_rows)
+    if total <= 60:
+        t = table(raw_rows, list(range(total)))
+        if head:
+            t.repeatRows = head
+        return t
+
+    # A long sheet is laid out in pieces. One table of a thousand rows is measured again from the top each time
+    # it is split across a page, which takes minutes; a dozen rows at a time takes seconds. Each piece carries
+    # the heading above it only when it falls at the top of a page, so the heading is where a reader expects it
+    # and never in the middle of one. A piece is never split, and never starts inside a joined cell.
+    def breakable(i):
+        return not any(r0 < i <= r1 for _, r0, _, r1 in spans)
+
+    heads = list(range(head))
+    head_table = table([raw_rows[i] for i in heads], heads) if head else None
+    pieces, start = [], head
+    while start < total:
+        end = min(total, start + 12)
+        while end < total and not breakable(end):
+            end += 1
+        pieces.append((start, end))
+        start = end
+    out = []
+    for n, (lo, hi) in enumerate(pieces):
+        ids = list(range(lo, hi))
+        out.append(_GridPiece(table([raw_rows[i] for i in ids], ids), head_table, always=(n == 0)))
+    return out
+
+
+class _GridPiece(Flowable if PDF_AVAILABLE else object):
+    """A few rows of a long sheet, with the sheet's heading drawn above them when they start a page."""
+
+    def __init__(self, body, head, always=False):
+        Flowable.__init__(self)
+        self.body, self.head, self.always = body, head, always
+        self._with_head = False
+        self._hh = 0
+
+    def wrap(self, aW, aH):
+        frame = getattr(self, "_frame", None)
+        self._with_head = bool(self.head is not None and (self.always or (frame is not None and getattr(frame, "_atTop", False))))
+        bw, bh = self.body.wrap(aW, aH)
+        self._hh = self.head.wrap(aW, aH)[1] if self._with_head else 0
+        self.width, self.height = bw, bh + self._hh
+        return self.width, self.height
+
+    def split(self, aW, aH):
+        return []
+
+    def draw(self):
+        bh = self.height - self._hh
+        self.body.drawOn(self.canv, 0, 0)
+        if self._with_head:
+            self.head.drawOn(self.canv, 0, bh)
+
+
+def _flow(blocks, st):
+    out = []
+    for b in blocks:
+        kind = b.get("type")
+        if kind == "banner":
+            out.append(_banner(b, st))
+        elif kind == "grid":
+            made = _grid(b, st)
+            out.extend(made) if isinstance(made, list) else out.append(made)
+        elif kind == "header":
+            out.append(_header(b, st))
+        elif kind == "party":
+            out.append(_party(b, st))
+        elif kind == "pairs":
+            out.append(_pairs(b, st))
+        elif kind == "band":
+            out.append(_box([[Paragraph(_esc(b.get("text", "")), st["band"])]], [_W()],
+                            [("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(SHADE))]))
+        elif kind == "table":
+            out.append(_table(b, st))
+        elif kind == "words":
+            label = b.get("label", "Rupees")
+            lw = (40 if len(label) > 10 else 24) * mm
+            out.append(_box([[Paragraph(_esc(label), st["label"] if len(label) > 10 else st["body"]),
+                              Paragraph(_esc(b.get("text", "")), st["bold"])]], [lw, _W() - lw]))
+        elif kind == "text":
+            out.append(_box([[Paragraph(_br(b.get("text", "")) if b.get("plain", True) else b.get("text", ""),
+                                        st.get(b.get("style") or "body", st["body"]))]], [_W()]))
+        elif kind == "terms":
+            lw = (b.get("label_width") or 62) * mm
+            out.append(_pairs_table(b.get("rows") or [], st, lw, _W() - lw, bold_rows=b.get("bold_rows") or ()))
+        elif kind == "heading":
+            # A section heading set left, bold and underlined, not shaded.
+            out.append(_box([[Paragraph("<u>%s</u>" % _esc(b.get("text", "")), st["heading"])]], [_W()]))
+        elif kind == "sums":
+            out.append(_sums(b, st))
+        elif kind == "qr" and b.get("data"):
+            out.append(_qr(b, st))
+        elif kind == "signatures":
+            sig = _signatures(b, st)
+            if sig is not None:
+                out.append(KeepTogether([sig]))
+        elif kind == "numbered":
+            out.append(_numbered(b, st))
+        elif kind == "page_break":
+            out.append(PageBreak())
+    return out
+
+
+def build_form_pdf(spec):
+    """The document as PDF bytes, from its description."""
+    if _IMPORT_ERROR is not None:  # pragma: no cover
+        raise RuntimeError("reportlab is not installed, so the PDF cannot be produced.") from _IMPORT_ERROR
+    st = _styles()
+    buf = io.BytesIO()
+    footer = spec.get("footer") or ""
+    watermark = spec.get("watermark") or ""
+
+    class Numbered(pdfcanvas.Canvas):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self._pages = []
+
+        def showPage(self):
+            self._pages.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            total = len(self._pages)
+            for state in self._pages:
+                self.__dict__.update(state)
+                self.saveState()
+                self.setFont("Helvetica", 6.8)
+                self.setFillColor(colors.HexColor("#555555"))
+                self.drawString(MARGIN, 8 * mm, footer)
+                self.drawRightString(page[0] - MARGIN, 8 * mm, "Page %d of %d" % (self._pageNumber, total))
+                self.restoreState()
+                super().showPage()
+            super().save()
+
+    def on_page(canvas, _doc):
+        _draw_watermark(canvas, page[0], page[1], watermark)
+
+    page = (A4[1], A4[0]) if spec.get("landscape") else A4
+    _PAGE.width = page[0] - 2 * MARGIN
+    template = BaseDocTemplate(buf, pagesize=page, leftMargin=MARGIN, rightMargin=MARGIN,
+                               topMargin=12 * mm, bottomMargin=14 * mm,
+                               title=spec.get("title", ""), author=spec.get("author", ""))
+    frame = Frame(MARGIN, 14 * mm, _W(), page[1] - 26 * mm,
+                  leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
+    template.addPageTemplates([PageTemplate(id="form", frames=[frame], onPage=on_page)])
+    try:
+        template.build(_flow(spec.get("blocks") or [], st), canvasmaker=Numbered)
+    finally:
+        _PAGE.width = WIDTH
+    return buf.getvalue()
+
+
+def plain_number(value, places=0):
+    """60000 -> 60,000 - the schedule prints whole rupees where the figure is
+    whole, as the trade's forms do, and paise only where there are some."""
+    try:
+        v = float(value or 0)
+    except (TypeError, ValueError):
+        v = 0.0
+    return inr(v, 2 if round(v, 2) != round(v, 0) or places else 0)
+
+
+def qty_text(value):
+    try:
+        v = float(value or 0)
+    except (TypeError, ValueError):
+        return str(value or "")
+    return inr(v, 0) if v == int(v) else inr(v, 3).rstrip("0").rstrip(".")
+
+
+def date_text(value):
+    return _date(value)
+
+
+def strip_tags(value):
+    return re.sub(r"<[^>]+>", "", str(value or ""))

@@ -137,7 +137,7 @@ def test_charge_lands_on_the_ledger(client, account, superadmin):
 
     charged = main.charge_wallet
     # Drive the charge directly; the AI endpoint itself needs an LLM key.
-    import database
+    from app import db as database
     with database.SessionLocal() as db:
         charged(db, cid, "ai_resume_screen", 1, "candidate-1")
         db.commit()
@@ -268,7 +268,7 @@ def test_razorpay_webhook_credits_once_with_a_valid_signature(client, account, m
     """The whole point of the ledger: a retried webhook must not pay twice."""
     monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", "rzp_secret")
     tenant = account["client"]
-    import database
+    from app import db as database
     with database.SessionLocal() as db:
         cid = db.query(main.models.DBClient).filter(
             main.models.DBClient.email == account["email"]
@@ -307,7 +307,7 @@ def test_razorpay_webhook_credits_once_with_a_valid_signature(client, account, m
 
 def test_razorpay_underpayment_is_not_credited(client, account, monkeypatch):
     monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", "rzp_secret")
-    import database
+    from app import db as database
     with database.SessionLocal() as db:
         cid = db.query(main.models.DBClient).filter(
             main.models.DBClient.email == account["email"]
