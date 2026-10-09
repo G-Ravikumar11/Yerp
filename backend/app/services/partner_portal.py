@@ -112,7 +112,7 @@ def _portal_bills(db, u, party, party_name):
                                   "PAID": "paid"}[b.status],
                         "date": (b.certified_at or b.created_at or "")[:10],
                         "claimed": money(b.this_bill), "retention": money(b.retention_amount),
-                        "deductions": money((b.advance_recovery or 0) + (b.other_deductions or 0)),
+                        "deductions": money((b.advance_recovery or 0) + (b.other_deductions or 0) + (b.back_charges or 0)),
                         "tds": money(b.tds_amount), "gst": money(b.gst_amount),
                         "net": money(b.net_payable), "paid": money(got),
                         "left": money(max(0.0, (b.net_payable or 0) - got)) if b.status != "SUBMITTED" else 0.0})

@@ -19,6 +19,7 @@ from app.constants import (
     assets,
     boq,
     client_billing,
+    compliance,
     common,
     crm,
     hr,
@@ -63,6 +64,7 @@ from app.schemas import (
     auth,
     boq,
     client_billing,
+    compliance,
     client_orders,
     collaboration,
     crm,
@@ -93,6 +95,7 @@ from app.services import (
     auth,
     boq,
     client_billing,
+    compliance,
     client_orders,
     collaboration,
     crm,
@@ -155,6 +158,7 @@ from app.routers import (
     quality,
     safety,
     partner_portal,
+    compliance,
 )
 
 for _module in (
@@ -183,6 +187,7 @@ for _module in (
     collaboration,
     subcontract_orders,
     boq,
+    compliance,
     subcontract_billing,
     client_billing,
     stores,

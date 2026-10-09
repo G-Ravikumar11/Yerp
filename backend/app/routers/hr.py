@@ -15,6 +15,7 @@ from app.core.audit import log_audit
 from app.core.auth import get_client_user, owned_or_404
 from app.core.currency import money
 from app.core.dates import _parse_date
+from app.core.references import release_references
 from app.core.permissions import (
     DEFAULT_PERMISSION_ROLE,
     EMPLOYEE_LEVELS,
@@ -607,19 +608,11 @@ def delete_employee(emp_id: int, request: Request, db: Session = Depends(get_db)
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
     emp_name = f"{emp.first_name} {emp.last_name}"
-    # Every table that points at employees must be cleared first, otherwise the
-    # delete fails on a foreign key violation. Attendance, goals, leave,
-    # documents, notifications and overtime were all being left behind.
-    for model in (
-        models.DBOnboardingItem, models.DBPayslip, models.DBAttendance,
-        models.DBEmployeeGoal, models.DBLeaveRequest, models.DBDocument,
-        models.DBNotification, models.DBOvertimeLog,
-    ):
-        db.query(model).filter(model.employee_id == emp_id).delete(synchronize_session=False)
-    # Anyone reporting to this person would keep a dangling manager reference.
-    db.query(models.DBEmployee).filter(models.DBEmployee.reports_to == emp_id).update(
-        {"reports_to": None}, synchronize_session=False
-    )
+    # Everything that points at the person is dealt with first, otherwise the delete fails on a foreign key violation
+    # (on Postgres - SQLite would let it through). Their own records (payslips, attendance, leave, documents, sites)
+    # go with them; records that only name them (the bills they submitted, the jobs they managed, anyone reporting to
+    # them) stay, with nobody against them.
+    release_references(db, "employees", emp_id)
     log_audit(db, client.id, "employee_deleted", "employee", emp.id, emp_name, "", request)
     db.delete(emp)
     db.commit()

@@ -403,6 +403,7 @@ class DBSubBill(Base):
     retention_amount = Column(Float, default=0.0)     # held back by us
     advance_recovery = Column(Float, default=0.0)     # mobilisation advance clawed back
     other_deductions = Column(Float, default=0.0)
+    back_charges = Column(Float, default=0.0)         # open back-charges taken off this bill (back_charges table)
     deduction_notes = Column(String, default="")
     gst_percent = Column(Float, default=0.0)
     gst_amount = Column(Float, default=0.0)           # the gang charges us

@@ -1440,6 +1440,7 @@ def ensure_columns():
                     ("sub_bills", "scan_amount", "DOUBLE PRECISION"),
                     ("sub_bills", "scan_by_name", "TEXT DEFAULT ''"),
                     ("sub_bills", "scan_at", "TEXT DEFAULT ''"),
+                    ("sub_bills", "back_charges", "FLOAT DEFAULT 0"),
                     ("measurement_dimensions", "nom", "DOUBLE PRECISION"),
                     ("measurement_dimensions", "is_heading", "BOOLEAN DEFAULT FALSE"),
                     ("sub_bills", "bill_date", "TEXT DEFAULT ''"),
@@ -1655,6 +1656,7 @@ def migrate_sqlite():
             add_col("sub_bills", "scan_amount", "FLOAT")
             add_col("sub_bills", "scan_by_name", "TEXT DEFAULT ''")
             add_col("sub_bills", "scan_at", "TEXT DEFAULT ''")
+            add_col("sub_bills", "back_charges", "FLOAT DEFAULT 0")
             add_col("measurement_dimensions", "nom", "FLOAT")
             add_col("measurement_dimensions", "is_heading", "BOOLEAN DEFAULT 0")
             add_col("sub_bills", "bill_date", "TEXT DEFAULT ''")

@@ -19,6 +19,7 @@ from app.db import get_db
 
 from app.constants.common import HARDCOPY_TYPES, RETENTION_STAGES, SUB_TRANSITIONS
 from app.core.audit import log_audit
+from app.services.compliance import free_back_charges_of
 from app.core.auth import (
     STAFF_VIEWER,
     get_client_user,
@@ -133,6 +134,7 @@ def sub_bill_delete(bill_id: int, request: Request, db: Session = Depends(get_db
     db.query(models.DBSubMeasurement).filter(models.DBSubMeasurement.sub_bill_id == bill.id).update(
         {"sub_bill_id": None}, synchronize_session=False)
     release_material_recovery(db, client.id, bill.id)
+    free_back_charges_of(db, bill.id)
     drop_files_of(db, "sub_bill_scan", [bill.id])
     drop(db.query(models.DBSubBillLine).filter(models.DBSubBillLine.sub_bill_id == bill.id))
     drop(db.query(models.DBApprovalChain).filter(
@@ -1145,6 +1147,7 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
                 {"sub_bill_id": None}, synchronize_session=False)
         # Material it recovered goes back to waiting for the next bill.
         release_material_recovery(db, client.id, bill.id)
+        free_back_charges_of(db, bill.id)
 
     was, bill.status = bill.status, allowed[move]
     bill.updated_at = now

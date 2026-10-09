@@ -46,6 +46,12 @@ from app.models.client_orders import (
     DBVariationOrder,
     DBVariationLine,
 )
+from app.models.compliance import (
+    DBBackCharge,
+    DBComplianceDocument,
+    DBContractorRating,
+)
+
 from app.models.crm import (
     DBQuote,
     DBQuoteLineItem,

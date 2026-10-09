@@ -470,7 +470,8 @@ def _bill_figures(bill):
     debit = money(getattr(bill, "debit_notes", 0) or 0)
     gross = rupees(work - debit)
     gst = money(bill.gst_amount)
-    adv, other = money(bill.advance_recovery), money(bill.other_deductions)
+    # Back-charges printed with the other recoveries: the certificate has one row for them.
+    adv, other = money(bill.advance_recovery), money(money(bill.other_deductions) + money(bill.back_charges))
     ret, tds, cess = money(bill.retention_amount), money(bill.tds_amount), money(bill.labour_cess_amount)
     return {"work": work, "mob": 0.0, "mat": 0.0, "debit": debit, "gross": gross,
             "sgst": money(bill.sgst_amount), "cgst": money(bill.cgst_amount), "igst": money(bill.igst_amount),

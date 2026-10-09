@@ -18,6 +18,7 @@ from app.core.dates import months_after
 from app.core.gst import GST_STATES, WORKS_CONTRACT_SAC, our_state, split_gst, supply_state_for_job
 from app.core.permissions import employee_can
 from app.core.queries import by_id, chain_rows, forget_chain
+from app.services.compliance import contractor_compliance
 
 
 #
@@ -192,7 +193,7 @@ def recost_sub_bill(db, bill):
     bill.retention_amount = rupees(this_bill * (bill.retention_percent or 0) / 100.0)
     bill.tds_amount = rupees(this_bill * (bill.tds_percent or 0) / 100.0)
     bill.labour_cess_amount = rupees(this_bill * (bill.labour_cess_percent or 0) / 100.0)
-    deductions = ((bill.advance_recovery or 0) + (bill.other_deductions or 0) + bill.retention_amount
+    deductions = ((bill.advance_recovery or 0) + (bill.other_deductions or 0) + (bill.back_charges or 0) + bill.retention_amount
                   + bill.tds_amount + bill.labour_cess_amount)
     bill.net_payable = rupees(gross + bill.gst_amount - deductions)
     bill.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -205,7 +206,7 @@ def sub_bill_room(bill):
     over to the government, and recovering an advance out of it leaves them
     owing tax on money they never received."""
     return money(rupees((bill.this_bill or 0) - (bill.debit_notes or 0))
-                 - (bill.advance_recovery or 0) - (bill.other_deductions or 0)
+                 - (bill.advance_recovery or 0) - (bill.other_deductions or 0) - (bill.back_charges or 0)
                  - (bill.retention_amount or 0) - (bill.tds_amount or 0)
                  - (bill.labour_cess_amount or 0))
 
@@ -235,6 +236,7 @@ def sub_bill_dict(db, bill, detail=False):
         "retention_amount": money(bill.retention_amount),
         "advance_recovery": money(bill.advance_recovery),
         "other_deductions": money(bill.other_deductions),
+        "back_charges": money(bill.back_charges),
         "deduction_notes": bill.deduction_notes or "",
         "gst_percent": bill.gst_percent or 0, "gst_amount": money(bill.gst_amount),
         "cgst_amount": money(bill.cgst_amount), "sgst_amount": money(bill.sgst_amount),
@@ -279,6 +281,17 @@ def sub_bill_dict(db, bill, detail=False):
     row["waiting_on"] = next((r["name"] for r in route if r["status"] == "waiting"), "")
     row["waiting_on_id"] = next((r["approver_id"] for r in route if r["status"] == "waiting"), None)
     if detail:
+        # What would make paying them unsafe - a lapsed licence, a missing registration - shown where the bill is read.
+        row["compliance_warnings"] = contractor_compliance(db, bill.client_id, bill.contractor_id)["warnings"]
+        row["open_back_charges"] = [{"id": c.id, "number": c.number, "kind": c.kind, "reason": c.reason, "amount": money(c.amount)}
+                                    for c in db.query(models.DBBackCharge).filter(
+                                        models.DBBackCharge.client_id == bill.client_id,
+                                        models.DBBackCharge.contractor_id == bill.contractor_id,
+                                        models.DBBackCharge.status == "OPEN").all()]
+        row["applied_back_charges"] = [{"id": c.id, "number": c.number, "kind": c.kind, "reason": c.reason, "amount": money(c.amount)}
+                                       for c in db.query(models.DBBackCharge).filter(
+                                           models.DBBackCharge.applied_bill_id == bill.id,
+                                           models.DBBackCharge.status == "APPLIED").all()]
         row["lines"] = [{
             "id": l.id, "item_id": l.item_id, "activity_no": l.activity_no or "",
             "description": (l.description or "").split("\n")[0], "uom": l.uom or "",

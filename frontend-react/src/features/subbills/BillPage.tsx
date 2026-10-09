@@ -6,6 +6,7 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, ConfirmDialog, Field, Input, Modal, NumField, Skeleton, Stat, StatGrid, StatusBadge, Textarea } from '@/components/ui'
 import { billKeys, editBill, moveBill, useSubBill, type BillEdit, type BillLine, type BillMove, type SubBill } from '@/api/subbills'
 import { PayModal } from '@/features/money/PayModal'
+import { BackCharges } from './BackCharges'
 import { HardCopy } from './HardCopy'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
@@ -208,6 +209,8 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
 
           <HardCopy bill={bill} canAttach={can('billing.manage')} onChanged={reseed} />
 
+          <BackCharges bill={bill} canEdit={can('billing.manage')} onChanged={reseed} />
+
           {!!bill.entries?.length && (
             <div>
               <h2 className="mb-3 text-lg font-semibold">
@@ -289,6 +292,7 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
                   ))}
                   {bill.advance_recovery > 0 && <Row label="Advance recovered" value={`- ${formatINR(bill.advance_recovery)}`} negative />}
                   {bill.other_deductions > 0 && <Row label="Material and other recoveries" value={`- ${formatINR(bill.other_deductions)}`} negative />}
+                  {(bill.back_charges ?? 0) > 0 && <Row label="Back-charges" value={`- ${formatINR(bill.back_charges ?? 0)}`} negative />}
                   <Row label={`Retention @ ${bill.retention_percent}%`} value={`- ${formatINR(bill.retention_amount)}`} negative />
                   <Row label={`TDS @ ${bill.tds_percent}%`} value={`- ${formatINR(bill.tds_amount)}`} negative />
                   {bill.labour_cess_amount > 0 && <Row label={`Labour cess @ ${bill.labour_cess_percent}%`} value={`- ${formatINR(bill.labour_cess_amount)}`} negative />}

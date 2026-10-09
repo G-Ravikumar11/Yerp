@@ -92,6 +92,11 @@ export interface SubBill {
   entry_mode?: '' | 'chosen'
   /** The hard copy of this bill, attached before it is sent; and whether one must be. */
   scan_required?: boolean
+  /** What a contractor's missing or lapsed papers say, and the back-charges on this bill and waiting for the next (detail only). */
+  back_charges?: number
+  compliance_warnings?: string[]
+  open_back_charges?: { id: number; number: string; kind: string; reason: string; amount: number }[]
+  applied_back_charges?: { id: number; number: string; kind: string; reason: string; amount: number }[]
   hardcopy?: { name: string; type: string; size: number; amount: number | null; by: string; at: string; difference: number | null } | null
   entries?: { id: number; code: string; kind: string; quantity: number; activity_no: string; location: string; measured_on: string }[]
   order_detail?: { number: string; subject: string; value: number; retention_percent: number; commencement_date: string; completion_date: string }

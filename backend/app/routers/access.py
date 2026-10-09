@@ -14,6 +14,7 @@ from app.constants.common import PORTAL_INVITE_DAYS, PORTAL_PARTY_TYPES
 from app.core.audit import log_audit
 from app.core.auth import current_role, get_client_user, require_erp_read, require_owner, wo_actor
 from app.core.notifications import default_from_email, send_email_background
+from app.core.references import release_references
 from app.core.security import RESET_TOKEN_TTL_MINUTES, issue_reset_token
 from app.schemas.access import PortalInviteIn, TeamInvite, TeamUpdate
 from app.services.access import (
@@ -149,6 +150,7 @@ def remove_member(member_id: int, request: Request, db: Session = Depends(get_db
              synchronize_session=False)
 
     log_audit(db, client.id, "team_removed", "team", member.id, member.email, "", request)
+    release_references(db, "team_members", member.id)
     db.delete(member)
     db.commit()
     return {"message": "Removed from the team"}
