@@ -2,11 +2,13 @@
 
 Put these in backend/.env (locally) or in the Railway Variables tab (live):
 
-    GROQ_API_KEY        the default for every text task (summaries, flags worded, email drafts, comparisons).
-    ANTHROPIC_API_KEY   Claude. Used for anything that has to LOOK at a document (scanned bills, quote PDFs and photos),
-                        and for text too if AI_PROVIDER=claude or there is no Groq key.
+    GROQ_API_KEY        the main key. Groq does everything: text, photos (its vision model), and PDFs that have text
+                        in them (read here, then sent as words).
+    ANTHROPIC_API_KEY   optional. Claude is used only for what Groq cannot read (a PDF that is a scan, a very large
+                        picture), or for everything if AI_PROVIDER=claude.
     AI_PROVIDER         "groq" (default) or "claude": which one answers text tasks when both keys are set.
-    GROQ_MODEL          the Groq model: default llama-3.3-70b-versatile
+    GROQ_MODEL          the Groq text model: default llama-3.3-70b-versatile
+    GROQ_VISION_MODEL   the Groq model for photos: default meta-llama/llama-4-scout-17b-16e-instruct
     AI_ENABLED          "1" (default) or "0" to switch every Ai_service feature off at once.
     AI_MODEL_SMART      the model for reading documents and judging: default claude-sonnet-5-5
     AI_MODEL_FAST       the model for short, cheap tasks: default claude-haiku-5-5
@@ -29,6 +31,10 @@ def groq_key() -> str:
 
 def groq_model() -> str:
     return (os.getenv("GROQ_MODEL") or "llama-3.3-70b-versatile").strip()
+
+
+def groq_vision_model() -> str:
+    return (os.getenv("GROQ_VISION_MODEL") or "meta-llama/llama-4-scout-17b-16e-instruct").strip()
 
 
 def prefer_groq() -> bool:

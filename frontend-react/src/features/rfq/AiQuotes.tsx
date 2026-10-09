@@ -42,7 +42,7 @@ export function ReadQuoteModal({ statement, open, onClose, onUse }: { statement:
     <Modal open={open} onOpenChange={(o) => !o && onClose()} size="lg" title="Read a quote" description="Paste the quotation or choose its file. Nothing is saved until you check it in the quote form.">
       <div className="grid gap-4">
         <Field label="Quotation text" htmlFor="rd-text"><Textarea id="rd-text" rows={5} value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste the supplier's quotation here" /></Field>
-        <Field label="Or a PDF or photo" htmlFor="rd-file" hint="A file needs the Claude key to be read."><input id="rd-file" type="file" accept=".pdf,image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
+        <Field label="Or a PDF or photo" htmlFor="rd-file" hint="A photo or a PDF with typed text is read. A scanned PDF: upload it as a photo."><input id="rd-file" type="file" accept=".pdf,image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
         <div><Button loading={go.isPending} disabled={!text.trim() && !file} onClick={() => go.mutate()}><ScanText /> Read it</Button></div>
         {read && (!read.available ? <p role="alert" className="text-sm text-muted-foreground">{read.message}</p> : (
           <div aria-label="What was read" className="grid gap-2 text-sm">

@@ -27,7 +27,7 @@ export function AiCheck({ bill }: { bill: SubBill }) {
       <CardContent className="grid gap-4 text-[13.5px]">
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" loading={run.isPending} onClick={() => run.mutate()}><Sparkles /> Review the bill</Button>
-          {bill.hardcopy && <Button variant="outline" size="sm" loading={read.isPending} disabled={!status.data?.claude} title={status.data?.claude ? undefined : 'Reading a scanned bill needs the Claude key'} onClick={() => read.mutate()}><ScanSearch /> Read the hard copy</Button>}
+          {bill.hardcopy && <Button variant="outline" size="sm" loading={read.isPending} disabled={!status.data?.reads_photos} title={status.data?.reads_photos ? undefined : 'Reading a scanned bill needs the AI key'} onClick={() => read.mutate()}><ScanSearch /> Read the hard copy</Button>}
         </div>
 
         {review && (

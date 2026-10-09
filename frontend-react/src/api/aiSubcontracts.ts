@@ -5,6 +5,8 @@ export interface AiStatus {
   enabled: boolean
   configured: boolean
   claude: boolean
+  groq: boolean
+  reads_photos: boolean
   available: boolean
 }
 

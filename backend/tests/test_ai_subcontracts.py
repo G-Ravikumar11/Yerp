@@ -127,13 +127,13 @@ def test_hard_copy_check_needs_a_hard_copy_and_then_compares_what_was_read(tenan
     assert [m["item"] for m in off["mismatches"]] == ["Value of work"] and off["mismatches"][0]["difference"] == -5000
 
 
-def test_hard_copy_check_without_a_claude_key_says_it_cannot_see(tenant, monkeypatch):
+def test_hard_copy_check_of_a_scanned_pdf_without_a_claude_key_says_so(tenant, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setenv("GROQ_API_KEY", "only-groq")
     order, bill = a_draft(tenant)
     tenant.post("/api/sub-bills/%d/hardcopy" % bill["id"], files={"file": ("bill.pdf", PDF, "application/pdf")}, data={"amount": ""})
     out = tenant.post("/api/ai/subcontracts/bills/%d/hard-copy-check" % bill["id"]).json()
-    assert out["available"] is False and out["reason"] == "needs_vision"
+    assert out["available"] is False and out["reason"] == "scanned_pdf"
 
 
 def test_the_brief_marks_a_contractor_with_lapsed_papers_as_careful(tenant, unkeyed):

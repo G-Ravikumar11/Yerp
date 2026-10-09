@@ -20,3 +20,5 @@ openpyxl==3.1.5
 reportlab==4.2.5
 # Photos are made smaller on the way in (main.slim_image); without this they are kept at full size.
 pillow==12.0.0
+# Reads the text inside a PDF so a text model can use it (Ai_service/pdf_text.py).
+pypdf==6.16.2

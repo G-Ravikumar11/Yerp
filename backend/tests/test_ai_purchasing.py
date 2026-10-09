@@ -58,10 +58,32 @@ def test_text_goes_to_groq_by_default_and_documents_go_to_claude(monkeypatch):
     assert calls[-1] == "claude"
 
 
-def test_groq_alone_cannot_read_a_document_and_says_so(monkeypatch):
+def test_groq_alone_reads_photos_and_text_pdfs_but_not_scanned_pdfs(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "g")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    assert llm_client.ask("s", "p", [llm_client.Attachment(b"x", "image/png")]).reason == "needs_vision"
+    seen = []
+    monkeypatch.setattr(llm_client, "_groq", lambda system, prompt, mt, t, as_json=False, images=None: seen.append((prompt, images)) or AiResult(True, text="x", provider="groq"))
+    monkeypatch.setattr(llm_client, "_claude", lambda *a, **k: (_ for _ in ()).throw(AssertionError("Claude must not be called")))
+    assert llm_client.ask("s", "p", [llm_client.Attachment(b"x", "image/png")]).ok
+    assert seen[-1][1] and seen[-1][1][0].media_type == "image/png", "a photo goes to Groq's vision model"
+    monkeypatch.setattr(llm_client.pdf_text, "extract_text", lambda data, **k: "Quotation No. 7 Cement OPC 53 rate 391 per bag " * 3)
+    assert llm_client.ask("s", "p", [llm_client.Attachment(b"%PDF", "application/pdf")]).ok
+    assert "Cement OPC 53" in seen[-1][0] and not seen[-1][1], "a PDF with text goes to Groq as words"
+    monkeypatch.setattr(llm_client.pdf_text, "extract_text", lambda data, **k: "")
+    assert llm_client.ask("s", "p", [llm_client.Attachment(b"%PDF", "application/pdf")]).reason == "scanned_pdf"
+    big = llm_client.Attachment(b"x" * (llm_client.GROQ_MAX_IMAGE_BYTES + 1), "image/png")
+    assert llm_client.ask("s", "p", [big]).reason == "too_big"
+
+
+def test_a_photo_too_big_for_groq_goes_to_claude_when_there_is_a_key(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "c")
+    calls = []
+    monkeypatch.setattr(llm_client, "_groq", lambda *a, **k: calls.append("groq") or AiResult(True, text="x"))
+    monkeypatch.setattr(llm_client, "_claude", lambda *a, **k: calls.append("claude") or AiResult(True, text="x"))
+    llm_client.ask("s", "p", [llm_client.Attachment(b"x", "image/png")])
+    llm_client.ask("s", "p", [llm_client.Attachment(b"x" * (llm_client.GROQ_MAX_IMAGE_BYTES + 1), "image/png")])
+    assert calls == ["groq", "claude"]
 
 
 # --- purchase order review ----------------------------------------------------------------------------------------------
@@ -177,11 +199,11 @@ def test_pasted_text_is_read_and_nothing_is_saved(tenant, groq, monkeypatch):
     assert tenant.get("/api/rfqs/%d" % r["rfq"]["id"]).json()["suppliers"] == [], "reading a quote records nothing"
 
 
-def test_the_reader_needs_something_to_read_and_a_pdf_needs_the_claude_key(tenant, groq):
+def test_the_reader_needs_something_to_read_and_a_scanned_pdf_needs_the_claude_key(tenant, groq):
     r = rfq(tenant)
     assert tenant.post("/api/ai/rfqs/%d/read-quote" % r["rfq"]["id"]).status_code == 400
     out = tenant.post("/api/ai/rfqs/%d/read-quote" % r["rfq"]["id"], files={"file": ("q.pdf", b"%PDF-1.4", "application/pdf")}).json()
-    assert out["available"] is False and out["reason"] == "needs_vision"
+    assert out["available"] is False and out["reason"] == "scanned_pdf"
     assert tenant.post("/api/ai/rfqs/%d/read-quote" % r["rfq"]["id"], files={"file": ("q.exe", b"x", "application/octet-stream")}).status_code == 400
 
 

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { FileDown, FileUp, Lock, LockOpen, Receipt, Ruler, Trash2 } from 'lucide-react'
+import { FileDown, FileUp, Lock, LockOpen, Receipt, Ruler, ScanText, Trash2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
@@ -15,6 +15,7 @@ import { HoldModal, ReleaseModal } from './HoldModals'
 import { formatDate, formatQty } from '@/lib/format'
 import { cn, compactINR, formatINR } from '@/lib/utils'
 import { ImportBookModal } from './ImportBookModal'
+import { BookAnalysis, ReadSheetModal } from './AiMeasurement'
 import { SheetView } from './SheetView'
 import { EntryDetail, calcSummary } from './EntryDetail'
 import { MeasureModal } from './MeasureModal'
@@ -105,6 +106,7 @@ export default function MeasurementBookPage() {
   const book = useMeasurementBook(chosen)
   const [measuring, setMeasuring] = useState<MbLine | null>(null)
   const [importing, setImporting] = useState(false)
+  const [reading, setReading] = useState(false)
   const [holding, setHolding] = useState<MbLine | null>(null)
   const [picked, setPicked] = useState<Set<string | number>>(new Set())
   const [clearing, setClearing] = useState(false)
@@ -313,6 +315,11 @@ export default function MeasurementBookPage() {
                 <FileUp /> Import MB from Excel
               </Button>
             )}
+            {record && chosen > 0 && (
+              <Button variant="outline" onClick={() => setReading(true)}>
+                <ScanText /> Read a sheet
+              </Button>
+            )}
           </>
         }
       />
@@ -404,6 +411,8 @@ export default function MeasurementBookPage() {
             <Stat label="Items over the order" value={s?.lines_over_measured ?? 0} tone={s?.lines_over_measured ? 'danger' : undefined} loading={book.isPending} />
           </StatGrid>
 
+          <BookAnalysis key={chosen} orderId={chosen} />
+
           <h2 className="mb-3 text-lg font-semibold">Items on the order - measure each one</h2>
           <FilterBar filters={itemFilters} placeholder="Search by item code, activity or words..." />
           <DataTable label="Items on the order" rows={itemFilters.filtered} columns={itemColumns} rowKey={(l) => l.item_id} loading={book.isPending} empty={itemFilters.active ? 'No item matches those filters.' : 'This order has no schedule lines.'} className="mb-8" />
@@ -469,6 +478,7 @@ export default function MeasurementBookPage() {
             }}
           />
           <ImportBookModal orderId={chosen} open={importing} onOpenChange={setImporting} />
+          <ReadSheetModal orderId={chosen} lines={lines} open={reading} onClose={() => setReading(false)} />
           <BulkDeleteDialog open={clearing} onOpenChange={setClearing} kind="entry" noun="entry" ids={[...picked].map(Number).sort((a, b) => rank(a) - rank(b))} onFinished={() => setPicked(new Set())} detail="Each measurement is taken out of the book and off any draft bill it was on. Measurements on a sent bill stay. This cannot be undone." />
           <HoldModal orderId={chosen} line={holding} onClose={() => setHolding(null)} />
           <ReleaseModal entry={releasing} line={releasing ? byItem.get(releasing.item_id) : undefined} onClose={() => setReleasing(null)} />

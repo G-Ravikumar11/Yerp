@@ -18,7 +18,7 @@ from app.services.wallet_ai import charge_after_success, ensure_can_afford
 def status() -> dict:
     """What the screens need to know before offering an AI button."""
     return {"enabled": config.enabled(), "configured": config.configured(),
-            "claude": bool(config.anthropic_key()), "groq": bool(config.groq_key()), "available": config.enabled() and config.configured()}
+            "claude": bool(config.anthropic_key()), "groq": bool(config.groq_key()), "reads_photos": bool(config.groq_key() or config.anthropic_key()), "available": config.enabled() and config.configured()}
 
 
 def run_feature(db: Session, request: Request, client, action_key: str, label: str, reference: str,
@@ -38,4 +38,4 @@ def run_feature(db: Session, request: Request, client, action_key: str, label: s
 
 def refuse(result: AiResult):
     """Turn a failed result into the plain HTTP answer."""
-    raise HTTPException(status_code=503 if result.reason in ("off", "no_key", "needs_vision") else 502, detail=result.message)
+    raise HTTPException(status_code=503 if result.reason in ("off", "no_key", "needs_vision") else 422 if result.reason in ("scanned_pdf", "too_big") else 502, detail=result.message)

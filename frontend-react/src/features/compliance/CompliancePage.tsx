@@ -4,6 +4,7 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, Field, Input, Modal, NumField, Select, Stat, StatGrid, Tabs } from '@/components/ui'
 import { contractorBrief, type ContractorBrief } from '@/api/aiSubcontracts'
+import { readPaper, type ReadPaper } from '@/api/aiMeasurement'
 import { addDocument, cancelBackCharge, complianceKeys, raiseBackCharge, rateContractor, removeDocument, useBackCharges, useComplianceHome, useContractorDetail, useSettlement, type BackCharge, type ContractorStatus } from '@/api/compliance'
 import { useOrders } from '@/api/orders'
 import { useAction } from '@/lib/mutate'
@@ -67,6 +68,18 @@ function ContractorModal({ contractor, kinds, onClose }: { contractor: Contracto
   const [score, setScore] = useState({ quality: 3, speed: 3, safety: 3, discipline: 3 })
   const manage = can('billing.manage')
   const [brief, setBrief] = useState<ContractorBrief | null>(null)
+  const [paperFile, setPaperFile] = useState<File | null>(null)
+  const [paperRead, setPaperRead] = useState<ReadPaper | null>(null)
+  const readIt = useAction(() => readPaper(contractor.contractor_id, { file: paperFile }), {
+    success: false,
+    onSuccess: (r) => {
+      setPaperRead(r)
+      if (!r.available) return
+      if (r.kind && r.kind in kinds) setKind(r.kind)
+      setNumber(r.number ?? '')
+      setUntil(r.valid_to ?? '')
+    },
+  })
   const askBrief = useAction(() => contractorBrief(contractor.contractor_id), { success: false, onSuccess: setBrief })
   const add = useAction(() => addDocument({ contractor_id: contractor.contractor_id, kind, number, valid_to: until }), { invalidate: [complianceKeys.all], onSuccess: () => { setNumber(''); setUntil('') } })
   const drop = useAction((id: number) => removeDocument(id), { invalidate: [complianceKeys.all] })
@@ -94,6 +107,18 @@ function ContractorModal({ contractor, kinds, onClose }: { contractor: Contracto
             <Field label="Number" htmlFor="cd-number"><Input id="cd-number" value={number} onChange={(e) => setNumber(e.target.value)} /></Field>
             <Field label="Valid until" htmlFor="cd-until"><Input id="cd-until" type="date" value={until} onChange={(e) => setUntil(e.target.value)} /></Field>
             <Button loading={add.isPending} disabled={!until} onClick={() => add.mutate()}><Plus /> Add</Button>
+          </div>
+        )}
+        {manage && (
+          <div className="grid gap-2 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <label htmlFor="cd-file" className="text-muted-foreground">Or read a photo or PDF of the paper:</label>
+              <input id="cd-file" type="file" accept=".pdf,image/*" onChange={(e) => setPaperFile(e.target.files?.[0] ?? null)} />
+              <Button size="sm" variant="outline" loading={readIt.isPending} disabled={!paperFile} onClick={() => readIt.mutate()}>Read it</Button>
+            </div>
+            {paperRead && !paperRead.available && <p role="alert" className="text-muted-foreground">{paperRead.message}</p>}
+            {paperRead?.available && <p className="text-muted-foreground">Filled in from the paper{paperRead.low_confidence && ' (not confident)'}. Check it, then press Add.</p>}
+            {paperRead?.warnings?.map((w) => <p key={w} className="text-warning">{w}</p>)}
           </div>
         )}
         <div className="border-t border-border pt-4">

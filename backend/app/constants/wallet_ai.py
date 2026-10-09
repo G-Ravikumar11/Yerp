@@ -51,6 +51,12 @@ DEFAULT_PRICING = [
      "Charged per recommendation on an enquiry. Priced at zero until set."),
     ("ai_quote_read",     "AI quote reader",        "purchasing", 0, 0,
      "Charged per supplier quote read. Priced at zero until set."),
+    ("ai_measurement_analysis", "AI measurement analysis", "subcontracts", 0, 0,
+     "Charged per measurement book summary. Priced at zero until set."),
+    ("ai_measurement_read", "AI measurement sheet reader", "subcontracts", 0, 0,
+     "Charged per measurement sheet read. Priced at zero until set."),
+    ("ai_document_read",  "AI compliance paper reader", "subcontracts", 0, 0,
+     "Charged per licence or insurance paper read. Priced at zero until set."),
 ]
 
 # PAYMENT GATEWAYS

@@ -1,18 +1,18 @@
 """Read a supplier's quote (a PDF, a photo, or pasted text) into the enquiry's quote form. Nothing is saved: the buyer
 checks what was read, fixes it and saves it with the normal "record quote" button.
 
-Pasted text is read by Groq; a PDF or a photo needs the Claude key. The model only matches what the paper says to the
+Pasted text, photos and PDFs with text are read by Groq; only a scanned PDF needs the Claude key. The model only matches what the paper says to the
 enquiry's own lines; every line it returns is checked here against those lines, and any it cannot match is listed apart.
 
     POST /api/ai/rfqs/{rfq_id}/read-quote        (multipart: file, or text)
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from sqlalchemy.orm import Session
 
-from Ai_service import guard
-from Ai_service.llm_client import AiResult, Attachment, ask_json
+from Ai_service import guard, inputs
+from Ai_service.llm_client import ask_json
 from app.core.auth import require_erp_read
 from app.db import get_db
 from app.services.procurement import _rfq_lines, rfq_or_404
@@ -20,8 +20,8 @@ from app.services.procurement import _rfq_lines, rfq_or_404
 router = APIRouter()
 
 ACTION_KEY = "ai_quote_read"
-READABLE = ("application/pdf", "image/jpeg", "image/png", "image/webp", "image/gif")
-MAX_BYTES = 8 * 1024 * 1024
+READABLE = inputs.READABLE
+MAX_BYTES = inputs.MAX_BYTES
 
 SYSTEM = (
     "You read a supplier's price quotation for a construction company and match it to the company's enquiry lines. "
@@ -77,18 +77,7 @@ def read_quote(rfq_id: int, request: Request, file: Optional[UploadFile] = File(
     client = require_erp_read(request, db)
     rfq = rfq_or_404(db, client.id, rfq_id)
     lines = _rfq_lines(db, rfq.id)
-    text = (text or "").strip()
-    attachments = []
-    if file is not None and file.filename:
-        data = file.file.read()
-        media = (file.content_type or "").lower()
-        if media not in READABLE:
-            raise HTTPException(400, "Upload a PDF or a picture (JPG, PNG), or paste the quotation as text.")
-        if len(data) > MAX_BYTES:
-            raise HTTPException(400, "That file is over 8 MB.")
-        attachments.append(Attachment(data, media))
-    elif not text:
-        raise HTTPException(400, "Upload the quotation, or paste its text.")
+    attachments, text = inputs.take(file, text, "quotation")
     prompt = build_prompt(lines, text)
     result = guard.run_feature(db, request, client, ACTION_KEY, "Quote read %s" % rfq.number, rfq.number or "",
                                lambda: ask_json(SYSTEM, prompt, attachments, smart=True, max_tokens=3000))
