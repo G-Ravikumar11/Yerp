@@ -7,6 +7,8 @@ import { useRfqs, useStatement, type Rfq } from '@/api/rfq'
 import { formatDate } from '@/lib/format'
 import { AwardModal } from './AwardModal'
 import { NewRfqModal } from './NewRfqModal'
+import type { ReadQuote } from '@/api/aiPurchasing'
+import { ReadQuoteModal } from './AiQuotes'
 import { QuoteModal } from './QuoteModal'
 import { StatementPanel } from './StatementPanel'
 import { FilterBar, useListFilters } from '@/components/data/filters'
@@ -19,6 +21,8 @@ export default function RfqPage() {
   const [creating, setCreating] = useState(false)
   const [open, setOpen] = useState<number | null>(null)
   const [quoting, setQuoting] = useState(false)
+  const [reading, setReading] = useState(false)
+  const [prefill, setPrefill] = useState<ReadQuote | null>(null)
   const [awarding, setAwarding] = useState(false)
   const statement = useStatement(open)
   const s = q.data?.summary
@@ -46,9 +50,10 @@ export default function RfqPage() {
       </StatGrid>
       <FilterBar filters={filters} placeholder="Search by enquiry, title, project..." />
       <DataTable label="Enquiries" rows={filters.filtered} columns={columns} rowKey={(r) => r.id} loading={q.isPending} empty="No enquiries yet. Ask three suppliers before an order goes out." />
-      {open && <StatementPanel id={open} onClose={() => setOpen(null)} onQuote={() => setQuoting(true)} onAward={() => setAwarding(true)} />}
+      {open && <StatementPanel id={open} onClose={() => setOpen(null)} onQuote={() => { setPrefill(null); setQuoting(true) }} onRead={() => setReading(true)} onAward={() => setAwarding(true)} />}
       <NewRfqModal open={creating} onClose={() => setCreating(false)} onOpened={(id) => { setCreating(false); setOpen(id) }} />
-      <QuoteModal statement={statement.data ?? null} open={quoting} onClose={() => setQuoting(false)} />
+      <QuoteModal statement={statement.data ?? null} open={quoting} prefill={prefill} onClose={() => setQuoting(false)} />
+      {statement.data && <ReadQuoteModal key={statement.data.rfq.id} statement={statement.data} open={reading} onClose={() => setReading(false)} onUse={(q) => { setPrefill(q); setReading(false); setQuoting(true) }} />}
       <AwardModal statement={statement.data ?? null} open={awarding} onClose={() => setAwarding(false)} />
     </>
   )

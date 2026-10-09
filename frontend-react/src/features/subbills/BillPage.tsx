@@ -6,6 +6,7 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, ConfirmDialog, Field, Input, Modal, NumField, Skeleton, Stat, StatGrid, StatusBadge, Textarea } from '@/components/ui'
 import { billKeys, editBill, moveBill, useSubBill, type BillEdit, type BillLine, type BillMove, type SubBill } from '@/api/subbills'
 import { PayModal } from '@/features/money/PayModal'
+import { AiCheck } from './AiCheck'
 import { BackCharges } from './BackCharges'
 import { HardCopy } from './HardCopy'
 import { useAction } from '@/lib/mutate'
@@ -210,6 +211,8 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
           <HardCopy bill={bill} canAttach={can('billing.manage')} onChanged={reseed} />
 
           <BackCharges bill={bill} canEdit={can('billing.manage')} onChanged={reseed} />
+
+          <AiCheck bill={bill} />
 
           {!!bill.entries?.length && (
             <div>

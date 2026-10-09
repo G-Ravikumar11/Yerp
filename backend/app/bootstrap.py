@@ -199,6 +199,11 @@ for _module in (
 ):
     app.include_router(_module.router)
 
+# Everything that calls an AI model lives in the Ai_service folder, one file per function.
+from Ai_service import routers as ai_routers
+for _router in ai_routers:
+    app.include_router(_router)
+
 # A .pdf beside every .xlsx - now that every route is in place.
 from app.documents.pdf_twins import add_pdf_twins
 PDF_TWINS = add_pdf_twins()

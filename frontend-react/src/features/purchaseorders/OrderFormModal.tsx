@@ -6,6 +6,7 @@ import { GST_RATES, poKeys, savePo, type PoInput, type PurchaseOrder } from '@/a
 import { useItems } from '@/api/items'
 import { useSuppliers } from '@/api/ledger'
 import { useJobOptions } from '@/api/clientOrders'
+import { AiPanel } from './AiPanel'
 import { SheetImportModal } from '@/features/sheetimport/SheetImportModal'
 import { useAction } from '@/lib/mutate'
 import { today } from '@/lib/format'
@@ -88,6 +89,7 @@ function Form({ order, staff, onClose }: { order: PurchaseOrder | null; staff: b
 
   return (
     <div>
+      {order && <AiPanel orderId={order.id} />}
       <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Supplier" htmlFor="po-supplier">
           <Input id="po-supplier" list="po-suppliers" autoComplete="off" value={supplier} onChange={(e) => setSupplier(e.target.value)} />

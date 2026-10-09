@@ -37,6 +37,20 @@ DEFAULT_PRICING = [
      "Charged per invoice description rewritten."),
     ("ai_brand_theme",    "AI branding theme",       "invoicing", 25, 5,
      "Charged per invoice theme designed."),
+    ("ai_hard_copy_check", "AI hard-copy bill check", "subcontracts", 0, 0,
+     "Charged per scanned contractor bill read and compared. Priced at zero until set."),
+    ("ai_bill_review",    "AI contractor bill review", "subcontracts", 0, 0,
+     "Charged per written bill summary. Priced at zero until set."),
+    ("ai_contractor_brief", "AI contractor brief",  "subcontracts", 0, 0,
+     "Charged per contractor standing summary. Priced at zero until set."),
+    ("ai_po_review",      "AI purchase order review", "purchasing", 0, 0,
+     "Charged per written purchase order review. Priced at zero until set."),
+    ("ai_po_email",       "AI supplier email draft", "purchasing", 0, 0,
+     "Charged per supplier email drafted. Priced at zero until set."),
+    ("ai_quote_recommend", "AI quote recommendation", "purchasing", 0, 0,
+     "Charged per recommendation on an enquiry. Priced at zero until set."),
+    ("ai_quote_read",     "AI quote reader",        "purchasing", 0, 0,
+     "Charged per supplier quote read. Priced at zero until set."),
 ]
 
 # PAYMENT GATEWAYS

@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, Field, Input, Modal, NumField, Select, Stat, StatGrid, Tabs } from '@/components/ui'
+import { contractorBrief, type ContractorBrief } from '@/api/aiSubcontracts'
 import { addDocument, cancelBackCharge, complianceKeys, raiseBackCharge, rateContractor, removeDocument, useBackCharges, useComplianceHome, useContractorDetail, useSettlement, type BackCharge, type ContractorStatus } from '@/api/compliance'
 import { useOrders } from '@/api/orders'
 import { useAction } from '@/lib/mutate'
@@ -65,6 +66,8 @@ function ContractorModal({ contractor, kinds, onClose }: { contractor: Contracto
   const [until, setUntil] = useState('')
   const [score, setScore] = useState({ quality: 3, speed: 3, safety: 3, discipline: 3 })
   const manage = can('billing.manage')
+  const [brief, setBrief] = useState<ContractorBrief | null>(null)
+  const askBrief = useAction(() => contractorBrief(contractor.contractor_id), { success: false, onSuccess: setBrief })
   const add = useAction(() => addDocument({ contractor_id: contractor.contractor_id, kind, number, valid_to: until }), { invalidate: [complianceKeys.all], onSuccess: () => { setNumber(''); setUntil('') } })
   const drop = useAction((id: number) => removeDocument(id), { invalidate: [complianceKeys.all] })
   const rate = useAction(() => rateContractor({ contractor_id: contractor.contractor_id, ...score }), { invalidate: [complianceKeys.all] })
@@ -93,6 +96,19 @@ function ContractorModal({ contractor, kinds, onClose }: { contractor: Contracto
             <Button loading={add.isPending} disabled={!until} onClick={() => add.mutate()}><Plus /> Add</Button>
           </div>
         )}
+        <div className="border-t border-border pt-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold">Standing for the next order</h3>
+            <Button size="sm" variant="outline" loading={askBrief.isPending} onClick={() => askBrief.mutate()}>Get a brief</Button>
+          </div>
+          {brief && (
+            <div aria-label="Contractor brief" className="mt-2 grid gap-1 text-sm">
+              <p><Badge tone={brief.standing.verdict === 'careful' ? 'danger' : brief.standing.verdict === 'good' ? 'success' : 'neutral'}>{brief.standing.verdict}</Badge> {brief.standing.orders} order(s), {brief.standing.certified_bills} certified bill(s), {formatINR(brief.standing.work_certified)} of work, {formatINR(brief.standing.back_charged)} charged back.</p>
+              {brief.standing.flags.length > 0 && <p className="text-warning">{brief.standing.flags.join('; ')}.</p>}
+              {brief.summary ? <p>{brief.summary}</p> : <p className="text-muted-foreground">{brief.ai_message ?? 'The written summary needs the AI key; the figures above are from the books.'}</p>}
+            </div>
+          )}
+        </div>
         <div className="border-t border-border pt-4">
           <h3 className="mb-2 text-sm font-semibold">Rate their work {d?.score.overall ? <span className="font-normal text-muted-foreground">(average {d.score.overall} of {d.score.count})</span> : null}</h3>
           <div className="grid gap-3 sm:grid-cols-4">

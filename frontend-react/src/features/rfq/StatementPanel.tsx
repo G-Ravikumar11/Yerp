@@ -1,10 +1,11 @@
-import { FileSpreadsheet, Plus, Printer } from 'lucide-react'
+import { FileSpreadsheet, Plus, Printer, ScanText } from 'lucide-react'
 import { Button, Skeleton } from '@/components/ui'
 import { useStatement } from '@/api/rfq'
+import { Recommendation } from './AiQuotes'
 import { formatINR } from '@/lib/utils'
 
 /** Lines down the side, suppliers across the top, the lowest in each row marked, and each supplier's total landed at site underneath. */
-export function StatementPanel({ id, onClose, onQuote, onAward }: { id: number; onClose: () => void; onQuote: () => void; onAward: () => void }) {
+export function StatementPanel({ id, onClose, onQuote, onRead, onAward }: { id: number; onClose: () => void; onQuote: () => void; onRead: () => void; onAward: () => void }) {
   const q = useStatement(id)
   const d = q.data
   if (q.isPending || !d) return <Skeleton className="mt-6 h-48 w-full" />
@@ -16,6 +17,7 @@ export function StatementPanel({ id, onClose, onQuote, onAward }: { id: number; 
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-5 py-3">
         <h2 className="font-semibold">Comparative statement - {d.rfq.number} {d.rfq.title}</h2>
         <div className="flex flex-wrap gap-2">
+          {open && <Button size="sm" variant="outline" onClick={onRead}><ScanText /> Read a quote</Button>}
           {open && <Button size="sm" variant="outline" onClick={onQuote}><Plus /> Quote</Button>}
           {open && sups.length > 0 && <Button size="sm" onClick={onAward}>Award</Button>}
           <Button size="sm" variant="outline" asChild><a href={`/api/rfqs/${id}/comparison.xlsx`}><FileSpreadsheet /> Comparison</a></Button>
@@ -23,6 +25,7 @@ export function StatementPanel({ id, onClose, onQuote, onAward }: { id: number; 
           <Button size="sm" variant="ghost" onClick={onClose}>Close</Button>
         </div>
       </div>
+      {sups.length > 0 && <Recommendation id={id} />}
       {sups.length > 0 && <p className="px-5 py-3 text-[13px]">{d.l1 && <>L1 landed: <strong>{d.l1}</strong> at {formatINR(d.l1_landed)}{d.saving_vs_l2 > 0 && ` - ${formatINR(d.saving_vs_l2)} under L2`}. </>}Lowest in every line, from whoever quoted it: {formatINR(d.lowest_per_line_basic)} basic.{d.rfq.award_reason && <span className="mt-1 block"><strong>Why not the lowest:</strong> {d.rfq.award_reason}</span>}</p>}
       <div className="overflow-x-auto">
         <table aria-label="Comparison" className="w-full text-[13px]">

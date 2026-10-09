@@ -1,24 +1,26 @@
 import { useState } from 'react'
 import { Button, Field, Input, Modal, NumField } from '@/components/ui'
 import { recordQuote, rfqKeys, useSupplierNames, type Statement } from '@/api/rfq'
+import type { ReadQuote } from '@/api/aiPurchasing'
 import { useAction } from '@/lib/mutate'
 import { today } from '@/lib/format'
 
 /** One supplier's answer: a rate and its tax for every line, the freight, the terms. */
-export function QuoteModal({ statement, open, onClose }: { statement: Statement | null; open: boolean; onClose: () => void }) {
+export function QuoteModal({ statement, open, prefill, onClose }: { statement: Statement | null; open: boolean; prefill?: ReadQuote | null; onClose: () => void }) {
   return (
     <Modal open={open && !!statement} onOpenChange={(o) => !o && onClose()} title={statement ? `Record a quote - ${statement.rfq.number}` : ''} description="Whatever a supplier left off a line is shown as not quoted in the comparison." size="lg">
-      {open && statement && <Form statement={statement} onClose={onClose} />}
+      {open && statement && <Form key={prefill ? 'read' : 'blank'} statement={statement} prefill={prefill ?? null} onClose={onClose} />}
     </Modal>
   )
 }
 
-function Form({ statement, onClose }: { statement: Statement; onClose: () => void }) {
+function Form({ statement, prefill, onClose }: { statement: Statement; prefill: ReadQuote | null; onClose: () => void }) {
   const names = useSupplierNames()
-  const [f, setF] = useState({ supplier_name: '', quote_ref: '', quote_date: today(), payment_terms: '' })
-  const [freight, setFreight] = useState(0)
-  const [days, setDays] = useState(0)
-  const [rates, setRates] = useState(() => statement.lines.map(() => ({ rate: 0, tax: 18 })))
+  const [f, setF] = useState({ supplier_name: prefill?.supplier_name ?? '', quote_ref: prefill?.quote_ref ?? '', quote_date: prefill?.quote_date || today(), payment_terms: prefill?.payment_terms ?? '' })
+  const [freight, setFreight] = useState(prefill?.freight ?? 0)
+  const [days, setDays] = useState(prefill?.delivery_days ?? 0)
+  // What the AI read is only a starting point: every figure is shown here to be checked before it is saved.
+  const [rates, setRates] = useState(() => statement.lines.map((l) => { const r = prefill?.lines?.find((x) => x.rfq_line_id === l.rfq_line_id); return { rate: r?.rate ?? 0, tax: r?.tax_percent ?? 18 } }))
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((x) => ({ ...x, [k]: e.target.value }))
   const edit = (i: number, patch: Partial<{ rate: number; tax: number }>) => setRates((r) => r.map((x, j) => (j === i ? { ...x, ...patch } : x)))
   const save = useAction(() => recordQuote(statement.rfq.id, { ...f, freight, delivery_days: days, lines: statement.lines.map((l, i) => ({ rfq_line_id: l.rfq_line_id, rate: rates[i].rate, tax_percent: rates[i].tax })) }), { invalidate: [rfqKeys.all], success: (r) => r.message, onSuccess: onClose })
