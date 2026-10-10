@@ -232,8 +232,8 @@ def superadmin_client_overview(client_id: int, request: Request, db: Session = D
         "portals": {
             "invoicing": "/next/",
             "hr": "/next/people/employees",
-            "employee": "/employee-login.html",
-            "job_board": f"/jobs.html?c={client.id}",
+            "employee": "/next/login",
+            "job_board": f"/next/jobs?c={client.id}",
         },
     }
 

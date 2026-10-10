@@ -45,7 +45,7 @@ def _issue_invite(u):
 
 def _invite_link(request, token):
     base = (os.getenv("APP_BASE_URL") or str(request.base_url)).rstrip("/")
-    return "%s/portal.html?invite=%s" % (base, token)
+    return "%s/next/portal?invite=%s" % (base, token)
 
 
 def _send_invite(background_tasks, db, client, u, link):

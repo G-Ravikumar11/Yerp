@@ -39,7 +39,7 @@ export async function api<T = unknown>(path: string, { body, headers, quiet, ...
     const detail = (data as { detail?: unknown } | null)?.detail
     const message =
       typeof detail === 'string' ? detail : Array.isArray(detail) ? 'Some of what was entered is not valid.' : res.statusText
-    if (res.status === 401 && !quiet && !location.pathname.startsWith('/login')) {
+    if (res.status === 401 && !quiet && !/^\/(next\/)?(login|reset-password|superadmin\/login)/.test(location.pathname)) {
       // The session ended; the login page is still the current app's.
       window.dispatchEvent(new CustomEvent('yerp:unauthorised'))
     }

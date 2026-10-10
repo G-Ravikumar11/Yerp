@@ -94,7 +94,7 @@ function UserChip() {
     // What this device kept for them - the data, and any change not yet sent - goes too.
     useOffline.setState({ queue: [] })
     await forgetLocalData()
-    window.location.assign('/login.html?signedout=1')
+    window.location.assign('/next/login?signedout=1')
   }
 
   return (

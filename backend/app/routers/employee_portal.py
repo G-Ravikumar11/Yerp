@@ -94,7 +94,7 @@ def employee_forgot_password(body: ForgotPasswordIn, background_tasks: Backgroun
     db.commit()
 
     base = (os.getenv("APP_BASE_URL") or str(request.base_url)).rstrip("/")
-    link = f"{base}/reset-password.html?token={token}&portal=employee"
+    link = f"{base}/next/reset-password?token={token}&portal=employee"
     who = f"{emp.first_name} {emp.last_name}".strip() or emp.email
     text_body, html_body = reset_email_bodies(link, who, RESET_TOKEN_TTL_MINUTES)
     from_email = default_from_email()

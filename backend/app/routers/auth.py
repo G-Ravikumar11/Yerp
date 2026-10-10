@@ -210,7 +210,7 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
         token = await oauth.google.authorize_access_token(request)
     except Exception as e:
         logger.error(f"Google token exchange failed: {e}")
-        return RedirectResponse(url="/login.html?error=auth_failed")
+        return RedirectResponse(url="/next/login?error=auth_failed")
     user = token.get('userinfo') or {}
     refresh_token = token.get('refresh_token')
     oauth_role = request.session.pop('oauth_role', 'client')
@@ -226,13 +226,13 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
         if sa_user:
             request.session['superadmin_id'] = sa_user.id
             log_login(db, None, google_email, "superadmin", "google", request, "success")
-            return RedirectResponse(url="/superadmin.html")
+            return RedirectResponse(url="/next/superadmin")
         log_login(db, None, google_email or "superadmin", "superadmin", "google", request, "failed")
-        return RedirectResponse(url="/superadmin-login.html?error=not_admin")
+        return RedirectResponse(url="/next/superadmin/login?error=not_admin")
 
     client_id = request.session.get("client_id")
     if not client_id or not db.query(models.DBClient).filter(models.DBClient.id == client_id).first():
-        return RedirectResponse(url="/login.html?error=gmail_sign_in_first")
+        return RedirectResponse(url="/next/login?error=gmail_sign_in_first")
     # Who the Gmail belongs to, for the screen that says which address mail goes out from. Never the tokens:
     # the session lives in a cookie, and a cookie is no place for the key to somebody's mailbox.
     request.session['user'] = {"email": google_email, "name": user.get("name", "")}
@@ -269,7 +269,7 @@ async def google_signin_start(request: Request, next: str = "/next/", who: str =
         # Back to the sign-in page with something readable, rather than a raw
         # server error. Somebody can reach this from a stale tab long after the
         # button stopped being offered.
-        return RedirectResponse("/login.html?error=google_unconfigured")
+        return RedirectResponse("/next/login?error=google_unconfigured")
     # Only a path on this site, so the redirect cannot be pointed elsewhere.
     request.session["google_next"] = next if next.startswith("/") and not next.startswith("//") else "/next/"
     # The partner portal has its own door: a partner signs in there, never into the office's app.
@@ -298,11 +298,11 @@ async def google_signin_callback(request: Request, db: Session = Depends(get_db)
         token = await oauth.google.authorize_access_token(request)
     except Exception:
         logger.exception("Google sign-in failed at the token exchange")
-        page = "/portal.html" if request.session.pop("google_for", "") == "portal" else "/login.html"
+        page = "/next/portal" if request.session.pop("google_for", "") == "portal" else "/next/login"
         return RedirectResponse(page + "?error=google_failed")
 
     portal = request.session.pop("google_for", "") == "portal"
-    page = "/portal.html" if portal else "/login.html"
+    page = "/next/portal" if portal else "/next/login"
     info = token.get("userinfo") or {}
     email = (info.get("email") or "").strip().lower()
     if not email:
@@ -319,26 +319,26 @@ async def google_signin_callback(request: Request, db: Session = Depends(get_db)
         if not u:
             log_login(db, None, email, "partner", "google", request, status="failed")
             db.commit()
-            return RedirectResponse("/portal.html?error=google_unknown")
+            return RedirectResponse("/next/portal?error=google_unknown")
         client = db.query(models.DBClient).filter(models.DBClient.id == u.client_id).first()
         party, _ = portal_party(db, u.client_id, u.party_type, u.party_id)
         if not client or not client.is_active or not party or party.is_active is False:
-            return RedirectResponse("/portal.html?error=account_disabled")
+            return RedirectResponse("/next/portal?error=account_disabled")
         _portal_signed_in(request, db, u, method="google")
-        return RedirectResponse("/portal.html")
+        return RedirectResponse("/next/portal")
 
     client = db.query(models.DBClient).filter(
         sqlfunc.lower(models.DBClient.email) == email).first()
     if client:
         if not client.is_active:
-            return RedirectResponse("/login.html?error=account_disabled")
+            return RedirectResponse("/next/login?error=account_disabled")
         request.session.pop("employee_id", None)
         request.session.pop("employee_client_id", None)
         request.session.pop("portal_user_id", None)
         request.session.pop("member_id", None)
         request.session["client_id"] = client.id
         log_login(db, client.id, email, "client", "google", request)
-        return RedirectResponse(target if client.is_onboarded else "/onboard.html")
+        return RedirectResponse(target if client.is_onboarded else "/next/onboard")
 
     # A colleague on the Master's team: signing in with the Google account their invite went to is as good as
     # accepting it.
@@ -347,7 +347,7 @@ async def google_signin_callback(request: Request, db: Session = Depends(get_db)
     if member:
         owner = db.query(models.DBClient).filter(models.DBClient.id == member.client_id).first()
         if not owner or not owner.is_active:
-            return RedirectResponse("/login.html?error=account_disabled")
+            return RedirectResponse("/next/login?error=account_disabled")
         for k in ("employee_id", "employee_client_id", "portal_user_id"):
             request.session.pop(k, None)
         request.session["client_id"] = owner.id
@@ -373,7 +373,7 @@ async def google_signin_callback(request: Request, db: Session = Depends(get_db)
     # addresses, anyone with a Google account could otherwise let themselves
     # in and land in a tenancy they have nothing to do with.
     log_login(db, None, email, "google", "google", request, status="failed")
-    return RedirectResponse("/login.html?error=google_unknown")
+    return RedirectResponse("/next/login?error=google_unknown")
 
 
 @router.get("/api/auth/me")
@@ -423,7 +423,7 @@ def forgot_password(body: ForgotPasswordIn, background_tasks: BackgroundTasks,
     db.commit()
 
     base = (os.getenv("APP_BASE_URL") or str(request.base_url)).rstrip("/")
-    link = f"{base}/reset-password.html?token={token}"
+    link = f"{base}/next/reset-password?token={token}"
     company = client.company_name or "your account"
     from_email = default_from_email()
 

@@ -35,7 +35,7 @@ def test_the_y_icon_is_served_for_every_page(tenant):
         res = tenant.get(path)
         assert res.status_code == 200, path
         assert kind in res.headers.get("content-type", "") or kind == "icon", (path, res.headers.get("content-type"))
-    for page in ("/login.html", "/employee-login.html", "/portal.html"):
+    for page in ("/next/login", "/next/portal", "/next/superadmin/login"):
         assert "/favicon.svg" in tenant.get(page).text, page
 
 

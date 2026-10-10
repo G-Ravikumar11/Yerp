@@ -4,6 +4,7 @@ import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client
 import { MotionConfig } from 'framer-motion'
 import { AppShell } from '@/components/layout/AppShell'
 import { Toaster, TooltipProvider } from '@/components/ui'
+import { LegacyLinks } from '@/lib/legacyLinks'
 import { allRoutes } from '@/lib/nav'
 import { persistOptions, queryClient } from '@/lib/query'
 import { watchConnection } from '@/stores/offline'
@@ -13,6 +14,15 @@ import Home from '@/pages/Home'
 import ModulePlaceholder from '@/pages/ModulePlaceholder'
 import NotFound from '@/pages/NotFound'
 
+const LoginPage = lazy(() => import('@/features/auth/LoginPage'))
+const ResetPasswordPage = lazy(() => import('@/features/auth/ResetPasswordPage'))
+const OnboardPage = lazy(() => import('@/features/auth/OnboardPage'))
+const PortalPage = lazy(() => import('@/features/portal/PortalPage'))
+const JobsPage = lazy(() => import('@/features/careers/JobsPage'))
+const ApplyPage = lazy(() => import('@/features/careers/ApplyPage'))
+const MeetingPage = lazy(() => import('@/features/meeting/MeetingPage'))
+const SuperadminPage = lazy(() => import('@/features/superadmin/SuperadminPage'))
+const SuperadminLoginPage = lazy(() => import('@/features/auth/SuperadminLoginPage'))
 const DesignSystem = lazy(() => import('@/pages/DesignSystem'))
 const GridPlayground = lazy(() => import('@/pages/GridPlayground'))
 
@@ -45,7 +55,18 @@ export default function App() {
       <MotionConfig reducedMotion="user">
       <TooltipProvider>
         <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+          <LegacyLinks />
+          <Suspense fallback={null}>
           <Routes>
+            <Route path="login" element={<LoginPage />} />
+            <Route path="jobs" element={<JobsPage />} />
+            <Route path="apply" element={<ApplyPage />} />
+            <Route path="meeting" element={<MeetingPage />} />
+            <Route path="onboard" element={<OnboardPage />} />
+            <Route path="portal" element={<PortalPage />} />
+            <Route path="reset-password" element={<ResetPasswordPage />} />
+            <Route path="superadmin" element={<SuperadminPage />} />
+            <Route path="superadmin/login" element={<SuperadminLoginPage />} />
             <Route element={<AppShell />}>
               <Route index element={<Home />} />
               <Route
@@ -75,6 +96,7 @@ export default function App() {
               <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>
+          </Suspense>
         </BrowserRouter>
         <Toaster />
       </TooltipProvider>

@@ -457,7 +457,7 @@ Powered by Aniprotech"""
               </div>
 
               <!-- View and Pay Online -->
-              <p style="margin-top: 20px;"><a href="{request.base_url}login.html" style="color: #0ea5e9; font-size: 14px; font-weight: 600;">View and pay online &rarr;</a></p>
+              <p style="margin-top: 20px;"><a href="{request.base_url}next/login" style="color: #0ea5e9; font-size: 14px; font-weight: 600;">View and pay online &rarr;</a></p>
             </div>
 
             <!-- Footer -->

@@ -1,39 +1,4 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import './index.css'
-import App from './App'
-import { registerSW } from 'virtual:pwa-register'
-import { toast } from './stores/toast'
-import { useOffline } from './stores/offline'
-
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
-
-// The service worker keeps the app itself on the device, which also means a tab left open keeps
-// showing the version it opened with. A new build is taken straight away when the app has only just
-// opened (nothing typed, nothing to lose); later it is offered, never forced, because reloading under
-// someone who is halfway through a form would lose it.
-if (import.meta.env.PROD) {
-  const opened = Date.now()
-  const update = registerSW({
-    onNeedRefresh() {
-      const justOpened = Date.now() - opened < 30_000
-      if (justOpened && useOffline.getState().queue.length === 0) void update(true)
-      else toast.withAction('A new version of Y ERP is ready.', 'Reload', () => void update(true))
-    },
-    onOfflineReady() {
-      toast.info('Y ERP is saved on this device and opens with no signal.')
-    },
-    onRegisteredSW(_url, registration) {
-      if (!registration) return
-      // Look for a newer build when the tab is come back to, and every half hour it stays open.
-      document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) void registration.update().catch(() => undefined)
-      })
-      setInterval(() => void registration.update().catch(() => undefined), 30 * 60_000)
-    },
-  })
-}
+// Two apps share one build: the company's public front page at "/" and the ERP under "/next/". Each is its own
+// bundle with its own styles, so opening one never downloads or restyles the other.
+if (location.pathname === '/') void import('./features/site/boot')
+else void import('./boot-app')
