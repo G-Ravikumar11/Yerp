@@ -74,31 +74,13 @@ def labour_cost_for_job(db, client_id, job_id):
 
 
 def job_costing(db, client_id, job):
-    """Quoted, committed, spent, invoiced - and what is left of it.
-
-    "Committed" is approved purchase orders that no bill has arrived for yet.
-    Counting a PO and its bill both as spend would double the cost of every
-    delivery, and ignoring open POs would show a job as profitable right up to
-    the day the invoices land.
-    """
-    invoices = on_job(db, models.DBInvoice, client_id, job.id)
-    live_invoices = [i for i in invoices if i.status != "Void"]
-    invoiced = money(sum(invoice_total(i) for i in live_invoices))
-    received = money(sum(i.paid or 0 for i in live_invoices))
-
+    """Quoted, spent - and what is left of the budget."""
     bills = on_job(db, models.DBBill, client_id, job.id)
     # A rejected cost is not a cost; it was refused.
     real_bills = [b for b in bills if (b.approval_status or "none") != "rejected"
                   and b.status != "Cancelled"]
     spent = money(sum(b.total or 0 for b in real_bills))
     unpaid = money(sum((b.total or 0) - (b.amount_paid or 0) for b in real_bills))
-
-    billed_po_ids = {b.purchase_order_id for b in real_bills if b.purchase_order_id}
-    orders = [o for o in on_job(db, models.DBPurchaseOrder, client_id, job.id)
-              if o.approval_status == "approved"]
-    committed = money(sum(o.total or 0 for o in orders
-                          if o.id not in billed_po_ids
-                          and o.status not in ("Closed", "Cancelled")))
 
     labour, hours = labour_cost_for_job(db, client_id, job.id)
 
@@ -133,38 +115,26 @@ def job_costing(db, client_id, job):
         quoted = money(sum(q.total or 0 for q in accepted))
 
     total_cost = money(spent + labour)
-    # Profit is measured against what has been invoiced, not what was quoted:
-    # quoting a job well is not the same as having earned it.
-    profit = money(invoiced - total_cost)
-    margin = round((profit / invoiced * 100), 1) if invoiced else 0.0
     budget = money(job.budget or 0)
 
     return {
         "quoted": quoted,
         "budget": budget,
-        "invoiced": invoiced,
-        "received": received,
-        "outstanding": money(invoiced - received),
         "spent": spent,
         "unpaid_bills": unpaid,
-        "committed": committed,
         "labour_cost": labour,
         "labour_hours": hours,
         "total_cost": total_cost,
-        # What the job will have cost if every open order lands in full.
-        "forecast_cost": money(total_cost + committed),
-        "profit": profit,
-        "margin_percent": margin,
-        "budget_remaining": money(budget - total_cost - committed) if budget else 0.0,
-        "over_budget": bool(budget and (total_cost + committed) > budget),
+        # Budget column: what has been used so far and what is left of it.
+        "used": total_cost,
+        "remaining": money(budget - total_cost) if budget else 0.0,
+        "over_budget": bool(budget and total_cost > budget),
         # Sold scope and its budget, from the work orders on this job.
         "ordered": ordered,
         "budgeted": budgeted,
         "expected_margin": money(ordered - budgeted) if budgeted else 0.0,
         "counts": {
-            "invoices": len(live_invoices),
             "bills": len(real_bills),
-            "open_orders": len([o for o in orders if o.id not in billed_po_ids]),
             "work_orders": len(live_orders),
         },
     }
@@ -221,15 +191,9 @@ def cost_jobs(db, client_id, jobs):
             out.setdefault(getattr(row, key), []).append(row)
         return out
 
-    invoices = bucket(db.query(models.DBInvoice).filter(
-        models.DBInvoice.client_id == client_id,
-        models.DBInvoice.job_id.in_(ids)).all())
     bills = bucket(db.query(models.DBBill).filter(
         models.DBBill.client_id == client_id,
         models.DBBill.job_id.in_(ids)).all())
-    orders = bucket(db.query(models.DBPurchaseOrder).filter(
-        models.DBPurchaseOrder.client_id == client_id,
-        models.DBPurchaseOrder.job_id.in_(ids)).all())
     work_orders = bucket(db.query(models.DBWorkOrder).filter(
         models.DBWorkOrder.client_id == client_id,
         models.DBWorkOrder.job_id.in_(ids)).all())
@@ -251,21 +215,10 @@ def cost_jobs(db, client_id, jobs):
 
     out = []
     for job in jobs:
-        live_invoices = [i for i in invoices.get(job.id, []) if i.status != "Void"]
-        invoiced = money(sum(invoice_total(i) for i in live_invoices))
-        received = money(sum(i.paid or 0 for i in live_invoices))
-
         real_bills = [b for b in bills.get(job.id, [])
                       if (b.approval_status or "none") != "rejected" and b.status != "Cancelled"]
         spent = money(sum(b.total or 0 for b in real_bills))
         unpaid = money(sum((b.total or 0) - (b.amount_paid or 0) for b in real_bills))
-        billed_po_ids = {b.purchase_order_id for b in real_bills if b.purchase_order_id}
-
-        open_orders = [o for o in orders.get(job.id, [])
-                       if (o.approval_status or "none") == "approved"
-                       and o.id not in billed_po_ids
-                       and o.status not in ("Closed", "Cancelled")]
-        committed = money(sum(o.total or 0 for o in open_orders))
 
         days = attendance.get(job.id, [])
         hours = round(sum(d.total_hours or 0.0 for d in days), 2)
@@ -279,7 +232,6 @@ def cost_jobs(db, client_id, jobs):
 
         quoted = money(job.quoted_value or 0) or ordered
         total_cost = money(spent + labour)
-        profit = money(invoiced - total_cost)
         budget = money(job.budget or 0)
 
         out.append({
@@ -297,21 +249,17 @@ def cost_jobs(db, client_id, jobs):
             "created_at": job.created_at or "",
             "costing": {
                 "quoted": quoted, "budget": budget,
-                "invoiced": invoiced, "received": received,
-                "outstanding": money(invoiced - received),
-                "spent": spent, "unpaid_bills": unpaid, "committed": committed,
+                "spent": spent, "unpaid_bills": unpaid,
                 "labour_cost": labour, "labour_hours": hours,
                 "total_cost": total_cost,
-                "forecast_cost": money(total_cost + committed),
-                "profit": profit,
-                "margin_percent": round(profit / invoiced * 100, 1) if invoiced else 0.0,
-                "budget_remaining": money(budget - total_cost - committed) if budget else 0.0,
-                "over_budget": bool(budget and (total_cost + committed) > budget),
+                "used": total_cost,
+                "remaining": money(budget - total_cost) if budget else 0.0,
+                "over_budget": bool(budget and total_cost > budget),
                 "ordered": ordered, "budgeted": budgeted,
                 "expected_margin": money(ordered - budgeted) if budgeted else 0.0,
                 "counts": {
-                    "invoices": len(live_invoices), "bills": len(real_bills),
-                    "open_orders": len(open_orders), "work_orders": len(live_wos),
+                    "bills": len(real_bills),
+                    "work_orders": len(live_wos),
                 },
             },
         })

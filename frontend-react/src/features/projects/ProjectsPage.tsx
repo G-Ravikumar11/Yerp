@@ -26,7 +26,7 @@ export default function ProjectsPage() {
     { id: 'no', header: 'Project', sort: (j) => j.number, cell: (j) => <div><span className="font-semibold">{j.number}</span><div className="text-xs text-muted-foreground">{j.name}</div></div> },
     { id: 'cust', header: 'Customer', hideBelow: 'md', cell: (j) => j.customer_name || '-' },
     { id: 'status', header: 'Status', cell: (j) => <div className="flex items-center gap-1.5"><Badge tone={tone(j.status)} dot>{JOB_STATUS[j.status] ?? j.status}</Badge>{j.costing.over_budget && <span className="text-xs font-bold text-danger">over budget</span>}</div> },
-    { id: 'inv', header: 'Invoiced', hideBelow: 'md', align: 'right', sort: (j) => j.costing.invoiced, cell: (j) => formatINR(j.costing.invoiced) },
+
     { id: 'cost', header: 'Cost', hideBelow: 'lg', align: 'right', sort: (j) => j.costing.total_cost, cell: (j) => formatINR(j.costing.total_cost) },
     { id: 'com', header: 'Committed', hideBelow: 'xl', align: 'right', cell: (j) => (j.costing.committed ? formatINR(j.costing.committed) : '-') },
     { id: 'profit', header: 'Profit', align: 'right', sort: (j) => j.costing.profit, cell: (j) => <span className={`font-semibold ${marginClass(j.costing.margin_percent, j.costing.invoiced > 0)}`}>{formatINR(j.costing.profit)}</span> },
@@ -36,8 +36,7 @@ export default function ProjectsPage() {
   return (
     <>
       <PageHeader eyebrow="Projects" title="Projects" description="What each site is making." actions={<Button onClick={() => setEditing('new')}><Plus /> New project</Button>} />
-      <StatGrid className="lg:grid-cols-4 xl:grid-cols-4">
-        <Stat label="Invoiced" value={formatINR(t?.invoiced ?? 0)} loading={q.isPending} />
+      <StatGrid className="lg:grid-cols-3 xl:grid-cols-3">
         <Stat label="Cost" value={formatINR(t?.cost ?? 0)} loading={q.isPending} />
         <Stat label="Committed" value={formatINR(t?.committed ?? 0)} loading={q.isPending} />
         <Stat label="Profit" value={formatINR(t?.profit ?? 0)} tone={(t?.profit ?? 0) >= 0 ? 'success' : 'danger'} loading={q.isPending} />

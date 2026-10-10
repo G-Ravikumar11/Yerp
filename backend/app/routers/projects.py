@@ -12,7 +12,7 @@ from app.constants.common import DRAWING_STATUSES
 from app.constants.crm import OPEN_INVOICE_STATUSES
 from app.constants.projects import DRAWING_DISCIPLINES, JOB_CLOSED_STATUSES, JOB_FINISHED, WEATHER
 from app.core.audit import log_audit
-from app.core.auth import get_client_user, owned_or_404, require_erp_read, require_items_access, wo_actor
+from app.core.auth import get_client_user, owned_or_404, require_erp_read, require_items_access, session_employee, wo_actor
 from app.core.cache import cached_read
 from app.core.currency import DEFAULT_CURRENCY, money, totals_by_currency
 from app.core.gst import GST_STATES
@@ -46,8 +46,10 @@ from app.services.projects import (
     diary_dict,
     diary_or_404,
     drawing_dict,
+    filter_jobs_for_employee,
     invoice_total,
     job_or_404,
+    job_or_404_for_employee,
     job_to_dict,
     parse_position,
     preload_pnl,
@@ -157,8 +159,15 @@ def get_dashboard_summary(request: Request, db: Session = Depends(get_db)):
 @router.get("/api/jobs")
 def list_jobs(request: Request, status: str = "", q: str = "", open_only: bool = False, costing: bool = True,
               db: Session = Depends(get_db)):
-    client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage"))
+    # Admin employees (project_manager, head_projects, reports.view …) see
+    # every project.  Regular employees only see the ones they are connected to.
+    client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage",
+                                                "site.record", "billing.manage"))
+    emp = session_employee(request, db)
     query = db.query(models.DBJob).filter(models.DBJob.client_id == client.id)
+    # Apply per-employee project visibility.  Returns the query unchanged for
+    # the account owner and admin-level employees.
+    query = filter_jobs_for_employee(query, db, client.id, emp)
     if status:
         query = query.filter(models.DBJob.status == validate_job_status(status))
     if open_only:
@@ -180,8 +189,11 @@ def list_jobs(request: Request, status: str = "", q: str = "", open_only: bool =
 @router.get("/api/jobs/{job_id}")
 def get_job(job_id: int, request: Request, db: Session = Depends(get_db)):
     """The job, its money, and everything filed against it."""
-    client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage"))
-    job = job_or_404(db, client.id, job_id)
+    client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage",
+                                                "site.record", "billing.manage"))
+    emp = session_employee(request, db)
+    # 404 for employees who have no connection to this project.
+    job = job_or_404_for_employee(db, client.id, emp, job_id)
     row = job_to_dict(db, job, costing=True)
 
     row["invoices"] = [
