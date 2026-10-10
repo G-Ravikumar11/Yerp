@@ -3,14 +3,17 @@
 The app is one FastAPI service serving its own frontend. There is no build
 step on Railway and no separate worker.
 
-The app is the React interface, served at `/next/` from `frontend-next/`,
-which is **built output committed to the repository** - Railway does not build
-it. `frontend/` holds the public company website (`index.html` at `/`, with its
-scripts, styles and photos under `frontend/site/`; its **YERP Login** button goes to
-`/login.html`), the sign-in, onboarding, partner portal, super admin,
-recruitment, job board and meeting pages, and small forwards from the old
-addresses (`app.html`, `hr.html`, `employee-dashboard.html`). After changing anything under `frontend-react/`, run `npm run build` there
-and commit `frontend-next/` with it (see `frontend-react/README.md`).
+The whole frontend is one React app, built into `frontend-next/`, which is **built
+output committed to the repository** - Railway does not build it. It is two
+bundles in one build: the company's public front page, served at `/`, and the ERP
+under `/next/` (sign-in, onboarding, the partner portal, the platform console,
+careers and the application form, meetings, and every ERP screen). The old
+`*.html` addresses (`/login.html`, `/portal.html`, `/app.html`, ...) are
+forwarded to their React pages by `backend/app/core/static.py`, so links already
+sent in emails keep working. `frontend/` now holds only the icons, the web
+manifest and the worker that removes the previous app's cache. After changing
+anything under `frontend-react/`, run `npm run build` there and commit
+`frontend-next/` with it (see `frontend-react/README.md`).
 
 ## What Railway needs from you
 
@@ -54,8 +57,8 @@ inactive until configured and says so plainly rather than failing.
 
 ### Sign in with Google
 
-The "Continue with Google" button appears on `/login.html` (the Master, team
-members, staff) and `/portal.html` (partners) once two variables are set. It
+The "Continue with Google" button appears on `/next/login` (the Master, team
+members, staff) and `/next/portal` (partners) once two variables are set. It
 signs in only addresses that already have a login here - it never creates one.
 
 1. Google Cloud Console → APIs & Services → OAuth consent screen: External,

@@ -370,12 +370,14 @@ def jobs_summary(request: Request, db: Session = Depends(get_db)):
         ~models.DBJob.status.in_(JOB_CLOSED_STATUSES),
     ).all()
     rows = cost_jobs(db, client.id, jobs)
-    rows.sort(key=lambda r: r["costing"]["margin_percent"])
+    # cost_jobs no longer reports invoiced / committed / profit / margin_percent (invoicing is being
+    # removed), so the board reads what it does report: the margin the sold scope was budgeted for.
+    rows.sort(key=lambda r: r["costing"]["expected_margin"])
     totals = {
-        "invoiced": money(sum(r["costing"]["invoiced"] for r in rows)),
         "cost": money(sum(r["costing"]["total_cost"] for r in rows)),
-        "committed": money(sum(r["costing"]["committed"] for r in rows)),
-        "profit": money(sum(r["costing"]["profit"] for r in rows)),
+        "ordered": money(sum(r["costing"]["ordered"] for r in rows)),
+        "budgeted": money(sum(r["costing"]["budgeted"] for r in rows)),
+        "expected_margin": money(sum(r["costing"]["expected_margin"] for r in rows)),
     }
     return {
         "jobs": rows,

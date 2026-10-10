@@ -11,7 +11,7 @@ await page.goto(BASE + '/employee-login.html', { waitUntil: 'domcontentloaded' }
 await page.waitForSelector('#email')
 await page.type('#email', email)
 await page.type('#password', 'Passw0rd-QA1')
-await Promise.all([page.waitForFunction(() => location.pathname.startsWith('/next'), { timeout: 15000 }), page.click('button[type=submit]')])
+await Promise.all([page.waitForFunction(() => location.pathname === '/next/', { timeout: 15000 }), page.click('button[type=submit]')])
 check('employee-login lands on /next/', page.url().includes('/next/'), page.url())
 await page.goto(BASE + '/employee-dashboard.html', { waitUntil: 'networkidle0' })
 check('the old staff page forwards to /next/', page.url().includes('/next/'), page.url())

@@ -60,7 +60,7 @@ export async function launch({ width = 1440, height = 1000, allow = [] } = {}) {
 
 /** Sign in as the account holder. The cookie is set on the page's origin. */
 export async function signIn(page, email = OWNER_EMAIL, password = OWNER_PASSWORD) {
-  await page.goto(BASE + '/login.html', { waitUntil: 'domcontentloaded' })
+  await page.goto(BASE + '/next/login', { waitUntil: 'domcontentloaded' })
   const status = await page.evaluate(
     async (email, password) => (await fetch('/api/client/login', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) })).status,
     email,

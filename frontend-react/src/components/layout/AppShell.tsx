@@ -30,7 +30,7 @@ export function AppShell() {
 
   // Signed out: go to the sign-in page rather than draw a page full of failures.
   useEffect(() => {
-    if (gated && isAnonymous && import.meta.env.PROD) window.location.assign('/login.html')
+    if (gated && isAnonymous && import.meta.env.PROD) window.location.assign('/next/login')
   }, [gated, isAnonymous])
 
   // A new page starts at its top, as a page does.
@@ -70,7 +70,7 @@ export function AppShell() {
                   {error ? 'Check the connection and try again.' : 'Your session has ended, or you have not signed in yet.'}
                 </p>
                 <Button asChild className="mt-6">
-                  <a href="/login.html">Go to sign in</a>
+                  <a href="/next/login">Go to sign in</a>
                 </Button>
               </div>
             ) : (

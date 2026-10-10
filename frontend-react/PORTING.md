@@ -83,13 +83,27 @@ Status: `done` · `todo`
 | Document viewer | `document-view` | not needed: it only framed the server PDF. Every screen now opens its own PDF (bill, order, purchase order, statement, slips) in a tab; Goods Receipt has its own screen |
 | Staff self-service (overview with clock, timesheet, costs, orders, leave, payslips, documents) | `my-*-view`, `employee-dashboard.html` | done; notifications, goals, team presence and profile of the old staff page are not ported |
 
-## Sign-in
-One sign-in door (`login.html`) and `employee-login.html` send the owner and staff to `/next/`.
+## Sign-in and the pages outside the menu
+Everything that used to be a separate HTML file in `frontend/` is now a React page, and the files are deleted
+(they are in git history). `/login.html` and the others are forwarded to the React page by
+`backend/app/core/static.py`, with their query string, so links already sent still work.
 
-## Pages that stay in `frontend/`
-Sign-in (`login.html`, `employee-login.html`, `superadmin-login.html`), `reset-password.html`, `onboard.html`,
-`portal.html` (partners), `superadmin.html`, `recruitment.html` (the public application form), `jobs.html`
-(the public job board) and `meeting.html`. They are separate from the ERP screens and were not rebuilt.
+| Old file | Now | Where |
+| --- | --- | --- |
+| `login.html`, `employee-login.html` | `/next/login` (one door for the Master and staff) | `features/auth/LoginPage.tsx` |
+| `reset-password.html` | `/next/reset-password` | `features/auth/ResetPasswordPage.tsx` |
+| `onboard.html` | `/next/onboard` | `features/auth/OnboardPage.tsx` |
+| `superadmin-login.html`, `superadmin.html` | `/next/superadmin/login`, `/next/superadmin` | `features/superadmin/` |
+| `portal.html`, `portal.js` (partners) | `/next/portal` | `features/portal/` |
+| `jobs.html` (public job board) | `/next/jobs?c=...` | `features/careers/JobsPage.tsx` |
+| `recruitment.html` (application form) | `/next/apply?token=...` | `features/careers/ApplyPage.tsx` |
+| `meeting.html` | `/next/meeting?room=...` | `features/meeting/` |
+| `index.html` + `site/` (company website) | `/` (its own bundle, no ERP styles) | `features/site/` |
+| `app.html`, `hr.html`, `employee-dashboard.html` | forwards; `#approvals` etc. are mapped by `lib/legacyLinks.tsx` | |
+
+The website and the ERP are two bundles chosen in `src/main.tsx` by the address, so neither downloads the other's code or styles.
+The meeting page keeps the call, chat, screen share, hand raise and the host's admit/deny/mute-all/remove/lock;
+live captions, the noise filter, device pickers and picture-in-picture of the old page were not carried over.
 
 ## Gone with the old app, not rebuilt
 - Recruitment management (vacancies and applications): it was only in the hidden legacy part of the old app and in `hr.html`. The server side still exists.
