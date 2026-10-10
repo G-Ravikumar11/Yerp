@@ -23,6 +23,7 @@ from app.core.security import RESET_TOKEN_TTL_MINUTES, issue_reset_token, rate_l
 from app.core.serials import allocate_bill_number, allocate_po_number
 from app.schemas.auth import ForgotPasswordIn
 from app.schemas.employee_portal import EmployeeDocumentUpload
+from app.constants.approvals import APPROVAL_ENTITY_TYPES
 from app.services.approvals import (
     approval_doc,
     bill_exceeds_its_order,
@@ -37,6 +38,8 @@ from app.services.employee_portal import (
     bill_to_employee_dict,
     decide_leave,
     employee_bill_or_404,
+    employee_can_access_job,
+    filter_jobs_for_employee,
     is_working_day,
     leave_balance_for,
     should_auto_clock_in,
@@ -818,9 +821,7 @@ def employee_list_jobs(request: Request, db: Session = Depends(get_db)):
         models.DBJob.client_id == emp.client_id,
         ~models.DBJob.status.in_(JOB_CLOSED_STATUSES),
     )
-    allowed = employee_site_ids(db, emp)
-    if allowed is not None:
-        query = query.filter(models.DBJob.id.in_(allowed or {0}))
+    query = filter_jobs_for_employee(query, emp, db)
     jobs = query.order_by(models.DBJob.id.desc()).all()
     return {"jobs": [{"id": j.id, "number": j.number, "name": j.name,
                       "customer_name": j.customer_name or "",
@@ -851,8 +852,8 @@ def employee_set_attendance_job(request: Request, body: dict = None,
 
 @router.get("/api/employee/approvals")
 def employee_pending_approvals(request: Request, db: Session = Depends(get_db)):
-    """What is waiting on this person to decide."""
-    emp = require_employee_permission(request, db, "bills.approve")
+    """What is waiting on this person to decide, or upcoming in their queue."""
+    emp = get_employee_user(request, db)
     steps = db.query(models.DBApprovalChain).filter(
         models.DBApprovalChain.client_id == emp.client_id,
         models.DBApprovalChain.approver_id == emp.id,
@@ -864,8 +865,17 @@ def employee_pending_approvals(request: Request, db: Session = Depends(get_db)):
         doc = approval_doc(db, s.entity_type, s.entity_id, emp.client_id)
         if not doc or doc.approval_status != "pending":
             continue
+
+        job_id = getattr(doc, "job_id", None)
+        if job_id and not employee_can_access_job(db, emp, job_id):
+            continue
+
         submitter = db.query(models.DBEmployee).filter(
-            models.DBEmployee.id == s.employee_id).first()
+            models.DBEmployee.id == s.employee_id,
+            models.DBEmployee.client_id == emp.client_id,
+        ).first()
+
+        current_step = doc.current_approval_step or 0
         row = {
             "step_id": s.id, "step": s.step,
             "entity_type": s.entity_type, "entity_id": doc.id,
@@ -873,22 +883,22 @@ def employee_pending_approvals(request: Request, db: Session = Depends(get_db)):
             "vendor_name": (getattr(doc, "vendor_name", "")
                             or getattr(doc, "supplier_name", "")
                             or getattr(doc, "to_contact", "")),
-            "total": getattr(doc, "total", None) or getattr(doc, "due", 0.0),
+            "total": getattr(doc, "total", None) if getattr(doc, "total", None) is not None else getattr(doc, "due", 0.0),
             "category": getattr(doc, "category", ""),
             "notes": getattr(doc, "notes", ""),
             "issue_date": getattr(doc, "issue_date", ""),
-            "submitted_by_name": employee_name(submitter),
-            "current_step": doc.current_approval_step or 0,
-            # An order commits money that has not been spent yet; a bill is
-            # money already owed. An approver should be told which they are
-            # looking at before they sign it.
+            "submitted_by_name": employee_name(submitter) if submitter else "",
+            "current_step": current_step,
             "kind": {"purchase_order": "Purchase order", "bill": "Bill",
-                     "invoice": "Invoice"}.get(s.entity_type, s.entity_type),
-            "job_name": job_label_for(db, getattr(doc, "job_id", None)),
+                     "invoice": "Invoice", "work_order": "Work order"}.get(
+                         s.entity_type, s.entity_type.replace("_", " ").title()),
+            "job_name": job_label_for(db, job_id),
             "over_order": bill_exceeds_its_order(db, doc, s.entity_type),
         }
-        # Steps above the current rung are real, but not this person's turn yet.
-        (waiting if s.step == (doc.current_approval_step or 0) else later).append(row)
+        if s.step == current_step:
+            waiting.append(row)
+        elif s.step > current_step:
+            later.append(row)
 
     return {"pending": waiting, "upcoming": later}
 
@@ -897,7 +907,7 @@ def employee_pending_approvals(request: Request, db: Session = Depends(get_db)):
 def employee_approval_action(step_id: int, request: Request, body: dict = None,
                              db: Session = Depends(get_db)):
     """Approve or send back a document addressed to this approver."""
-    emp = require_employee_permission(request, db, "bills.approve")
+    emp = get_employee_user(request, db)
     body = body or {}
     step = db.query(models.DBApprovalChain).filter(
         models.DBApprovalChain.id == step_id,
@@ -906,22 +916,42 @@ def employee_approval_action(step_id: int, request: Request, body: dict = None,
     if not step:
         raise HTTPException(status_code=404, detail="Approval step not found")
     if step.approver_id != emp.id:
-        # Not "forbidden" in the abstract: this step belongs to someone else,
-        # and saying so stops people hunting for a permission they do need.
         raise HTTPException(status_code=403, detail="This approval is addressed to somebody else")
-    return decide_approval_step(db, step, body.get("action", ""), body.get("notes", ""),
+
+    action = (body.get("action") or "").strip().lower()
+    notes = (body.get("notes") or "").strip()
+    if action == "reject" and not notes:
+        raise HTTPException(status_code=400, detail="Please say why, so the person who raised it knows.")
+
+    return decide_approval_step(db, step, action, notes,
                                 request, emp.client_id, actor=employee_name(emp))
 
 
 @router.get("/api/employee/approvals/history/{entity_type}/{entity_id}")
 def employee_approval_history(entity_type: str, entity_id: int, request: Request,
                               db: Session = Depends(get_db)):
-    emp = require_employee_permission(request, db, "bills.submit")
-    if entity_type not in ("invoice", "bill"):
+    emp = get_employee_user(request, db)
+    if entity_type not in APPROVAL_ENTITY_TYPES:
         raise HTTPException(status_code=400, detail="Unknown document type")
     doc = approval_doc(db, entity_type, entity_id, emp.client_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    is_submitter = getattr(doc, "submitted_by", None) == emp.id
+    has_global_view = employee_can(emp, "bills.view_all") or employee_can(emp, "reports.view")
+    is_approver = db.query(models.DBApprovalChain.id).filter(
+        models.DBApprovalChain.client_id == emp.client_id,
+        models.DBApprovalChain.entity_type == entity_type,
+        models.DBApprovalChain.entity_id == entity_id,
+        models.DBApprovalChain.approver_id == emp.id,
+    ).first() is not None
+
+    job_id = getattr(doc, "job_id", None)
+    is_job_authorized = job_id is not None and employee_can_access_job(db, emp, job_id)
+
+    if not (is_submitter or is_approver or has_global_view or is_job_authorized):
+        raise HTTPException(status_code=403, detail="You are not authorized to view the history for this document")
+
     return {"history": get_approval_chain_history(entity_type, entity_id, db)}
 
 
@@ -1401,9 +1431,7 @@ def employee_today(request: Request, db: Session = Depends(get_db)):
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     q = db.query(models.DBJob).filter(models.DBJob.client_id == emp.client_id,
                                       ~models.DBJob.status.in_(JOB_CLOSED_STATUSES))
-    allowed = employee_site_ids(db, emp)
-    if allowed is not None:
-        q = q.filter(models.DBJob.id.in_(allowed or {0}))
+    q = filter_jobs_for_employee(q, emp, db)
     jobs = q.order_by(models.DBJob.number).limit(30).all()
     me = "employee:%d" % emp.id
     sites, waiting = [], []

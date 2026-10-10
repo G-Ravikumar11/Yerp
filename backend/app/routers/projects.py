@@ -12,7 +12,7 @@ from app.constants.common import DRAWING_STATUSES
 from app.constants.crm import OPEN_INVOICE_STATUSES
 from app.constants.projects import DRAWING_DISCIPLINES, JOB_CLOSED_STATUSES, JOB_FINISHED, WEATHER
 from app.core.audit import log_audit
-from app.core.auth import get_client_user, owned_or_404, require_erp_read, require_items_access, wo_actor
+from app.core.auth import get_client_user, owned_or_404, require_erp_read, require_items_access, session_person, wo_actor
 from app.core.cache import cached_read
 from app.core.currency import DEFAULT_CURRENCY, money, totals_by_currency
 from app.core.gst import GST_STATES
@@ -32,7 +32,11 @@ from app.schemas.projects import (
 )
 from app.services.assets import asset_costs, asset_dict
 from app.services.crm import invoice_overdue_days, quote_display_status
-from app.services.employee_portal import bill_to_employee_dict
+from app.services.employee_portal import (
+    bill_to_employee_dict,
+    employee_can_access_job,
+    filter_jobs_for_employee,
+)
 from app.services.procurement import purchase_order_to_dict
 from app.services.projects import (
     _apply_activity,
@@ -158,7 +162,10 @@ def get_dashboard_summary(request: Request, db: Session = Depends(get_db)):
 def list_jobs(request: Request, status: str = "", q: str = "", open_only: bool = False, costing: bool = True,
               db: Session = Depends(get_db)):
     client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage"))
+    _, emp = session_person(request, db)
     query = db.query(models.DBJob).filter(models.DBJob.client_id == client.id)
+    if emp is not None:
+        query = filter_jobs_for_employee(query, emp, db)
     if status:
         query = query.filter(models.DBJob.status == validate_job_status(status))
     if open_only:
@@ -181,6 +188,9 @@ def list_jobs(request: Request, status: str = "", q: str = "", open_only: bool =
 def get_job(job_id: int, request: Request, db: Session = Depends(get_db)):
     """The job, its money, and everything filed against it."""
     client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage"))
+    _, emp = session_person(request, db)
+    if emp is not None and not employee_can_access_job(db, emp, job_id):
+        raise HTTPException(status_code=403, detail="You do not have access to view this project.")
     job = job_or_404(db, client.id, job_id)
     row = job_to_dict(db, job, costing=True)
 

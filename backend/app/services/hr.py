@@ -199,25 +199,17 @@ def employee_name(emp) -> str:
 
 
 def employee_site_ids(db, emp):
-    """The job ids this employee is assigned to, or None for no restriction.
-
-    None rather than an empty set on purpose: "assigned to nothing" and
-    "allowed everything" are different answers, and returning an empty set for
-    both would lock every existing employee out of every job the moment this
-    shipped.
-    """
-    rows = db.query(models.DBEmployeeSite.job_id).filter(
-        models.DBEmployeeSite.employee_id == emp.id).all()
-    if not rows:
-        return None
-    return {r[0] for r in rows}
+    """The job ids this employee is assigned to, or None for no restriction (global access)."""
+    from app.services.employee_portal import accessible_job_ids_for
+    return accessible_job_ids_for(db, emp)
 
 
 def employee_may_use_job(db, emp, job_id) -> bool:
     if job_id is None:
         return True
-    allowed = employee_site_ids(db, emp)
-    return allowed is None or job_id in allowed
+    from app.services.employee_portal import employee_can_access_job
+    return employee_can_access_job(db, emp, job_id)
+
 
 
 def resolve_employee_job_id(db, emp, raw):
