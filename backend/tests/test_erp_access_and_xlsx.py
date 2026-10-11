@@ -79,14 +79,19 @@ def test_anyone_signed_in_can_read_the_master(tenant):
     assert tenant.get("/api/erp/vocabulary").status_code == 200
 
 
-def test_a_manager_can_raise_a_work_order(tenant):
+def test_ho_qs_raises_a_work_order_and_a_manager_does_not(tenant):
+    """Work orders are opened at head office, by HO QS - not by a manager on a site any more."""
     fg = add_item(tenant, kind="FG", item_name="SUPPLY").json()
     job = tenant.post("/api/jobs", json={"name": "Plot 7", "status": "in_progress"}).json()
     boss = staff(tenant, "manager")
+    qs = staff(tenant, "ho_qs")
+    body = {"job_id": job["id"], "lines": [{"code": fg["item_code"], "qty": 100, "rate": 50}]}
 
     sign_in(tenant, boss)
-    res = tenant.post("/api/erp/work-orders/build", json={
-        "job_id": job["id"], "lines": [{"code": fg["item_code"], "qty": 100, "rate": 50}]})
+    res = tenant.post("/api/erp/work-orders/build", json=body)
+    assert res.status_code == 403 and "HO QS" in res.json()["detail"]
+    sign_in(tenant, qs)
+    res = tenant.post("/api/erp/work-orders/build", json=body)
     assert res.status_code == 200, res.text
     assert res.json()["work_order"]["total_value"] == 5000.0
 

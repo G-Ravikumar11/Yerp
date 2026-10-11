@@ -7,6 +7,7 @@ import { FilterBar, useListFilters } from '@/components/data/filters'
 import { Badge, Button, ConfirmDialog, Stat, StatGrid } from '@/components/ui'
 import { clientOrderKeys, decideClientOrder, placeClientOrder, useClientOrders, type ClientOrder } from '@/api/clientOrders'
 import { useAction } from '@/lib/mutate'
+import { useOpenOnArrival } from '@/lib/hooks'
 import { useSession } from '@/lib/session'
 import { DeleteOrderDialog } from '@/features/deleteorder/DeleteOrderDialog'
 import { BulkBar, BulkDeleteDialog } from '@/components/data/BulkDelete'
@@ -47,7 +48,9 @@ export default function ClientOrdersPage() {
   const [material, setMaterial] = useState<ClientOrder | null>(null)
   const [viewing, setViewing] = useState<ClientOrder | null>(null)
   const [sendingBack, setSendingBack] = useState<ClientOrder | null>(null)
-  const manage = can('workorders.manage')
+  // Opening a work order is HO QS's (and the Master's); keeping one up to date is anybody's who manages them.
+  const opens = can('workorders.create')
+  useOpenOnArrival(() => setCreating(true), opens)
 
   const all = orders.data?.work_orders ?? []
   const filters = useListFilters(all, {
@@ -209,7 +212,7 @@ export default function ClientOrdersPage() {
                 <Download /> Sheet template
               </a>
             </Button>
-            {manage && (
+            {opens && (
               <>
                 <Button variant="outline" onClick={() => setFromFile(true)} title="Bring in an order that already exists as a sheet">
                   <FileUp /> From a file
@@ -241,7 +244,7 @@ export default function ClientOrdersPage() {
         rowKey={(o) => o.id}
         loading={orders.isPending}
         onRowClick={setViewing}
-        empty={filters.active ? 'Nothing matches those filters.' : 'No work orders yet. Start one with New client work order.'}
+        empty={filters.active ? 'Nothing matches those filters.' : opens ? 'No work orders yet. Start one with New client work order.' : 'No work orders yet. HO QS opens them.'}
       />
 
       <NewClientOrderModal open={creating} onOpenChange={setCreating} staff={user?.type === 'employee'} onCreated={(o) => setBudgeting(o)} />

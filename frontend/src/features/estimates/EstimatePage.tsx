@@ -5,8 +5,10 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, ConfirmDialog, Field, Input, NumField, Skeleton, Stat, StatGrid } from '@/components/ui'
 import { actOnEstimate, addEstimateItem, estimateKeys, removeEstimateItem, saveEstimateHead, useEstimate, type Estimate, type EstimateItem } from '@/api/estimates'
+import { workOrderFromTender } from '@/api/headOffice'
 import { useAction } from '@/lib/mutate'
 import { formatQty } from '@/lib/format'
+import { useSession } from '@/lib/session'
 import { formatINR } from '@/lib/utils'
 import { ESTIMATE_TONE } from './EstimatesPage'
 import { RateAnalysisModal } from './RateAnalysisModal'
@@ -27,6 +29,9 @@ export default function EstimatePage() {
   const add = useAction(() => addEstimateItem(id, item), { invalidate: refresh, success: false, onSuccess: () => setItem({ item_no: '', description: '', uom: '', quantity: 0, cost_rate: 0 }) })
   const remove = useAction((it: EstimateItem) => removeEstimateItem(id, it.id), { invalidate: refresh, success: false, onSuccess: () => setRemoving(null) })
   const act = useAction((a: { action: Act; reason?: string }) => actOnEstimate(id, a.action, a.reason), { invalidate: [...refresh, ['client-orders']], onSuccess: () => setAsking(null) })
+  // Work orders are opened at head office: a tender won by anybody else waits for HO QS to draw its order up.
+  const draws = useSession().can('workorders.create')
+  const order = useAction(() => workOrderFromTender(id), { invalidate: [...refresh, ['client-orders']] })
 
   if (q.isPending) return <Skeleton className="h-64 w-full" />
   if (!e) return <p role="alert" className="py-10 text-center text-sm text-danger">Could not open that estimate.</p>
@@ -92,6 +97,11 @@ export default function EstimatePage() {
           <>
             <Badge tone={tone}>{e.status.charAt(0) + e.status.slice(1).toLowerCase()}</Badge>
             {e.work_order && <span className="text-sm">became <strong>{e.work_order}</strong></span>}
+            {e.status === 'WON' && !e.work_order && (draws ? (
+              <Button loading={order.isPending} onClick={() => order.mutate()}>Draw up the work order</Button>
+            ) : (
+              <span className="text-sm text-muted-foreground">HO QS draws up its work order</span>
+            ))}
             <Button variant="outline" asChild><a href={`/api/estimates/${e.id}/export.xlsx`}><Download /> Excel</a></Button>
             {buttons.filter((b) => e.actions.includes(b.need)).map((b) => (
               <Button key={b.a} variant={b.primary ? 'primary' : 'outline'} loading={act.isPending && act.variables?.action === b.a} onClick={() => (b.a === 'win' || b.a === 'lose' ? setAsking(b.a) : act.mutate({ action: b.a }))}>{b.label}</Button>
@@ -130,7 +140,7 @@ export default function EstimatePage() {
 
       <RateAnalysisModal estimate={e} item={rating} onClose={() => setRating(null)} />
       <ConfirmDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)} title="Remove this item?" description="It goes, with its rate build-up." confirmLabel="Remove it" tone="danger" loading={remove.isPending} onConfirm={() => { if (removing) remove.mutate(removing) }} />
-      <ConfirmDialog open={asking === 'win'} onOpenChange={(o) => !o && setAsking(null)} title="Mark this tender as won?" description="A work order will be drawn up from it, line for line." confirmLabel="We won it" loading={act.isPending} onConfirm={() => act.mutate({ action: 'win' })} />
+      <ConfirmDialog open={asking === 'win'} onOpenChange={(o) => !o && setAsking(null)} title="Mark this tender as won?" description={draws ? 'A work order will be drawn up from it, line for line.' : 'HO QS then draws up the client work order from it, line for line.'} confirmLabel="We won it" loading={act.isPending} onConfirm={() => act.mutate({ action: 'win' })} />
       <ConfirmDialog open={asking === 'lose'} onOpenChange={(o) => !o && setAsking(null)} title="Mark this tender as lost?" confirmLabel="We lost it" tone="danger" reason={{ label: 'Why did we lose it? (L1 price, spec, timing...)' }} loading={act.isPending} onConfirm={(reason) => act.mutate({ action: 'lose', reason })} />
     </>
   )

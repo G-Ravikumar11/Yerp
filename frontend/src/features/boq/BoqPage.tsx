@@ -189,7 +189,7 @@ export default function BoqPage() {
                   <GitBranch /> New revision
                 </Button>
               )}
-              {can('workorders.manage') && viewing === undefined && (
+              {can('workorders.create') && viewing === undefined && (
                 <Button variant="outline" onClick={() => setOrdering(true)}>
                   <ShoppingCart /> Client work order
                 </Button>

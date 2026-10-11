@@ -12,6 +12,10 @@ export type SessionUser = {
   roleLabel: string
   /** owner, admin or viewer for the company login; empty for staff. Only the owner is the Master. */
   teamRole: string
+  /** The access level's code - 'ho_qs', 'planning_billing' and so on. 'owner' for the company login. */
+  roleCode: string
+  /** HO QS or HO Coordinator: they land on the HO portal rather than a site's day. */
+  headOffice: boolean
   /** The department the owner has put this person in; staff see it on their own sign-in. */
   department: string
 }
@@ -22,7 +26,9 @@ type StaffMe = {
   email: string
   full_name?: string
   permissions?: string[]
+  permission_role?: string
   permission_role_label?: string
+  head_office?: boolean
   department?: string
 }
 
@@ -52,6 +58,8 @@ async function resolveSession(): Promise<SessionUser | null> {
         employeeId: null,
         roleLabel: owner.role && owner.role !== 'owner' ? (owner.role === 'viewer' ? 'Viewer' : 'Admin') : 'Master',
         teamRole: owner.role || 'owner',
+        roleCode: 'owner',
+        headOffice: false,
         department: '',
       }
     }
@@ -70,6 +78,8 @@ async function resolveSession(): Promise<SessionUser | null> {
         employeeId: staff.id,
         roleLabel: staff.permission_role_label || 'Staff',
         teamRole: '',
+        roleCode: staff.permission_role || 'staff',
+        headOffice: !!staff.head_office,
         department: staff.department ?? '',
       }
     }
@@ -97,6 +107,8 @@ export function useSession() {
     // Only an answer of "nobody" is signed out. No answer at all (no signal) is not.
     isAnonymous: q.isSuccess && !user,
     isOwner: user?.type === 'owner' && user.teamRole === 'owner',
+    /** HO QS or HO Coordinator. */
+    isHeadOffice: !!user?.headOffice,
     // A failed refresh with a person already known (offline, or the server restarting) is not
     // "could not reach the server" - the person is still there, and so is their data.
     error: user ? null : q.error,

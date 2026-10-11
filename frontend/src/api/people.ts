@@ -64,6 +64,8 @@ export interface Permission {
   key: string
   group: string
   label: string
+  /** Held only by this access level (and the Master) - 'ho_qs' for opening vendor codes, work orders and BOQs. */
+  only_role?: string
 }
 
 export interface PermissionRole {
@@ -73,6 +75,8 @@ export interface PermissionRole {
   description: string
   permissions: string[]
   retired?: boolean
+  /** HO QS and HO Coordinator: they land on the HO portal. */
+  head_office?: boolean
 }
 
 export interface HrCatalogue {

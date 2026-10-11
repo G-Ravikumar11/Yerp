@@ -209,13 +209,13 @@ def priced_order(client):
 
 def test_a_work_order_reaches_the_project_manager_and_is_approved_from_the_inbox(tenant, portal):
     pm = person(tenant, "project_manager")
-    qs = person(tenant, "planning_billing")
+    qs = person(tenant, "ho_qs")
     sign_in(portal, qs)
     order = priced_order(portal)
     res = portal.post("/api/wo/orders/%d/submit" % order["id"], json={})
     assert res.status_code == 200, res.text
     assert pm["first_name"] in " ".join(res.json()["order"]["pending_with"])
-    # Billing drafts; billing does not approve.
+    # HO QS drafts; HO QS does not approve.
     assert portal.post("/api/wo/orders/%d/approve" % order["id"], json={}).status_code == 403
     assert not [i for i in inbox(portal) if i["kind"] == "subcontract_order"]
 
@@ -237,8 +237,12 @@ def test_a_work_order_reaches_the_project_manager_and_is_approved_from_the_inbox
 
 
 def test_nobody_approves_the_work_order_they_raised(tenant, portal):
-    pm = person(tenant, "project_manager")
-    sign_in(portal, pm)
+    # HO QS opens the orders; given the right to approve as well, still not their own.
+    qs = person(tenant, "ho_qs")
+    res = tenant.put("/api/employees/%d/permissions" % qs["id"], json={
+        "permission_role": "ho_qs", "permissions": sorted(main.ROLE_PERMISSIONS["ho_qs"] | {"subcontracts.approve"})})
+    assert res.status_code == 200, res.text
+    sign_in(portal, qs)
     order = priced_order(portal)
     portal.post("/api/wo/orders/%d/submit" % order["id"], json={})
     res = portal.post("/api/wo/orders/%d/approve" % order["id"], json={})

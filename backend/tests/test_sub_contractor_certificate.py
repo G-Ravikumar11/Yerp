@@ -65,8 +65,8 @@ def test_an_aadhaar_is_twelve_digits(tenant):
     assert res.status_code == 400
 
 
-def test_a_gang_registered_on_site_waits_for_approval(tenant, portal):
-    qs = staff(tenant, "planning_billing")
+def test_a_gang_registered_by_ho_qs_waits_for_approval(tenant, portal):
+    qs = staff(tenant, "ho_qs")
     pm = staff(tenant, "project_manager")
     sign_in(portal, qs)
     con = portal.post("/api/wo/contractors", json={"company_name": "Najir Hossain", "nature_of_work": "Concrete"}).json()
@@ -84,7 +84,7 @@ def test_a_gang_registered_on_site_waits_for_approval(tenant, portal):
 
 
 def test_a_form_sent_back_says_why_and_goes_back_when_put_right(tenant, portal):
-    qs = staff(tenant, "planning_billing")
+    qs = staff(tenant, "ho_qs")
     sign_in(portal, qs)
     con = portal.post("/api/wo/contractors", json={"company_name": "Rahul"}).json()
     assert tenant.post("/api/wo/contractors/%d/reject" % con["id"], json={}).status_code == 400
@@ -97,7 +97,7 @@ def test_a_form_sent_back_says_why_and_goes_back_when_put_right(tenant, portal):
 
 
 def test_no_order_is_approved_for_a_gang_not_yet_taken_on(tenant, portal):
-    qs = staff(tenant, "planning_billing")
+    qs = staff(tenant, "ho_qs")
     sign_in(portal, qs)
     con = portal.post("/api/wo/contractors", json={"company_name": "Pending Gang"}).json()
     order = draft(tenant, contractor_id=con["id"])

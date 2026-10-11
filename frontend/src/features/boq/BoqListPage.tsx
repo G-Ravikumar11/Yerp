@@ -7,6 +7,7 @@ import { Badge, Button, Field, Input, Modal, Select } from '@/components/ui'
 import { boqKeys, createBoq, useBoqs, type BoqHead } from '@/api/boq'
 import { projectLabel, useProjects } from '@/api/projects'
 import { useAction } from '@/lib/mutate'
+import { useOpenOnArrival } from '@/lib/hooks'
 import { useSession } from '@/lib/session'
 import { formatINR } from '@/lib/utils'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
@@ -18,6 +19,9 @@ export default function BoqListPage() {
   const list = useBoqs()
   const projects = useProjects()
   const [creating, setCreating] = useState(false)
+  // A project's BOQ is opened at head office, by HO QS (and the Master).
+  const opens = can('boq.create')
+  useOpenOnArrival(() => setCreating(true), opens)
   const [job, setJob] = useState('')
   const [title, setTitle] = useState('')
   const rows = list.data?.boqs ?? []
@@ -57,14 +61,14 @@ export default function BoqListPage() {
         title="BOQ"
         description="The client's bill of quantities, kept once. Sections, items and sub-items as their sheet numbers them; orders and bills hang off it."
         actions={
-          can('workorders.manage') && (
+          opens && (
             <Button onClick={() => setCreating(true)}>
               <Plus /> New BOQ
             </Button>
           )
         }
       />
-      <DataTable label="BOQs" rows={rows} columns={columns} rowKey={(b) => b.id} loading={list.isPending} onRowClick={(b) => nav(`/projects/boq/${b.id}`)} empty="No BOQ yet. Start one for a project, then paste or import the client's sheet." />
+      <DataTable label="BOQs" rows={rows} columns={columns} rowKey={(b) => b.id} loading={list.isPending} onRowClick={(b) => nav(`/projects/boq/${b.id}`)} empty={opens ? "No BOQ yet. Start one for a project, then paste or import the client's sheet." : 'No BOQ yet. HO QS opens them.'} />
 
       <Modal
         open={creating}

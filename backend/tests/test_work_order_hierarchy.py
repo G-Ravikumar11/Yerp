@@ -12,9 +12,9 @@ def route(client, order_id):
 def test_the_route_climbs_every_rank_to_the_owner(tenant, portal):
     pm = person(tenant, "project_manager")
     head = person(tenant, "head_projects")
-    qs = person(tenant, "planning_billing")
+    qs = person(tenant, "ho_qs")
     sign_in(portal, qs)
-    order = priced_order(portal)          # raised by the planner, as it is on site
+    order = priced_order(portal)          # raised by HO QS, as every order is
     assert portal.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 200
     steps = route(tenant, order["id"])
     assert [s["name"].split()[0] for s in steps[:2]] == [pm["first_name"], head["first_name"]]
@@ -46,9 +46,9 @@ def test_the_route_climbs_every_rank_to_the_owner(tenant, portal):
 def test_sent_back_midway_it_returns_to_draft_and_the_route_closes(tenant, portal):
     pm = person(tenant, "project_manager")
     person(tenant, "head_projects")
-    qs = person(tenant, "planning_billing")
+    qs = person(tenant, "ho_qs")
     sign_in(portal, qs)
-    order = priced_order(portal)          # raised by the planner, as it is on site
+    order = priced_order(portal)          # raised by HO QS, as every order is
     portal.post("/api/wo/orders/%d/submit" % order["id"], json={})
     sign_in(portal, pm)
     res = portal.post("/api/wo/orders/%d/reject" % order["id"], json={"comments": "Rate for shuttering too high"})
@@ -58,9 +58,9 @@ def test_sent_back_midway_it_returns_to_draft_and_the_route_closes(tenant, porta
 
 def test_the_owner_may_sign_at_any_point_and_it_is_the_last_word(tenant, portal):
     person(tenant, "project_manager")
-    qs = person(tenant, "planning_billing")
+    qs = person(tenant, "ho_qs")
     sign_in(portal, qs)
-    order = priced_order(portal)          # raised by the planner, as it is on site
+    order = priced_order(portal)          # raised by HO QS, as every order is
     portal.post("/api/wo/orders/%d/submit" % order["id"], json={})
     res = tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
     assert res.json()["order"]["status"] == "APPROVED"
@@ -70,9 +70,9 @@ def test_the_owner_may_sign_at_any_point_and_it_is_the_last_word(tenant, portal)
 def test_somebody_who_has_left_is_passed_over(tenant, portal):
     pm = person(tenant, "project_manager")
     head = person(tenant, "head_projects")
-    qs = person(tenant, "planning_billing")
+    qs = person(tenant, "ho_qs")
     sign_in(portal, qs)
-    order = priced_order(portal)          # raised by the planner, as it is on site
+    order = priced_order(portal)          # raised by HO QS, as every order is
     portal.post("/api/wo/orders/%d/submit" % order["id"], json={})
     tenant.put("/api/employees/%d" % pm["id"], json={"status": "terminated"})
     pending = tenant.get("/api/wo/orders/%d" % order["id"]).json()["order"]["pending_with"]
@@ -83,9 +83,9 @@ def test_the_owner_can_leave_the_last_signature_to_the_heads(tenant, portal):
     assert tenant.put("/api/approval-rules", json={"owner_signs_work_orders": False}).status_code == 200
     assert tenant.get("/api/approval-rules").json()["owner_signs_work_orders"] is False
     pm = person(tenant, "project_manager")
-    qs = person(tenant, "planning_billing")
+    qs = person(tenant, "ho_qs")
     sign_in(portal, qs)
-    order = priced_order(portal)          # raised by the planner, as it is on site
+    order = priced_order(portal)          # raised by HO QS, as every order is
     portal.post("/api/wo/orders/%d/submit" % order["id"], json={})
     assert len(route(tenant, order["id"])) == 1
     sign_in(portal, pm)
@@ -137,19 +137,22 @@ def test_placing_a_client_order_on_site_waits_for_its_approvals(tenant, portal):
 
 def test_staff_see_only_the_orders_they_made_or_have_to_sign_or_were_shown(tenant, portal):
     pm = person(tenant, "project_manager")
-    qs = person(tenant, "planning_billing")
+    qs = person(tenant, "ho_qs")
+    planner = person(tenant, "planning_billing")
     site = person(tenant, "staff")
-    # The owner's own draft is the owner's alone.
+    # The owner's own draft is the owner's - and head office's, which sees every order - but no site's.
     owners = priced_order(tenant)
-    sign_in(portal, qs)
+    sign_in(portal, planner)
     assert portal.get("/api/wo/orders/%d" % owners["id"]).status_code == 404
     assert owners["id"] not in [o["id"] for o in portal.get("/api/wo/orders").json()["orders"]]
     assert portal.get("/api/wo/orders/%d/document.pdf" % owners["id"]).status_code == 404
-    # The planner's draft: theirs alone - not their senior's, not the site's.
+    sign_in(portal, qs)
+    assert portal.get("/api/wo/orders/%d" % owners["id"]).status_code == 200
+    # HO QS's draft: not the project manager's, not the planner's, not the site's.
     mine = priced_order(portal)
     assert portal.get("/api/wo/orders/%d" % mine["id"]).status_code == 200
     assert mine["id"] in [o["id"] for o in portal.get("/api/wo/orders").json()["orders"]]
-    for other in (pm, site):
+    for other in (pm, planner, site):
         sign_in(portal, other)
         assert portal.get("/api/wo/orders/%d" % mine["id"]).status_code == 404
         assert mine["id"] not in [o["id"] for o in portal.get("/api/wo/orders").json()["orders"]]
@@ -163,7 +166,7 @@ def test_staff_see_only_the_orders_they_made_or_have_to_sign_or_were_shown(tenan
     # Sending the owner's order for approval shows it to whoever has to sign it, and to no one else.
     assert tenant.post("/api/wo/orders/%d/submit" % owners["id"], json={}).status_code == 200
     on_route = {r["name"] for r in tenant.get("/api/wo/orders/%d" % owners["id"]).json()["order"]["approval_route"]}
-    for who in (qs, pm, site):
+    for who in (planner, pm, site):
         sign_in(portal, who)
         name = "%s %s" % (who["first_name"], who["last_name"])
         seen = portal.get("/api/wo/orders/%d" % owners["id"]).status_code == 200
@@ -192,7 +195,7 @@ def test_the_manager_the_owner_set_is_asked_first_even_while_still_onboarding(te
     earlier = person(tenant, "project_manager")                  # created first, holds the right
     chosen = make_employee(tenant, permission_role="project_manager", password="Crew1234")
     tenant.put("/api/employees/%d" % chosen["id"], json={"status": "onboarding"})
-    qs = make_employee(tenant, permission_role="planning_billing", password="Crew1234", reports_to=chosen["id"])
+    qs = make_employee(tenant, permission_role="ho_qs", password="Crew1234", reports_to=chosen["id"])
     tenant.put("/api/employees/%d" % qs["id"], json={"status": "onboarding"})
     sign_in(portal, qs)
     order = priced_order(portal)

@@ -21,7 +21,7 @@ from app.constants.crm import (
     SALES_STAGES,
 )
 from app.core.audit import log_audit
-from app.core.auth import get_client_user, owned_or_404, require_erp_read, require_items_access, wo_actor
+from app.core.auth import get_client_user, owned_or_404, require_erp_read, require_items_access, session_can, wo_actor
 from app.core.currency import (
     DEFAULT_CURRENCY,
     compute_invoice_totals,
@@ -989,6 +989,30 @@ def set_rate_analysis(est_id: int, item_id: int, body: dict, request: Request,
     return {"ok": True, "estimate": estimate_dict(db, est, detail=True)}
 
 
+# Registered before /api/estimates/{est_id}/{action}, which would otherwise take "work-order" for an action.
+@router.post("/api/estimates/{est_id}/work-order")
+def work_order_from_won_tender(est_id: int, request: Request, db: Session = Depends(get_db)):
+    """HO QS draws up the client's work order from a tender somebody else marked won:
+    the same order, line for line, that winning it draws up when HO QS marks it."""
+    client = require_items_access(request, db, "workorders.create")
+    est = estimate_or_404(db, client.id, est_id)
+    if (est.status or "") != "WON":
+        raise HTTPException(409, "Only a won tender becomes a work order.")
+    if est.work_order_id and db.query(models.DBWorkOrder.id).filter(
+            models.DBWorkOrder.id == est.work_order_id, models.DBWorkOrder.client_id == client.id).first():
+        raise HTTPException(409, "%s already has its work order." % (est.number or "This tender"))
+    if not est.job_id:
+        raise HTTPException(409, "Attach the tender to its project first.")
+    made = work_order_from_estimate(db, client, est, request)
+    est.work_order_id = made.id
+    db.commit()
+    db.refresh(est)
+    return {"ok": True, "estimate": estimate_dict(db, est, detail=True),
+            "work_order": work_order_to_dict(db, made),
+            "message": "%s drawn up from %s, line for line - place it when the client's order arrives."
+                       % (made.number, est.number)}
+
+
 @router.post("/api/estimates/{est_id}/{action}")
 def act_on_estimate(est_id: int, action: str, request: Request, body: dict = None,
                     db: Session = Depends(get_db)):
@@ -1024,8 +1048,12 @@ def act_on_estimate(est_id: int, action: str, request: Request, body: dict = Non
             db.add(job)
             db.flush()
             est.job_id = job.id
-        made = work_order_from_estimate(db, client, est, request)
-        est.work_order_id = made.id
+        # The work order is drawn up from it there and then when HO QS (or the
+        # Master) marks it won. Anybody else marks it won, and HO QS draws the
+        # order up from it - work orders are opened at head office.
+        if session_can(request, db, "workorders.create"):
+            made = work_order_from_estimate(db, client, est, request)
+            est.work_order_id = made.id
         est.decided_at = now
     elif move == "LOSE":
         est.lost_reason = (body.get("reason") or "").strip()
@@ -1046,6 +1074,9 @@ def act_on_estimate(est_id: int, action: str, request: Request, body: dict = Non
         out["work_order"] = work_order_to_dict(db, made)
         out["message"] = ("%s won. %s drawn up from it, line for line - place it "
                           "when the client's order arrives." % (est.number, made.number))
+    elif move == "WIN":
+        out["message"] = ("%s won. HO QS draws up the client's work order from it."
+                          % est.number)
     return out
 
 

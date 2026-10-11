@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 /** A value that follows another after it has settled - so a search box asks the server once, not per keystroke. */
 export function useDebounced<T>(value: T, ms = 250): T {
@@ -22,4 +23,23 @@ export function useMinWidth(px: number): boolean {
     return () => mq.removeEventListener('change', on)
   }, [query])
   return matches
+}
+
+/**
+ * Open a register's "new" form when the page is arrived at with ?new=1 - the HO portal's
+ * "Open a vendor code" lands on the Vendor Register with the form already up. Only when
+ * `allowed`: a person without the right sees the register, not a form they would be refused at.
+ */
+export function useOpenOnArrival(open: () => void, allowed: boolean) {
+  const [params, setParams] = useSearchParams()
+  const asked = params.get('new') === '1'
+  useEffect(() => {
+    // Not yet allowed may be not yet known (the session still loading): wait rather than drop the ask.
+    if (!asked || !allowed) return
+    open()
+    const next = new URLSearchParams(params)
+    next.delete('new')
+    setParams(next, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asked, allowed])
 }

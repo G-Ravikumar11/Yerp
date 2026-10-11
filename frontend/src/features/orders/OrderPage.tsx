@@ -169,7 +169,7 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
                 <Download /> Schedule
               </a>
             </Button>
-            {can('workorders.manage') && (
+            {can('workorders.create') && (
               <Button variant="outline" size="sm" loading={copy.isPending} onClick={() => copy.mutate()}>
                 <Copy /> Copy
               </Button>
@@ -196,7 +196,7 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
               </Button>
             )}
             {has('EXECUTE') && <Button onClick={() => setDialog('execute')}>{label('EXECUTE')}</Button>}
-            {has('AMEND') && can('workorders.manage') && (
+            {has('AMEND') && can('workorders.create') && (
               <Button variant="outline" onClick={() => setDialog('amend')}>
                 {label('AMEND')}
               </Button>

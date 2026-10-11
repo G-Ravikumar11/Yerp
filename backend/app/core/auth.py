@@ -11,7 +11,7 @@ from app import models
 from app.db import SessionLocal
 
 from app.core.config import ADMIN_PANEL_MIN_LENGTH, logger
-from app.core.permissions import PORTAL_PERMISSIONS, employee_can
+from app.core.permissions import HO_QS_ONLY, HO_QS_ONLY_REFUSAL, PORTAL_PERMISSIONS, employee_can
 from app.core.security import admin_panel_password, hash_password, verify_password
 
 
@@ -136,6 +136,11 @@ def require_items_access(request, db, permission="items.manage"):
     # by the store and by the project office alike.
     wanted = (permission,) if isinstance(permission, str) else tuple(permission or ())
     if wanted and not any(employee_can(emp, p) for p in wanted):
+        if set(wanted) <= HO_QS_ONLY:
+            # Not something HR hands out: say who does it rather than whom to ask.
+            raise HTTPException(
+                status_code=403,
+                detail=HO_QS_ONLY_REFUSAL.get(wanted[0], "Only HO QS can do that") + " - ask HO QS to open it.")
         label = " or ".join(next((p["label"] for p in PORTAL_PERMISSIONS if p["key"] == w), w)
                             for w in wanted)
         raise HTTPException(
@@ -150,6 +155,22 @@ def require_items_access(request, db, permission="items.manage"):
 
 def require_workorder_access(request, db):
     return require_items_access(request, db, "workorders.manage")
+
+
+def session_can(request, db, permission) -> bool:
+    """Whether whoever is calling holds a right - asked, not enforced, for a step that is
+    taken only by those who may (a won tender draws up its work order only for HO QS).
+    The account holder and their admins hold everything; a read-only member nothing."""
+    try:
+        get_client_user(request, db)
+        return current_role(request, db) != "viewer"
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            return False
+    try:
+        return employee_can(get_employee_user(request, db), permission)
+    except HTTPException:
+        return False
 
 
 def require_erp_read(request, db):
@@ -196,14 +217,17 @@ def get_employee_user(request: Request, db: Session):
     client = db.query(models.DBClient).filter(models.DBClient.id == emp.client_id).first()
     if not client or not client.is_active:
         raise HTTPException(status_code=403, detail="Account disabled")
-    STAFF_VIEWER.set(emp.id)
+    # Head office looks after every site, so it sees every order and bill, as the owner does;
+    # anybody else sees the ones they have a hand in.
+    STAFF_VIEWER.set(None if employee_can(emp, "ho.view_all") else emp.id)
     CURRENT_CLIENT_ID.set(client.id)
     return emp
 
 
 # The member of staff this request is for, once it has been worked out - so a
 # lookup deep inside a route can ask "may this person see it" without every
-# route passing the person down. Unset for the owner. One per request.
+# route passing the person down. Unset for the owner, and for head office,
+# which sees every site's orders and bills. One per request.
 STAFF_VIEWER = contextvars.ContextVar("staff_viewer", default=None)
 
 
