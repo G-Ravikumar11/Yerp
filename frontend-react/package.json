@@ -9,6 +9,8 @@
     "test": "vitest run",
     "e2e": "node e2e/run-all.mjs",
     "build:next": "npm run build",
+    "build:mobile": "vite build --mode mobile",
+    "cap": "cap",
     "lint": "oxlint",
     "preview": "vite preview"
   },
@@ -36,9 +38,16 @@
     "recharts": "^3.10.1",
     "tailwind-merge": "^3.7.0",
     "tailwindcss": "^4.3.3",
-    "zustand": "^5.0.15"
+    "zustand": "^5.0.15",
+    "@capacitor/core": "^7.0.1",
+    "@capacitor/android": "^7.0.1",
+    "@capacitor/ios": "^7.0.1",
+    "@capacitor/app": "^7.0.0",
+    "@capacitor/status-bar": "^7.0.0",
+    "@capacitor/splash-screen": "^7.0.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "^7.0.1",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { ApiError, api } from '@/lib/api'
+import { ApiError, api, apiUrl } from '@/lib/api'
 import { queryClient } from '@/lib/query'
 import { toast } from './toast'
 
@@ -116,7 +116,7 @@ export function watchConnection() {
     const s = useOffline.getState()
     if (s.online && !s.queue.length) return
     try {
-      const res = await fetch('/api/health', { cache: 'no-store' })
+      const res = await fetch(apiUrl('/api/health'), { cache: 'no-store' })
       if (res.ok && !s.online) s.setOnline(true)
       else if (res.ok && s.queue.some((q) => q.status === 'waiting')) void s.flush()
     } catch {

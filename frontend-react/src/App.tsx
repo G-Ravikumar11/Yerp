@@ -40,11 +40,14 @@ export default function App() {
     return () => window.removeEventListener('yerp:unauthorised', on)
   }, [])
 
+  const rawBase = import.meta.env.BASE_URL || ''
+  const basename = rawBase === './' || rawBase === '/' ? '' : rawBase.replace(/\/$/, '')
+
   return (
     <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions} onSuccess={() => void queryClient.invalidateQueries({ queryKey: ['session'] })}>
       <MotionConfig reducedMotion="user">
       <TooltipProvider>
-        <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+        <BrowserRouter basename={basename}>
           <Routes>
             <Route element={<AppShell />}>
               <Route index element={<Home />} />

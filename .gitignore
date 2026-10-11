@@ -28,3 +28,13 @@ node_modules/
 
 # Editor and agent workspace, not part of the product.
 .claude/
+
+# Mobile native build artifacts & keystores
+*.keystore
+*.jks
+frontend-react/android/.gradle/
+frontend-react/android/build/
+frontend-react/android/app/build/
+frontend-react/ios/DerivedData/
+frontend-react/dist/
+

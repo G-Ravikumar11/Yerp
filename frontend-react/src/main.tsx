@@ -3,8 +3,12 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App'
 import { registerSW } from 'virtual:pwa-register'
+import { Capacitor } from '@capacitor/core'
+import { initMobile } from './lib/mobile'
 import { toast } from './stores/toast'
 import { useOffline } from './stores/offline'
+
+void initMobile()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -16,7 +20,7 @@ createRoot(document.getElementById('root')!).render(
 // showing the version it opened with. A new build is taken straight away when the app has only just
 // opened (nothing typed, nothing to lose); later it is offered, never forced, because reloading under
 // someone who is halfway through a form would lose it.
-if (import.meta.env.PROD) {
+if (import.meta.env.PROD && !Capacitor.isNativePlatform()) {
   const opened = Date.now()
   const update = registerSW({
     onNeedRefresh() {

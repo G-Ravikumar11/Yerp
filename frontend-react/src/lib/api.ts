@@ -14,13 +14,27 @@ type Options = Omit<RequestInit, 'body'> & {
 }
 
 /**
+ * Resolves an API or backend path against the configured backend base URL
+ * (e.g. from VITE_API_BASE_URL when running inside Capacitor) or leaves
+ * it relative when running directly in the browser served alongside FastAPI.
+ */
+export function apiUrl(path: string): string {
+  if (!path) return ''
+  if (/^https?:\/\//i.test(path)) return path
+  const base = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/$/, '')
+  if (!base) return path
+  return path.startsWith('/') ? `${base}${path}` : `${base}/${path}`
+}
+
+/**
  * The one door to the FastAPI backend. Sends the session cookie, speaks JSON,
  * and turns the backend's `{ detail }` errors into an ApiError so screens can
  * show the server's own plain-language reason.
  */
 export async function api<T = unknown>(path: string, { body, headers, quiet, ...init }: Options = {}): Promise<T> {
   const isForm = typeof FormData !== 'undefined' && body instanceof FormData
-  const res = await fetch(path, {
+  const targetUrl = apiUrl(path)
+  const res = await fetch(targetUrl, {
     credentials: 'include',
     ...init,
     headers: { ...(body !== undefined && !isForm ? { 'Content-Type': 'application/json' } : {}), ...headers },

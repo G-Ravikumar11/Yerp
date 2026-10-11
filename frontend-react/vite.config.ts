@@ -11,10 +11,13 @@ export default defineConfig(({ mode, command }) => {
   // session cookie stays same-origin and no CORS setup is needed in dev.
   const api = env.VITE_API_TARGET || 'http://127.0.0.1:8931'
 
+  const isMobile = mode === 'mobile' || env.VITE_MOBILE === 'true'
+
   return {
-    // Built, the app is served by the backend under /next/; in development it owns the root.
-    base: command === 'build' ? '/next/' : '/',
-    build: { outDir: '../frontend-next', emptyOutDir: true },
+    // Built for web, the app is served by the backend under /next/; in development it owns the root.
+    // Built for mobile (Capacitor), relative base ensures assets load properly inside the native webview.
+    base: isMobile ? './' : command === 'build' ? '/next/' : '/',
+    build: { outDir: isMobile ? 'dist' : '../frontend-next', emptyOutDir: true },
     // Each build gets its own stamp, so data saved on the device by an older build is never trusted by a newer one.
     define: { __BUILD__: JSON.stringify(String(Date.now())) },
     plugins: [

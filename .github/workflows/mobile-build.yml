@@ -1,0 +1,144 @@
+name: Build Mobile Apps (Android & iOS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: 'Backend API Base URL (e.g. https://your-app.up.railway.app)'
+        required: false
+        default: ''
+  push:
+    branches:
+      - main
+    paths:
+      - 'frontend-react/**'
+      - '.github/workflows/mobile-build.yml'
+
+jobs:
+  # =========================================================================
+  # 1. Android Build (Ubuntu Runner) -> Produces .apk (Direct Install) & .aab (Play Store)
+  # =========================================================================
+  build-android:
+    name: Build Android (APK & Play Store AAB)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: 'frontend-react/package.json'
+
+      - name: Setup Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Install dependencies
+        working-directory: frontend-react
+        run: npm install
+
+      - name: Build Web Assets for Mobile
+        working-directory: frontend-react
+        env:
+          VITE_API_BASE_URL: ${{ inputs.api_base_url || secrets.VITE_API_BASE_URL || '' }}
+        run: npm run build:mobile
+
+      - name: Initialize Android Platform & Sync Capacitor
+        working-directory: frontend-react
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
+          npx cap sync android
+
+      - name: Make Gradle executable
+        working-directory: frontend-react/android
+        run: chmod +x ./gradlew
+
+      - name: Build Debug APK (For Immediate Phone Testing)
+        working-directory: frontend-react/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Build Release App Bundle (AAB for Google Play Store)
+        working-directory: frontend-react/android
+        run: ./gradlew bundleRelease --no-daemon
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Yerp-Android-Debug-APK
+          path: frontend-react/android/app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
+      - name: Upload Release AAB (Google Play Bundle)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Yerp-Android-PlayStore-AAB
+          path: frontend-react/android/app/build/outputs/bundle/release/*.aab
+          retention-days: 14
+
+  # =========================================================================
+  # 2. iOS Build (macOS Apple Silicon Runner) -> Produces Xcode Archive
+  # =========================================================================
+  build-ios:
+    name: Build iOS (Apple App Store / TestFlight Archive)
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: 'frontend-react/package.json'
+
+      - name: Install dependencies
+        working-directory: frontend-react
+        run: npm install
+
+      - name: Build Web Assets for Mobile
+        working-directory: frontend-react
+        env:
+          VITE_API_BASE_URL: ${{ inputs.api_base_url || secrets.VITE_API_BASE_URL || '' }}
+        run: npm run build:mobile
+
+      - name: Initialize iOS Platform & Sync Capacitor
+        working-directory: frontend-react
+        run: |
+          if [ ! -d "ios" ]; then
+            npx cap add ios
+          fi
+          npx cap sync ios
+
+      - name: Build Xcode Archive
+        working-directory: frontend-react/ios/App
+        run: |
+          mkdir -p ../../build
+          xcodebuild -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            -archivePath ../../build/App.xcarchive \
+            clean archive
+
+      - name: Compress iOS Archive
+        working-directory: frontend-react/build
+        run: zip -r Yerp-iOS-Archive.zip App.xcarchive
+
+      - name: Upload iOS Archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: Yerp-iOS-Archive
+          path: frontend-react/build/Yerp-iOS-Archive.zip
+          retention-days: 14

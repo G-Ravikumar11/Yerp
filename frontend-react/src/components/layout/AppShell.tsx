@@ -2,6 +2,7 @@ import { Suspense, useEffect } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { trailFor } from '@/lib/nav'
+import { apiUrl } from '@/lib/api'
 import { useSession } from '@/lib/session'
 import { useUI } from '@/stores/ui'
 import { Button, Skeleton } from '@/components/ui'
@@ -30,7 +31,9 @@ export function AppShell() {
 
   // Signed out: go to the sign-in page rather than draw a page full of failures.
   useEffect(() => {
-    if (gated && isAnonymous && import.meta.env.PROD) window.location.assign('/login.html')
+    if (gated && isAnonymous && (import.meta.env.PROD || import.meta.env.VITE_API_BASE_URL)) {
+      window.location.assign(apiUrl('/login.html'))
+    }
   }, [gated, isAnonymous])
 
   // A new page starts at its top, as a page does.
