@@ -18,7 +18,7 @@ from app.constants.recruitment import (
     OFFER_STATUSES,
 )
 from app.core.audit import log_audit
-from app.core.auth import get_client_user
+from app.core.auth import get_client_user, require_owner
 from app.core.currency import esc, money
 from app.core.dates import _parse_date
 from app.core.files import MAX_DOCUMENT_BYTES
@@ -34,7 +34,7 @@ from app.schemas.recruitment import (
     OfferIn,
     RecruitmentFormCreate,
 )
-from app.services.hr import start_onboarding
+from app.services.hr import department_or_404, move_to_department, start_onboarding
 from app.services.recruitment import (
     _get_submission_for_client,
     _parse_datetime_minutes,
@@ -1021,6 +1021,12 @@ def hire_candidate(sub_id: int, request: Request, body: dict = None, db: Session
     level = validate_level(body.get("level"))
     role = validate_role(body.get("role"))
     reports_to = validate_manager(db, client.id, None, body.get("reports_to"))
+    # Placing somebody in a department is the Master's call, and the id has to
+    # be one of this company's - it was stored unchecked before.
+    dept_id = body.get("department_id") or None
+    if dept_id:
+        require_owner(request, db)
+        department_or_404(db, client.id, dept_id)
 
     max_num = db.query(sqlfunc.coalesce(sqlfunc.max(models.DBEmployee.id), 0)).filter(
         models.DBEmployee.client_id == client.id
@@ -1029,7 +1035,7 @@ def hire_candidate(sub_id: int, request: Request, body: dict = None, db: Session
         client_id=client.id, employee_id=f"EMP-{max_num + 1:04d}",
         first_name=first_name, last_name=last_name, email=email,
         phone=body.get("phone") or sub.candidate_phone or "",
-        job_title=body.get("job_title", ""), department_id=body.get("department_id"),
+        job_title=body.get("job_title", ""),
         reports_to=reports_to, level=level, role=role,
         employment_type=body.get("employment_type", "full_time"),
         pay_frequency=body.get("pay_frequency", "monthly"),
@@ -1039,6 +1045,7 @@ def hire_candidate(sub_id: int, request: Request, body: dict = None, db: Session
     )
     db.add(emp)
     db.flush()
+    move_to_department(db, client.id, emp, dept_id)
 
     # Carry the application's files across so the new starter's record already
     # holds their CV and right-to-work documents.

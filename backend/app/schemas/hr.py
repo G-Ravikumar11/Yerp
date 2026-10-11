@@ -11,6 +11,10 @@ class DepartmentCreate(BaseModel):
     icon: Optional[str] = "building"
 
 
+class DepartmentMembersIn(BaseModel):
+    employee_ids: List[int]
+
+
 class EmployeeCreate(BaseModel):
     # The sites this person works on. None means "leave as it is"; an empty
     # list means "every site", which is what somebody unassigned already had.

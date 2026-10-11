@@ -28,14 +28,17 @@ from app.core.permissions import (
     permissions_for,
 )
 from app.core.security import validate_password_strength
-from app.schemas.hr import DepartmentCreate, DocumentRequirementIn, EmployeeCreate, RequirementTemplateIn
+from app.schemas.hr import DepartmentCreate, DepartmentMembersIn, DocumentRequirementIn, EmployeeCreate, RequirementTemplateIn
 from app.services.employee_portal import leave_balance_for
 from app.services.hr import (
     assert_department_name_free,
     assert_employee_code_free,
     assign_document_requests,
+    department_or_404,
+    department_to_dict,
     employee_sites_payload,
     maybe_complete_onboarding,
+    move_to_department,
     onboarding_snapshot,
     org_domain_for,
     request_to_dict,
@@ -194,52 +197,39 @@ def get_hr_levels(request: Request, db: Session = Depends(get_db)):
 @router.get("/api/departments")
 def get_departments(request: Request, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
-    depts = db.query(models.DBDepartment).filter(models.DBDepartment.client_id == client.id).all()
-    result = []
-    for d in depts:
-        employees = db.query(models.DBEmployee).filter(models.DBEmployee.department_id == d.id).all()
-        emp_list = [{"id": e.id, "name": (e.first_name + " " + e.last_name).strip(), "job_title": e.job_title or "", "email": e.email or ""} for e in employees]
-        result.append({
-            "id": d.id, "name": d.name, "description": d.description,
-            "color": d.color or "#00f0ff", "icon": d.icon or "building",
-            "employee_count": len(employees), "employees": emp_list, "created_at": d.created_at,
-        })
-    return result
+    depts = db.query(models.DBDepartment).filter(
+        models.DBDepartment.client_id == client.id).order_by(models.DBDepartment.name).all()
+    return [department_to_dict(db, d) for d in depts]
 
 
 @router.get("/api/departments/{dept_id}")
 def get_department(dept_id: int, request: Request, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
-    d = db.query(models.DBDepartment).filter(models.DBDepartment.id == dept_id, models.DBDepartment.client_id == client.id).first()
-    if not d:
-        raise HTTPException(status_code=404, detail="Department not found")
-    employees = db.query(models.DBEmployee).filter(models.DBEmployee.department_id == d.id).all()
-    emp_list = [{"id": e.id, "name": (e.first_name + " " + e.last_name).strip(), "job_title": e.job_title or "", "email": e.email or "", "status": e.status or ""} for e in employees]
-    return {
-        "id": d.id, "name": d.name, "description": d.description,
-        "color": d.color or "#00f0ff", "icon": d.icon or "building",
-        "employee_count": len(employees), "employees": emp_list, "created_at": d.created_at,
-    }
+    return department_to_dict(db, department_or_404(db, client.id, dept_id))
 
+
+# Departments are set up and staffed by the Master alone; everybody signed in
+# may read them, since pickers, the org chart and work orders all show them.
 
 @router.post("/api/departments")
 def create_department(request: Request, body: DepartmentCreate, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
+    require_owner(request, db)
     name = clean_department_name(body.name)
     assert_department_name_free(db, client.id, name)
     dept = models.DBDepartment(name=name, description=body.description, color=body.color, icon=body.icon, client_id=client.id)
     db.add(dept)
+    db.flush()
+    log_audit(db, client.id, "department_created", "department", dept.id, dept.name, "", request)
     db.commit()
-    db.refresh(dept)
-    return {"id": dept.id, "name": dept.name, "description": dept.description, "color": dept.color, "icon": dept.icon, "employee_count": 0}
+    return department_to_dict(db, dept)
 
 
 @router.put("/api/departments/{dept_id}")
 def update_department(dept_id: int, request: Request, body: DepartmentCreate, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
-    dept = db.query(models.DBDepartment).filter(models.DBDepartment.id == dept_id, models.DBDepartment.client_id == client.id).first()
-    if not dept:
-        raise HTTPException(status_code=404, detail="Department not found")
+    require_owner(request, db)
+    dept = department_or_404(db, client.id, dept_id)
     name = clean_department_name(body.name)
     # Create checked for duplicates but update did not, so a rename could
     # produce two departments with the same name.
@@ -248,16 +238,16 @@ def update_department(dept_id: int, request: Request, body: DepartmentCreate, db
     dept.description = body.description
     dept.color = body.color
     dept.icon = body.icon
+    log_audit(db, client.id, "department_updated", "department", dept.id, dept.name, "", request)
     db.commit()
-    return {"id": dept.id, "name": dept.name, "description": dept.description, "color": dept.color, "icon": dept.icon}
+    return department_to_dict(db, dept)
 
 
 @router.delete("/api/departments/{dept_id}")
 def delete_department(dept_id: int, request: Request, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
-    dept = db.query(models.DBDepartment).filter(models.DBDepartment.id == dept_id, models.DBDepartment.client_id == client.id).first()
-    if not dept:
-        raise HTTPException(status_code=404, detail="Department not found")
+    require_owner(request, db)
+    dept = department_or_404(db, client.id, dept_id)
     db.query(models.DBEmployee).filter(models.DBEmployee.department_id == dept_id).update(
         {"department_id": None}, synchronize_session=False
     )
@@ -272,6 +262,49 @@ def delete_department(dept_id: int, request: Request, db: Session = Depends(get_
     db.delete(dept)
     db.commit()
     return {"message": "Department deleted"}
+
+
+@router.post("/api/departments/{dept_id}/employees")
+def add_to_department(dept_id: int, request: Request, body: DepartmentMembersIn, db: Session = Depends(get_db)):
+    """Put people in this department. Anyone already in another one moves
+    across, which is how somebody changes department."""
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    dept = department_or_404(db, client.id, dept_id)
+    ids = list(dict.fromkeys(body.employee_ids))
+    if not ids:
+        raise HTTPException(status_code=400, detail="Choose at least one employee")
+    people = db.query(models.DBEmployee).filter(
+        models.DBEmployee.client_id == client.id, models.DBEmployee.id.in_(ids)).all()
+    if len(people) != len(ids):
+        raise HTTPException(status_code=404, detail="Employee not found")
+    names = {d.id: d.name for d in db.query(models.DBDepartment).filter(
+        models.DBDepartment.client_id == client.id).all()}
+    for emp in people:
+        old = move_to_department(db, client.id, emp, dept.id)
+        if old != dept.id:
+            log_audit(db, client.id, "employee_department_changed", "employee", emp.id,
+                      f"{emp.first_name} {emp.last_name}",
+                      "Moved from %s to %s" % (names.get(old, "no department"), dept.name), request)
+    db.commit()
+    return department_to_dict(db, dept)
+
+
+@router.delete("/api/departments/{dept_id}/employees/{emp_id}")
+def remove_from_department(dept_id: int, emp_id: int, request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    dept = department_or_404(db, client.id, dept_id)
+    emp = db.query(models.DBEmployee).filter(
+        models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id,
+        models.DBEmployee.department_id == dept.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="That employee is not in this department")
+    move_to_department(db, client.id, emp, None)
+    log_audit(db, client.id, "employee_department_changed", "employee", emp.id,
+              f"{emp.first_name} {emp.last_name}", "Removed from %s" % dept.name, request)
+    db.commit()
+    return department_to_dict(db, dept)
 
 
 @router.get("/api/employees")
@@ -340,7 +373,9 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     if permission_role != DEFAULT_PERMISSION_ROLE:
         require_owner(request, db)
     reports_to = validate_manager(db, client.id, None, body.reports_to)
-    owned_or_404(db, models.DBDepartment, client.id, body.department_id, "Department")
+    if body.department_id:
+        require_owner(request, db)
+        department_or_404(db, client.id, body.department_id)
 
     max_num = db.query(sqlfunc.coalesce(sqlfunc.max(models.DBEmployee.id), 0)).filter(models.DBEmployee.client_id == client.id).scalar()
     emp_number = employee_code or f"EMP-{max_num + 1:04d}"
@@ -349,7 +384,7 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
         client_id=client.id, employee_id=emp_number,
         first_name=first_name, last_name=last_name,
         email=email, phone=body.phone, address=body.address,
-        department_id=body.department_id, reports_to=reports_to,
+        reports_to=reports_to,
         job_title=body.job_title, role=role, level=level,
         permission_role=permission_role,
         employment_type=body.employment_type, pay_frequency=body.pay_frequency,
@@ -364,33 +399,11 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     )
     db.add(emp)
     db.flush()
+    # Before the checklist: some document requirements apply to one department only.
+    move_to_department(db, client.id, emp, body.department_id)
 
     # Create default onboarding checklist
     start_onboarding(db, client.id, emp)
-
-    if body.department_id:
-        pending_goals = db.query(models.DBDepartmentGoal).filter(
-            models.DBDepartmentGoal.department_id == body.department_id,
-            models.DBDepartmentGoal.client_id == client.id,
-            models.DBDepartmentGoal.is_assigned == False,
-        ).all()
-        for dg in pending_goals:
-            goal = models.DBEmployeeGoal(
-                client_id=client.id, employee_id=emp.id, department_id=body.department_id,
-                title=dg.title, description=dg.description,
-                target_value=dg.target_value, current_value=0,
-                unit=dg.unit, category=dg.category,
-                priority=dg.priority, start_date=dg.start_date,
-                due_date=dg.due_date, created_by="HR",
-            )
-            db.add(goal)
-            note = models.DBNotification(
-                client_id=client.id, employee_id=emp.id,
-                title="New Goal Assigned", message=f"HR has assigned you a department goal: {dg.title}",
-                type="info",
-            )
-            db.add(note)
-            dg.is_assigned = True
 
     db.commit()
     db.refresh(emp)
@@ -550,7 +563,6 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
-    old_dept = emp.department_id
     body = body or {}
     # Everything a blind setattr would have accepted unchecked.
     if "first_name" in body:
@@ -571,6 +583,11 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
     # any team member widen their own or anybody's rights through this route.
     if ACCESS_FIELDS & body.keys():
         require_owner(request, db)
+    # So is the department: only the Master moves people between them. The
+    # profile form sends the current one back unchanged, which is fine.
+    new_dept = body.pop("department_id", emp.department_id) or None
+    if new_dept != emp.department_id:
+        require_owner(request, db)
     if "permission_role" in body:
         body["permission_role"] = validate_permission_role(body["permission_role"])
     if "reports_to" in body:
@@ -580,30 +597,9 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
         if hasattr(emp, key) and key not in ("id", "client_id", "created_at", "password_hash", "employee_id"):
             setattr(emp, key, val)
     set_employee_sites(db, client.id, emp, site_ids)
-    new_dept = emp.department_id
-    if new_dept and new_dept != old_dept:
-        pending_goals = db.query(models.DBDepartmentGoal).filter(
-            models.DBDepartmentGoal.department_id == new_dept,
-            models.DBDepartmentGoal.client_id == client.id,
-            models.DBDepartmentGoal.is_assigned == False,
-        ).all()
-        for dg in pending_goals:
-            goal = models.DBEmployeeGoal(
-                client_id=client.id, employee_id=emp.id, department_id=new_dept,
-                title=dg.title, description=dg.description,
-                target_value=dg.target_value, current_value=0,
-                unit=dg.unit, category=dg.category,
-                priority=dg.priority, start_date=dg.start_date,
-                due_date=dg.due_date, created_by="HR",
-            )
-            db.add(goal)
-            note = models.DBNotification(
-                client_id=client.id, employee_id=emp.id,
-                title="New Goal Assigned", message=f"HR has assigned you a department goal: {dg.title}",
-                type="info",
-            )
-            db.add(note)
-            dg.is_assigned = True
+    if move_to_department(db, client.id, emp, new_dept) != new_dept:
+        log_audit(db, client.id, "employee_department_changed", "employee", emp.id,
+                  f"{emp.first_name} {emp.last_name}", "Department set to %s" % (new_dept or "none"), request)
     log_audit(db, client.id, "employee_updated", "employee", emp.id, f"{emp.first_name} {emp.last_name}", f"Fields: {', '.join(body.keys()) if body else 'none'}", request)
     db.commit()
     return {"message": "Employee updated"}

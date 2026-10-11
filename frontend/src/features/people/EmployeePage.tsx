@@ -16,6 +16,7 @@ function Profile({ e }: { e: EmployeeDetail }) {
   const people = useEmployees('')
   const cat = useHrCatalogue()
   const [f, setF] = useState({ first_name: e.first_name, last_name: e.last_name, email: e.email, phone: e.phone, job_title: e.job_title, department_id: e.department_id, reports_to: e.reports_to, level: e.level, role: e.role, employment_type: e.employment_type, pay_frequency: e.pay_frequency, salary: e.salary, tax_rate: e.tax_rate, start_date: e.start_date, emergency_contact: e.emergency_contact, emergency_phone: e.emergency_phone })
+  const { isOwner } = useSession()
   const set = (k: keyof typeof f) => (ev: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((s) => ({ ...s, [k]: ev.target.value }))
   const save = useAction(() => updateEmployee(e.id, f), { invalidate: [peopleKeys.all], success: 'Saved' })
   return (
@@ -26,7 +27,7 @@ function Profile({ e }: { e: EmployeeDetail }) {
         <Field label="Email (their login)" htmlFor="ep-email"><Input id="ep-email" type="email" value={f.email} onChange={set('email')} /></Field>
         <Field label="Phone" htmlFor="ep-phone"><Input id="ep-phone" value={f.phone} onChange={set('phone')} /></Field>
         <Field label="Job title" htmlFor="ep-title"><Input id="ep-title" value={f.job_title} onChange={set('job_title')} /></Field>
-        <Field label="Department" htmlFor="ep-dept"><Select id="ep-dept" value={f.department_id ?? ''} onChange={(ev) => setF((s) => ({ ...s, department_id: ev.target.value ? Number(ev.target.value) : null }))} placeholder="None" options={(depts.data ?? []).map((d) => ({ value: d.id, label: d.name }))} /></Field>
+        <Field label="Department" htmlFor="ep-dept" hint={isOwner ? undefined : 'Only the Master moves people between departments.'}><Select id="ep-dept" disabled={!isOwner} value={f.department_id ?? ''} onChange={(ev) => setF((s) => ({ ...s, department_id: ev.target.value ? Number(ev.target.value) : null }))} placeholder="None" options={(depts.data ?? []).map((d) => ({ value: d.id, label: d.name }))} /></Field>
         <Field label="Reports to" htmlFor="ep-mgr"><Select id="ep-mgr" value={f.reports_to ?? ''} onChange={(ev) => setF((s) => ({ ...s, reports_to: ev.target.value ? Number(ev.target.value) : null }))} placeholder="None" options={(people.data ?? []).filter((p) => p.id !== e.id).map((p) => ({ value: p.id, label: p.full_name }))} /></Field>
         <Field label="Level" htmlFor="ep-level"><Select id="ep-level" value={f.level} onChange={set('level')} placeholder="Not set" options={(cat.data?.levels ?? []).map((l) => ({ value: l.code, label: l.label }))} /></Field>
         <Field label="Reporting role" htmlFor="ep-role"><Select id="ep-role" value={f.role} onChange={set('role')} options={(cat.data?.roles ?? []).map((r) => ({ value: r.code, label: r.label }))} /></Field>

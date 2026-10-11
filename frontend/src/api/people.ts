@@ -125,3 +125,6 @@ export const startOffboarding = (id: number) => post<{ message: string }>(`/api/
 export type DepartmentInput = { name: string; description: string; color: string; icon: string }
 export const saveDepartment = (id: number | null, b: DepartmentInput) => (id ? put<{ id: number }>(`/api/departments/${id}`, b) : post<{ id: number }>('/api/departments', b))
 export const deleteDepartment = (id: number) => del<{ message: string }>(`/api/departments/${id}`)
+/** Puts these people in the department, moving any already in another one. The Master only. */
+export const addToDepartment = (id: number, employee_ids: number[]) => post<Department>(`/api/departments/${id}/employees`, { employee_ids })
+export const removeFromDepartment = (id: number, employeeId: number) => del<Department>(`/api/departments/${id}/employees/${employeeId}`)

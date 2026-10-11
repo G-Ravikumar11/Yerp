@@ -5,6 +5,7 @@ import { Button, ConfirmDialog, Skeleton } from '@/components/ui'
 import { deleteDepartment, peopleKeys, useDepartments, type Department } from '@/api/people'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
+import { DepartmentMembersModal } from './DepartmentMembersModal'
 import { DepartmentModal } from './DepartmentModal'
 import { iconOf } from './icons'
 
@@ -14,6 +15,7 @@ export default function DepartmentsPage() {
   const [editing, setEditing] = useState<Department | null>(null)
   const [creating, setCreating] = useState(false)
   const [removing, setRemoving] = useState<Department | null>(null)
+  const [staffing, setStaffing] = useState<Department | null>(null)
   const remove = useAction((d: Department) => deleteDepartment(d.id), { invalidate: [peopleKeys.all, ['orders', 'vocabulary']], success: 'Department deleted', onSuccess: () => setRemoving(null) })
   return (
     <>
@@ -30,13 +32,14 @@ export default function DepartmentsPage() {
                 </div>
                 <p className="mt-3 text-sm"><strong>{d.employee_count}</strong> {d.employee_count === 1 ? 'person' : 'people'}</p>
                 <ul className="mt-1 min-h-10 text-[13px] text-muted-foreground">{d.employees.slice(0, 4).map((e) => <li key={e.id} className="truncate">{e.name}{e.job_title && ` - ${e.job_title}`}</li>)}{d.employees.length > 4 && <li>and {d.employees.length - 4} more</li>}</ul>
-                {isOwner && <div className="mt-3 flex gap-2"><Button size="sm" variant="outline" onClick={() => setEditing(d)}>Edit</Button><Button size="sm" variant="outline" className="text-danger" onClick={() => setRemoving(d)}>Delete</Button></div>}
+                {isOwner && <div className="mt-3 flex gap-2"><Button size="sm" onClick={() => setStaffing(d)}>Manage people</Button><Button size="sm" variant="outline" onClick={() => setEditing(d)}>Edit</Button><Button size="sm" variant="outline" className="text-danger" onClick={() => setRemoving(d)}>Delete</Button></div>}
               </section>
             )
           })}
           {q.data?.length === 0 && <p className="col-span-full rounded-lg border border-border bg-muted/40 p-4 text-sm">No departments yet. Until you create some, work orders offer the usual trades (Civil, STP, Electrical...). Create yours and they replace them.</p>}
         </div>
       )}
+      <DepartmentMembersModal dept={staffing && (q.data?.find((d) => d.id === staffing.id) ?? staffing)} onClose={() => setStaffing(null)} />
       <DepartmentModal open={creating || !!editing} dept={editing} onClose={() => { setCreating(false); setEditing(null) }} />
       <ConfirmDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)} title={`Delete ${removing?.name ?? 'this department'}?`} description="The people in it are not deleted; they are left with no department." confirmLabel="Delete it" tone="danger" loading={remove.isPending} onConfirm={() => { if (removing) remove.mutate(removing) }} />
     </>
