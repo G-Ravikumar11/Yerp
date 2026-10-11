@@ -128,13 +128,13 @@ export function CashFlowChart({ months }: { months: MonthFlow[] }) {
   )
 }
 
-/** What is owed to us and what we owe, by how long it has been owing. */
+/** Money to receive and money to pay, by how long it has been pending. */
 export function AgeingChart({ receivable, payable }: { receivable: Record<string, number> | undefined; payable: Record<string, number> | undefined }) {
   const calm = useReducedMotion()
   const wide = useMinWidth(640)
   const rows = ageing(receivable, payable)
   return (
-    <figure aria-label="Owed to us and owed by us, by age" className="m-0 h-full min-h-[260px]">
+    <figure aria-label="Money to receive and money to pay, by age" className="m-0 h-full min-h-[260px]">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={rows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={3}>
           <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="3 4" />
@@ -151,8 +151,8 @@ export function AgeingChart({ receivable, payable }: { receivable: Record<string
             )}
           />
           <Legend verticalAlign="top" align={wide ? 'right' : 'left'} iconType="circle" iconSize={8} formatter={legend} />
-          <Bar name="Owed to us" dataKey="receivable" fill={RECEIVED} radius={[6, 6, 0, 0]} maxBarSize={30} isAnimationActive={!calm} />
-          <Bar name="We owe" dataKey="payable" fill={PAID} radius={[6, 6, 0, 0]} maxBarSize={30} isAnimationActive={!calm} />
+          <Bar name="Money to receive" dataKey="receivable" fill={RECEIVED} radius={[6, 6, 0, 0]} maxBarSize={30} isAnimationActive={!calm} />
+          <Bar name="Money to pay" dataKey="payable" fill={PAID} radius={[6, 6, 0, 0]} maxBarSize={30} isAnimationActive={!calm} />
         </BarChart>
       </ResponsiveContainer>
     </figure>

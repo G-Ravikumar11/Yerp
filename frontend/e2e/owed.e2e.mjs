@@ -21,7 +21,7 @@ if (receive) {
   await page.waitForFunction(() => !document.querySelector('[role=dialog]'))
 }
 
-await clickText(page, 'button[role=tab]', 'We owe')
+await clickText(page, 'button[role=tab]', 'Money to pay')
 await page.waitForSelector('table[aria-label="We owe"]')
 check('what we owe is listed with its own stats and ageing', (await main()).includes('Waiting on approval') && (await page.$$eval('table[aria-label="We owe"] tbody tr', (r) => r.length)) >= 1)
 

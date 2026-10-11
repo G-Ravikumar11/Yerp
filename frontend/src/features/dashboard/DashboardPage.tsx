@@ -114,16 +114,17 @@ export default function DashboardPage() {
           <motion.div variants={rise} className="grid grid-cols-2 gap-3 lg:col-span-3 lg:grid-cols-5">
             {money && (
               <>
-                <Stat label="Owed to us" value={fig(receivables.data?.summary.owed, receivables.isPending)} loading={receivables.isPending} tone={receivables.data?.summary.overdue ? 'warning' : undefined} sub={receivables.data ? `${compactINR(receivables.data.summary.overdue)} overdue` : undefined} />
-                <Stat label="We owe" value={fig(payables.data?.summary.owed, payables.isPending)} loading={payables.isPending} sub={payables.data ? `${compactINR(payables.data.summary.overdue)} overdue` : undefined} />
-                <Stat label="Retention held" value={fig(retention.data?.summary.held, retention.isPending)} loading={retention.isPending} sub={retention.data ? `${compactINR(retention.data.summary.on_finished_jobs)} on finished jobs` : undefined} />
+                <Stat label="Money to receive" to="/money/owed?tab=owed" value={fig(receivables.data?.summary.owed, receivables.isPending)} loading={receivables.isPending} tone={receivables.data?.summary.overdue ? 'warning' : undefined} sub={receivables.data ? `${compactINR(receivables.data.summary.overdue)} overdue from clients` : undefined} />
+                <Stat label="Money to pay" to="/money/owed?tab=owe" value={fig(payables.data?.summary.owed, payables.isPending)} loading={payables.isPending} sub={payables.data ? `${compactINR(payables.data.summary.overdue)} overdue to suppliers` : undefined} />
+                <Stat label="Retention money held" to="/money/owed?tab=retention" value={fig(retention.data?.summary.held, retention.isPending)} loading={retention.isPending} sub={retention.data ? `${compactINR(retention.data.summary.on_finished_jobs)} on completed projects` : undefined} />
               </>
             )}
             {reports && (
               <>
-                <Stat label="Order book" value={fig(pnl.data?.summary.order_value, pnl.isPending)} loading={pnl.isPending} sub={pnl.data ? `${compactINR(pnl.data.summary.revenue)} earned` : undefined} />
+                <Stat label="Total contract value" to="/clients/work-orders" value={fig(pnl.data?.summary.order_value, pnl.isPending)} loading={pnl.isPending} sub={pnl.data ? `${compactINR(pnl.data.summary.revenue)} earned so far` : undefined} />
                 <Stat
-                  label="Margin to date"
+                  label="Profit so far"
+                  to="/projects/profit"
                   value={fig(pnl.data?.summary.margin, pnl.isPending)}
                   loading={pnl.isPending}
                   tone={pnl.data && pnl.data.summary.margin < 0 ? 'danger' : 'success'}
@@ -199,7 +200,7 @@ export default function DashboardPage() {
                 </Suspense>
               )}
             </Panel>
-            <Panel title="Owed, by age" description="What is owed to us, and what we owe, by how long it has been outstanding.">
+            <Panel title="Payments due, by age" description="Money to receive and money to pay, grouped by how long it has been pending.">
               {receivables.isPending || payables.isPending ? (
                 <ChartSkeleton />
               ) : receivables.isError && payables.isError ? (

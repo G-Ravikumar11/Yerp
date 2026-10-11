@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, ConfirmDialog, Stat, StatGrid, Tabs } from '@/components/ui'
@@ -23,7 +24,9 @@ const money = 'tabular whitespace-nowrap'
 
 export default function OwedPage() {
   const { can } = useSession()
-  const [tab, setTab] = useState<Tab>('owed')
+  const [params] = useSearchParams()
+  const asked = params.get('tab')
+  const [tab, setTab] = useState<Tab>(asked === 'owe' || asked === 'retention' ? asked : 'owed')
   const recv = useOwedReceivables()
   const pay = useOwedPayables()
   const ret = useRetentionPage()
@@ -97,7 +100,7 @@ export default function OwedPage() {
   return (
     <>
       <PageHeader eyebrow="Money" title="Owed & Retention" description="Who owes what today, and the retention nobody chases. Money that is not late yet is kept apart from money that is." />
-      <div className="mb-5"><Tabs label="View" value={tab} onChange={setTab} items={[{ value: 'owed', label: 'Owed to us' }, { value: 'owe', label: 'We owe' }, { value: 'retention', label: 'Retention' }]} /></div>
+      <div className="mb-5"><Tabs label="View" value={tab} onChange={setTab} items={[{ value: 'owed', label: 'Money to receive' }, { value: 'owe', label: 'Money to pay' }, { value: 'retention', label: 'Retention money' }]} /></div>
 
       {tab === 'owed' && (
         <>
