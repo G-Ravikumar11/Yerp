@@ -34,12 +34,11 @@ import { VariationDialog } from './VariationDialog'
 interface Row {
   key: string
   kind: BoqKind
-  sno: string
+  group_code: string
   description: string
   uom: string
   quantity: number | null
   rate: number | null
-  code: string
   item_code: string
   remarks: string
   material: string
@@ -47,8 +46,8 @@ interface Row {
   rate_only: boolean
 }
 
-const blank = (): Row => ({ key: '', kind: 'item', sno: '', description: '', uom: '', quantity: null, rate: null, code: '', item_code: '', remarks: '', material: '', rate_only: false })
-const fromLines = (lines: BoqLine[]): Row[] => lines.map((l) => ({ key: l.key, kind: l.kind, sno: l.sno, description: l.description, uom: l.uom, quantity: l.kind === 'section' || l.kind === 'note' || l.rate_only ? null : l.quantity, rate: l.kind === 'section' || l.kind === 'note' ? null : l.rate, code: l.code, item_code: l.item_code, remarks: l.remarks, material: l.material ?? '', rate_only: !!l.rate_only }))
+const blank = (): Row => ({ key: '', kind: 'item', group_code: '', description: '', uom: '', quantity: null, rate: null, item_code: '', remarks: '', material: '', rate_only: false })
+const fromLines = (lines: BoqLine[]): Row[] => lines.map((l) => ({ key: l.key, kind: l.kind, group_code: l.group_code ?? '', description: l.description, uom: l.uom, quantity: l.kind === 'section' || l.kind === 'note' || l.rate_only ? null : l.quantity, rate: l.kind === 'section' || l.kind === 'note' ? null : l.rate, item_code: l.item_code, remarks: l.remarks, material: l.material ?? '', rate_only: !!l.rate_only }))
 const priced = (r: Row) => r.kind === 'item' || r.kind === 'sub'
 const amountOf = (r: Row) => (priced(r) && !r.rate_only && r.quantity && r.rate ? Math.round(r.quantity * r.rate * 100) / 100 : null)
 
@@ -71,6 +70,12 @@ const KINDS = [
 const FLAG_TEXT: Record<BoqFlag, string> = { no_gang: 'No gang yet', over_allotted: 'Given past the BOQ', loss: 'Gang rate above ours', over_executed: 'Executed past the BOQ' }
 
 type Tab = 'boq' | 'summary' | 'tracker' | 'variations' | 'revisions'
+
+/**
+ * The group codes on offer. "Customize" at the end of the list takes any other; the codes already on this BOQ
+ * are added to the list so a typed one comes back next time.
+ */
+const GROUP_CODES = ['SUB STRUCTURE WORKS', 'SUPER STRUCTURE WORKS', 'FINISHING WORKS', 'ELECTRICAL WORKS', 'PLUMBING WORKS', 'FIRE FIGHTING', 'HVAC']
 
 const MATERIALS = ['M10', 'M20', 'M25', 'M30', 'M40', 'M60', 'Fe500', 'Fe550/550D', 'Ply wood', 'Steel', 'Cement']
 
@@ -135,9 +140,16 @@ export default function BoqPage() {
   })
   const order = useAction(() => makeClientOrder(id, reference.trim()), { invalidate: [boqKeys.all, ['clientorders']], success: (r) => r.message, onSuccess: () => setOrdering(false) })
 
+  // The listed codes, then any others this BOQ already uses, so a code typed once is on the list from then on.
+  const groupOptions = useMemo(() => {
+    const used = rows.map((r) => r.group_code.trim()).filter(Boolean)
+    return Array.from(new Set([...GROUP_CODES, ...used]))
+  }, [rows])
+
   const columns = useMemo<Column<Row>[]>(
     () => [
-      { id: 'sno', header: 'S.No', width: 84, mono: true, pin: true, placeholder: '1.1' },
+      { id: 'group_code', header: 'Group code', hint: 'Pick one, or type your own', type: 'select', freeText: true, customLabel: 'Customize...', width: 190, pin: true, options: groupOptions },
+      { id: 'item_code', header: 'Item code', hint: 'Type one, or leave blank to be given one on save', width: 120, mono: true, placeholder: 'Auto' },
       { id: 'description', header: 'Description', hint: 'Paste the client’s lines here', width: 420, required: true, placeholder: 'What is the work?' },
       { id: 'material', header: 'Material', hint: 'Grade or material: M40, Fe550/550D', type: 'select', freeText: true, width: 120, options: MATERIALS, readOnly: (r) => !priced(r) },
       { id: 'uom', header: 'Unit', type: 'select', freeText: true, width: 84, options: ['cum', 'sqm', 'rmt', 'nos', 'kg', 'MT', 'ltr', 'LS'], readOnly: (r) => !priced(r) },
@@ -146,10 +158,8 @@ export default function BoqPage() {
       { id: 'rate_only', header: 'R/o', hint: 'Rate only: rate agreed, quantity not yet known. Comes to nothing and is in no total.', type: 'checkbox', width: 64, readOnly: (r) => !priced(r), countsAsData: false },
       { id: 'amount', header: 'Amount', type: 'number', width: 140, readOnly: true, get: (r) => amountOf(r), format: (v) => (typeof v === 'number' ? formatINR(v) : ''), summary: 'sum' },
       { id: 'kind', header: 'Kind', type: 'select', width: 110, options: KINDS, countsAsData: false },
-      { id: 'item_code', header: 'Item code', hint: 'Given on save', width: 120, mono: true, readOnly: true },
-      { id: 'code', header: 'Client code', width: 110, mono: true },
     ],
-    [],
+    [groupOptions],
   )
 
   const head = book.data?.boq
@@ -237,7 +247,7 @@ export default function BoqPage() {
                 <Save /> Save the BOQ
               </Button>
               {dirty && <Badge tone="warning">Unsaved changes</Badge>}
-              <span className="text-xs text-muted-foreground">Paste lines straight from Excel (S.No, Description, Unit, Qty, Rate). A line with no quantity or rate is saved as a heading.</span>
+              <span className="text-xs text-muted-foreground">Paste lines straight from Excel (Group code, Description, Unit, Qty, Rate). A line with no quantity or rate is saved as a heading.</span>
             </div>
           )}
           {!editable && viewing !== undefined && (
@@ -387,7 +397,7 @@ export default function BoqPage() {
 /** The BOQ's front page: each section with what it comes to, then the total, the GST on it, and the total with GST. */
 function SummaryView({ summary, loading, gst, onGst }: { summary?: BoqSummary; loading: boolean; gst: number; onGst: (v: number) => void }) {
   const sections: TableColumn<BoqSummarySection>[] = [
-    { id: 'sno', header: 'SL', width: '4rem', cell: (s) => <span className="font-mono text-xs font-semibold">{s.sno}</span> },
+    { id: 'group', header: 'Group', width: '7rem', cell: (s) => <span className="font-mono text-xs font-semibold">{s.group_code}</span> },
     { id: 'title', header: 'Description', cell: (s) => <span className="font-medium">{s.title}</span> },
     { id: 'items', header: 'Items', align: 'right', hideBelow: 'md', cell: (s) => s.items },
     { id: 'ro', header: 'Rate only', align: 'right', hideBelow: 'md', cell: (s) => (s.rate_only ? <Badge tone="neutral">{s.rate_only} R/o</Badge> : '') },
@@ -439,7 +449,7 @@ function SummaryView({ summary, loading, gst, onGst }: { summary?: BoqSummary; l
 function TrackerView({ rows, flags, totals, loading, denied }: { rows: TrackerRow[]; flags?: Record<BoqFlag, number>; totals?: { value: number; given_cost: number; client_billed: number; gang_billed: number }; loading: boolean; denied: boolean }) {
   if (denied) return <p className="rounded-lg border border-border px-4 py-8 text-center text-sm text-muted-foreground">The tracker shows the gang rates against ours, so it is for those who see the reports.</p>
   const columns: TableColumn<TrackerRow>[] = [
-    { id: 'sno', header: 'S.No', width: '5rem', cell: (r) => <span className={cn('font-mono text-xs', r.kind === 'section' && 'font-semibold')}>{r.sno}</span> },
+    { id: 'group', header: 'Group', width: '6rem', cell: (r) => <span className={cn('font-mono text-xs', r.kind === 'section' && 'font-semibold')}>{r.group_code}</span> },
     { id: 'd', header: 'Description', cell: (r) => (r.kind === 'section' ? <span className="font-semibold">{r.description}</span> : <div className="max-w-sm truncate" title={r.description}>{r.description}</div>) },
     { id: 'qty', header: 'BOQ qty', align: 'right', cell: (r) => (r.kind === 'section' ? '' : `${formatQty(r.quantity ?? 0)} ${r.uom ?? ''}`) },
     { id: 'rate', header: 'Our rate', align: 'right', hideBelow: 'md', cell: (r) => (r.kind === 'section' ? '' : formatINR(r.rate ?? 0)) },
@@ -460,7 +470,7 @@ function TrackerView({ rows, flags, totals, loading, denied }: { rows: TrackerRo
         <Stat label="Executed past the BOQ" value={flags?.over_executed ?? 0} tone={flags?.over_executed ? 'danger' : undefined} loading={loading} />
         <Stat label="Cost of what gangs have" value={compactINR(totals?.given_cost)} loading={loading} />
       </StatGrid>
-      <DataTable label="BOQ tracker" rows={rows} columns={columns} rowKey={(r) => (r.key ?? r.kind) + r.sno + r.description} loading={loading} empty="Nothing to track yet. Save the BOQ, then give its lines to gangs." rowClassName={(r) => (r.kind === 'section' ? 'bg-surface/60' : undefined)} />
+      <DataTable label="BOQ tracker" rows={rows} columns={columns} rowKey={(r) => (r.key ?? r.kind) + r.group_code + r.description} loading={loading} empty="Nothing to track yet. Save the BOQ, then give its lines to gangs." rowClassName={(r) => (r.kind === 'section' ? 'bg-surface/60' : undefined)} />
     </div>
   )
 }

@@ -184,6 +184,24 @@ describe('numbers, choices and ticks', () => {
     expect(latest[0].uom).toBe('cum')
   })
 
+  it('a picker with a Customize entry lists it last, and choosing it takes what is typed next', async () => {
+    const custom: Column<Line>[] = columns.map((c) => (c.id === 'uom' ? { ...c, freeText: true, customLabel: 'Customize...' } : c))
+    function Custom() {
+      const [rows, setRows] = useState<Line[]>([line()])
+      latest = rows
+      return <DataGrid aria-label="BOQ" columns={custom} rows={rows} onRowsChange={(next) => { latest = next; setRows(next) }} newRow={blank} />
+    }
+    const user = userEvent.setup()
+    render(<Custom />)
+    await user.click(screen.getAllByRole('gridcell')[1])
+    const opts = screen.getAllByRole('option')
+    expect(opts.at(-1)).toHaveTextContent('Customize...')
+    await user.click(opts.at(-1)!)
+    expect(screen.queryByRole('listbox')).toBeNull()
+    await user.keyboard('rmt{Enter}')
+    expect(latest[0].uom).toBe('rmt')
+  })
+
   it('a picker refuses something that is not a choice', async () => {
     const user = await start({ initial: [line()] })
     await user.keyboard('{Tab}zzz{Enter}')

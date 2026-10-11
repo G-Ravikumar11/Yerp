@@ -7,12 +7,11 @@ from pydantic import BaseModel
 class ProjectBoqLineIn(BaseModel):
     key: Optional[str] = ""
     kind: Optional[str] = "item"
-    sno: Optional[str] = ""
+    group_code: Optional[str] = ""
     description: Optional[str] = ""
     uom: Optional[str] = ""
     quantity: Optional[float] = 0
     rate: Optional[float] = 0
-    code: Optional[str] = ""
     item_code: Optional[str] = ""
     remarks: Optional[str] = ""
     material: Optional[str] = ""
@@ -34,7 +33,6 @@ class BoqVariationLineIn(BaseModel):
     kind: Optional[str] = "quantity"
     boq_key: Optional[str] = ""
     section_key: Optional[str] = ""
-    sno: Optional[str] = ""
     description: Optional[str] = ""
     uom: Optional[str] = ""
     change_qty: Optional[float] = 0

@@ -22,13 +22,12 @@ export interface BoqLine {
   id?: number
   key: string
   kind: BoqKind
-  sno: string
+  group_code: string
   description: string
   uom: string
   quantity: number
   rate: number
   amount: number
-  code: string
   item_code: string
   remarks: string
   /** The grade or material: M40, Fe550/550D, Ply wood. */
@@ -41,7 +40,7 @@ export interface BoqLine {
 
 export interface BoqSummarySection {
   key: string
-  sno: string
+  group_code: string
   title: string
   items: number
   rate_only: number
@@ -100,7 +99,7 @@ export type BoqFlag = 'no_gang' | 'over_allotted' | 'loss' | 'over_executed'
 export interface TrackerRow {
   kind: BoqKind
   key?: string
-  sno: string
+  group_code: string
   description: string
   uom?: string
   item_code?: string
@@ -131,7 +130,7 @@ export interface Tracker {
 export interface AvailableLine {
   kind: BoqKind
   key?: string
-  sno: string
+  group_code: string
   description: string
   uom?: string
   item_code?: string
@@ -184,7 +183,6 @@ export interface VariationLine {
   kind: 'quantity' | 'extra'
   boq_key: string
   section_key: string
-  sno: string
   description: string
   uom: string
   old_qty: number
@@ -222,7 +220,6 @@ export interface VariationInput {
   kind: 'quantity' | 'extra'
   boq_key: string
   section_key: string
-  sno: string
   description: string
   uom: string
   change_qty: number

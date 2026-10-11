@@ -33,8 +33,8 @@ BOQ_KINDS = ("section", "item", "sub", "note")
 BOQ_PRICED = ("item", "sub")
 BOQ_NOT_LIVE = ("CANCELLED", "AMENDED", "REJECTED")
 BOQ_IMPORT_ALIASES = {
-    "sno": ["slno", "sl", "srno", "sr", "sno", "serialno", "itemno", "no", "activityno", "boqno", "refno"],
-    "code": ["itemcode", "code", "boqcode", "sku", "productcode", "scheduleitemno"],
+    "group_code": ["groupcode", "group", "workgroup", "trade", "category", "boqgroup"],
+    "item_code": ["itemcode", "code", "boqcode", "sku", "productcode", "scheduleitemno"],
     "description": ["description", "itemdescription", "particulars", "descriptionofwork", "descriptionofitem",
                     "workdescription", "natureofwork", "scopeofwork", "itemofwork"],
     "uom": ["uom", "unit", "units", "unitofmeasure", "unitsofmeasure", "measure"],

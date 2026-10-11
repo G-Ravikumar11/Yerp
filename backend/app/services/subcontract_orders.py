@@ -1584,7 +1584,7 @@ def wo_variations(db, wo, cutoff):
         lines = db.query(models.DBBoqVariationLine).filter(models.DBBoqVariationLine.variation_id == v.id).order_by(
             models.DBBoqVariationLine.display_order, models.DBBoqVariationLine.id).all()
         what = "; ".join(
-            ("%s %s%s" % (l.sno or "", l.description.split("\n")[0][:40],
+            ("%s %s%s" % ("", l.description.split("\n")[0][:40],
                           (" (+%g)" % l.change_qty) if l.kind == "quantity" else (" (new, %g %s)" % (l.change_qty, l.uom)))).strip()
             for l in lines[:6]) + ("; ..." if len(lines) > 6 else "")
         out.append({"number": (v.number or "").rsplit("/", 1)[-1], "date": (v.approved_at or "")[:10], "reason": v.reason or "",
