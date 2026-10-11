@@ -142,7 +142,11 @@ jobs:
         working-directory: mobile
         run: |
           if [ ! -d "ios/App" ]; then
+            # Capacitor will not add a platform into a folder that already exists (it holds only a README).
+            cp ios/README.md "$RUNNER_TEMP/ios-README.md" 2>/dev/null || true
+            rm -rf ios
             npx cap add ios
+            cp "$RUNNER_TEMP/ios-README.md" ios/README.md 2>/dev/null || true
           fi
           npx cap sync ios
 
