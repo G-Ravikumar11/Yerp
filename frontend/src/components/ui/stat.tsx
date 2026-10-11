@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom'
+import { ArrowUpRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Skeleton } from './skeleton'
 
@@ -10,6 +12,7 @@ export function Stat({
   sub,
   tone,
   loading,
+  to,
   className,
 }: {
   label: string
@@ -17,18 +20,33 @@ export function Stat({
   sub?: React.ReactNode
   tone?: 'success' | 'warning' | 'danger'
   loading?: boolean
+  /** Makes the whole tile a link to the page this figure comes from. */
+  to?: string
   className?: string
 }) {
-  return (
-    <div className={cn('min-w-0 rounded-xl border border-border bg-card p-4 shadow-card', className)}>
-      <p className="text-[12.5px] text-muted-foreground">{label}</p>
+  const body = (
+    <>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[12.5px] text-muted-foreground">{label}</p>
+        {to && <ArrowUpRight className="size-3.5 shrink-0 text-subtle transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-foreground" />}
+      </div>
       {loading ? (
         <Skeleton className="mt-2.5 h-7 w-28" />
       ) : (
         <p className={cn('tabular mt-1.5 break-words font-display text-xl font-semibold leading-tight sm:text-2xl', tone && toneClass[tone])}>{value}</p>
       )}
       {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
-    </div>
+    </>
+  )
+  const box = 'min-w-0 rounded-xl border border-border bg-card p-4 shadow-card'
+  if (!to) return <div className={cn(box, className)}>{body}</div>
+  return (
+    <Link
+      to={to}
+      className={cn(box, 'group block transition-all hover:-translate-y-0.5 hover:border-ring/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}
+    >
+      {body}
+    </Link>
   )
 }
 
