@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Y ERP</string>
+    <string name="title_activity_main">Y ERP</string>
+    <string name="package_name">com.yerp.app</string>
+    <string name="custom_url_scheme">com.yerp.app</string>
+</resources>

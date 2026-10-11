@@ -12,7 +12,7 @@ export default function SuperadminLoginPage() {
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    void fetch('/api/superadmin/me').then((r) => r.ok && window.location.assign(appUrl('superadmin'))).catch(() => undefined)
+    void api('/api/superadmin/me', { quiet: true }).then(() => window.location.assign(appUrl('superadmin'))).catch(() => undefined)
   }, [])
 
   const submit = async (e: React.FormEvent) => {

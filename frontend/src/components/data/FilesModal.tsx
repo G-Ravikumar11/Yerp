@@ -1,3 +1,4 @@
+import { takePhoto } from '@/lib/mobile'
 import { useRef, useState } from 'react'
 import { Camera, Paperclip } from 'lucide-react'
 import { Button, ConfirmDialog, Input, Modal, Skeleton, Tabs } from '@/components/ui'
@@ -20,10 +21,10 @@ export function FilesModal({ type, id, title, onClose }: { type: string; id: num
   const q = useFiles(type, id, { ...noFilter, kind })
   const remove = useAction((f: FileItem) => removeFile(f.id), { invalidate: [fileKeys.all], success: 'File removed', onSuccess: () => setRemoving(null) })
   const s = q.data?.summary
-  const send = async (list: FileList | null) => {
+  const send = async (list: ArrayLike<File> | null) => {
     if (!list?.length) return
     setBusy(true)
-    const { done, failed } = await uploadFiles([...list], type, id, caption.trim() ? { caption: caption.trim() } : {})
+    const { done, failed } = await uploadFiles(Array.from(list), type, id, caption.trim() ? { caption: caption.trim() } : {})
     setBusy(false)
     setCaption('')
     await qc.invalidateQueries({ queryKey: fileKeys.all })
@@ -39,7 +40,7 @@ export function FilesModal({ type, id, title, onClose }: { type: string; id: num
             <div className="w-56"><Input aria-label="Caption" placeholder="Caption (optional)" value={caption} onChange={(e) => setCaption(e.target.value)} /></div>
             <input ref={camera} type="file" accept="image/*" capture="environment" className="sr-only" aria-label="Take a photo" onChange={(e) => { void send(e.target.files); e.target.value = '' }} />
             <input ref={pick} type="file" multiple className="sr-only" aria-label="Choose files" onChange={(e) => { void send(e.target.files); e.target.value = '' }} />
-            <Button variant="outline" loading={busy} onClick={() => camera.current?.click()}><Camera /> Take a photo</Button>
+            <Button variant="outline" loading={busy} onClick={() => void takePhoto(camera.current, (f) => void send(f))}><Camera /> Take a photo</Button>
             <Button loading={busy} onClick={() => pick.current?.click()}><Paperclip /> Add files</Button>
           </div>
         )}

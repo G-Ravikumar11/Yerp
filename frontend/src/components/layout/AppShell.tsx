@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { trailFor } from '@/lib/nav'
 import { useSession } from '@/lib/session'
+import { registerPush } from '@/lib/mobile'
 import { useUI } from '@/stores/ui'
 import { Button, Skeleton } from '@/components/ui'
 import { CompanyNotice } from '@/components/company/CompanyNotice'
@@ -31,8 +32,15 @@ export function AppShell() {
 
   // Signed out: go to the sign-in page rather than draw a page full of failures.
   useEffect(() => {
-    if (gated && isAnonymous && import.meta.env.PROD) window.location.assign(appUrl('login'))
+    if (gated && isAnonymous && (import.meta.env.PROD || import.meta.env.VITE_API_BASE_URL)) {
+      window.location.assign(appUrl('login'))
+    }
   }, [gated, isAnonymous])
+
+  // In the native app, a signed-in phone is offered notifications.
+  useEffect(() => {
+    if (gated && !isLoading && !isAnonymous) void registerPush()
+  }, [gated, isLoading, isAnonymous])
 
   // A new page starts at its top, as a page does.
   useEffect(() => {

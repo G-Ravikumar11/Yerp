@@ -160,6 +160,8 @@ from app.routers import (
     partner_portal,
     compliance,
     master_delete,
+    devices,
+    app_updates,
 )
 
 for _module in (
@@ -198,6 +200,8 @@ for _module in (
     safety,
     partner_portal,
     master_delete,
+    devices,
+    app_updates,
 ):
     app.include_router(_module.router)
 

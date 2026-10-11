@@ -1,3 +1,4 @@
+import { takePhoto } from '@/lib/mobile'
 import { useMemo, useRef, useState } from 'react'
 import { Camera, X } from 'lucide-react'
 import { Button, Field, Input, Modal, NumField, Select, Skeleton, Textarea } from '@/components/ui'
@@ -66,8 +67,8 @@ function Form({ job, day, onClose }: { job: number; day: DiaryDetail | null; onC
     },
     { invalidate: [diaryKeys.all, fileKeys.all], success: (r) => r.message, onSuccess: onClose },
   )
-  const pickPhotos = (list: FileList | null) => {
-    const chosen = list ? [...list] : [] // copied now: the input is emptied straight after, and a FileList empties with it
+  const pickPhotos = (list: ArrayLike<File> | null) => {
+    const chosen = list ? Array.from(list) : [] // copied now: the input is emptied straight after, and a FileList empties with it
     if (chosen.length) setPhotos((p) => [...p, ...chosen])
   }
   const num = 'text-right'
@@ -116,7 +117,7 @@ function Form({ job, day, onClose }: { job: number; day: DiaryDetail | null; onC
       {!locked && (
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <input ref={camera} type="file" accept="image/*" capture="environment" multiple className="sr-only" aria-label="Photos of the day" onChange={(e) => { pickPhotos(e.target.files); e.target.value = '' }} />
-          <Button variant="outline" size="sm" onClick={() => camera.current?.click()}><Camera /> Photos of the day</Button>
+          <Button variant="outline" size="sm" onClick={() => void takePhoto(camera.current, pickPhotos)}><Camera /> Photos of the day</Button>
           {photos.map((f, i) => <span key={i} className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-xs">{f.name.slice(0, 18)}<button type="button" aria-label={`Remove ${f.name}`} onClick={() => setPhotos(photos.filter((_, j) => j !== i))}><X className="size-3" /></button></span>)}
         </div>
       )}

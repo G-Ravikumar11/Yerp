@@ -1,3 +1,4 @@
+import { takePhoto } from '@/lib/mobile'
 import { useRef, useState } from 'react'
 import { Camera, FileUp } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -25,8 +26,8 @@ export function PhotosTab({ job }: { job: number }) {
   const res = useJobPhotos(job, kind, { ...noFilter, q, from, to }, source)
   const s = res.data?.summary
   const remove = useAction((f: FileItem) => removeFile(f.id), { invalidate: [drwKeys.all, fileKeys.all], success: 'File removed', onSuccess: () => setRemoving(null) })
-  const send = async (list: FileList | null, asKind?: string) => {
-    const chosen = list ? [...list] : []
+  const send = async (list: ArrayLike<File> | null, asKind?: string) => {
+    const chosen = list ? Array.from(list) : []
     if (!chosen.length) return
     setBusy(true)
     const { done, failed } = await uploadFiles(chosen, 'job', job, asKind ? { kind: asKind } : {})
@@ -46,7 +47,7 @@ export function PhotosTab({ job }: { job: number }) {
       <div className="mb-3 flex flex-wrap gap-2">
         <input ref={camera} type="file" accept="image/*" capture="environment" multiple className="sr-only" aria-label="Photos of the site" onChange={(e) => { void send(e.target.files); e.target.value = '' }} />
         <input ref={papers} type="file" accept=".pdf,.dwg,.dxf,image/*" multiple className="sr-only" aria-label="Drawings for the project" onChange={(e) => { void send(e.target.files, 'drawing'); e.target.value = '' }} />
-        <Button loading={busy} onClick={() => camera.current?.click()}><Camera /> Photos of the site</Button>
+        <Button loading={busy} onClick={() => void takePhoto(camera.current, (f) => void send(f))}><Camera /> Photos of the site</Button>
         <Button variant="outline" loading={busy} onClick={() => papers.current?.click()}><FileUp /> Drawings for the project</Button>
       </div>
       <div className="mb-4 flex flex-wrap items-center gap-2">

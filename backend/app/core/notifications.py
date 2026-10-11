@@ -17,6 +17,7 @@ from app import models
 from app.db import SessionLocal
 
 from app.core.config import logger
+from app.core.push import push_to
 
 
 def default_from_email():
@@ -152,6 +153,7 @@ def notify_employee(db, client_id, employee_id, title, message, link=""):
             client_id=client_id, employee_id=employee_id,
             title=title, message=message, type="info", link=link,
         ))
+        push_to(db, client_id, title, message, link, employee_id=employee_id)
     except Exception:
         logger.exception("Could not queue notification for employee %s", employee_id)
 
@@ -245,6 +247,8 @@ def notify(db, client_id, kind, title, body="", view="", ref_type="", ref_id=Non
         n.sent_to = ", ".join(emails + ["+" + x for x in numbers])
         db.add(n)
         db.commit()
+        if kind != "daily_digest":
+            push_to(db, client_id, title, body, "/next/" + (view or ""), owner=True)
         # Paper waiting for a decision is also put in front of the people who
         # can make it, in their own notices - the bell alone told everybody,
         # which is the same as telling nobody.
