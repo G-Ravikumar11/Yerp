@@ -8,6 +8,27 @@ it whether the job made money.
 Single company, single owner, staff underneath with only the rights the owner
 gives them.
 
+## Where everything is
+
+```
+backend/            the server: Python, FastAPI, SQLAlchemy        -> "How the backend is arranged" below
+  app/              all the server code
+  tests/            pytest suite
+  scripts/          run_demo.py, seed_demo.py
+  requirements.txt  what the server needs; requirements-dev.txt adds the test tools
+frontend/           the web app: React, TypeScript, Vite            -> frontend/README.md
+  src/              all the screens and the company website
+  public/           icons and the website's photos, copied into the build as-is
+  e2e/              browser tests
+docs/               deployment.md (Railway)
+nixpacks.toml       how Railway builds it: Python, then the React app into frontend/dist
+railway.json        how Railway starts it and checks it is healthy
+requirements.txt    one line pointing at backend/requirements.txt (Railway needs a file here to spot Python)
+```
+
+`frontend/dist/` is the compiled web app. It is made by `npm run build`, never committed, and served
+by the backend at `/next/` (the website at `/`).
+
 ## The chain it follows
 
 Every screen below is one link, and each one feeds the next. Nothing is typed
@@ -124,14 +145,26 @@ material, labour and plant included. Worst margin first.
 
 ## Running it
 
+The backend:
+
 ```bash
 cd backend
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 python -m uvicorn main:app --reload
 ```
 
-Then open http://localhost:8000. With no `DATABASE_URL` set it uses a local
-SQLite file; set one to point at Postgres.
+The API is then on http://localhost:8000. With no `DATABASE_URL` set it uses a local
+SQLite file; set one to point at Postgres. Copy `backend/.env.example` to `backend/.env` for the optional keys.
+
+The web app, while working on it (hot reload, `/api` proxied to the backend):
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+To have the backend serve the app itself, as it does in production, run `npm run build` in `frontend/` once.
 
 A seeded demo with sample data:
 
@@ -158,8 +191,9 @@ backend/
     validators/    checks on what people enter
     constants/     the fixed lists, limits and statuses each area works to
     documents/     printed and Excel documents: letterhead, forms, the PDF drawing code
-    integrations/  outside services (the language model)
-  scripts/         seed_demo.py, run_demo.py and one-off tools
+    ai/            everything that calls an AI model, one file per feature (see ai/__init__.py)
+    static/        the two files the old phone app still asks for at the root of the site
+  scripts/         seed_demo.py and run_demo.py
   tests/
 ```
 
@@ -180,13 +214,14 @@ cd backend
 python -m pytest -q
 ```
 
-Around 1,390 of them, roughly eight minutes. They are written as statements
+Around 2,500 of them, roughly ten minutes. The few that load the compiled web app skip
+unless `npm run build` has been run in `frontend/`. They are written as statements
 about how the business works rather than about how the code is arranged — the
 name of a failing test should tell you which rule broke.
 
 ## Deploying
 
-See [DEPLOY.md](DEPLOY.md). `DATABASE_URL` and `SECRET_KEY` are required in any
+See [docs/deployment.md](docs/deployment.md). `DATABASE_URL` and `SECRET_KEY` are required in any
 deployed environment and the app refuses to start without them rather than
 silently falling back to a local file that vanishes on the next deploy.
 

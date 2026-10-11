@@ -1,1 +1,0 @@
-import{t as e}from"./useQuery-BPf3gF4t.js";import{i as t}from"./api-WIvxvfKZ.js";var n=()=>e({queryKey:[`costs`,`list`],queryFn:()=>t(`/api/costs/by-project`)}),r=n=>e({queryKey:[`costs`,`one`,n],enabled:n>0,queryFn:()=>t(`/api/costs/by-project/${n}`)}),i=()=>e({queryKey:[`costs`,`pnl`],queryFn:()=>t(`/api/jobs-pnl`)});export{i as n,r,n as t};

@@ -151,5 +151,5 @@ def test_free_allowance_means_no_charge(client, account, superadmin, monkeypatch
 
 def test_llm_returns_none_without_a_key():
     """The guard that makes every AI feature degrade instead of erroring."""
-    from app.integrations import llm
+    from app.ai import assistant_llm as llm
     assert llm.llm_chat([{"role": "user", "content": "hi"}]) is None or llm.GROQ_API_KEY
