@@ -7,8 +7,8 @@ from datetime import date
 
 import pytest
 
-from Ai_service import compliance_reader, measurement_analysis, measurement_reader
-from Ai_service.llm_client import AiResult
+from app.ai import compliance_reader, measurement_analysis, measurement_reader
+from app.ai.llm_client import AiResult
 from test_ai_subcontracts import a_draft, unkeyed  # noqa: F401  (fixtures)
 from test_delete_work_order import book
 

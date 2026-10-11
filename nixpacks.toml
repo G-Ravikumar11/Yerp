@@ -1,0 +1,11 @@
+# How Railway builds the app (railway.json picks the Nixpacks builder).
+#
+# Nixpacks sees requirements.txt at the root and sets up Python. Node is added here only to compile the
+# React app into frontend/dist, which the server then serves at /next/. The compiled app is not committed.
+# Vite needs Node 22.12 or newer.
+
+[phases.setup]
+nixPkgs = ["...", "nodejs_22"]
+
+[phases.build]
+cmds = ["cd frontend && npm ci --include=dev && npm run build"]

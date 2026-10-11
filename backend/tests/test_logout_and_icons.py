@@ -1,4 +1,5 @@
 """Signing out signs out of everything this browser holds, and every page shows the Y."""
+from _frontend import needs_frontend_build
 from conftest import make_employee
 
 PASSWORD = "Crew1234"
@@ -30,6 +31,7 @@ def test_the_staff_logout_clears_even_when_the_staff_session_is_gone(tenant):
     assert tenant.get("/api/client/me").status_code == 401
 
 
+@needs_frontend_build
 def test_the_y_icon_is_served_for_every_page(tenant):
     for path, kind in (("/favicon.svg", "svg"), ("/favicon.ico", "icon"), ("/favicon-32.png", "png"), ("/icons/apple-touch-icon.png", "png")):
         res = tenant.get(path)
