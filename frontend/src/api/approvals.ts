@@ -52,7 +52,7 @@ export interface Decision {
 
 export const decide = (d: Decision) => post<{ message: string }>('/api/approvals/decide', { ...d, note: d.note ?? '', override: !!d.override })
 
-/** Where the document lives in the app. Anything not ported yet goes to the current app, which still has it. */
+/** Where the document lives in the app. A kind without a page of its own opens the approvals inbox. */
 export function hrefFor(i: ApprovalItem): { to: string; external: boolean } {
   switch (i.kind) {
     case 'subcontract_order':

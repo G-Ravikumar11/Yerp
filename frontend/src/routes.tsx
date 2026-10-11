@@ -1,16 +1,16 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
 
 /**
- * The screens that have been moved across. Each loads on its own, so opening
- * the Item Master does not download the work order builder. Any menu item not
- * listed here still shows the "waiting to be ported" page.
+ * Every screen inside the app shell and the address it lives at. Each loads on its own, so opening
+ * the Item Master does not download the work order builder. The sidebar's menu is in lib/nav.ts;
+ * a menu item needs its screen listed here too.
  */
-export interface PortedRoute {
+export interface Screen {
   path: string
   Component: LazyExoticComponent<ComponentType>
 }
 
-export const PORTED: PortedRoute[] = [
+export const SCREENS: Screen[] = [
   { path: '/projects/boq', Component: lazy(() => import('@/features/boq/BoqListPage')) },
   { path: '/projects/boq/:id', Component: lazy(() => import('@/features/boq/BoqPage')) },
   { path: '/store/items', Component: lazy(() => import('@/features/items/ItemMasterPage')) },

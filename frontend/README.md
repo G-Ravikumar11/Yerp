@@ -42,7 +42,7 @@ src/
   features/     one folder per screen family (orders, measurement, subbills, ...)
   lib/          api client, session, query cache + persistence, formatting
   stores/       Zustand: ui, toast, offline queue
-  pages/        Command Center, design-system page, grid playground
+  pages/        app-wide pages: not found, the design-system page, the grid playground
   routes.tsx    every page and the address it lives at
 e2e/            puppeteer suites (one file per area) and run-all.mjs
 public/         copied into the build as-is: favicons, app icons, the website's photos (site/)

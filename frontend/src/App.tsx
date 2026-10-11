@@ -5,13 +5,11 @@ import { MotionConfig } from 'framer-motion'
 import { AppShell } from '@/components/layout/AppShell'
 import { Toaster, TooltipProvider } from '@/components/ui'
 import { LegacyLinks } from '@/lib/legacyLinks'
-import { allRoutes } from '@/lib/nav'
 import { persistOptions, queryClient } from '@/lib/query'
 import { watchConnection } from '@/stores/offline'
 import { applyTheme, useUI } from '@/stores/ui'
-import { PORTED } from '@/routes'
-import Home from '@/pages/Home'
-import ModulePlaceholder from '@/pages/ModulePlaceholder'
+import { SCREENS } from '@/routes'
+import HomePage from '@/features/dashboard/HomePage'
 import NotFound from '@/pages/NotFound'
 
 const LoginPage = lazy(() => import('@/features/auth/LoginPage'))
@@ -68,7 +66,7 @@ export default function App() {
             <Route path="superadmin" element={<SuperadminPage />} />
             <Route path="superadmin/login" element={<SuperadminLoginPage />} />
             <Route element={<AppShell />}>
-              <Route index element={<Home />} />
+              <Route index element={<HomePage />} />
               <Route
                 path="design"
                 element={
@@ -85,14 +83,9 @@ export default function App() {
                   </Suspense>
                 }
               />
-              {PORTED.map(({ path, Component }) => (
+              {SCREENS.map(({ path, Component }) => (
                 <Route key={path} path={path.slice(1)} element={<Component />} />
               ))}
-              {allRoutes()
-                .filter((r) => !PORTED.some((p) => p.path === r.path))
-                .map((r) => (
-                  <Route key={r.path} path={r.path.slice(1)} element={<ModulePlaceholder title={r.label} group={r.group} />} />
-                ))}
               <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>

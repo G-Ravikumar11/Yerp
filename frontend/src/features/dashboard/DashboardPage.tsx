@@ -6,14 +6,14 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Skeleton, Stat } from '@/components/ui'
 import { useInbox } from '@/api/approvals'
 import { attentionHref, useAttention, useCashFlow, usePayables, useProjectPnl, useReceivables, useRetention, type AttentionItem } from '@/api/dashboard'
-import { Figure } from '@/features/dashboard/Figure'
+import { Figure } from './Figure'
 import { useSession } from '@/lib/session'
 import { compactINR, formatINR } from '@/lib/utils'
 
 // The chart library is the heaviest thing on this page, and the tiles above it should not wait for it.
-const ProfitChart = lazy(() => import('@/features/dashboard/Charts').then((m) => ({ default: m.ProfitChart })))
-const CashFlowChart = lazy(() => import('@/features/dashboard/Charts').then((m) => ({ default: m.CashFlowChart })))
-const AgeingChart = lazy(() => import('@/features/dashboard/Charts').then((m) => ({ default: m.AgeingChart })))
+const ProfitChart = lazy(() => import('./Charts').then((m) => ({ default: m.ProfitChart })))
+const CashFlowChart = lazy(() => import('./Charts').then((m) => ({ default: m.CashFlowChart })))
+const AgeingChart = lazy(() => import('./Charts').then((m) => ({ default: m.AgeingChart })))
 
 const greeting = () => {
   const h = new Date().getHours()
@@ -70,7 +70,7 @@ function AttentionRow({ item }: { item: AttentionItem }) {
   return link.external ? <a href={link.to}>{body}</a> : <Link to={link.to}>{body}</Link>
 }
 
-export default function Dashboard() {
+export default function DashboardPage() {
   const { user, can } = useSession()
   const money = can('bills.view_all')
   const reports = can('reports.view')
