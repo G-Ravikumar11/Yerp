@@ -5,6 +5,7 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Button, ConfirmDialog, Field, Input, NumField, Select, Skeleton, Tabs } from '@/components/ui'
 import { peopleKeys, resetPassword, setAccess, startOffboarding, updateEmployee, useDepartments, useEmployee, useEmployees, useHrCatalogue, type EmployeeDetail } from '@/api/people'
 import { useAction } from '@/lib/mutate'
+import { useSession } from '@/lib/session'
 import { AccessPicker } from './AccessPicker'
 import { EMPLOYEE_TONE } from './EmployeesPage'
 
@@ -44,11 +45,13 @@ function Profile({ e }: { e: EmployeeDetail }) {
 }
 
 function Access({ e }: { e: EmployeeDetail }) {
+  const { isOwner } = useSession()
   const cat = useHrCatalogue()
   const [role, setRole] = useState(e.permission_role)
   const [granted, setGranted] = useState(e.permissions)
   useEffect(() => { setRole(e.permission_role); setGranted(e.permissions) }, [e.permission_role, e.permissions])
   const save = useAction(() => setAccess(e.id, { permission_role: role, permissions: granted }), { invalidate: [peopleKeys.all], success: 'Access updated' })
+  if (!isOwner) return <p className="text-[13px] text-muted-foreground">Only the Master can change what somebody is allowed to do. They currently hold {e.permissions.length} permission{e.permissions.length === 1 ? '' : 's'}.</p>
   if (!cat.data) return <Skeleton className="h-40 w-full" />
   return (
     <div>

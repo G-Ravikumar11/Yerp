@@ -12,7 +12,7 @@ from app.db import get_db
 
 from app.constants.hr import ONBOARDING_STAGES, ORG_DOMAIN_KEY
 from app.core.audit import log_audit
-from app.core.auth import get_client_user, owned_or_404
+from app.core.auth import get_client_user, owned_or_404, require_owner
 from app.core.currency import money
 from app.core.dates import _parse_date
 from app.core.references import release_references
@@ -63,6 +63,8 @@ from app.validators.hr import (
     validate_role,
 )
 
+
+ACCESS_FIELDS = {"permission_role", "extra_permissions", "denied_permissions"}
 
 router = APIRouter()
 
@@ -335,6 +337,8 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     level = validate_level(body.level)
     role = validate_role(body.role)
     permission_role = validate_permission_role(body.permission_role)
+    if permission_role != DEFAULT_PERMISSION_ROLE:
+        require_owner(request, db)
     reports_to = validate_manager(db, client.id, None, body.reports_to)
     owned_or_404(db, models.DBDepartment, client.id, body.department_id, "Department")
 
@@ -563,6 +567,10 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
         body["level"] = validate_level(body["level"])
     if "role" in body:
         body["role"] = validate_role(body["role"])
+    # Access is the Master's alone. A blind setattr below would otherwise let
+    # any team member widen their own or anybody's rights through this route.
+    if ACCESS_FIELDS & body.keys():
+        require_owner(request, db)
     if "permission_role" in body:
         body["permission_role"] = validate_permission_role(body["permission_role"])
     if "reports_to" in body:
@@ -690,16 +698,44 @@ def suggest_employee_email(request: Request, first_name: str = "", last_name: st
     }
 
 
+@router.get("/api/master/access")
+def master_access_overview(request: Request, db: Session = Depends(get_db)):
+    """Every permission in the system, every access level, and what each employee holds.
+
+    For the Master's access screen: one read gives the whole picture, and
+    PUT /api/employees/{id}/permissions changes it.
+    """
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    people = db.query(models.DBEmployee).filter(
+        models.DBEmployee.client_id == client.id,
+    ).order_by(models.DBEmployee.first_name, models.DBEmployee.last_name).all()
+    return {
+        "permissions": PORTAL_PERMISSIONS,
+        "permission_roles": PERMISSION_ROLES,
+        "employees": [{
+            "id": e.id, "employee_id": e.employee_id,
+            "full_name": f"{e.first_name} {e.last_name}".strip(),
+            "job_title": e.job_title, "status": e.status,
+            "permission_role": (e.permission_role or DEFAULT_PERMISSION_ROLE),
+            "permissions": sorted(permissions_for(e)),
+            "extra_permissions": sorted(permission_list(e.extra_permissions)),
+            "denied_permissions": sorted(permission_list(e.denied_permissions)),
+        } for e in people],
+    }
+
+
 @router.put("/api/employees/{emp_id}/permissions")
 def set_employee_permissions(emp_id: int, request: Request, body: dict = None,
                              db: Session = Depends(get_db)):
-    """HR decides what a member of staff may do in the portal.
+    """The Master decides what a member of staff may do in the portal, whenever they like.
 
     Recorded in the audit log because it is a change of access, not a change of
     detail: who widened somebody's rights, and when, is the first question
     asked after a cost is approved by the wrong person.
     """
     client = get_client_user(request, db)
+    require_owner(request, db)
     emp = db.query(models.DBEmployee).filter(
         models.DBEmployee.id == emp_id,
         models.DBEmployee.client_id == client.id,

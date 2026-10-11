@@ -4,10 +4,11 @@ import math
 from typing import Any, Dict, Optional, Set, Tuple
 
 from fastapi import HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-
 from app import models
+from app.constants.approvals import GONE_STATUSES
 from app.core.audit import log_audit
 from app.core.currency import money
 from app.core.dates import DEFAULT_WORKING_DAYS, _parse_date, parse_working_days
@@ -252,7 +253,10 @@ def decide_leave(
         ).first()
 
         if emp:
-            leave_year = int(str(leave.start_date)[:4]) if leave.start_date else datetime.now().year
+            try:
+                leave_year = int(str(leave.start_date)[:4]) if leave.start_date else datetime.now().year
+            except ValueError:
+                leave_year = datetime.now().year
             balance = leave_balance_for(db, emp, for_year=leave_year)
             leave_days = float(leave.days or 0)
 
@@ -337,6 +341,8 @@ def site_for_point(
         user_lng = float(lng)
     except (ValueError, TypeError):
         return None, None
+    if not (math.isfinite(user_lat) and math.isfinite(user_lng)):
+        return None, None
 
     best_fence = None
     best_dist: Optional[float] = None
@@ -384,6 +390,30 @@ GLOBAL_PROJECT_ROLES = {
     "finance",
 }
 
+# A person's access role (permission_role) and org role (role) are set
+# independently, so each of these is matched against both.
+PROJECT_MANAGER_ROLES = {"project_manager", "manager"}
+CREW_LEAD_ROLES = {"team_lead", "manager", "construction", "supervisor"}
+
+MAX_REPORT_DEPTH = 8
+
+
+def all_report_ids_for(db: Session, emp: models.DBEmployee) -> Set[int]:
+    """Everyone below this employee in the reporting line, however many levels down."""
+    found: Set[int] = set()
+    frontier = [emp.id]
+    for _ in range(MAX_REPORT_DEPTH):
+        if not frontier:
+            break
+        rows = db.query(models.DBEmployee.id).filter(
+            models.DBEmployee.client_id == emp.client_id,
+            models.DBEmployee.reports_to.in_(frontier),
+            or_(models.DBEmployee.status.is_(None), models.DBEmployee.status.notin_(GONE_STATUSES)),
+        ).all()
+        frontier = [r[0] for r in rows if r[0] != emp.id and r[0] not in found]
+        found.update(frontier)
+    return found
+
 
 def accessible_job_ids_for(db: Session, emp: models.DBEmployee) -> Optional[Set[int]]:
     """Determine the job IDs an employee is authorized to access based on their role.
@@ -391,18 +421,18 @@ def accessible_job_ids_for(db: Session, emp: models.DBEmployee) -> Optional[Set[
     Returns:
         - None: Unrestricted (sees all tenant projects).
         - Set[int]: Authorized job IDs.
-        - set() (empty set): No project access.
+        - set() (empty set): No project access (no employee).
     """
     if not emp:
         return set()
 
     role = (getattr(emp, "permission_role", "") or "staff").lower()
     org_role = (getattr(emp, "role", "") or "employee").lower()
+    roles = {role, org_role}
 
     # 1. Global visibility: Executive / Finance / Head of Projects / Owner
     if (
-        role in GLOBAL_PROJECT_ROLES
-        or org_role == "executive"
+        roles & GLOBAL_PROJECT_ROLES
         or employee_can(emp, "bills.view_all")
         or employee_can(emp, "reports.view")
         or employee_can(emp, "billing.manage")
@@ -418,9 +448,12 @@ def accessible_job_ids_for(db: Session, emp: models.DBEmployee) -> Optional[Set[
     ).all()
     for row in assigned_rows:
         allowed_job_ids.add(row[0])
+    # Nobody assigned to a site is not restricted to none: "assigned to nothing"
+    # and "allowed everything" are different answers, and treating them alike
+    # would lock every existing employee out of every job.
 
     # 3. Project Managers: Include projects where manager_id == emp.id
-    if role in ("project_manager", "manager") or org_role in ("manager", "team_lead"):
+    if roles & PROJECT_MANAGER_ROLES:
         managed_jobs = db.query(models.DBJob.id).filter(
             models.DBJob.client_id == emp.client_id,
             models.DBJob.manager_id == emp.id,
@@ -428,14 +461,10 @@ def accessible_job_ids_for(db: Session, emp: models.DBEmployee) -> Optional[Set[
         for j in managed_jobs:
             allowed_job_ids.add(j[0])
 
-    # 4. Team Leads / Supervisors: Include sites assigned to their direct crew
-    if org_role in ("team_lead", "manager") or role in ("construction", "supervisor"):
-        report_ids = [
-            r[0] for r in db.query(models.DBEmployee.id).filter(
-                models.DBEmployee.client_id == emp.client_id,
-                models.DBEmployee.reports_to == emp.id,
-            ).all()
-        ]
+    # 4. Team Leads / Supervisors: Include sites assigned to anyone below them,
+    # not just their direct crew
+    if roles & CREW_LEAD_ROLES:
+        report_ids = all_report_ids_for(db, emp)
         if report_ids:
             crew_sites = db.query(models.DBEmployeeSite.job_id).filter(
                 models.DBEmployeeSite.employee_id.in_(report_ids),
@@ -444,6 +473,8 @@ def accessible_job_ids_for(db: Session, emp: models.DBEmployee) -> Optional[Set[
             for row in crew_sites:
                 allowed_job_ids.add(row[0])
 
+    if not allowed_job_ids and not assigned_rows:
+        return None
     return allowed_job_ids
 
 

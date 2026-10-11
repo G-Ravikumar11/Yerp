@@ -13,7 +13,7 @@ from app.db import get_db
 
 from app.constants.common import ALLOW_SELF_REGISTRATION, GOOGLE_SIGNIN_SCOPES
 from app.core.audit import log_audit, log_login
-from app.core.auth import end_every_session, get_client_user
+from app.core.auth import current_role, end_every_session, get_client_user
 from app.core.config import logger
 from app.core.notifications import default_from_email, send_email_background
 from app.core.oauth import oauth
@@ -146,6 +146,8 @@ def client_me(request: Request, db: Session = Depends(get_db)):
         "industry": client.industry,
         "is_onboarded": client.is_onboarded,
         "created_at": client.created_at,
+        # The account holder or a colleague: the screens show the Master's controls only to the former.
+        "role": current_role(request, db),
     }
 
 

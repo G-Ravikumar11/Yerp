@@ -10,11 +10,13 @@ export type SessionUser = {
   permissions: string[]
   employeeId: number | null
   roleLabel: string
+  /** owner, admin or viewer for the company login; empty for staff. Only the owner is the Master. */
+  teamRole: string
   /** The department the owner has put this person in; staff see it on their own sign-in. */
   department: string
 }
 
-type OwnerMe = { email: string; contact_name?: string; company_name?: string }
+type OwnerMe = { email: string; contact_name?: string; company_name?: string; role?: string }
 type StaffMe = {
   id: number
   email: string
@@ -48,7 +50,8 @@ async function resolveSession(): Promise<SessionUser | null> {
         company: owner.company_name || '',
         permissions: [],
         employeeId: null,
-        roleLabel: 'Master',
+        roleLabel: owner.role && owner.role !== 'owner' ? (owner.role === 'viewer' ? 'Viewer' : 'Admin') : 'Master',
+        teamRole: owner.role || 'owner',
         department: '',
       }
     }
@@ -66,6 +69,7 @@ async function resolveSession(): Promise<SessionUser | null> {
         permissions: staff.permissions ?? [],
         employeeId: staff.id,
         roleLabel: staff.permission_role_label || 'Staff',
+        teamRole: '',
         department: staff.department ?? '',
       }
     }
@@ -92,7 +96,7 @@ export function useSession() {
     isLoading: q.isPending,
     // Only an answer of "nobody" is signed out. No answer at all (no signal) is not.
     isAnonymous: q.isSuccess && !user,
-    isOwner: user?.type === 'owner',
+    isOwner: user?.type === 'owner' && user.teamRole === 'owner',
     // A failed refresh with a person already known (offline, or the server restarting) is not
     // "could not reach the server" - the person is still there, and so is their data.
     error: user ? null : q.error,

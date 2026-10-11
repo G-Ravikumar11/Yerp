@@ -4,6 +4,7 @@ import { createEmployee, peopleKeys, setAccess, useDepartments, useEmployees, us
 import { useJobOptions } from '@/api/clientOrders'
 import { useAction } from '@/lib/mutate'
 import { today } from '@/lib/format'
+import { useSession } from '@/lib/session'
 import { AccessPicker } from './AccessPicker'
 
 const blank = (): EmployeeInput => ({ first_name: '', last_name: '', email: '', password: '', phone: '', job_title: '', department_id: null, reports_to: null, level: '', role: 'employee', permission_role: 'staff', site_ids: [], employment_type: 'full_time', pay_frequency: 'monthly', salary: 0, tax_rate: 0, start_date: today(), emergency_contact: '', emergency_phone: '' })
@@ -22,6 +23,7 @@ function Form({ onClose }: { onClose: () => void }) {
   const [granted, setGranted] = useState<string[]>([])
   const [given, setGiven] = useState<{ id: string; email: string; password: string; sites: string } | null>(null)
   const cat = useHrCatalogue()
+  const { isOwner } = useSession()
   const depts = useDepartments()
   const people = useEmployees('')
   const jobs = useJobOptions(false)
@@ -35,7 +37,7 @@ function Form({ onClose }: { onClose: () => void }) {
 
   const save = useAction(async () => {
     const made = await createEmployee({ ...f, password: f.password?.trim() })
-    await setAccess(made.id, { permission_role: f.permission_role, permissions: granted })
+    if (isOwner) await setAccess(made.id, { permission_role: f.permission_role, permissions: granted })
     return made
   }, { invalidate: [peopleKeys.all], success: (r) => r.message || 'Employee created', onSuccess: (r) => setGiven({ id: r.employee_id, email: f.email, password: f.password ?? '', sites: (r.site_names ?? []).join(', ') || 'Every site' }) })
   const ready = f.first_name.trim() && f.last_name.trim() && (!f.password?.trim() || f.email.trim())
@@ -81,7 +83,7 @@ function Form({ onClose }: { onClose: () => void }) {
           </div>
         </Field>
       </div>
-      {cat.data && <div className="mt-5"><AccessPicker catalogue={cat.data} role={f.permission_role} granted={granted} onRole={(code, rights) => { setF((s) => ({ ...s, permission_role: code })); setGranted(rights) }} onGranted={setGranted} /></div>}
+      {isOwner && cat.data && <div className="mt-5"><AccessPicker catalogue={cat.data} role={f.permission_role} granted={granted} onRole={(code, rights) => { setF((s) => ({ ...s, permission_role: code })); setGranted(rights) }} onGranted={setGranted} /></div>}
       <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
         {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
         <Button variant="ghost" onClick={onClose}>Cancel</Button>

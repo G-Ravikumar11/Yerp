@@ -31,6 +31,7 @@ from app.services.approvals import (
     approval_doc,
     approval_inbox,
     approval_thresholds,
+    build_approval_chain,
     decide_approval_step,
     finance_approver_for,
     get_approval_chain_history,
@@ -384,9 +385,9 @@ def approvals_decide(body: ApprovalDecisionIn, request: Request, db: Session = D
             if leave.employee_id == emp.id:
                 raise HTTPException(403, "Your own leave is approved by somebody else.")
             if not employee_can(emp, "people.manage"):
-                them = db.query(models.DBEmployee).filter(models.DBEmployee.id == leave.employee_id).first()
-                if not them or them.reports_to != emp.id:
-                    raise HTTPException(403, "Only their own manager or HR decides this leave.")
+                above = build_approval_chain(leave.employee_id, client.id, db)
+                if emp.id not in {step["employee_id"] for step in above}:
+                    raise HTTPException(403, "Only somebody above them in the reporting line, or HR, decides this leave.")
         who = employee_name(emp) if emp else (client.contact_name or "Master")
         return decide_leave(db, client.id, leave, decision, who, request)
     raise HTTPException(400, "Unknown kind of approval")

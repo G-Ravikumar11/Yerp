@@ -260,3 +260,27 @@ def test_one_company_cannot_touch_another_s_team(client, tenant):
 
 def test_the_team_needs_a_session(client):
     assert client.get("/api/team").status_code == 401
+
+
+# --- access is the Master's alone ---------------------------------------------
+
+def test_an_admin_cannot_change_anybodys_access(admin):
+    c = admin["client"]
+    # tenant and admin share one browser, so the Master's session is gone by now
+    with main.SessionLocal() as db:
+        cid = db.query(models.DBTeamMember).get(admin["member"]["id"]).client_id
+        e = models.DBEmployee(client_id=cid, employee_id="EMP-9001", first_name="Asha", last_name="Rao", email="asha@example.com")
+        db.add(e)
+        db.commit()
+        eid = e.id
+    assert c.get("/api/master/access").status_code == 403
+    assert c.put(f"/api/employees/{eid}/permissions", json={"permission_role": "owner"}).status_code == 403
+    # the side door: a plain edit must not carry access fields either
+    assert c.put(f"/api/employees/{eid}", json={"permission_role": "owner"}).status_code == 403
+    assert c.put(f"/api/employees/{eid}", json={"extra_permissions": "bills.pay"}).status_code == 403
+    assert c.post("/api/employees", json={"first_name": "B", "last_name": "C",
+                                          "permission_role": "owner"}).status_code == 403
+    # ...while ordinary edits still work for them
+    assert c.put(f"/api/employees/{eid}", json={"job_title": "Engineer"}).status_code == 200
+    with main.SessionLocal() as db:
+        assert db.query(models.DBEmployee).get(eid).permission_role in (None, "staff")
