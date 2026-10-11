@@ -7,8 +7,8 @@ from datetime import date
 
 import pytest
 
-from Ai_service import compliance_reader, measurement_analysis, measurement_reader
-from Ai_service.llm_client import AiResult
+from app.ai import compliance_reader, measurement_analysis, measurement_reader
+from app.ai.llm_client import AiResult
 from test_ai_subcontracts import a_draft, unkeyed  # noqa: F401  (fixtures)
 from test_delete_work_order import book
 
@@ -120,7 +120,7 @@ def test_the_plain_checks_alone_are_free_and_never_call_the_model(tenant, monkey
 
 
 def test_a_question_about_the_book_is_answered_from_its_own_figures(tenant, monkeypatch):
-    from Ai_service import measurement_ask
+    from app.ai import measurement_ask
     monkeypatch.setenv("GROQ_API_KEY", "g")
     seen = {}
     def fake(system, prompt, *a, **k):

@@ -5,10 +5,12 @@ import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FRONTEND = os.path.join(HERE, "..", "..", "frontend")
+# The old app's files the server still sends: its self-removing service worker and its manifest.
+STATIC = os.path.join(HERE, "..", "app", "static")
 
 
 def read(name):
-    with open(os.path.join(FRONTEND, name), encoding="utf-8") as f:
+    with open(os.path.join(STATIC, name), encoding="utf-8") as f:
         return f.read()
 
 
@@ -50,6 +52,6 @@ def test_the_previous_interface_is_gone():
 def test_the_old_service_worker_removes_itself_and_what_it_kept(client):
     res = client.get("/sw.js")
     assert res.status_code == 200 and "javascript" in res.headers["content-type"]
-    sw = read("sw.js")
+    sw = read("legacy-sw.js")
     assert "unregister()" in sw and "caches.delete" in sw
     assert "addEventListener('fetch'" not in sw, "it must not answer requests"

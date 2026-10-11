@@ -533,7 +533,7 @@ def tenant_ai_status(request: Request):
     which is safe but indistinguishable from a broken model - this says which.
     """
     require_superadmin(request)
-    from app.integrations import llm
+    from app.ai import assistant_llm as llm
     key = llm.GROQ_API_KEY or ""
     configured = bool(key)
     looks_valid = key.startswith("gsk_") and len(key) > 20
