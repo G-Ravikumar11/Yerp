@@ -70,6 +70,30 @@ def wo_boq_template(request: Request, db: Session = Depends(get_db)):
         "boq_template.xlsx")
 
 
+@router.get("/api/boqs/sample.xlsx")
+def boq_sample_sheet(request: Request, db: Session = Depends(get_db)):
+    """A filled-in sample in exactly the shape the BOQ import reads: headings in capitals, priced lines under them,
+    a group code on each, and rate-only (R/o) lines. Fill it in, or import it as it is to see how a BOQ comes in."""
+    require_erp_read(request, db)
+    sub, sup, fin = "SUB STRUCTURE WORKS", "SUPER STRUCTURE WORKS", "FINISHING WORKS"
+    return sheet_response(
+        ["Group code", "Item code", "Description", "Material", "Unit", "Quantity", "Rate", "Amount"],
+        [["", "", "PLAIN CEMENT CONCRETE", "", "", "", "", ""],
+         [sub, "", "PCC M10 (1:3:6) below footings", "M10", "Cum", 277, 5230, 1448710],
+         [sub, "", "PCC M10 flooring bed", "M10", "Cum", 764, 5230, 3995720],
+         ["", "", "REINFORCED CEMENT CONCRETE", "", "", "", "", ""],
+         [sub, "", "RCC footings", "M30", "Cum", 809, 6064, 4905776],
+         [sup, "", "RCC podium slab", "M40", "Cum", 762, 6592, 5023104],
+         ["", "", "REINFORCEMENT STEEL", "", "", "", "", ""],
+         [sub, "", "Reinforcement steel in footings", "Fe550/550D", "MT", 133.05, 73900, 9832395],
+         ["", "", "MASONRY AND PLASTERING", "", "", "", "", ""],
+         [fin, "", "Solid concrete block masonry 150mm in CM 1:6", "", "Sqm", 3333, 1350, 4499550],
+         [fin, "", "External plastering 20mm in CM 1:6, two coats", "", "Sqm", "R/o", 740, ""],
+         ["ELECTRICAL WORKS", "", "Conduiting and wiring for common areas", "", "LS", 1, 850000, 850000],
+         ["PLUMBING WORKS", "", "CPVC water supply lines, 25mm", "", "Rmt", 1200, 420, 504000]],
+        "sample_boq.xlsx")
+
+
 @router.get("/api/boqs")
 def boq_list(request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
