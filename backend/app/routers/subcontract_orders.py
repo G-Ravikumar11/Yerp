@@ -33,6 +33,8 @@ from app.core.auth import (
     require_erp_read,
     require_items_access,
     require_owner,
+    session_can,
+    session_employee,
     wo_actor,
 )
 from app.core.config import logger
@@ -126,8 +128,9 @@ def wo_access_get(order_id: int, request: Request, db: Session = Depends(get_db)
     was let in. The owner and the maker choose the last."""
     client = require_erp_read(request, db)
     order = wo_or_404(db, client.id, order_id)
-    viewer = STAFF_VIEWER.get()
-    if viewer and order.submitted_by != viewer:
+    # Whoever made it or the Master - not head office, which sees every order but did not make this one.
+    me = session_employee(request, db)
+    if me and order.submitted_by != me.id:
         raise HTTPException(403, "Only the Master, or whoever made the order, decides who sees it.")
     shared = {r[0] for r in db.query(models.DBOrderAccess.employee_id).filter(models.DBOrderAccess.order_id == order.id).all()}
     route = {r.approver_id for r in wo_chain_rows(db, order.id) if r.approver_id}
@@ -144,8 +147,9 @@ def wo_access_get(order_id: int, request: Request, db: Session = Depends(get_db)
 def wo_access_put(order_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     order = wo_or_404(db, client.id, order_id)
-    viewer = STAFF_VIEWER.get()
-    if viewer and order.submitted_by != viewer:
+    # Whoever made it or the Master - not head office, which sees every order but did not make this one.
+    me = session_employee(request, db)
+    if me and order.submitted_by != me.id:
         raise HTTPException(403, "Only the Master, or whoever made the order, decides who sees it.")
     want = {int(i) for i in (body.get("employee_ids") or []) if str(i).isdigit() or isinstance(i, int)}
     valid = {r[0] for r in db.query(models.DBEmployee.id).filter(models.DBEmployee.client_id == client.id, models.DBEmployee.id.in_(list(want) or [0])).all()}
@@ -308,7 +312,8 @@ def wo_list_contractors(request: Request, q: str = "", status: str = "", db: Ses
 @router.post("/api/wo/contractors")
 def wo_create_contractor(body: ContractorIn, request: Request,
                          db: Session = Depends(get_db)):
-    client, actor_id, actor_name = wo_actor(request, db, ("workorders.manage", "billing.manage"))
+    # A vendor code is opened at head office, by HO QS (or the Master) - nobody else.
+    client, actor_id, actor_name = wo_actor(request, db, "vendors.create")
     name = (body.company_name or "").strip()
     if not name:
         raise HTTPException(400, "The contractor needs a company name")
@@ -598,8 +603,9 @@ def wo_list_orders(request: Request, status: str = "", q: str = "",
 def wo_create_order(body: WorkOrderHeadIn, request: Request,
                     db: Session = Depends(get_db)):
     """Opens a draft. The number is issued now so it can be quoted while the
-    BOQ is still being priced, which is how the site office refers to it."""
-    client, actor_id, actor_name = wo_actor(request, db)
+    BOQ is still being priced, which is how the site office refers to it.
+    Work orders are opened at head office, by HO QS (or the Master)."""
+    client, actor_id, actor_name = wo_actor(request, db, "workorders.create")
     dept = (body.department or "").strip()
     order = models.DBSubcontractOrder(
         client_id=client.id, status="DRAFT",
@@ -673,9 +679,9 @@ def wo_copy_order(order_id: int, request: Request, db: Session = Depends(get_db)
     The same trade on the next site is the same schedule with different
     quantities and mostly the same clauses. What is not copied is anything
     that was decided about this order in particular: its number, its dates,
-    its approval and its history.
+    its approval and its history. A copy is a new order, so it is HO QS's to make.
     """
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "workorders.create")
     source = wo_or_404(db, client.id, order_id)
     order = models.DBSubcontractOrder(
         client_id=client.id, status="DRAFT",
@@ -1187,9 +1193,10 @@ def wo_amend(order_id: int, body: WoActionIn, request: Request,
 
     The original is not edited and not deleted: it was signed, so it stays as
     it was signed. The revision is a new draft carrying everything across, and
-    the two are linked so the history reads in one line.
+    the two are linked so the history reads in one line. The revision is a
+    new order under a new number, so HO QS opens it as it opens any other.
     """
-    client, actor_id, actor_name = wo_actor(request, db)
+    client, actor_id, actor_name = wo_actor(request, db, "workorders.create")
     order = wo_or_404(db, client.id, order_id)
     if "AMEND" not in WO_TRANSITIONS.get(order.status or "", {}):
         raise HTTPException(409, "%s is %s, so it cannot be amended." % (order.wo_number, (order.status or "").lower()))
@@ -1307,6 +1314,9 @@ def wo_update_contractor(con_id: int, body: ContractorIn, request: Request,
     con.address = (body.address or "").strip()
     code = (body.vendor_code or "").strip().upper()
     if code and code != (con.vendor_code or "").upper():
+        if not session_can(request, db, "vendors.create"):
+            raise HTTPException(403, "Vendor codes are given by HO QS - ask HO QS to change %s's code."
+                                % (con.vendor_code or name))
         if db.query(models.DBContractor).filter(
                 models.DBContractor.client_id == client.id, models.DBContractor.id != con.id,
                 sqlfunc.upper(models.DBContractor.vendor_code) == code).first():
@@ -1374,8 +1384,8 @@ async def import_registration_forms(request: Request, file: UploadFile = File(..
     the right shape is left blank and listed back, and a code already taken
     by somebody else is not reused - the code in the sheet's own name is used
     when it is free, which is how a copied form that kept its original's
-    code is usually put right."""
-    client, actor_id, actor_name = wo_actor(request, db, ("workorders.manage", "billing.manage"))
+    code is usually put right. Vendor codes are HO QS's to open, so the import is too."""
+    client, actor_id, actor_name = wo_actor(request, db, "vendors.create")
     raw = await file.read()
     try:
         import_guard.check_workbook_bytes(raw, file.filename)

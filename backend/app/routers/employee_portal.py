@@ -18,7 +18,7 @@ from app.core.config import logger
 from app.core.dates import _parse_date
 from app.core.files import ALLOWED_DOCUMENT_EXTENSIONS, MAX_DOCUMENT_BYTES
 from app.core.notifications import default_from_email, notify_employee, send_email_background
-from app.core.permissions import DEFAULT_PERMISSION_ROLE, PERMISSION_ROLES, employee_can, permissions_for
+from app.core.permissions import DEFAULT_PERMISSION_ROLE, PERMISSION_ROLES, employee_can, is_head_office, permissions_for
 from app.core.security import RESET_TOKEN_TTL_MINUTES, issue_reset_token, rate_limiter, upgrade_password_hash
 from app.core.serials import allocate_bill_number, allocate_po_number
 from app.schemas.auth import ForgotPasswordIn
@@ -266,6 +266,8 @@ def employee_me(request: Request, db: Session = Depends(get_db)):
         "permission_role": role_code,
         "permission_role_label": role_label,
         "permissions": sorted(permissions_for(emp)),
+        # HO QS and HO Coordinator sign in at the same page and land on the HO portal.
+        "head_office": is_head_office(emp),
         "today_clock_in": att.clock_in if att else "",
         "today_clock_out": att.clock_out if att else "",
         "today_hours": att.total_hours if att else 0,

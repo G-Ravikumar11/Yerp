@@ -506,8 +506,8 @@ def import_subcontract_orders(body: dict, request: Request, db: Session = Depend
     """A register of gangs and dates, brought in as one draft order each - the
     contractor and project matched by name where they are already on file,
     left blank to be picked when they are not, so a mistyped name never
-    silently attaches an order to the wrong gang."""
-    client, actor_id, actor_name = wo_actor(request, db)
+    silently attaches an order to the wrong gang. Each is a new order, so HO QS's to bring in."""
+    client, actor_id, actor_name = wo_actor(request, db, "workorders.create")
     contractors = {norm_name(c.company_name): c for c in db.query(models.DBContractor).filter(
         models.DBContractor.client_id == client.id).all()}
     jobs = {norm_name(j.name): j for j in db.query(models.DBJob).filter(

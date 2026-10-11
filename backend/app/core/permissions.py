@@ -100,8 +100,36 @@ PORTAL_PERMISSIONS = [
      "label": "Record site work - diary, measurements, photos, quality, safety, plant and material"},
     {"key": "site.signoff", "group": "Site",
      "label": "Sign off site work - diary days, permits to work, incidents, inspections and NCRs"},
+    # HEAD OFFICE
+    #
+    # A vendor code, a work order and a BOQ are opened at head office, by its
+    # quantity surveyor, and by nobody else in the business. Three sites each
+    # registering gangs and raising orders is how one gang ends up with two
+    # vendor codes and one project with two BOQs. The Master holds these as
+    # well. They are never handed out one by one (see HO_QS_ONLY): the way to
+    # give somebody them is to make that person HO QS.
+    {"key": "vendors.create", "group": "Head office", "only_role": "ho_qs",
+     "label": "Open vendor codes - register a sub contractor"},
+    {"key": "workorders.create", "group": "Head office", "only_role": "ho_qs",
+     "label": "Open work orders - the client's and the sub contractors'"},
+    {"key": "boq.create", "group": "Head office", "only_role": "ho_qs",
+     "label": "Open a project's BOQ"},
+    # Head office looks after every site, so it sees every order and every
+    # bill - not only those it has a hand in, which is all a site sees.
+    {"key": "ho.view_all", "group": "Head office",
+     "label": "The HO portal: every vendor, work order, BOQ and bill on every site"},
 ]
 PERMISSION_KEYS = {p["key"] for p in PORTAL_PERMISSIONS}
+
+# The rights only HO QS (and the Master) can hold, whatever else is ticked.
+HO_QS_ONLY = frozenset(p["key"] for p in PORTAL_PERMISSIONS if p.get("only_role") == "ho_qs")
+HO_QS_ONLY_ROLES = frozenset({"ho_qs", "owner"})
+# What is said to somebody who tries one of them: who does it instead.
+HO_QS_ONLY_REFUSAL = {
+    "vendors.create": "Vendor codes are opened by HO QS",
+    "workorders.create": "Work orders are opened by HO QS",
+    "boq.create": "BOQs are opened by HO QS",
+}
 # Presets rather than per-person checkboxes: with a workforce that turns over,
 # the question asked at hiring is "what does this person do", and a fixed set
 # of answers is far harder to get quietly wrong than twelve tick boxes. The
@@ -119,6 +147,10 @@ _PROJECT_MANAGER = ["self.service", "bills.submit", "bills.approve", "bills.view
 # What "workorders.manage" used to open on its own. The older presets keep all
 # of it, so nobody already on one loses a screen the day the split lands.
 _SPLIT_OUT = ["billing.manage", "purchase.manage", "stores.manage", "accounts.manage"]
+# What both people at head office hold: every site's orders, BOQs and bills in
+# sight, and the right to keep them up to date.
+_HEAD_OFFICE = ["self.service", "bills.submit", "bills.view_all", "reports.view",
+                "workorders.manage", "billing.manage", "customers.manage", "ho.view_all"]
 PERMISSION_ROLES = [
     {
         "code": "staff", "label": "Site staff", "rank": 1,
@@ -137,9 +169,10 @@ PERMISSION_ROLES = [
     },
     {
         "code": "planning_billing", "label": "Planning & Billing", "rank": 2,
-        "description": "Tenders, estimates and budgets; drafts work orders; measures "
-                       "and bills the client; checks subcontractor bills. Sends them "
-                       "for approval - does not approve them.",
+        "description": "Tenders, estimates and budgets; works on the work orders "
+                       "HO QS opens; measures and bills the client; checks "
+                       "subcontractor bills. Sends them for approval - does not "
+                       "approve them.",
         "permissions": ["self.service", "bills.submit", "billing.manage",
                         "workorders.manage", "items.manage", "customers.manage",
                         "reports.view"] + _SITE,
@@ -189,6 +222,27 @@ PERMISSION_ROLES = [
                        "the Master.",
         "permissions": _PROJECT_MANAGER + ["purchase.manage", "stores.manage"],
     },
+    # HEAD OFFICE - its two people. They sign in at the same page as everybody
+    # else and land on the HO portal rather than on a site's day. Ranked with
+    # the departments: an order HO QS prepares climbs the same ladder the
+    # planner's did - project manager, head projects, then the Master.
+    {
+        "code": "ho_qs", "label": "HO QS", "rank": 2, "head_office": True,
+        "description": "Head office quantity surveyor. The only one who opens vendor "
+                       "codes, work orders (the client's and the sub contractors') and "
+                       "BOQs. Sees every order, BOQ and bill on every site and checks "
+                       "the bills against them.",
+        "permissions": _HEAD_OFFICE + ["items.manage", "vendors.create",
+                                       "workorders.create", "boq.create"],
+    },
+    {
+        "code": "ho_coordinator", "label": "HO Coordinator", "rank": 2, "head_office": True,
+        "description": "Head office coordinator. Sees every vendor, work order, BOQ and "
+                       "bill on every site, follows up whatever is waiting and keeps "
+                       "drafts up to date. Does not open vendor codes, work orders or "
+                       "BOQs - HO QS does.",
+        "permissions": list(_HEAD_OFFICE),
+    },
     # The first presets, before the list followed the departments. Still
     # honoured for whoever holds one, and offered only to them.
     {
@@ -229,6 +283,8 @@ PERMISSION_ROLES = [
 ROLE_PERMISSIONS = {r["code"]: set(r["permissions"]) for r in PERMISSION_ROLES}
 ROLE_RANK = {r["code"]: r.get("rank", 1) for r in PERMISSION_ROLES}
 DEFAULT_PERMISSION_ROLE = "staff"
+# The access levels that make somebody head office: they land on the HO portal.
+HEAD_OFFICE_ROLES = frozenset(r["code"] for r in PERMISSION_ROLES if r.get("head_office"))
 
 
 def permission_list(raw) -> set:
@@ -257,11 +313,20 @@ def permissions_for(emp) -> set:
     held = set(ROLE_PERMISSIONS.get(role, ROLE_PERMISSIONS[DEFAULT_PERMISSION_ROLE]))
     held |= permission_list(getattr(emp, "extra_permissions", ""))
     held -= permission_list(getattr(emp, "denied_permissions", ""))
+    if role not in HO_QS_ONLY_ROLES:
+        # Ticked by hand for somebody who is not HO QS: not honoured. Opening
+        # codes and orders stays with one desk however the boxes were set.
+        held -= HO_QS_ONLY
     return held
 
 
 def employee_can(emp, permission: str) -> bool:
     return permission in permissions_for(emp)
+
+
+def is_head_office(emp) -> bool:
+    """Whether this member of staff is one of head office's people (HO QS or HO Coordinator)."""
+    return (getattr(emp, "permission_role", "") or "").lower() in HEAD_OFFICE_ROLES
 
 
 def role_rank(emp):

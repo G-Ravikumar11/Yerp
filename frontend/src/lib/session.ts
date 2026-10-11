@@ -10,6 +10,10 @@ export type SessionUser = {
   permissions: string[]
   employeeId: number | null
   roleLabel: string
+  /** The access level's code - 'ho_qs', 'planning_billing' and so on. 'owner' for the account holder. */
+  roleCode: string
+  /** HO QS or HO Coordinator: they land on the HO portal rather than a site's day. */
+  headOffice: boolean
   /** The department the owner has put this person in; staff see it on their own sign-in. */
   department: string
 }
@@ -20,7 +24,9 @@ type StaffMe = {
   email: string
   full_name?: string
   permissions?: string[]
+  permission_role?: string
   permission_role_label?: string
+  head_office?: boolean
   department?: string
 }
 
@@ -49,6 +55,8 @@ async function resolveSession(): Promise<SessionUser | null> {
         permissions: [],
         employeeId: null,
         roleLabel: 'Master',
+        roleCode: 'owner',
+        headOffice: false,
         department: '',
       }
     }
@@ -66,6 +74,8 @@ async function resolveSession(): Promise<SessionUser | null> {
         permissions: staff.permissions ?? [],
         employeeId: staff.id,
         roleLabel: staff.permission_role_label || 'Staff',
+        roleCode: staff.permission_role || 'staff',
+        headOffice: !!staff.head_office,
         department: staff.department ?? '',
       }
     }
@@ -93,6 +103,8 @@ export function useSession() {
     // Only an answer of "nobody" is signed out. No answer at all (no signal) is not.
     isAnonymous: q.isSuccess && !user,
     isOwner: user?.type === 'owner',
+    /** HO QS or HO Coordinator. */
+    isHeadOffice: !!user?.headOffice,
     // A failed refresh with a person already known (offline, or the server restarting) is not
     // "could not reach the server" - the person is still there, and so is their data.
     error: user ? null : q.error,

@@ -6,6 +6,7 @@ import { FilterBar, useListFilters } from '@/components/data/filters'
 import { Badge, Button, ConfirmDialog } from '@/components/ui'
 import { decideVendor, importVendors, useVendors, vendorKeys, type Registration, type Vendor } from '@/api/vendors'
 import { useAction } from '@/lib/mutate'
+import { useOpenOnArrival } from '@/lib/hooks'
 import { useSession } from '@/lib/session'
 import { DeleteOrderDialog } from '@/features/deleteorder/DeleteOrderDialog'
 import { BulkBar, BulkDeleteDialog } from '@/components/data/BulkDelete'
@@ -36,6 +37,9 @@ export default function VendorsPage() {
   const [creating, setCreating] = useState(false)
   const [sendBack, setSendBack] = useState<Vendor | null>(null)
   const file = useRef<HTMLInputElement>(null)
+  // Vendor codes are opened at head office, by HO QS (and the Master) - nobody else.
+  const opens = can('vendors.create')
+  useOpenOnArrival(() => setCreating(true), opens)
 
   const decide = useAction((a: { v: Vendor; decision: 'approve' | 'reject'; comments?: string }) => decideVendor(a.v.id, a.decision, a.comments), {
     invalidate: [vendorKeys.all, ['approvals'], ['orders']],
@@ -142,7 +146,7 @@ export default function VendorsPage() {
       <PageHeader
         eyebrow="Subcontractors"
         title="Vendor Register"
-        description="Every contractor with its vendor code and its Sub Contractor Registration Form. No order is issued to a contractor whose form is not signed off."
+        description={`Every contractor with its vendor code and its Sub Contractor Registration Form. No order is issued to a contractor whose form is not signed off.${opens ? '' : ' Vendor codes are opened by HO QS.'}`}
         actions={
           <>
             <Button variant="outline" asChild>
@@ -150,7 +154,7 @@ export default function VendorsPage() {
                 <Download /> Excel
               </a>
             </Button>
-            {can('workorders.manage|billing.manage') && (
+            {opens && (
               <>
                 <input ref={file} type="file" hidden accept=".xlsx" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) bring.mutate(f) }} />
                 <Button variant="outline" loading={bring.isPending} onClick={() => file.current?.click()}>
@@ -175,7 +179,7 @@ export default function VendorsPage() {
         columns={columns}
         rowKey={(v) => v.id}
         loading={vendors.isPending}
-        empty={filters.active ? 'Nobody matches those filters.' : 'No sub contractors yet. Register one, or import the registration forms workbook.'}
+        empty={filters.active ? 'Nobody matches those filters.' : opens ? 'No sub contractors yet. Register one, or import the registration forms workbook.' : 'No sub contractors yet. HO QS opens their vendor codes.'}
       />
 
       <VendorFormModal vendor={null} open={creating} onOpenChange={setCreating} />

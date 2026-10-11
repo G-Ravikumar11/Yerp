@@ -70,9 +70,9 @@ def erp_build_work_order(body: WorkOrderIn, request: Request,
 
     The picker only offers finished goods from this tenant's own master, so
     the "code not found" failure a sheet produces cannot arise at all; what is
-    left to check is quantities and prices.
+    left to check is quantities and prices. Opened at head office, by HO QS.
     """
-    client = require_workorder_access(request, db)
+    client = require_items_access(request, db, "workorders.create")
     job = job_or_404(db, client.id, body.job_id)
     if not body.lines:
         raise HTTPException(400, "Add at least one line")
@@ -220,7 +220,7 @@ async def erp_wo_validate(request: Request, file: UploadFile = File(...),
 async def erp_wo_upload(request: Request, file: UploadFile = File(...),
                         job_id: int = Form(...), sheet: str = Form(""),
                         db: Session = Depends(get_db)):
-    client = require_workorder_access(request, db)
+    client = require_items_access(request, db, "workorders.create")
     job = job_or_404(db, client.id, job_id)
 
     rows = await parse_sheet(file, WO_COLUMNS, WO_HEADER_ALIASES, sheet)

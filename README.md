@@ -143,6 +143,17 @@ also where the labour cost comes from.
 **Project profit** — what each job earned against what it truly cost, with
 material, labour and plant included. Worst margin first.
 
+**Head office** — two access levels, HO QS and HO Coordinator, given like any
+other in People. They sign in at the same page as everybody else and land on
+the HO portal (`/next/ho`): every site at once — vendors, work orders both
+ways, BOQs and RA bills, what is in draft, what waits on whom, and which
+projects have no BOQ yet. HO QS is the only one in the business, with the
+Master, who opens a vendor code, a work order (the client's or a sub
+contractor's, a copy or an amendment) or a BOQ; nobody on a site does, and the
+boxes cannot be ticked for anybody else by hand. The coordinator sees all of it,
+follows it up and keeps drafts up to date. A tender won by somebody else waits
+for HO QS to draw up its work order.
+
 ## Running it
 
 The backend:

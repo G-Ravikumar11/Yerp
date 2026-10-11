@@ -21,12 +21,17 @@ export function AccessPicker({ catalogue, role, granted, onRole, onGranted }: { 
           {[...groups.entries()].map(([group, items]) => (
             <div key={group}>
               <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">{group}</p>
-              {items.map((p) => (
-                <label key={p.key} className="flex items-start gap-2 py-0.5 text-[13px]">
-                  <input type="checkbox" className="mt-0.5 size-4 accent-[var(--primary)]" checked={granted.includes(p.key)} onChange={(e) => onGranted(e.target.checked ? [...granted, p.key] : granted.filter((k) => k !== p.key))} />
-                  <span>{p.label}{!fromRole.has(p.key) && <span className="text-muted-foreground"> · not in this level</span>}</span>
-                </label>
-              ))}
+              {items.map((p) => {
+                // Opening vendor codes, work orders and BOQs goes with being HO QS (or Master) - it is not ticked on for anybody else.
+                const reserved = !!p.only_role && p.only_role !== role && role !== 'owner'
+                const holder = catalogue.permission_roles.find((r) => r.code === p.only_role)?.label ?? p.only_role
+                return (
+                  <label key={p.key} className={'flex items-start gap-2 py-0.5 text-[13px]' + (reserved ? ' opacity-60' : '')}>
+                    <input type="checkbox" className="mt-0.5 size-4 accent-[var(--primary)]" disabled={reserved} checked={!reserved && granted.includes(p.key)} onChange={(e) => onGranted(e.target.checked ? [...granted, p.key] : granted.filter((k) => k !== p.key))} />
+                    <span>{p.label}{reserved ? <span className="text-muted-foreground"> · {holder} only</span> : !fromRole.has(p.key) && <span className="text-muted-foreground"> · not in this level</span>}</span>
+                  </label>
+                )
+              })}
             </div>
           ))}
         </div>

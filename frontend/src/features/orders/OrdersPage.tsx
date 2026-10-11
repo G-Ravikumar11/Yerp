@@ -6,6 +6,7 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
 import { Button, Stat, StatGrid, StatusBadge } from '@/components/ui'
 import { useOrders, type Order } from '@/api/orders'
+import { useOpenOnArrival } from '@/lib/hooks'
 import { useSession } from '@/lib/session'
 import { compactINR, formatINR } from '@/lib/utils'
 import { formatDate } from '@/lib/format'
@@ -19,6 +20,9 @@ export default function OrdersPage() {
   const { can, isOwner } = useSession()
   const orders = useOrders()
   const [creating, setCreating] = useState(false)
+  // Work orders are opened at head office, by HO QS (and the Master).
+  const opens = can('workorders.create')
+  useOpenOnArrival(() => setCreating(true), opens)
   const [deleting, setDeleting] = useState<Order | null>(null)
   const [picked, setPicked] = useState<Set<string | number>>(new Set())
   const [clearing, setClearing] = useState(false)
@@ -79,7 +83,7 @@ export default function OrdersPage() {
                 <Download /> Excel
               </a>
             </Button>
-            {can('workorders.manage') && (
+            {opens && (
               <Button onClick={() => setCreating(true)}>
                 <Plus /> New work order
               </Button>
@@ -107,7 +111,7 @@ export default function OrdersPage() {
         rowKey={(o) => o.id}
         loading={orders.isPending}
         onRowClick={(o) => nav(`/subcontractors/work-orders/${o.id}`)}
-        empty={filters.active ? 'Nothing matches those filters.' : 'No work orders yet. Start one with New work order.'}
+        empty={filters.active ? 'Nothing matches those filters.' : opens ? 'No work orders yet. Start one with New work order.' : 'No work orders yet. HO QS opens them.'}
       />
 
       <NewOrderModal open={creating} onOpenChange={setCreating} />

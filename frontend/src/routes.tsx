@@ -11,6 +11,7 @@ export interface Screen {
 }
 
 export const SCREENS: Screen[] = [
+  { path: '/ho', Component: lazy(() => import('@/features/headoffice/HoPortalPage')) },
   { path: '/projects/boq', Component: lazy(() => import('@/features/boq/BoqListPage')) },
   { path: '/projects/boq/:id', Component: lazy(() => import('@/features/boq/BoqPage')) },
   { path: '/store/items', Component: lazy(() => import('@/features/items/ItemMasterPage')) },

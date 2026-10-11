@@ -3,6 +3,7 @@ import {
   Building2,
   CheckCheck,
   HardHat,
+  Landmark,
   LayoutDashboard,
   type LucideIcon,
   Package,
@@ -12,7 +13,8 @@ import {
   Wallet,
 } from 'lucide-react'
 
-export type NavItem = { label: string; path: string; perm?: string }
+/** notHeadOffice: left out for HO QS and HO Coordinator, whose front page is the HO portal. */
+export type NavItem = { label: string; path: string; perm?: string; notHeadOffice?: boolean }
 /** staffOnly: the screens of a member of staff's own work (timesheet, payslips), which the account holder has no use for. */
 export type NavGroup = { id: string; label: string; icon: LucideIcon; items: NavItem[]; staffOnly?: boolean; ownerOnly?: boolean }
 export type NavEntry = { kind: 'link'; id: string; label: string; icon: LucideIcon; path: string; perm?: string; ownerOnly?: boolean } | ({ kind: 'group' } & NavGroup)
@@ -24,6 +26,9 @@ export type NavEntry = { kind: 'link'; id: string; label: string; icon: LucideIc
  */
 export const NAV: NavEntry[] = [
   { kind: 'link', id: 'dashboard', label: 'Command Center', icon: LayoutDashboard, path: '/', ownerOnly: true },
+  // Head office's front page: every site's vendors, work orders, BOQs and bills, and what waits on whom.
+  // HO QS and HO Coordinator land here; the Master can open it to see what head office sees.
+  { kind: 'link', id: 'ho', label: 'HO Portal', icon: Landmark, path: '/ho', perm: 'ho.view_all' },
   {
     kind: 'group',
     id: 'me',
@@ -31,7 +36,7 @@ export const NAV: NavEntry[] = [
     icon: UserRound,
     staffOnly: true,
     items: [
-      { label: 'Overview', path: '/' },
+      { label: 'Overview', path: '/', notHeadOffice: true },
       { label: 'Timesheet', path: '/me/timesheet' },
       { label: 'My Costs', path: '/me/costs', perm: 'bills.submit' },
       { label: 'My Orders', path: '/me/orders', perm: 'bills.submit' },
@@ -162,13 +167,13 @@ export function trailFor(pathname: string, staff = false): Trail {
 }
 
 /** The menu as this person may see it: items they lack the right to are left out, and so are groups left empty. */
-export function visibleNav(can: (perm: string) => boolean, staff = false): NavEntry[] {
+export function visibleNav(can: (perm: string) => boolean, staff = false, headOffice = false): NavEntry[] {
   return NAV.flatMap((e): NavEntry[] => {
     if (e.kind === 'group' && e.staffOnly && !staff) return []
     if (e.kind === 'group' && e.ownerOnly && staff) return []
     if (e.kind === 'link' && e.ownerOnly && staff) return []
     if (e.kind === 'link') return !e.perm || can(e.perm) ? [e] : []
-    const items = e.items.filter((i) => !i.perm || can(i.perm))
+    const items = e.items.filter((i) => (!i.perm || can(i.perm)) && !(headOffice && i.notHeadOffice))
     return items.length ? [{ ...e, items }] : []
   })
 }

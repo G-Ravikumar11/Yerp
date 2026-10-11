@@ -11,7 +11,7 @@ from app.db import get_db
 
 from app.constants.boq import BOQ_IMPORT_ALIASES, BOQ_PRICED, BV_TRANSITIONS
 from app.core.audit import log_audit
-from app.core.auth import require_erp_read, require_items_access, require_workorder_access, wo_actor
+from app.core.auth import require_erp_read, require_items_access, wo_actor
 from app.core.currency import inr, money, sheet_number, unit_rate
 from app.core.notifications import notify, notify_employee
 from app.core.serials import next_sequence_number
@@ -78,7 +78,8 @@ def boq_list(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/api/boqs")
 def boq_create(body: ProjectBoqIn, request: Request, db: Session = Depends(get_db)):
-    client, _, actor_name = wo_actor(request, db)
+    # A project's BOQ is opened at head office, by HO QS (or the Master).
+    client, _, actor_name = wo_actor(request, db, "boq.create")
     job = job_or_404(db, client.id, body.job_id)
     if db.query(models.DBBoq).filter(models.DBBoq.client_id == client.id, models.DBBoq.job_id == job.id).first():
         raise HTTPException(409, "%s already has a BOQ. Open it, or add a revision." % job.name)
@@ -232,8 +233,9 @@ async def boq_import(boq_id: int, request: Request, file: UploadFile = File(...)
 
 @router.post("/api/boqs/from-estimate/{estimate_id}")
 def boq_from_estimate(estimate_id: int, request: Request, db: Session = Depends(get_db)):
-    """A tender that was won becomes the project's BOQ, R0: its items, quantities and quoted rates."""
-    client, _, actor_name = wo_actor(request, db)
+    """A tender that was won becomes the project's BOQ, R0: its items, quantities and quoted rates.
+    Opening a BOQ is HO QS's, however it starts."""
+    client, _, actor_name = wo_actor(request, db, "boq.create")
     est = estimate_or_404(db, client.id, estimate_id)
     if not est.job_id:
         raise HTTPException(409, "Attach the tender to its project first.")
@@ -261,8 +263,9 @@ def boq_from_estimate(estimate_id: int, request: Request, db: Session = Depends(
 
 @router.post("/api/boqs/{boq_id}/client-order")
 def boq_make_client_order(boq_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
-    """The client's work order, drawn from the BOQ: its priced lines, in the item codes the BOQ gave them."""
-    client = require_workorder_access(request, db)
+    """The client's work order, drawn from the BOQ: its priced lines, in the item codes the BOQ gave them.
+    A new work order, so HO QS's to open."""
+    client = require_items_access(request, db, "workorders.create")
     boq = boq_or_404(db, client.id, boq_id)
     made = db.query(models.DBWorkOrder).filter(models.DBWorkOrder.boq_id == boq.id).first()
     if made:

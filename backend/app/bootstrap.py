@@ -22,6 +22,7 @@ from app.constants import (
     compliance,
     common,
     crm,
+    head_office,
     hr,
     invoicing,
     items,
@@ -102,6 +103,7 @@ from app.services import (
     email,
     employee_portal,
     files,
+    head_office,
     hr,
     invoicing,
     items,
@@ -160,6 +162,7 @@ from app.routers import (
     partner_portal,
     compliance,
     master_delete,
+    head_office,
 )
 
 for _module in (
@@ -198,6 +201,7 @@ for _module in (
     safety,
     partner_portal,
     master_delete,
+    head_office,
 ):
     app.include_router(_module.router)
 

@@ -3,6 +3,7 @@ import { FileCheck2, Paperclip } from 'lucide-react'
 import { Button, Field, Input, Modal, Textarea } from '@/components/ui'
 import { createVendor, updateVendor, vendorKeys, VENDOR_DOCS, type Vendor, type VendorInput } from '@/api/vendors'
 import { useAction } from '@/lib/mutate'
+import { useSession } from '@/lib/session'
 import { toast } from '@/stores/toast'
 
 const MAX_BYTES = 5 * 1024 * 1024
@@ -58,7 +59,7 @@ const readFile = (file: File) =>
 /** The Sub Contractor Registration Form, box for box - with each required document attached as a PDF or a picture. */
 export function VendorFormModal({ vendor, open, onOpenChange }: { vendor: Vendor | null; open: boolean; onOpenChange: (o: boolean) => void }) {
   return (
-    <Modal open={open} onOpenChange={onOpenChange} size="lg" title={vendor ? `Registration form - ${vendor.vendor_code} ${vendor.company_name}` : 'Sub Contractor Registration Form'} description="Registered by staff, the form waits in Approvals until somebody who approves work orders signs it off.">
+    <Modal open={open} onOpenChange={onOpenChange} size="lg" title={vendor ? `Registration form - ${vendor.vendor_code} ${vendor.company_name}` : 'Sub Contractor Registration Form'} description="Vendor codes are opened by HO QS. The form then waits in Approvals until somebody who approves work orders signs it off.">
       {open && <Form key={vendor?.id ?? 'new'} vendor={vendor} onClose={() => onOpenChange(false)} />}
     </Modal>
   )
@@ -69,6 +70,8 @@ function Section({ children }: { children: string }) {
 }
 
 function Form({ vendor, onClose }: { vendor: Vendor | null; onClose: () => void }) {
+  // The code itself is HO QS's to give or change; anybody keeping the form up to date sees it, not edits it.
+  const codes = useSession().can('vendors.create')
   const [f, setF] = useState<Partial<Vendor>>(() => (vendor ? { ...vendor } : blank()))
   const [files, setFiles] = useState<Record<string, { name: string; data: string }>>({})
   const set = (k: keyof Vendor) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setF((s) => ({ ...s, [k]: e.target.value }))
@@ -134,8 +137,8 @@ function Form({ vendor, onClose }: { vendor: Vendor | null; onClose: () => void 
       <Field label="Project (optional)" htmlFor="v-project" className="sm:col-span-2">
         <Input id="v-project" value={f.registered_project ?? ''} onChange={set('registered_project')} placeholder="The project they were taken on for" />
       </Field>
-      <Field label="Vendor code" htmlFor="v-code" hint="Next in the series if left blank.">
-        <Input id="v-code" value={f.vendor_code ?? ''} onChange={upper('vendor_code')} className="font-mono uppercase" />
+      <Field label="Vendor code" htmlFor="v-code" hint={codes ? 'Next in the series if left blank.' : 'Given by HO QS.'}>
+        <Input id="v-code" value={f.vendor_code ?? ''} onChange={upper('vendor_code')} className="font-mono uppercase" disabled={!codes} />
       </Field>
       <Field label="Date of joining" htmlFor="v-join">
         <Input id="v-join" type="date" value={f.joining_date ?? ''} onChange={set('joining_date')} />
