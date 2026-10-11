@@ -165,10 +165,7 @@ def get_dashboard_summary(request: Request, db: Session = Depends(get_db)):
 @router.get("/api/jobs")
 def list_jobs(request: Request, status: str = "", q: str = "", open_only: bool = False, costing: bool = True,
               db: Session = Depends(get_db)):
-    # Site staff list their own projects too; which ones each person sees is decided by
-    # filter_jobs_for_employee (role, assigned sites, managed projects, reporting line).
-    client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage",
-                                                "site.record", "billing.manage"))
+    client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage"))
     _, emp = session_person(request, db)
     query = db.query(models.DBJob).filter(models.DBJob.client_id == client.id)
     if emp is not None:
@@ -194,8 +191,7 @@ def list_jobs(request: Request, status: str = "", q: str = "", open_only: bool =
 @router.get("/api/jobs/{job_id}")
 def get_job(job_id: int, request: Request, db: Session = Depends(get_db)):
     """The job, its money, and everything filed against it."""
-    client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage",
-                                                "site.record", "billing.manage"))
+    client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage"))
     _, emp = session_person(request, db)
     if emp is not None and not employee_can_access_job(db, emp, job_id):
         raise HTTPException(status_code=403, detail="You do not have access to view this project.")
