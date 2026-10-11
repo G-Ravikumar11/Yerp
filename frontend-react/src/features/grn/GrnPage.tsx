@@ -9,6 +9,7 @@ import { formatINR } from '@/lib/utils'
 import { ReceiptModal } from './ReceiptModal'
 import { ReceiveModal } from './ReceiveModal'
 import { FilterBar, useListFilters } from '@/components/data/filters'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 const tone = (s: string) => (s === 'POSTED' ? 'success' : s === 'CANCELLED' ? 'danger' : 'neutral') as 'success' | 'danger' | 'neutral'
 
@@ -29,6 +30,7 @@ export default function GrnPage() {
     { id: 'rej', header: 'Rejected', hideBelow: 'md', align: 'right', cell: (g) => (g.rejected_value ? <span className="text-warning">{formatINR(g.rejected_value)}</span> : '-') },
     { id: 'st', header: 'Status', cell: (g) => <Badge tone={tone(g.status)} dot>{g.status === 'POSTED' ? 'Posted' : g.status === 'CANCELLED' ? 'Cancelled' : 'Draft'}</Badge> },
     { id: 'act', header: '', align: 'right', cell: (g) => <div className="flex justify-end gap-1.5">{g.actions.includes('POST') && <Button size="sm" onClick={() => setOpen(g.id)}>Post</Button>}<Button size="sm" variant="outline" onClick={() => setOpen(g.id)}>Open</Button><Button size="sm" variant="ghost" asChild><a href={`/api/grn/${g.id}/export.xlsx`} title="As a workbook"><FileSpreadsheet /></a></Button></div> },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="grn" id={r.id} label={String(r.number)} noun="goods receipt" /> },
   ]
   const matches: TableColumn<MatchRow>[] = [
     { id: 'po', header: 'Order', cell: (r) => <div><span className="font-mono font-semibold">{r.number}</span><div className="text-xs text-muted-foreground">{r.supplier_name}</div></div> },

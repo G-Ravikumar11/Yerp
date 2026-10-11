@@ -9,6 +9,7 @@ import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { compactINR, formatINR } from '@/lib/utils'
 import { FilterBar, useListFilters } from '@/components/data/filters'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 const TONE: Record<string, 'neutral' | 'warning' | 'success' | 'danger'> = { DRAFT: 'neutral', SUBMITTED: 'warning', CERTIFIED: 'success', PAID: 'success', CANCELLED: 'danger' }
 const link = 'text-primary underline-offset-2 hover:underline'
@@ -124,6 +125,7 @@ export function BillsPanel({ workOrderId }: { workOrderId: number }) {
         </div>
       ),
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="ra_bill" id={r.id} label={String(r.number)} noun="RA bill" /> },
   ]
 
   const filters = useListFilters(bills, {

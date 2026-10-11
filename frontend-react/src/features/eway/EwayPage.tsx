@@ -8,6 +8,7 @@ import { formatDate } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { EwayModal } from './EwayModal'
 import { FilterBar, useListFilters } from '@/components/data/filters'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 /** Goods over the threshold on the road - site transfers, plant, returns - each with its e-way bill. */
 export default function EwayPage() {
@@ -29,6 +30,7 @@ export default function EwayPage() {
     { id: 'no', header: 'EWB no.', hideBelow: 'md', cell: (e) => <span className="font-mono">{e.ewb_no || '-'}</span> },
     { id: 'valid', header: 'Valid to', hideBelow: 'xl', cell: (e) => e.valid_upto },
     { id: 'st', header: 'Status', cell: (e) => <Badge tone={e.status === 'GENERATED' ? (e.expired ? 'danger' : 'success') : e.status === 'CANCELLED' ? 'neutral' : 'warning'} dot>{e.expired ? 'Expired' : e.status === 'GENERATED' ? 'Issued' : e.status === 'CANCELLED' ? 'Cancelled' : 'Draft'}</Badge> },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="eway" id={r.id} label={String(r.number)} noun="e-way bill" /> },
   ]
   const filters = useListFilters(q.data?.eway_bills, {
     search: (e) => [e.number, e.ewb_no, e.source_ref, e.vehicle_no, e.doc_no, e.from.name, e.to.name, e.status].join(' '),

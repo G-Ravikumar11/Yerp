@@ -12,6 +12,7 @@ import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { BillFormModal } from './BillFormModal'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 type Tab = '' | 'Draft' | 'Unpaid' | 'Paid' | 'Overdue'
 const TONE: Record<string, 'neutral' | 'warning' | 'success' | 'danger' | 'info'> = { draft: 'neutral', 'awaiting payment': 'warning', unpaid: 'warning', paid: 'success', overdue: 'danger', cancelled: 'neutral', rejected: 'danger', 'partially paid': 'info' }
@@ -69,6 +70,7 @@ export default function BillsPage() {
           </div>
         ) : null,
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="supplier_bill" id={r.id} label={String(r.number)} noun="supplier bill" /> },
   ]
 
   return (

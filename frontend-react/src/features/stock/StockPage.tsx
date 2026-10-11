@@ -13,6 +13,7 @@ import { formatINR } from '@/lib/utils'
 import { IssueModal } from './IssueModal'
 import { LedgerModal } from './LedgerModal'
 import { TransferModal } from './TransferModal'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 /** What is in the store, what went to site, and what it cost. The store's balance is the sum of its movements. */
 export default function StockPage() {
@@ -62,6 +63,7 @@ export default function StockPage() {
         </div>
       ),
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="stock_issue" id={r.id} label={String(r.number)} noun="stock issue" /> },
   ]
   return (
     <>

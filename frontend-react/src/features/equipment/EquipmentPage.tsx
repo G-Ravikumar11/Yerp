@@ -13,6 +13,7 @@ import { MachineModal } from './MachineModal'
 import { MoveModal } from './MoveModal'
 import { ServiceModal } from './ServiceModal'
 import { FilterBar, useListFilters } from '@/components/data/filters'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 const tone = (s: string) => (s === 'Deployed' ? 'success' : s === 'Under repair' ? 'danger' : 'neutral') as 'success' | 'danger' | 'neutral'
 
@@ -49,6 +50,7 @@ export default function EquipmentPage() {
         </div>
       ),
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="equipment" id={r.id} label={String(r.name)} noun="equipment" /> },
   ]
   const filters = useListFilters(q.data?.assets, {
     search: (m) => [m.code, m.name, m.category, m.make, m.model, m.reg_no, m.current_job, m.hired_from, m.status].join(' '),

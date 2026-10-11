@@ -55,6 +55,8 @@ DEFAULT_PRICING = [
      "Charged per measurement book summary. Priced at zero until set."),
     ("ai_measurement_read", "AI measurement sheet reader", "subcontracts", 0, 0,
      "Charged per measurement sheet read. Priced at zero until set."),
+    ("ai_measurement_ask", "AI measurement book question", "subcontracts", 0, 0,
+     "Charged per question answered about a measurement book. Priced at zero until set."),
     ("ai_document_read",  "AI compliance paper reader", "subcontracts", 0, 0,
      "Charged per licence or insurance paper read. Priced at zero until set."),
 ]

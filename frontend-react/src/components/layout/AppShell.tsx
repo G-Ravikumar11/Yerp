@@ -9,6 +9,7 @@ import { CompanyNotice } from '@/components/company/CompanyNotice'
 import { PageErrorBoundary } from './PageErrorBoundary'
 import { Sidebar, SIDEBAR_COLLAPSED, SIDEBAR_WIDTH } from './Sidebar'
 import { Topbar } from './Topbar'
+import { appUrl } from '@/lib/paths'
 
 /**
  * The frame every screen sits in: rail, top bar, and a content area whose page
@@ -30,7 +31,7 @@ export function AppShell() {
 
   // Signed out: go to the sign-in page rather than draw a page full of failures.
   useEffect(() => {
-    if (gated && isAnonymous && import.meta.env.PROD) window.location.assign('/next/login')
+    if (gated && isAnonymous && import.meta.env.PROD) window.location.assign(appUrl('login'))
   }, [gated, isAnonymous])
 
   // A new page starts at its top, as a page does.
@@ -70,7 +71,7 @@ export function AppShell() {
                   {error ? 'Check the connection and try again.' : 'Your session has ended, or you have not signed in yet.'}
                 </p>
                 <Button asChild className="mt-6">
-                  <a href="/next/login">Go to sign in</a>
+                  <a href={appUrl('login')}>Go to sign in</a>
                 </Button>
               </div>
             ) : (

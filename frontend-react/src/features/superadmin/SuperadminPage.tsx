@@ -4,6 +4,7 @@ import { formatINR } from '@/lib/utils'
 import { formatDate } from '@/lib/format'
 import { useAction } from '@/lib/mutate'
 import { adjustWallet, changePassword, deleteClient, impersonate, saKeys, saLogout, savePrice, toggleClient, useClientOverview, useGateways, useInsights, useLoginLogs, useLoginStats, usePlatformStats, usePricing, useRevenue, useSaClient, useSaClients, useSaMe, useTrends, useWallets, type PriceRow, type SaClient, type WalletRow } from '@/api/superadmin'
+import { appUrl } from '@/lib/paths'
 
 const card = 'rounded-xl border border-border bg-card p-5'
 const th = 'px-2 py-2 text-left text-xs font-semibold uppercase text-muted-foreground'
@@ -23,9 +24,9 @@ export default function SuperadminPage() {
   const [passwordOpen, setPasswordOpen] = useState(false)
   useEffect(() => {
     document.title = 'Super Admin - Y ERP'
-    if (!me.isLoading && !me.data) window.location.assign('/next/superadmin/login')
+    if (!me.isLoading && !me.data) window.location.assign(appUrl('superadmin/login'))
   }, [me.isLoading, me.data])
-  const out = useAction(saLogout, { success: false, onSuccess: () => window.location.assign('/next/superadmin/login') })
+  const out = useAction(saLogout, { success: false, onSuccess: () => window.location.assign(appUrl('superadmin/login')) })
   if (!me.data) return null
   return (
     <div className="min-h-screen bg-background">
@@ -212,7 +213,7 @@ function Clients() {
   const shown = useMemo(() => clients.filter((c) => !search || `${c.company_name} ${c.email} ${c.contact_name}`.toLowerCase().includes(search.toLowerCase())), [clients, search])
   const toggle = useAction((id: number) => toggleClient(id), { invalidate: [saKeys.all], success: false })
   const remove = useAction((id: number) => deleteClient(id), { invalidate: [saKeys.all] })
-  const login = useAction((id: number) => impersonate(id), { success: false, onSuccess: () => window.location.assign('/next/') })
+  const login = useAction((id: number) => impersonate(id), { success: false, onSuccess: () => window.location.assign(appUrl()) })
   const askLogin = (c: SaClient) => window.confirm(`Log in as ${c.company_name || c.email} to help them? You are signed in as that client until you sign out.`) && login.mutate(c.id)
   const askDelete = (c: SaClient) => window.confirm(`Delete ${c.company_name || c.email} and all their data? This cannot be undone.`) && remove.mutate(c.id)
   return (

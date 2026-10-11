@@ -159,6 +159,7 @@ from app.routers import (
     safety,
     partner_portal,
     compliance,
+    master_delete,
 )
 
 for _module in (
@@ -196,6 +197,7 @@ for _module in (
     quality,
     safety,
     partner_portal,
+    master_delete,
 ):
     app.include_router(_module.router)
 

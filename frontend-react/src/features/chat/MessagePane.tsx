@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, Paperclip } from 'lucide-react'
 import { Button, ConfirmDialog, Skeleton } from '@/components/ui'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 import { chatKeys, removeMessage, setClosed, useThread, type Message } from '@/api/chat'
 import { useAction } from '@/lib/mutate'
 import { cn } from '@/lib/utils'
@@ -33,6 +34,7 @@ export function MessagePane({ id, onBack }: { id: number; onBack: () => void }) 
         <Button variant="ghost" size="icon" className="lg:hidden" aria-label="Back to threads" onClick={onBack}><ArrowLeft /></Button>
         <div className="min-w-0 flex-1"><h2 className="truncate font-semibold">{t.title}</h2><p className="truncate text-xs text-muted-foreground">{t.project} - started by {t.started_by_name}</p></div>
         <Button size="sm" variant="outline" loading={toggle.isPending} onClick={() => toggle.mutate({ closed: !t.closed })}>{t.closed ? 'Reopen' : 'Close'}</Button>
+        <MasterDelete kind="thread" id={id} label={t.title} noun="thread" onDeleted={onBack} />
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-4" aria-live="polite" aria-label="Messages">
         {q.data?.messages.length === 0 && <p className="m-auto text-sm text-muted-foreground">Nothing said yet.</p>}

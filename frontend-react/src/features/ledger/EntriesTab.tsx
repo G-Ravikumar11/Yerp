@@ -7,6 +7,7 @@ import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
 import { cn, compactINR, formatINR } from '@/lib/utils'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 /** Every receipt and payment, newest first. A wrong one is voided - kept, struck through, and the bill goes back to owing. */
 export function EntriesTab() {
@@ -28,6 +29,7 @@ export function EntriesTab() {
     { id: 'in', header: 'In', align: 'right', cell: (e) => (e.direction === 'IN' ? <span className={strike(e)}>{formatINR(e.amount)}</span> : '') },
     { id: 'out', header: 'Out', align: 'right', cell: (e) => (e.direction === 'OUT' ? <span className={strike(e)}>{formatINR(e.amount)}</span> : '') },
     { id: 'act', header: '', align: 'right', cell: (e) => (e.voided ? <span className="text-xs text-muted-foreground" title={e.void_reason}>void</span> : can('bills.pay') ? <Button size="sm" variant="outline" onClick={() => setVoiding(e)}>Void</Button> : null) },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="payment" id={r.id} label={String(r.number)} noun="payment" /> },
   ]
 
   return (

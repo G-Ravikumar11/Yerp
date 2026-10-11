@@ -12,6 +12,7 @@ import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
 import { CubeResultModal, CubeSetModal, NcrModal } from './CubeModals'
 import { InspectionModal, NewInspectionModal } from './InspectionModal'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 type Tab = 'inspections' | 'cubes' | 'ncrs'
 const resultTone = (r: string) => (r === 'PASSED' ? 'success' : r === 'FAILED' ? 'danger' : 'warning') as 'success' | 'danger' | 'warning'
@@ -52,6 +53,7 @@ export default function QualityPage() {
         </div>
       ),
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="inspection" id={r.id} label={String(r.number)} noun="inspection" /> },
   ]
   const cubes: TableColumn<CubeSet>[] = [
     { id: 'no', header: 'Set', cell: (c) => <span className="font-mono text-[13px]">{c.number}</span> },
@@ -80,6 +82,7 @@ export default function QualityPage() {
         </div>
       ),
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="cube_set" id={r.id} label={String(r.number)} noun="cube set" /> },
   ]
   const ncrs: TableColumn<Ncr>[] = [
     { id: 'no', header: 'NCR', cell: (n) => <div><span className="font-mono text-[13px]">{n.number}</span>{n.severity === 'Major' && <div className="text-[11px] text-danger">major</div>}</div> },
@@ -101,6 +104,7 @@ export default function QualityPage() {
         </div>
       ),
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="ncr" id={r.id} label={String(r.number)} noun="NCR" /> },
   ]
   const failed = d?.inspections.filter((i) => i.result === 'FAILED').length ?? 0
   return (

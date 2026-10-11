@@ -11,6 +11,7 @@ import { formatINR } from '@/lib/utils'
 import { AddItemsModal } from './AddItemsModal'
 import { EditItemModal } from './EditItemModal'
 import { ImportItemsModal } from './ImportItemsModal'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 type Tab = '' | 'RM' | 'FG'
 
@@ -76,6 +77,7 @@ export default function ItemMasterPage() {
           },
         ]
       : []),
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="item" id={r.id} label={String(r.item_code)} noun="item" /> },
   ]
 
   return (

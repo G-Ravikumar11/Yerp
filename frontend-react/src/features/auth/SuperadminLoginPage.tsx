@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Button, Field, Input } from '@/components/ui'
 import { api, ApiError } from '@/lib/api'
 import { AuthLayout, Notice } from './AuthLayout'
+import { appUrl } from '@/lib/paths'
 
 /** The platform operator's own door, separate from the companies' sign-in. */
 export default function SuperadminLoginPage() {
@@ -11,7 +12,7 @@ export default function SuperadminLoginPage() {
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    void fetch('/api/superadmin/me').then((r) => r.ok && window.location.assign('/next/superadmin')).catch(() => undefined)
+    void fetch('/api/superadmin/me').then((r) => r.ok && window.location.assign(appUrl('superadmin'))).catch(() => undefined)
   }, [])
 
   const submit = async (e: React.FormEvent) => {
@@ -21,7 +22,7 @@ export default function SuperadminLoginPage() {
     setError('')
     try {
       await api('/api/superadmin/login', { method: 'POST', body: { identifier: identifier.trim(), password }, quiet: true })
-      window.location.assign('/next/superadmin')
+      window.location.assign(appUrl('superadmin'))
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Network error. Try again.')
       setBusy(false)

@@ -9,6 +9,7 @@ import { useDiaries, useLabourHistory, type DiaryRow } from '@/api/diary'
 import { formatDate } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { DiaryFormModal } from './DiaryFormModal'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 /** The daily site record: who turned up, what the weather did, what got built and what stopped it. */
 export default function DiaryPage() {
@@ -37,6 +38,7 @@ export default function DiaryPage() {
         </div>
       ),
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="diary" id={r.id} label={String(r.diary_date)} noun="diary day" /> },
   ]
   const top = Math.max(...(labour.data?.by_trade.map((t) => t.mandays) ?? [0]), 1)
   return (

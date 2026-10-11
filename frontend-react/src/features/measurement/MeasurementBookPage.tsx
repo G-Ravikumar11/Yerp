@@ -15,7 +15,8 @@ import { HoldModal, ReleaseModal } from './HoldModals'
 import { formatDate, formatQty } from '@/lib/format'
 import { cn, compactINR, formatINR } from '@/lib/utils'
 import { ImportBookModal } from './ImportBookModal'
-import { BookAnalysis, ReadSheetModal } from './AiMeasurement'
+import { BookAnalysis, EntryFlag, ReadSheetModal } from './AiMeasurement'
+import { useBookFlags } from '@/api/aiMeasurement'
 import { SheetView } from './SheetView'
 import { EntryDetail, calcSummary } from './EntryDetail'
 import { MeasureModal } from './MeasureModal'
@@ -104,6 +105,7 @@ export default function MeasurementBookPage() {
   const replacement = liveAfter(order)
   const quick = useRef<QuickMeasureHandle>(null)
   const book = useMeasurementBook(chosen)
+  const flags = useBookFlags(chosen)
   const [measuring, setMeasuring] = useState<MbLine | null>(null)
   const [importing, setImporting] = useState(false)
   const [reading, setReading] = useState(false)
@@ -227,6 +229,7 @@ export default function MeasurementBookPage() {
   ]
 
   const entryColumns: TableColumn<MbEntry>[] = [
+    { id: 'flag', header: '', width: '2rem', cell: (e) => <EntryFlag flags={flags.data?.by_entry?.[e.id]} /> },
     { id: 'code', header: 'Entry', sort: (e) => e.code ?? '', cell: (e) => <span className="whitespace-nowrap font-mono text-xs font-medium">{e.code ? e.code.slice(e.code.lastIndexOf('/') + 1) : '-'}</span> },
     { id: 'date', header: 'Date', sort: (e) => e.measured_on, cell: (e) => formatDate(e.measured_on) },
     {

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
@@ -8,6 +8,7 @@ import { JOB_STATUS, useProject, type ProjectDoc } from '@/api/projects'
 import { formatDate } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { ProjectFormModal } from './ProjectFormModal'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 import { marginClass } from './ProjectsPage'
 
 function Docs({ title, rows, party }: { title: string; rows: ProjectDoc[]; party: (d: ProjectDoc) => string }) {
@@ -25,6 +26,7 @@ function Docs({ title, rows, party }: { title: string; rows: ProjectDoc[]; party
 /** One project: where the money stands, and every paper filed against it. */
 export default function ProjectPage() {
   const id = Number(useParams().id)
+  const nav = useNavigate()
   const q = useProject(id)
   const [editing, setEditing] = useState(false)
   const p = q.data
@@ -36,7 +38,7 @@ export default function ProjectPage() {
       <Link to="/projects" className="mb-3 inline-flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground"><ArrowLeft className="size-3.5" /> All projects</Link>
       {q.isPending || !p || !c ? <Skeleton className="h-64 w-full" /> : (
         <>
-          <PageHeader title={`${p.number} - ${p.name}`} description={[p.customer_name, p.site_address, JOB_STATUS[p.status] ?? p.status].filter(Boolean).join(' - ')} actions={<Button variant="outline" onClick={() => setEditing(true)}>Edit</Button>} />
+          <PageHeader title={`${p.number} - ${p.name}`} description={[p.customer_name, p.site_address, JOB_STATUS[p.status] ?? p.status].filter(Boolean).join(' - ')} actions={<><Button variant="outline" onClick={() => setEditing(true)}>Edit</Button><MasterDelete kind="project" id={p.id} label={`${p.number} ${p.name}`} noun="project" onDeleted={() => nav('/projects')} /></>} />
           {c.over_budget && <p role="alert" className="mb-4 rounded-lg border border-danger/30 bg-danger-soft p-3 text-sm font-semibold text-danger">Costs and open orders have passed the {formatINR(c.budget)} budget.</p>}
           <StatGrid className="lg:grid-cols-4 xl:grid-cols-4">
             <Stat label="Quoted" value={formatINR(c.quoted)} />

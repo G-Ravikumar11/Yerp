@@ -3,10 +3,12 @@ import { Button, ConfirmDialog, Field, Input, Modal, NumField, Select } from '@/
 import { deleteActivity, saveActivity, schKeys, useWorkOrderLines, useWorkOrdersOf, type Activity } from '@/api/schedule'
 import { useAction } from '@/lib/mutate'
 import { today } from '@/lib/format'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 export function ActivityModal({ job, activity, others, open, onClose }: { job: number; activity: Activity | null; others: Activity[]; open: boolean; onClose: () => void }) {
   return (
     <Modal open={open} onOpenChange={(o) => !o && onClose()} title={activity ? `Edit ${activity.code || activity.name}` : 'New activity'} description="An activity tied to a work order line fills its progress itself from the measurement book.">
+      {open && activity && <div className="mb-3 flex items-center justify-end gap-2 text-xs text-muted-foreground">Delete this activity <MasterDelete kind="activity" id={activity.id} label={activity.code || activity.name} noun="activity" onDeleted={onClose} /></div>}
       {open && <Form key={activity?.id ?? 'new'} job={job} activity={activity} others={others} onClose={onClose} />}
     </Modal>
   )

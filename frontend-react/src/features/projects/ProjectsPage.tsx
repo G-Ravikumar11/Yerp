@@ -9,6 +9,7 @@ import { JOB_STATUS, useBoard, type BoardProject } from '@/api/projects'
 import { useSession } from '@/lib/session'
 import { formatINR } from '@/lib/utils'
 import { ProjectFormModal } from './ProjectFormModal'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 export const marginClass = (percent: number, hasRevenue: boolean) => (!hasRevenue ? 'text-muted-foreground' : percent < 0 ? 'text-danger' : percent < 10 ? 'text-warning' : 'text-success')
 const tone = (s: string) => (s === 'complete' ? 'success' : s === 'cancelled' ? 'danger' : s === 'on_hold' ? 'warning' : 'neutral') as 'success' | 'danger' | 'warning' | 'neutral'
@@ -32,6 +33,7 @@ export default function ProjectsPage() {
     { id: 'profit', header: 'Profit', align: 'right', sort: (j) => j.costing.profit, cell: (j) => <span className={`font-semibold ${marginClass(j.costing.margin_percent, j.costing.invoiced > 0)}`}>{formatINR(j.costing.profit)}</span> },
     { id: 'margin', header: 'Margin', hideBelow: 'md', align: 'right', cell: (j) => <span className={`font-semibold ${marginClass(j.costing.margin_percent, j.costing.invoiced > 0)}`}>{j.costing.invoiced ? `${j.costing.margin_percent}%` : '-'}</span> },
     { id: 'act', header: '', align: 'right', cell: (j) => can('workorders.manage|reports.view') && <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); setEditing(j) }}>Edit</Button> },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (j) => <MasterDelete kind="project" id={j.id} label={`${j.number} ${j.name}`} noun="project" /> },
   ]
   return (
     <>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Button, Field, Input } from '@/components/ui'
 import { api, ApiError } from '@/lib/api'
 import { AuthLayout, Notice } from './AuthLayout'
+import { appUrl } from '@/lib/paths'
 
 type Stage = 'checking' | 'dead' | 'form' | 'done'
 
@@ -43,7 +44,7 @@ export default function ResetPasswordPage() {
         <div className="grid gap-3 text-center">
           <Notice tone="error">That reset link is invalid or has expired.</Notice>
           <p className="text-sm text-muted-foreground">Links work once and last an hour.</p>
-          <div><Button asChild><a href="/next/login">Back to sign in</a></Button></div>
+          <div><Button asChild><a href={appUrl('login')}>Back to sign in</a></Button></div>
         </div>
       )}
       {stage === 'form' && (
@@ -57,7 +58,7 @@ export default function ResetPasswordPage() {
       {stage === 'done' && (
         <div className="grid gap-3 text-center">
           <Notice tone="success">Password updated.</Notice>
-          <div><Button asChild><a href="/next/login">Sign in</a></Button></div>
+          <div><Button asChild><a href={appUrl('login')}>Sign in</a></Button></div>
         </div>
       )}
     </AuthLayout>

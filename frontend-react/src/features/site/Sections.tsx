@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { SITE } from './data/content'
 import { goTo } from './Nav'
 import { asset, inr, reduceMotion } from './lib'
+import { appUrl } from '@/lib/paths'
 
 const SCOPE_OF: Record<string, string> = { electrical: 'electrical', fire: 'fire', panels: 'panels', phe: 'phe', testing: 'testing' }
 const DURATION = 7000
@@ -242,7 +243,7 @@ export function Footer() {
       <div className="wrap footer__top">
         <a href="#top" className="brand brand--lg" aria-label="Back to top" onClick={(e) => goTo('#top') && e.preventDefault()}><img src={asset('site/img/mark.png')} alt="" width="54" height="45" /><span translate="no">Yalavarti</span></a>
         <nav className="footer__links" aria-label="Footer">
-          <a href="/next/login">YERP Login</a>
+          <a href={appUrl('login')}>YERP Login</a>
           <a href="https://www.yalavarti.com/images/pages/YPPL_PROFILE_2023.pdf" target="_blank" rel="noopener noreferrer">Company Profile (PDF)</a>
           <a href="https://www.yalavarti.com/post-your-cv.php" target="_blank" rel="noopener noreferrer">Send Your CV</a>
           <a href="https://www.linkedin.com/in/yalavartiprojects" target="_blank" rel="noopener noreferrer">LinkedIn</a>

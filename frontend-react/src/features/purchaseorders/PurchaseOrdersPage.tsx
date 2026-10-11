@@ -12,6 +12,7 @@ import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { OrderFormModal } from './OrderFormModal'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 const tone = (o: PurchaseOrder) => (o.approval_status === 'pending' ? 'warning' : o.status === 'Approved' || o.status === 'Received' ? 'success' : o.status === 'Rejected' ? 'danger' : 'neutral') as 'warning' | 'success' | 'danger' | 'neutral'
 
@@ -55,6 +56,7 @@ export default function PurchaseOrdersPage() {
         </div>
       ),
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="purchase_order" id={r.id} label={String(r.number)} noun="purchase order" /> },
   ]
 
   return (

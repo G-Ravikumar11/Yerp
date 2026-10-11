@@ -10,6 +10,7 @@ import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
 import { compactINR, formatINR } from '@/lib/utils'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 export const ESTIMATE_TONE = { DRAFT: 'neutral', SUBMITTED: 'warning', WON: 'success', LOST: 'danger', WITHDRAWN: 'danger' } as const
 
@@ -80,6 +81,7 @@ export default function EstimatesPage() {
         </div>
       ),
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="estimate" id={r.id} label={String(r.number)} noun="estimate" /> },
   ]
 
   return (

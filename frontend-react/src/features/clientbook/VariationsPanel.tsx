@@ -6,6 +6,7 @@ import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { compactINR, formatINR } from '@/lib/utils'
 import { FilterBar, useListFilters } from '@/components/data/filters'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 const TONE: Record<string, 'neutral' | 'warning' | 'success' | 'danger'> = { DRAFT: 'neutral', SUBMITTED: 'warning', APPROVED: 'success', REJECTED: 'danger', CANCELLED: 'danger' }
 
@@ -70,6 +71,7 @@ export function VariationsPanel({ workOrderId }: { workOrderId: number }) {
         </div>
       ),
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="variation_order" id={r.id} label={String(r.number)} noun="variation" /> },
   ]
 
   const filters = useListFilters(vars.data?.variations, {

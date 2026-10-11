@@ -9,6 +9,7 @@ import { projectLabel, useProjects } from '@/api/projects'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { formatINR } from '@/lib/utils'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 /** Every project's BOQ: the client's bill of quantities, once, with its revisions. */
 export default function BoqListPage() {
@@ -46,6 +47,7 @@ export default function BoqListPage() {
     { id: 'rev', header: 'Revision', cell: (b) => <Badge tone={b.status === 'OPEN' ? 'warning' : 'success'}>{b.revision}</Badge> },
     { id: 'items', header: 'Priced lines', align: 'right', hideBelow: 'md', cell: (b) => b.items },
     { id: 'total', header: 'Value', align: 'right', sort: (b) => b.total, cell: (b) => <span className="font-semibold">{formatINR(b.total)}</span> },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="boq" id={r.id} label={String(r.number)} noun="BOQ" /> },
   ]
 
   return (

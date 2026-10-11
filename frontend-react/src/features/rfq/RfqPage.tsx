@@ -12,6 +12,7 @@ import { ReadQuoteModal } from './AiQuotes'
 import { QuoteModal } from './QuoteModal'
 import { StatementPanel } from './StatementPanel'
 import { FilterBar, useListFilters } from '@/components/data/filters'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 const tone = (s: string) => (s === 'AWARDED' ? 'success' : s === 'OPEN' ? 'warning' : 'neutral') as 'success' | 'warning' | 'neutral'
 
@@ -34,6 +35,7 @@ export default function RfqPage() {
     { id: 'need', header: 'Needed by', hideBelow: 'md', cell: (r) => (r.needed_by ? formatDate(r.needed_by) : '-') },
     { id: 'st', header: 'Status', cell: (r) => <Badge tone={tone(r.status)} dot>{r.status === 'OPEN' ? 'Open' : r.status === 'AWARDED' ? 'Awarded' : 'Cancelled'}</Badge> },
     { id: 'a', header: '', align: 'right', cell: (r) => <Button size="sm" variant={r.status === 'OPEN' ? 'primary' : 'outline'} onClick={() => setOpen(r.id)}>{r.status === 'OPEN' ? 'Quotes & compare' : 'Statement'}</Button> },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="rfq" id={r.id} label={String(r.number)} noun="enquiry" /> },
   ]
   const filters = useListFilters(q.data?.rfqs, {
     search: (r) => [r.number, r.title, r.project, r.status].join(' '),

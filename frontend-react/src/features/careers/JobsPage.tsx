@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
+import { appUrl } from '@/lib/paths'
 
 interface Job {
   title: string; reference: string; location?: string; work_mode?: string; employment_type?: string; department?: string; level?: string
@@ -61,7 +62,7 @@ export default function JobsPage() {
               {j.description && <p className="whitespace-pre-line text-sm">{j.description}</p>}
               {j.requirements && <details className="mt-2 text-sm"><summary className="cursor-pointer font-medium">What we are looking for</summary><p className="mt-1 whitespace-pre-line text-muted-foreground">{j.requirements}</p></details>}
               {j.closing_date && <p className="mt-2 text-xs text-muted-foreground">Closes {j.closing_date}</p>}
-              {j.apply_token ? <a className="mt-3 inline-block text-sm font-semibold text-primary hover:underline" href={`/next/apply?token=${encodeURIComponent(j.apply_token)}`}>Apply for this role &rarr;</a> : <span className="mt-3 inline-block text-sm text-muted-foreground">Applications not open yet</span>}
+              {j.apply_token ? <a className="mt-3 inline-block text-sm font-semibold text-primary hover:underline" href={`${appUrl('apply')}?token=${encodeURIComponent(j.apply_token)}`}>Apply for this role &rarr;</a> : <span className="mt-3 inline-block text-sm text-muted-foreground">Applications not open yet</span>}
             </article>
           )
         })}

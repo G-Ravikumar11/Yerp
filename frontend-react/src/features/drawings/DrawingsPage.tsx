@@ -9,6 +9,7 @@ import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
 import { AddDrawingModal, HistoryModal, RevisionModal } from './DrawingModals'
 import { PhotosTab } from './PhotosTab'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 type Tab = 'drawings' | 'photos'
 const tone = (s: string) => (s === 'Good for construction' ? 'success' : s === 'For approval' ? 'warning' : 'neutral') as 'success' | 'warning' | 'neutral'
@@ -47,6 +48,7 @@ export default function DrawingsPage() {
         </div>
       ),
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="drawing" id={r.id} label={String(r.number)} noun="drawing" /> },
   ]
   return (
     <>

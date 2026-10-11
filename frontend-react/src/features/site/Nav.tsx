@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { asset, reduceMotion } from './lib'
+import { appUrl } from '@/lib/paths'
 
 const LINKS: [string, string][] = [['capabilities', 'Capabilities'], ['work', 'Projects'], ['clients', 'Clients'], ['company', 'Company'], ['contact', 'Contact']]
 const WATCHED = ['capabilities', 'work', 'projects', 'clients', 'company', 'quote', 'contact']
@@ -73,7 +74,7 @@ export function Nav() {
         ))}
         <a href="#quote" className="nav__m nav__m--quote" onClick={(e) => click(e, '#quote')}>Request a Quote</a>
       </nav>
-      <a href="/next/login" className="btn btn--login btn--sm nav__login" title="Sign in to YERP, the Yalavarti ERP">
+      <a href={appUrl('login')} className="btn btn--login btn--sm nav__login" title="Sign in to YERP, the Yalavarti ERP">
         <svg className="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="1.5" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
         YERP Login
       </a>

@@ -12,6 +12,7 @@ import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
 import { IncidentModal } from './IncidentModal'
 import { PermitModal } from './PermitModal'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 type Tab = 'incidents' | 'talks' | 'permits'
 
@@ -55,12 +56,14 @@ export default function SafetyPage() {
         </div>
       ),
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="incident" id={r.id} label={String(r.number)} noun="incident" /> },
   ]
   const talks: TableColumn<Talk>[] = [
     { id: 'on', header: 'On', sort: (t) => t.held_on, cell: (t) => formatDate(t.held_on) },
     { id: 'topic', header: 'Topic', cell: (t) => <div>{t.topic}{t.notes && <div className="text-xs text-muted-foreground">{t.notes}</div>}</div> },
     { id: 'by', header: 'By', hideBelow: 'md', cell: (t) => t.conducted_by },
     { id: 'att', header: 'Attended', cell: (t) => <div>{t.attendees}{t.attendee_names && <div className="text-xs text-muted-foreground">{t.attendee_names}</div>}</div> },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="toolbox" id={r.id} label={String(r.topic)} noun="toolbox talk" /> },
   ]
   const permits: TableColumn<Permit>[] = [
     { id: 'no', header: 'Permit', cell: (p) => <span className="font-mono text-[13px]">{p.number}</span> },
@@ -80,6 +83,7 @@ export default function SafetyPage() {
         </div>
       ),
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="permit" id={r.id} label={String(r.number)} noun="permit" /> },
   ]
   const register = `/api/safety/${tab}.xlsx${job ? `?job_id=${job}` : ''}`
   const noPermit = tab === 'permits' && !signoff

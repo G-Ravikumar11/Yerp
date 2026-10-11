@@ -13,6 +13,7 @@ import { useState } from 'react'
 import { ConfirmDialog, Skeleton, Tooltip } from '@/components/ui'
 import { NotificationBell } from './NotificationBell'
 import { SyncIndicator } from './SyncIndicator'
+import { appUrl } from '@/lib/paths'
 
 function Breadcrumbs() {
   const { pathname } = useLocation()
@@ -94,7 +95,7 @@ function UserChip() {
     // What this device kept for them - the data, and any change not yet sent - goes too.
     useOffline.setState({ queue: [] })
     await forgetLocalData()
-    window.location.assign('/next/login?signedout=1')
+    window.location.assign(appUrl('login?signedout=1'))
   }
 
   return (

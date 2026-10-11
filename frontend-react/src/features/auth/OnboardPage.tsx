@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Button, Field, Input } from '@/components/ui'
 import { api, ApiError } from '@/lib/api'
 import { AuthLayout, Notice } from './AuthLayout'
+import { appUrl } from '@/lib/paths'
 
 interface Profile {
   is_onboarded?: boolean
@@ -28,10 +29,10 @@ export default function OnboardPage() {
   useEffect(() => {
     api<Profile>('/api/client/me', { quiet: true })
       .then((p) => {
-        if (p.is_onboarded) return window.location.assign('/next/')
+        if (p.is_onboarded) return window.location.assign(appUrl())
         setForm((f) => ({ ...f, ...Object.fromEntries(Object.keys(f).map((k) => [k, (p as Record<string, string | undefined>)[k] ?? ''])) }))
       })
-      .catch(() => window.location.assign('/next/login'))
+      .catch(() => window.location.assign(appUrl('login')))
   }, [])
 
   const ready = form.company_name.trim() !== '' && form.contact_name.trim() !== ''
@@ -50,7 +51,7 @@ export default function OnboardPage() {
     setError('')
     try {
       await api('/api/client/onboard', { method: 'POST', body: { ...form, logo_url: withLogo ? logo : '' } })
-      window.location.assign('/next/')
+      window.location.assign(appUrl())
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Could not save. Try again.')
       setBusy(false)

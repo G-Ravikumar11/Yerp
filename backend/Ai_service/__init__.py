@@ -15,6 +15,7 @@
     pdf_text.py          the words inside a PDF, so Groq can read it
     measurement_analysis.py  findings and a summary for an order's measurement book
     measurement_reader.py    read a measurement sheet (photo, PDF, text) into book rows
+    measurement_ask.py       answer a question about an order's measurement book
     compliance_reader.py     read a licence or insurance paper into the add-a-paper form
 
 To add a function: write a new file here with its own `router = APIRouter()`, call `llm_client.ask` / `ask_json`
@@ -22,9 +23,9 @@ inside `guard.run_feature`, and add the module to FEATURES below. Nothing else i
 The model reads and writes words; anything that changes money, approves or deletes is done by a person.
 """
 from Ai_service import (bill_review, compliance_reader, contractor_brief, hard_copy_check, measurement_analysis,
-                        measurement_reader, po_review, po_supplier_email, quote_comparison, quote_reader, status)
+                        measurement_ask, measurement_reader, po_review, po_supplier_email, quote_comparison, quote_reader, status)
 
 FEATURES = (status, hard_copy_check, bill_review, contractor_brief, po_review, po_supplier_email, quote_comparison, quote_reader,
-            measurement_analysis, measurement_reader, compliance_reader)
+            measurement_analysis, measurement_reader, compliance_reader, measurement_ask)
 
 routers = [module.router for module in FEATURES]

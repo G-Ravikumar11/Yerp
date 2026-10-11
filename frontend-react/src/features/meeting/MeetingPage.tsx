@@ -4,6 +4,7 @@ import { Button, Field, Input } from '@/components/ui'
 import { api } from '@/lib/api'
 import { AuthLayout } from '@/features/auth/AuthLayout'
 import { useMeeting, type Person } from './useMeeting'
+import { appUrl } from '@/lib/paths'
 
 const newRoom = () => Math.random().toString(36).slice(2, 5) + '-' + Math.random().toString(36).slice(2, 6) + '-' + Math.random().toString(36).slice(2, 5)
 
@@ -37,7 +38,7 @@ export default function MeetingPage() {
       setSignedIn(false)
     })()
   }, [])
-  useEffect(() => { if (signedIn === false) window.location.assign('/next/login?next=' + encodeURIComponent('/next/meeting' + window.location.search)) }, [signedIn])
+  useEffect(() => { if (signedIn === false) window.location.assign(appUrl('login?next=') + encodeURIComponent(appUrl('meeting') + window.location.search)) }, [signedIn])
 
   if (signedIn === null || signedIn === false) return null
   if (!joined) {
@@ -58,9 +59,9 @@ function Room({ room, name }: { room: string; name: string }) {
   const m = useMeeting(room, name, true)
   const [text, setText] = useState('')
   const [open, setOpen] = useState(true)
-  const link = `${location.origin}/next/meeting?room=${encodeURIComponent(room)}`
+  const link = `${location.origin}${appUrl('meeting')}?room=${encodeURIComponent(room)}`
 
-  if (m.ended) return <AuthLayout title="Meeting ended" mark="■"><p className="mb-4 text-center text-sm text-muted-foreground">{m.ended}</p><div className="text-center"><Button asChild><a href="/next/meeting">Join another</a></Button></div></AuthLayout>
+  if (m.ended) return <AuthLayout title="Meeting ended" mark="■"><p className="mb-4 text-center text-sm text-muted-foreground">{m.ended}</p><div className="text-center"><Button asChild><a href={appUrl('meeting')}>Join another</a></Button></div></AuthLayout>
   const sharer = m.people.find((p: Person) => p.sharing)
   return (
     <div className="flex h-screen flex-col bg-slate-950 text-white">

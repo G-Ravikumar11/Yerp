@@ -103,3 +103,39 @@ def test_another_company_cannot_reach_these(tenant, second_tenant, unkeyed):
     assert second_tenant.get("/api/ai/subcontracts/orders/%d/measurement-analysis" % order["id"]).status_code == 404
     assert second_tenant.post("/api/ai/subcontracts/orders/%d/read-measurements" % order["id"], data={"text": "x"}).status_code == 404
     assert second_tenant.post("/api/ai/subcontracts/contractors/%d/read-document" % order["contractor_id"], data={"text": "x"}).status_code == 404
+
+
+def test_each_finding_about_one_entry_is_tied_to_it_so_the_table_can_mark_it():
+    entries = [entry(5, loc="A"), entry(6, loc="B"), entry(5, loc="C"), entry(6, loc="D"), dict(entry(60, loc="E"), id=77)]
+    out = measurement_analysis.find_findings([dict(ITEM, quantity=1000)], entries, "2026-06-01", "2027-06-01", TODAY)
+    assert 77 in out["by_entry"] and out["by_entry"][77][0]["level"] == "check"
+
+
+def test_the_plain_checks_alone_are_free_and_never_call_the_model(tenant, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.setattr(measurement_analysis, "ask", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no model call")))
+    order, _bill = a_draft(tenant)
+    out = tenant.get("/api/ai/subcontracts/orders/%d/measurement-analysis?ai=0" % order["id"]).json()
+    assert out["by_entry"] is not None and out["available"] is False and out["summary"] == ""
+
+
+def test_a_question_about_the_book_is_answered_from_its_own_figures(tenant, monkeypatch):
+    from Ai_service import measurement_ask
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    seen = {}
+    def fake(system, prompt, *a, **k):
+        seen["prompt"] = prompt
+        return AiResult(True, text="Ten units are measured.", provider="groq", model="t")
+    monkeypatch.setattr(measurement_ask, "ask", fake)
+    order, _bill = a_draft(tenant, qty=10)
+    out = tenant.post("/api/ai/subcontracts/orders/%d/ask-book" % order["id"], json={"question": "How much is measured?"}).json()
+    assert out["available"] and out["answer"] == "Ten units are measured."
+    assert "measured 10" in seen["prompt"] and "Question: How much is measured?" in seen["prompt"]
+    assert tenant.post("/api/ai/subcontracts/orders/%d/ask-book" % order["id"], json={"question": "  "}).status_code == 400
+
+
+def test_asking_without_a_key_says_so_and_another_company_cannot_ask(tenant, second_tenant, unkeyed):
+    order, _bill = a_draft(tenant)
+    out = tenant.post("/api/ai/subcontracts/orders/%d/ask-book" % order["id"], json={"question": "Anything odd?"}).json()
+    assert out["available"] is False and out["answer"] == ""
+    assert second_tenant.post("/api/ai/subcontracts/orders/%d/ask-book" % order["id"], json={"question": "x"}).status_code == 404

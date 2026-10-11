@@ -7,6 +7,7 @@ import { StatementModal } from './StatementModal'
 import { SupplierModal } from './SupplierModal'
 import { useAction } from '@/lib/mutate'
 import { cn } from '@/lib/utils'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 /** The supplier master. Names already used on orders and bills can be adopted into it in one go. */
 export function SuppliersTab() {
@@ -36,6 +37,7 @@ export function SuppliersTab() {
         </div>
       ),
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="supplier" id={r.id} label={String(r.name)} noun="supplier" /> },
   ]
 
   return (

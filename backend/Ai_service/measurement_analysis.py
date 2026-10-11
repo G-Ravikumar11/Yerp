@@ -75,25 +75,25 @@ def find_findings(items: list, entries: list, start: str, end: str, today) -> di
             m = median(qtys)
             for e in es:
                 if m > 0 and (e["quantity"] or 0) > 3 * m:
-                    findings.append({"level": "check", "text": "%s: an entry of %s on %s is more than three times the usual %s. Check it was not mistyped." % (
+                    findings.append({"level": "check", "entry": e["id"], "text": "%s: an entry of %s on %s is more than three times the usual %s. Check it was not mistyped." % (
                         it["label"], money(e["quantity"]), e.get("measured_on") or "an unknown date", money(m))})
         seen = {}
         for e in es:
             key = (e.get("location") or "", e.get("measured_on") or "", round(e["quantity"] or 0, 4))
             if e.get("location") and key in seen and (e["quantity"] or 0) != 0:
-                findings.append({"level": "check", "text": "%s: %s measured twice on %s at %s. It may have been entered twice." % (
+                findings.append({"level": "check", "entry": e["id"], "text": "%s: %s measured twice on %s at %s. It may have been entered twice." % (
                     it["label"], money(e["quantity"]), e.get("measured_on") or "the same day", e["location"])})
             seen[key] = True
         for e in es:
             d = _date(e.get("measured_on"))
             if not e.get("measured_on"):
-                findings.append({"level": "note", "text": "%s has an entry of %s with no date." % (it["label"], money(e["quantity"]))})
+                findings.append({"level": "note", "entry": e["id"], "text": "%s has an entry of %s with no date." % (it["label"], money(e["quantity"]))})
             elif d and d > today:
-                findings.append({"level": "check", "text": "%s has an entry dated %s, which is in the future." % (it["label"], e["measured_on"])})
+                findings.append({"level": "check", "entry": e["id"], "text": "%s has an entry dated %s, which is in the future." % (it["label"], e["measured_on"])})
             elif d and first and d < first:
-                findings.append({"level": "note", "text": "%s has an entry dated %s, before the order started on %s." % (it["label"], e["measured_on"], start)})
+                findings.append({"level": "note", "entry": e["id"], "text": "%s has an entry dated %s, before the order started on %s." % (it["label"], e["measured_on"], start)})
             if (e["quantity"] or 0) < 0 and ordered and abs(e["quantity"]) > ordered * 0.2:
-                findings.append({"level": "check", "text": "%s has a correction of %s, over a fifth of the ordered quantity." % (it["label"], money(e["quantity"]))})
+                findings.append({"level": "check", "entry": e["id"], "text": "%s has a correction of %s, over a fifth of the ordered quantity." % (it["label"], money(e["quantity"]))})
 
     work_pct = measured_value * 100.0 / ordered_value if ordered_value else None
     if work_pct is not None and time_pct is not None:
@@ -103,13 +103,17 @@ def find_findings(items: list, entries: list, start: str, end: str, today) -> di
             findings.append({"level": "note", "text": "Work is ahead of time: %s%% of the value is measured with %s%% of the time gone." % (round(work_pct), round(time_pct))})
     order = {"stop": 0, "check": 1, "note": 2}
     findings.sort(key=lambda f: order[f["level"]])
-    return {"findings": findings, "rows": rows, "measured_value": money(measured_value), "ordered_value": money(ordered_value),
+    by_entry = {}
+    for f in findings:
+        if f.get("entry"):
+            by_entry.setdefault(f["entry"], []).append({"level": f["level"], "text": f["text"]})
+    return {"findings": findings, "by_entry": by_entry, "rows": rows, "measured_value": money(measured_value), "ordered_value": money(ordered_value),
             "time_percent": round(time_pct, 1) if time_pct is not None else None,
             "work_percent": round(work_pct, 1) if work_pct is not None else None}
 
 
 @router.get("/api/ai/subcontracts/orders/{order_id}/measurement-analysis")
-def measurement_analysis(order_id: int, request: Request, db: Session = Depends(get_db)):
+def measurement_analysis(order_id: int, request: Request, ai: int = 1, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     order = sub_order_or_404(db, client.id, order_id)
     items = [{"id": i.id, "label": ((i.activity_no + " ") if i.activity_no else "") + (i.item_description or i.item_code or "Item")[:60],
@@ -121,6 +125,8 @@ def measurement_analysis(order_id: int, request: Request, db: Session = Depends(
                for m in db.query(models.DBSubMeasurement).filter(models.DBSubMeasurement.order_id == order.id).all()]
     out = find_findings(items, entries, order.commencement_date, order.completion_date, datetime.now().date())
     out.update({"order": order.wo_number or "", "entries": len(entries)})
+    if not ai:              # the plain checks alone, free: what the entries table marks without being asked
+        return dict(out, available=False, summary="", reason="", message="")
     facts = ("Order %s. Ordered value %s, measured value %s (%s%% of value; %s%% of time passed). Checks:\n%s" % (
         order.wo_number, out["ordered_value"], out["measured_value"], out["work_percent"], out["time_percent"],
         "\n".join("- [%s] %s" % (f["level"], f["text"]) for f in out["findings"]) or "- none"))

@@ -10,6 +10,7 @@ import { formatDate } from '@/lib/format'
 import { cn, compactINR, formatINR } from '@/lib/utils'
 import { LeadDetailModal } from './LeadDetailModal'
 import { LeadFormModal } from './LeadFormModal'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 type Tab = 'board' | 'emd' | 'closed'
 const STAGES: [LeadStatus, string][] = [['NEW', 'New'], ['QUALIFIED', 'Qualified'], ['ESTIMATING', 'Estimating'], ['SUBMITTED', 'Bid in']]
@@ -61,6 +62,7 @@ export default function LeadsPage() {
     { id: 'out', header: 'Outcome', cell: (l) => <Badge tone={l.status === 'WON' ? 'success' : l.status === 'LOST' ? 'danger' : 'neutral'}>{l.status.charAt(0) + l.status.slice(1).toLowerCase()}</Badge> },
     { id: 'why', header: 'Why / who won', hideBelow: 'lg', cell: (l) => [l.lost_reason, l.winning_bidder].filter(Boolean).join(' - ') },
     { id: 'theirs', header: 'Their price', hideBelow: 'lg', align: 'right', cell: (l) => (l.winning_price ? formatINR(l.winning_price) : '') },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="lead" id={r.id} label={String(r.number)} noun="tender" /> },
   ]
 
   const emdCols: TableColumn<Lead>[] = [

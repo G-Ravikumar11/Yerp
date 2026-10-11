@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Button, Field, Input } from '@/components/ui'
 import { api } from '@/lib/api'
 import { AuthLayout, Notice, nextTarget } from './AuthLayout'
+import { appUrl } from '@/lib/paths'
 
 const ERRORS: Record<string, string> = {
   auth_failed: 'Authentication failed. Please try again.',
@@ -45,7 +46,7 @@ export default function LoginPage() {
     }
     // Already signed in: go straight on.
     void (async () => {
-      for (const [url, to] of [['/api/client/me', nextTarget('/next/')], ['/api/employee/auth/me', nextTarget('/next/')], ['/api/superadmin/me', '/next/superadmin']]) {
+      for (const [url, to] of [['/api/client/me', nextTarget(appUrl())], ['/api/employee/auth/me', nextTarget(appUrl())], ['/api/superadmin/me', appUrl('superadmin')]]) {
         const r = await fetch(url).catch(() => null)
         if (r?.ok) return go(to)
       }
@@ -60,9 +61,9 @@ export default function LoginPage() {
     setError('')
     try {
       const owner = await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password }, quiet: true }).catch(() => null)
-      if (owner) return go(owner.is_onboarded === false ? nextTarget('/next/onboard') : nextTarget('/next/'))
+      if (owner) return go(owner.is_onboarded === false ? nextTarget(appUrl('onboard')) : nextTarget(appUrl()))
       const staff = await api('/api/employee/auth/login', { method: 'POST', body: { email: email.trim(), password, device_info: navigator.userAgent.slice(0, 200) }, quiet: true }).catch(() => null)
-      if (staff) return go(nextTarget('/next/'))
+      if (staff) return go(nextTarget(appUrl()))
       setError('That email and password did not match an account.')
     } finally {
       setBusy(false)
@@ -100,7 +101,7 @@ export default function LoginPage() {
       {google && (
         <>
           <div className="my-5 flex items-center gap-3 text-xs uppercase text-muted-foreground"><span className="h-px flex-1 bg-border" />or<span className="h-px flex-1 bg-border" /></div>
-          <Button type="button" variant="outline" className="w-full" onClick={() => go('/api/auth/google/start?next=' + encodeURIComponent(nextTarget('/next/')))}>Continue with Google</Button>
+          <Button type="button" variant="outline" className="w-full" onClick={() => go('/api/auth/google/start?next=' + encodeURIComponent(nextTarget(appUrl())))}>Continue with Google</Button>
         </>
       )}
       <p className="mt-5 text-center text-sm"><a className="text-muted-foreground hover:text-primary" href="/">&larr; Back to website</a></p>
