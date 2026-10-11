@@ -28,7 +28,8 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(({ option
       )}
       {...props}
     >
-      {placeholder !== undefined && <option value="">{placeholder}</option>}
+      {/* Coloured like the rest of the list: unstyled, the browser paints it light grey on the dark theme. */}
+      {placeholder !== undefined && <option value="" className="bg-popover text-muted-foreground">{placeholder}</option>}
       {options.map((o) => (
         <option key={o.value} value={o.value} disabled={o.disabled} className="bg-popover text-foreground">
           {o.label}

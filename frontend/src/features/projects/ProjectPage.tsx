@@ -35,7 +35,9 @@ export default function ProjectPage() {
   return (
     <>
       <Link to="/projects" className="mb-3 inline-flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground"><ArrowLeft className="size-3.5" /> All projects</Link>
-      {q.isPending || !p || !c ? <Skeleton className="h-64 w-full" /> : (
+      {q.isError ? (
+        <p className="rounded-lg border border-border bg-muted/40 p-4 text-sm">This project no longer exists. It may have been deleted. <Link to="/projects" className="font-medium text-primary underline underline-offset-4">Back to all projects</Link></p>
+      ) : q.isPending || !p || !c ? <Skeleton className="h-64 w-full" /> : (
         <>
           <PageHeader title={`${p.number} - ${p.name}`} description={[p.customer_name, p.site_address, JOB_STATUS[p.status] ?? p.status].filter(Boolean).join(' - ')} actions={<><Button variant="outline" onClick={() => setEditing(true)}>Edit</Button><MasterDelete kind="project" id={p.id} label={`${p.number} ${p.name}`} noun="project" onDeleted={() => nav('/projects')} /></>} />
           {c.over_budget && <p role="alert" className="mb-4 rounded-lg border border-danger/30 bg-danger-soft p-3 text-sm font-semibold text-danger">Costs and open orders have passed the {formatINR(c.budget)} budget.</p>}
