@@ -32,9 +32,14 @@ node_modules/
 # Mobile native build artifacts & keystores
 *.keystore
 *.jks
-frontend-react/android/.gradle/
-frontend-react/android/build/
-frontend-react/android/app/build/
-frontend-react/ios/DerivedData/
-frontend-react/dist/
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/app/build/
+mobile/ios/DerivedData/
+frontend/build/
 
+mobile/android/keystore.properties
+mobile/android/app/google-services.json
+mobile/ios/App/App/GoogleService-Info.plist
+mobile/node_modules/
+mobile/build/

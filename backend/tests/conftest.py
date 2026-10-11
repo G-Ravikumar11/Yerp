@@ -16,7 +16,9 @@ if BACKEND_DIR not in sys.path:
 
 # Must be set before `database` is imported, since it reads the env at import.
 _TMP_DB = os.path.join(tempfile.gettempdir(), f"invoicing_test_{uuid.uuid4().hex}.db")
-os.environ["DATABASE_URL"] = f"sqlite:///{_TMP_DB}"
+# TEST_DATABASE_URL runs the suite on another database - Postgres, which is what the live site uses and where a delete
+# that forgot a table is refused. Unset, each run gets its own SQLite file.
+os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL") or f"sqlite:///{_TMP_DB}"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-not-used-in-production")
 # A real install is one business and shuts registration once it exists. The
 # suite is the exception the flag is there for: every module builds its own

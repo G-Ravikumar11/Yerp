@@ -17,6 +17,7 @@ from app.models.accounts import (
 )
 from app.models.alerts import (
     DBNotification,
+    DBDevice,
     DBAlert,
     DBAlertRead,
 )

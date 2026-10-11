@@ -88,7 +88,7 @@ def invite_member(body: TeamInvite, background_tasks: BackgroundTasks,
     db.commit()
 
     base = (os.getenv("APP_BASE_URL") or str(request.base_url)).rstrip("/")
-    link = f"{base}/reset-password.html?token={token}&portal=team"
+    link = f"{base}/next/reset-password?token={token}&portal=team"
     who = client.company_name or "the team"
     text_body, html_body = reset_email_bodies(link, who, RESET_TOKEN_TTL_MINUTES)
     text_body = text_body.replace("Someone asked to reset the password for",

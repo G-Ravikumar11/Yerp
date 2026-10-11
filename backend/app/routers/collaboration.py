@@ -1,5 +1,4 @@
 """The collaboration endpoints."""
-import os
 import uuid
 from datetime import date, datetime
 from typing import Optional
@@ -14,13 +13,13 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app import models
 from app.db import get_db
 
-from app.core.config import frontend_path, logger
+from app.core.config import logger
 from app.core.files import file_dict, store_file
 from app.schemas.collaboration import MessageIn, ThreadIn
 from app.services.collaboration import (
@@ -41,16 +40,10 @@ from app.services.projects import job_or_404
 router = APIRouter()
 
 
-@router.get("/meeting", response_class=HTMLResponse)
+@router.get("/meeting")
 async def meeting_page(request: Request):
-    if not (request.session.get("client_id") or request.session.get("employee_id")
-            or request.session.get("portal_user_id")):
-        return RedirectResponse("/login.html")
-    html_path = os.path.join(frontend_path, "meeting.html")
-    if os.path.exists(html_path):
-        with open(html_path, "r") as f:
-            return HTMLResponse(content=f.read())
-    return HTMLResponse(content="<h1>Meeting page not found</h1>", status_code=404)
+    query = request.url.query
+    return RedirectResponse("/next/meeting" + ("?" + query if query else ""))
 
 
 @router.websocket("/ws/meeting/{room_id}")

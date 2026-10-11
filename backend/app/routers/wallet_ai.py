@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.db import get_db
-from app.integrations.llm import llm_chat, llm_configured, llm_error_message, llm_json
+from app.ai.assistant_llm import llm_chat, llm_configured, llm_error_message, llm_json
 
 from app.constants.wallet_ai import ASSISTANT_SYSTEM, TOPUP_MAX_MAJOR, TOPUP_MIN_MAJOR
 from app.core.auth import get_client_user

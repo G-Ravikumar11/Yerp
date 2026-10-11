@@ -65,6 +65,16 @@ ADMIN_PANEL_MIN_LENGTH = 10
 # development (the browser refuses to store the session at all). Default to
 # secure, and let a local run opt out with COOKIE_SECURE=false.
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").strip().lower() not in ("false", "0", "no")
+# The native iOS/Android app is served from capacitor://localhost (iOS) or https://localhost (Android) and calls this
+# API cross-site, so its session cookie must be SameSite=None (which needs Secure). Set SESSION_SAMESITE=none and
+# the app origins below are allowed; the web app alone keeps the safer default, lax.
+SESSION_SAMESITE = os.getenv("SESSION_SAMESITE", "lax").strip().lower()
+if SESSION_SAMESITE not in ("lax", "strict", "none"):
+    SESSION_SAMESITE = "lax"
+_extra_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+CORS_ORIGINS = _extra_origins + (
+    ["capacitor://localhost", "https://localhost", "ionic://localhost"] if SESSION_SAMESITE == "none" else []
+)
 
 # The largest request body each kind of address accepts. A signed-in upload may be a 40 MB photo; a login form
 # is a few hundred bytes, and the public application form takes its attachments (6 x 5 MB, as text) and no more.
@@ -77,7 +87,7 @@ SMALL_FORM_PATHS = ("/api/client/login", "/api/client/register", "/api/client/fo
 
 SLOW_REQUEST_MS = int(os.getenv("SLOW_REQUEST_MS", "1500"))
 
-# Serve frontend
-frontend_path = os.path.join(BACKEND_DIR, "..", "frontend")
-
-next_path = os.path.join(BACKEND_DIR, "..", "frontend-next")
+# The React app, compiled by `npm run build` in frontend/. Not committed: the deploy builds it (nixpacks.toml).
+FRONTEND_DIST = os.path.join(BACKEND_DIR, "..", "frontend", "dist")
+# Files the server sends itself rather than the React app: see app/static/README.md.
+STATIC_DIR = os.path.join(BACKEND_DIR, "app", "static")

@@ -1,4 +1,4 @@
-"""The AI functions for purchasing (backend/Ai_service): purchase order review, supplier email, quote recommendation and
+"""The AI functions for purchasing (backend/app/ai): purchase order review, supplier email, quote recommendation and
 the quote reader. The model only words or reads; plain code finds the flags and checks everything it returns.
 
 No network and no key are used: the model call is replaced in each test.
@@ -7,8 +7,8 @@ from datetime import date, timedelta
 
 import pytest
 
-from Ai_service import llm_client, po_review, po_supplier_email, quote_comparison, quote_reader
-from Ai_service.llm_client import AiResult
+from app.ai import llm_client, po_review, po_supplier_email, quote_comparison, quote_reader
+from app.ai.llm_client import AiResult
 from test_comparative_statement import quote, rfq
 
 

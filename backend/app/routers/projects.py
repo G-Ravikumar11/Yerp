@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func as sqlfunc, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models
@@ -12,8 +13,9 @@ from app.constants.common import DRAWING_STATUSES
 from app.constants.crm import OPEN_INVOICE_STATUSES
 from app.constants.projects import DRAWING_DISCIPLINES, JOB_CLOSED_STATUSES, JOB_FINISHED, WEATHER
 from app.core.audit import log_audit
-from app.core.auth import get_client_user, owned_or_404, require_erp_read, require_items_access, wo_actor
+from app.core.auth import get_client_user, owned_or_404, require_erp_read, require_items_access, require_owner, wo_actor
 from app.core.cache import cached_read
+from app.core.config import logger
 from app.core.currency import DEFAULT_CURRENCY, money, totals_by_currency
 from app.core.gst import GST_STATES
 from app.core.queries import prime
@@ -30,6 +32,7 @@ from app.schemas.projects import (
     ProgressIn,
     SiteLocationIn,
 )
+from app.services import purge
 from app.services.assets import asset_costs, asset_dict
 from app.services.crm import invoice_overdue_days, quote_display_status
 from app.services.employee_portal import bill_to_employee_dict
@@ -314,33 +317,33 @@ def update_job(job_id: int, body: JobIn, request: Request, db: Session = Depends
     return job_to_dict(db, job, costing=True)
 
 
+@router.get("/api/jobs/{job_id}/delete-preview")
+def delete_job_preview(job_id: int, request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    job = job_or_404(db, client.id, job_id)
+    rep = purge.project_report(db, client, job)
+    return {"numbers": [job.number or job.name or "Project"], "counts": rep["counts"], "kept": rep["kept"],
+            "blockers": [], "warnings": [], "can_delete": True}
+
+
 @router.delete("/api/jobs/{job_id}")
 def delete_job(job_id: int, request: Request, db: Session = Depends(get_db)):
-    """Only while nothing has been filed against it.
-
-    Deleting a job that documents point at would silently detach real money
-    from the only thing explaining what it was for. A finished job is marked
-    complete, not deleted.
-    """
+    """The Master's alone. The project goes with every record that is about it: its work orders and bills, measurements,
+    purchase orders and goods received, payments, site diary, drawings, quality and safety records, schedule, budgets,
+    chat and photos. Equipment, tenders and estimates it was linked to are kept and simply unlinked."""
     client = get_client_user(request, db)
+    require_owner(request, db)
     job = job_or_404(db, client.id, job_id)
-    attached = []
-    for model, label in ((models.DBInvoice, "invoice"), (models.DBBill, "bill"),
-                         (models.DBQuote, "quote"), (models.DBPurchaseOrder, "purchase order"),
-                         (models.DBAttendance, "timesheet entry")):
-        count = db.query(model).filter(
-            model.client_id == client.id, model.job_id == job.id).count()
-        if count:
-            attached.append(f"{count} {label}{'s' if count != 1 else ''}")
-    if attached:
-        raise HTTPException(
-            status_code=409,
-            detail=f"This job has {', '.join(attached)} against it. "
-                   "Mark it complete instead of deleting it.")
-    log_audit(db, client.id, "job_deleted", "job", job.id, job.number, "", request)
-    db.delete(job)
-    db.commit()
-    return {"ok": True}
+    name = job.number or job.name or "Project"
+    try:
+        counts = purge.delete_project(db, request, client, job)
+    except IntegrityError as exc:
+        db.rollback()
+        logger.warning("Project %s could not be deleted: %s", job_id, exc)
+        raise HTTPException(409, "Could not delete it: %s" % str(getattr(exc, "orig", exc)).splitlines()[0][:240])
+    took = ", ".join("%d %s" % (n, k) for k, n in sorted(purge.human(counts).items()))
+    return {"ok": True, "message": "%s deleted%s." % (name, (", with " + took) if took else "")}
 
 
 @router.get("/api/jobs-summary")

@@ -20,6 +20,19 @@ class DBNotification(Base):
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
+class DBDevice(Base):
+    """A phone that has the native app and may be sent push notifications.
+    `employee_id` is empty for the account owner's phone."""
+    __tablename__ = "push_devices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    token = Column(String, nullable=False, unique=True, index=True)
+    platform = Column(String, default="")          # ios | android
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
 class DBAlert(Base):
     """Something announced - on the bell in the app, and by email or WhatsApp
     to whoever the company named for that kind of thing."""

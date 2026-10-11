@@ -23,7 +23,9 @@ from app.core.config import (
     BODY_LIMIT_APPLICATION,
     BODY_LIMIT_DEFAULT,
     BODY_LIMIT_FORMS,
+    CORS_ORIGINS,
     COOKIE_SECURE,
+    SESSION_SAMESITE,
     SECRET_KEY,
     SLOW_REQUEST_MS,
     SMALL_FORM_PATHS,
@@ -34,16 +36,16 @@ from app.core.config import (
 app.add_middleware(
     SessionMiddleware,
     secret_key=SECRET_KEY,
-    same_site="lax",
+    same_site=SESSION_SAMESITE,
     https_only=COOKIE_SECURE,
     max_age=int(os.getenv("SESSION_MAX_AGE", "86400")),
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "").split(",") if os.getenv("CORS_ORIGINS") else [],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
 
