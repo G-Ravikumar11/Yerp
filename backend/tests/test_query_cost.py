@@ -75,8 +75,7 @@ def test_the_board_still_adds_up(tenant):
     row = [r for r in board["jobs"] if r["id"] == job["id"]][0]["costing"]
     single = tenant.get("/api/jobs/%d" % job["id"]).json()["costing"]
 
-    for field in ("invoiced", "spent", "profit", "margin_percent",
-                  "total_cost", "committed", "ordered", "budgeted"):
+    for field in ("spent", "used", "remaining", "total_cost", "ordered", "budgeted"):
         assert row[field] == single[field], field
 
 

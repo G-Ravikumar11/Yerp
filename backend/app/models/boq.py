@@ -1,7 +1,7 @@
 """Bills of quantities and their variations."""
 from datetime import datetime
 
-from sqlalchemy import Column, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 
 from app.db.session import Base
 
@@ -59,6 +59,12 @@ class DBBoqLine(Base):
     code = Column(String, default="")                         # the client's own item code, if their sheet has one
     item_code = Column(String, default="", index=True)        # ours, from the item master
     remarks = Column(Text, default="")
+    # The grade or material the item is in ("M40", "Fe550/550D", "Ply wood"), kept apart from the description so a
+    # sheet can be read, filtered and totalled by it.
+    material = Column(String, default="")
+    # Rate agreed, quantity not yet known ("R/o" on the client's sheet): it carries a rate and no amount, and
+    # stays out of every total until a quantity is put on it.
+    rate_only = Column(Boolean, default=False)
     display_order = Column(Integer, default=0)
 
 

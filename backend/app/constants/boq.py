@@ -42,7 +42,11 @@ BOQ_IMPORT_ALIASES = {
     "rate": ["rate", "unitrate", "price", "unitprice", "rateinrs", "rates"],
     "amount": ["amount", "totalamount", "amountinrs", "value", "amt", "total"],
     "remarks": ["remarks", "notes", "specification", "spec"],
+    "material": ["material", "grade", "materialgrade", "materialtype", "mix", "mixgrade"],
 }
+
+# What a quantity cell says when the rate is agreed and the quantity is not: "R/o", rate only.
+BOQ_RATE_ONLY_WORDS = ("r/o", "ro", "rateonly", "rateonlyitem")
 
 # VARIATIONS TO THE BOQ
 #

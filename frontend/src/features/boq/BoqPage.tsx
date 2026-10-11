@@ -14,10 +14,13 @@ import {
   saveBoqLines,
   useBoq,
   useBoqChanges,
+  useBoqSummary,
   useTracker,
   type BoqFlag,
   type BoqKind,
   type BoqLine,
+  type BoqSummary,
+  type BoqSummarySection,
   type TrackerRow,
 } from '@/api/boq'
 import { useAction } from '@/lib/mutate'
@@ -39,12 +42,15 @@ interface Row {
   code: string
   item_code: string
   remarks: string
+  material: string
+  /** Rate agreed, quantity not known yet (R/o): no amount, and in no total. */
+  rate_only: boolean
 }
 
-const blank = (): Row => ({ key: '', kind: 'item', sno: '', description: '', uom: '', quantity: null, rate: null, code: '', item_code: '', remarks: '' })
-const fromLines = (lines: BoqLine[]): Row[] => lines.map((l) => ({ key: l.key, kind: l.kind, sno: l.sno, description: l.description, uom: l.uom, quantity: l.kind === 'section' || l.kind === 'note' ? null : l.quantity, rate: l.kind === 'section' || l.kind === 'note' ? null : l.rate, code: l.code, item_code: l.item_code, remarks: l.remarks }))
+const blank = (): Row => ({ key: '', kind: 'item', sno: '', description: '', uom: '', quantity: null, rate: null, code: '', item_code: '', remarks: '', material: '', rate_only: false })
+const fromLines = (lines: BoqLine[]): Row[] => lines.map((l) => ({ key: l.key, kind: l.kind, sno: l.sno, description: l.description, uom: l.uom, quantity: l.kind === 'section' || l.kind === 'note' || l.rate_only ? null : l.quantity, rate: l.kind === 'section' || l.kind === 'note' ? null : l.rate, code: l.code, item_code: l.item_code, remarks: l.remarks, material: l.material ?? '', rate_only: !!l.rate_only }))
 const priced = (r: Row) => r.kind === 'item' || r.kind === 'sub'
-const amountOf = (r: Row) => (priced(r) && r.quantity && r.rate ? Math.round(r.quantity * r.rate * 100) / 100 : null)
+const amountOf = (r: Row) => (priced(r) && !r.rate_only && r.quantity && r.rate ? Math.round(r.quantity * r.rate * 100) / 100 : null)
 
 /**
  * What the server is sent. A row with words but no quantity and no rate is a heading, not an item at nought -
@@ -53,7 +59,7 @@ const amountOf = (r: Row) => (priced(r) && r.quantity && r.rate ? Math.round(r.q
 const payload = (rows: Row[]) =>
   rows
     .filter((r) => r.description.trim())
-    .map((r) => ({ ...r, kind: priced(r) && !r.quantity && !r.rate ? ('section' as BoqKind) : r.kind, quantity: r.quantity ?? 0, rate: r.rate ?? 0 }))
+    .map((r) => ({ ...r, kind: priced(r) && !r.quantity && !r.rate ? ('section' as BoqKind) : r.kind, quantity: r.rate_only ? 0 : (r.quantity ?? 0), rate: r.rate ?? 0 }))
 
 const KINDS = [
   { value: 'section', label: 'Section' },
@@ -64,7 +70,9 @@ const KINDS = [
 
 const FLAG_TEXT: Record<BoqFlag, string> = { no_gang: 'No gang yet', over_allotted: 'Given past the BOQ', loss: 'Gang rate above ours', over_executed: 'Executed past the BOQ' }
 
-type Tab = 'boq' | 'tracker' | 'variations' | 'revisions'
+type Tab = 'boq' | 'summary' | 'tracker' | 'variations' | 'revisions'
+
+const MATERIALS = ['M10', 'M20', 'M25', 'M30', 'M40', 'M60', 'Fe500', 'Fe550/550D', 'Ply wood', 'Steel', 'Cement']
 
 export default function BoqPage() {
   const id = Number(useParams().id)
@@ -73,8 +81,10 @@ export default function BoqPage() {
   const [tab, setTab] = useState<Tab>(params.get('tab') === 'variations' ? 'variations' : 'boq')
   const [varying, setVarying] = useState<{ id: number | null } | null>(null)
   const [viewing, setViewing] = useState<number | undefined>(undefined)
+  const [gst, setGst] = useState(18)
   const book = useBoq(id, viewing)
   const tracker = useTracker(id, tab === 'tracker')
+  const summary = useBoqSummary(id, gst, tab === 'summary', viewing)
   const variations = useBoqVariations(id)
   const [rows, setRows] = useState<Row[]>([])
   const [dirty, setDirty] = useState(false)
@@ -129,9 +139,11 @@ export default function BoqPage() {
     () => [
       { id: 'sno', header: 'S.No', width: 84, mono: true, pin: true, placeholder: '1.1' },
       { id: 'description', header: 'Description', hint: 'Paste the client’s lines here', width: 420, required: true, placeholder: 'What is the work?' },
+      { id: 'material', header: 'Material', hint: 'Grade or material: M40, Fe550/550D', type: 'select', freeText: true, width: 120, options: MATERIALS, readOnly: (r) => !priced(r) },
       { id: 'uom', header: 'Unit', type: 'select', freeText: true, width: 84, options: ['cum', 'sqm', 'rmt', 'nos', 'kg', 'MT', 'ltr', 'LS'], readOnly: (r) => !priced(r) },
-      { id: 'quantity', header: 'Quantity', type: 'number', decimals: 3, width: 112, readOnly: (r) => !priced(r), validate: (v) => ((v as number) < 0 ? 'Cannot be negative' : null) },
+      { id: 'quantity', header: 'Quantity', type: 'number', decimals: 3, width: 112, readOnly: (r) => !priced(r) || r.rate_only, validate: (v) => ((v as number) < 0 ? 'Cannot be negative' : null) },
       { id: 'rate', header: 'Rate', hint: '₹ per unit', type: 'number', decimals: 2, width: 112, readOnly: (r) => !priced(r), validate: (v) => ((v as number) < 0 ? 'Cannot be negative' : null) },
+      { id: 'rate_only', header: 'R/o', hint: 'Rate only: rate agreed, quantity not yet known. Comes to nothing and is in no total.', type: 'checkbox', width: 64, readOnly: (r) => !priced(r), countsAsData: false },
       { id: 'amount', header: 'Amount', type: 'number', width: 140, readOnly: true, get: (r) => amountOf(r), format: (v) => (typeof v === 'number' ? formatINR(v) : ''), summary: 'sum' },
       { id: 'kind', header: 'Kind', type: 'select', width: 110, options: KINDS, countsAsData: false },
       { id: 'item_code', header: 'Item code', hint: 'Given on save', width: 120, mono: true, readOnly: true },
@@ -191,6 +203,7 @@ export default function BoqPage() {
           onChange={setTab}
           items={[
             { value: 'boq', label: 'BOQ' },
+            { value: 'summary', label: 'Summary' },
             { value: 'tracker', label: 'Tracker' },
             { value: 'variations', label: 'Variations', count: variations.data?.summary.raised },
             { value: 'revisions', label: 'Revisions', count: book.data?.revisions.length },
@@ -247,6 +260,8 @@ export default function BoqPage() {
           />
         </div>
       )}
+
+      {tab === 'summary' && <SummaryView summary={summary.data} loading={summary.isPending} gst={gst} onGst={setGst} />}
 
       {tab === 'tracker' && <TrackerView rows={tracker.data?.rows ?? []} flags={tracker.data?.flags} totals={tracker.data?.totals} loading={tracker.isPending} denied={tracker.isError} />}
 
@@ -366,6 +381,58 @@ export default function BoqPage() {
         <Field label="The client's order number" htmlFor="co-ref" hint="Optional. Printed on every bill raised against the order."><Input id="co-ref" value={reference} onChange={(e) => setReference(e.target.value)} /></Field>
       </Modal>
     </>
+  )
+}
+
+/** The BOQ's front page: each section with what it comes to, then the total, the GST on it, and the total with GST. */
+function SummaryView({ summary, loading, gst, onGst }: { summary?: BoqSummary; loading: boolean; gst: number; onGst: (v: number) => void }) {
+  const sections: TableColumn<BoqSummarySection>[] = [
+    { id: 'sno', header: 'SL', width: '4rem', cell: (s) => <span className="font-mono text-xs font-semibold">{s.sno}</span> },
+    { id: 'title', header: 'Description', cell: (s) => <span className="font-medium">{s.title}</span> },
+    { id: 'items', header: 'Items', align: 'right', hideBelow: 'md', cell: (s) => s.items },
+    { id: 'ro', header: 'Rate only', align: 'right', hideBelow: 'md', cell: (s) => (s.rate_only ? <Badge tone="neutral">{s.rate_only} R/o</Badge> : '') },
+    { id: 'amount', header: 'Amount', align: 'right', cell: (s) => <span className="font-semibold tabular">{formatINR(s.amount)}</span> },
+  ]
+  const money = (v?: number) => formatINR(v ?? 0)
+  const left = summary?.rate_only_items ?? 0
+  return (
+    <div className="grid gap-5">
+      <StatGrid>
+        <Stat label="Total" value={compactINR(summary?.total)} loading={loading} />
+        <Stat label={`GST @${summary?.gst_percent ?? gst}%`} value={compactINR(summary?.gst)} loading={loading} />
+        <Stat label="Total incl. GST" value={compactINR(summary?.total_with_gst)} tone="success" loading={loading} />
+        <Stat label="Rate-only items" value={left} tone={left ? 'warning' : undefined} loading={loading} />
+      </StatGrid>
+      <div className="flex items-center gap-2 text-[13px]">
+        <label htmlFor="boq-gst" className="text-muted-foreground">GST rate</label>
+        <Input id="boq-gst" type="number" min={0} max={100} step="0.5" value={gst} onChange={(e) => onGst(Math.min(100, Math.max(0, Number(e.target.value) || 0)))} className="w-24" />
+        <span className="text-muted-foreground">%</span>
+      </div>
+      <div>
+        <DataTable label="BOQ summary by section" rows={summary?.sections ?? []} columns={sections} rowKey={(s) => s.key + s.title} loading={loading} empty="Nothing in the BOQ yet. Add sections and items on the BOQ tab." />
+        <dl className="mt-2 overflow-hidden rounded-lg border border-border text-sm">
+          <div className="flex justify-between bg-success-soft px-4 py-2.5 font-semibold"><dt>TOTAL</dt><dd className="tabular">{money(summary?.total)}</dd></div>
+          <div className="flex justify-between px-4 py-2.5"><dt>GST @{summary?.gst_percent ?? gst}%</dt><dd className="tabular">{money(summary?.gst)}</dd></div>
+          <div className="flex justify-between bg-warning-soft px-4 py-2.5 font-bold"><dt>TOTAL incl. GST</dt><dd className="tabular">{money(summary?.total_with_gst)}</dd></div>
+        </dl>
+        {left > 0 && <p className="mt-2 text-xs text-muted-foreground">{left} rate-only item{left === 1 ? '' : 's'} (R/o) {left === 1 ? 'is' : 'are'} priced but not yet quantified, so {left === 1 ? 'it is' : 'they are'} in none of these figures.</p>}
+      </div>
+      {!!summary?.by_material.length && (
+        <div>
+          <h2 className="mb-2 text-sm font-semibold">By material or grade</h2>
+          <DataTable
+            label="BOQ by material"
+            rows={summary.by_material}
+            rowKey={(m) => m.material}
+            columns={[
+              { id: 'm', header: 'Material', cell: (m) => <span className="font-medium">{m.material}</span> },
+              { id: 'n', header: 'Items', align: 'right', cell: (m) => m.items },
+              { id: 'a', header: 'Amount', align: 'right', cell: (m) => <span className="tabular">{formatINR(m.amount)}</span> },
+            ]}
+          />
+        </div>
+      )}
+    </div>
   )
 }
 

@@ -3,7 +3,7 @@ import re
 from datetime import date, datetime, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import func, func as sqlfunc
+from sqlalchemy import func, func as sqlfunc, or_
 
 from app import models
 
@@ -14,6 +14,7 @@ from app.constants.quality import SERIOUS_KINDS
 from app.core.config import logger
 from app.core.currency import inr, money, unit_rate
 from app.core.dates import _days_until, ageing_bucket
+from app.core.permissions import employee_can
 from app.core.queries import by_id, on_job
 from app.services.assets import asset_service_state, equipment_cost_by_job
 from app.services.stores import stock_balances, stocked_share_of_bills
@@ -22,6 +23,37 @@ from app.services.stores import stock_balances, stocked_share_of_bills
 def job_or_404(db, client_id, job_id):
     job = db.query(models.DBJob).filter(
         models.DBJob.id == job_id, models.DBJob.client_id == client_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+# Anyone holding one of these sees every project; the rest see their own.
+SEE_ALL_PROJECTS = ("reports.view", "bills.view_all", "workorders.manage")
+
+
+def filter_jobs_for_employee(query, db, client_id, emp):
+    """Narrow a jobs query to the projects this member of staff may see.
+
+    The account owner (emp is None) and admin-level staff see everything. Other
+    staff see the sites HR has assigned them, plus any project they manage.
+    Staff with no sites assigned at all are not restricted, the same as
+    everywhere else sites are checked (see employee_site_ids).
+    """
+    if emp is None or any(employee_can(emp, p) for p in SEE_ALL_PROJECTS):
+        return query
+    allowed = employee_site_ids(db, emp)
+    if allowed is None:
+        return query
+    return query.filter(or_(models.DBJob.id.in_(allowed or {0}),
+                            models.DBJob.manager_id == emp.id))
+
+
+def job_or_404_for_employee(db, client_id, emp, job_id):
+    """The job, or a 404 for a member of staff who has no connection to it."""
+    query = db.query(models.DBJob).filter(
+        models.DBJob.id == job_id, models.DBJob.client_id == client_id)
+    job = filter_jobs_for_employee(query, db, client_id, emp).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
@@ -1373,7 +1405,7 @@ def fixed_asset_attention(db, client_id):
 # Names this module only needs once it is running. They come from modules that in turn need this one,
 # so they are imported last, after everything above has been defined.
 from app.services.crm import next_customer_code, settled_amounts, sync_lead_from_estimate
-from app.services.hr import employee_name
+from app.services.hr import employee_name, employee_site_ids
 from app.services.money import material_recovered_by_job
 from app.services.quality import cube_dict
 from app.services.subcontract_billing import _live_releases, release_attention, released_by_job

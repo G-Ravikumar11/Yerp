@@ -249,3 +249,77 @@ def test_the_kinds_of_row_are_told_apart():
     assert kind("1.2.b", "Edges", 5, 10) == "sub" and kind("(ii)", "Edges", 5, 10) == "sub"
     assert kind("A", "SUBSTRUCTURE", 0, 0) == "section" and kind("", "FINISHING WORKS", 0, 0) == "section"
     assert kind("", "All rates include supply, fixing and curing unless stated otherwise in the specification.", 0, 0) == "note"
+
+
+# --- the contractor's own layout: material or grade, rate-only items, a summary with GST ------------------------------
+
+CLUB_HOUSE_SHEET = [
+    ["Proposed Construction of Residential Apartment - Club House"], [],
+    ["SL.NO", "PARTICULARS", "MATERIAL", "UNIT", "QUANTITY", "RATE", "AMOUNT"],
+    ["A", "PLAIN CEMENT CONCRETE", None, None, None, None, None],
+    ["a", "Footings", None, "Cum.", 277, 5230, 1448710],
+    ["B", "REINFORCED CEMENT CONCRETE", None, None, None, None, None],
+    ["2.01a", "Tower Columns (Found to Plinth)", "M60", "Cum", 61, 7800, 475800],
+    ["2.04a", "Podium drops", "M40", "Cum", 269, 6592, 1773248],
+    ["C", "REINFORCEMENT STEEL", None, None, None, None, None],
+    ["3.01a", "Footings", "Fe550/550D", "MT", 133.05, 73900, 9832395],
+    ["E", "MASONRY", None, None, None, None, None],
+    ["6", "Solid block masonry 400 x 100 x 200 mm in CM 1:4", None, "Sqm", "R/o", 1200, None],
+]
+
+
+def club_house(tenant):
+    _, boq = make_boq(tenant, "Club House")
+    res = tenant.post("/api/boqs/%d/import" % boq["id"], files={"file": ("club.xlsx", sheet(CLUB_HOUSE_SHEET))})
+    assert res.status_code == 200, res.text
+    out = res.json()
+    saved = tenant.put("/api/boqs/%d/lines" % boq["id"], json={"lines": out["lines"], "issue_codes": True})
+    assert saved.status_code == 200, saved.text
+    return boq, out
+
+
+def test_material_and_rate_only_items_are_read_from_the_sheet(tenant):
+    _, out = club_house(tenant)
+    by_text = {l["description"]: l for l in out["lines"]}
+    assert by_text["Tower Columns (Found to Plinth)"]["material"] == "M60"
+    assert by_text["Footings"]["material"] in ("", "Fe550/550D")
+    r_o = by_text["Solid block masonry 400 x 100 x 200 mm in CM 1:4"]
+    assert r_o["rate_only"] is True and r_o["quantity"] == 0 and r_o["amount"] == 0 and r_o["rate"] == 1200
+    assert not out["warnings"]
+
+
+def test_a_rate_only_item_is_in_no_total(tenant):
+    boq, _ = club_house(tenant)
+    body = tenant.get("/api/boqs/%d" % boq["id"]).json()
+    assert body["total"] == 1448710 + 475800 + 1773248 + 9832395
+    assert [l for l in body["lines"] if l["rate_only"]][0]["amount"] == 0
+
+
+def test_the_summary_adds_sections_and_puts_gst_on_the_total(tenant):
+    boq, _ = club_house(tenant)
+    s = tenant.get("/api/boqs/%d/summary" % boq["id"]).json()
+    amounts = {x["title"]: x["amount"] for x in s["sections"]}
+    assert amounts["PLAIN CEMENT CONCRETE"] == 1448710
+    assert amounts["REINFORCED CEMENT CONCRETE"] == 475800 + 1773248
+    assert amounts["MASONRY"] == 0
+    assert s["total"] == sum(amounts.values())
+    assert s["gst_percent"] == 18.0
+    assert s["gst"] == round(s["total"] * 0.18, 2)
+    assert s["total_with_gst"] == round(s["total"] + s["gst"], 2)
+    assert s["rate_only_items"] == 1
+    # The same money by grade.
+    grades = {m["material"]: m["amount"] for m in s["by_material"]}
+    assert grades["M40"] == 1773248 and grades["Fe550/550D"] == 9832395
+
+
+def test_the_gst_rate_can_be_changed_on_the_summary(tenant):
+    boq, _ = club_house(tenant)
+    s = tenant.get("/api/boqs/%d/summary?gst=12" % boq["id"]).json()
+    assert s["gst_percent"] == 12.0 and s["gst"] == round(s["total"] * 0.12, 2)
+
+
+def test_material_and_rate_only_survive_a_new_revision(tenant):
+    boq, _ = club_house(tenant)
+    assert tenant.post("/api/boqs/%d/revisions" % boq["id"], json={}).status_code == 200
+    lines = tenant.get("/api/boqs/%d" % boq["id"]).json()["lines"]
+    assert any(l["material"] == "M60" for l in lines) and any(l["rate_only"] for l in lines)

@@ -373,12 +373,11 @@ def jobs_summary(request: Request, db: Session = Depends(get_db)):
         ~models.DBJob.status.in_(JOB_CLOSED_STATUSES),
     ).all()
     rows = cost_jobs(db, client.id, jobs)
-    rows.sort(key=lambda r: r["costing"]["margin_percent"])
+    rows.sort(key=lambda r: r["costing"]["remaining"])
     totals = {
-        "invoiced": money(sum(r["costing"]["invoiced"] for r in rows)),
-        "cost": money(sum(r["costing"]["total_cost"] for r in rows)),
-        "committed": money(sum(r["costing"]["committed"] for r in rows)),
-        "profit": money(sum(r["costing"]["profit"] for r in rows)),
+        "budget": money(sum(r["costing"]["budget"] for r in rows)),
+        "used": money(sum(r["costing"]["used"] for r in rows)),
+        "remaining": money(sum(r["costing"]["remaining"] for r in rows)),
     }
     return {
         "jobs": rows,

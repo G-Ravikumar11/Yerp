@@ -40,19 +40,22 @@ export const JOB_STATUS: Record<string, string> = { quoting: 'Quoting', won: 'Wo
 export interface Costing {
   quoted: number
   budget: number
-  invoiced: number
-  received: number
-  outstanding: number
+  spent: number
+  unpaid_bills: number
   total_cost: number
-  committed: number
   labour_cost: number
   labour_hours: number
-  profit: number
-  margin_percent: number
+  /** Budget used so far, and what is left of it (0 when no budget is set). */
+  used: number
+  remaining: number
   over_budget: boolean
+  ordered: number
+  budgeted: number
+  expected_margin: number
+  counts: { bills: number; work_orders: number }
 }
 export interface BoardProject extends Project { customer_name: string; state_code?: string; description?: string; retention_percent?: number; costing: Costing }
-export interface Board { jobs: BoardProject[]; totals: { invoiced: number; cost: number; committed: number; profit: number } }
+export interface Board { jobs: BoardProject[]; totals: { budget: number; used: number; remaining: number } }
 export interface ProjectDoc { id: number; number: string; total: number; status: string; issue_date: string; to_contact?: string; supplier_name?: string; vendor_name?: string; over_order?: boolean }
 export interface ProjectDetail extends BoardProject { invoices: ProjectDoc[]; bills: ProjectDoc[]; purchase_orders: ProjectDoc[]; quotes: ProjectDoc[] }
 export interface SiteLocation { set: boolean; lat?: number; lng?: number; radius_m?: number }

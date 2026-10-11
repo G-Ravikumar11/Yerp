@@ -33,14 +33,52 @@ def boq_revision_of(db, boq, rev_no=None):
     return rev
 
 
-def boq_amount(kind, qty, rate):
+def boq_amount(kind, qty, rate, rate_only=False):
+    """What a line comes to. A rate-only line (R/o) has a rate and no quantity, so it comes to nothing yet."""
+    if rate_only:
+        return 0.0
     return money((qty or 0) * (rate or 0)) if kind in BOQ_PRICED else 0.0
 
 
 def boq_line_dict(l):
     return {"id": l.id, "key": l.key, "kind": l.kind, "sno": l.sno or "", "description": l.description or "",
             "uom": l.uom or "", "quantity": money(l.quantity), "rate": unit_rate(l.rate), "amount": money(l.amount),
-            "code": l.code or "", "item_code": l.item_code or "", "remarks": l.remarks or ""}
+            "code": l.code or "", "item_code": l.item_code or "", "remarks": l.remarks or "",
+            "material": l.material or "", "rate_only": bool(l.rate_only)}
+
+
+def boq_summary(db, rev, gst_percent=18.0):
+    """The BOQ on one page: each section with what it comes to, then the total, the GST on it and the total with GST.
+
+    Also the same money cut by material or grade, and a count of rate-only items, which are priced but not yet
+    quantified and so are in no figure here."""
+    lines = db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id).order_by(
+        models.DBBoqLine.display_order, models.DBBoqLine.id).all()
+    sections, by_material, current, total = [], {}, None, 0.0
+    for l in lines:
+        if l.kind == "section":
+            current = {"key": l.key, "sno": l.sno or "", "title": l.description or "", "items": 0, "rate_only": 0, "amount": 0.0}
+            sections.append(current)
+        elif l.kind in BOQ_PRICED:
+            if current is None:
+                current = {"key": "", "sno": "", "title": "Items outside any section", "items": 0, "rate_only": 0, "amount": 0.0}
+                sections.append(current)
+            current["items"] += 1
+            if l.rate_only:
+                current["rate_only"] += 1
+                continue
+            current["amount"] = money(current["amount"] + (l.amount or 0))
+            total += l.amount or 0
+            name = (l.material or "").strip() or "Not stated"
+            row = by_material.setdefault(name, {"material": name, "items": 0, "amount": 0.0})
+            row["items"] += 1
+            row["amount"] = money(row["amount"] + (l.amount or 0))
+    gst_percent = max(0.0, min(100.0, float(gst_percent or 0)))
+    total = money(total)
+    gst = money(total * gst_percent / 100.0)
+    return {"sections": sections, "total": total, "gst_percent": gst_percent, "gst": gst, "total_with_gst": money(total + gst),
+            "by_material": sorted(by_material.values(), key=lambda r: -r["amount"]),
+            "rate_only_items": sum(s["rate_only"] for s in sections)}
 
 
 def boq_lines_with_subtotals(db, rev):
@@ -106,7 +144,8 @@ def boq_save_lines(db, boq, rev, rows, issue_codes, client_id):
         if not text:
             continue
         kind = r.kind if r.kind in BOQ_KINDS else "item"
-        qty = money(r.quantity or 0) if kind in BOQ_PRICED else 0.0
+        rate_only = bool(getattr(r, "rate_only", False)) and kind in BOQ_PRICED
+        qty = money(r.quantity or 0) if kind in BOQ_PRICED and not rate_only else 0.0
         rate = unit_rate(r.rate or 0) if kind in BOQ_PRICED else 0.0
         if qty < 0 or rate < 0:
             raise HTTPException(400, "Line %d: quantity and rate cannot be negative." % (index + 1))
@@ -117,9 +156,10 @@ def boq_save_lines(db, boq, rev, rows, issue_codes, client_id):
         line = models.DBBoqLine(
             boq_id=boq.id, revision_id=rev.id, key=key, kind=kind, sno=(r.sno or "").strip()[:30],
             description=text, uom=(r.uom or "").strip()[:20] if kind in BOQ_PRICED else "", quantity=qty, rate=rate,
-            amount=boq_amount(kind, qty, rate), code=(r.code or "").strip()[:60],
+            amount=boq_amount(kind, qty, rate, rate_only), code=(r.code or "").strip()[:60],
             item_code=(r.item_code or "").strip().upper()[:40] if kind in BOQ_PRICED else "",
-            remarks=(r.remarks or "").strip(), display_order=len(kept))
+            remarks=(r.remarks or "").strip(), display_order=len(kept),
+            material=(getattr(r, "material", "") or "").strip()[:60] if kind in BOQ_PRICED else "", rate_only=rate_only)
         db.add(line)
         kept.append(line)
     db.flush()
@@ -430,7 +470,7 @@ def bv_apply(db, client, boq, vo):
     for l in db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == cur.id).order_by(models.DBBoqLine.display_order).all():
         copies.append(models.DBBoqLine(boq_id=boq.id, revision_id=nxt.id, key=l.key, kind=l.kind, sno=l.sno, description=l.description,
                                        uom=l.uom, quantity=l.quantity, rate=l.rate, amount=l.amount, code=l.code,
-                                       item_code=l.item_code, remarks=l.remarks))
+                                       item_code=l.item_code, remarks=l.remarks, material=l.material, rate_only=l.rate_only))
     by_key = {c.key: c for c in copies}
     added = []
     for vl in db.query(models.DBBoqVariationLine).filter(models.DBBoqVariationLine.variation_id == vo.id).order_by(

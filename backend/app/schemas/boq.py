@@ -15,6 +15,8 @@ class ProjectBoqLineIn(BaseModel):
     code: Optional[str] = ""
     item_code: Optional[str] = ""
     remarks: Optional[str] = ""
+    material: Optional[str] = ""
+    rate_only: Optional[bool] = False
 
 
 class ProjectBoqLinesIn(BaseModel):

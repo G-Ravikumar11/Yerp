@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.db import get_db
 
-from app.constants.boq import BOQ_IMPORT_ALIASES, BOQ_PRICED, BV_TRANSITIONS
+from app.constants.boq import BOQ_IMPORT_ALIASES, BOQ_PRICED, BOQ_RATE_ONLY_WORDS, BV_TRANSITIONS
 from app.core.audit import log_audit
 from app.core.auth import require_erp_read, require_items_access, require_workorder_access, wo_actor
 from app.core.currency import inr, money, sheet_number, unit_rate
@@ -38,6 +38,7 @@ from app.services.boq import (
     boq_revision_of,
     boq_revisions_list,
     boq_save_lines,
+    boq_summary,
     boq_tracker_data,
     boq_variation_or_404,
     bv_apply,
@@ -102,6 +103,16 @@ def boq_get(boq_id: int, request: Request, rev: Optional[int] = None, db: Sessio
             "editable": revision.status == "OPEN" and revision.rev_no == boq.current_rev}
 
 
+@router.get("/api/boqs/{boq_id}/summary")
+def boq_get_summary(boq_id: int, request: Request, rev: Optional[int] = None, gst: float = 18.0,
+                    db: Session = Depends(get_db)):
+    """Section totals, then the total, GST and total with GST: the front page of the BOQ."""
+    client = require_erp_read(request, db)
+    boq = boq_or_404(db, client.id, boq_id)
+    revision = boq_revision_of(db, boq, rev)
+    return {"boq": boq_head(db, boq, revision), **boq_summary(db, revision, gst)}
+
+
 @router.put("/api/boqs/{boq_id}/lines")
 def boq_set_lines(boq_id: int, body: ProjectBoqLinesIn, request: Request, db: Session = Depends(get_db)):
     """Save the BOQ as it is on screen: the lines are replaced as a whole, as the grid holds them."""
@@ -140,7 +151,8 @@ def boq_new_revision(boq_id: int, body: dict, request: Request, db: Session = De
     for l in db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == cur.id).order_by(models.DBBoqLine.display_order).all():
         db.add(models.DBBoqLine(boq_id=boq.id, revision_id=nxt.id, key=l.key, kind=l.kind, sno=l.sno, description=l.description,
                                 uom=l.uom, quantity=l.quantity, rate=l.rate, amount=l.amount, code=l.code,
-                                item_code=l.item_code, remarks=l.remarks, display_order=l.display_order))
+                                item_code=l.item_code, remarks=l.remarks, material=l.material, rate_only=l.rate_only,
+                                display_order=l.display_order))
     boq.current_rev = nxt.rev_no
     log_audit(db, client.id, "boq_revised", "boq", boq.id, boq.number, nxt.label, request)
     db.commit()
@@ -203,6 +215,10 @@ async def boq_import(boq_id: int, request: Request, file: UploadFile = File(...)
         text = (row.get("description") or "").strip()
         qty, rate = money(sheet_number(row.get("quantity"))), unit_rate(sheet_number(row.get("rate")))
         stated = sheet_number(row.get("amount")) if row.get("amount") else None
+        # "R/o" where the quantity should be: the rate is agreed, the quantity is not.
+        rate_only = bool(rate) and re.sub(r"\s+", "", str(row.get("quantity") or "")).lower() in BOQ_RATE_ONLY_WORDS
+        if rate_only:
+            qty, stated = 0.0, None
         if not text:
             skipped += 1
             continue
@@ -214,7 +230,8 @@ async def boq_import(boq_id: int, request: Request, file: UploadFile = File(...)
         if stated and not rate and qty:
             rate = unit_rate(stated / qty)           # a sheet with an amount and no rate: the rate is what it implies
         kind = boq_kind_of(row.get("sno"), text, qty, rate)
-        if kind in BOQ_PRICED:
+        rate_only = rate_only and kind in BOQ_PRICED
+        if kind in BOQ_PRICED and not rate_only:
             running += qty * rate
             if stated and abs(stated - qty * rate) > 1:
                 warnings.append("Row %s: %s x %s is %s but the sheet says %s." % (
@@ -222,7 +239,8 @@ async def boq_import(boq_id: int, request: Request, file: UploadFile = File(...)
         lines.append({"key": "", "kind": kind, "sno": (row.get("sno") or "").strip(), "description": text,
                       "uom": (row.get("uom") or "").strip() if kind in BOQ_PRICED else "", "quantity": qty if kind in BOQ_PRICED else 0,
                       "rate": rate if kind in BOQ_PRICED else 0, "amount": money(qty * rate) if kind in BOQ_PRICED else 0,
-                      "code": (row.get("code") or "").strip(), "item_code": "", "remarks": (row.get("remarks") or "").strip()})
+                      "code": (row.get("code") or "").strip(), "item_code": "", "remarks": (row.get("remarks") or "").strip(),
+                      "material": (row.get("material") or "").strip()[:60] if kind in BOQ_PRICED else "", "rate_only": rate_only})
     if not any(l["kind"] in BOQ_PRICED for l in lines):
         raise HTTPException(400, "Nothing on that sheet read as a priced line." + sheet_note())
     return {"lines": lines[:5000], "read_as": mapping_report(header, mapping), "ignored_columns": unmapped,
@@ -321,19 +339,23 @@ def boq_export(boq_id: int, request: Request, rev: Optional[int] = None, db: Ses
     revision = boq_revision_of(db, boq, rev)
     lines, total = boq_lines_with_subtotals(db, revision)
     head = boq_head(db, boq, revision)
+    summary = boq_summary(db, revision)
     rows = []
     for l in lines:
         if l["kind"] == "section":
-            rows.append((l["sno"], "", "", l["description"].upper(), "", "", "", l["subtotal"]))
+            rows.append((l["sno"], "", "", l["description"].upper(), "", "", "", "", l["subtotal"]))
         elif l["kind"] == "note":
-            rows.append(("", "", "", l["description"], "", "", "", ""))
+            rows.append(("", "", "", l["description"], "", "", "", "", ""))
         else:
-            rows.append((l["sno"], l["code"], l["item_code"], l["description"], l["uom"], l["quantity"], l["rate"], l["amount"]))
-    return sheet_response(("S.No", "Client code", "Item code", "Description", "UoM", "Qty", "Rate", "Amount"), rows,
+            rows.append((l["sno"], l["code"], l["item_code"], l["description"], l["material"], l["uom"],
+                         "R/o" if l["rate_only"] else l["quantity"], l["rate"], "" if l["rate_only"] else l["amount"]))
+    return sheet_response(("S.No", "Client code", "Item code", "Description", "Material", "UoM", "Qty", "Rate", "Amount"), rows,
                           "boq_%s.xlsx" % re.sub(r"[^A-Za-z0-9]+", "_", head["number"]),
                           preamble=_pre(client, "BILL OF QUANTITIES", ("Project", head["project"]), ("Revision", head["revision"]),
                                         ("BOQ", head["number"])),
-                          closing=[(), ("Total", "", "", "", "", "", "", total)])
+                          closing=[(), ("Total", "", "", "", "", "", "", "", total),
+                                   ("GST @%g%%" % summary["gst_percent"], "", "", "", "", "", "", "", summary["gst"]),
+                                   ("Total incl. GST", "", "", "", "", "", "", "", summary["total_with_gst"])])
 
 
 @router.get("/api/boq-variations")
