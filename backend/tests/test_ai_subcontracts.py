@@ -1,11 +1,11 @@
-"""The AI functions for subcontracts (backend/Ai_service): the model only reads or words things; plain code decides.
+"""The AI functions for subcontracts (backend/app/ai): the model only reads or words things; plain code decides.
 
 No network and no key are used: the model call is replaced in each test.
 """
 import pytest
 
-from Ai_service import bill_review, config, contractor_brief, hard_copy_check
-from Ai_service.llm_client import AiResult, parse_json
+from app.ai import bill_review, config, contractor_brief, hard_copy_check
+from app.ai.llm_client import AiResult, parse_json
 from test_delete_work_order import book, live_order
 
 PDF = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF"

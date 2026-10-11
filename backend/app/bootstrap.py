@@ -159,6 +159,7 @@ from app.routers import (
     safety,
     partner_portal,
     compliance,
+    master_delete,
 )
 
 for _module in (
@@ -196,11 +197,12 @@ for _module in (
     quality,
     safety,
     partner_portal,
+    master_delete,
 ):
     app.include_router(_module.router)
 
-# Everything that calls an AI model lives in the Ai_service folder, one file per function.
-from Ai_service import routers as ai_routers
+# Everything that calls an AI model lives in backend/app/ai, one file per function.
+from app.ai import routers as ai_routers
 for _router in ai_routers:
     app.include_router(_router)
 

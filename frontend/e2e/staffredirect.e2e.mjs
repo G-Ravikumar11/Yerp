@@ -1,0 +1,18 @@
+import { api, launch, signIn, BASE } from './lib.mjs'
+const { page, check, done } = await launch({ allow: [/403 |400 /] })
+await signIn(page)
+const stamp = Date.now().toString().slice(-6)
+const dom = (await api(page, 'GET', '/api/hr/org-domain')).data.domain
+const email = `qa.go.${stamp}@${dom || 'example.in'}`
+const made = await api(page, 'POST', '/api/employees', { first_name: 'Go', last_name: `Next${stamp}`, email, password: 'Passw0rd-QA1', phone: '', job_title: 'Surveyor', department_id: null, reports_to: null, level: 'L1', role: 'employee', permission_role: 'staff', site_ids: [], employment_type: 'full_time', pay_frequency: 'monthly', salary: 1, tax_rate: 0, start_date: '2026-01-01', emergency_contact: '', emergency_phone: '' })
+check('staff exists', made.status === 200, JSON.stringify(made.data).slice(0, 100))
+await api(page, 'POST', '/api/client/logout')
+await page.goto(BASE + '/employee-login.html', { waitUntil: 'domcontentloaded' })
+await page.waitForSelector('#email')
+await page.type('#email', email)
+await page.type('#password', 'Passw0rd-QA1')
+await Promise.all([page.waitForFunction(() => location.pathname === '/next/', { timeout: 15000 }), page.click('button[type=submit]')])
+check('employee-login lands on /next/', page.url().includes('/next/'), page.url())
+await page.goto(BASE + '/employee-dashboard.html', { waitUntil: 'networkidle0' })
+check('the old staff page forwards to /next/', page.url().includes('/next/'), page.url())
+await done()

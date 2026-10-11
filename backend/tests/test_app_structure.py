@@ -22,9 +22,11 @@ def test_the_front_end_is_mounted_after_every_endpoint():
     kinds = [type(r).__name__ for r in routes]
     last_api = max(i for i, k in enumerate(kinds) if k in ("APIRoute", "APIWebSocketRoute"))
     for i, r in enumerate(routes):
-        if type(r).__name__ == "Mount" and getattr(r, "path", None) in ("", "/next"):
+        if type(r).__name__ == "Mount" and getattr(r, "path", None) in ("", "/next", "/icons"):
             assert i > last_api, "the %r mount comes before an endpoint" % r.path
-    assert getattr(routes[-1], "path", None) == "", "the old front page, mounted on /, must come last of all"
+    # Nothing is mounted on "/" any more: the few files the root serves are named routes (app/core/static.py),
+    # so a folder mounted there could only ever swallow addresses meant for something else.
+    assert not any(type(r).__name__ == "Mount" and getattr(r, "path", None) == "" for r in routes),         "a folder is mounted on /"
 
 
 def test_no_endpoint_is_registered_twice():
