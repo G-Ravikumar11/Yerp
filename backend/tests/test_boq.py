@@ -369,3 +369,15 @@ def test_a_badly_formed_item_code_is_refused_in_the_masters_words(tenant):
     _, boq = make_boq(tenant)
     res = save_with(tenant, boq, {"item_code": "AB"})
     assert res.status_code == 400 and "characters" in res.json()["detail"]
+
+
+def test_the_sample_sheet_imports_as_it_is(tenant):
+    _, boq = make_boq(tenant)
+    sample = tenant.get("/api/boqs/sample.xlsx")
+    assert sample.status_code == 200
+    out = tenant.post("/api/boqs/%d/import" % boq["id"], files={"file": ("sample_boq.xlsx", sample.content)})
+    assert out.status_code == 200, out.text
+    lines = out.json()["lines"]
+    assert [l["description"] for l in lines if l["kind"] == "section"][0] == "PLAIN CEMENT CONCRETE"
+    assert any(l["rate_only"] for l in lines) and any(l["group_code"] == "SUB STRUCTURE WORKS" for l in lines)
+    assert not out.json()["warnings"]

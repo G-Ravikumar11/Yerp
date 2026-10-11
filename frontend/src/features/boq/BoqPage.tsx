@@ -163,6 +163,12 @@ export default function BoqPage() {
   )
 
   const head = book.data?.boq
+  // The files are made from the saved BOQ: a download with changes still on screen would leave them out.
+  const savedFirst = (e: React.MouseEvent) => {
+    if (!dirty) return
+    e.preventDefault()
+    toast.error('Save the BOQ first, so the download has your changes in it.')
+  }
   const noCode = rows.filter((r) => priced(r) && r.description.trim() && !r.item_code).length
 
   return (
@@ -175,12 +181,12 @@ export default function BoqPage() {
           head && (
             <>
               <Button variant="outline" asChild>
-                <a href={`/api/boqs/${id}/export.xlsx${viewing === undefined ? '' : `?rev=${viewing}`}`}>
+                <a href={`/api/boqs/${id}/export.xlsx${viewing === undefined ? '' : `?rev=${viewing}`}`} onClick={savedFirst}>
                   <Download /> Excel
                 </a>
               </Button>
               <Button variant="outline" asChild>
-                <a href={`/api/boqs/${id}/export.pdf${viewing === undefined ? '' : `?rev=${viewing}`}`} target="_blank" rel="noopener">
+                <a href={`/api/boqs/${id}/export.pdf${viewing === undefined ? '' : `?rev=${viewing}`}`} target="_blank" rel="noopener" onClick={savedFirst}>
                   PDF
                 </a>
               </Button>
@@ -238,6 +244,11 @@ export default function BoqPage() {
               />
               <Button variant="outline" size="sm" loading={read.isPending} onClick={() => file.current?.click()}>
                 <FileUp /> Import the client&apos;s sheet
+              </Button>
+              <Button variant="ghost" size="sm" asChild>
+                <a href="/api/boqs/sample.xlsx">
+                  <Download /> Sample sheet
+                </a>
               </Button>
               <label className="flex items-center gap-2 text-[13px]">
                 <input type="checkbox" checked={issue} onChange={(e) => setIssue(e.target.checked)} className="size-4 accent-[var(--primary)]" />
