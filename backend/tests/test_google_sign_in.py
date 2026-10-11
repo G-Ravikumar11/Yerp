@@ -57,7 +57,7 @@ def clients():
 def test_the_master_signs_in_with_their_google_address_whatever_its_capitals(account, google):
     browser = new_browser()
     res = sign_in_with_google(browser, google, account["email"].upper())
-    assert where(res).startswith("/next/") or where(res) == "/onboard.html", where(res)
+    assert where(res).startswith("/next/") or where(res) == "/next/onboard", where(res)
     assert browser.get("/api/client/me").json()["email"] == account["email"]
 
 
@@ -84,7 +84,7 @@ def test_an_address_nobody_gave_a_login_to_gets_nothing(tenant, google):
     before = clients()
     browser = new_browser()
     res = sign_in_with_google(browser, google, "stranger@gmail.com")
-    assert where(res) == "/login.html?error=google_unknown"
+    assert where(res) == "/next/login?error=google_unknown"
     assert browser.get("/api/client/me").status_code == 401
     assert clients() == before
 
@@ -92,7 +92,7 @@ def test_an_address_nobody_gave_a_login_to_gets_nothing(tenant, google):
 def test_an_unverified_google_address_is_refused(account, google):
     google["verified"] = False
     browser = new_browser()
-    assert where(sign_in_with_google(browser, google, account["email"])) == "/login.html?error=google_unverified"
+    assert where(sign_in_with_google(browser, google, account["email"])) == "/next/login?error=google_unverified"
     assert browser.get("/api/client/me").status_code == 401
 
 
@@ -103,7 +103,7 @@ def test_a_partner_signs_in_with_google_at_the_portal(tenant, google):
     portal_invite(tenant, "contractor", order["contractor_id"], email)
     browser = new_browser()
     res = sign_in_with_google(browser, google, email.upper(), who="portal")
-    assert where(res) == "/portal.html"
+    assert where(res) == "/next/portal"
     assert browser.get("/api/portal/me").status_code == 200
     assert browser.get("/api/client/me").status_code == 401
 
@@ -111,7 +111,7 @@ def test_a_partner_signs_in_with_google_at_the_portal(tenant, google):
 def test_the_portal_door_only_opens_for_partners(account, google):
     browser = new_browser()
     res = sign_in_with_google(browser, google, account["email"], who="portal")
-    assert where(res) == "/portal.html?error=google_unknown"
+    assert where(res) == "/next/portal?error=google_unknown"
     assert browser.get("/api/client/me").status_code == 401
 
 
@@ -120,7 +120,7 @@ def test_connecting_gmail_never_creates_or_switches_an_account(tenant, account, 
     stranger = new_browser()
     google["email"], google["refresh"] = "stranger@gmail.com", "rt-stranger"
     res = stranger.get("/api/auth/callback", follow_redirects=False)
-    assert where(res) == "/login.html?error=gmail_sign_in_first"
+    assert where(res) == "/next/login?error=gmail_sign_in_first"
     assert stranger.get("/api/client/me").status_code == 401 and clients() == before
 
     # signed in, it attaches that Gmail to this company, and the cookie carries no Google keys
@@ -147,10 +147,10 @@ def test_the_platform_console_takes_only_addresses_named_for_it(google, monkeypa
     browser = new_browser()
     browser.get("/api/auth/login", params={"role": "superadmin"}, follow_redirects=False)
     google["email"] = "hello@billing.com"
-    assert where(browser.get("/api/auth/callback", follow_redirects=False)) == "/superadmin-login.html?error=not_admin"
+    assert where(browser.get("/api/auth/callback", follow_redirects=False)) == "/next/superadmin/login?error=not_admin"
     monkeypatch.setenv("SUPERADMIN_EMAILS", "hello@billing.com")
     browser.get("/api/auth/login", params={"role": "superadmin"}, follow_redirects=False)
-    assert where(browser.get("/api/auth/callback", follow_redirects=False)) == "/superadmin.html"
+    assert where(browser.get("/api/auth/callback", follow_redirects=False)) == "/next/superadmin"
 
 
 def test_which_gmail_the_company_sends_from_is_not_told_to_strangers():

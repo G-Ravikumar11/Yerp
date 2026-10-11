@@ -29,12 +29,13 @@ node_modules/
 # Editor and agent workspace, not part of the product.
 .claude/
 
+# The React app compiled by `npm run build`; the deploy builds it, so it is never committed.
+frontend/dist/
+
 # Mobile native build artifacts & keystores
 *.keystore
 *.jks
-frontend-react/android/.gradle/
-frontend-react/android/build/
-frontend-react/android/app/build/
-frontend-react/ios/DerivedData/
-frontend-react/dist/
-
+frontend/android/.gradle/
+frontend/android/build/
+frontend/android/app/build/
+frontend/ios/DerivedData/

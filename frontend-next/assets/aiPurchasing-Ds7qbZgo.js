@@ -1,1 +1,0 @@
-import{a as e,i as t,n}from"./api-C9UCh3g2.js";var r=e=>t(`/api/ai/purchase-orders/${e}/review`),i=t=>e(`/api/ai/purchase-orders/${t}/draft-email`),a=e=>t(`/api/ai/rfqs/${e}/recommend`),o=(e,t)=>{let r=new FormData;return t.file&&r.append(`file`,t.file),t.text&&r.append(`text`,t.text),n(`/api/ai/rfqs/${e}/read-quote`,{method:`POST`,body:r})};export{r as i,o as n,a as r,i as t};

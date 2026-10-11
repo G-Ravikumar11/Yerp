@@ -5,14 +5,9 @@ router draws the page), a missing file is a real 404, and the manifest and
 service worker - what make it installable and usable with no signal - are
 served as what they are.
 """
-import os
+from _frontend import needs_frontend_build
 
-import pytest
-
-HERE = os.path.dirname(os.path.abspath(__file__))
-BUILT = os.path.isdir(os.path.join(HERE, "..", "..", "frontend-next"))
-
-pytestmark = pytest.mark.skipif(not BUILT, reason="frontend-next has not been built")
+pytestmark = needs_frontend_build
 
 
 def test_the_app_opens_at_next(client):
@@ -63,4 +58,6 @@ def test_the_service_worker_is_javascript_and_never_cached_stale(client):
 
 def test_the_sign_in_pages_are_still_served_at_the_root_and_the_old_app_forwards(client):
     assert "/next/" in client.get("/app.html").text
-    assert client.get("/login.html").status_code == 200
+    assert client.get("/login.html").status_code == 200       # forwarded to /next/login, which serves the app
+    assert client.get("/next/login").status_code == 200
+    assert client.get("/next/reset-password?token=x").status_code == 200

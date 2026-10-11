@@ -77,7 +77,7 @@ SMALL_FORM_PATHS = ("/api/client/login", "/api/client/register", "/api/client/fo
 
 SLOW_REQUEST_MS = int(os.getenv("SLOW_REQUEST_MS", "1500"))
 
-# Serve frontend
-frontend_path = os.path.join(BACKEND_DIR, "..", "frontend")
-
-next_path = os.path.join(BACKEND_DIR, "..", "frontend-next")
+# The React app, compiled by `npm run build` in frontend/. Not committed: the deploy builds it (nixpacks.toml).
+FRONTEND_DIST = os.path.join(BACKEND_DIR, "..", "frontend", "dist")
+# Files the server sends itself rather than the React app: see app/static/README.md.
+STATIC_DIR = os.path.join(BACKEND_DIR, "app", "static")

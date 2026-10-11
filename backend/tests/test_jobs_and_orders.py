@@ -143,13 +143,15 @@ def test_labour_hours_reach_the_job(portal, tenant):
     assert "labour_cost" in c
 
 
-def test_a_job_with_documents_cannot_be_deleted(tenant):
+def test_a_job_with_documents_is_deleted_with_them_by_the_master(tenant):
     job = make_job(tenant)
     tenant.post("/api/bills", json={"number": "B1", "vendor_name": "X",
                                     "amount": 10.0, "total": 10.0, "job_id": job["id"]})
+    pre = tenant.get(f"/api/jobs/{job['id']}/delete-preview").json()
+    assert pre["can_delete"] and pre["counts"].get("supplier bills") == 1
     res = tenant.delete(f"/api/jobs/{job['id']}")
-    assert res.status_code == 409
-    assert "complete" in res.json()["detail"]
+    assert res.status_code == 200
+    assert tenant.get(f"/api/jobs/{job['id']}").status_code == 404
 
 
 def test_an_empty_job_can_be_deleted(tenant):

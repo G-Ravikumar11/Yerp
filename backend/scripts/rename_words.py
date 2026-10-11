@@ -2,7 +2,7 @@
 text it prints on documents. Only string literals that read as words (they hold a space, or are one of the label
 words) are touched, and never docstrings: identifiers, keys and stored values stay as they are.
 
-    python scripts_rename_words.py [--check] main.py sheet_forms.py ...
+    python scripts/rename_words.py [--check] app/routers/*.py app/documents/*.py ...   (run from backend/)
 """
 import io
 import re

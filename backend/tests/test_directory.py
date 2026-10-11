@@ -187,8 +187,8 @@ def test_client_overview_reports_usage_and_portals(client, account, superadmin):
     d = superadmin.get(f"/api/superadmin/clients/{cid}/overview").json()
     for section in ("invoicing", "hr", "recruitment", "portals"):
         assert section in d
-    assert d["portals"]["employee"] == "/employee-login.html"
-    assert d["portals"]["job_board"] == f"/jobs.html?c={cid}"
+    assert d["portals"]["employee"] == "/next/login"
+    assert d["portals"]["job_board"] == f"/next/jobs?c={cid}"
 
 
 def test_superadmin_endpoints_require_authorisation(client):
