@@ -1,10 +1,12 @@
 import { Capacitor } from '@capacitor/core'
 import { App } from '@capacitor/app'
+import { Browser } from '@capacitor/browser'
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
 import { StatusBar, Style } from '@capacitor/status-bar'
 import { SplashScreen } from '@capacitor/splash-screen'
 import { PushNotifications } from '@capacitor/push-notifications'
-import { get, post } from '@/lib/api'
+import { api, get, post } from '@/lib/api'
+import { toast } from '@/stores/toast'
 
 /**
  * Initializes mobile-native behaviors when running inside a native
@@ -34,6 +36,37 @@ export async function initMobile() {
     await SplashScreen.hide({ fadeOutDuration: 300 })
   } catch (err) {
     console.warn('Native mobile initialization encountered an issue:', err)
+  }
+
+  void checkForUpdate()
+  // A phone left with the app open for days still hears about a new build when it is brought back.
+  void App.addListener('resume', () => void checkForUpdate())
+}
+
+let offered = 0
+
+/**
+ * Android only: when a newer signed build has been published, offer it. "Update" opens the APK's download in the
+ * browser; the person then taps the downloaded file and Android asks to install it over this one. (Outside the Play
+ * Store, Android always asks; it cannot be done silently.) Builds are signed with one key, so it installs as an
+ * update and keeps the person signed in.
+ */
+async function checkForUpdate() {
+  if (Capacitor.getPlatform() !== 'android') return
+  try {
+    const [{ build }, latest] = await Promise.all([
+      App.getInfo(),
+      api<{ version_code: number; version_name?: string; apk_url?: string }>('/api/app/android/latest', { quiet: true }),
+    ])
+    const current = Number(build) || 0
+    if (!latest.apk_url || latest.version_code <= current || latest.version_code === offered) return
+    offered = latest.version_code
+    const url = latest.apk_url
+    toast.withAction(`A new version of Y ERP is available${latest.version_name ? ` (${latest.version_name})` : ''}.`, 'Update', () => {
+      void Browser.open({ url })
+    })
+  } catch {
+    // No signal, or the server is older than this check: try again next time the app opens.
   }
 }
 
