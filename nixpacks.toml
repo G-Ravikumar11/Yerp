@@ -2,10 +2,15 @@
 #
 # Nixpacks sees requirements.txt at the root and sets up Python. Node is added here only to compile the
 # React app into frontend/dist, which the server then serves at /next/. The compiled app is not committed.
-# Vite needs Node 22.12 or newer.
+#
+# Node comes from its own Nix snapshot. The snapshot Nixpacks pins for Python (November 2024) only has Node 22.10
+# and 23.1, and Vite 8 needs 22.12 or newer. This one is nixos-25.11 as of 30 June 2026, giving Node 24.18, the same
+# major version the app is developed on. Python stays on Nixpacks' own snapshot.
 
-[phases.setup]
-nixPkgs = ["...", "nodejs_22"]
+[phases.node]
+nixPkgs = ["nodejs_24"]
+nixpkgsArchive = "b6018f87da91d19d0ab4cf979885689b469cdd41"
 
 [phases.build]
+dependsOn = ["install", "node"]
 cmds = ["cd frontend && npm ci --include=dev && npm run build"]

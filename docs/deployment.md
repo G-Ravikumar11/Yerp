@@ -87,7 +87,8 @@ python -m uvicorn main:app --host 0.0.0.0 --port $PORT --app-dir backend
 
 `requirements.txt` at the repository root is what makes Nixpacks recognise
 this as a Python app; it installs from `backend/requirements.txt`.
-`.python-version` pins Python 3.12. `nixpacks.toml` adds Node 22 for the frontend build.
+`.python-version` pins Python 3.12. `nixpacks.toml` adds Node 24 for the frontend build, from a newer Nix
+snapshot than the one Nixpacks uses for Python: that one only has Node 22.10, and Vite needs 22.12 or newer.
 
 ## The database
 
