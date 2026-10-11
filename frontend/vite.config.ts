@@ -15,8 +15,9 @@ export default defineConfig(({ mode, command }) => {
 
   return {
     // Built for web, the app is served by the backend under /next/; in development it owns the root.
-    // Built for mobile (Capacitor), a relative base lets assets load inside the native webview.
-    base: isMobile ? './' : command === 'build' ? '/next/' : '/',
+    // Built for mobile, the app is the root of the native webview's own server (https://localhost/), so '/' - a
+    // relative base would break as soon as a nested screen like /projects/diary is reloaded.
+    base: isMobile ? '/' : command === 'build' ? '/next/' : '/',
     // Built into frontend/dist, which is not committed: the deploy builds it (see nixpacks.toml).
     build: { outDir: 'dist', emptyOutDir: true },
     // Each build gets its own stamp, so data saved on the device by an older build is never trusted by a newer one.

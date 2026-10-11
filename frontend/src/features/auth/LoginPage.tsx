@@ -41,14 +41,15 @@ export default function LoginPage() {
     api<{ configured?: boolean }>('/api/auth/google/status', { quiet: true }).then((d) => setGoogle(!!d?.configured)).catch(() => undefined)
     if (params.get('signedout')) {
       // Arrived from Sign out: end whatever sign-in this browser still holds, and show the form.
-      for (const u of ['/api/client/logout', '/api/employee/auth/logout', '/api/portal/logout']) void fetch(u, { method: 'POST' }).catch(() => undefined)
+      for (const u of ['/api/client/logout', '/api/employee/auth/logout', '/api/portal/logout']) void api(u, { method: 'POST', quiet: true }).catch(() => undefined)
       return
     }
     // Already signed in: go straight on.
     void (async () => {
       for (const [url, to] of [['/api/client/me', nextTarget(appUrl())], ['/api/employee/auth/me', nextTarget(appUrl())], ['/api/superadmin/me', appUrl('superadmin')]]) {
-        const r = await fetch(url).catch(() => null)
-        if (r?.ok) return go(to)
+        // Through api(): in the native app a bare '/api/...' is answered by the app's own files, not the server.
+        const signedIn = await api(url, { quiet: true }).then(() => true, () => false)
+        if (signedIn) return go(to)
       }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
