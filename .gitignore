@@ -43,3 +43,6 @@ mobile/android/app/google-services.json
 mobile/ios/App/App/GoogleService-Info.plist
 mobile/node_modules/
 mobile/build/
+
+# The React app compiled by `npm run build`; the deploy builds it, so it is never committed.
+frontend/dist/
