@@ -1,7 +1,7 @@
 """Bills of quantities and their variations."""
 from datetime import datetime
 
-from sqlalchemy import Column, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 
 from app.db.session import Base
 
@@ -50,15 +50,21 @@ class DBBoqLine(Base):
     # Stays the same on a line through every revision, so a change can be followed and orders can point at it.
     key = Column(String, nullable=False, index=True)
     kind = Column(String, default="item")                     # section | item | sub | note
-    sno = Column(String, default="")                          # 1.1, 1.1.a - the client's own numbering
+    # The group the line belongs to (PCC, RCC, Steel ...): picked from a list or typed, and kept as the sheet has it.
+    group_code = Column(String, default="", index=True)
     description = Column(Text, default="")
     uom = Column(String, default="")
     quantity = Column(Float, default=0.0)
     rate = Column(Float, default=0.0)
     amount = Column(Float, default=0.0)
-    code = Column(String, default="")                         # the client's own item code, if their sheet has one
     item_code = Column(String, default="", index=True)        # ours, from the item master
     remarks = Column(Text, default="")
+    # The grade or material the item is in ("M40", "Fe550/550D", "Ply wood"), kept apart from the description so a
+    # sheet can be read, filtered and totalled by it.
+    material = Column(String, default="")
+    # Rate agreed, quantity not yet known ("R/o" on the client's sheet): it carries a rate and no amount, and
+    # stays out of every total until a quantity is put on it.
+    rate_only = Column(Boolean, default=False)
     display_order = Column(Integer, default=0)
 
 
@@ -99,7 +105,6 @@ class DBBoqVariationLine(Base):
     kind = Column(String, default="quantity")                 # quantity (an existing line) | extra (a new item)
     boq_key = Column(String, default="", index=True)          # quantity: the BOQ line changed
     section_key = Column(String, default="")                  # extra: the section it goes under
-    sno = Column(String, default="")
     description = Column(Text, default="")
     uom = Column(String, default="")
     old_qty = Column(Float, default=0.0)

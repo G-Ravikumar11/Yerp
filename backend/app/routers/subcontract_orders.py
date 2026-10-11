@@ -1566,10 +1566,10 @@ def wo_add_boq_lines(order_id: int, body: dict, request: Request, db: Session = 
             continue
         qty = money(w.get("quantity") if w.get("quantity") is not None else l.quantity)
         rate = unit_rate(w.get("rate") if w.get("rate") is not None else l.rate)
-        out.append({"boq_key": l.key, "activity_no": l.sno or "", "item_code": l.item_code or "",
+        out.append({"boq_key": l.key, "activity_no": l.group_code or "", "item_code": l.item_code or "",
                     "item_description": l.description, "technical_spec": l.remarks or "", "uom": l.uom or "",
                     "quantity": qty, "unit_rate": rate})
         total = (given.get(l.key) or {"qty": 0.0})["qty"] + qty
         if total > (l.quantity or 0) + 0.0001:
-            warn.append("%s: %s would be given in all against %s in the BOQ" % (l.sno or l.description[:30], money(total), money(l.quantity)))
+            warn.append("%s: %s would be given in all against %s in the BOQ" % (l.description[:30], money(total), money(l.quantity)))
     return {"lines": out, "warnings": warn}

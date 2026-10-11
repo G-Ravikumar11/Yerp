@@ -33,14 +33,52 @@ def boq_revision_of(db, boq, rev_no=None):
     return rev
 
 
-def boq_amount(kind, qty, rate):
+def boq_amount(kind, qty, rate, rate_only=False):
+    """What a line comes to. A rate-only line (R/o) has a rate and no quantity, so it comes to nothing yet."""
+    if rate_only:
+        return 0.0
     return money((qty or 0) * (rate or 0)) if kind in BOQ_PRICED else 0.0
 
 
 def boq_line_dict(l):
-    return {"id": l.id, "key": l.key, "kind": l.kind, "sno": l.sno or "", "description": l.description or "",
+    return {"id": l.id, "key": l.key, "kind": l.kind, "group_code": l.group_code or "", "description": l.description or "",
             "uom": l.uom or "", "quantity": money(l.quantity), "rate": unit_rate(l.rate), "amount": money(l.amount),
-            "code": l.code or "", "item_code": l.item_code or "", "remarks": l.remarks or ""}
+            "item_code": l.item_code or "", "remarks": l.remarks or "",
+            "material": l.material or "", "rate_only": bool(l.rate_only)}
+
+
+def boq_summary(db, rev, gst_percent=18.0):
+    """The BOQ on one page: each section with what it comes to, then the total, the GST on it and the total with GST.
+
+    Also the same money cut by material or grade, and a count of rate-only items, which are priced but not yet
+    quantified and so are in no figure here."""
+    lines = db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id).order_by(
+        models.DBBoqLine.display_order, models.DBBoqLine.id).all()
+    sections, by_material, current, total = [], {}, None, 0.0
+    for l in lines:
+        if l.kind == "section":
+            current = {"key": l.key, "group_code": l.group_code or "", "title": l.description or "", "items": 0, "rate_only": 0, "amount": 0.0}
+            sections.append(current)
+        elif l.kind in BOQ_PRICED:
+            if current is None:
+                current = {"key": "", "group_code": "", "title": "Items outside any section", "items": 0, "rate_only": 0, "amount": 0.0}
+                sections.append(current)
+            current["items"] += 1
+            if l.rate_only:
+                current["rate_only"] += 1
+                continue
+            current["amount"] = money(current["amount"] + (l.amount or 0))
+            total += l.amount or 0
+            name = (l.material or "").strip() or "Not stated"
+            row = by_material.setdefault(name, {"material": name, "items": 0, "amount": 0.0})
+            row["items"] += 1
+            row["amount"] = money(row["amount"] + (l.amount or 0))
+    gst_percent = max(0.0, min(100.0, float(gst_percent or 0)))
+    total = money(total)
+    gst = money(total * gst_percent / 100.0)
+    return {"sections": sections, "total": total, "gst_percent": gst_percent, "gst": gst, "total_with_gst": money(total + gst),
+            "by_material": sorted(by_material.values(), key=lambda r: -r["amount"]),
+            "rate_only_items": sum(s["rate_only"] for s in sections)}
 
 
 def boq_lines_with_subtotals(db, rev):
@@ -84,17 +122,19 @@ def boq_new_key():
     return uuid.uuid4().hex[:12]
 
 
-def boq_kind_of(sno, description, quantity, rate):
-    """What a row of a client's sheet is: a priced item (or sub-item), a section heading, or a note."""
-    sno, text = (sno or "").strip().rstrip(".)"), (description or "").strip()
+def boq_kind_of(description, quantity, rate):
+    """What a row of a client's sheet is: a priced item, a section heading, or a note."""
+    text = (description or "").strip()
     if quantity or rate:
-        sub = bool(re.match(r"^(\d+(\.\d+)*[.\-\s]*)?\(?([a-z]|[ivx]{1,4})$", sno)) and not re.match(r"^\d+(\.\d+)*$", sno)
-        return "sub" if sub else "item"
+        return "item"
     if text.isupper() and len(text) < 160:
         return "section"                                  # a heading shouted in capitals
-    if re.match(r"^([A-Z]{1,3}|[IVXL]+|\d+)$", sno):
-        return "section" if len(text) < 160 else "note"   # lettered, roman or whole-numbered: a section
     return "note" if (len(text) > 60 or text.endswith(".")) else "section"
+
+
+def boq_line_label(l):
+    """How a line is named in a message: its group and the start of its description."""
+    return ("%s %s" % (l.group_code or "", (l.description or "").split("\n")[0][:60])).strip()
 
 
 def boq_save_lines(db, boq, rev, rows, issue_codes, client_id):
@@ -106,7 +146,8 @@ def boq_save_lines(db, boq, rev, rows, issue_codes, client_id):
         if not text:
             continue
         kind = r.kind if r.kind in BOQ_KINDS else "item"
-        qty = money(r.quantity or 0) if kind in BOQ_PRICED else 0.0
+        rate_only = bool(getattr(r, "rate_only", False)) and kind in BOQ_PRICED
+        qty = money(r.quantity or 0) if kind in BOQ_PRICED and not rate_only else 0.0
         rate = unit_rate(r.rate or 0) if kind in BOQ_PRICED else 0.0
         if qty < 0 or rate < 0:
             raise HTTPException(400, "Line %d: quantity and rate cannot be negative." % (index + 1))
@@ -115,18 +156,48 @@ def boq_save_lines(db, boq, rev, rows, issue_codes, client_id):
             key = boq_new_key()
         seen.add(key)
         line = models.DBBoqLine(
-            boq_id=boq.id, revision_id=rev.id, key=key, kind=kind, sno=(r.sno or "").strip()[:30],
+            boq_id=boq.id, revision_id=rev.id, key=key, kind=kind, group_code=(r.group_code or "").strip()[:40],
             description=text, uom=(r.uom or "").strip()[:20] if kind in BOQ_PRICED else "", quantity=qty, rate=rate,
-            amount=boq_amount(kind, qty, rate), code=(r.code or "").strip()[:60],
+            amount=boq_amount(kind, qty, rate, rate_only),
             item_code=(r.item_code or "").strip().upper()[:40] if kind in BOQ_PRICED else "",
-            remarks=(r.remarks or "").strip(), display_order=len(kept))
+            remarks=(r.remarks or "").strip(), display_order=len(kept),
+            material=(getattr(r, "material", "") or "").strip()[:60] if kind in BOQ_PRICED else "", rate_only=rate_only)
         db.add(line)
         kept.append(line)
     db.flush()
+    boq_check_typed_codes(db, client_id, kept)
     issued = 0
     if issue_codes:
         issued = boq_issue_codes(db, client_id, kept)
     return kept, issued
+
+
+def boq_check_typed_codes(db, client_id, lines):
+    """An item code typed on a line must be one code for one line, and must be a finished good in the item master:
+    the code of an item that is already there is taken as it is, and one that is not is added to the master under
+    the line's own name. The master's own rules on what a code looks like apply, and are reported in its words."""
+    seen = {}
+    for l in lines:
+        if l.kind not in BOQ_PRICED or not l.item_code:
+            continue
+        if l.item_code in seen:
+            raise HTTPException(400, "Item code %s is on two lines (%s and %s). A code is for one line only." % (
+                l.item_code, boq_line_label(seen[l.item_code]), boq_line_label(l)))
+        seen[l.item_code] = l
+    if not seen:
+        return
+    known = {i.item_code: i for i in db.query(models.DBItem).filter(models.DBItem.item_code.in_(list(seen))).all()}
+    for code, l in seen.items():
+        item = known.get(code)
+        if item is not None:
+            if item.client_id != client_id or item.kind != "FG":
+                raise HTTPException(409, "Item code %s belongs to something that is not one of your finished goods. "
+                                         "Leave the code blank to be given one." % code)
+            continue
+        name = re.sub(r"\s+", " ", (l.description or "").split("\n")[0]).strip()[:200]
+        build_item(db, client_id, ItemIn(kind="FG", item_code=code, item_name=name, description=(l.description or "").strip(),
+                                         units_of_measure=canonical_unit(l.uom) or "Nos"), set())
+        db.flush()
 
 
 def boq_issue_codes(db, client_id, lines):
@@ -190,7 +261,7 @@ def boq_over_allotments(db, client_id, keys):
                                                models.DBBoqLine.revision_id.in_(list(current) or [0])).all():
         g = given.get(l.key)
         if g and g["qty"] > (l.quantity or 0) + 0.0001:
-            out.append("%s: %s given to gangs against %s in the BOQ" % (l.sno or l.description[:30], money(g["qty"]), money(l.quantity)))
+            out.append("%s: %s given to gangs against %s in the BOQ" % (boq_line_label(l), money(g["qty"]), money(l.quantity)))
     return out
 
 
@@ -216,7 +287,7 @@ def boq_tracker_data(db, client, boq):
     totals = {"value": 0.0, "given_cost": 0.0, "client_billed": 0.0, "gang_billed": 0.0}
     for l in lines:
         if l.kind == "section":
-            rows.append({"kind": "section", "sno": l.sno or "", "description": l.description})
+            rows.append({"kind": "section", "group_code": l.group_code or "", "description": l.description})
             continue
         if l.kind not in BOQ_PRICED:
             continue
@@ -241,7 +312,7 @@ def boq_tracker_data(db, client, boq):
         totals["given_cost"] += g["cost"]
         totals["client_billed"] += c_billed * (l.rate or 0)
         totals["gang_billed"] += gang_billed * gang_rate
-        rows.append({"kind": l.kind, "key": l.key, "sno": l.sno or "", "description": l.description, "uom": l.uom or "",
+        rows.append({"kind": l.kind, "key": l.key, "group_code": l.group_code or "", "description": l.description, "uom": l.uom or "",
                      "item_code": l.item_code or "", "quantity": money(l.quantity), "rate": unit_rate(l.rate), "amount": money(l.amount),
                      "given": money(g["qty"]), "gang_rate": gang_rate, "gang_cost": money(g["cost"]), "orders": g["orders"],
                      "left_to_give": money(max(0.0, (l.quantity or 0) - g["qty"])),
@@ -285,15 +356,15 @@ def bv_write_lines(db, boq, vo, rows):
             if not line or line.kind not in BOQ_PRICED:
                 raise HTTPException(400, "%s: choose the BOQ line whose quantity changes." % label)
             if r.boq_key in seen:
-                raise HTTPException(400, "%s: %s is on this variation twice." % (label, line.sno or line.description[:30]))
+                raise HTTPException(400, "%s: %s is on this variation twice." % (label, boq_line_label(line)))
             seen.add(r.boq_key)
             if not change:
-                raise HTTPException(400, "%s: say how much is added to (or taken from) %s." % (label, line.sno or line.description[:30]))
+                raise HTTPException(400, "%s: say how much is added to (or taken from) %s." % (label, boq_line_label(line)))
             if money((line.quantity or 0) + change) < 0:
-                raise HTTPException(400, "%s: that would take %s below nothing." % (label, line.sno or line.description[:30]))
+                raise HTTPException(400, "%s: that would take %s below nothing." % (label, boq_line_label(line)))
             rate = unit_rate(r.rate if r.rate is not None else line.rate)
             db.add(models.DBBoqVariationLine(
-                variation_id=vo.id, kind="quantity", boq_key=line.key, sno=line.sno or "", description=line.description,
+                variation_id=vo.id, kind="quantity", boq_key=line.key, description=line.description,
                 uom=line.uom or "", old_qty=money(line.quantity), change_qty=change, rate=rate, amount=money(change * rate),
                 remarks=(r.remarks or "").strip(), display_order=index))
         else:
@@ -308,7 +379,7 @@ def bv_write_lines(db, boq, vo, rows):
             if r.section_key and (by_key.get(r.section_key) is None or by_key[r.section_key].kind != "section"):
                 raise HTTPException(400, "%s: that section is not in the BOQ." % label)
             db.add(models.DBBoqVariationLine(
-                variation_id=vo.id, kind="extra", section_key=(r.section_key or ""), sno=(r.sno or "").strip()[:30],
+                variation_id=vo.id, kind="extra", section_key=(r.section_key or ""),
                 description=text, uom=(r.uom or "").strip()[:20], old_qty=0.0, change_qty=change, rate=rate,
                 amount=money(change * rate), remarks=(r.remarks or "").strip(), display_order=index))
         kept += 1
@@ -337,7 +408,7 @@ def bv_dict(db, vo, detail=False):
     row["waiting_on"] = next((r["name"] for r in route if r["status"] == "waiting"), "")
     if detail:
         row["lines"] = [{"id": l.id, "kind": l.kind, "boq_key": l.boq_key or "", "section_key": l.section_key or "",
-                         "sno": l.sno or "", "description": l.description or "", "uom": l.uom or "",
+                         "description": l.description or "", "uom": l.uom or "",
                          "old_qty": money(l.old_qty), "change_qty": money(l.change_qty), "new_qty": money((l.old_qty or 0) + (l.change_qty or 0)),
                          "rate": unit_rate(l.rate), "amount": money(l.amount), "remarks": l.remarks or ""}
                         for l in db.query(models.DBBoqVariationLine).filter(models.DBBoqVariationLine.variation_id == vo.id).order_by(
@@ -428,9 +499,9 @@ def bv_apply(db, client, boq, vo):
     db.flush()
     copies = []
     for l in db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == cur.id).order_by(models.DBBoqLine.display_order).all():
-        copies.append(models.DBBoqLine(boq_id=boq.id, revision_id=nxt.id, key=l.key, kind=l.kind, sno=l.sno, description=l.description,
-                                       uom=l.uom, quantity=l.quantity, rate=l.rate, amount=l.amount, code=l.code,
-                                       item_code=l.item_code, remarks=l.remarks))
+        copies.append(models.DBBoqLine(boq_id=boq.id, revision_id=nxt.id, key=l.key, kind=l.kind, group_code=l.group_code, description=l.description,
+                                       uom=l.uom, quantity=l.quantity, rate=l.rate, amount=l.amount,
+                                       item_code=l.item_code, remarks=l.remarks, material=l.material, rate_only=l.rate_only))
     by_key = {c.key: c for c in copies}
     added = []
     for vl in db.query(models.DBBoqVariationLine).filter(models.DBBoqVariationLine.variation_id == vo.id).order_by(
@@ -439,15 +510,15 @@ def bv_apply(db, client, boq, vo):
             line = by_key.get(vl.boq_key)
             if line is None:
                 raise HTTPException(409, "%s is no longer in the BOQ, so this variation cannot be applied. Send it back and correct it."
-                                    % (vl.sno or vl.description[:30]))
+                                    % (vl.description[:60]))
             line.quantity = money((line.quantity or 0) + vl.change_qty)
             if line.quantity < 0:
-                raise HTTPException(409, "%s would fall below nothing. Send it back and correct it." % (vl.sno or vl.description[:30]))
+                raise HTTPException(409, "%s would fall below nothing. Send it back and correct it." % (vl.description[:60]))
             line.amount = money(line.quantity * (line.rate or 0))
         else:
-            # An extra item with no number of its own is numbered after the variation that brought it: V1/1, V1/2.
+            # An extra item is grouped under the variation that brought it: V1, V2.
             new = models.DBBoqLine(boq_id=boq.id, revision_id=nxt.id, key=boq_new_key(), kind="item",
-                                   sno=vl.sno or "V%d/%d" % (vo.sequence or 1, len(added) + 1),
+                                   group_code="V%d" % (vo.sequence or 1),
                                    description=vl.description, uom=vl.uom, quantity=money(vl.change_qty), rate=unit_rate(vl.rate),
                                    amount=money(vl.change_qty * vl.rate), remarks=vl.remarks or "")
             at = len(copies)

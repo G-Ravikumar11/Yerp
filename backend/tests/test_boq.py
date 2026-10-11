@@ -20,13 +20,13 @@ def sheet(rows):
 # Off a client's desk: a title block above the headings, section rows, items, sub-items and its own grand total.
 CLIENT_SHEET = [
     ["M/s Kokapet Towers LLP"], ["BILL OF QUANTITIES - TOWER C"], [],
-    ["Sl.No", "Description of work", "Unit", "Qty", "Rate (Rs)", "Amount (Rs)"],
-    ["A", "SUBSTRUCTURE", None, None, None, None],
-    ["1.1", "Excavation in all types of soil", "cum", 500, 180, 90000],
-    ["1.2", "M25 grade RCC in raft", "cum", 120, 8200, 984000],
-    ["a", "Shuttering to raft edges", "sqm", 80, 410, 32800],
-    ["B", "SUPERSTRUCTURE", None, None, None, None],
-    ["2.1", "Brick masonry in CM 1:6", "cum", 60, 6100, 366000],
+    ["Group code", "Description of work", "Unit", "Qty", "Rate (Rs)", "Amount (Rs)"],
+    [None, "SUBSTRUCTURE", None, None, None, None],
+    ["EXC", "Excavation in all types of soil", "cum", 500, 180, 90000],
+    ["RCC", "M25 grade RCC in raft", "cum", 120, 8200, 984000],
+    ["FWK", "Shuttering to raft edges", "sqm", 80, 410, 32800],
+    [None, "SUPERSTRUCTURE", None, None, None, None],
+    ["MAS", "Brick masonry in CM 1:6", "cum", 60, 6100, 366000],
     ["", "Grand Total", None, None, None, 1472800],
 ]
 
@@ -57,8 +57,8 @@ def saved(tenant, boq, issue_codes=True):
 def test_a_clients_sheet_is_read_as_it_comes(tenant):
     _, boq = make_boq(tenant)
     out = import_lines(tenant, boq)
-    kinds = [(l["kind"], l["sno"]) for l in out["lines"]]
-    assert kinds == [("section", "A"), ("item", "1.1"), ("item", "1.2"), ("sub", "a"), ("section", "B"), ("item", "2.1")]
+    kinds = [(l["kind"], l["group_code"]) for l in out["lines"]]
+    assert kinds == [("section", ""), ("item", "EXC"), ("item", "RCC"), ("item", "FWK"), ("section", ""), ("item", "MAS")]
     assert out["total"] == 1472800 and not out["warnings"]
     assert out["skipped_rows"] == 1                       # the sheet's own grand total, checked and left out
 
@@ -109,11 +109,11 @@ def test_a_line_pasted_with_the_name_of_an_existing_item_takes_that_items_code(t
     _, boq = make_boq(tenant)
     first = saved(tenant, boq)
     code = first["lines"][1]["item_code"]
-    line = {"kind": "item", "sno": "9.9", "description": "Excavation in all types of soil", "uom": "cum", "quantity": 10, "rate": 200}
+    line = {"kind": "item", "group_code": "NEW", "description": "Excavation in all types of soil", "uom": "cum", "quantity": 10, "rate": 200}
     # the first line holding that code is removed, so the code is free for the pasted line to take
     rest = [l for l in first["lines"] if l["item_code"] != code]
     res = tenant.put("/api/boqs/%d/lines" % boq["id"], json={"lines": rest + [line], "issue_codes": True}).json()
-    assert [l for l in res["lines"] if l["sno"] == "9.9"][0]["item_code"] == code
+    assert [l for l in res["lines"] if l["group_code"] == "NEW"][0]["item_code"] == code
 
 
 def test_one_boq_to_a_project_and_negative_figures_are_refused(tenant):
@@ -135,8 +135,8 @@ def test_a_new_revision_locks_the_old_one_and_the_changes_are_listed(tenant):
     assert tenant.get("/api/boqs/%d" % boq["id"], params={"rev": 0}).json()["editable"] is False
     lines = r1["lines"]
     lines[1]["quantity"] = 650                                     # excavation 500 -> 650
-    lines = [l for l in lines if l["sno"] != "2.1"]                # masonry removed
-    lines.append({"kind": "item", "sno": "3.1", "description": "Plastering", "uom": "sqm", "quantity": 100, "rate": 90})
+    lines = [l for l in lines if l["group_code"] != "MAS"]                # masonry removed
+    lines.append({"kind": "item", "group_code": "PLS", "description": "Plastering", "uom": "sqm", "quantity": 100, "rate": 90})
     assert tenant.put("/api/boqs/%d/lines" % boq["id"], json={"lines": lines}).status_code == 200
     ch = tenant.get("/api/boqs/%d/changes" % boq["id"], params={"frm": 0}).json()
     by = {c["change"]: c for c in ch["changes"]}
@@ -166,42 +166,42 @@ def gang_order(tenant, boq_lines, picks, order=None):
 
 def test_lines_are_pulled_from_the_boq_into_a_gang_order_and_keep_their_link(tenant):
     _, boq = make_boq(tenant)
-    lines = {l["sno"]: l for l in saved(tenant, boq)["lines"]}
-    order, pulled, res = gang_order(tenant, lines, [(lines["1.1"], 300, 150)])
+    lines = {l["group_code"]: l for l in saved(tenant, boq)["lines"]}
+    order, pulled, res = gang_order(tenant, lines, [(lines["EXC"], 300, 150)])
     assert pulled["lines"][0]["item_description"] == "Excavation in all types of soil" and pulled["warnings"] == []
-    assert res["order"]["items"][0]["boq_key"] == lines["1.1"]["key"] and res["warnings"] == []
+    assert res["order"]["items"][0]["boq_key"] == lines["EXC"]["key"] and res["warnings"] == []
 
 
 def test_giving_more_than_the_boq_allows_is_warned_not_refused(tenant):
     _, boq = make_boq(tenant)
-    lines = {l["sno"]: l for l in saved(tenant, boq)["lines"]}
-    gang_order(tenant, lines, [(lines["1.1"], 300, 150)])
+    lines = {l["group_code"]: l for l in saved(tenant, boq)["lines"]}
+    gang_order(tenant, lines, [(lines["EXC"], 300, 150)])
     pulled = tenant.post("/api/wo/orders/%d/boq-lines" % draft(tenant)["id"],
-                         json={"lines": [{"key": lines["1.1"]["key"], "quantity": 300, "rate": 150}]}).json()
+                         json={"lines": [{"key": lines["EXC"]["key"], "quantity": 300, "rate": 150}]}).json()
     assert "600" in pulled["warnings"][0] and "500" in pulled["warnings"][0]
-    _, _, res = gang_order(tenant, lines, [(lines["1.1"], 300, 150)])
+    _, _, res = gang_order(tenant, lines, [(lines["EXC"], 300, 150)])
     assert res["warnings"] and "Over the BOQ" in res["message"]
 
 
 def test_the_tracker_adds_up_what_the_gangs_have_and_flags_what_is_wrong(tenant):
     _, boq = make_boq(tenant)
-    lines = {l["sno"]: l for l in saved(tenant, boq)["lines"]}
-    gang_order(tenant, lines, [(lines["1.1"], 300, 150), (lines["1.2"], 120, 9000)])      # the second is at a loss
+    lines = {l["group_code"]: l for l in saved(tenant, boq)["lines"]}
+    gang_order(tenant, lines, [(lines["EXC"], 300, 150), (lines["RCC"], 120, 9000)])      # the second is at a loss
     t = tenant.get("/api/boqs/%d/tracker" % boq["id"]).json()
-    rows = {r["sno"]: r for r in t["rows"] if r["kind"] != "section"}
-    assert rows["1.1"]["given"] == 300 and rows["1.1"]["gang_rate"] == 150 and rows["1.1"]["left_to_give"] == 200
-    assert rows["1.1"]["margin_percent"] == round((180 - 150) / 180 * 100, 1) and rows["1.1"]["flags"] == []
-    assert "loss" in rows["1.2"]["flags"] and "no_gang" in rows["2.1"]["flags"] and "no_gang" in rows["a"]["flags"]
+    rows = {r["group_code"]: r for r in t["rows"] if r["kind"] != "section"}
+    assert rows["EXC"]["given"] == 300 and rows["EXC"]["gang_rate"] == 150 and rows["EXC"]["left_to_give"] == 200
+    assert rows["EXC"]["margin_percent"] == round((180 - 150) / 180 * 100, 1) and rows["EXC"]["flags"] == []
+    assert "loss" in rows["RCC"]["flags"] and "no_gang" in rows["MAS"]["flags"] and "no_gang" in rows["FWK"]["flags"]
     assert t["flags"]["loss"] == 1 and t["flags"]["no_gang"] == 2
 
 
 def test_a_cancelled_gang_order_no_longer_counts_against_the_boq(tenant):
     _, boq = make_boq(tenant)
-    lines = {l["sno"]: l for l in saved(tenant, boq)["lines"]}
-    order, _, _ = gang_order(tenant, lines, [(lines["1.1"], 300, 150)])
+    lines = {l["group_code"]: l for l in saved(tenant, boq)["lines"]}
+    order, _, _ = gang_order(tenant, lines, [(lines["EXC"], 300, 150)])
     tenant.post("/api/wo/orders/%d/cancel" % order["id"], json={"comments": "x"})
-    rows = {r["sno"]: r for r in tenant.get("/api/boqs/%d/tracker" % boq["id"]).json()["rows"] if r["kind"] != "section"}
-    assert rows["1.1"]["given"] == 0
+    rows = {r["group_code"]: r for r in tenant.get("/api/boqs/%d/tracker" % boq["id"]).json()["rows"] if r["kind"] != "section"}
+    assert rows["EXC"]["given"] == 0
 
 
 # --- the client's order, export, tender -------------------------------------------------------------------------------
@@ -245,7 +245,127 @@ def test_a_won_tender_becomes_the_boq(tenant):
 
 def test_the_kinds_of_row_are_told_apart():
     kind = main.boq_kind_of
-    assert kind("1.1", "Excavation", 5, 10) == "item" and kind("a", "Edges", 5, 10) == "sub"
-    assert kind("1.2.b", "Edges", 5, 10) == "sub" and kind("(ii)", "Edges", 5, 10) == "sub"
-    assert kind("A", "SUBSTRUCTURE", 0, 0) == "section" and kind("", "FINISHING WORKS", 0, 0) == "section"
-    assert kind("", "All rates include supply, fixing and curing unless stated otherwise in the specification.", 0, 0) == "note"
+    assert kind("Excavation", 5, 10) == "item" and kind("Edges", 0, 10) == "item"
+    assert kind("SUBSTRUCTURE", 0, 0) == "section" and kind("FINISHING WORKS", 0, 0) == "section"
+    assert kind("All rates include supply, fixing and curing unless stated otherwise in the specification.", 0, 0) == "note"
+
+
+# --- the contractor's own layout: material or grade, rate-only items, a summary with GST ------------------------------
+
+CLUB_HOUSE_SHEET = [
+    ["Proposed Construction of Residential Apartment - Club House"], [],
+    ["GROUP CODE", "PARTICULARS", "MATERIAL", "UNIT", "QUANTITY", "RATE", "AMOUNT"],
+    ["A", "PLAIN CEMENT CONCRETE", None, None, None, None, None],
+    ["a", "Footings", None, "Cum.", 277, 5230, 1448710],
+    ["B", "REINFORCED CEMENT CONCRETE", None, None, None, None, None],
+    ["2.01a", "Tower Columns (Found to Plinth)", "M60", "Cum", 61, 7800, 475800],
+    ["2.04a", "Podium drops", "M40", "Cum", 269, 6592, 1773248],
+    ["C", "REINFORCEMENT STEEL", None, None, None, None, None],
+    ["3.01a", "Footings", "Fe550/550D", "MT", 133.05, 73900, 9832395],
+    ["E", "MASONRY", None, None, None, None, None],
+    ["6", "Solid block masonry 400 x 100 x 200 mm in CM 1:4", None, "Sqm", "R/o", 1200, None],
+]
+
+
+def club_house(tenant):
+    _, boq = make_boq(tenant, "Club House")
+    res = tenant.post("/api/boqs/%d/import" % boq["id"], files={"file": ("club.xlsx", sheet(CLUB_HOUSE_SHEET))})
+    assert res.status_code == 200, res.text
+    out = res.json()
+    saved = tenant.put("/api/boqs/%d/lines" % boq["id"], json={"lines": out["lines"], "issue_codes": True})
+    assert saved.status_code == 200, saved.text
+    return boq, out
+
+
+def test_material_and_rate_only_items_are_read_from_the_sheet(tenant):
+    _, out = club_house(tenant)
+    by_text = {l["description"]: l for l in out["lines"]}
+    assert by_text["Tower Columns (Found to Plinth)"]["material"] == "M60"
+    assert by_text["Footings"]["material"] in ("", "Fe550/550D")
+    r_o = by_text["Solid block masonry 400 x 100 x 200 mm in CM 1:4"]
+    assert r_o["rate_only"] is True and r_o["quantity"] == 0 and r_o["amount"] == 0 and r_o["rate"] == 1200
+    assert not out["warnings"]
+
+
+def test_a_rate_only_item_is_in_no_total(tenant):
+    boq, _ = club_house(tenant)
+    body = tenant.get("/api/boqs/%d" % boq["id"]).json()
+    assert body["total"] == 1448710 + 475800 + 1773248 + 9832395
+    assert [l for l in body["lines"] if l["rate_only"]][0]["amount"] == 0
+
+
+def test_the_summary_adds_sections_and_puts_gst_on_the_total(tenant):
+    boq, _ = club_house(tenant)
+    s = tenant.get("/api/boqs/%d/summary" % boq["id"]).json()
+    amounts = {x["title"]: x["amount"] for x in s["sections"]}
+    assert amounts["PLAIN CEMENT CONCRETE"] == 1448710
+    assert amounts["REINFORCED CEMENT CONCRETE"] == 475800 + 1773248
+    assert amounts["MASONRY"] == 0
+    assert s["total"] == sum(amounts.values())
+    assert s["gst_percent"] == 18.0
+    assert s["gst"] == round(s["total"] * 0.18, 2)
+    assert s["total_with_gst"] == round(s["total"] + s["gst"], 2)
+    assert s["rate_only_items"] == 1
+    # The same money by grade.
+    grades = {m["material"]: m["amount"] for m in s["by_material"]}
+    assert grades["M40"] == 1773248 and grades["Fe550/550D"] == 9832395
+
+
+def test_the_gst_rate_can_be_changed_on_the_summary(tenant):
+    boq, _ = club_house(tenant)
+    s = tenant.get("/api/boqs/%d/summary?gst=12" % boq["id"]).json()
+    assert s["gst_percent"] == 12.0 and s["gst"] == round(s["total"] * 0.12, 2)
+
+
+def test_material_and_rate_only_survive_a_new_revision(tenant):
+    boq, _ = club_house(tenant)
+    assert tenant.post("/api/boqs/%d/revisions" % boq["id"], json={}).status_code == 200
+    lines = tenant.get("/api/boqs/%d" % boq["id"]).json()["lines"]
+    assert any(l["material"] == "M60" for l in lines) and any(l["rate_only"] for l in lines)
+
+
+# --- group code and a typed item code ----------------------------------------------------------------------------------
+
+def save_with(tenant, boq, patch, issue_codes=True):
+    lines = import_lines(tenant, boq)["lines"]
+    for line in lines:
+        if line["description"].startswith("Excavation"):
+            line.update(patch)
+    return tenant.put("/api/boqs/%d/lines" % boq["id"], json={"lines": lines, "issue_codes": issue_codes})
+
+
+def test_a_group_code_is_kept_with_the_line(tenant):
+    _, boq = make_boq(tenant)
+    res = save_with(tenant, boq, {"group_code": "Earthwork"})
+    assert res.status_code == 200, res.text
+    assert [l["group_code"] for l in res.json()["lines"] if l["description"].startswith("Excavation")] == ["Earthwork"]
+
+
+def test_a_typed_item_code_is_kept_and_added_to_the_master(tenant):
+    _, boq = make_boq(tenant)
+    res = save_with(tenant, boq, {"item_code": "ZK4M7X"})
+    assert res.status_code == 200, res.text
+    assert [l["item_code"] for l in res.json()["lines"] if l["description"].startswith("Excavation")] == ["ZK4M7X"]
+    items = tenant.get("/api/erp/items").json()
+    assert "ZK4M7X" in str(items)
+
+
+def test_a_blank_item_code_is_still_given_one(tenant):
+    _, boq = make_boq(tenant)
+    res = save_with(tenant, boq, {"item_code": ""})
+    assert all(l["item_code"] for l in res.json()["lines"] if l["kind"] != "section")
+
+
+def test_one_item_code_cannot_be_on_two_lines(tenant):
+    _, boq = make_boq(tenant)
+    lines = import_lines(tenant, boq)["lines"]
+    priced = [l for l in lines if l["kind"] != "section"]
+    priced[0]["item_code"] = priced[1]["item_code"] = "ZK4M7X"
+    res = tenant.put("/api/boqs/%d/lines" % boq["id"], json={"lines": lines, "issue_codes": True})
+    assert res.status_code == 400 and "two lines" in res.json()["detail"]
+
+
+def test_a_badly_formed_item_code_is_refused_in_the_masters_words(tenant):
+    _, boq = make_boq(tenant)
+    res = save_with(tenant, boq, {"item_code": "AB"})
+    assert res.status_code == 400 and "characters" in res.json()["detail"]

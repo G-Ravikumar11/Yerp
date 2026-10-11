@@ -75,7 +75,7 @@ export function BoqPicker({ orderId, jobId, open, onOpenChange, onAdd }: { order
             <thead className="sticky top-0 bg-surface text-left text-[11px] uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="w-10 px-3 py-2" />
-                <th className="px-2 py-2">S.No</th>
+                <th className="px-2 py-2">Group</th>
                 <th className="px-2 py-2">Description</th>
                 <th className="px-2 py-2 text-right">BOQ qty</th>
                 <th className="px-2 py-2 text-right">Left to give</th>
@@ -88,23 +88,23 @@ export function BoqPicker({ orderId, jobId, open, onOpenChange, onAdd }: { order
                 l.kind === 'section' ? (
                   <tr key={i} className="border-t border-border bg-surface/60">
                     <td colSpan={7} className="px-3 py-1.5 font-semibold">
-                      {l.sno} {l.description}
+                      {l.group_code} {l.description}
                     </td>
                   </tr>
                 ) : (
                   <tr key={l.key} className="border-t border-border">
                     <td className="px-3 py-1.5">
-                      <input type="checkbox" aria-label={`Take ${l.sno || l.description}`} checked={!!picks[l.key!]} onChange={(e) => toggle(l.key!, l.left ?? 0, e.target.checked)} />
+                      <input type="checkbox" aria-label={`Take ${l.description}`} checked={!!picks[l.key!]} onChange={(e) => toggle(l.key!, l.left ?? 0, e.target.checked)} />
                     </td>
-                    <td className="px-2 py-1.5 font-mono text-xs">{l.sno}</td>
+                    <td className="px-2 py-1.5 font-mono text-xs">{l.group_code}</td>
                     <td className="max-w-xs truncate px-2 py-1.5" title={l.description}>{l.description}</td>
                     <td className="tabular px-2 py-1.5 text-right">{formatQty(l.quantity ?? 0)} {l.uom}</td>
                     <td className={cn('tabular px-2 py-1.5 text-right', !l.left && 'text-muted-foreground')}>{formatQty(l.left ?? 0)}</td>
                     <td className="px-2 py-1">
-                      {picks[l.key!] && <input aria-label={`Quantity of ${l.sno}`} inputMode="decimal" className="h-8 w-full rounded-md border border-input bg-background px-2 text-right" value={picks[l.key!].quantity} onChange={(e) => set(l.key!, 'quantity', e.target.value)} />}
+                      {picks[l.key!] && <input aria-label={`Quantity of ${l.description}`} inputMode="decimal" className="h-8 w-full rounded-md border border-input bg-background px-2 text-right" value={picks[l.key!].quantity} onChange={(e) => set(l.key!, 'quantity', e.target.value)} />}
                     </td>
                     <td className="px-2 py-1">
-                      {picks[l.key!] && <input aria-label={`Gang rate of ${l.sno}`} inputMode="decimal" placeholder="Rs / unit" className="h-8 w-full rounded-md border border-input bg-background px-2 text-right" value={picks[l.key!].rate} onChange={(e) => set(l.key!, 'rate', e.target.value)} />}
+                      {picks[l.key!] && <input aria-label={`Gang rate of ${l.description}`} inputMode="decimal" placeholder="Rs / unit" className="h-8 w-full rounded-md border border-input bg-background px-2 text-right" value={picks[l.key!].rate} onChange={(e) => set(l.key!, 'rate', e.target.value)} />}
                     </td>
                   </tr>
                 ),

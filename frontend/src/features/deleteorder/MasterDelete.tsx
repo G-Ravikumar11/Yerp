@@ -65,9 +65,11 @@ export function MasterDelete({ kind, id, label, noun, onDeleted }: { kind: Maste
   const [open, setOpen] = useState(false)
   if (!isOwner) return null
   return (
-    <>
+    // The dialog is drawn over the page, but React still hands its clicks up to the row it was opened from. A row
+    // that opens on a click would then open the very record being deleted - so no click leaves this one.
+    <span onClick={(e) => e.stopPropagation()}>
       <DeleteButton label={label} onClick={() => setOpen(true)} />
       <MasterDeleteDialog open={open} onOpenChange={setOpen} kind={kind} id={id} label={label} noun={noun} onDeleted={onDeleted} />
-    </>
+    </span>
   )
 }

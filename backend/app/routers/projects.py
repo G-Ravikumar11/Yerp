@@ -165,7 +165,10 @@ def get_dashboard_summary(request: Request, db: Session = Depends(get_db)):
 @router.get("/api/jobs")
 def list_jobs(request: Request, status: str = "", q: str = "", open_only: bool = False, costing: bool = True,
               db: Session = Depends(get_db)):
-    client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage"))
+    # Site staff list their own projects too; which ones each person sees is decided by
+    # filter_jobs_for_employee (role, assigned sites, managed projects, reporting line).
+    client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage",
+                                                "site.record", "billing.manage"))
     _, emp = session_person(request, db)
     query = db.query(models.DBJob).filter(models.DBJob.client_id == client.id)
     if emp is not None:
@@ -191,7 +194,8 @@ def list_jobs(request: Request, status: str = "", q: str = "", open_only: bool =
 @router.get("/api/jobs/{job_id}")
 def get_job(job_id: int, request: Request, db: Session = Depends(get_db)):
     """The job, its money, and everything filed against it."""
-    client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage"))
+    client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage",
+                                                "site.record", "billing.manage"))
     _, emp = session_person(request, db)
     if emp is not None and not employee_can_access_job(db, emp, job_id):
         raise HTTPException(status_code=403, detail="You do not have access to view this project.")
@@ -372,12 +376,11 @@ def jobs_summary(request: Request, db: Session = Depends(get_db)):
         ~models.DBJob.status.in_(JOB_CLOSED_STATUSES),
     ).all()
     rows = cost_jobs(db, client.id, jobs)
-    rows.sort(key=lambda r: r["costing"]["margin_percent"])
+    rows.sort(key=lambda r: r["costing"]["remaining"])
     totals = {
-        "invoiced": money(sum(r["costing"]["invoiced"] for r in rows)),
-        "cost": money(sum(r["costing"]["total_cost"] for r in rows)),
-        "committed": money(sum(r["costing"]["committed"] for r in rows)),
-        "profit": money(sum(r["costing"]["profit"] for r in rows)),
+        "budget": money(sum(r["costing"]["budget"] for r in rows)),
+        "used": money(sum(r["costing"]["used"] for r in rows)),
+        "remaining": money(sum(r["costing"]["remaining"] for r in rows)),
     }
     return {
         "jobs": rows,

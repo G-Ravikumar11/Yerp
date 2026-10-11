@@ -9,7 +9,6 @@ import { formatDate } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { ProjectFormModal } from './ProjectFormModal'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
-import { marginClass } from './ProjectsPage'
 
 function Docs({ title, rows, party }: { title: string; rows: ProjectDoc[]; party: (d: ProjectDoc) => string }) {
   if (!rows.length) return null
@@ -31,24 +30,24 @@ export default function ProjectPage() {
   const [editing, setEditing] = useState(false)
   const p = q.data
   const c = p?.costing
-  const cls = c ? marginClass(c.margin_percent, c.invoiced > 0) : ''
+  const cls = c ? (c.over_budget ? 'text-danger' : 'text-success') : ''
   const none = p && !p.invoices.length && !p.bills.length && !p.purchase_orders.length && !p.quotes.length
   return (
     <>
       <Link to="/projects" className="mb-3 inline-flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground"><ArrowLeft className="size-3.5" /> All projects</Link>
-      {q.isPending || !p || !c ? <Skeleton className="h-64 w-full" /> : (
+      {q.isError ? (
+        <p className="rounded-lg border border-border bg-muted/40 p-4 text-sm">This project no longer exists. It may have been deleted. <Link to="/projects" className="font-medium text-primary underline underline-offset-4">Back to all projects</Link></p>
+      ) : q.isPending || !p || !c ? <Skeleton className="h-64 w-full" /> : (
         <>
           <PageHeader title={`${p.number} - ${p.name}`} description={[p.customer_name, p.site_address, JOB_STATUS[p.status] ?? p.status].filter(Boolean).join(' - ')} actions={<><Button variant="outline" onClick={() => setEditing(true)}>Edit</Button><MasterDelete kind="project" id={p.id} label={`${p.number} ${p.name}`} noun="project" onDeleted={() => nav('/projects')} /></>} />
           {c.over_budget && <p role="alert" className="mb-4 rounded-lg border border-danger/30 bg-danger-soft p-3 text-sm font-semibold text-danger">Costs and open orders have passed the {formatINR(c.budget)} budget.</p>}
           <StatGrid className="lg:grid-cols-4 xl:grid-cols-4">
             <Stat label="Quoted" value={formatINR(c.quoted)} />
-            <Stat label="Invoiced" value={formatINR(c.invoiced)} />
-            <Stat label="Received" value={formatINR(c.received)} />
+            <Stat label="Budget" value={formatINR(c.budget)} />
+            <Stat label="Used budget" value={formatINR(c.used)} />
+            <Stat label="Remaining budget" value={<span className={cls}>{c.budget ? formatINR(c.remaining) : '-'}</span>} />
             <Stat label="Cost so far" value={formatINR(c.total_cost)} />
-            <Stat label="Committed" value={formatINR(c.committed)} />
             <Stat label="Labour" value={formatINR(c.labour_cost)} sub={`${c.labour_hours}h`} />
-            <Stat label="Profit" value={<span className={cls}>{formatINR(c.profit)}</span>} />
-            <Stat label="Margin" value={<span className={cls}>{c.invoiced ? `${c.margin_percent}%` : '-'}</span>} />
           </StatGrid>
           {none && <p className="rounded-lg border border-border bg-muted/40 p-4 text-sm">Nothing filed against this project yet.</p>}
           <Docs title="Invoices" rows={p.invoices} party={(d) => d.to_contact ?? ''} />

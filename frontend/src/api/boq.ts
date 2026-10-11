@@ -22,17 +22,41 @@ export interface BoqLine {
   id?: number
   key: string
   kind: BoqKind
-  sno: string
+  group_code: string
   description: string
   uom: string
   quantity: number
   rate: number
   amount: number
-  code: string
   item_code: string
   remarks: string
+  /** The grade or material: M40, Fe550/550D, Ply wood. */
+  material?: string
+  /** Rate agreed, quantity not yet known ("R/o"): carries a rate, comes to nothing, and is in no total. */
+  rate_only?: boolean
   /** Sections only: what the items under it come to. */
   subtotal?: number
+}
+
+export interface BoqSummarySection {
+  key: string
+  group_code: string
+  title: string
+  items: number
+  rate_only: number
+  amount: number
+}
+
+/** The BOQ on one page: section totals, then the total, the GST on it, and the total with GST. */
+export interface BoqSummary {
+  boq: BoqHead
+  sections: BoqSummarySection[]
+  total: number
+  gst_percent: number
+  gst: number
+  total_with_gst: number
+  by_material: { material: string; items: number; amount: number }[]
+  rate_only_items: number
 }
 
 export interface BoqRevision {
@@ -75,7 +99,7 @@ export type BoqFlag = 'no_gang' | 'over_allotted' | 'loss' | 'over_executed'
 export interface TrackerRow {
   kind: BoqKind
   key?: string
-  sno: string
+  group_code: string
   description: string
   uom?: string
   item_code?: string
@@ -106,7 +130,7 @@ export interface Tracker {
 export interface AvailableLine {
   kind: BoqKind
   key?: string
-  sno: string
+  group_code: string
   description: string
   uom?: string
   item_code?: string
@@ -121,6 +145,7 @@ export const boqKeys = {
   list: ['boq', 'list'] as const,
   one: (id: number, rev?: number) => ['boq', 'one', id, rev ?? 'current'] as const,
   tracker: (id: number) => ['boq', 'tracker', id] as const,
+  summary: (id: number, gst: number, rev?: number) => ['boq', 'summary', id, gst, rev ?? 'current'] as const,
   available: (id: number) => ['boq', 'available', id] as const,
 }
 
@@ -128,6 +153,12 @@ export const useBoqs = () => useQuery({ queryKey: boqKeys.list, queryFn: () => g
 export const useBoq = (id: number, rev?: number) =>
   useQuery({ queryKey: boqKeys.one(id, rev), enabled: id > 0, queryFn: () => get<BoqBook>(`/api/boqs/${id}${rev === undefined ? '' : `?rev=${rev}`}`) })
 export const useTracker = (id: number, enabled: boolean) => useQuery({ queryKey: boqKeys.tracker(id), enabled: enabled && id > 0, queryFn: () => get<Tracker>(`/api/boqs/${id}/tracker`) })
+export const useBoqSummary = (id: number, gst: number, enabled: boolean, rev?: number) =>
+  useQuery({
+    queryKey: boqKeys.summary(id, gst, rev),
+    enabled: enabled && id > 0,
+    queryFn: () => get<BoqSummary>(`/api/boqs/${id}/summary?gst=${gst}${rev === undefined ? '' : `&rev=${rev}`}`),
+  })
 export const useAvailable = (id: number) => useQuery({ queryKey: boqKeys.available(id), enabled: id > 0, queryFn: () => get<{ boq: BoqHead; lines: AvailableLine[] }>(`/api/boqs/${id}/available`) })
 export const useBoqChanges = (id: number, from: number, enabled: boolean) => useQuery({ queryKey: ['boq', 'changes', id, from], enabled: enabled && id > 0, queryFn: () => get<BoqChanges>(`/api/boqs/${id}/changes?frm=${from}`) })
 
@@ -152,7 +183,6 @@ export interface VariationLine {
   kind: 'quantity' | 'extra'
   boq_key: string
   section_key: string
-  sno: string
   description: string
   uom: string
   old_qty: number
@@ -190,7 +220,6 @@ export interface VariationInput {
   kind: 'quantity' | 'extra'
   boq_key: string
   section_key: string
-  sno: string
   description: string
   uom: string
   change_qty: number

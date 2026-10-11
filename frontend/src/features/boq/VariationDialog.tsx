@@ -24,7 +24,6 @@ interface Row {
   kind: 'quantity' | 'extra'
   boq_key: string
   section_key: string
-  sno: string
   description: string
   uom: string
   change_qty: number | null
@@ -32,8 +31,8 @@ interface Row {
   remarks: string
 }
 
-const blank = (): Row => ({ kind: 'quantity', boq_key: '', section_key: '', sno: '', description: '', uom: '', change_qty: null, rate: null, remarks: '' })
-const fromLine = (l: VariationLine): Row => ({ kind: l.kind, boq_key: l.boq_key, section_key: l.section_key, sno: l.sno, description: l.description, uom: l.uom, change_qty: l.change_qty, rate: l.rate, remarks: l.remarks })
+const blank = (): Row => ({ kind: 'quantity', boq_key: '', section_key: '', description: '', uom: '', change_qty: null, rate: null, remarks: '' })
+const fromLine = (l: VariationLine): Row => ({ kind: l.kind, boq_key: l.boq_key, section_key: l.section_key, description: l.description, uom: l.uom, change_qty: l.change_qty, rate: l.rate, remarks: l.remarks })
 const KINDS = [
   { value: 'quantity', label: 'Quantity change' },
   { value: 'extra', label: 'Extra item' },
@@ -71,8 +70,8 @@ export function VariationDialog({ boqId, id, lines, open, onOpenChange }: { boqI
   const columns = useMemo<Column<Row>[]>(
     () => [
       { id: 'kind', header: 'What', type: 'select', width: 116, options: KINDS, countsAsData: false },
-      { id: 'boq_key', header: 'BOQ line', hint: 'For a quantity change', type: 'select', width: 190, options: priced.map((l) => ({ value: l.key, label: `${l.sno} ${l.description}`.slice(0, 60) })), readOnly: (r) => r.kind === 'extra' },
-      { id: 'section_key', header: 'Under section', hint: 'For an extra item', type: 'select', width: 130, options: [{ value: '', label: 'At the end' }, ...sections.map((s) => ({ value: s.key, label: `${s.sno} ${s.description}`.slice(0, 40) }))], readOnly: (r) => r.kind === 'quantity', countsAsData: false },
+      { id: 'boq_key', header: 'BOQ line', hint: 'For a quantity change', type: 'select', width: 190, options: priced.map((l) => ({ value: l.key, label: `${l.group_code} ${l.description}`.trim().slice(0, 60) })), readOnly: (r) => r.kind === 'extra' },
+      { id: 'section_key', header: 'Under section', hint: 'For an extra item', type: 'select', width: 130, options: [{ value: '', label: 'At the end' }, ...sections.map((s) => ({ value: s.key, label: `${s.group_code} ${s.description}`.trim().slice(0, 40) }))], readOnly: (r) => r.kind === 'quantity', countsAsData: false },
       { id: 'description', header: 'Description', hint: 'The new item’s words', width: 200, readOnly: (r) => r.kind === 'quantity', get: (r) => (r.kind === 'quantity' ? (byKey.get(r.boq_key)?.description ?? '') : r.description) },
       { id: 'uom', header: 'Unit', width: 62, readOnly: (r) => r.kind === 'quantity', get: (r) => (r.kind === 'quantity' ? (byKey.get(r.boq_key)?.uom ?? '') : r.uom) },
       { id: 'change_qty', header: 'Add / (take)', hint: 'Quantity', type: 'number', decimals: 3, width: 104 },
@@ -97,7 +96,7 @@ export function VariationDialog({ boqId, id, lines, open, onOpenChange }: { boqI
   const payload = (): VariationInput[] =>
     rows
       .filter((r) => r.boq_key || r.description.trim() || r.change_qty)
-      .map((r) => ({ kind: r.kind, boq_key: r.kind === 'quantity' ? r.boq_key : '', section_key: r.kind === 'extra' ? r.section_key : '', sno: r.sno, description: r.description, uom: r.uom, change_qty: r.change_qty ?? 0, rate: r.rate, remarks: r.remarks }))
+      .map((r) => ({ kind: r.kind, boq_key: r.kind === 'quantity' ? r.boq_key : '', section_key: r.kind === 'extra' ? r.section_key : '', description: r.description, uom: r.uom, change_qty: r.change_qty ?? 0, rate: r.rate, remarks: r.remarks }))
 
   const refresh = [variationKeys.all, boqKeys.all, ['approvals']]
   const save = useAction(() => (id ? updateVariation(id, reason, payload()) : createVariation(boqId, reason, payload())), {

@@ -23,6 +23,11 @@ export interface Column<T> {
   options?: readonly Option[]
   /** A `select` that also takes what is typed when nothing in the list matches - a unit nobody listed. */
   freeText?: boolean
+  /**
+   * A `freeText` select: the words for a last entry in its list ("Customize...") that turns the box into one
+   * for typing an answer the list does not have.
+   */
+  customLabel?: string
   /** A computed column is `readOnly` with a `get`. May depend on the row. */
   readOnly?: boolean | ((row: T, index: number) => boolean)
   get?: (row: T, index: number) => CellValue

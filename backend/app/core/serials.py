@@ -45,14 +45,24 @@ def next_sequence_number(db, model, client_id, prefix, field="number"):
 
 
 def allocate_job_number(db, client_id) -> str:
-    last = db.query(models.DBJob).filter(
-        models.DBJob.client_id == client_id).order_by(models.DBJob.id.desc()).first()
-    if last and last.number:
-        try:
-            return f"JOB-{int(str(last.number).replace('JOB-', '').replace('JOB', '')) + 1:04d}"
-        except (ValueError, TypeError):
-            pass
-    return "JOB-0001"
+    """The next job number, never one that has been used before.
+
+    Reading the last job's number and adding one hands the same number out
+    again as soon as the newest job is deleted. A counter that only ever goes
+    up does not: JOB-0003 deleted still leaves the next job as JOB-0004. The
+    counter starts after the highest number already on file, so existing
+    tenants carry on from where they are.
+    """
+    series = "job:%d" % client_id
+    if not db.query(models.DBCodeSequence).filter(models.DBCodeSequence.name == series).first():
+        highest = 0
+        for (number,) in db.query(models.DBJob.number).filter(models.DBJob.client_id == client_id).all():
+            digits = re.sub(r"\D", "", str(number or ""))
+            if digits:
+                highest = max(highest, int(digits))
+        db.add(models.DBCodeSequence(name=series, next_value=highest + 1))
+        db.flush()
+    return f"JOB-{next_serial(db, series):04d}"
 
 
 # ENTERING THIS DATA WITHOUT A SPREADSHEET

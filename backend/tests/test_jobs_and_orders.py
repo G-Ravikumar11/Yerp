@@ -62,7 +62,15 @@ def test_a_job_gets_a_number_and_starts_empty(tenant):
     job = make_job(tenant)
     assert job["number"] == "JOB-0001"
     c = job["costing"]
-    assert c["invoiced"] == 0 and c["spent"] == 0 and c["profit"] == 0
+    assert c["spent"] == 0 and c["used"] == 0 and c["remaining"] == c["budget"]
+
+
+def test_a_job_number_is_never_used_twice(tenant):
+    first, second = make_job(tenant), make_job(tenant, name="Second")
+    assert (first["number"], second["number"]) == ("JOB-0001", "JOB-0002")
+    assert tenant.delete(f"/api/jobs/{second['id']}").status_code == 200
+    # The newest one is gone, but its number is not handed out again.
+    assert make_job(tenant, name="Third")["number"] == "JOB-0003"
 
 
 def test_jobs_number_in_sequence(tenant):
@@ -82,19 +90,17 @@ def test_negative_money_is_refused(tenant):
     assert tenant.post("/api/jobs", json={"name": "X", "budget": -5}).status_code == 400
 
 
-def test_costing_adds_up_across_invoices_and_bills(tenant):
-    job = make_job(tenant)
-    make_invoice(tenant, job_id=job["id"],
-                 line_items=[{"description": "Groundworks", "qty": 1, "price": 10000.0,
-                              "tax_rate": "No Tax"}])
+def test_costing_shows_the_budget_used_and_what_is_left(tenant):
+    job = make_job(tenant, budget=10000.0)
     tenant.post("/api/bills", json={"number": "BILL-9001", "vendor_name": "Jewson",
                                     "amount": 3000.0, "total": 3000.0, "job_id": job["id"]})
 
     c = tenant.get(f"/api/jobs/{job['id']}").json()["costing"]
-    assert c["invoiced"] == 10000.0
+    assert c["budget"] == 10000.0
     assert c["spent"] == 3000.0
-    assert c["profit"] == 7000.0
-    assert c["margin_percent"] == 70.0
+    assert c["used"] == 3000.0
+    assert c["remaining"] == 7000.0
+    assert c["over_budget"] is False
 
 
 def test_money_on_another_job_stays_there(tenant):
@@ -165,18 +171,14 @@ def test_completing_a_job_stamps_the_date(tenant):
     assert done["completed_at"] != ""
 
 
-def test_the_board_puts_the_worst_margin_first(tenant):
-    good = make_job(tenant, name="Good one")
-    bad = make_job(tenant, name="Bad one")
-    make_invoice(tenant, job_id=good["id"],
-                 line_items=[{"description": "w", "qty": 1, "price": 1000.0, "tax_rate": "No Tax"}])
-    make_invoice(tenant, job_id=bad["id"],
-                 line_items=[{"description": "w", "qty": 1, "price": 1000.0, "tax_rate": "No Tax"}])
+def test_the_board_puts_the_least_budget_left_first(tenant):
+    make_job(tenant, name="Good one", budget=1000.0)
+    bad = make_job(tenant, name="Bad one", budget=1000.0)
     tenant.post("/api/bills", json={"number": "B1", "vendor_name": "X",
                                     "amount": 900.0, "total": 900.0, "job_id": bad["id"]})
     board = tenant.get("/api/jobs-summary").json()
     assert board["jobs"][0]["name"] == "Bad one"
-    assert board["totals"]["invoiced"] == 2000.0
+    assert board["totals"] == {"budget": 2000.0, "used": 900.0, "remaining": 1100.0}
 
 
 def test_a_job_over_budget_is_flagged(tenant):
@@ -231,17 +233,15 @@ def test_an_order_goes_up_the_line_before_the_money_is_spent(portal, tenant):
     assert order["approval_status"] == "approved"
 
 
-def test_an_approved_order_is_committed_cost_not_spend(portal, tenant):
+def test_an_approved_order_is_not_spend_until_billed(portal, tenant):
     job = make_job(tenant)
     approved_order(portal, tenant, **{"supplier_name": "Speedy Hire", "amount": 1000.0, "job_id": job["id"]})
 
     c = tenant.get(f"/api/jobs/{job['id']}").json()["costing"]
-    assert c["committed"] == 1000.0
-    assert c["spent"] == 0.0
-    assert c["forecast_cost"] == 1000.0
+    assert c["spent"] == 0.0 and c["used"] == 0.0
 
 
-def test_a_matched_bill_replaces_the_commitment(portal, tenant):
+def test_a_matched_bill_counts_once(portal, tenant):
     job = make_job(tenant)
     order = approved_order(portal, tenant, **{"supplier_name": "Speedy Hire", "amount": 1000.0, "job_id": job["id"]})
 
@@ -250,8 +250,7 @@ def test_a_matched_bill_replaces_the_commitment(portal, tenant):
                                     "job_id": job["id"], "purchase_order_id": order["id"]})
     c = tenant.get(f"/api/jobs/{job['id']}").json()["costing"]
     # Counting both would double the cost of the same delivery.
-    assert c["committed"] == 0.0
-    assert c["spent"] == 1000.0
+    assert c["spent"] == 1000.0 and c["used"] == 1000.0
 
 
 def test_a_bill_cannot_be_matched_to_an_unapproved_order(portal, tenant):

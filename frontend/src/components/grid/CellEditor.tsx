@@ -65,7 +65,12 @@ export function CellEditor<T>({
   const done = useRef(false)
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null)
   const isSelect = column.type === 'select'
-  const options = useMemo(() => (isSelect ? filterOptions(column.options ?? [], text) : []), [isSelect, column.options, text])
+  // Chose the list's own "Customize" entry: the box is for typing now, and the list is put away.
+  const [custom, setCustom] = useState(false)
+  const picking = isSelect && !custom
+  const extra = picking && column.freeText && column.customLabel ? column.customLabel : null
+  const options = useMemo(() => (picking ? filterOptions(column.options ?? [], text) : []), [picking, column.options, text])
+  const count = options.length + (extra ? 1 : 0)
 
   useLayoutEffect(() => {
     const el = inputRef.current
@@ -110,8 +115,20 @@ export function CellEditor<T>({
     }
   }
 
+  const startCustom = () => {
+    setCustom(true)
+    setText('')
+    setError(null)
+    onTextChange('')
+    inputRef.current?.focus({ preventScroll: true })
+  }
+
   const choose = (move: Move) => {
     if (!isSelect) return finish(text, move)
+    if (custom) return finish(text.trim() || (currentLabel ?? ''), move)
+    // Typed something the list does not have: that is the answer, not a request to start typing.
+    if (column.freeText && text.trim() && !options.length) return finish(text.trim(), move)
+    if (extra && hi === options.length) return startCustom()
     const pick = options[hi]
     if (pick) return finish(optionLabel(pick), move)
     if (!text.trim()) return finish(currentLabel ?? '', move)
@@ -135,9 +152,9 @@ export function CellEditor<T>({
       stop()
       done.current = true
       onCancel()
-    } else if (isSelect && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+    } else if (picking && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       stop()
-      if (options.length) setHi((h) => (h + (e.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length)
+      if (count) setHi((h) => (h + (e.key === 'ArrowDown' ? 1 : -1) + count) % count)
     } else if (arrows[e.key] && mode === 'enter' && !isSelect) {
       stop()
       finish(text, arrows[e.key])
@@ -176,8 +193,8 @@ export function CellEditor<T>({
         aria-label={column.header}
         aria-invalid={error ? true : undefined}
         aria-autocomplete={isSelect ? 'list' : undefined}
-        aria-expanded={isSelect ? true : undefined}
-        placeholder={isSelect ? (currentLabel ?? column.placeholder) : column.type === 'date' ? 'dd-mm-yyyy' : undefined}
+        aria-expanded={isSelect ? picking : undefined}
+        placeholder={custom ? 'Type your own, then Enter' : isSelect ? (currentLabel ?? column.placeholder) : column.type === 'date' ? 'dd-mm-yyyy' : undefined}
         className={cn(
           'size-full bg-card px-2.5 text-[13px] text-foreground outline-none',
           'shadow-[inset_0_0_0_2px_var(--primary)] placeholder:text-subtle',
@@ -194,7 +211,7 @@ export function CellEditor<T>({
           {error}
         </div>
       )}
-      {isSelect && <OptionList rect={anchorRect} options={options} highlighted={hi} onPick={(o) => finish(optionLabel(o), 'down')} />}
+      {picking && <OptionList rect={anchorRect} options={options} highlighted={hi} onPick={(o) => finish(optionLabel(o), 'down')} extra={extra} onExtra={startCustom} />}
     </div>
   )
 }
@@ -205,11 +222,16 @@ function OptionList({
   options,
   highlighted,
   onPick,
+  extra,
+  onExtra,
 }: {
   rect: DOMRect | null
   options: Option[]
   highlighted: number
   onPick: (o: Option) => void
+  /** A last entry that is not a choice but a way to type one. */
+  extra?: string | null
+  onExtra?: () => void
 }) {
   const listRef = useRef<HTMLUListElement>(null)
 
@@ -231,7 +253,7 @@ function OptionList({
       }}
       className="fixed z-[70] max-h-60 overflow-y-auto rounded-lg border border-border bg-popover p-1 text-[13px] shadow-pop"
     >
-      {options.length === 0 && <li className="px-2.5 py-2 text-muted-foreground">No match</li>}
+      {options.length === 0 && !extra && <li className="px-2.5 py-2 text-muted-foreground">No match</li>}
       {options.map((o, i) => (
         <li
           key={optionValue(o)}
@@ -245,6 +267,20 @@ function OptionList({
           {optionLabel(o)}
         </li>
       ))}
+      {extra && (
+        <li
+          role="option"
+          aria-selected={highlighted === options.length}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => onExtra?.()}
+          className={cn(
+            'mt-1 cursor-pointer rounded-md border-t border-border px-2.5 py-1.5 font-medium',
+            highlighted === options.length ? 'bg-primary-soft text-foreground' : 'text-primary hover:bg-accent',
+          )}
+        >
+          + {extra}
+        </li>
+      )}
     </ul>,
     document.body,
   )

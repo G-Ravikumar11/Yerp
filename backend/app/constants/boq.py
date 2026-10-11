@@ -33,8 +33,8 @@ BOQ_KINDS = ("section", "item", "sub", "note")
 BOQ_PRICED = ("item", "sub")
 BOQ_NOT_LIVE = ("CANCELLED", "AMENDED", "REJECTED")
 BOQ_IMPORT_ALIASES = {
-    "sno": ["slno", "sl", "srno", "sr", "sno", "serialno", "itemno", "no", "activityno", "boqno", "refno"],
-    "code": ["itemcode", "code", "boqcode", "sku", "productcode", "scheduleitemno"],
+    "group_code": ["groupcode", "group", "workgroup", "trade", "category", "boqgroup"],
+    "item_code": ["itemcode", "code", "boqcode", "sku", "productcode", "scheduleitemno"],
     "description": ["description", "itemdescription", "particulars", "descriptionofwork", "descriptionofitem",
                     "workdescription", "natureofwork", "scopeofwork", "itemofwork"],
     "uom": ["uom", "unit", "units", "unitofmeasure", "unitsofmeasure", "measure"],
@@ -42,7 +42,11 @@ BOQ_IMPORT_ALIASES = {
     "rate": ["rate", "unitrate", "price", "unitprice", "rateinrs", "rates"],
     "amount": ["amount", "totalamount", "amountinrs", "value", "amt", "total"],
     "remarks": ["remarks", "notes", "specification", "spec"],
+    "material": ["material", "grade", "materialgrade", "materialtype", "mix", "mixgrade"],
 }
+
+# What a quantity cell says when the rate is agreed and the quantity is not: "R/o", rate only.
+BOQ_RATE_ONLY_WORDS = ("r/o", "ro", "rateonly", "rateonlyitem")
 
 # VARIATIONS TO THE BOQ
 #
