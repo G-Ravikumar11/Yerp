@@ -13,19 +13,19 @@ const list = (counts: Record<string, number>) => Object.entries(counts).filter((
  * The Master's delete for any record: it says first what goes with it, then takes it away from every screen.
  * `onDeleted` is where to go next when the record was the page being looked at.
  */
-export function MasterDeleteDialog({ open, onOpenChange, kind, id, label, noun, onDeleted }: { open: boolean; onOpenChange: (o: boolean) => void; kind: MasterKind; id: number; label: string; noun?: string; onDeleted?: () => void }) {
+export function MasterDeleteDialog({ open, onOpenChange, kind, id, label, noun, onDeleted, optimistic }: { open: boolean; onOpenChange: (o: boolean) => void; kind: MasterKind; id: number; label: string; noun?: string; onDeleted?: () => void; optimistic?: () => void }) {
   const qc = useQueryClient()
   const preview = useMasterPreview(kind, id, open)
   const p = preview.data
   const remove = useAction(() => masterDelete(kind, id), {
     invalidate: [],
-    onSuccess: async () => {
+    onSuccess: () => {
       // Close first, so the question about what it is tied to is not asked again of a record that is gone.
       onOpenChange(false)
       qc.removeQueries({ queryKey: ['master-preview'] })
-      // Everything that listed it - the lists, the books, the totals - starts over.
-      await qc.invalidateQueries()
       onDeleted?.()
+      // Everything that listed it - the lists, the books, the totals - starts over, without holding the screen up.
+      void qc.invalidateQueries()
     },
   })
   const goes = p ? list(p.counts) : ''
@@ -39,7 +39,11 @@ export function MasterDeleteDialog({ open, onOpenChange, kind, id, label, noun, 
       footer={
         <>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>Keep it</Button>
-          <Button variant="danger" loading={remove.isPending} disabled={!p?.can_delete} onClick={() => remove.mutate()}>Delete everywhere</Button>
+          <Button variant="danger" loading={remove.isPending} disabled={!p?.can_delete} onClick={() => {
+            // A page that can hide the row at once does so; if the server refuses, everything is read again.
+            optimistic?.()
+            remove.mutate(undefined, { onError: () => void qc.invalidateQueries() })
+          }}>Delete everywhere</Button>
         </>
       }
     >
@@ -60,7 +64,7 @@ export function MasterDeleteDialog({ open, onOpenChange, kind, id, label, noun, 
 }
 
 /** The delete icon for a row, shown only to the Master, with its confirmation. */
-export function MasterDelete({ kind, id, label, noun, onDeleted }: { kind: MasterKind; id: number; label: string; noun?: string; onDeleted?: () => void }) {
+export function MasterDelete({ kind, id, label, noun, onDeleted, optimistic }: { kind: MasterKind; id: number; label: string; noun?: string; onDeleted?: () => void; optimistic?: () => void }) {
   const { isOwner } = useSession()
   const [open, setOpen] = useState(false)
   if (!isOwner) return null
@@ -69,7 +73,7 @@ export function MasterDelete({ kind, id, label, noun, onDeleted }: { kind: Maste
     // that opens on a click would then open the very record being deleted - so no click leaves this one.
     <span onClick={(e) => e.stopPropagation()}>
       <DeleteButton label={label} onClick={() => setOpen(true)} />
-      <MasterDeleteDialog open={open} onOpenChange={setOpen} kind={kind} id={id} label={label} noun={noun} onDeleted={onDeleted} />
+      <MasterDeleteDialog open={open} onOpenChange={setOpen} kind={kind} id={id} label={label} noun={noun} onDeleted={onDeleted} optimistic={optimistic} />
     </span>
   )
 }
