@@ -131,43 +131,57 @@ def department_or_404(db, client_id, dept_id):
     return dept
 
 
-def department_to_dict(db, dept):
-    employees = db.query(models.DBEmployee).filter(
-        models.DBEmployee.department_id == dept.id,
-        models.DBEmployee.client_id == dept.client_id,
-    ).order_by(models.DBEmployee.first_name, models.DBEmployee.last_name).all()
+def _member_dict(e):
+    return {"id": e.id, "name": f"{e.first_name} {e.last_name}".strip(),
+            "job_title": e.job_title or "", "email": e.email or "",
+            "status": e.status or ""}
+
+
+def _dept_dict(dept, members):
     return {
         "id": dept.id, "name": dept.name, "description": dept.description,
         "color": dept.color or "#00f0ff", "icon": dept.icon or "building",
-        "employee_count": len(employees), "created_at": dept.created_at,
-        "employees": [{"id": e.id, "name": f"{e.first_name} {e.last_name}".strip(),
-                       "job_title": e.job_title or "", "email": e.email or "",
-                       "status": e.status or ""} for e in employees],
+        "employee_count": len(members), "created_at": dept.created_at,
+        "employees": [_member_dict(e) for e in members],
     }
 
 
-def move_to_department(db, client_id, emp, dept_id):
-    """Put an employee in a department, or in none, wherever they were before.
+def departments_to_dicts(db, client_id, depts):
+    """Departments with the people in them, in one query however many there are.
 
-    The department's goals not yet handed out go to whoever joins it. Returns
-    the department they left (or None), so the caller can record the move.
+    On a database across an ocean every query is a third of a second, so a
+    query per department was most of the time the Departments page took.
     """
-    dept_id = dept_id or None
-    if dept_id is not None:
-        department_or_404(db, client_id, dept_id)
-    old = emp.department_id
-    if old == dept_id:
-        return old
-    emp.department_id = dept_id
-    if dept_id is None:
-        return old
-    for dg in db.query(models.DBDepartmentGoal).filter(
-            models.DBDepartmentGoal.department_id == dept_id,
-            models.DBDepartmentGoal.client_id == client_id,
-            models.DBDepartmentGoal.is_assigned == False,  # noqa: E712
-    ).all():
+    ids = [d.id for d in depts]
+    by_dept = {i: [] for i in ids}
+    if ids:
+        for e in db.query(models.DBEmployee).filter(
+                models.DBEmployee.client_id == client_id,
+                models.DBEmployee.department_id.in_(ids),
+        ).order_by(models.DBEmployee.first_name, models.DBEmployee.last_name).all():
+            by_dept[e.department_id].append(e)
+    return [_dept_dict(d, by_dept[d.id]) for d in depts]
+
+
+def department_to_dict(db, dept):
+    return departments_to_dicts(db, dept.client_id, [dept])[0]
+
+
+def pending_department_goals(db, client_id, dept_id):
+    return db.query(models.DBDepartmentGoal).filter(
+        models.DBDepartmentGoal.department_id == dept_id,
+        models.DBDepartmentGoal.client_id == client_id,
+        models.DBDepartmentGoal.is_assigned == False,  # noqa: E712
+    ).all()
+
+
+def hand_out_department_goals(db, client_id, emp_id, dept_id, goals):
+    """The department's goals nobody has been given yet go to this person."""
+    for dg in goals:
+        if dg.is_assigned:
+            continue
         db.add(models.DBEmployeeGoal(
-            client_id=client_id, employee_id=emp.id, department_id=dept_id,
+            client_id=client_id, employee_id=emp_id, department_id=dept_id,
             title=dg.title, description=dg.description,
             target_value=dg.target_value, current_value=0,
             unit=dg.unit, category=dg.category,
@@ -175,11 +189,34 @@ def move_to_department(db, client_id, emp, dept_id):
             due_date=dg.due_date, created_by="HR",
         ))
         db.add(models.DBNotification(
-            client_id=client_id, employee_id=emp.id,
+            client_id=client_id, employee_id=emp_id,
             title="New Goal Assigned", message=f"HR has assigned you a department goal: {dg.title}",
             type="info",
         ))
         dg.is_assigned = True
+
+
+def move_to_department(db, client_id, emp, dept_id, *, checked=False, goals=None):
+    """Put an employee in a department, or in none, wherever they were before.
+
+    The department's goals not yet handed out go to whoever joins it. Returns
+    the department they left (or None), so the caller can record the move.
+    A caller moving several people passes `checked` once it has looked the
+    department up itself, and the department's pending `goals`, so neither is
+    fetched again for every person.
+    """
+    dept_id = dept_id or None
+    if dept_id is not None and not checked:
+        department_or_404(db, client_id, dept_id)
+    old = emp.department_id
+    if old == dept_id:
+        return old
+    emp.department_id = dept_id
+    if dept_id is None:
+        return old
+    if goals is None:
+        goals = pending_department_goals(db, client_id, dept_id)
+    hand_out_department_goals(db, client_id, emp.id, dept_id, goals)
     return old
 
 

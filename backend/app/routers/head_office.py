@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 
 from app.core.auth import require_items_access, session_employee
+from app.core.cache import cached_read
 from app.services.head_office import ho_overview
 
 
@@ -17,4 +18,7 @@ def head_office_overview(request: Request, db: Session = Depends(get_db)):
     what is open, what is in draft, what waits on whom, and which projects have no BOQ yet.
     For HO QS, HO Coordinator and the Master."""
     client = require_items_access(request, db, "ho.view_all")
-    return ho_overview(db, client, session_employee(request, db))
+    emp = session_employee(request, db)
+    # Refreshed every minute while the page is open; kept until anything is saved.
+    return cached_read(("ho-overview", client.id, emp.id if emp else None),
+                       lambda: ho_overview(db, client, emp), ttl=30)

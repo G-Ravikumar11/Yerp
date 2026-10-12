@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Button, ConfirmDialog, Field, Input, NumField, Select, Skeleton, Tabs } from '@/components/ui'
-import { peopleKeys, resetPassword, setAccess, startOffboarding, updateEmployee, useDepartments, useEmployee, useEmployees, useHrCatalogue, type EmployeeDetail } from '@/api/people'
+import { deleteEmployee, peopleKeys, resetPassword, setAccess, startOffboarding, updateEmployee, useDepartments, useEmployee, useEmployees, useHrCatalogue, type EmployeeDetail } from '@/api/people'
+import { useQueryClient } from '@tanstack/react-query'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { AccessPicker } from './AccessPicker'
@@ -67,10 +68,24 @@ function Access({ e }: { e: EmployeeDetail }) {
 }
 
 function Account({ e }: { e: EmployeeDetail }) {
+  const { isOwner } = useSession()
+  const navigate = useNavigate()
+  const qc = useQueryClient()
   const [pw, setPw] = useState('')
   const [asking, setAsking] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const reset = useAction(() => resetPassword(e.id, pw), { success: 'Password updated', onSuccess: () => setPw('') })
   const off = useAction(() => startOffboarding(e.id), { invalidate: [peopleKeys.all], onSuccess: () => setAsking(false) })
+  // Gone from every list, department and count, so those are read again; this page's own record is dropped first so it is not asked for.
+  const del = useAction(() => deleteEmployee(e.id), {
+    success: `${e.full_name} was deleted`,
+    onSuccess: async () => {
+      qc.removeQueries({ queryKey: ['people', 'employee', e.id] })
+      await qc.invalidateQueries({ queryKey: peopleKeys.all })
+      navigate('/people/employees')
+    },
+    onError: () => setDeleting(false),
+  })
   return (
     <div className="max-w-md space-y-8">
       <div>
@@ -86,6 +101,14 @@ function Account({ e }: { e: EmployeeDetail }) {
           <Button variant="outline" className="text-danger" onClick={() => setAsking(true)}>Start offboarding</Button>
         </div>
       )}
+      {isOwner && (
+        <div className="border-t border-border pt-6">
+          <h3 className="mb-2 font-semibold text-danger">Delete this employee</h3>
+          <p className="mb-3 text-[13px] text-muted-foreground">Removes {e.full_name} for good, with their payslips, attendance, leave, documents and site assignments. Bills they raised and jobs they managed stay, with nobody against them. For somebody who is leaving, offboarding above keeps the record.</p>
+          <Button variant="outline" className="text-danger" onClick={() => setDeleting(true)}>Delete employee</Button>
+        </div>
+      )}
+      <ConfirmDialog open={deleting} onOpenChange={setDeleting} title={`Delete ${e.full_name}?`} description="This cannot be undone." confirmLabel="Delete for good" tone="danger" loading={del.isPending} onConfirm={() => del.mutate()} />
       <ConfirmDialog open={asking} onOpenChange={setAsking} title={`Start offboarding ${e.full_name}?`} confirmLabel="Start offboarding" tone="danger" loading={off.isPending} onConfirm={() => off.mutate()} />
     </div>
   )

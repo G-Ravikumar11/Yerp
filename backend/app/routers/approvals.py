@@ -14,6 +14,7 @@ from app.constants.approvals import (
     WO_OWNER_SIGNS_KEY,
 )
 from app.core.audit import log_audit
+from app.core.cache import cached_read
 from app.core.auth import get_client_user, session_person
 from app.core.currency import DEFAULT_CURRENCY, money
 from app.core.permissions import PERMISSION_ROLES, employee_can, role_rank
@@ -328,9 +329,15 @@ def set_approval_rules(request: Request, body: dict = None, db: Session = Depend
 @router.get("/api/approvals/inbox")
 def approvals_inbox(request: Request, db: Session = Depends(get_db)):
     client, emp = session_person(request, db)
-    items = approval_inbox(db, client, emp)
-    return {"items": items, "mine": len([i for i in items if i["mine"]]), "count": len(items),
-            "owner": emp is None}
+
+    def build():
+        items = approval_inbox(db, client, emp)
+        return {"items": items, "mine": len([i for i in items if i["mine"]]), "count": len(items),
+                "owner": emp is None}
+    # Asked again every minute by every open screen for the badge, and it costs
+    # a query for each kind of document waiting. Kept until anything is saved,
+    # and per person: what is waiting on somebody is not what waits on another.
+    return cached_read(("approvals-inbox", client.id, emp.id if emp else None), build, ttl=30)
 
 
 @router.post("/api/approvals/decide")
