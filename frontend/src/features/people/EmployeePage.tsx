@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, ChevronDown } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Button, ConfirmDialog, Field, Input, NumField, Select, Skeleton, Tabs } from '@/components/ui'
-import { deleteEmployee, peopleKeys, resetPassword, setAccess, startOffboarding, updateEmployee, useDepartments, useEmployee, useEmployees, useHrCatalogue, type EmployeeDetail } from '@/api/people'
+import { deleteEmployee, peopleKeys, setAccess, setEmployeeStatus, updateEmployee, useDepartments, useEmployee, useEmployees, useHrCatalogue, type EmployeeDetail } from '@/api/people'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { AccessPicker } from './AccessPicker'
 import { EMPLOYEE_TONE } from './EmployeesPage'
 
-type Tab = 'profile' | 'access' | 'account' | 'onboarding'
+type Tab = 'profile' | 'access'
 
 function Profile({ e }: { e: EmployeeDetail }) {
   const depts = useDepartments()
@@ -67,15 +67,14 @@ function Access({ e }: { e: EmployeeDetail }) {
   )
 }
 
-function Account({ e }: { e: EmployeeDetail }) {
-  const { isOwner } = useSession()
+/** Moves the employee between stages; the Master only. The status shown in the header follows. */
+function StatusMenu({ e }: { e: EmployeeDetail }) {
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [pw, setPw] = useState('')
-  const [asking, setAsking] = useState(false)
+  const [open, setOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const reset = useAction(() => resetPassword(e.id, pw), { success: 'Password updated', onSuccess: () => setPw('') })
-  const off = useAction(() => startOffboarding(e.id), { invalidate: [peopleKeys.all], onSuccess: () => setAsking(false) })
+  const [asking, setAsking] = useState<null | 'offboard' | 'terminate'>(null)
+  const change = useAction((to: 'onboard' | 'offboard' | 'terminate') => setEmployeeStatus(e.id, to), { invalidate: [peopleKeys.all], success: (r) => r.message, onSuccess: () => setAsking(null) })
   // Gone from every list, department and count, so those are read again; this page's own record is dropped first so it is not asked for.
   const del = useAction(() => deleteEmployee(e.id), {
     success: `${e.full_name} was deleted`,
@@ -86,30 +85,25 @@ function Account({ e }: { e: EmployeeDetail }) {
     },
     onError: () => setDeleting(false),
   })
+  const pick = (fn: () => void) => () => { setOpen(false); fn() }
+  const item = 'block w-full px-3 py-2 text-left text-sm hover:bg-muted disabled:opacity-50'
   return (
-    <div className="max-w-md space-y-8">
-      <div>
-        <h3 className="mb-2 font-semibold">Reset their password</h3>
-        <Field label="New password" htmlFor="ea-pw" hint="At least four characters. Tell them; it cannot be shown again."><Input id="ea-pw" type="text" autoComplete="off" value={pw} onChange={(ev) => setPw(ev.target.value)} /></Field>
-        {reset.error && <p role="alert" className="mt-2 text-[13px] text-danger">{reset.error.message}</p>}
-        <Button className="mt-3" loading={reset.isPending} disabled={pw.length < 4} onClick={() => reset.mutate()}>Set the password</Button>
-      </div>
-      {(e.status === 'active' || e.status === 'onboarding') && (
-        <div>
-          <h3 className="mb-2 font-semibold">Leaving</h3>
-          <p className="mb-3 text-[13px] text-muted-foreground">Starts offboarding: the exit checklist, and their access ends when it is completed.</p>
-          <Button variant="outline" className="text-danger" onClick={() => setAsking(true)}>Start offboarding</Button>
-        </div>
+    <div className="relative inline-block" onKeyDown={(ev) => ev.key === 'Escape' && setOpen(false)}>
+      <Button variant="outline" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}>Status <ChevronDown className="size-4" /></Button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div role="menu" className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-lg border border-border bg-card py-1 shadow-card">
+            <button role="menuitem" className={item} disabled={e.status === 'onboarding'} onClick={pick(() => change.mutate('onboard'))}>Onboard</button>
+            <button role="menuitem" className={item} disabled={e.status === 'offboarding'} onClick={pick(() => setAsking('offboard'))}>Offboard</button>
+            <button role="menuitem" className={`${item} text-danger`} disabled={e.status === 'terminated'} onClick={pick(() => setAsking('terminate'))}>Terminate</button>
+            <button role="menuitem" className={`${item} text-danger`} onClick={pick(() => setDeleting(true))}>Delete</button>
+          </div>
+        </>
       )}
-      {isOwner && (
-        <div className="border-t border-border pt-6">
-          <h3 className="mb-2 font-semibold text-danger">Delete this employee</h3>
-          <p className="mb-3 text-[13px] text-muted-foreground">Removes {e.full_name} for good, with their payslips, attendance, leave, documents and site assignments. Bills they raised and jobs they managed stay, with nobody against them. For somebody who is leaving, offboarding above keeps the record.</p>
-          <Button variant="outline" className="text-danger" onClick={() => setDeleting(true)}>Delete employee</Button>
-        </div>
-      )}
-      <ConfirmDialog open={deleting} onOpenChange={setDeleting} title={`Delete ${e.full_name}?`} description="This cannot be undone." confirmLabel="Delete for good" tone="danger" loading={del.isPending} onConfirm={() => del.mutate()} />
-      <ConfirmDialog open={asking} onOpenChange={setAsking} title={`Start offboarding ${e.full_name}?`} confirmLabel="Start offboarding" tone="danger" loading={off.isPending} onConfirm={() => off.mutate()} />
+      <ConfirmDialog open={deleting} onOpenChange={setDeleting} title={`Delete ${e.full_name}?`} description="Removes them for good, with their payslips, attendance, leave, documents and site assignments. This cannot be undone." confirmLabel="Delete for good" tone="danger" loading={del.isPending} onConfirm={() => del.mutate()} />
+      <ConfirmDialog open={asking === 'offboard'} onOpenChange={(o) => !o && setAsking(null)} title={`Offboard ${e.full_name}?`} description="Their status becomes offboarding." confirmLabel="Offboard" tone="danger" loading={change.isPending} onConfirm={() => change.mutate('offboard')} />
+      <ConfirmDialog open={asking === 'terminate'} onOpenChange={(o) => !o && setAsking(null)} title={`Terminate ${e.full_name}?`} description="Their status becomes terminated and today is recorded as their last day." confirmLabel="Terminate" tone="danger" loading={change.isPending} onConfirm={() => change.mutate('terminate')} />
     </div>
   )
 }
@@ -119,22 +113,19 @@ export default function EmployeePage() {
   const q = useEmployee(id)
   const [tab, setTab] = useState<Tab>('profile')
   const e = q.data
+  const { isOwner } = useSession()
   if (q.isPending) return <Skeleton className="h-64 w-full" />
   if (!e) return <p role="alert" className="py-10 text-center text-sm text-danger">Could not open that employee.</p>
   return (
     <>
       <Link to="/people/employees" className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Employees</Link>
       <PageHeader eyebrow={e.employee_id} title={e.full_name} description={[e.job_title, e.department_name, e.manager_name && `reports to ${e.manager_name}`].filter(Boolean).join(' · ') || undefined} actions={<Badge tone={EMPLOYEE_TONE[e.status] ?? 'neutral'}>{e.status}</Badge>} />
-      <div className="mb-5"><Tabs label="Section" value={tab} onChange={setTab} items={[{ value: 'profile', label: 'Profile' }, { value: 'access', label: 'Access' }, { value: 'account', label: 'Account' }, { value: 'onboarding', label: `Onboarding ${e.onboarding_items.filter((i) => !i.is_completed).length || ''}`.trim() }]} /></div>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <Tabs label="Section" value={tab} onChange={setTab} items={isOwner ? [{ value: 'profile', label: 'Profile' }, { value: 'access', label: 'Access' }] : [{ value: 'profile', label: 'Profile' }]} />
+        {isOwner && <StatusMenu e={e} />}
+      </div>
       {tab === 'profile' && <Profile key={e.id} e={e} />}
-      {tab === 'access' && <Access e={e} />}
-      {tab === 'account' && <Account e={e} />}
-      {tab === 'onboarding' && (
-        <ul className="max-w-xl divide-y divide-border rounded-lg border border-border">
-          {e.onboarding_items.length === 0 && <li className="p-4 text-sm text-muted-foreground">No onboarding checklist.</li>}
-          {e.onboarding_items.map((i) => <li key={i.id} className="flex items-center gap-3 px-4 py-2.5 text-sm"><input type="checkbox" readOnly checked={i.is_completed} aria-label={i.title} className="size-4 accent-[var(--primary)]" /><span className="flex-1">{i.title}</span><Badge>{i.category}</Badge><span className="w-16 text-right text-xs text-muted-foreground">{i.assigned_to}</span></li>)}
-        </ul>
-      )}
+      {tab === 'access' && isOwner && <Access e={e} />}
     </>
   )
 }
