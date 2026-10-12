@@ -381,3 +381,14 @@ def test_the_sample_sheet_imports_as_it_is(tenant):
     assert [l["description"] for l in lines if l["kind"] == "section"][0] == "PLAIN CEMENT CONCRETE"
     assert any(l["rate_only"] for l in lines) and any(l["group_code"] == "SUB STRUCTURE WORKS" for l in lines)
     assert not out.json()["warnings"]
+
+
+def test_a_material_added_once_is_offered_on_every_boq(tenant):
+    _, boq = make_boq(tenant)
+    res = save_with(tenant, boq, {"material": "Anti-termite chemical"})
+    assert res.status_code == 200, res.text
+    got = tenant.get("/api/boqs/materials")
+    assert got.status_code == 200 and "Anti-termite chemical" in got.json()["materials"]
+    # A second project's BOQ sees it too.
+    _, other = make_boq(tenant, "Another site")
+    assert "Anti-termite chemical" in tenant.get("/api/boqs/materials").json()["materials"]

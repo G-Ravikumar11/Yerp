@@ -14,6 +14,7 @@ import {
   saveBoqLines,
   useBoq,
   useBoqChanges,
+  useBoqMaterials,
   useBoqSummary,
   useTracker,
   type BoqFlag,
@@ -48,7 +49,13 @@ interface Row {
 
 const blank = (): Row => ({ key: '', kind: 'item', group_code: '', description: '', uom: '', quantity: null, rate: null, item_code: '', remarks: '', material: '', rate_only: false })
 const fromLines = (lines: BoqLine[]): Row[] => lines.map((l) => ({ key: l.key, kind: l.kind, group_code: l.group_code ?? '', description: l.description, uom: l.uom, quantity: l.kind === 'section' || l.kind === 'note' || l.rate_only ? null : l.quantity, rate: l.kind === 'section' || l.kind === 'note' ? null : l.rate, item_code: l.item_code, remarks: l.remarks, material: l.material ?? '', rate_only: !!l.rate_only }))
-const priced = (r: Row) => r.kind === 'item' || r.kind === 'sub'
+/**
+ * What a row is, from what is in it - there is no Kind column to set. A row with a quantity, a rate or R/o is an item;
+ * with only words it is a heading. A note, which can only come from an older BOQ, stays one.
+ */
+const kindOf = (r: Row): BoqKind => (r.kind === 'note' ? 'note' : r.quantity || r.rate || r.rate_only ? (r.kind === 'sub' ? 'sub' : 'item') : 'section')
+const priced = (r: Row) => kindOf(r) === 'item' || kindOf(r) === 'sub'
+const locked = (r: Row) => r.kind === 'note'
 const amountOf = (r: Row) => (priced(r) && !r.rate_only && r.quantity && r.rate ? Math.round(r.quantity * r.rate * 100) / 100 : null)
 
 /**
@@ -58,14 +65,7 @@ const amountOf = (r: Row) => (priced(r) && !r.rate_only && r.quantity && r.rate 
 const payload = (rows: Row[]) =>
   rows
     .filter((r) => r.description.trim())
-    .map((r) => ({ ...r, kind: priced(r) && !r.quantity && !r.rate ? ('section' as BoqKind) : r.kind, quantity: r.rate_only ? 0 : (r.quantity ?? 0), rate: r.rate ?? 0 }))
-
-const KINDS = [
-  { value: 'section', label: 'Section' },
-  { value: 'item', label: 'Item' },
-  { value: 'sub', label: 'Sub-item' },
-  { value: 'note', label: 'Note' },
-]
+    .map((r) => ({ ...r, kind: kindOf(r), quantity: r.rate_only ? 0 : (r.quantity ?? 0), rate: r.rate ?? 0 }))
 
 const FLAG_TEXT: Record<BoqFlag, string> = { no_gang: 'No gang yet', over_allotted: 'Given past the BOQ', loss: 'Gang rate above ours', over_executed: 'Executed past the BOQ' }
 
@@ -146,20 +146,26 @@ export default function BoqPage() {
     return Array.from(new Set([...GROUP_CODES, ...used]))
   }, [rows])
 
+  // The standard list, then every material added on any BOQ before, then this sheet's own - so one added once is there next time.
+  const known = useBoqMaterials()
+  const materialOptions = useMemo(() => {
+    const used = rows.map((r) => r.material.trim()).filter(Boolean)
+    return Array.from(new Set([...MATERIALS, ...(known.data?.materials ?? []), ...used]))
+  }, [rows, known.data])
+
   const columns = useMemo<Column<Row>[]>(
     () => [
       { id: 'group_code', header: 'Group code', hint: 'Pick one, or type your own', type: 'select', freeText: true, customLabel: 'Customize...', width: 190, pin: true, options: groupOptions },
       { id: 'item_code', header: 'Item code', hint: 'Type one, or leave blank to be given one on save', width: 120, mono: true, placeholder: 'Auto' },
       { id: 'description', header: 'Description', hint: 'Paste the client’s lines here', width: 420, required: true, placeholder: 'What is the work?' },
-      { id: 'material', header: 'Material', hint: 'Grade or material: M40, Fe550/550D', type: 'select', freeText: true, width: 120, options: MATERIALS, readOnly: (r) => !priced(r) },
-      { id: 'uom', header: 'Unit', type: 'select', freeText: true, width: 84, options: ['cum', 'sqm', 'rmt', 'nos', 'kg', 'MT', 'ltr', 'LS'], readOnly: (r) => !priced(r) },
-      { id: 'quantity', header: 'Quantity', type: 'number', decimals: 3, width: 112, readOnly: (r) => !priced(r) || r.rate_only, validate: (v) => ((v as number) < 0 ? 'Cannot be negative' : null) },
-      { id: 'rate', header: 'Rate', hint: '₹ per unit', type: 'number', decimals: 2, width: 112, readOnly: (r) => !priced(r), validate: (v) => ((v as number) < 0 ? 'Cannot be negative' : null) },
-      { id: 'rate_only', header: 'R/o', hint: 'Rate only: rate agreed, quantity not yet known. Comes to nothing and is in no total.', type: 'checkbox', width: 64, readOnly: (r) => !priced(r), countsAsData: false },
+      { id: 'material', header: 'Material', hint: 'Grade or material: M40, Fe550/550D', type: 'select', freeText: true, customLabel: 'Add an item...', width: 130, options: materialOptions, readOnly: locked },
+      { id: 'uom', header: 'Unit', type: 'select', freeText: true, width: 84, options: ['cum', 'sqm', 'rmt', 'nos', 'kg', 'MT', 'ltr', 'LS'], readOnly: locked },
+      { id: 'quantity', header: 'Quantity', type: 'number', decimals: 3, width: 112, readOnly: (r) => locked(r) || r.rate_only, validate: (v) => ((v as number) < 0 ? 'Cannot be negative' : null) },
+      { id: 'rate', header: 'Rate', hint: '₹ per unit', type: 'number', decimals: 2, width: 112, readOnly: locked, validate: (v) => ((v as number) < 0 ? 'Cannot be negative' : null) },
+      { id: 'rate_only', header: 'R/o', hint: 'Rate only: rate agreed, quantity not yet known. Comes to nothing and is in no total.', type: 'checkbox', width: 64, readOnly: locked, countsAsData: false },
       { id: 'amount', header: 'Amount', type: 'number', width: 140, readOnly: true, get: (r) => amountOf(r), format: (v) => (typeof v === 'number' ? formatINR(v) : ''), summary: 'sum' },
-      { id: 'kind', header: 'Kind', type: 'select', width: 110, options: KINDS, countsAsData: false },
     ],
-    [groupOptions],
+    [groupOptions, materialOptions],
   )
 
   const head = book.data?.boq
@@ -276,7 +282,7 @@ export default function BoqPage() {
             autoGrow={editable}
             minRows={editable ? 12 : 0}
             maxHeight={620}
-            rowClassName={(r) => (r.kind === 'section' ? 'font-semibold bg-surface/60' : r.kind === 'note' ? 'italic text-muted-foreground' : undefined)}
+            rowClassName={(r) => (kindOf(r) === 'section' ? 'font-semibold bg-surface/60' : r.kind === 'note' ? 'italic text-muted-foreground' : undefined)}
             emptyText="Nothing in the BOQ yet."
           />
         </div>

@@ -94,6 +94,16 @@ def boq_sample_sheet(request: Request, db: Session = Depends(get_db)):
         "sample_boq.xlsx")
 
 
+@router.get("/api/boqs/materials")
+def boq_materials(request: Request, db: Session = Depends(get_db)):
+    """Every material or grade that has been put on any of this business's BOQ lines, for the Material dropdown: an
+    item added once is on the list from then on, on every BOQ."""
+    client = require_erp_read(request, db)
+    rows = db.query(models.DBBoqLine.material).join(models.DBBoq, models.DBBoq.id == models.DBBoqLine.boq_id).filter(
+        models.DBBoq.client_id == client.id, models.DBBoqLine.material.isnot(None), models.DBBoqLine.material != "").distinct().all()
+    return {"materials": sorted({r[0].strip() for r in rows if r[0] and r[0].strip()}, key=str.lower)}
+
+
 @router.get("/api/boqs")
 def boq_list(request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
