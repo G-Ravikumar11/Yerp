@@ -56,6 +56,7 @@ from app.validators.common import validate_candidate_document
 from app.validators.hr import (
     clean_department_name,
     clean_employee_email,
+    clean_org_email,
     clean_org_domain,
     clean_person_name,
     validate_employee_money,
@@ -337,7 +338,7 @@ def get_employees(request: Request, q: str = "", status: str = "", db: Session =
             "id": e.id, "employee_id": e.employee_id,
             "first_name": e.first_name, "last_name": e.last_name,
             "full_name": f"{e.first_name} {e.last_name}",
-            "email": e.email, "phone": e.phone,
+            "email": e.email, "org_email": e.org_email or "", "phone": e.phone,
             "department_id": e.department_id, "department_name": dept_name,
             "reports_to": e.reports_to, "manager_name": manager_name,
             "job_title": e.job_title, "role": e.role, "level": e.level or "",
@@ -364,6 +365,7 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     first_name = clean_person_name(body.first_name, "First name")
     last_name = clean_person_name(body.last_name, "Last name")
     email = clean_employee_email(db, client.id, body.email, required=bool(body.password))
+    org_email = clean_org_email(db, client.id, body.org_email)
     validate_employee_money(body.model_dump())
     employee_code = assert_employee_code_free(db, client.id, body.employee_id)
 
@@ -383,7 +385,7 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     emp = models.DBEmployee(
         client_id=client.id, employee_id=emp_number,
         first_name=first_name, last_name=last_name,
-        email=email, phone=body.phone, address=body.address,
+        email=email, org_email=org_email, phone=body.phone, address=body.address,
         reports_to=reports_to,
         job_title=body.job_title, role=role, level=level,
         permission_role=permission_role,
@@ -414,7 +416,7 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
         **employee_sites_payload(db, emp),
         "id": emp.id, "employee_id": emp.employee_id,
         "first_name": emp.first_name, "last_name": emp.last_name,
-        "email": emp.email, "status": emp.status, "level": emp.level or "", "role": emp.role,
+        "email": emp.email, "org_email": emp.org_email or "", "status": emp.status, "level": emp.level or "", "role": emp.role,
         "permission_role": emp.permission_role or DEFAULT_PERMISSION_ROLE,
         "department_id": emp.department_id, "reports_to": emp.reports_to,
         "message": "Employee created. Onboarding checklist generated.",
@@ -572,6 +574,8 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
     if "email" in body:
         body["email"] = clean_employee_email(db, client.id, body["email"], exclude_id=emp.id,
                                              required=bool(emp.password_hash or body.get("password")))
+    if "org_email" in body:
+        body["org_email"] = clean_org_email(db, client.id, body["org_email"], exclude_id=emp.id)
     validate_employee_money(body)
     # Hierarchy fields go through the same checks as on create; a blind
     # setattr let callers set an unknown level or build a reporting loop.

@@ -344,6 +344,7 @@ def ensure_columns():
             # Add new columns to existing tables
             alter_statements = [
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS password_hash VARCHAR DEFAULT ''",
+                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS org_email VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS work_location VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS latitude FLOAT DEFAULT 0.0",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS longitude FLOAT DEFAULT 0.0",
@@ -1328,6 +1329,7 @@ def ensure_columns():
                     ("bills", "current_approval_step", "INTEGER DEFAULT 0"),
                     ("bills", "rejection_reason", "VARCHAR DEFAULT ''"),
                     ("employees", "permission_role", "VARCHAR DEFAULT 'staff'"),
+                    ("employees", "org_email", "VARCHAR DEFAULT ''"),
                     # Job costing. Nullable throughout: a business that does not
                     # work job-by-job is unaffected.
                     ("invoices", "job_id", "INTEGER"),
@@ -1557,6 +1559,7 @@ def migrate_sqlite():
 
             # What a member of staff is allowed to do in the portal, set by HR.
             add_col("employees", "permission_role", "VARCHAR DEFAULT 'staff'")
+            add_col("employees", "org_email", "VARCHAR DEFAULT ''")
 
             # Job costing: what each document was for.
             add_col("invoices", "job_id", "INTEGER")

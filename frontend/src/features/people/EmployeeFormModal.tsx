@@ -7,7 +7,7 @@ import { today } from '@/lib/format'
 import { useSession } from '@/lib/session'
 import { AccessPicker } from './AccessPicker'
 
-const blank = (): EmployeeInput => ({ first_name: '', last_name: '', email: '', password: '', phone: '', job_title: '', department_id: null, reports_to: null, level: '', role: 'employee', permission_role: 'staff', site_ids: [], employment_type: 'full_time', pay_frequency: 'monthly', salary: 0, tax_rate: 0, start_date: today(), emergency_contact: '', emergency_phone: '' })
+const blank = (): EmployeeInput => ({ first_name: '', last_name: '', email: '', org_email: '', password: '', phone: '', job_title: '', department_id: null, reports_to: null, level: '', role: 'employee', permission_role: 'staff', site_ids: [], employment_type: 'full_time', pay_frequency: 'monthly', salary: 0, tax_rate: 0, start_date: today(), emergency_contact: '', emergency_phone: '' })
 
 /** A new member of staff: who they are, the department they belong to, what they may do, and a login if they need one. */
 export function EmployeeFormModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -63,7 +63,8 @@ function Form({ onClose }: { onClose: () => void }) {
         <Field label="First name *" htmlFor="ef-first"><Input id="ef-first" value={f.first_name} onChange={set('first_name')} autoFocus /></Field>
         <Field label="Last name *" htmlFor="ef-last"><Input id="ef-last" value={f.last_name} onChange={set('last_name')} /></Field>
         <Field label="Employee ID" htmlFor="ef-eid" hint="Leave blank to number it."><Input id="ef-eid" value={f.employee_id ?? ''} onChange={set('employee_id')} /></Field>
-        <Field label="Email (their login)" htmlFor="ef-email"><Input id="ef-email" type="email" value={f.email} onChange={(e) => { setTyped(true); set('email')(e) }} /></Field>
+        <Field label="Personal email" htmlFor="ef-email"><Input id="ef-email" type="email" value={f.email} onChange={(e) => { setTyped(true); set('email')(e) }} /></Field>
+        <Field label="Organization email (Yahoo sign-in)" htmlFor="ef-org-email"><Input id="ef-org-email" type="email" value={f.org_email ?? ''} onChange={set('org_email')} /></Field>
         <Field label="Password" htmlFor="ef-pass" hint="Leave blank for site staff who are paid without signing in."><Input id="ef-pass" type="text" autoComplete="off" value={f.password ?? ''} onChange={set('password')} /></Field>
         <Field label="Phone" htmlFor="ef-phone"><Input id="ef-phone" type="tel" value={f.phone} onChange={set('phone')} /></Field>
         <Field label="Job title" htmlFor="ef-title"><Input id="ef-title" value={f.job_title} onChange={set('job_title')} /></Field>

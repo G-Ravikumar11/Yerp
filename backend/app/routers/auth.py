@@ -367,8 +367,9 @@ def _sign_in_with_identity(request: Request, db: Session, info: dict, provider: 
         db.commit()
         return RedirectResponse(target)
 
-    emp = db.query(models.DBEmployee).filter(
-        sqlfunc.lower(models.DBEmployee.email) == email).first()
+    # Yahoo signs staff in by the address the organisation issued them, never by their personal one.
+    emp_col = models.DBEmployee.org_email if provider == "yahoo" else models.DBEmployee.email
+    emp = db.query(models.DBEmployee).filter(sqlfunc.lower(emp_col) == email).first()
     if emp and emp.status != "terminated":
         request.session.pop("client_id", None)
         request.session.pop("member_id", None)

@@ -133,6 +133,21 @@ def clean_employee_email(db, client_id, email, exclude_id=None, required=True):
     return email
 
 
+def clean_org_email(db, client_id, email, exclude_id=None):
+    """The organisation-issued address an employee signs in with through Yahoo. Optional, but never shared."""
+    email = (email or "").strip().lower()
+    if not email:
+        return ""
+    if not validate_email_address(email):
+        raise HTTPException(status_code=400, detail=f"'{email}' is not a valid organization email address")
+    query = db.query(models.DBEmployee).filter(sqlfunc.lower(models.DBEmployee.org_email) == email)
+    if exclude_id:
+        query = query.filter(models.DBEmployee.id != exclude_id)
+    if query.first():
+        raise HTTPException(status_code=400, detail="That organization email already belongs to another employee")
+    return email
+
+
 def clean_person_name(value, label):
     value = (value or "").strip()
     if not value:

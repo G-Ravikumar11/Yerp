@@ -35,6 +35,8 @@ class DBEmployee(Base):
     first_name = Column(String, nullable=False)
     last_name = Column(String, nullable=False)
     email = Column(String, nullable=False)
+    # The address the organisation issued, used only to sign in with Yahoo; `email` is their personal one.
+    org_email = Column(String, default="", index=True)
     phone = Column(String, default="")
     address = Column(String, default="")
 

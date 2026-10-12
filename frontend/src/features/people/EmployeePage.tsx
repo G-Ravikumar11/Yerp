@@ -15,7 +15,7 @@ function Profile({ e }: { e: EmployeeDetail }) {
   const depts = useDepartments()
   const people = useEmployees('')
   const cat = useHrCatalogue()
-  const [f, setF] = useState({ first_name: e.first_name, last_name: e.last_name, email: e.email, phone: e.phone, job_title: e.job_title, department_id: e.department_id, reports_to: e.reports_to, level: e.level, role: e.role, employment_type: e.employment_type, pay_frequency: e.pay_frequency, salary: e.salary, tax_rate: e.tax_rate, start_date: e.start_date, emergency_contact: e.emergency_contact, emergency_phone: e.emergency_phone })
+  const [f, setF] = useState({ first_name: e.first_name, last_name: e.last_name, email: e.email, org_email: e.org_email ?? '', phone: e.phone, job_title: e.job_title, department_id: e.department_id, reports_to: e.reports_to, level: e.level, role: e.role, employment_type: e.employment_type, pay_frequency: e.pay_frequency, salary: e.salary, tax_rate: e.tax_rate, start_date: e.start_date, emergency_contact: e.emergency_contact, emergency_phone: e.emergency_phone })
   const { isOwner } = useSession()
   const set = (k: keyof typeof f) => (ev: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((s) => ({ ...s, [k]: ev.target.value }))
   const save = useAction(() => updateEmployee(e.id, f), { invalidate: [peopleKeys.all], success: 'Saved' })
@@ -24,7 +24,8 @@ function Profile({ e }: { e: EmployeeDetail }) {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Field label="First name" htmlFor="ep-first"><Input id="ep-first" value={f.first_name} onChange={set('first_name')} /></Field>
         <Field label="Last name" htmlFor="ep-last"><Input id="ep-last" value={f.last_name} onChange={set('last_name')} /></Field>
-        <Field label="Email (their login)" htmlFor="ep-email"><Input id="ep-email" type="email" value={f.email} onChange={set('email')} /></Field>
+        <Field label="Personal email" htmlFor="ep-email"><Input id="ep-email" type="email" value={f.email} onChange={set('email')} /></Field>
+        <Field label="Organization email (Yahoo sign-in)" htmlFor="ep-org-email"><Input id="ep-org-email" type="email" value={f.org_email} onChange={set('org_email')} /></Field>
         <Field label="Phone" htmlFor="ep-phone"><Input id="ep-phone" value={f.phone} onChange={set('phone')} /></Field>
         <Field label="Job title" htmlFor="ep-title"><Input id="ep-title" value={f.job_title} onChange={set('job_title')} /></Field>
         <Field label="Department" htmlFor="ep-dept" hint={isOwner ? undefined : 'Only the Master moves people between departments.'}><Select id="ep-dept" disabled={!isOwner} value={f.department_id ?? ''} onChange={(ev) => setF((s) => ({ ...s, department_id: ev.target.value ? Number(ev.target.value) : null }))} placeholder="None" options={(depts.data ?? []).map((d) => ({ value: d.id, label: d.name }))} /></Field>
