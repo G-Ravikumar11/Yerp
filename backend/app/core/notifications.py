@@ -115,6 +115,29 @@ def prepare_email_message(to_email, subject, body_text, html_body, from_email, l
     return msg.as_string()
 
 
+def _send_via_smtp(to_email: str, raw_msg: str):
+    """Server-wide mail account (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD) for when no Gmail is connected."""
+    import smtplib
+    import ssl
+    host, port = os.getenv("SMTP_HOST", ""), int(os.getenv("SMTP_PORT", "587"))
+    user, password = os.getenv("SMTP_USER", ""), os.getenv("SMTP_PASSWORD", "")
+    try:
+        if port == 465:
+            server = smtplib.SMTP_SSL(host, port, context=ssl.create_default_context(), timeout=20)
+        else:
+            server = smtplib.SMTP(host, port, timeout=20)
+            server.starttls(context=ssl.create_default_context())
+        with server:
+            if user:
+                server.login(user, password)
+            server.sendmail(user or os.getenv("SMTP_FROM", ""), [to_email], raw_msg.encode("utf-8"))
+        logger.info(f"Email sent via SMTP to {to_email}")
+        return True, "Email sent via SMTP"
+    except Exception as e:
+        logger.error(f"SMTP failed: {type(e).__name__}")
+        return False, f"SMTP error: {type(e).__name__}"
+
+
 def send_email_background(to_email: str, subject: str, body: str, from_email: str, html_body: str = None, pdf_b64: str = None, pdf_filename: str = "invoice.pdf", logo_data: str = "", client_id: int = None):
     pdf_bytes = None
     if pdf_b64:
@@ -129,6 +152,10 @@ def send_email_background(to_email: str, subject: str, body: str, from_email: st
         refresh_token = get_stored_refresh_token(db, client_id=client_id)
 
     if not refresh_token:
+        # No Gmail connected in the app: fall back to the server's own mail account, if one is configured.
+        if os.getenv("SMTP_HOST"):
+            return _send_via_smtp(to_email, raw_msg)
+        logger.error(f"Email to {to_email} not sent: no Gmail connected and SMTP_HOST is not set")
         return False, "Gmail refresh token not configured"
 
     try:

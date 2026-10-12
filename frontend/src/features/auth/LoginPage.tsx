@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Button, Field, Input } from '@/components/ui'
 import { Capacitor } from '@capacitor/core'
+import { Eye, EyeOff } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { AuthLayout, Notice, nextTarget } from './AuthLayout'
 import { appUrl } from '@/lib/paths'
@@ -43,6 +44,8 @@ export default function LoginPage() {
   const [yahoo, setYahoo] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [rememberMe, setRememberMe] = useState(false)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -77,9 +80,9 @@ export default function LoginPage() {
         if (!(e instanceof ApiError)) unreachable = true
         return null
       }
-      const owner = await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password }, quiet: true }).catch(none)
+      const owner = await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password, rememberMe }, quiet: true }).catch(none)
       if (owner) return go(owner.is_onboarded === false ? nextTarget(appUrl('onboard')) : nextTarget(appUrl()))
-      const staff = await api('/api/employee/auth/login', { method: 'POST', body: { email: email.trim(), password, device_info: navigator.userAgent.slice(0, 200) }, quiet: true }).catch(none)
+      const staff = await api('/api/employee/auth/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, device_info: navigator.userAgent.slice(0, 200) }, quiet: true }).catch(none)
       if (staff) return go(nextTarget(appUrl()))
       setError(unreachable ? 'Could not reach the server. Check the connection and try again.' : 'That email and password did not match an account.')
     } finally {
@@ -109,10 +112,19 @@ export default function LoginPage() {
 
   return (
     <AuthLayout title="Y ERP" subtitle="Sign in to your account" aside={pitch}>
+      {params.get('reset') && !error && <Notice tone="success">Your password has been updated. Sign in with the new one.</Notice>}
       {error && <Notice tone="error">{error}</Notice>}
       <form onSubmit={submit} className="grid gap-4">
         <Field label="Email address" htmlFor="email"><Input id="email" type="email" autoComplete="username" autoFocus required placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
-        <Field label="Password" htmlFor="password"><Input id="password" type="password" autoComplete="current-password" required placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+        <Field label="Password" htmlFor="password"><Input id="password" type={showPassword ? 'text' : 'password'} autoComplete="current-password" required placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)}
+          trailing={<button type="button" onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} className="grid size-6 place-items-center rounded text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">{showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</button>} /></Field>
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
+          <label htmlFor="rememberMe" className="flex w-fit cursor-pointer items-center gap-2 text-muted-foreground">
+            <input id="rememberMe" type="checkbox" className="size-4 cursor-pointer rounded border-border accent-primary" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
+            Remember me
+          </label>
+          <a href={appUrl('forgot-password')} className="text-muted-foreground hover:text-primary">Forgot password?</a>
+        </div>
         <Button type="submit" loading={busy} className="w-full">Sign in</Button>
       </form>
       {(google || yahoo) && !native && (

@@ -3,6 +3,7 @@ import asyncio
 import contextvars
 import json
 import os
+import re
 import time
 from datetime import datetime, timedelta
 
@@ -25,6 +26,8 @@ from app.core.config import (
     BODY_LIMIT_FORMS,
     CORS_ORIGINS,
     COOKIE_SECURE,
+    REMEMBER_MAX_AGE,
+    SESSION_MAX_AGE,
     SESSION_SAMESITE,
     SECRET_KEY,
     SLOW_REQUEST_MS,
@@ -33,13 +36,64 @@ from app.core.config import (
 )
 
 
+class SessionExpiryMiddleware:
+    """Innermost: enforces the session's own `exp` (set at sign-in; stamped on first sight for older sessions)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        session = scope.get("session") if scope["type"] in ("http", "websocket") else None
+        if session:
+            now = int(time.time())
+            if session.get("exp") and session["exp"] < now:
+                session.clear()
+            elif "exp" not in session:
+                session["exp"] = now + SESSION_MAX_AGE
+        await self.app(scope, receive, send)
+
+
+class SessionCookieLifetimeMiddleware:
+    """Outside SessionMiddleware: sets the cookie's Max-Age per sign-in. Remember me gets a persistent cookie; a
+    sign-in without it gets none, so the browser drops it on close. (The signature check allows the longest
+    lifetime; `exp` above is what actually limits a shorter one.)"""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        async def wrapped(message):
+            session = scope.get("session")
+            if message["type"] == "http.response.start" and session:
+                remember = session.get("remember")
+                headers = []
+                for k, v in message["headers"]:
+                    if k.lower() == b"set-cookie" and v.startswith(b"session=") and not v.startswith(b"session=null"):
+                        text = re.sub(r";\s*Max-Age=\d+", "", v.decode("latin-1"), flags=re.I)
+                        if remember is True:
+                            text += f"; Max-Age={REMEMBER_MAX_AGE}"
+                        elif remember is None:
+                            text += f"; Max-Age={SESSION_MAX_AGE}"
+                        v = text.encode("latin-1")
+                    headers.append((k, v))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, wrapped)
+
+
+app.add_middleware(SessionExpiryMiddleware)
 app.add_middleware(
     SessionMiddleware,
     secret_key=SECRET_KEY,
     same_site=SESSION_SAMESITE,
     https_only=COOKIE_SECURE,
-    max_age=int(os.getenv("SESSION_MAX_AGE", "86400")),
+    max_age=REMEMBER_MAX_AGE,
 )
+app.add_middleware(SessionCookieLifetimeMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

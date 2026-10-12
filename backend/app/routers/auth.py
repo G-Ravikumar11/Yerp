@@ -13,7 +13,7 @@ from app.db import get_db
 
 from app.constants.common import ALLOW_SELF_REGISTRATION, GOOGLE_SIGNIN_SCOPES
 from app.core.audit import log_audit, log_login
-from app.core.auth import current_role, end_every_session, get_client_user
+from app.core.auth import current_role, end_every_session, get_client_user, set_session_lifetime
 from app.core.config import logger
 from app.core.notifications import default_from_email, send_email_background
 from app.core.oauth import oauth
@@ -107,6 +107,7 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
             request.session.pop("portal_user_id", None)
             request.session["client_id"] = owner.id
             request.session["member_id"] = member.id
+            set_session_lifetime(request, body.remember_me)
             member.last_login = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             log_login(db, owner.id, member.email, "member", "password", request, "success")
             db.commit()
@@ -122,6 +123,7 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
     request.session.pop("portal_user_id", None)
     request.session["client_id"] = client.id
     request.session.pop("member_id", None)
+    set_session_lifetime(request, body.remember_me)
     log_login(db, client.id, body.email, "client", "password", request, "success")
     return {"message": "Logged in", "is_onboarded": client.is_onboarded, "company_name": client.company_name}
 
