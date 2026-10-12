@@ -22,3 +22,18 @@ export function addRevision(id: number, file: File, b: { revision: string; statu
   for (const [k, v] of Object.entries(b)) fd.append(k, v)
   return api<{ message: string }>(`/api/drawings/${id}/revisions`, { method: 'POST', body: fd })
 }
+
+export interface Plan3D {
+  available: boolean
+  message?: string
+  reason?: string
+  walls?: { x1: number; y1: number; x2: number; y2: number }[]
+  rooms?: { name: string; x: number; y: number; w: number; h: number }[]
+  openings?: { type: 'door' | 'window'; x: number; y: number }[]
+  width_m?: number | null
+  storeys?: number
+  revision?: string
+  low_confidence?: boolean
+}
+/** Trace the current sheet's floor plan into walls and rooms. Nothing is saved. */
+export const planTo3d = (id: number) => post<Plan3D>(`/api/ai/drawings/${id}/to-3d`, {})

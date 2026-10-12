@@ -9,6 +9,7 @@ import { useDrawings, type Drawing, type DrawingRegister } from '@/api/drawings'
 import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
 import { AddDrawingModal, HistoryModal, RevisionModal } from './DrawingModals'
+import { Plan3DModal } from './Plan3DModal'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 const tone = (s: string) => (s === 'Good for construction' ? 'success' : s === 'For approval' ? 'warning' : 'neutral') as 'success' | 'warning' | 'neutral'
@@ -26,6 +27,7 @@ export default function DrawingsPage() {
   const [adding, setAdding] = useState(false)
   const [revising, setRevising] = useState<Drawing | null>(null)
   const [history, setHistory] = useState<number | null>(null)
+  const [view3d, setView3d] = useState<Drawing | null>(null)
   const words = search.toLowerCase()
   const rows = (d?.drawings ?? []).filter((w) => (!words || `${w.number} ${w.title}`.toLowerCase().includes(words)) && (!disc || w.discipline === disc) && (!status || (status === 'none' ? !w.current_revision : w.status === status)))
   const columns: TableColumn<Drawing>[] = [
@@ -43,6 +45,7 @@ export default function DrawingsPage() {
         <div className="flex flex-wrap justify-end gap-1.5">
           {w.current_file_id && <Button size="sm" variant="outline" asChild><a href={`/api/files/${w.current_file_id}`} target="_blank" rel="noopener">Open</a></Button>}
           <Button size="sm" variant="outline" onClick={() => setRevising(w)}>New revision</Button>
+          {w.current_file_id && <Button size="sm" variant="outline" onClick={() => setView3d(w)}>3D</Button>}
           <Button size="sm" variant="outline" onClick={() => setHistory(w.id)}>History</Button>
         </div>
       ),
@@ -77,6 +80,7 @@ export default function DrawingsPage() {
           <DataTable label="Drawings" rows={rows} columns={columns} rowKey={(w) => w.id} loading={q.isPending && job > 0} empty={d?.drawings.length ? 'No drawing matches the filters.' : 'No drawings on the register. Add each sheet by its number, then its revisions as they arrive.'} />
       <AddDrawingModal job={job} disciplines={d?.disciplines ?? []} open={adding} onClose={() => setAdding(false)} onAdded={(id, number) => { setAdding(false); setRevising(d?.drawings.find((w) => w.id === id) ?? ({ id, number, title: '', discipline: '', current_revision: '', revisions: 0, status: '', received_on: '', current_file_id: null } as Drawing)) }} />
       <RevisionModal drawing={revising} statuses={d?.statuses ?? []} onClose={() => setRevising(null)} />
+      <Plan3DModal drawing={view3d} onClose={() => setView3d(null)} />
       <HistoryModal id={history} onClose={() => setHistory(null)} />
     </>
   )

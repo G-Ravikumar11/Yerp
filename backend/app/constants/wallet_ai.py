@@ -67,6 +67,8 @@ DEFAULT_PRICING = [
      "Charged per programme summary. Priced at zero until set."),
     ("ai_plan_ask",       "AI programme question",  "projects",  0, 0,
      "Charged per question answered about a programme. Priced at zero until set."),
+    ("ai_drawing_3d",     "AI drawing 3D view",     "projects", 0, 0,
+     "Charged per floor plan traced into a 3D view. Priced at zero until set."),
 ]
 
 # PAYMENT GATEWAYS
