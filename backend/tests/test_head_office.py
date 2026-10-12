@@ -317,3 +317,21 @@ def test_the_order_ho_qs_raises_still_goes_to_the_project_manager_first(tenant):
     qs = person(tenant, "ho_qs")
     pm = person(tenant, "project_manager")
     assert _route(tenant, qs)[0] == "%s %s" % (pm["first_name"], pm["last_name"])
+
+
+# --- The coordinator follows up; it starts nothing ------------------------------------------
+
+def test_the_coordinator_starts_no_project_tender_bill_or_variation_but_ho_qs_can(tenant, portal):
+    job = project(tenant)
+    co = sign_in(portal, person(tenant, "ho_coordinator"))
+    for url, body in (("/api/jobs", {"name": "Another", "customer_name": "x"}),
+                      ("/api/estimates", {"title": "Tender", "job_id": job["id"]}),
+                      ("/api/ra-bills", {"work_order_id": 1}),
+                      ("/api/variations", {"work_order_id": 1, "title": "v"}),
+                      ("/api/sub-bills", {"order_id": 1})):
+        res = co.post(url, json=body)
+        assert res.status_code == 403, (url, res.text)
+        assert "coordinator" in res.json()["detail"]
+    qs = sign_in(portal, person(tenant, "ho_qs"))
+    assert qs.post("/api/estimates", json={"title": "Tender", "job_id": job["id"]}).status_code == 200
+    assert qs.post("/api/jobs", json={"name": "QS job", "customer_name": "x"}).status_code == 200

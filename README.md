@@ -151,7 +151,7 @@ projects have no BOQ yet. HO QS is the only one in the business, with the
 Master, who opens a vendor code, a work order (the client's or a sub
 contractor's, a copy or an amendment) or a BOQ; nobody on a site does, and the
 boxes cannot be ticked for anybody else by hand. The coordinator sees all of it,
-follows it up and keeps drafts up to date. A tender won by somebody else waits
+follows it up and keeps drafts up to date, and starts nothing new (no project, tender, bill or variation either). A tender won by somebody else waits
 for HO QS to draw up its work order.
 
 HO QS also sits on the approval ladder, right after the project manager: what a site raises goes to

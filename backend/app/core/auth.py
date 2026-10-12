@@ -11,7 +11,7 @@ from app import models
 from app.db import SessionLocal
 
 from app.core.config import ADMIN_PANEL_MIN_LENGTH, logger
-from app.core.permissions import HO_QS_ONLY, HO_QS_ONLY_REFUSAL, PORTAL_PERMISSIONS, employee_can
+from app.core.permissions import HO_FOLLOW_UP_ONLY_ROLES, HO_QS_ONLY, HO_QS_ONLY_REFUSAL, PORTAL_PERMISSIONS, employee_can
 from app.core.security import admin_panel_password, hash_password, verify_password
 
 
@@ -171,6 +171,23 @@ def session_can(request, db, permission) -> bool:
         return employee_can(get_employee_user(request, db), permission)
     except HTTPException:
         return False
+
+
+def refuse_ho_coordinator(request, db, what):
+    """The HO Coordinator follows things up; it does not start them. Refuses it, and only it, when it
+    tries to create `what` (a project, a tender, a bill, a variation). Everybody else is unaffected."""
+    try:
+        get_client_user(request, db)
+        return
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            return
+    try:
+        emp = get_employee_user(request, db)
+    except HTTPException:
+        return
+    if (getattr(emp, "permission_role", "") or "").lower() in HO_FOLLOW_UP_ONLY_ROLES:
+        raise HTTPException(403, "%s are started by HO QS or the site team - the coordinator follows them up." % what)
 
 
 def require_erp_read(request, db):

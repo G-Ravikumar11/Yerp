@@ -13,7 +13,7 @@ from app.constants.common import DRAWING_STATUSES
 from app.constants.crm import OPEN_INVOICE_STATUSES
 from app.constants.projects import DRAWING_DISCIPLINES, JOB_CLOSED_STATUSES, JOB_FINISHED, WEATHER
 from app.core.audit import log_audit
-from app.core.auth import (get_client_user, owned_or_404, require_erp_read, require_items_access, require_owner,
+from app.core.auth import (get_client_user, owned_or_404, refuse_ho_coordinator, require_erp_read, require_items_access, require_owner,
                             session_person, wo_actor)
 from app.core.cache import cached_read
 from app.core.config import logger
@@ -231,6 +231,7 @@ def get_job(job_id: int, request: Request, db: Session = Depends(get_db)):
 
 @router.post("/api/jobs")
 def create_job(body: JobIn, request: Request, db: Session = Depends(get_db)):
+    refuse_ho_coordinator(request, db, "Projects")
     client = require_items_access(request, db, "workorders.manage")
     name = (body.name or "").strip()
     if not name:

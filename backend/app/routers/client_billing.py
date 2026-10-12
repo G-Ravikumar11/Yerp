@@ -14,7 +14,7 @@ from app.db import get_db
 
 from app.constants.client_billing import RA_EDITABLE, VO_TRANSITIONS
 from app.core.audit import log_audit
-from app.core.auth import require_erp_read, require_items_access, wo_actor
+from app.core.auth import refuse_ho_coordinator, require_erp_read, require_items_access, wo_actor
 from app.core.currency import inr, money, unit_rate
 from app.core.notifications import notify
 from app.core.sheets import sheet_response
@@ -48,6 +48,7 @@ router = APIRouter()
 
 @router.post("/api/ra-bills")
 def raise_ra_bill(body: RABillIn, request: Request, db: Session = Depends(get_db)):
+    refuse_ho_coordinator(request, db, "RA bills")
     """Draw up the next bill on an order.
 
     Nothing is typed. The bill is what has been measured to date minus what
@@ -275,6 +276,7 @@ def suggest_variation(work_order_id: int, request: Request,
 def create_variation(body: VariationIn, request: Request,
                      db: Session = Depends(get_db)):
     """Draw one up - from the measurement book unless lines are supplied."""
+    refuse_ho_coordinator(request, db, "Variations")
     client, actor_id, actor_name = wo_actor(request, db, "billing.manage")
     wo = work_order_or_404(db, client.id, body.work_order_id)
     if (wo.status or "") == "Draft":
