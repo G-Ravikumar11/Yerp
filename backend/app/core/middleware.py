@@ -151,6 +151,9 @@ def _db_trip_end(conn, cursor, statement, parameters, context, executemany):
         tally[1] += took
 
 
+_STABLE_NAME_FILES = (".png", ".jpg", ".jpeg", ".webp", ".avif", ".gif", ".svg", ".ico", ".woff", ".woff2")
+
+
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
     tally = [0, 0.0]
@@ -167,11 +170,22 @@ async def security_middleware(request: Request, call_next):
                            request.method, path, total_ms, tally[0], tally[1] * 1000)
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         _WRITE_VERSION[0] += 1
-    if path.endswith(".html") or path == "/":
+    served_html = response.headers.get("content-type", "").startswith("text/html")
+    if path.endswith(".html") or path == "/" or (path.startswith("/next") and served_html):
+        # The app's own pages included: /next/ and every deep link under it are
+        # answered with index.html though no ".html" is in the address. Without
+        # this they carried no instruction at all, so a browser could keep a
+        # copy that names script files a later deploy has since removed - a
+        # blank app until the cache is cleared by hand.
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
     elif path.startswith("/next/assets/"):
+        # Named by a hash of their contents, so the name changes when they do.
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif path.startswith(("/next/", "/icons/")) and path.endswith(_STABLE_NAME_FILES):
+        # Pictures and fonts that keep their name from one deploy to the next:
+        # kept for an hour, then checked with the file's ETag (a 304, no body).
+        response.headers["Cache-Control"] = "public, max-age=3600, stale-while-revalidate=86400"
     elif path.endswith((".js", ".css")):
         # Revalidate rather than trusting a cached copy. Versioned URLs cover
         # the normal case, but a browser holding an older script alongside a

@@ -1,8 +1,9 @@
 import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button, ConfirmDialog, Skeleton } from '@/components/ui'
-import { deleteDepartment, peopleKeys, useDepartments, type Department } from '@/api/people'
+import { deleteDepartment, peopleKeys, showDepartmentChange, useDepartments, type Department } from '@/api/people'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { DepartmentMembersModal } from './DepartmentMembersModal'
@@ -11,12 +12,21 @@ import { iconOf } from './icons'
 
 export default function DepartmentsPage() {
   const { isOwner } = useSession()
+  const qc = useQueryClient()
   const q = useDepartments()
   const [editing, setEditing] = useState<Department | null>(null)
   const [creating, setCreating] = useState(false)
   const [removing, setRemoving] = useState<Department | null>(null)
   const [staffing, setStaffing] = useState<Department | null>(null)
-  const remove = useAction((d: Department) => deleteDepartment(d.id), { invalidate: [peopleKeys.all, ['orders', 'vocabulary']], success: 'Department deleted', onSuccess: () => setRemoving(null) })
+  // Gone from the page the moment it is confirmed; a refusal reloads the list and says why.
+  const remove = useAction((d: Department) => deleteDepartment(d.id), { success: 'Department deleted', onSuccess: (_, d) => showDepartmentChange(qc, { deletedId: d.id }), onError: () => void qc.invalidateQueries({ queryKey: peopleKeys.all }) })
+  const confirmDelete = () => {
+    if (!removing) return
+    const d = removing
+    setRemoving(null)
+    showDepartmentChange(qc, { deletedId: d.id }, { refresh: false })
+    remove.mutate(d)
+  }
   return (
     <>
       <PageHeader eyebrow="People" title="Departments" description="The departments of the business. Create them here and they appear everywhere they are needed: on an employee, on a work order, and on a member of staff's own sign-in." actions={isOwner && <Button onClick={() => setCreating(true)}><Plus /> New department</Button>} />
@@ -41,7 +51,7 @@ export default function DepartmentsPage() {
       )}
       <DepartmentMembersModal dept={staffing && (q.data?.find((d) => d.id === staffing.id) ?? staffing)} onClose={() => setStaffing(null)} />
       <DepartmentModal open={creating || !!editing} dept={editing} onClose={() => { setCreating(false); setEditing(null) }} />
-      <ConfirmDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)} title={`Delete ${removing?.name ?? 'this department'}?`} description="The people in it are not deleted; they are left with no department." confirmLabel="Delete it" tone="danger" loading={remove.isPending} onConfirm={() => { if (removing) remove.mutate(removing) }} />
+      <ConfirmDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)} title={`Delete ${removing?.name ?? 'this department'}?`} description="The people in it are not deleted; they are left with no department." confirmLabel="Delete it" tone="danger" onConfirm={confirmDelete} />
     </>
   )
 }

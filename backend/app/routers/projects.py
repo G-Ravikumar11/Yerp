@@ -734,6 +734,11 @@ def portfolio_pnl(request: Request, db: Session = Depends(get_db)):
     losing money, so the one that is losing money is at the top.
     """
     client = require_items_access(request, db, "reports.view")
+    # Nineteen queries to add up; kept until anything is saved.
+    return cached_read(("jobs-pnl", client.id), lambda: portfolio_pnl_payload(db, client), ttl=60)
+
+
+def portfolio_pnl_payload(db, client):
     rows = []
     pre = preload_pnl(db, client.id)
     for job in db.query(models.DBJob).filter(
