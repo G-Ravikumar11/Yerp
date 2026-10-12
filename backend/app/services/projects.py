@@ -963,13 +963,14 @@ class ScheduleContext:
             for m in db.query(models.DBMeasurement).filter(
                     models.DBMeasurement.line_id.in_(line_ids)).all():
                 self.measures.setdefault(m.line_id, []).append((m.measured_on or "", m.quantity or 0))
-        self.reports = {}
+        self.reports, self.last = {}, {}
         ids = [a.id for a in self.acts]
         if ids:
             for p in db.query(models.DBScheduleProgress).filter(
                     models.DBScheduleProgress.activity_id.in_(ids)).order_by(
                         models.DBScheduleProgress.reported_on, models.DBScheduleProgress.id).all():
                 self.reports.setdefault(p.activity_id, []).append((p.reported_on or "", p.percent or 0))
+                self.last[p.activity_id] = (p.reported_on or "", p.by_name or "")      # the latest report is the last one read
 
     def actual(self, a, on):
         """Done, as a percentage, on a given date."""
@@ -1082,6 +1083,134 @@ def schedule_view(db, client_id, job):
             "planned_finish": planned_end.isoformat() if planned_end else "",
             "forecast_finish": project_finish.isoformat() if project_finish else "",
             "slip_days": (project_finish - planned_end).days if project_finish and planned_end else 0}}
+
+
+def task_dict(t, names=None):
+    return {"id": t.id, "activity_id": t.activity_id, "activity": (names or {}).get(t.activity_id, ""), "date": t.task_date or "",
+            "text": t.text or "", "done": bool(t.done), "done_by_name": t.done_by_name or "", "done_at": t.done_at or "",
+            "created_by_name": t.created_by_name or ""}
+
+
+def sync_progress_from_tasks(db, client_id, activity_id, actor_name):
+    """An activity's progress follows its tasks: the share of them that are done. Each tick (or un-tick, add or removal)
+    writes a dated report like any other, so the history is kept and the S-curve still reads true.
+
+    An activity whose progress is measured in the book is left alone - the book is where that is changed - and so is
+    one with no tasks at all, which keeps whatever was reported on it."""
+    if not activity_id:
+        return None
+    a = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.id == activity_id,
+                                                   models.DBScheduleActivity.client_id == client_id).first()
+    if a is None or a.work_order_line_id:
+        return None
+    tasks = db.query(models.DBScheduleTask).filter(models.DBScheduleTask.activity_id == a.id).all()
+    if not tasks:
+        return None
+    pct = round(sum(1 for t in tasks if t.done) / len(tasks) * 100.0, 1)
+    on = date.today().isoformat()
+    last = db.query(models.DBScheduleProgress).filter(models.DBScheduleProgress.activity_id == a.id).order_by(
+        models.DBScheduleProgress.reported_on.desc(), models.DBScheduleProgress.id.desc()).first()
+    if last is None or abs((last.percent or 0) - pct) > 0.001:
+        db.add(models.DBScheduleProgress(client_id=client_id, activity_id=a.id, reported_on=on, percent=pct,
+                                         note="From its tasks", by_name=actor_name))
+    if pct > 0 and not a.actual_start:
+        a.actual_start = on
+    # Finished is what the tasks say: ticking the last one finishes it, un-ticking one opens it again.
+    a.actual_finish = on if pct >= 100 else ""
+    return pct
+
+
+def task_or_404(db, client_id, task_id):
+    t = db.query(models.DBScheduleTask).filter(models.DBScheduleTask.id == task_id,
+                                               models.DBScheduleTask.client_id == client_id).first()
+    if not t:
+        raise HTTPException(404, "Task not found")
+    return t
+
+
+def check_task(db, client_id, job, text, date_text, activity_id):
+    """What a task needs: some words, a real date, and - if it is under an activity - one that is on this project."""
+    words = (text or "").strip()
+    if not words:
+        raise HTTPException(400, "What is to be done?")
+    if len(words) > 300:
+        raise HTTPException(400, "Keep a task to 300 characters or fewer.")
+    day = _d(date_text)
+    if day is None:
+        raise HTTPException(400, "Give the day as YYYY-MM-DD.")
+    if activity_id and not db.query(models.DBScheduleActivity.id).filter(
+            models.DBScheduleActivity.id == activity_id, models.DBScheduleActivity.job_id == job.id,
+            models.DBScheduleActivity.client_id == client_id).first():
+        raise HTTPException(400, "That activity is not on this project.")
+    return words, day.isoformat()
+
+
+def schedule_day(db, client_id, job, on=None, ahead_days=7):
+    """What the site is meant to be doing on one day, read from the programme: the activities running that day with
+    how much of each should be done by its end and how much is, those already past their finish and not done, and
+    what starts in the next few days.
+
+    The day's target is the share of an activity its plan puts on that day (an activity planned across ten days
+    carries a tenth of itself on each); what it would take to be back on plan by the end of the day is the gap
+    between where the plan has it and where the work actually is."""
+    on = on or date.today()
+    ctx = ScheduleContext(db, client_id, job.id)
+    weighted = any(a.weight for a in ctx.acts)
+
+    names = {a.id: ((a.code or "") + " " + (a.name or "")).strip() for a in ctx.acts}
+    by_activity = {}
+    for t in db.query(models.DBScheduleTask).filter(models.DBScheduleTask.client_id == client_id,
+                                                     models.DBScheduleTask.job_id == job.id).order_by(
+            models.DBScheduleTask.task_date, models.DBScheduleTask.id).all():
+        by_activity.setdefault(t.activity_id, []).append(t)
+
+    def row(a, bucket):
+        s, f = _d(a.planned_start), _d(a.planned_finish)
+        mine = by_activity.get(a.id, [])
+        by_end = planned_percent(a, on)
+        before = planned_percent(a, on - timedelta(days=1))
+        done = ctx.actual(a, on)
+        return {"id": a.id, "code": a.code or "", "name": a.name or "", "bucket": bucket,
+                "planned_start": a.planned_start or "", "planned_finish": a.planned_finish or "",
+                "is_milestone": bool(a.is_milestone), "progress_from": "measurement book" if a.work_order_line_id else "reported",
+                "planned_percent": by_end, "actual_percent": done,
+                "target_today": round(max(0.0, by_end - before), 1),
+                "to_catch_up": round(max(0.0, by_end - done), 1), "remaining": round(max(0.0, 100.0 - done), 1),
+                "days_left": (f - on).days if f and bucket == "today" else None,
+                "starts_in": (s - on).days if s and bucket == "soon" else None,
+                "days_late": (on - f).days if f and bucket == "overdue" else None,
+                "updated_on": ctx.last.get(a.id, ("", ""))[0], "updated_by": ctx.last.get(a.id, ("", ""))[1],
+                "editable": not a.work_order_line_id,
+                "tasks_total": len(mine), "tasks_done": sum(1 for t in mine if t.done),
+                "tasks": [task_dict(t, names) for t in mine]}
+
+    today_rows, overdue, soon = [], [], []
+    for a in ctx.acts:
+        s, f = _d(a.planned_start), _d(a.planned_finish)
+        if not s or not f:
+            continue
+        done = ctx.actual(a, on)
+        if s <= on <= f and done < 100:
+            today_rows.append(row(a, "today"))
+        elif f < on and done < 100:
+            overdue.append(row(a, "overdue"))
+        elif on < s <= on + timedelta(days=ahead_days):
+            soon.append(row(a, "soon"))
+    soon.sort(key=lambda r: r["starts_in"])
+    overdue.sort(key=lambda r: -(r["days_late"] or 0))
+    today_rows.sort(key=lambda r: (-r["to_catch_up"], r["planned_finish"]))
+
+    weights = [(a.weight or 0) if weighted else 1.0 for a in ctx.acts]
+    total = sum(weights) or 1.0
+    overall = round(sum(w * ctx.actual(a, on) for a, w in zip(ctx.acts, weights)) / total, 1) if ctx.acts else 0.0
+    planned = round(sum(w * planned_percent(a, on) for a, w in zip(ctx.acts, weights)) / total, 1) if ctx.acts else 0.0
+    tasks = [task_dict(t, names) for t in db.query(models.DBScheduleTask).filter(
+        models.DBScheduleTask.client_id == client_id, models.DBScheduleTask.job_id == job.id,
+        models.DBScheduleTask.task_date == on.isoformat()).order_by(models.DBScheduleTask.id).all()]
+    return {"job": {"id": job.id, "number": job.number, "name": job.name}, "date": on.isoformat(),
+            "today": today_rows, "overdue": overdue, "soon": soon, "tasks": tasks,
+            "summary": {"working": len(today_rows), "overdue": len(overdue), "starting_soon": len(soon),
+                        "done_percent": overall, "planned_percent": planned, "variance": round(overall - planned, 1)}}
 
 
 def _apply_activity(db, client_id, job, a, body):

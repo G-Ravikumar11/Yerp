@@ -159,6 +159,8 @@ export const useBoqSummary = (id: number, gst: number, enabled: boolean, rev?: n
     enabled: enabled && id > 0,
     queryFn: () => get<BoqSummary>(`/api/boqs/${id}/summary?gst=${gst}${rev === undefined ? '' : `&rev=${rev}`}`),
   })
+/** Every material or grade already put on a BOQ line: what the Material dropdown offers besides its standard list. */
+export const useBoqMaterials = () => useQuery({ queryKey: ['boq', 'materials'], queryFn: () => get<{ materials: string[] }>('/api/boqs/materials') })
 export const useAvailable = (id: number) => useQuery({ queryKey: boqKeys.available(id), enabled: id > 0, queryFn: () => get<{ boq: BoqHead; lines: AvailableLine[] }>(`/api/boqs/${id}/available`) })
 export const useBoqChanges = (id: number, from: number, enabled: boolean) => useQuery({ queryKey: ['boq', 'changes', id, from], enabled: enabled && id > 0, queryFn: () => get<BoqChanges>(`/api/boqs/${id}/changes?frm=${from}`) })
 

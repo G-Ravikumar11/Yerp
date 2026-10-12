@@ -138,3 +138,151 @@ def test_another_tenant_cannot_see_it(tenant, second_tenant):
     j = job(tenant)
     act(tenant, j, "X", d(0), d(5))
     assert second_tenant.get("/api/jobs/%d/schedule" % j["id"]).status_code == 404
+
+
+# --- the plan for one day ------------------------------------------------------------------------------------------
+
+def test_the_day_plan_lists_what_is_due_overdue_and_next(tenant):
+    j = job(tenant)
+    act(tenant, j, "Excavation", d(-4), d(5))       # running: nine days from start to finish, a ninth of it a day
+    act(tenant, j, "Survey", d(-10), d(-3))         # past its finish and never reported
+    act(tenant, j, "Raft", d(3), d(12))             # starts in three days
+    act(tenant, j, "Handover", d(40), d(45))        # too far off to list
+    day = tenant.get("/api/jobs/%d/schedule/day" % j["id"]).json()
+    assert [a["name"] for a in day["today"]] == ["Excavation"]
+    assert [a["name"] for a in day["overdue"]] == ["Survey"] and day["overdue"][0]["days_late"] == 3
+    assert [a["name"] for a in day["soon"]] == ["Raft"] and day["soon"][0]["starts_in"] == 3
+    work = day["today"][0]
+    assert work["target_today"] == 11.1 and work["actual_percent"] == 0 and work["to_catch_up"] == work["planned_percent"] > 0
+    assert day["summary"]["working"] == 1 and day["summary"]["overdue"] == 1 and day["summary"]["starting_soon"] == 1
+
+
+def test_the_day_plan_follows_the_date_asked_for(tenant):
+    j = job(tenant)
+    act(tenant, j, "Excavation", d(-4), d(5))
+    far = tenant.get("/api/jobs/%d/schedule/day" % j["id"], params={"on": d(20)}).json()
+    assert far["date"] == d(20) and far["today"] == [] and [a["name"] for a in far["overdue"]] == ["Excavation"]
+    assert tenant.get("/api/jobs/%d/schedule/day" % j["id"], params={"on": "tomorrow"}).status_code == 400
+
+
+def test_finished_work_drops_off_the_day_plan(tenant):
+    j = job(tenant)
+    s = act(tenant, j, "Excavation", d(-4), d(5))
+    tenant.post("/api/schedule/activities/%d/progress" % s["activities"][0]["id"], json={"percent": 100})
+    day = tenant.get("/api/jobs/%d/schedule/day" % j["id"]).json()
+    assert day["today"] == [] and day["overdue"] == []
+
+
+# --- what is to be done on the day, and progress as it is reported ---------------------------------------------------
+
+def day_of(tenant, j, on=None):
+    return tenant.get("/api/jobs/%d/schedule/day" % j["id"], params={"on": on or d(0)}).json()
+
+
+def test_a_task_belongs_to_its_day_and_can_be_ticked_off(tenant):
+    j = job(tenant)
+    s = act(tenant, j, "Excavation", d(-4), d(5))
+    aid = s["activities"][0]["id"]
+    made = tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json={"text": "Pour the slab, 8 labourers", "date": d(0), "activity_id": aid})
+    assert made.status_code == 200, made.text
+    tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json={"text": "Order cement", "date": d(1)})
+    today = day_of(tenant, j)["tasks"]
+    assert [t["text"] for t in today] == ["Pour the slab, 8 labourers"] and today[0]["activity"].endswith("Excavation")
+    assert [t["text"] for t in day_of(tenant, j, d(1))["tasks"]] == ["Order cement"]
+    tid = made.json()["task"]["id"]
+    done = tenant.put("/api/schedule/tasks/%d" % tid, json={"done": True}).json()["task"]
+    assert done["done"] is True and done["done_by_name"] and done["done_at"]
+    undone = tenant.put("/api/schedule/tasks/%d" % tid, json={"done": False}).json()["task"]
+    assert undone["done"] is False and undone["done_by_name"] == ""
+
+
+def test_a_task_is_checked_before_it_is_kept(tenant):
+    j = job(tenant)
+    other = job(tenant)
+    s = act(tenant, other, "Elsewhere", d(0), d(5))
+    post = lambda body: tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json=body)
+    assert post({"text": "  ", "date": d(0)}).status_code == 400
+    assert post({"text": "x", "date": "soon"}).status_code == 400
+    assert post({"text": "x", "date": d(0), "activity_id": s["activities"][0]["id"]}).status_code == 400   # another project's
+
+
+def test_a_task_can_be_reworded_moved_and_removed(tenant):
+    j = job(tenant)
+    tid = tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json={"text": "Shuttering", "date": d(0)}).json()["task"]["id"]
+    moved = tenant.put("/api/schedule/tasks/%d" % tid, json={"text": "Shuttering, level 2", "date": d(2)}).json()["task"]
+    assert moved["text"] == "Shuttering, level 2" and moved["date"] == d(2)
+    assert day_of(tenant, j)["tasks"] == []
+    assert tenant.delete("/api/schedule/tasks/%d" % tid).status_code == 200
+    assert day_of(tenant, j, d(2))["tasks"] == []
+    assert tenant.delete("/api/schedule/tasks/%d" % tid).status_code == 404
+
+
+def test_deleting_an_activity_keeps_its_tasks_on_the_project(tenant):
+    j = job(tenant)
+    s = act(tenant, j, "Excavation", d(-4), d(5))
+    aid = s["activities"][0]["id"]
+    tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json={"text": "Clear the site", "date": d(0), "activity_id": aid})
+    assert tenant.delete("/api/schedule/activities/%d" % aid).status_code == 200
+    kept = day_of(tenant, j)["tasks"]
+    assert [t["text"] for t in kept] == ["Clear the site"] and kept[0]["activity_id"] is None
+
+
+def test_the_day_plan_says_who_last_reported_progress_and_whether_it_can_be_reported(tenant):
+    j = job(tenant)
+    s = act(tenant, j, "Excavation", d(-4), d(5))
+    tenant.post("/api/schedule/activities/%d/progress" % s["activities"][0]["id"], json={"percent": 40})
+    row = day_of(tenant, j)["today"][0]
+    assert row["actual_percent"] == 40 and row["updated_on"] == d(0) and row["updated_by"] and row["editable"] is True
+
+
+def test_a_project_with_tasks_can_still_be_deleted(tenant):
+    j = job(tenant)
+    s = act(tenant, j, "Excavation", d(-4), d(5))
+    tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json={"text": "Clear the site", "date": d(0), "activity_id": s["activities"][0]["id"]})
+    assert tenant.delete("/api/jobs/%d" % j["id"]).status_code == 200
+
+
+# --- an activity's progress follows its tasks --------------------------------------------------------------------------
+
+def activity_row(tenant, j, aid):
+    return [a for a in day_of(tenant, j)["today"] if a["id"] == aid][0]
+
+
+def test_ticking_a_task_raises_its_activitys_progress(tenant):
+    j = job(tenant)
+    aid = act(tenant, j, "Excavation", d(-4), d(5))["activities"][0]["id"]
+    ids = [tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json={"text": "Task %d" % n, "date": d(0), "activity_id": aid}).json()["task"]["id"] for n in range(4)]
+    assert activity_row(tenant, j, aid)["actual_percent"] == 0
+    tenant.put("/api/schedule/tasks/%d" % ids[0], json={"done": True})
+    row = activity_row(tenant, j, aid)
+    assert row["actual_percent"] == 25 and row["tasks_done"] == 1 and row["tasks_total"] == 4
+    assert [t["done"] for t in row["tasks"]] == [True, False, False, False]
+    tenant.put("/api/schedule/tasks/%d" % ids[1], json={"done": True})
+    assert activity_row(tenant, j, aid)["actual_percent"] == 50
+    tenant.put("/api/schedule/tasks/%d" % ids[1], json={"done": False})
+    assert activity_row(tenant, j, aid)["actual_percent"] == 25
+
+
+def test_the_last_task_finishes_the_activity_and_unticking_reopens_it(tenant):
+    j = job(tenant)
+    aid = act(tenant, j, "Excavation", d(-4), d(5))["activities"][0]["id"]
+    tid = tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json={"text": "Only task", "date": d(0), "activity_id": aid}).json()["task"]["id"]
+    tenant.put("/api/schedule/tasks/%d" % tid, json={"done": True})
+    sch = tenant.get("/api/jobs/%d/schedule" % j["id"]).json()["activities"][0]
+    assert sch["actual_percent"] == 100 and sch["state"] == "done"
+    tenant.put("/api/schedule/tasks/%d" % tid, json={"done": False})
+    again = tenant.get("/api/jobs/%d/schedule" % j["id"]).json()["activities"][0]
+    assert again["actual_percent"] == 0 and again["state"] != "done"
+
+
+def test_adding_or_removing_a_task_moves_the_share(tenant):
+    j = job(tenant)
+    aid = act(tenant, j, "Excavation", d(-4), d(5))["activities"][0]["id"]
+    new = lambda text: tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json={"text": text, "date": d(0), "activity_id": aid}).json()["task"]["id"]
+    a, b = new("one"), new("two")
+    tenant.put("/api/schedule/tasks/%d" % a, json={"done": True})
+    assert activity_row(tenant, j, aid)["actual_percent"] == 50
+    new("three")
+    assert activity_row(tenant, j, aid)["actual_percent"] == 33.3        # a new task is more still to do
+    tenant.delete("/api/schedule/tasks/%d" % b)
+    assert activity_row(tenant, j, aid)["actual_percent"] == 50

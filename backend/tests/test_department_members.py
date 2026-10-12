@@ -128,3 +128,24 @@ def test_another_companys_department_cannot_be_used(tenant):
         theirs_id = theirs.id
     assert tenant.put(f"/api/employees/{a}", json={"department_id": theirs_id}).status_code == 404
     assert tenant.post(f"/api/departments/{theirs_id}/employees", json={"employee_ids": [a]}).status_code == 404
+
+
+# --- deleting an employee ------------------------------------------------------
+
+def test_the_master_deletes_an_employee(tenant):
+    a = person(tenant, "Asha")
+    civil = dept(tenant, "Civil")
+    tenant.post(f"/api/departments/{civil['id']}/employees", json={"employee_ids": [a]})
+    assert tenant.delete(f"/api/employees/{a}").status_code == 200
+    assert tenant.get(f"/api/employees/{a}").status_code == 404
+    assert members(tenant, civil["id"]) == set(), "they leave their department with the record"
+    assert tenant.delete(f"/api/employees/{a}").status_code == 404
+    logs = [l["details"] for l in tenant.get("/api/audit-logs").json() if l["action"] == "employee_deleted"]
+    assert logs, "and it is written down"
+
+
+def test_nobody_but_the_master_deletes_an_employee(admin_and_ids):
+    c, _civil, _roads, a = admin_and_ids
+    assert c.delete(f"/api/employees/{a}").status_code == 403
+    with main.SessionLocal() as db:
+        assert db.query(models.DBEmployee).get(a) is not None

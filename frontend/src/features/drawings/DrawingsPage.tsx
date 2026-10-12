@@ -1,24 +1,23 @@
 import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { ProjectPicker } from '@/components/data/ProjectPicker'
-import { Badge, Button, Input, Select, Stat, StatGrid, Tabs } from '@/components/ui'
-import { useDrawings, type Drawing } from '@/api/drawings'
+import { Badge, Button, Input, Select, Stat, StatGrid } from '@/components/ui'
+import { useDrawings, type Drawing, type DrawingRegister } from '@/api/drawings'
 import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
 import { AddDrawingModal, HistoryModal, RevisionModal } from './DrawingModals'
-import { PhotosTab } from './PhotosTab'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
-type Tab = 'drawings' | 'photos'
 const tone = (s: string) => (s === 'Good for construction' ? 'success' : s === 'For approval' ? 'warning' : 'neutral') as 'success' | 'warning' | 'neutral'
 
-/** Every sheet and every revision, the one to build to marked - and the site's photographs. */
+/** Every sheet and every revision, the one to build to marked. */
 export default function DrawingsPage() {
   const { can } = useSession()
   const [job, setJob] = useState(0)
-  const [tab, setTab] = useState<Tab>('drawings')
+  const qc = useQueryClient()
   const q = useDrawings(job)
   const d = q.data
   const [search, setSearch] = useState('')
@@ -48,16 +47,23 @@ export default function DrawingsPage() {
         </div>
       ),
     },
-    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="drawing" id={r.id} label={String(r.number)} noun="drawing" /> },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete
+        kind="drawing"
+        id={r.id}
+        label={String(r.number)}
+        noun="drawing"
+        optimistic={() =>
+          qc.setQueryData<DrawingRegister>(['drawings', 'register', job], (old) =>
+            old ? { ...old, drawings: old.drawings.filter((w) => w.id !== r.id), summary: { ...old.summary, drawings: old.summary.drawings - 1 } } : old,
+          )
+        }
+      /> },
   ]
   return (
     <>
-      <PageHeader eyebrow="Projects" title="Drawings & Photos" description="Every sheet and every revision, the one to build to marked - and the site's photographs." actions={can('workorders.manage') && tab === 'drawings' && <Button disabled={!job} onClick={() => setAdding(true)}><Plus /> Drawing</Button>} />
+      <PageHeader eyebrow="Projects" title="Drawings" description="Every sheet and every revision, with the one to build to marked." actions={can('workorders.manage') && <Button disabled={!job} onClick={() => setAdding(true)}><Plus /> Drawing</Button>} />
       <div className="mb-6"><ProjectPicker value={job} onChange={setJob} id="drw-job" /></div>
-      <div className="mb-5"><Tabs label="Drawings and photos" value={tab} onChange={setTab} items={[{ value: 'drawings', label: 'Drawings register' }, { value: 'photos', label: 'Photos & files' }]} /></div>
-      {tab === 'photos' ? (job > 0 ? <PhotosTab job={job} /> : null) : (
-        <>
-          <StatGrid className="lg:grid-cols-3 xl:grid-cols-3">
+      <StatGrid className="lg:grid-cols-3 xl:grid-cols-3">
             <Stat label="Drawings" value={d?.summary.drawings ?? 0} loading={q.isPending && job > 0} />
             <Stat label="Good for construction" value={d?.summary.gfc ?? 0} loading={q.isPending && job > 0} />
             <Stat label="Awaiting approval" value={d?.summary.awaiting ?? 0} loading={q.isPending && job > 0} />
@@ -69,8 +75,6 @@ export default function DrawingsPage() {
             <span className="text-[13px] text-muted-foreground">{rows.length} of {d?.drawings.length ?? 0}</span>
           </div>
           <DataTable label="Drawings" rows={rows} columns={columns} rowKey={(w) => w.id} loading={q.isPending && job > 0} empty={d?.drawings.length ? 'No drawing matches the filters.' : 'No drawings on the register. Add each sheet by its number, then its revisions as they arrive.'} />
-        </>
-      )}
       <AddDrawingModal job={job} disciplines={d?.disciplines ?? []} open={adding} onClose={() => setAdding(false)} onAdded={(id, number) => { setAdding(false); setRevising(d?.drawings.find((w) => w.id === id) ?? ({ id, number, title: '', discipline: '', current_revision: '', revisions: 0, status: '', received_on: '', current_file_id: null } as Drawing)) }} />
       <RevisionModal drawing={revising} statuses={d?.statuses ?? []} onClose={() => setRevising(null)} />
       <HistoryModal id={history} onClose={() => setHistory(null)} />

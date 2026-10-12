@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Button, Field, Input, Modal, Textarea } from '@/components/ui'
-import { peopleKeys, saveDepartment, type Department } from '@/api/people'
+import { peopleKeys, saveDepartment, showDepartmentChange, useDepartments, type Department } from '@/api/people'
 import { useAction } from '@/lib/mutate'
 import { DEPARTMENT_COLORS, DEPARTMENT_ICONS } from './icons'
 
@@ -13,11 +14,27 @@ export function DepartmentModal({ dept, open, onClose }: { dept: Department | nu
 }
 
 function Form({ dept, onClose }: { dept: Department | null; onClose: () => void }) {
+  const qc = useQueryClient()
   const [name, setName] = useState(dept?.name ?? '')
   const [description, setDescription] = useState(dept?.description ?? '')
   const [color, setColor] = useState(dept?.color ?? DEPARTMENT_COLORS[0])
   const [icon, setIcon] = useState(dept?.icon ?? 'building')
-  const save = useAction(() => saveDepartment(dept?.id ?? null, { name: name.trim(), description, color, icon }), { invalidate: [peopleKeys.all, ['orders', 'vocabulary']], success: () => (dept ? 'Department updated' : 'Department created'), onSuccess: onClose })
+  const depts = useDepartments()
+  // Caught here so the dialog can say so; it is the one refusal an edit commonly meets.
+  const taken = (depts.data ?? []).some((d) => d.id !== dept?.id && d.name.trim().toLowerCase() === name.trim().toLowerCase())
+  const save = useAction(() => saveDepartment(dept?.id ?? null, { name: name.trim(), description, color, icon }), {
+    success: () => (dept ? 'Department updated' : 'Department created'),
+    onSuccess: (saved) => { showDepartmentChange(qc, { saved }); if (!dept) onClose() },
+    onError: () => { if (dept) void qc.invalidateQueries({ queryKey: peopleKeys.all }) },
+  })
+  // An edit shows at once and is saved behind it. A new department waits: its id comes from the server.
+  const submit = () => {
+    if (dept) {
+      showDepartmentChange(qc, { saved: { ...dept, name: name.trim(), description, color, icon } }, { refresh: false })
+      onClose()
+    }
+    save.mutate()
+  }
   return (
     <div>
       <div className="grid gap-4">
@@ -37,9 +54,9 @@ function Form({ dept, onClose }: { dept: Department | null; onClose: () => void 
         </div>
       </div>
       <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
-        {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
+        {(taken || save.error) && <p role="alert" className="mr-auto text-[13px] text-danger">{taken ? `A department called '${name.trim()}' already exists` : save.error?.message}</p>}
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button loading={save.isPending} disabled={!name.trim()} onClick={() => save.mutate()}>Save department</Button>
+        <Button loading={save.isPending} disabled={!name.trim() || taken} onClick={submit}>Save department</Button>
       </div>
     </div>
   )

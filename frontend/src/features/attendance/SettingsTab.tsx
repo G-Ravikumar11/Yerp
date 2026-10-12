@@ -38,7 +38,6 @@ function Form({ initial }: { initial: AttSettings }) {
       <div className="mt-5 border-t border-border pt-4">
         <p className="mb-2 text-sm font-medium">Working days</p>
         <div className="flex flex-wrap gap-4 text-sm">{DAYS.map(([v, l]) => <label key={v} className="flex items-center gap-1.5"><input type="checkbox" checked={days.includes(v)} onChange={() => toggle(v)} /> {l}</label>)}</div>
-        <label className="mt-4 flex items-center gap-2 text-sm"><input type="checkbox" checked={s.auto_clock_in} onChange={(e) => set('auto_clock_in', e.target.checked)} /> Signing in to the portal starts a shift</label>
         <p className="mt-1.5 text-[13px] text-muted-foreground">Leave this off and staff clock in themselves. Either way, signing in on a non-working day never records attendance, so someone opening the portal on a Sunday to read a payslip is not marked present. They can still clock in by hand if they really are working.</p>
       </div>
       <div className="mt-5 flex justify-end">

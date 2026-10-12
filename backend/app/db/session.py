@@ -37,18 +37,29 @@ if not DATABASE_URL:
     DATABASE_URL = "sqlite:///./invoicing.db"
 
 # Neon closes idle connections and sits behind a pooler, so a connection left
-# in the pool is often already dead by the time it is handed back out.
-# pool_pre_ping spends one round trip checking, which is the difference
-# between a request working and a random OperationalError under light traffic.
-ENGINE_OPTIONS = {"pool_pre_ping": True}
+# in the pool is often already dead by the time it is handed back out, and
+# something has to check before it is trusted - the difference between a
+# request working and a random OperationalError under light traffic.
+#
+# pool_pre_ping checks on every checkout: one extra round trip per request,
+# which on a database across an ocean is most of a second each time, even for
+# a connection used a moment ago. install_idle_ping checks only connections
+# that have been sitting; a busy one is trusted, and a dead one is still
+# replaced rather than failing the request. SQLite is a local file and needs
+# neither.
+PING_AFTER_IDLE_SECONDS = float(os.getenv("DB_PING_AFTER_IDLE", "20"))
+ENGINE_OPTIONS = {}
 
 if DATABASE_URL.startswith("sqlite"):
     # One file, many threads: FastAPI serves each request on its own.
     ENGINE_OPTIONS["connect_args"] = {"check_same_thread": False}
 else:
     ENGINE_OPTIONS.update({
-        # Recycle before Neon's own idle timeout rather than after it.
-        "pool_recycle": 280,
+        # A healthy connection is kept: every reconnect is a TLS handshake and a
+        # login across the network, seconds on a bad day. A connection Neon has
+        # dropped is found by the idle ping, so recycling early is not needed
+        # to avoid a dead one - this only bounds how long one lives.
+        "pool_recycle": int(os.getenv("DB_POOL_RECYCLE", "1800")),
         "pool_size": int(os.getenv("DB_POOL_SIZE", "5")),
         "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "10")),
         "pool_timeout": 30,
@@ -60,6 +71,37 @@ else:
         DATABASE_URL += ("&" if "?" in DATABASE_URL else "?") + "sslmode=require"
 
 engine = create_engine(DATABASE_URL, **ENGINE_OPTIONS)
+
+
+def install_idle_ping(target_engine, idle_seconds=PING_AFTER_IDLE_SECONDS):
+    """Check a pooled connection is alive only if it has been idle a while.
+
+    Raising DisconnectionError from a checkout handler makes the pool throw the
+    dead connection away and open a fresh one for the same request."""
+    import time
+    from sqlalchemy import event, exc
+
+    @event.listens_for(target_engine, "checkin")
+    def _remember_when_idle_began(dbapi_connection, record):
+        record.info["idle_since"] = time.monotonic()
+
+    @event.listens_for(target_engine, "checkout")
+    def _ping_if_it_has_been_idle(dbapi_connection, record, proxy):
+        since = record.info.get("idle_since")
+        if since is None or time.monotonic() - since < idle_seconds:
+            return
+        try:
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("SELECT 1")
+            finally:
+                cursor.close()
+        except Exception as error:
+            raise exc.DisconnectionError(str(error)) from error
+
+
+if not DATABASE_URL.startswith("sqlite"):
+    install_idle_ping(engine)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

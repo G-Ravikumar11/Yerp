@@ -162,17 +162,17 @@ def test_deleting_a_department_detaches_employees(tenant):
 
 # --- attendance ------------------------------------------------------------
 
-def test_login_clocks_in_and_clock_out_records_hours(portal, client, tenant):
-    """Logging into the employee portal clocks you in automatically, so a
-    second explicit clock-in is a duplicate."""
+def test_clock_in_and_clock_out_record_hours(portal, client, tenant):
+    """Signing in does not start a shift; pressing Clock in does, and only once."""
     work_every_day(tenant)
     emp = make_employee(tenant, password="EmpPass123")
     login = portal.post("/api/employee/auth/login", json={
         "email": emp["email"], "password": "EmpPass123",
     })
     assert login.status_code == 200
-    assert login.json()["clock_in"]
+    assert not login.json()["clock_in"]
 
+    assert portal.post("/api/employee/attendance/clock-in", json={}).status_code == 200
     assert portal.post("/api/employee/attendance/clock-in", json={}).status_code == 400
 
     out = portal.post("/api/employee/attendance/clock-out")
@@ -188,6 +188,7 @@ def test_clock_out_after_already_clocking_out_is_refused(portal, client, tenant)
     work_every_day(tenant)
     emp = make_employee(tenant, password="EmpPass123")
     portal.post("/api/employee/auth/login", json={"email": emp["email"], "password": "EmpPass123"})
+    assert portal.post("/api/employee/attendance/clock-in", json={}).status_code == 200
     assert portal.post("/api/employee/attendance/clock-out").status_code == 200
     assert portal.post("/api/employee/attendance/clock-out").status_code == 400
 

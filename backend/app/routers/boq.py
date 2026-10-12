@@ -94,6 +94,16 @@ def boq_sample_sheet(request: Request, db: Session = Depends(get_db)):
         "sample_boq.xlsx")
 
 
+@router.get("/api/boqs/materials")
+def boq_materials(request: Request, db: Session = Depends(get_db)):
+    """Every material or grade that has been put on any of this business's BOQ lines, for the Material dropdown: an
+    item added once is on the list from then on, on every BOQ."""
+    client = require_erp_read(request, db)
+    rows = db.query(models.DBBoqLine.material).join(models.DBBoq, models.DBBoq.id == models.DBBoqLine.boq_id).filter(
+        models.DBBoq.client_id == client.id, models.DBBoqLine.material.isnot(None), models.DBBoqLine.material != "").distinct().all()
+    return {"materials": sorted({r[0].strip() for r in rows if r[0] and r[0].strip()}, key=str.lower)}
+
+
 @router.get("/api/boqs")
 def boq_list(request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
@@ -370,19 +380,19 @@ def boq_export(boq_id: int, request: Request, rev: Optional[int] = None, db: Ses
     rows = []
     for l in lines:
         if l["kind"] == "section":
-            rows.append((l["group_code"], "", l["description"].upper(), "", "", "", "", l["subtotal"]))
+            rows.append((l["group_code"], "", l["description"].upper(), "", "", "", "", l["subtotal"], l["remarks"]))
         elif l["kind"] == "note":
-            rows.append(("", "", l["description"], "", "", "", "", ""))
+            rows.append(("", "", l["description"], "", "", "", "", "", l["remarks"]))
         else:
             rows.append((l["group_code"], l["item_code"], l["description"], l["material"], l["uom"],
-                         "R/o" if l["rate_only"] else l["quantity"], l["rate"], "" if l["rate_only"] else l["amount"]))
-    return sheet_response(("Group code", "Item code", "Description", "Material", "UoM", "Qty", "Rate", "Amount"), rows,
+                         "R/o" if l["rate_only"] else l["quantity"], l["rate"], "" if l["rate_only"] else l["amount"], l["remarks"]))
+    return sheet_response(("Group code", "Item code", "Description", "Material", "UoM", "Qty", "Rate", "Amount", "Remarks"), rows,
                           "boq_%s.xlsx" % re.sub(r"[^A-Za-z0-9]+", "_", head["number"]),
                           preamble=_pre(client, "BILL OF QUANTITIES", ("Project", head["project"]), ("Revision", head["revision"]),
                                         ("BOQ", head["number"])),
-                          closing=[(), ("Total", "", "", "", "", "", "", total),
-                                   ("GST @%g%%" % summary["gst_percent"], "", "", "", "", "", "", summary["gst"]),
-                                   ("Total incl. GST", "", "", "", "", "", "", summary["total_with_gst"])])
+                          closing=[(), ("Total", "", "", "", "", "", "", total, ""),
+                                   ("GST @%g%%" % summary["gst_percent"], "", "", "", "", "", "", summary["gst"], ""),
+                                   ("Total incl. GST", "", "", "", "", "", "", summary["total_with_gst"], "")])
 
 
 @router.get("/api/boq-variations")

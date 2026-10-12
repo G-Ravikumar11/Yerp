@@ -12,6 +12,7 @@ from app.constants.money import COST_CATEGORIES, MONEY_MODES, PARTY_TYPES
 from app.constants.projects import JOB_FINISHED
 from app.core.audit import log_audit
 from app.core.auth import get_client_user, owned_or_404, require_items_access, wo_actor
+from app.core.cache import cached_read
 from app.core.currency import amount_in_words, inr, money
 from app.core.dates import ageing_bucket, days_after
 from app.core.notifications import notify
@@ -210,6 +211,11 @@ def aged_receivables(request: Request, db: Session = Depends(get_db)):
 def costs_by_project(request: Request, db: Session = Depends(get_db)):
     """Every project on one screen, with the money on each."""
     client = require_items_access(request, db, "reports.view")
+    # Nineteen queries to add up; kept until anything is saved.
+    return cached_read(("costs-by-project", client.id), lambda: costs_by_project_payload(db, client), ttl=60)
+
+
+def costs_by_project_payload(db, client):
     jobs = db.query(models.DBJob).filter(
         models.DBJob.client_id == client.id).order_by(models.DBJob.id.desc()).all()
     pre = preload_pnl(db, client.id)          # once for every project, not per row

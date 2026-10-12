@@ -34,6 +34,7 @@ from app.schemas.auth import (
     LogoUpdate,
     ResetPasswordIn,
 )
+from app.services.employee_portal import stop_the_clock
 from app.services.auth import (
     find_valid_reset,
     google_configured,
@@ -126,7 +127,10 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
 
 
 @router.post("/api/client/logout")
-def client_logout(request: Request):
+def client_logout(request: Request, db: Session = Depends(get_db)):
+    # This ends every sign-in the browser holds, a member of staff's included, so their clock stops with it.
+    if stop_the_clock(db, request.session.get("employee_id"), request.session.get("employee_client_id")):
+        db.commit()
     end_every_session(request)
     return {"message": "Logged out"}
 
@@ -437,7 +441,9 @@ def get_current_user(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/auth/logout")
-def logout(request: Request):
+def logout(request: Request, db: Session = Depends(get_db)):
+    if stop_the_clock(db, request.session.get("employee_id"), request.session.get("employee_client_id")):
+        db.commit()
     request.session.clear()
     return RedirectResponse(url="/")
 

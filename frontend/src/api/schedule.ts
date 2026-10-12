@@ -31,6 +31,61 @@ export interface ActivityInput { name: string; code: string; planned_start: stri
 export interface WoLite { id: number; number: string; job_id: number; status: string }
 export interface WoLine { id: number; label: string }
 
+/** One row of a day's plan: an activity, how far along it is, and what the plan asks of it that day. */
+export interface DayRow {
+  id: number
+  code: string
+  name: string
+  bucket: 'today' | 'overdue' | 'soon'
+  planned_start: string
+  planned_finish: string
+  is_milestone: boolean
+  progress_from: string
+  /** Where the plan has it by the end of the day, and where the work actually is. */
+  planned_percent: number
+  actual_percent: number
+  /** The share of the activity the plan puts on this one day. */
+  target_today: number
+  /** What it would take to be back on plan by the end of the day. */
+  to_catch_up: number
+  remaining: number
+  days_left: number | null
+  starts_in: number | null
+  days_late: number | null
+  /** The last progress report on it: when, and who made it. */
+  updated_on: string
+  updated_by: string
+  /** False when its progress comes from the measurement book. */
+  editable: boolean
+  /** Its tasks, all days: progress follows how many are done. */
+  tasks_total: number
+  tasks_done: number
+  tasks: DayTask[]
+}
+
+/** Something to be done on a day, optionally under an activity. */
+export interface DayTask {
+  id: number
+  activity_id: number | null
+  activity: string
+  date: string
+  text: string
+  done: boolean
+  done_by_name: string
+  done_at: string
+  created_by_name: string
+}
+export interface DayPlan {
+  job: { id: number; number: string; name: string }
+  date: string
+  today: DayRow[]
+  overdue: DayRow[]
+  soon: DayRow[]
+  tasks: DayTask[]
+  summary: { working: number; overdue: number; starting_soon: number; done_percent: number; planned_percent: number; variance: number }
+}
+
+export const useDayPlan = (job: number, on: string) => useQuery({ queryKey: ['schedule', 'day', job, on], enabled: job > 0, queryFn: () => get<DayPlan>(`/api/jobs/${job}/schedule/day?on=${on}`) })
 export const useSchedule = (job: number) => useQuery({ queryKey: ['schedule', job], enabled: job > 0, queryFn: () => get<Schedule>(`/api/jobs/${job}/schedule`) })
 
 /** The placed work orders of a project - each of their lines can carry an activity's progress. */
@@ -55,4 +110,7 @@ type Reply = { schedule: Schedule; message?: string }
 export const saveActivity = (job: number, id: number | null, b: ActivityInput) => (id ? put<Reply>(`/api/schedule/activities/${id}`, b) : post<Reply>(`/api/jobs/${job}/schedule/activities`, b))
 export const deleteActivity = (id: number) => del<Reply>(`/api/schedule/activities/${id}`)
 export const setProgress = (id: number, percent: number) => post<Reply>(`/api/schedule/activities/${id}/progress`, { percent })
+export const addTask = (job: number, b: { text: string; date: string; activity_id: number | null }) => post<{ task: DayTask }>(`/api/jobs/${job}/schedule/tasks`, b)
+export const editTask = (id: number, b: { text?: string; date?: string; activity_id?: number | null; done?: boolean }) => put<{ task: DayTask }>(`/api/schedule/tasks/${id}`, b)
+export const deleteTask = (id: number) => del<{ ok: boolean }>(`/api/schedule/tasks/${id}`)
 export const drawFromOrder = (job: number, wo: number, start: string, finish: string) => post<Reply>(`/api/jobs/${job}/schedule/from-work-order/${wo}`, { start, finish })

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.constants.approvals import GONE_STATUSES
 from app.core.audit import log_audit
+from app.core.config import logger
 from app.core.currency import money
 from app.core.dates import DEFAULT_WORKING_DAYS, _parse_date, parse_working_days
 from app.core.permissions import employee_can
@@ -48,11 +49,87 @@ def is_working_day(settings: Optional[models.DBAttendanceSettings], on_date: Any
     return target.isoweekday() in parse_working_days(raw or DEFAULT_WORKING_DAYS)
 
 
-def should_auto_clock_in(settings: Optional[models.DBAttendanceSettings], on_date: Any = None) -> bool:
-    """Determine whether accessing the portal should automatically clock the employee in."""
-    if settings is not None and not bool(getattr(settings, "auto_clock_in", True)):
-        return False
-    return is_working_day(settings, on_date)
+def target_hours_for(settings: Optional[models.DBAttendanceSettings]) -> float:
+    """How long a working day is meant to be: the gap between the configured start and end, or 8 hours."""
+    try:
+        start = datetime.strptime(settings.work_start, "%H:%M")
+        end = datetime.strptime(settings.work_end, "%H:%M")
+        hours = (end - start).total_seconds() / 3600
+        if 0 < hours <= 24:
+            return round(hours, 2)
+    except Exception:
+        pass
+    return 8.0
+
+
+def end_shift(db: Session, att: models.DBAttendance, client_id: int, now: Optional[datetime] = None) -> models.DBAttendance:
+    """Stop the clock on an open shift: end any break, set the clock-out and work out the hours.
+
+    The one place a shift ends, so pressing Clock out and signing out can never
+    disagree about the hours, the overtime or a shift that ran past midnight.
+    Does not commit.
+    """
+    now = now or datetime.now()
+    today = att.date or now.strftime("%Y-%m-%d")
+    now_str = now.strftime("%H:%M:%S")
+    if att.is_on_break:
+        try:
+            break_start = datetime.strptime(today + " " + att.break_start, "%Y-%m-%d %H:%M:%S")
+            att.break_minutes = (att.break_minutes or 0) + round((now - break_start).total_seconds() / 60, 3)
+        except Exception:
+            pass
+        att.is_on_break = False
+        att.break_start = ""
+    att.clock_out = now_str
+    try:
+        cin = datetime.strptime(today + " " + att.clock_in, "%Y-%m-%d %H:%M:%S")
+        cout = datetime.strptime(today + " " + now_str, "%Y-%m-%d %H:%M:%S")
+        # A clock-out earlier than the clock-in means the shift ran past
+        # midnight. Without this, total_hours went negative and silently
+        # corrupted the hours that payroll reads.
+        if cout < cin:
+            cout += timedelta(days=1)
+        raw_hours = (cout - cin).total_seconds() / 3600
+        break_hours = (att.break_minutes or 0) / 60
+        att.total_hours = max(0.0, round(raw_hours - break_hours, 2))
+        settings = attendance_settings_for(db, client_id)
+        if settings:
+            try:
+                wh_start = datetime.strptime(settings.work_start, "%H:%M")
+                wh_end = datetime.strptime(settings.work_end, "%H:%M")
+                work_hours = (wh_end - wh_start).total_seconds() / 3600
+            except Exception:
+                work_hours = 8.0
+            if att.total_hours > work_hours:
+                overtime = round(att.total_hours - work_hours, 2)
+                # Respect the configured overtime ceiling so a forgotten
+                # clock-out cannot book an unbounded overtime claim.
+                cap = settings.max_overtime_hours or 0
+                att.overtime_hours = min(overtime, cap) if cap > 0 else overtime
+        att.status = "completed"
+    except Exception:
+        logger.exception("Failed to compute hours for attendance %s", att.id)
+    return att
+
+
+def stop_the_clock(db: Session, emp_id: Optional[int], client_id: Optional[int]) -> Optional[models.DBAttendance]:
+    """If this person is clocked in and still working today, clock them out.
+
+    Called wherever somebody's session ends - signing out, signing in as
+    somebody else on the same browser - so a shift cannot go on counting after
+    the person has left. Nothing to do if they never clocked in or already
+    clocked out. Does not commit.
+    """
+    if not emp_id:
+        return None
+    att = db.query(models.DBAttendance).filter(
+        models.DBAttendance.employee_id == emp_id,
+        models.DBAttendance.date == datetime.now().strftime("%Y-%m-%d"),
+        models.DBAttendance.client_id == client_id,
+    ).first()
+    if att and att.clock_in and not att.clock_out:
+        return end_shift(db, att, client_id)
+    return None
 
 
 # -------------------------------------------------------------------------

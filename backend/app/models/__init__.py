@@ -122,6 +122,7 @@ from app.models.projects import (
     DBDiaryPlant,
     DBScheduleActivity,
     DBScheduleProgress,
+    DBScheduleTask,
     DBProjectThread,
     DBProjectMessage,
     DBThreadRead,
