@@ -55,9 +55,10 @@ def test_profile_reflects_approval_without_a_separate_call(portal, client, accou
 
 
 def test_profile_shows_someone_currently_clocked_in(portal, client, tenant, person):
-    # Logging in clocks the employee in; they stay clocked in until logout.
+    # They press Clock in; they stay clocked in until they clock out or log out.
     work_every_day(tenant)
     portal.post("/api/employee/auth/login", json={"email": person["email"], "password": "EmpPass123"})
+    portal.post("/api/employee/attendance/clock-in", json={})
     a = tenant.get(f"/api/employees/{person['id']}").json()["attendance_summary"]
     assert a["days_present"] == 1
     assert a["clocked_in_today"] is True
@@ -67,6 +68,7 @@ def test_profile_shows_someone_currently_clocked_in(portal, client, tenant, pers
 def test_profile_shows_a_completed_day(portal, client, tenant, person):
     work_every_day(tenant)
     portal.post("/api/employee/auth/login", json={"email": person["email"], "password": "EmpPass123"})
+    portal.post("/api/employee/attendance/clock-in", json={})
     portal.post("/api/employee/auth/logout")   # logout clocks them out
     a = tenant.get(f"/api/employees/{person['id']}").json()["attendance_summary"]
     assert a["days_present"] == 1

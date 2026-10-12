@@ -34,6 +34,7 @@ from app.services.approvals import (
 from app.services.auth import reset_email_bodies
 from app.services.employee_portal import (
     attendance_settings_for,
+    end_shift,
     bill_money_from,
     bill_to_employee_dict,
     decide_leave,
@@ -42,8 +43,9 @@ from app.services.employee_portal import (
     filter_jobs_for_employee,
     is_working_day,
     leave_balance_for,
-    should_auto_clock_in,
     site_for_point,
+    stop_the_clock,
+    target_hours_for,
     working_days_between,
 )
 from app.services.hr import employee_name, employee_site_ids, request_to_dict, resolve_employee_job_id
@@ -131,68 +133,30 @@ def employee_login(request: Request, body: dict = None, db: Session = Depends(ge
     # One identity per session. Signing in as staff ends any owner session in
     # this browser; without that the owner's rights survive underneath and
     # every permission check below is answered by the wrong person.
+    # Whoever was signed in on this browser is leaving it; if they were working, their clock stops here
+    # rather than running on with nobody at the screen.
+    previous = request.session.get('employee_id')
+    if previous and previous != emp.id:
+        if stop_the_clock(db, previous, request.session.get('employee_client_id')):
+            db.commit()
     request.session.pop('client_id', None)
     request.session.pop('member_id', None)
     request.session.pop('portal_user_id', None)
     request.session['employee_id'] = emp.id
     request.session['employee_client_id'] = emp.client_id
+    # Signing in is not clocking in. A shift starts when the person presses
+    # Clock in, each one for themselves; opening the portal to read a payslip,
+    # or from a phone left at home, must never count as being at work.
     today = datetime.now().strftime("%Y-%m-%d")
-    now_str = datetime.now().strftime("%H:%M:%S")
-    ip = request.client.host if request and request.client else ""
-    device = body.get("device_info", "")
-    lat = body.get("latitude", 0.0)
-    lng = body.get("longitude", 0.0)
-    loc_label = body.get("location_label", "")
     existing = db.query(models.DBAttendance).filter(
         models.DBAttendance.employee_id == emp.id,
         models.DBAttendance.date == today,
         models.DBAttendance.client_id == emp.client_id,
     ).first()
-    who = {"id": emp.id, "name": f"{emp.first_name} {emp.last_name}", "email": emp.email}
-    if existing and existing.clock_in:
-        return {"message": "Already clocked in today", "employee": who, "clock_in": existing.clock_in}
-
-    settings = attendance_settings_for(db, emp.client_id)
-    working_day = is_working_day(settings)
-    if not should_auto_clock_in(settings):
-        # Opening the portal on a day off - to read a payslip or upload a
-        # document - is not a shift. The Clock In button is still there for
-        # anyone who really is working.
-        return {
-            "message": "Signed in", "employee": who, "clock_in": "",
-            "auto_clock_in": False, "is_working_day": working_day,
-        }
-
-    check_type = "remote"
-    if lat and lng:
-        if settings and settings.office_lat and settings.office_lng:
-            from math import radians, cos, sin, asin, sqrt
-            dlat = radians(lat - settings.office_lat)
-            dlng = radians(lng - settings.office_lng)
-            a = sin(dlat/2)**2 + cos(radians(settings.office_lat)) * cos(radians(lat)) * sin(dlng/2)**2
-            dist = 2 * 6371000 * asin(sqrt(a))
-            if dist <= settings.geofence_radius:
-                check_type = "office"
-            else:
-                check_type = "field"
-    site, _ = site_for_point(db, emp.client_id, lat, lng)
-    if site:
-        check_type = "site"
-    att = models.DBAttendance(
-        client_id=emp.client_id, employee_id=emp.id, date=today,
-        clock_in=now_str, status="present", check_type=check_type,
-        ip_address=ip, device_info=device,
-        location_lat=lat, location_lng=lng,
-        location_label=loc_label or (("%s %s" % (site.number, site.name)) if site else ""),
-        job_id=site.id if site else None,
-    )
-    db.add(att)
-    db.commit()
     return {
-        "message": "Clocked in automatically",
-        "employee": who,
-        "clock_in": now_str, "check_type": check_type,
-        "auto_clock_in": True, "is_working_day": working_day,
+        "message": "Signed in",
+        "employee": {"id": emp.id, "name": f"{emp.first_name} {emp.last_name}", "email": emp.email},
+        "clock_in": (existing.clock_in if existing else "") or "",
     }
 
 
@@ -203,39 +167,13 @@ def employee_logout(request: Request, db: Session = Depends(get_db)):
     if not emp_id:
         end_every_session(request)
         return {"message": "Not logged in"}
-    today = datetime.now().strftime("%Y-%m-%d")
-    now_str = datetime.now().strftime("%H:%M:%S")
-    att = db.query(models.DBAttendance).filter(
-        models.DBAttendance.employee_id == emp_id,
-        models.DBAttendance.date == today,
-        models.DBAttendance.client_id == client_id,
-    ).first()
-    hours = 0.0
-    if att and att.clock_in and not att.clock_out:
-        if att.is_on_break and att.break_start:
-            try:
-                now = datetime.now()
-                today_str = now.strftime("%Y-%m-%d")
-                bs = datetime.strptime(today_str + " " + att.break_start, "%Y-%m-%d %H:%M:%S")
-                att.break_minutes = (att.break_minutes or 0) + round((now - bs).total_seconds() / 60, 1)
-            except Exception:
-                pass
-            att.is_on_break = False
-            att.break_start = ""
-        att.clock_out = now_str
-        try:
-            cin = datetime.strptime(today + " " + att.clock_in, "%Y-%m-%d %H:%M:%S")
-            cout = datetime.strptime(today + " " + now_str, "%Y-%m-%d %H:%M:%S")
-            raw_hours = (cout - cin).total_seconds() / 3600
-            break_hours = (att.break_minutes or 0) / 60
-            att.total_hours = round(raw_hours - break_hours, 2)
-            hours = att.total_hours
-            att.status = "completed"
-        except Exception:
-            pass
+    # Signing out stops the clock: the shift ends now, not whenever they next look.
+    att = stop_the_clock(db, emp_id, client_id)
+    if att:
         db.commit()
+    hours = att.total_hours if att else 0.0
     end_every_session(request)
-    return {"message": "Logged out", "total_hours": hours, "break_minutes": att.break_minutes if att else 0}
+    return {"message": "Logged out", "total_hours": hours or 0.0, "break_minutes": att.break_minutes if att else 0}
 
 
 @router.get("/api/employee/auth/me")
@@ -390,46 +328,7 @@ def employee_clock_out(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="No clock-in found for today")
     if att.clock_out:
         raise HTTPException(status_code=400, detail="Already clocked out")
-    if att.is_on_break:
-        try:
-            now = datetime.now()
-            today_str = now.strftime("%Y-%m-%d")
-            break_start = datetime.strptime(today_str + " " + att.break_start, "%Y-%m-%d %H:%M:%S")
-            att.break_minutes += round((now - break_start).total_seconds() / 60, 1)
-        except Exception:
-            pass
-        att.is_on_break = False
-        att.break_start = ""
-    att.clock_out = now_str
-    try:
-        from datetime import timedelta
-        cin = datetime.strptime(today + " " + att.clock_in, "%Y-%m-%d %H:%M:%S")
-        cout = datetime.strptime(today + " " + now_str, "%Y-%m-%d %H:%M:%S")
-        # A clock-out earlier than the clock-in means the shift ran past
-        # midnight. Without this, total_hours went negative and silently
-        # corrupted the hours that payroll reads.
-        if cout < cin:
-            cout += timedelta(days=1)
-        raw_hours = (cout - cin).total_seconds() / 3600
-        break_hours = (att.break_minutes or 0) / 60
-        att.total_hours = max(0.0, round(raw_hours - break_hours, 2))
-        settings = db.query(models.DBAttendanceSettings).filter(models.DBAttendanceSettings.client_id == client_id).first()
-        if settings:
-            try:
-                wh_start = datetime.strptime(settings.work_start, "%H:%M")
-                wh_end = datetime.strptime(settings.work_end, "%H:%M")
-                work_hours = (wh_end - wh_start).total_seconds() / 3600
-            except Exception:
-                work_hours = 8.0
-            if att.total_hours > work_hours:
-                overtime = round(att.total_hours - work_hours, 2)
-                # Respect the configured overtime ceiling so a forgotten
-                # clock-out cannot book an unbounded overtime claim.
-                cap = settings.max_overtime_hours or 0
-                att.overtime_hours = min(overtime, cap) if cap > 0 else overtime
-        att.status = "completed"
-    except Exception:
-        logger.exception("Failed to compute hours for attendance %s", att.id)
+    end_shift(db, att, client_id)
     db.commit()
     return {"message": "Clocked out", "total_hours": att.total_hours, "overtime_hours": att.overtime_hours, "break_minutes": att.break_minutes}
 
@@ -477,7 +376,7 @@ def employee_break_stop(request: Request, db: Session = Depends(get_db)):
         now = datetime.now()
         today_str = now.strftime("%Y-%m-%d")
         break_start = datetime.strptime(today_str + " " + att.break_start, "%Y-%m-%d %H:%M:%S")
-        elapsed = round((now - break_start).total_seconds() / 60, 1)
+        elapsed = round((now - break_start).total_seconds() / 60, 3)
         att.break_minutes = (att.break_minutes or 0) + elapsed
     except Exception:
         logger.error(f"Failed to calculate break duration for attendance {att.id}")
@@ -500,21 +399,27 @@ def employee_today_attendance(request: Request, db: Session = Depends(get_db)):
         models.DBAttendance.client_id == client_id,
     ).first()
     # The portal says why the Clock In button is waiting rather than filled in.
-    working_day = is_working_day(attendance_settings_for(db, client_id))
+    settings = attendance_settings_for(db, client_id)
+    working_day = is_working_day(settings)
+    target = target_hours_for(settings)       # what the dial on the clock fills towards
     if not att:
-        return {"clocked_in": False, "is_working_day": working_day}
+        return {"clocked_in": False, "is_working_day": working_day, "target_hours": target}
     now_str = datetime.now().strftime("%H:%M:%S")
     elapsed = 0
+    worked_seconds = 0       # what the screen's counter starts from, to the second
+    break_seconds = 0        # how long the break in progress has run
     if att.clock_in and not att.clock_out:
         try:
             cin = datetime.strptime(today + " " + att.clock_in, "%Y-%m-%d %H:%M:%S")
             now_t = datetime.strptime(today + " " + now_str, "%Y-%m-%d %H:%M:%S")
-            elapsed = round((now_t - cin).total_seconds() / 3600, 2)
+            worked = (now_t - cin).total_seconds()
             if att.is_on_break and att.break_start:
                 bs = datetime.strptime(today + " " + att.break_start, "%Y-%m-%d %H:%M:%S")
-                elapsed -= round((now_t - bs).total_seconds() / 3600, 2)
-            elapsed -= (att.break_minutes or 0) / 60
-            elapsed = round(max(0, elapsed), 2)
+                break_seconds = max(0, int((now_t - bs).total_seconds()))
+                worked -= break_seconds
+            worked -= (att.break_minutes or 0) * 60
+            worked_seconds = max(0, int(worked))
+            elapsed = round(worked_seconds / 3600, 2)
         except Exception:
             pass
     return {
@@ -527,6 +432,9 @@ def employee_today_attendance(request: Request, db: Session = Depends(get_db)):
         "break_minutes": att.break_minutes or 0,
         "overtime_hours": att.overtime_hours,
         "elapsed_hours": elapsed,
+        "elapsed_seconds": worked_seconds,
+        "break_elapsed_seconds": break_seconds,
+        "target_hours": target,
         "status": att.status,
     }
 
