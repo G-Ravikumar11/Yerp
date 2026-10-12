@@ -15,8 +15,34 @@ export const useJobPhotos = (job: number, kind: string, f: FileFilter, source: s
   useQuery({ queryKey: ['drawings', 'photos', job, kind, f, source], enabled: job > 0, queryFn: () => get<{ photos: FileItem[]; summary: FileSummary }>(`/api/jobs/${job}/photos?kind=${encodeURIComponent(kind || 'photo,drawing,document')}${fileQuery({ ...f, kind: '' })}${source ? `&source=${encodeURIComponent(source)}` : ''}`) })
 
 export const addDrawing = (job: number, b: { number: string; title: string; discipline: string }) => post<{ drawing: { id: number; number: string } }>(`/api/jobs/${job}/drawings`, b)
+export const deleteDrawing = (id: number) => api<{ message: string }>(`/api/drawings/${id}`, { method: 'DELETE' })
 export const setDrawingStatus = (id: number, status: string) => post<{ drawing: { number: string } }>(`/api/drawings/${id}/status`, { status })
-export function addRevision(id: number, file: File, b: { revision: string; status: string; received_on: string; received_from: string; remarks: string }) {
+/** A large photo of a sheet, made smaller in the browser before it goes up (the server keeps at most 2400 px anyway),
+ *  so a 6 MB phone picture uploads as a few hundred KB. Anything else, or anything that does not shrink, goes as it is. */
+async function shrink(file: File): Promise<File> {
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size < 800_000) return file
+  try {
+    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' })
+    const k = Math.min(1, 2400 / Math.max(bmp.width, bmp.height))
+    const c = document.createElement('canvas')
+    c.width = Math.round(bmp.width * k)
+    c.height = Math.round(bmp.height * k)
+    const g = c.getContext('2d')
+    if (!g) return file
+    g.fillStyle = '#fff'
+    g.fillRect(0, 0, c.width, c.height)
+    g.drawImage(bmp, 0, 0, c.width, c.height)
+    bmp.close()
+    const blob = await new Promise<Blob | null>((ok) => c.toBlob(ok, 'image/jpeg', 0.82))
+    if (!blob || blob.size >= file.size) return file
+    return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' })
+  } catch {
+    return file
+  }
+}
+
+export async function addRevision(id: number, picked: File, b: { revision: string; status: string; received_on: string; received_from: string; remarks: string }) {
+  const file = await shrink(picked)
   const fd = new FormData()
   fd.append('file', file, file.name)
   for (const [k, v] of Object.entries(b)) fd.append(k, v)

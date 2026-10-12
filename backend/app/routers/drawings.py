@@ -3,6 +3,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy import func as sqlfunc
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models
@@ -12,7 +13,9 @@ from app.constants.common import DRAWING_STATUSES
 from app.core.audit import log_audit
 from app.core.auth import require_erp_read, wo_actor
 from app.core.files import store_file
+from app.core.config import logger
 from app.schemas.drawings import DrawingStatusIn
+from app.services import purge
 from app.services.projects import drawing_dict
 
 
@@ -52,8 +55,8 @@ def add_revision(did: int, request: Request, file: UploadFile = File(...),
     f = store_file(db, client.id, file, data, job_id=d.job_id, attached_type="drawing",
                    attached_id=d.id, kind="drawing", caption="%s rev %s" % (d.number, rev),
                    taken_on=received_on or date.today().isoformat(), by=actor_name)
-    for old in db.query(models.DBDrawingRevision).filter(models.DBDrawingRevision.drawing_id == d.id).all():
-        old.status = "Superseded"
+    db.query(models.DBDrawingRevision).filter(models.DBDrawingRevision.drawing_id == d.id).update(
+        {"status": "Superseded"}, synchronize_session=False)       # one statement, however many revisions there are
     db.add(models.DBDrawingRevision(drawing_id=d.id, revision=rev, file_id=f.id, status=status,
                                     received_on=(received_on or date.today().isoformat())[:10],
                                     received_from=(received_from or "").strip(),
@@ -82,3 +85,17 @@ def drawing_status(did: int, body: DrawingStatusIn, request: Request, db: Sessio
     cur.status = d.status = body.status
     db.commit()
     return {"drawing": drawing_dict(db, d, detail=True)}
+
+
+@router.delete("/api/drawings/{did}")
+def delete_drawing(did: int, request: Request, db: Session = Depends(get_db)):
+    """Take a sheet off the register with all its revisions and their files. Anyone who manages work orders may -
+    it is recorded in the audit log with who did it."""
+    client, _, _ = wo_actor(request, db)
+    try:
+        message = purge.delete_one(db, request, client, "drawing", did)
+    except IntegrityError as exc:
+        db.rollback()
+        logger.warning("drawing %s could not be deleted: %s", did, exc)
+        raise HTTPException(409, "This drawing is in use and could not be deleted.")
+    return {"ok": True, "message": message}
