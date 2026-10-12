@@ -150,6 +150,23 @@ jobs:
           fi
           npx cap sync ios
 
+      # The iOS project is generated here, with Capacitor's placeholder icon and splash. Every image in those two
+      # sets is replaced with the company's logo (mobile/assets/, drawn from the website's icon) at the size it was.
+      - name: Use the company logo for the app icon and splash
+        working-directory: mobile
+        run: |
+          set -e
+          XC=ios/App/App/Assets.xcassets
+          for f in "$XC"/AppIcon.appiconset/*.png; do
+            w=$(sips -g pixelWidth "$f" | awk '/pixelWidth/{print $2}')
+            sips -z "$w" "$w" assets/icon-1024.png --out "$f" > /dev/null
+          done
+          for f in "$XC"/Splash.imageset/*.png; do
+            w=$(sips -g pixelWidth "$f" | awk '/pixelWidth/{print $2}')
+            h=$(sips -g pixelHeight "$f" | awk '/pixelHeight/{print $2}')
+            sips -z "$h" "$w" assets/splash-2732.png --out "$f" > /dev/null
+          done
+
       - name: Add camera and photo permissions to Info.plist
         working-directory: mobile/ios/App/App
         run: |
