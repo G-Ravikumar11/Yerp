@@ -164,6 +164,7 @@ export default function BoqPage() {
       { id: 'rate', header: 'Rate', hint: '₹ per unit', type: 'number', decimals: 2, width: 112, readOnly: locked, validate: (v) => ((v as number) < 0 ? 'Cannot be negative' : null) },
       { id: 'rate_only', header: 'R/o', hint: 'Rate only: rate agreed, quantity not yet known. Comes to nothing and is in no total.', type: 'checkbox', width: 64, readOnly: locked, countsAsData: false },
       { id: 'amount', header: 'Amount', type: 'number', width: 140, readOnly: true, get: (r) => amountOf(r), format: (v) => (typeof v === 'number' ? formatINR(v) : ''), summary: 'sum' },
+      { id: 'remarks', header: 'Remarks', hint: 'Any note about the line', width: 260, placeholder: 'Remarks' },
     ],
     [groupOptions, materialOptions],
   )

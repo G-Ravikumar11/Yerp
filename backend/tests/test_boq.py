@@ -392,3 +392,14 @@ def test_a_material_added_once_is_offered_on_every_boq(tenant):
     # A second project's BOQ sees it too.
     _, other = make_boq(tenant, "Another site")
     assert "Anti-termite chemical" in tenant.get("/api/boqs/materials").json()["materials"]
+
+
+def test_remarks_are_kept_and_go_to_the_excel(tenant):
+    _, boq = make_boq(tenant)
+    res = save_with(tenant, boq, {"remarks": "Rate includes pumping"})
+    assert res.status_code == 200, res.text
+    assert "Rate includes pumping" in [l["remarks"] for l in res.json()["lines"]]
+    x = tenant.get("/api/boqs/%d/export.xlsx" % boq["id"])
+    cells = [c.value for ws in openpyxl.load_workbook(io.BytesIO(x.content)).worksheets for row in ws.iter_rows() for c in row if c.value is not None]
+    assert "Remarks" in cells and "Rate includes pumping" in cells
+    assert tenant.get("/api/boqs/%d/export.pdf" % boq["id"]).status_code == 200
