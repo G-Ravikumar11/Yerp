@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { FileUp } from 'lucide-react'
 import { Button, Field, Input, Modal, Select, Skeleton, Textarea } from '@/components/ui'
 import { addDrawing, addRevision, drwKeys, setDrawingStatus, useDrawing, type Drawing } from '@/api/drawings'
 import { useAction } from '@/lib/mutate'
@@ -12,6 +13,7 @@ export function AddDrawingModal({ job, disciplines, open, onClose, onAdded }: { 
   const save = useAction(() => addDrawing(job, { number, title, discipline: disc }), { invalidate: [drwKeys.all], success: (r) => `${r.drawing.number} added. Now add its first revision.`, onSuccess: (r) => { setNumber(''); setTitle(''); onAdded(r.drawing.id, r.drawing.number) } })
   return (
     <Modal open={open} onOpenChange={(o) => !o && onClose()} title="Add a drawing" description="Add each sheet by the number printed on it, then its revisions as they arrive.">
+      <form onSubmit={(e) => { e.preventDefault(); if (number.trim() && !save.isPending) save.mutate() }}>
       <div className="grid gap-4">
         <Field label="Drawing number" htmlFor="dw-no"><Input id="dw-no" value={number} onChange={(e) => setNumber(e.target.value)} placeholder="STR-101" autoFocus /></Field>
         <Field label="What it shows" htmlFor="dw-title"><Input id="dw-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Raft reinforcement" /></Field>
@@ -19,9 +21,10 @@ export function AddDrawingModal({ job, disciplines, open, onClose, onAdded }: { 
       </div>
       <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
         {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
-        <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button loading={save.isPending} disabled={!number.trim()} onClick={() => save.mutate()}>Add the drawing</Button>
+        <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button type="submit" loading={save.isPending} disabled={!number.trim()}>Add the drawing</Button>
       </div>
+      </form>
     </Modal>
   )
 }
@@ -43,10 +46,18 @@ function RevisionForm({ drawing, statuses, onClose }: { drawing: Drawing; status
   const [from, setFrom] = useState('')
   const [remarks, setRemarks] = useState('')
   const save = useAction(() => addRevision(drawing.id, file as File, { revision: rev.trim(), status, received_on: on, received_from: from, remarks }), { invalidate: [drwKeys.all], success: (r) => r.message, onSuccess: onClose })
+  const picker = useRef<HTMLInputElement>(null)
+  const ready = !!file && !!rev.trim()
   return (
-    <div>
+    <form onSubmit={(e) => { e.preventDefault(); if (ready && !save.isPending) save.mutate() }}>
       <div className="grid gap-4 sm:grid-cols-3">
-        <Field label="The sheet" htmlFor="rv-file" className="sm:col-span-3"><Input id="rv-file" type="file" accept=".pdf,.dwg,.dxf,image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
+        <Field label="The sheet" htmlFor="rv-file" className="sm:col-span-3">
+          <input ref={picker} id="rv-file" type="file" accept=".pdf,.dwg,.dxf,image/*" className="sr-only" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+          <Button type="button" variant="outline" className="h-11 w-full justify-start gap-2 font-normal" onClick={() => picker.current?.click()}>
+            <FileUp className="size-4 shrink-0" />
+            <span className={`truncate ${file ? '' : 'text-muted-foreground'}`}>{file ? file.name : 'Choose a file (PDF, DWG, DXF or image)'}</span>
+          </Button>
+        </Field>
         <Field label="Revision" htmlFor="rv-rev"><Input id="rv-rev" value={rev} onChange={(e) => setRev(e.target.value)} placeholder="R1, A, B..." /></Field>
         <Field label="Status" htmlFor="rv-status"><Select id="rv-status" value={status} onChange={(e) => setStatus(e.target.value)} options={statuses.filter((s) => s !== 'Superseded').map((s) => ({ value: s, label: s }))} /></Field>
         <Field label="Received on" htmlFor="rv-on"><Input id="rv-on" type="date" value={on} onChange={(e) => setOn(e.target.value)} /></Field>
@@ -55,10 +66,10 @@ function RevisionForm({ drawing, statuses, onClose }: { drawing: Drawing; status
       </div>
       <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
         {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
-        <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button loading={save.isPending} disabled={!file || !rev.trim()} onClick={() => save.mutate()}>Add the revision</Button>
+        <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button type="submit" loading={save.isPending} disabled={!ready}>Add the revision</Button>
       </div>
-    </div>
+    </form>
   )
 }
 
