@@ -173,7 +173,6 @@ def test_staff_passwords_meet_the_same_rule_as_everybody_elses(tenant):
     assert res.status_code == 400
     emp = staff(tenant, "staff")
     assert tenant.put("/api/employees/%d/set-password" % emp["id"], json={"password": "1234"}).status_code == 400
-    assert tenant.post("/api/employees/%d/reset-password" % emp["id"], json={"password": "abcd"}).status_code == 400
 
 
 def test_a_password_stored_the_old_way_still_works_and_is_stored_the_new_way_after(account, client):

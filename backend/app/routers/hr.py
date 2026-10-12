@@ -663,19 +663,6 @@ def delete_employee(emp_id: int, request: Request, db: Session = Depends(get_db)
     return {"message": "Employee deleted"}
 
 
-@router.post("/api/employees/{emp_id}/reset-password")
-def reset_employee_password(emp_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
-    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
-    if not emp:
-        raise HTTPException(status_code=404, detail="Employee not found")
-    new_pass = body.get("password", "")
-    validate_password_strength(new_pass)
-    emp.password_hash = passwords.hash_password(new_pass)
-    db.commit()
-    return {"message": "Password updated successfully"}
-
-
 @router.get("/api/hr/org-domain")
 def get_org_domain(request: Request, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
@@ -815,15 +802,35 @@ def set_employee_permissions(emp_id: int, request: Request, body: dict = None,
     }
 
 
-@router.post("/api/employees/{emp_id}/offboard")
-def start_offboarding(emp_id: int, request: Request, db: Session = Depends(get_db)):
+def _set_status(emp_id: int, request: Request, db: Session, status: str, message: str, **fields):
+    """Master-only: move an employee to another stage of their time with the company."""
     client = get_client_user(request, db)
+    require_owner(request, db)
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
-    emp.status = "offboarding"
+    before = emp.status
+    emp.status = status
+    for k, v in fields.items():
+        setattr(emp, k, v)
+    log_audit(db, client.id, "employee_status_changed", "employee", emp.id, "%s: %s -> %s" % (emp.full_name if hasattr(emp, "full_name") else emp.id, before, status), "", request)
     db.commit()
-    return {"message": "Offboarding started"}
+    return {"message": message, "status": emp.status}
+
+
+@router.post("/api/employees/{emp_id}/onboard")
+def start_onboarding_status(emp_id: int, request: Request, db: Session = Depends(get_db)):
+    return _set_status(emp_id, request, db, "onboarding", "Employee is onboarding", offboarding_complete=False, end_date="")
+
+
+@router.post("/api/employees/{emp_id}/offboard")
+def start_offboarding(emp_id: int, request: Request, db: Session = Depends(get_db)):
+    return _set_status(emp_id, request, db, "offboarding", "Offboarding started")
+
+
+@router.post("/api/employees/{emp_id}/terminate")
+def terminate_employee(emp_id: int, request: Request, db: Session = Depends(get_db)):
+    return _set_status(emp_id, request, db, "terminated", "Employee terminated", end_date=datetime.now().strftime("%Y-%m-%d"))
 
 
 @router.post("/api/employees/{emp_id}/complete-offboard")
