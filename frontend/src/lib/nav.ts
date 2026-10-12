@@ -17,7 +17,7 @@ import {
 export type NavItem = { label: string; path: string; perm?: string; notHeadOffice?: boolean }
 /** staffOnly: the screens of a member of staff's own work (timesheet, payslips), which the account holder has no use for. */
 export type NavGroup = { id: string; label: string; icon: LucideIcon; items: NavItem[]; staffOnly?: boolean; ownerOnly?: boolean }
-export type NavEntry = { kind: 'link'; id: string; label: string; icon: LucideIcon; path: string; perm?: string; ownerOnly?: boolean } | ({ kind: 'group' } & NavGroup)
+export type NavEntry = { kind: 'link'; id: string; label: string; icon: LucideIcon; path: string; perm?: string; ownerOnly?: boolean; staffOnly?: boolean } | ({ kind: 'group' } & NavGroup)
 
 /**
  * The same six groups the current app has, so nobody has to relearn where
@@ -27,8 +27,9 @@ export type NavEntry = { kind: 'link'; id: string; label: string; icon: LucideIc
 export const NAV: NavEntry[] = [
   { kind: 'link', id: 'dashboard', label: 'Command Center', icon: LayoutDashboard, path: '/', ownerOnly: true },
   // Head office's front page: every site's vendors, work orders, BOQs and bills, and what waits on whom.
-  // HO QS and HO Coordinator land here; the Master can open it to see what head office sees.
-  { kind: 'link', id: 'ho', label: 'HO Portal', icon: Landmark, path: '/ho', perm: 'ho.view_all' },
+  // HO QS and HO Coordinator land here. It is theirs, a staff login like any other: the Master manages
+  // who they are in People and does not carry the HO portal in the Master's own menu.
+  { kind: 'link', id: 'ho', label: 'HO Portal', icon: Landmark, path: '/ho', perm: 'ho.view_all', staffOnly: true },
   {
     kind: 'group',
     id: 'me',
@@ -172,6 +173,7 @@ export function visibleNav(can: (perm: string) => boolean, staff = false, headOf
     if (e.kind === 'group' && e.staffOnly && !staff) return []
     if (e.kind === 'group' && e.ownerOnly && staff) return []
     if (e.kind === 'link' && e.ownerOnly && staff) return []
+    if (e.kind === 'link' && e.staffOnly && !staff) return []
     if (e.kind === 'link') return !e.perm || can(e.perm) ? [e] : []
     const items = e.items.filter((i) => (!i.perm || can(i.perm)) && !(headOffice && i.notHeadOffice))
     return items.length ? [{ ...e, items }] : []

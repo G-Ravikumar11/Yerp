@@ -216,23 +216,26 @@ PERMISSION_ROLES = [
         "permissions": list(_PROJECT_MANAGER),
     },
     {
-        "code": "head_projects", "label": "Head projects", "rank": 4,
+        "code": "head_projects", "label": "Head projects", "rank": 5,
         "description": "Over every project: a project manager's rights on all of "
                        "them plus purchase and stores, and the last approval before "
                        "the Master.",
         "permissions": _PROJECT_MANAGER + ["purchase.manage", "stores.manage"],
     },
     # HEAD OFFICE - its two people. They sign in at the same page as everybody
-    # else and land on the HO portal rather than on a site's day. Ranked with
-    # the departments: an order HO QS prepares climbs the same ladder the
-    # planner's did - project manager, head projects, then the Master.
+    # else and land on the HO portal rather than on a site's day. HO QS sits on
+    # the approval ladder right after the project manager: what a site raises
+    # goes site -> project manager -> HO QS -> head projects -> the Master. The
+    # coordinator approves nothing; it follows up.
     {
-        "code": "ho_qs", "label": "HO QS", "rank": 2, "head_office": True,
+        "code": "ho_qs", "label": "HO QS", "rank": 4, "head_office": True,
         "description": "Head office quantity surveyor. The only one who opens vendor "
                        "codes, work orders (the client's and the sub contractors') and "
-                       "BOQs. Sees every order, BOQ and bill on every site and checks "
-                       "the bills against them.",
-        "permissions": _HEAD_OFFICE + ["items.manage", "vendors.create",
+                       "BOQs. Sees every order, BOQ and bill on every site and approves "
+                       "what the project manager has approved, before head projects "
+                       "and the Master.",
+        "permissions": _HEAD_OFFICE + ["items.manage", "bills.approve",
+                                       "subcontracts.approve", "vendors.create",
                                        "workorders.create", "boq.create"],
     },
     {
@@ -274,7 +277,7 @@ PERMISSION_ROLES = [
                         "customers.manage", "subcontracts.approve"] + _SPLIT_OUT,
     },
     {
-        "code": "owner", "label": "Master", "rank": 5,
+        "code": "owner", "label": "Master", "rank": 6,
         "description": "Full access to everything in the portal.",
         "permissions": sorted(PERMISSION_KEYS),
     },
@@ -327,6 +330,17 @@ def employee_can(emp, permission: str) -> bool:
 def is_head_office(emp) -> bool:
     """Whether this member of staff is one of head office's people (HO QS or HO Coordinator)."""
     return (getattr(emp, "permission_role", "") or "").lower() in HEAD_OFFICE_ROLES
+
+
+# HO QS approves at rank 4, above the project manager - but the paper HO QS raises (the work orders it
+# opens) is prepared like a department's: it climbs from the bottom, through the project manager.
+RAISING_RANK = {"ho_qs": 2}
+
+
+def raising_rank(emp):
+    """Where a document climbs from when this person raised it."""
+    role = (getattr(emp, "permission_role", "") or DEFAULT_PERMISSION_ROLE).lower()
+    return RAISING_RANK.get(role, ROLE_RANK.get(role, 1))
 
 
 def role_rank(emp):

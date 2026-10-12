@@ -154,6 +154,12 @@ boxes cannot be ticked for anybody else by hand. The coordinator sees all of it,
 follows it up and keeps drafts up to date. A tender won by somebody else waits
 for HO QS to draw up its work order.
 
+HO QS also sits on the approval ladder, right after the project manager: what a site raises goes to
+the project manager, then HO QS, then head projects, then the Master. The coordinator approves nothing.
+What HO QS raises itself (the work orders it opens) is prepared like any department's and climbs from
+the project manager. Head office are staff logins like everyone else - the Master makes the two
+accounts in People and does not carry the HO portal in the Master's own menu.
+
 ## Running it
 
 The backend:
