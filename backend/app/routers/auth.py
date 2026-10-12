@@ -40,6 +40,7 @@ from app.services.auth import (
     google_configured,
     reset_email_bodies,
     superadmin_google_emails,
+    yahoo_configured,
 )
 from app.services.partner_portal import _portal_signed_in
 from app.services.subcontract_billing import portal_party
@@ -307,14 +308,20 @@ async def google_signin_callback(request: Request, db: Session = Depends(get_db)
         page = "/next/portal" if request.session.pop("google_for", "") == "portal" else "/next/login"
         return RedirectResponse(page + "?error=google_failed")
 
+    return _sign_in_with_identity(request, db, token.get("userinfo") or {}, "google")
+
+
+def _sign_in_with_identity(request: Request, db: Session, info: dict, provider: str):
+    """Sign in whoever the identity provider says this is, if the address belongs to an account here.
+
+    Shared by Google and Yahoo: only the provider's name differs, in the log and in the error codes."""
     portal = request.session.pop("google_for", "") == "portal"
     page = "/next/portal" if portal else "/next/login"
-    info = token.get("userinfo") or {}
     email = (info.get("email") or "").strip().lower()
     if not email:
-        return RedirectResponse(page + "?error=google_no_email")
+        return RedirectResponse(page + f"?error={provider}_no_email")
     if info.get("email_verified") is False:
-        return RedirectResponse(page + "?error=google_unverified")
+        return RedirectResponse(page + f"?error={provider}_unverified")
 
     target = request.session.pop("google_next", "/next/")
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -323,14 +330,14 @@ async def google_signin_callback(request: Request, db: Session = Depends(get_db)
         u = db.query(models.DBPortalUser).filter(sqlfunc.lower(models.DBPortalUser.email) == email,
                                                  models.DBPortalUser.is_active.is_(True)).first()
         if not u:
-            log_login(db, None, email, "partner", "google", request, status="failed")
+            log_login(db, None, email, "partner", provider, request, status="failed")
             db.commit()
-            return RedirectResponse("/next/portal?error=google_unknown")
+            return RedirectResponse(f"/next/portal?error={provider}_unknown")
         client = db.query(models.DBClient).filter(models.DBClient.id == u.client_id).first()
         party, _ = portal_party(db, u.client_id, u.party_type, u.party_id)
         if not client or not client.is_active or not party or party.is_active is False:
             return RedirectResponse("/next/portal?error=account_disabled")
-        _portal_signed_in(request, db, u, method="google")
+        _portal_signed_in(request, db, u, method=provider)
         return RedirectResponse("/next/portal")
 
     client = db.query(models.DBClient).filter(
@@ -343,7 +350,7 @@ async def google_signin_callback(request: Request, db: Session = Depends(get_db)
         request.session.pop("portal_user_id", None)
         request.session.pop("member_id", None)
         request.session["client_id"] = client.id
-        log_login(db, client.id, email, "client", "google", request)
+        log_login(db, client.id, email, "client", provider, request)
         return RedirectResponse(target if client.is_onboarded else "/next/onboard")
 
     # A colleague on the Master's team: signing in with the Google account their invite went to is as good as
@@ -360,7 +367,7 @@ async def google_signin_callback(request: Request, db: Session = Depends(get_db)
         request.session["member_id"] = member.id
         member.accepted_at = member.accepted_at or now
         member.last_login = now
-        log_login(db, owner.id, member.email, "member", "google", request, "success")
+        log_login(db, owner.id, member.email, "member", provider, request, "success")
         db.commit()
         return RedirectResponse(target)
 
@@ -372,14 +379,51 @@ async def google_signin_callback(request: Request, db: Session = Depends(get_db)
         request.session.pop("portal_user_id", None)
         request.session["employee_id"] = emp.id
         request.session["employee_client_id"] = emp.client_id
-        log_login(db, emp.client_id, email, "employee", "google", request)
+        log_login(db, emp.client_id, email, "employee", provider, request)
         return RedirectResponse(target)
 
     # Deliberately no account creation. On a system where HR issues the
     # addresses, anyone with a Google account could otherwise let themselves
     # in and land in a tenancy they have nothing to do with.
-    log_login(db, None, email, "google", "google", request, status="failed")
-    return RedirectResponse("/next/login?error=google_unknown")
+    log_login(db, None, email, provider, provider, request, status="failed")
+    return RedirectResponse(f"/next/login?error={provider}_unknown")
+
+
+@router.get("/api/auth/yahoo/status")
+def yahoo_status():
+    """Whether the Yahoo button should be offered at all."""
+    return {"configured": yahoo_configured()}
+
+
+@router.get("/api/auth/yahoo/start")
+async def yahoo_signin_start(request: Request, next: str = "/next/", who: str = ""):
+    if not yahoo_configured():
+        return RedirectResponse("/next/login?error=yahoo_unconfigured")
+    request.session["google_next"] = next if next.startswith("/") and not next.startswith("//") else "/next/"
+    request.session["google_for"] = "portal" if who == "portal" else ""
+    redirect_uri = str(request.url_for("yahoo_signin_callback"))
+    if redirect_uri.startswith("http://") and "localhost" not in redirect_uri:
+        redirect_uri = redirect_uri.replace("http://", "https://", 1)
+    return await oauth.yahoo.authorize_redirect(request, redirect_uri)
+
+
+@router.get("/api/auth/yahoo/callback", name="yahoo_signin_callback")
+async def yahoo_signin_callback(request: Request, db: Session = Depends(get_db)):
+    """Back from Yahoo: the same account matching as Google, and no account creation."""
+    try:
+        token = await oauth.yahoo.authorize_access_token(request)
+    except Exception:
+        logger.exception("Yahoo sign-in failed at the token exchange")
+        page = "/next/portal" if request.session.pop("google_for", "") == "portal" else "/next/login"
+        return RedirectResponse(page + "?error=yahoo_failed")
+    info = token.get("userinfo")
+    if not info:
+        try:
+            info = await oauth.yahoo.userinfo(token=token)
+        except Exception:
+            logger.exception("Yahoo userinfo request failed")
+            info = {}
+    return _sign_in_with_identity(request, db, dict(info or {}), "yahoo")
 
 
 @router.get("/api/auth/me")
