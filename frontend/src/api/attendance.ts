@@ -51,7 +51,6 @@ export interface AttSettings {
   allow_remote: boolean
   require_location: boolean
   working_days: string
-  auto_clock_in: boolean
 }
 export interface OvertimeLog { id?: number; employee_id: number; employee_name: string; date: string; hours: number; reason: string; announced_by: string; status: string }
 

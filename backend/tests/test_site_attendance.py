@@ -13,7 +13,6 @@ def job(tenant):
 
 
 def staff_in(tenant, client, lat, lng):
-    tenant.put("/api/attendance/settings", json={"auto_clock_in": False})
     emp = make_employee(tenant, password="EmpPass123", job_title="Site engineer")
     client.post("/api/employee/auth/login", json={"email": emp["email"], "password": "EmpPass123"})
     res = client.post("/api/employee/attendance/clock-in", json={"latitude": lat, "longitude": lng})

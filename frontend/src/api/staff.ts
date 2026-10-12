@@ -173,10 +173,17 @@ export interface ClockState {
   break_minutes?: number
   overtime_hours?: number
   elapsed_hours?: number
+  /** Worked so far, breaks taken out, to the second: the counter on the clock starts from this. */
+  elapsed_seconds?: number
+  /** How long the break in progress has run. */
+  break_elapsed_seconds?: number
+  /** How long the working day is meant to be, in hours: what the dial on the clock fills towards. */
+  target_hours?: number
   status?: string
 }
 
-export const useClock = () => useQuery({ queryKey: k('clock'), queryFn: () => get<ClockState>('/api/employee/attendance/today'), refetchInterval: 60_000 })
+// Always asked afresh when the card appears: the answer changes by the second and a kept one can be a shift that has ended.
+export const useClock = () => useQuery({ queryKey: k('clock'), queryFn: () => get<ClockState>('/api/employee/attendance/today'), refetchInterval: 60_000, staleTime: 0, refetchOnMount: 'always' })
 export const breakFor = (which: 'start' | 'stop') => post<{ message?: string }>(`/api/employee/attendance/break-${which}`)
 
 export interface MyJob { id: number; number: string; name: string; customer_name: string; site_address: string }
