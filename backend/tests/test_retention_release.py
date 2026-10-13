@@ -3,7 +3,7 @@
 Retention is held on every certified bill. Until now the app could say how
 much was held and nothing more - no document ever brought it back, so it
 could not be received, did not age, and sat outside the ledgers and the GST
-registers. A release is a bill of its own, with the tax the RA bills left off.
+registers. A release is a bill of its own, but carries no tax: the RA bills already charged GST on the whole.
 """
 import main
 from test_measurement_and_ra_bills import placed_order, measure, line_of, raise_bill
@@ -41,14 +41,14 @@ def test_half_is_suggested_at_practical_completion(tenant):
     assert p["gst_percent"] == 18
 
 
-def test_a_release_carries_the_gst_the_bills_left_off(tenant):
+def test_a_release_carries_no_gst_the_bills_already_charged_it(tenant):
     wo, bill = certified_ra(tenant)
     res = release(tenant, "client", wo["id"], 2500)
     assert res.status_code == 200, res.text
     r = res.json()["release"]
     assert r["number"] == "RET-0001" and r["status"] == "CERTIFIED"
-    assert r["gst_amount"] == 450 and r["net_amount"] == 2950
-    assert r["cgst_amount"] + r["sgst_amount"] + r["igst_amount"] == 450
+    assert r["gst_amount"] == 0 and r["net_amount"] == 2500
+    assert r["cgst_amount"] + r["sgst_amount"] + r["igst_amount"] == 0
     # What is left is the second half, due at the end of the defects period.
     p = position(tenant, "client", wo["id"])
     assert p["balance"] == 2500 and p["released"] == 2500
@@ -71,9 +71,9 @@ def test_a_release_is_owed_received_and_in_the_ledger(tenant):
     r = release(tenant, "client", wo["id"], 2500).json()["release"]
     owed = [x for x in tenant.get("/api/money/receivables").json()["invoices"]
             if x["doc_type"] == "retention_release"]
-    assert len(owed) == 1 and owed[0]["outstanding"] == 2950 and owed[0]["kind"] == "Retention release"
+    assert len(owed) == 1 and owed[0]["outstanding"] == 2500 and owed[0]["kind"] == "Retention release"
     got = tenant.post("/api/money/entries", json={"doc_type": "retention_release", "doc_id": r["id"],
-                                                  "amount": 2950, "mode": "NEFT", "reference": "UTR9"})
+                                                  "amount": 2500, "mode": "NEFT", "reference": "UTR9"})
     assert got.status_code == 200, got.text
     assert got.json()["entry"]["direction"] == "IN"
     assert tenant.get("/api/retention/releases/%d" % r["id"]).json()["status"] == "PAID"
@@ -98,12 +98,13 @@ def test_a_release_with_money_against_it_is_not_cancelled(tenant):
     assert position(tenant, "client", wo["id"])["balance"] == 5000
 
 
-def test_the_release_is_an_outward_supply(tenant):
+def test_the_release_is_not_a_second_supply(tenant):
     wo, bill = certified_ra(tenant)
+    before = tenant.get("/api/gst/outward").json()
     release(tenant, "client", wo["id"], 2500)
     out = tenant.get("/api/gst/outward").json()
-    rel = [x for x in out["supplies"] if x["kind"] == "Retention release"]
-    assert len(rel) == 1 and rel[0]["taxable"] == 2500 and rel[0]["tax"] == 450
+    assert not [x for x in out["supplies"] if x["kind"] == "Retention release"]
+    assert out["totals"] == before["totals"] if "totals" in out else True
 
 
 def test_the_project_money_counts_it(tenant):
@@ -113,7 +114,7 @@ def test_the_project_money_counts_it(tenant):
     release(tenant, "client", wo["id"], 2500)
     after = tenant.get("/api/costs/by-project/%d" % bill["job_id"]).json()
     assert after["retention_held"] == before.json()["retention_held"] - 2500
-    assert after["outstanding"] == before.json()["outstanding"] + 2950
+    assert after["outstanding"] == before.json()["outstanding"] + 2500
 
 
 def gang_with_retention(tenant, **over):
@@ -142,7 +143,8 @@ def test_a_gangs_retention_is_released_as_money_we_owe(tenant):
     assert paid.json()["entry"]["direction"] == "OUT"
     assert tenant.get("/api/sub-bills?order_id=%d" % order["id"]).json()["summary"]["retention_held"] == held - held / 2
     inward = [x for x in tenant.get("/api/gst/inward").json()["supplies"] if x["kind"] == "Retention release"]
-    assert len(inward) == 1 and inward[0]["taxable"] == held / 2
+    assert not inward          # the gang's bill already carried the GST
+    assert r["gst_amount"] == 0 and r["net_amount"] == held / 2
 
 
 def test_a_gang_whose_defects_period_has_run_out_is_flagged(tenant):

@@ -12,7 +12,7 @@ from app.db import get_db
 
 from app.constants.common import PAYROLL_EXCLUDED_STATUSES, PAYSLIP_META_FIELDS, PAYSLIP_PAY_INPUTS
 from app.core.audit import log_audit
-from app.core.auth import get_client_user
+from app.core.auth import get_client_user, require_owner
 from app.core.currency import esc, money
 from app.core.dates import _parse_date
 from app.core.notifications import default_from_email, send_email_background
@@ -21,7 +21,7 @@ from app.routers.hr import employee_ytd
 from app.schemas.invoicing import SendInvoiceEmail
 from app.schemas.payroll import PayrollRunRequest, PayslipCreate
 from app.services.email import TRACKING_PIXEL
-from app.services.payroll import compute_payslip_figures, find_overlapping_payslip
+from app.services.payroll import compute_payslip_figures, find_overlapping_payslip, auto_payroll_enabled, generate_payroll, pay_period_days, set_auto_payroll
 from app.services.wallet_ai import require_credit
 from app.validators.common import validate_email_address
 
@@ -104,89 +104,11 @@ def run_payroll(request: Request, body: PayrollRunRequest, db: Session = Depends
     if p_end < p_start:
         raise HTTPException(status_code=400, detail="Period end cannot be before period start")
 
-    # Anyone still on the books gets paid. New starters sit in "onboarding" and
-    # leavers in "offboarding" - both are still owed a payslip; only terminated
-    # staff are excluded.
-    query = db.query(models.DBEmployee).filter(
-        models.DBEmployee.client_id == client.id,
-        models.DBEmployee.status.notin_(PAYROLL_EXCLUDED_STATUSES),
-    )
-    if body.employee_ids:
-        query = query.filter(models.DBEmployee.id.in_(body.employee_ids))
-    employees = query.all()
-    if not employees:
-        raise HTTPException(status_code=400, detail="No payable employees match this payroll run")
-
-    created, skipped, warnings, total_net, total_gross = [], [], [], 0.0, 0.0
-    next_number = next_sequence_number(db, models.DBPayslip, client.id, "PS-")
-    seq = int(next_number.split("-")[1])
-
-    for emp in employees:
-        clash = find_overlapping_payslip(db, client.id, emp.id, body.period_start, body.period_end)
-        if clash:
-            if body.skip_existing:
-                skipped.append({
-                    "employee_id": emp.id, "name": f"{emp.first_name} {emp.last_name}",
-                    "reason": f"already covered by {clash.number}",
-                })
-                continue
-            raise HTTPException(
-                status_code=409,
-                detail=f"{emp.first_name} {emp.last_name} already has payslip {clash.number} for this period",
-            )
-
-        hours = 0.0
-        if body.include_attendance_hours:
-            records = db.query(models.DBAttendance).filter(
-                models.DBAttendance.employee_id == emp.id,
-                models.DBAttendance.client_id == client.id,
-                models.DBAttendance.date >= body.period_start,
-                models.DBAttendance.date <= body.period_end,
-            ).all()
-            hours = round(sum(r.total_hours or 0 for r in records), 2)
-
-        ot_hours = round(sum(
-            log.hours or 0 for log in db.query(models.DBOvertimeLog).filter(
-                models.DBOvertimeLog.employee_id == emp.id,
-                models.DBOvertimeLog.client_id == client.id,
-                models.DBOvertimeLog.date >= body.period_start,
-                models.DBOvertimeLog.date <= body.period_end,
-                models.DBOvertimeLog.status == "announced",
-            ).all()
-        ), 2)
-
-        figures = compute_payslip_figures(emp, {
-            "hours_worked": hours, "overtime_hours": ot_hours,
-            "bonus": emp.bonus or 0, "allowances": emp.allowances or 0,
-        })
-        ps = models.DBPayslip(
-            client_id=client.id, employee_id=emp.id, number=f"PS-{seq:04d}",
-            period_start=body.period_start, period_end=body.period_end, pay_date=body.pay_date,
-            status="Draft", pay_frequency=emp.pay_frequency or "", **figures,
-        )
-        seq += 1
-        db.add(ps)
-        total_net += figures["net_pay"]
-        total_gross += figures["gross_pay"]
-        created.append({
-            "employee_id": emp.id, "name": f"{emp.first_name} {emp.last_name}",
-            "number": ps.number, "gross_pay": figures["gross_pay"], "net_pay": figures["net_pay"],
-        })
-        # A zero-value payslip is almost always missing data (an hourly worker
-        # with no attendance logged) rather than a genuine nil payment. Surface
-        # it instead of quietly paying someone nothing.
-        if figures["gross_pay"] <= 0:
-            warnings.append({
-                "employee_id": emp.id, "name": f"{emp.first_name} {emp.last_name}",
-                "number": ps.number,
-                "reason": "no salary and no hours recorded for this period - payslip is zero",
-            })
-
-    if created:
-        # Priced per payslip; charged once for the batch so a part-run cannot
-        # be billed twice.
-        require_credit(db, client.id, "payroll_run", len(created),
-                       f"{body.period_start}..{body.period_end}")
+    result = generate_payroll(db, client.id, body.period_start, body.period_end, body.pay_date,
+                              employee_ids=body.employee_ids, include_attendance_hours=body.include_attendance_hours,
+                              skip_existing=body.skip_existing)
+    created, skipped, warnings = result["created"], result["skipped"], result["warnings"]
+    total_net, total_gross = result["total_net"], result["total_gross"]
     log_audit(db, client.id, "payroll_run", "payslip", None, f"{body.period_start}..{body.period_end}",
               f"{len(created)} payslips, net {total_net:.2f}", request)
     db.commit()
@@ -196,6 +118,26 @@ def run_payroll(request: Request, body: PayrollRunRequest, db: Session = Depends
         "total_gross": money(total_gross), "total_net": money(total_net),
         "period_start": body.period_start, "period_end": body.period_end, "pay_date": body.pay_date,
     }
+
+
+@router.get("/api/payroll/auto")
+def get_auto_payroll(request: Request, db: Session = Depends(get_db)):
+    """Whether payslips are drafted by themselves when a month ends."""
+    client = get_client_user(request, db)
+    return {"enabled": auto_payroll_enabled(db, client.id)}
+
+
+@router.put("/api/payroll/auto")
+def put_auto_payroll(request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """The Master turns the automatic monthly payroll on or off."""
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    enabled = bool((body or {}).get("enabled"))
+    set_auto_payroll(db, client.id, enabled)
+    log_audit(db, client.id, "payroll_auto_changed", "settings", None, "auto_payroll",
+              "Automatic payroll turned " + ("on" if enabled else "off"), request)
+    db.commit()
+    return {"enabled": enabled, "message": "Automatic payroll is " + ("on" if enabled else "off")}
 
 
 @router.get("/api/payslips/{ps_id}")
@@ -225,7 +167,9 @@ def get_payslip(ps_id: int, request: Request, db: Session = Depends(get_db)):
             "department_name": dept_name, "bank_name": emp.bank_name if emp else "",
             "bank_account": emp.bank_account if emp else "", "tax_id": emp.tax_id if emp else "",
             "pay_frequency": emp.pay_frequency if emp else "",
+            "start_date": emp.start_date if emp else "", "work_location": emp.work_location if emp else "",
         } if emp else {},
+        "days": pay_period_days(db, client.id, emp, ps),
         "period_start": ps.period_start, "period_end": ps.period_end, "pay_date": ps.pay_date,
         "hours_worked": ps.hours_worked, "overtime_hours": ps.overtime_hours, "overtime_rate": ps.overtime_rate,
         "basic_salary": ps.basic_salary, "overtime_pay": ps.overtime_pay,

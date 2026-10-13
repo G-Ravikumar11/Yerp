@@ -706,6 +706,8 @@ def einvoice_release_payload(db, client, r):
         problems.append("a contractor's release is their invoice to us, not ours")
     if r.status not in ("CERTIFIED", "PAID"):
         problems.append("the release is %s" % (r.status or "").lower())
+    if not (r.gst_amount or 0):
+        problems.append("the bills this retention came from already carried the GST, so a release has no invoice of its own")
     job = db.query(models.DBJob).filter(models.DBJob.id == r.job_id).first()
     seller, buyer = einvoice_parties(db, client, job, r.place_of_supply, problems)
     ass = money(r.amount)

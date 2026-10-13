@@ -12,9 +12,10 @@ import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
 import { IncidentModal } from './IncidentModal'
 import { PermitModal } from './PermitModal'
+import { SafeDays } from './SafeDays'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
-type Tab = 'incidents' | 'talks' | 'permits'
+type Tab = 'incidents' | 'talks' | 'permits' | 'safe'
 
 /** Incidents and near misses with their cause and fix, the morning toolbox talk, and permits to work. */
 export default function SafetyPage() {
@@ -85,23 +86,25 @@ export default function SafetyPage() {
     },
     { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="permit" id={r.id} label={String(r.number)} noun="permit" /> },
   ]
-  const register = `/api/safety/${tab}.xlsx${job ? `?job_id=${job}` : ''}`
+  const register = `/api/safety/${tab === 'safe' ? 'incidents' : tab}.xlsx${job ? `?job_id=${job}` : ''}`
   const noPermit = tab === 'permits' && !signoff
   return (
     <>
       <PageHeader eyebrow="Projects" title="Safety" description="Incidents and near misses with their cause and fix, the morning toolbox talk, and permits to work." actions={<><Button variant="outline" asChild><a href={register}><FileSpreadsheet /> Register</a></Button><Button disabled={!job || noPermit} title={noPermit ? 'A permit to work is issued by a supervisor.' : undefined} onClick={add}><Plus /> New</Button></>} />
       <div className="mb-6"><ProjectPicker value={job} onChange={setJob} id="sf-job" allowAll /></div>
-      <StatGrid>
+      <StatGrid className="lg:grid-cols-3 xl:grid-cols-6">
         <Stat label="Days without a lost-time injury" value={s ? (s.days_without_lti === null ? 'none yet' : s.days_without_lti) : 0} loading={q.isPending} />
+        <Stat label="Incidents so far" value={d?.incidents.length ?? 0} sub="all time, every kind" loading={q.isPending} />
         <Stat label="Incidents this month" value={s?.incidents_this_month ?? 0} loading={q.isPending} />
         <Stat label="Near misses reported" value={s?.near_misses ?? 0} loading={q.isPending} />
         <Stat label="Toolbox talks this week" value={s?.talks_this_week ?? 0} loading={q.isPending} />
         <Stat label="Permits live" value={s?.active_permits ?? 0} sub={s?.expired_open ? `${s.expired_open} run out` : undefined} tone={s?.expired_open ? 'danger' : undefined} loading={q.isPending} />
       </StatGrid>
-      <div className="mb-4"><Tabs label="Safety" value={tab} onChange={setTab} items={[{ value: 'incidents', label: 'Incidents' }, { value: 'talks', label: 'Toolbox talks' }, { value: 'permits', label: 'Permits to work' }]} /></div>
+      <div className="mb-4"><Tabs label="Safety" value={tab} onChange={setTab} items={[{ value: 'incidents', label: 'Incidents' }, { value: 'talks', label: 'Toolbox talks' }, { value: 'permits', label: 'Permits to work' }, { value: 'safe', label: 'Safe days' }]} /></div>
       {tab === 'incidents' && <DataTable label="Incidents" rows={d?.incidents ?? []} columns={incidents} rowKey={(i) => i.id} loading={q.isPending} empty="Nothing reported. A near miss written down is the cheapest lesson there is." />}
       {tab === 'talks' && <DataTable label="Toolbox talks" rows={d?.talks ?? []} columns={talks} rowKey={(t) => t.id} loading={q.isPending} empty="No talks recorded." />}
       {tab === 'permits' && <DataTable label="Permits" rows={d?.permits ?? []} columns={permits} rowKey={(p) => p.id} loading={q.isPending} empty="No permits issued." />}
+      {tab === 'safe' && <SafeDays incidents={d?.incidents ?? []} loading={q.isPending} />}
 
       <IncidentModal job={job} kinds={d?.kinds ?? []} open={reporting} onClose={() => setReporting(false)} />
       <PermitModal job={job} kinds={d?.permit_kinds ?? {}} open={permitting} onClose={() => setPermitting(false)} />

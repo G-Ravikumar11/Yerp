@@ -154,9 +154,15 @@ def test_an_issued_revision_cannot_be_edited_by_saving(tenant):
 
 # --- gang orders against the BOQ ---------------------------------------------------------------------------------------
 
+def job_of_key(key):
+    with main.SessionLocal() as db:
+        line = db.query(main.models.DBBoqLine).filter(main.models.DBBoqLine.key == key).first()
+        return db.get(main.models.DBBoq, line.boq_id).job_id
+
+
 def gang_order(tenant, boq_lines, picks, order=None):
-    """A draft gang order whose schedule is the BOQ lines picked: [(boq line, quantity, gang rate)]."""
-    order = order or draft(tenant)
+    """A draft sub contractor work order on the BOQ's project whose schedule is the BOQ lines picked: [(boq line, quantity, sub contractor rate)]."""
+    order = order or draft(tenant, job_id=job_of_key(picks[0][0]["key"]))
     pulled = tenant.post("/api/wo/orders/%d/boq-lines" % order["id"],
                          json={"lines": [{"key": l["key"], "quantity": q, "rate": r} for l, q, r in picks]}).json()
     res = tenant.put("/api/wo/orders/%d/boq" % order["id"], json={"lines": pulled["lines"]})
@@ -176,7 +182,7 @@ def test_giving_more_than_the_boq_allows_is_warned_not_refused(tenant):
     _, boq = make_boq(tenant)
     lines = {l["group_code"]: l for l in saved(tenant, boq)["lines"]}
     gang_order(tenant, lines, [(lines["EXC"], 300, 150)])
-    pulled = tenant.post("/api/wo/orders/%d/boq-lines" % draft(tenant)["id"],
+    pulled = tenant.post("/api/wo/orders/%d/boq-lines" % draft(tenant, job_id=job_of_key(lines["EXC"]["key"]))["id"],
                          json={"lines": [{"key": lines["EXC"]["key"], "quantity": 300, "rate": 150}]}).json()
     assert "600" in pulled["warnings"][0] and "500" in pulled["warnings"][0]
     _, _, res = gang_order(tenant, lines, [(lines["EXC"], 300, 150)])
@@ -365,10 +371,51 @@ def test_one_item_code_cannot_be_on_two_lines(tenant):
     assert res.status_code == 400 and "two lines" in res.json()["detail"]
 
 
-def test_a_badly_formed_item_code_is_refused_in_the_masters_words(tenant):
+def test_an_item_code_of_any_pattern_is_kept_and_added_to_the_master(tenant):
     _, boq = make_boq(tenant)
-    res = save_with(tenant, boq, {"item_code": "AB"})
-    assert res.status_code == 400 and "characters" in res.json()["detail"]
+    res = save_with(tenant, boq, {"item_code": "civ-rcc-25"})
+    assert res.status_code == 200, res.text
+    line = [l for l in res.json()["lines"] if l["description"].startswith("Excavation")][0]
+    assert line["item_code"] == "CIV-RCC-25", "kept as typed, in capitals"
+    items = tenant.get("/api/erp/items").json()
+    row = [i for k in ("FG",) for i in items.get(k, items.get("items", [])) if i["item_code"] == "CIV-RCC-25"] if isinstance(items, dict) else []
+    assert row and row[0]["item_name"].startswith("Excavation"), "the code is a finished good in the master under the line's name"
+
+
+def test_a_typed_item_code_with_spaces_or_odd_marks_is_refused(tenant):
+    _, boq = make_boq(tenant)
+    for bad in ("CIV RCC", "RCC*25", "A" * 31):
+        res = save_with(tenant, boq, {"item_code": bad})
+        assert res.status_code == 400 and "letters, numbers" in res.json()["detail"], bad
+
+
+def test_the_code_typed_on_the_boq_is_the_code_on_every_document_made_from_it(tenant):
+    jid, boq = make_boq(tenant)
+    lines = import_lines(tenant, boq)["lines"]
+    typed = {"Excavation in all types of soil": "CIV-EXC-01", "M25 grade RCC in raft": "CIV-RCC-25",
+             "Shuttering to raft edges": "CIV-FWK-03", "Brick masonry in CM 1:6": "CIV-MAS-06"}
+    for l in lines:
+        l["item_code"] = typed.get(l["description"], "")
+    saved_boq = tenant.put("/api/boqs/%d/lines" % boq["id"], json={"lines": lines, "issue_codes": True}).json()
+    assert {l["description"]: l["item_code"] for l in saved_boq["lines"] if l["kind"] != "section"} == typed
+    # the client's work order carries the same codes
+    wo = tenant.post("/api/boqs/%d/client-order" % boq["id"], json={}).json()["work_order"]
+    full = tenant.get("/api/erp/work-orders/%d" % wo["id"]).json()
+    assert sorted(l["fg_code"] for l in full["lines"]) == sorted(typed.values())
+    # a gang's order pulls the line with the same code, and the tracker shows it
+    key = [l for l in saved_boq["lines"] if l["item_code"] == "CIV-RCC-25"][0]["key"]
+    pulled = tenant.post("/api/wo/orders/%d/boq-lines" % draft(tenant, job_id=job_of_key(key))["id"], json={"lines": [{"key": key, "quantity": 10, "rate": 100}]}).json()
+    assert pulled["lines"][0]["item_code"] == "CIV-RCC-25"
+    rows = tenant.get("/api/boqs/%d/tracker" % boq["id"]).json()["rows"]
+    assert "CIV-RCC-25" in [r.get("item_code") for r in rows]
+
+
+def test_a_blank_item_code_is_still_given_one_beside_typed_ones(tenant):
+    _, boq = make_boq(tenant)
+    res = save_with(tenant, boq, {"item_code": "CIV-EXC-01"})
+    priced = [l for l in res.json()["lines"] if l["kind"] != "section"]
+    assert priced[0]["item_code"] == "CIV-EXC-01" and all(l["item_code"] for l in priced)
+
 
 
 def test_the_sample_sheet_imports_as_it_is(tenant):
@@ -403,3 +450,143 @@ def test_remarks_are_kept_and_go_to_the_excel(tenant):
     cells = [c.value for ws in openpyxl.load_workbook(io.BytesIO(x.content)).worksheets for row in ws.iter_rows() for c in row if c.value is not None]
     assert "Remarks" in cells and "Rate includes pumping" in cells
     assert tenant.get("/api/boqs/%d/export.pdf" % boq["id"]).status_code == 200
+
+
+# --- the company logo on the BOQ's PDF ------------------------------------------------------------------------------
+
+def logo_uri():
+    import base64
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (240, 80), (200, 40, 40)).save(buf, "PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def set_logo(account, uri):
+    from app import models
+    from app.db.session import SessionLocal
+    db = SessionLocal()
+    db.query(models.DBClient).filter(models.DBClient.email == account["email"]).update({"logo_url": uri})
+    db.commit()
+    db.close()
+
+
+def test_the_boq_pdf_carries_the_company_logo_in_the_heading_and_as_a_watermark(tenant, account, monkeypatch):
+    from app.documents import form_pdf
+    _, boq = make_boq(tenant)
+    saved(tenant, boq)
+    plain = tenant.get("/api/boqs/%d/export.pdf" % boq["id"])
+    assert plain.status_code == 200 and b"/Subtype /Image" not in plain.content
+
+    set_logo(account, logo_uri())
+    drawn = []
+    real = form_pdf._draw_logo_watermark
+    monkeypatch.setattr(form_pdf, "_draw_logo_watermark", lambda *a: (drawn.append(1), real(*a))[1])
+    branded = tenant.get("/api/boqs/%d/export.pdf" % boq["id"])
+    assert branded.status_code == 200 and b"/Subtype /Image" in branded.content
+    assert len(drawn) >= 1, "the watermark is drawn on the page"
+    assert len(branded.content) > len(plain.content)
+
+
+def test_the_watermark_is_on_every_page_of_a_long_boq(tenant, account, monkeypatch):
+    from pypdf import PdfReader
+    from app.documents import form_pdf
+    _, boq = make_boq(tenant)
+    lines = [{"kind": "item", "description": "Item %d of the schedule" % n, "uom": "cum", "quantity": 1, "rate": 10} for n in range(160)]
+    assert tenant.put("/api/boqs/%d/lines" % boq["id"], json={"lines": lines, "issue_codes": False}).status_code == 200
+    set_logo(account, logo_uri())
+    drawn = []
+    real = form_pdf._draw_logo_watermark
+    monkeypatch.setattr(form_pdf, "_draw_logo_watermark", lambda *a: (drawn.append(1), real(*a))[1])
+    pdf = tenant.get("/api/boqs/%d/export.pdf" % boq["id"]).content
+    pages = len(PdfReader(io.BytesIO(pdf)).pages)
+    assert pages >= 2 and len(drawn) == pages
+
+
+def test_a_logo_that_is_only_an_address_is_left_off_the_pdf_rather_than_fetched(tenant, account):
+    _, boq = make_boq(tenant)
+    saved(tenant, boq)
+    set_logo(account, "http://example.invalid/logo.png")
+    res = tenant.get("/api/boqs/%d/export.pdf" % boq["id"])
+    assert res.status_code == 200 and b"/Subtype /Image" not in res.content
+
+
+# --- a client work order opened outside the BOQ is still against it ---------------------------------------------------
+
+def build_order(tenant, jid, boq_lines):
+    priced = [l for l in boq_lines if l["kind"] != "section" and l["quantity"]]
+    res = tenant.post("/api/erp/work-orders/build", json={"job_id": jid, "lines": [
+        {"code": l["item_code"], "qty": l["quantity"], "rate": l["rate"]} for l in priced]})
+    assert res.status_code == 200, res.text
+    return res.json()["work_order"]
+
+
+def test_an_order_opened_from_the_client_work_orders_page_is_against_the_projects_boq(tenant):
+    jid, boq = make_boq(tenant)
+    lines = saved(tenant, boq)["lines"]
+    wo = build_order(tenant, jid, lines)
+    with main.SessionLocal() as db:
+        assert db.get(main.models.DBWorkOrder, wo["id"]).boq_id == boq["id"]
+    # the BOQ knows it has its order, so a second one is not made from it
+    again = tenant.post("/api/boqs/%d/client-order" % boq["id"], json={})
+    assert again.status_code == 409 and wo["number"] in again.json()["detail"]
+
+
+def test_an_order_never_tied_to_the_boq_is_still_found_as_the_projects_order(tenant):
+    jid, boq = make_boq(tenant)
+    lines = saved(tenant, boq)["lines"]
+    wo = build_order(tenant, jid, lines)
+    with main.SessionLocal() as db:                         # as an order made before this change was
+        db.get(main.models.DBWorkOrder, wo["id"]).boq_id = None
+        db.commit()
+    # read straight away, it is still the project's order against the BOQ
+    assert tenant.post("/api/boqs/%d/client-order" % boq["id"], json={}).status_code == 409
+    assert tenant.get("/api/boqs/%d/tracker" % boq["id"]).status_code == 200
+
+
+def test_a_rejected_order_does_not_stop_the_boq_making_the_next(tenant):
+    jid, boq = make_boq(tenant)
+    lines = saved(tenant, boq)["lines"]
+    wo = build_order(tenant, jid, lines)
+    with main.SessionLocal() as db:
+        db.get(main.models.DBWorkOrder, wo["id"]).status = "Rejected"
+        db.commit()
+    made = tenant.post("/api/boqs/%d/client-order" % boq["id"], json={})
+    assert made.status_code == 200, made.text
+
+
+# --- a sub contractor work order goes along with the project's BOQ ------------------------------------------------------------------
+
+def test_a_sub_contractor_line_typed_in_is_tied_to_its_boq_line_by_code_or_description(tenant):
+    _, boq = make_boq(tenant)
+    lines = {l["group_code"]: l for l in saved(tenant, boq)["lines"]}
+    order = draft(tenant, job_id=job_of_key(lines["EXC"]["key"]))
+    typed = [{"item_code": lines["EXC"]["item_code"], "item_description": "Digging", "uom": "cum", "quantity": 10, "unit_rate": 100},
+             {"item_code": "", "item_description": lines["RCC"]["description"], "uom": "cum", "quantity": 5, "unit_rate": 9000}]
+    res = tenant.put("/api/wo/orders/%d/boq" % order["id"], json={"lines": typed})
+    assert res.status_code == 200, res.text
+    items = res.json()["order"]["items"]
+    assert [i["boq_key"] for i in items] == [lines["EXC"]["key"], lines["RCC"]["key"]]
+    assert items[1]["item_code"] == lines["RCC"]["item_code"]
+
+
+def test_a_sub_contractor_order_with_a_line_off_the_boq_cannot_go_for_approval(tenant):
+    _, boq = make_boq(tenant)
+    lines = {l["group_code"]: l for l in saved(tenant, boq)["lines"]}
+    order, _, _ = gang_order(tenant, lines, [(lines["EXC"], 10, 150)])
+    full = tenant.get("/api/wo/orders/%d" % order["id"]).json()["order"]
+    sched = full["items"] + [{"item_description": "Something not in the BOQ", "uom": "nos", "quantity": 1, "unit_rate": 500}]
+    res = tenant.put("/api/wo/orders/%d/boq" % order["id"], json={"lines": sched})
+    assert res.status_code == 200 and "not on the project BOQ" in res.json()["message"]
+    fund_order(tenant, res.json()["order"])
+    sub = tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
+    assert sub.status_code == 400 and "project BOQ" in sub.json()["detail"]
+
+
+def test_the_boq_picker_offers_only_the_orders_own_projects_boq(tenant):
+    _, boq = make_boq(tenant)
+    lines = {l["group_code"]: l for l in saved(tenant, boq)["lines"]}
+    elsewhere = draft(tenant)                                          # a sub contractor work order on another project
+    pulled = tenant.post("/api/wo/orders/%d/boq-lines" % elsewhere["id"],
+                         json={"lines": [{"key": lines["EXC"]["key"], "quantity": 1, "rate": 1}]}).json()
+    assert pulled["lines"] == []

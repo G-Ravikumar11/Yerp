@@ -103,6 +103,8 @@ from app.models.money import (
     DBBankAccount,
     DBMoneyEntry,
     DBRetentionRelease,
+    DBCreditNote,
+    DBCreditNoteLine,
 )
 from app.models.procurement import (
     DBPurchaseOrder,
@@ -126,12 +128,17 @@ from app.models.projects import (
     DBProjectThread,
     DBProjectMessage,
     DBThreadRead,
+    DBChatReaction,
+    DBChatTask,
+    DBChatNotice,
 )
 from app.models.quality import (
     DBInspection,
     DBCubeSet,
     DBCubeResult,
     DBNcr,
+    DBQcChecklist,
+    DBQcCriteria,
 )
 from app.models.recruitment import (
     DBInterviewReminder,

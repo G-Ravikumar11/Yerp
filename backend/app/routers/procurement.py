@@ -1,4 +1,5 @@
 """The procurement endpoints."""
+import base64
 import re
 from datetime import datetime
 
@@ -14,8 +15,10 @@ from app.core.audit import log_audit
 from app.core.auth import require_erp_read, require_items_access, session_employee, wo_actor
 from app.core.currency import amount_in_words, inr, money, tax_percent_of, unit_rate
 from app.core.dates import days_after
+from app.core.notifications import default_from_email, send_email_background
 from app.core.serials import allocate_grn_number, allocate_po_number, next_sequence_number
 from app.core.sheets import sheet_response
+from app.documents import form_pdf
 from app.documents.forms import _pre, form_pdf_response, po_form_spec
 from app.documents.letterhead import our_party
 from app.routers.employee_portal import employee_create_purchase_order
@@ -949,6 +952,35 @@ def purchase_order_pdf(order_id: int, request: Request, db: Session = Depends(ge
     client = require_erp_read(request, db)
     order = purchase_order_or_404(db, client.id, order_id)
     return form_pdf_response(po_form_spec(db, client, order), order.number)
+
+
+@router.post("/api/purchase-orders/{order_id}/send-email")
+def send_purchase_order_email(order_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """Email the purchase order, with its PDF, to the supplier from the company's connected Gmail.
+    `to`, `subject` and `body` may be given (the AI draft, edited); otherwise the plain draft is used."""
+    client, _, actor = wo_actor(request, db, "purchase.manage")
+    order = purchase_order_or_404(db, client.id, order_id)
+    body = body or {}
+    to = (body.get("to") or order.supplier_email or "").strip()
+    if not re.match(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$", to):
+        raise HTTPException(400, "Give a valid supplier email address to send %s to." % order.number)
+    if not form_pdf.PDF_AVAILABLE:
+        raise HTTPException(503, "The PDF library is not installed on this server, so the order cannot be attached.")
+    from app.ai.po_supplier_email import plain_draft
+    company = client.company_name or "Our company"
+    draft = plain_draft(purchase_order_to_dict(db, order), company)
+    subject = (body.get("subject") or draft["subject"]).strip()[:200]
+    text = (body.get("body") or draft["body"]).strip()
+    pdf = form_pdf.build_form_pdf(po_form_spec(db, client, order))
+    ok, message = send_email_background(
+        to, subject, text, "%s <%s>" % (company, default_from_email()), client_id=client.id,
+        pdf_b64=base64.b64encode(pdf).decode(), pdf_filename="%s.pdf" % re.sub(r"[^A-Za-z0-9]+", "_", order.number).strip("_"))
+    if not ok:
+        raise HTTPException(502, "%s was not sent: %s" % (order.number, message))
+    log_audit(db, client.id, "purchase_order_emailed", "purchase_order", order.id, order.number,
+              "Sent to %s by %s" % (to, actor), request)
+    db.commit()
+    return {"ok": True, "to": to, "message": "%s sent to %s." % (order.number, to)}
 
 
 @router.get("/api/rfqs/{rfq_id}/comparison.xlsx")

@@ -63,6 +63,15 @@ def test_deleting_a_project_takes_every_record_about_it_and_keeps_what_existed_a
         other_job = _add(db, "jobs", client_id=_client_id(), name="Other", number="JOB-OTHER")
         other_po = _add(db, "purchase_orders", client_id=_client_id(), job_id=other_job, number="PO-OTHER")
 
+    # Money has moved through it, so it is refused: deleting would take the receipts and payments out of the bank book.
+    blocked = tenant.get("/api/jobs/%d/delete-preview" % ids["job"]).json()
+    assert blocked["can_delete"] is False and "Money has moved" in blocked["blockers"][0]
+    assert tenant.delete("/api/jobs/%d" % ids["job"]).status_code == 409 and _count("jobs", id=ids["job"]) == 1
+    with _db() as db:      # the entries are reversed first (voided), which is what the refusal asks for
+        db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.job_id == ids["job"]).update({"voided": True})
+        db.query(models.DBBill).filter(models.DBBill.job_id == ids["job"]).update({"amount_paid": 0.0})
+        db.commit()
+
     preview = tenant.get("/api/jobs/%d/delete-preview" % ids["job"]).json()
     assert preview["can_delete"] and preview["counts"].get("purchase orders") == 1 and preview["counts"].get("supplier bills") == 1
     assert preview["kept"].get("equipment") == 1, "equipment is kept, and the preview says so"
@@ -86,6 +95,10 @@ def test_deleting_a_project_takes_every_record_about_it_and_keeps_what_existed_a
 def test_deleting_a_project_that_a_staff_member_may_not_delete_is_refused(tenant):
     # Only the account Master. The tenant fixture is the Master; a staff session is exercised in test_employee_portal.
     ids = _project_with_records(_client_id())
+    with _db() as db:      # no money has moved on it, so the only thing in question is who may delete
+        db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.job_id == ids["job"]).update({"voided": True})
+        db.query(models.DBBill).filter(models.DBBill.job_id == ids["job"]).update({"amount_paid": 0.0})
+        db.commit()
     assert tenant.delete("/api/jobs/%d" % ids["job"]).status_code == 200
 
 

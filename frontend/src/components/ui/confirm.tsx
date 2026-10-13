@@ -9,6 +9,8 @@ export interface ConfirmProps {
   title: string
   description?: string
   confirmLabel: string
+  /** The way out; "Not now" unless a screen wants it plainer. */
+  cancelLabel?: string
   tone?: 'primary' | 'danger'
   /** Ask for a reason. The server refuses a bare "cancel" and so does this. */
   reason?: { label: string; placeholder?: string; required?: boolean }
@@ -22,7 +24,7 @@ export interface ConfirmProps {
  * "Are you sure" that can also ask why. Used for every move that cannot be
  * quietly taken back: cancelling an order, sending a bill back, certifying.
  */
-export function ConfirmDialog({ open, onOpenChange, title, description, confirmLabel, tone = 'primary', reason, loading, onConfirm, children }: ConfirmProps) {
+export function ConfirmDialog({ open, onOpenChange, title, description, confirmLabel, cancelLabel = 'Not now', tone = 'primary', reason, loading, onConfirm, children }: ConfirmProps) {
   const [text, setText] = useState('')
   const [touched, setTouched] = useState(false)
   const missing = !!reason?.required && !text.trim()
@@ -49,7 +51,7 @@ export function ConfirmDialog({ open, onOpenChange, title, description, confirmL
       footer={
         <>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Not now
+            {cancelLabel}
           </Button>
           <Button variant={tone === 'danger' ? 'danger' : 'primary'} loading={loading} onClick={submit}>
             {confirmLabel}

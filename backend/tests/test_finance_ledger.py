@@ -262,7 +262,7 @@ def test_a_bill_with_money_received_cannot_be_cancelled(tenant):
                                                   "amount": 1000, "mode": "Cash"})
     assert got.status_code == 200, got.text
     res = tenant.post("/api/ra-bills/%d/cancel" % b["id"], json={"comments": "raised twice"})
-    assert res.status_code == 409 and "received against it" in res.json()["detail"]
+    assert res.status_code == 409 and "credit note" in res.json()["detail"]
 
 
 def test_a_bill_certified_today_is_not_overdue(tenant):

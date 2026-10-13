@@ -286,3 +286,250 @@ def test_adding_or_removing_a_task_moves_the_share(tenant):
     assert activity_row(tenant, j, aid)["actual_percent"] == 33.3        # a new task is more still to do
     tenant.delete("/api/schedule/tasks/%d" % b)
     assert activity_row(tenant, j, aid)["actual_percent"] == 50
+
+
+# --- the site diary reports the planned work done -----------------------------------------------------------------------
+
+def start_diary(tenant, j, updates, on=None):
+    return tenant.post("/api/diary", json={"job_id": j["id"], "diary_date": on or d(0), "work_done": "Slab", "work_updates": updates})
+
+
+def test_a_diary_ticks_planned_tasks_and_the_activitys_progress_follows(tenant):
+    j = job(tenant)
+    aid = act(tenant, j, "Excavation", d(-4), d(5))["activities"][0]["id"]
+    ids = [tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json={"text": "Task %d" % n, "date": d(0), "activity_id": aid}).json()["task"]["id"] for n in range(4)]
+    res = start_diary(tenant, j, [{"task_id": ids[0], "done": True}, {"task_id": ids[1], "done": True}])
+    assert res.status_code == 200, res.text
+    assert res.json()["planning"] == {"tasks": 2, "activities": 0} and "Planning & Progress updated: 2 tasks" in res.json()["message"]
+    row = day_of(tenant, j)["today"][0]
+    assert row["actual_percent"] == 50 and row["tasks_done"] == 2
+    done = [t for t in row["tasks"] if t["done"]]
+    assert len(done) == 2 and all(t["done_by_name"] for t in done)
+
+
+def test_a_diary_sets_progress_on_an_activity_without_tasks(tenant):
+    j = job(tenant)
+    aid = act(tenant, j, "Excavation", d(-4), d(5))["activities"][0]["id"]
+    res = start_diary(tenant, j, [{"activity_id": aid, "percent": 35}])
+    assert res.status_code == 200, res.text
+    assert res.json()["planning"] == {"tasks": 0, "activities": 1}
+    assert day_of(tenant, j)["today"][0]["actual_percent"] == 35
+
+
+def test_saving_the_diary_again_does_not_move_the_plan_twice(tenant):
+    j = job(tenant)
+    aid = act(tenant, j, "Excavation", d(-4), d(5))["activities"][0]["id"]
+    diary_id = start_diary(tenant, j, [{"activity_id": aid, "percent": 35}]).json()["diary"]["id"]
+    again = tenant.put("/api/diary/%d" % diary_id, json={"work_updates": [{"activity_id": aid, "percent": 35}]})
+    assert again.status_code == 200 and again.json()["planning"] == {"tasks": 0, "activities": 0}
+    moved = tenant.put("/api/diary/%d" % diary_id, json={"work_updates": [{"activity_id": aid, "percent": 60}]})
+    assert moved.json()["planning"]["activities"] == 1 and day_of(tenant, j)["today"][0]["actual_percent"] == 60
+
+
+def test_a_diary_can_put_a_task_back(tenant):
+    j = job(tenant)
+    aid = act(tenant, j, "Excavation", d(-4), d(5))["activities"][0]["id"]
+    tid = tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json={"text": "Dig", "date": d(0), "activity_id": aid}).json()["task"]["id"]
+    diary_id = start_diary(tenant, j, [{"task_id": tid, "done": True}]).json()["diary"]["id"]
+    assert tenant.get("/api/jobs/%d/schedule" % j["id"]).json()["activities"][0]["state"] == "done"
+    tenant.put("/api/diary/%d" % diary_id, json={"work_updates": [{"task_id": tid, "done": False}]})
+    assert tenant.get("/api/jobs/%d/schedule" % j["id"]).json()["activities"][0]["actual_percent"] == 0
+
+
+def test_a_diary_cannot_move_work_that_is_not_its_to_move(tenant, second_tenant):
+    j, other = job(tenant), job(second_tenant)
+    theirs = act(second_tenant, other, "Elsewhere", d(-4), d(5))["activities"][0]["id"]
+    their_task = second_tenant.post("/api/jobs/%d/schedule/tasks" % other["id"], json={"text": "x", "date": d(0), "activity_id": theirs}).json()["task"]["id"]
+    # another company's, and another project's, are refused
+    assert start_diary(tenant, j, [{"task_id": their_task, "done": True}]).status_code == 400
+    assert start_diary(tenant, j, [{"activity_id": theirs, "percent": 100}], on=d(-1)).status_code == 400
+    mine = act(tenant, j, "Excavation", d(-4), d(5))["activities"][0]["id"]
+    assert start_diary(tenant, j, [{"activity_id": mine, "percent": 120}], on=d(-2)).status_code == 400
+    # an activity that follows its tasks is not set by a percentage
+    tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json={"text": "y", "date": d(0), "activity_id": mine})
+    refused = start_diary(tenant, j, [{"activity_id": mine, "percent": 50}], on=d(-3))
+    assert refused.status_code == 409 and "follows its tasks" in refused.json()["detail"]
+    assert second_tenant.get("/api/jobs/%d/schedule/day" % other["id"]).json()["tasks"][0]["done"] is False
+
+
+def test_a_diary_without_work_updates_still_saves_as_before(tenant):
+    j = job(tenant)
+    res = start_diary(tenant, j, None)
+    assert res.status_code == 200 and res.json()["planning"] == {"tasks": 0, "activities": 0}
+    assert res.json()["message"] == "Diary opened for %s." % d(0)
+
+
+# ---- the project chart: who is responsible, what is late, how long it runs ----
+
+def employee(tenant, first="Suresh", last="Babu"):
+    from conftest import make_employee
+    return make_employee(tenant, first_name=first, last_name=last)
+
+
+def test_an_activity_is_given_to_an_employee_and_listed_under_their_name(tenant):
+    from conftest import make_employee
+    j = job(tenant)
+    e = employee(tenant)
+    s = act(tenant, j, "Excavation", d(-10), d(10), assigned_to_id=e["id"])
+    a = s["activities"][0]
+    assert a["assigned_to_id"] == e["id"] and a["assigned_to"] == "Suresh Babu"
+    assert {"id": e["id"], "name": "Suresh Babu"} in s["employees"]
+    # Changed, then taken off.
+    other = make_employee(tenant, first_name="Anil", last_name="Rao")
+    s = tenant.put("/api/schedule/activities/%d" % a["id"], json={"name": "Excavation", "planned_start": d(-10), "planned_finish": d(10), "assigned_to_id": other["id"]}).json()["schedule"]
+    assert s["activities"][0]["assigned_to"] == "Anil Rao"
+    s = tenant.put("/api/schedule/activities/%d" % a["id"], json={"name": "Excavation", "planned_start": d(-10), "planned_finish": d(10)}).json()["schedule"]
+    assert s["activities"][0]["assigned_to_id"] is None
+
+
+def test_only_an_employee_of_this_company_can_be_given_the_work(tenant, second_tenant):
+    j = job(tenant)
+    stranger = employee(second_tenant, "Other", "Firm")
+    res = tenant.post("/api/jobs/%d/schedule/activities" % j["id"], json={"name": "Raft", "planned_start": d(0), "planned_finish": d(5), "assigned_to_id": stranger["id"]})
+    assert res.status_code == 400
+    res = tenant.post("/api/jobs/%d/schedule/activities" % j["id"], json={"name": "Raft", "planned_start": d(0), "planned_finish": d(5), "assigned_to_id": 99999})
+    assert res.status_code == 400
+    assert tenant.get("/api/jobs/%d/schedule" % j["id"]).json()["activities"] == []
+
+
+def test_the_chart_reports_overdue_work_delays_and_the_timeline(tenant):
+    j = job(tenant)
+    act(tenant, j, "Excavation", d(-20), d(-5))
+    s = act(tenant, j, "Raft", d(-4), d(30), depends_on_id=tenant.get("/api/jobs/%d/schedule" % j["id"]).json()["activities"][0]["id"])
+    late, ok = s["activities"]
+    assert late["overdue"] and late["days_late"] == 5 and late["delayed"]
+    assert not ok["overdue"] and ok["delayed"]                  # it cannot start until the late one is done
+    assert s["summary"]["overdue"] == 1
+    assert s["summary"]["start"] == d(-20) and s["summary"]["end"] == d(30) and s["summary"]["duration_days"] == 51
+    # Finished work is not overdue, and a milestone is counted and tracked.
+    tenant.post("/api/schedule/activities/%d/progress" % late["id"], json={"percent": 100})
+    s = act(tenant, j, "Handover", d(31), d(31), is_milestone=True)
+    assert s["summary"]["overdue"] == 0 and s["summary"]["milestones"] == 1 and s["summary"]["milestones_done"] == 0
+    assert [a["predecessor_code"] for a in s["activities"]][1] == "A10"
+
+
+# ---- status, notes, codes, dependencies and the project team ----
+
+def put_act(tenant, a, **over):
+    body = {"name": a["name"], "planned_start": a["planned_start"], "planned_finish": a["planned_finish"], "code": a["code"]}
+    body.update(over)
+    return tenant.put("/api/schedule/activities/%d" % a["id"], json=body)
+
+
+def test_status_and_notes_are_saved_and_shown(tenant):
+    j = job(tenant)
+    s = act(tenant, j, "Raft", d(0), d(20), notes="Needs the pump booked", status="In Progress")
+    a = s["activities"][0]
+    assert a["status"] == "In Progress" and a["stored_status"] == "In Progress" and a["notes"] == "Needs the pump booked"
+    assert a["actual_percent"] == 0
+    assert act(tenant, j, "Walls", d(30), d(40))["activities"][1]["status"] == "Not Started"
+    assert tenant.post("/api/jobs/%d/schedule/activities" % j["id"], json={"name": "X", "planned_start": d(0), "planned_finish": d(1), "status": "Whenever"}).status_code == 400
+
+
+def test_completed_reports_one_hundred_percent_and_late_work_shows_as_delayed(tenant):
+    j = job(tenant)
+    s = act(tenant, j, "Excavation", d(-20), d(-5))
+    a = s["activities"][0]
+    assert a["status"] == "Delayed" and a["overdue"]
+    done = put_act(tenant, a, status="Completed").json()["schedule"]["activities"][0]
+    assert done["status"] == "Completed" and done["actual_percent"] == 100 and not done["overdue"]
+    # It cannot be called In Progress while it is reported complete: the work is reported lower first.
+    refused = put_act(tenant, done, status="In Progress")
+    assert refused.status_code == 409 and "100% complete" in refused.json()["detail"]
+    tenant.post("/api/schedule/activities/%d/progress" % done["id"], json={"percent": 70})
+    reopened = put_act(tenant, done, status="In Progress").json()["schedule"]["activities"][0]
+    assert reopened["status"] == "In Progress" and reopened["actual_percent"] == 70
+
+
+def test_codes_are_not_repeated_on_a_project(tenant):
+    j = job(tenant)
+    act(tenant, j, "Excavation", d(0), d(5), code="EX-1")
+    clash = tenant.post("/api/jobs/%d/schedule/activities" % j["id"], json={"name": "Backfill", "planned_start": d(6), "planned_finish": d(9), "code": " ex-1 "})
+    assert clash.status_code == 409 and "EX-1" in clash.json()["detail"]
+    other = job(tenant)
+    assert tenant.post("/api/jobs/%d/schedule/activities" % other["id"], json={"name": "Backfill", "planned_start": d(6), "planned_finish": d(9), "code": "EX-1"}).status_code == 200
+    # An activity may keep its own code when it is saved again, and a generated code never collides with a typed one.
+    s = act(tenant, j, "Piling", d(10), d(12), code="A20")
+    s = act(tenant, j, "Capping", d(13), d(15))
+    codes = [a["code"] for a in s["activities"]]
+    assert len(set(codes)) == len(codes) == 3
+    first = s["activities"][0]
+    assert put_act(tenant, first, name="Excavation works").status_code == 200
+
+
+def test_dates_and_dependencies_are_checked(tenant):
+    j = job(tenant)
+    s = act(tenant, j, "A", d(0), d(5))
+    a = s["activities"][0]
+    s = act(tenant, j, "B", d(6), d(9), depends_on_id=a["id"])
+    b = s["activities"][1]
+    s = act(tenant, j, "C", d(10), d(12), depends_on_id=b["id"])
+    c = s["activities"][2]
+    post = "/api/jobs/%d/schedule/activities" % j["id"]
+    assert tenant.post(post, json={"name": "", "planned_start": d(0), "planned_finish": d(1)}).status_code == 400
+    assert tenant.post(post, json={"name": "Z", "planned_start": "soon", "planned_finish": d(1)}).status_code == 400
+    assert tenant.post(post, json={"name": "Z", "planned_start": d(5), "planned_finish": d(1)}).status_code == 400
+    assert tenant.post(post, json={"name": "Z", "planned_start": d(0), "planned_finish": d(1), "actual_finish": "x"}).status_code == 400
+    # No loops: itself, a straight pair, or round a chain.
+    assert put_act(tenant, a, depends_on_id=a["id"]).status_code == 400
+    assert put_act(tenant, a, depends_on_id=b["id"]).status_code == 400
+    r = put_act(tenant, a, depends_on_id=c["id"])
+    assert r.status_code == 400 and "wait on each other" in r.json()["detail"]
+    # Nor on an activity of another project.
+    k = job(tenant)
+    foreign = act(tenant, k, "Elsewhere", d(0), d(3))["activities"][0]
+    assert put_act(tenant, a, depends_on_id=foreign["id"]).status_code == 400
+    assert put_act(tenant, a, depends_on_id=999999).status_code == 400
+
+
+def test_the_assignee_list_is_the_projects_own_team(tenant):
+    from conftest import make_employee
+    from app import db as database, models
+    j = job(tenant)
+    on = make_employee(tenant, first_name="On", last_name="Site")
+    off = make_employee(tenant, first_name="Not", last_name="Here")
+    # Nobody placed yet: the whole company is offered.
+    s = tenant.get("/api/jobs/%d/schedule" % j["id"]).json()
+    assert s["team_scope"] == "company" and {e["name"] for e in s["employees"]} >= {"On Site", "Not Here"}
+    sess = database.SessionLocal()
+    try:
+        emp = sess.query(models.DBEmployee).filter(models.DBEmployee.id == on["id"]).first()
+        sess.add(models.DBEmployeeSite(client_id=emp.client_id, employee_id=emp.id, job_id=j["id"]))
+        sess.commit()
+    finally:
+        sess.close()
+    s = tenant.get("/api/jobs/%d/schedule" % j["id"]).json()
+    assert s["team_scope"] == "project" and [e["name"] for e in s["employees"]] == ["On Site"]
+    # Somebody already given work stays on the list.
+    s = act(tenant, j, "Raft", d(0), d(5), assigned_to_id=off["id"])
+    assert {e["name"] for e in s["employees"]} == {"On Site", "Not Here"}
+
+
+def test_the_status_set_in_the_edit_form_is_the_status_shown(tenant):
+    j = job(tenant)
+    a = act(tenant, j, "Raft", d(-10), d(-2))["activities"][0]            # past its deadline: worked out, it is Delayed
+    assert a["status"] == "Delayed" and a["overdue"]
+    for want in ("In Progress", "Not Started", "Delayed", "Completed"):
+        got = put_act(tenant, a, status=want).json()["schedule"]["activities"][0]
+        assert got["status"] == want and got["stored_status"] == want, want
+        a = got
+    # Overdue is still said beside it: the status is what was set, the lateness is a fact.
+    back = put_act(tenant, dict(a, name="Raft"), status="In Progress")
+    assert back.status_code == 409          # reported complete by the step above
+    a2 = act(tenant, j, "Walls", d(-10), d(-2))["activities"][1]
+    got = put_act(tenant, a2, status="In Progress").json()["schedule"]["activities"][1]
+    assert got["status"] == "In Progress" and got["overdue"] and got["days_late"] == 2
+
+
+def test_reporting_progress_moves_the_status_with_it(tenant):
+    j = job(tenant)
+    a = act(tenant, j, "Raft", d(0), d(20), status="Not Started")["activities"][0]
+    assert a["status"] == "Not Started"
+    s = tenant.post("/api/schedule/activities/%d/progress" % a["id"], json={"percent": 30}).json()["schedule"]
+    assert s["activities"][0]["status"] == "In Progress"
+    s = tenant.post("/api/schedule/activities/%d/progress" % a["id"], json={"percent": 100}).json()["schedule"]
+    assert s["activities"][0]["status"] == "Completed" and s["activities"][0]["stored_status"] == "Completed"
+    # Not Started is refused once work is reported on it.
+    b = act(tenant, j, "Walls", d(0), d(9))["activities"][1]
+    tenant.post("/api/schedule/activities/%d/progress" % b["id"], json={"percent": 25})
+    assert put_act(tenant, b, status="Not Started").status_code == 409

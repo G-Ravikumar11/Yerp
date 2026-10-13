@@ -1,5 +1,5 @@
 """What the projects endpoints are sent."""
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -27,6 +27,14 @@ class JobStateIn(BaseModel):
     state_code: str
 
 
+class WorkUpdateIn(BaseModel):
+    """What a diary says about the planned work: a task done (or not), or an activity now so far along."""
+    task_id: Optional[int] = None
+    done: Optional[bool] = None
+    activity_id: Optional[int] = None
+    percent: Optional[float] = None
+
+
 class DiaryIn(BaseModel):
     job_id: Optional[int] = None
     work_order_id: Optional[int] = None
@@ -41,6 +49,8 @@ class DiaryIn(BaseModel):
     safety_note: Optional[str] = None
     labour: Optional[list] = None
     plant: Optional[list] = None
+    # Work from Planning & Progress that the day's diary reports done: applied to the plan when the diary is saved.
+    work_updates: Optional[List[WorkUpdateIn]] = None
 
 
 class ActivityIn(BaseModel):
@@ -54,6 +64,9 @@ class ActivityIn(BaseModel):
     is_milestone: Optional[bool] = False
     actual_start: Optional[str] = ""
     actual_finish: Optional[str] = ""
+    assigned_to_id: Optional[int] = None
+    status: Optional[str] = ""
+    notes: Optional[str] = ""
 
 
 class ProgressIn(BaseModel):

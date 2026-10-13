@@ -14,7 +14,7 @@ export function DepartmentMembersModal({ dept, onClose }: { dept: Department | n
   )
 }
 
-function Members({ dept, onClose }: { dept: Department; onClose: () => void }) {
+export function Members({ dept, onClose }: { dept: Department; onClose: () => void }) {
   const qc = useQueryClient()
   const people = useEmployees('')
   const [picked, setPicked] = useState<number[]>([])

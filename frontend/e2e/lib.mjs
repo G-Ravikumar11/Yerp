@@ -70,8 +70,12 @@ export async function signIn(page, email = OWNER_EMAIL, password = OWNER_PASSWOR
 }
 
 export async function open(page, path) {
-  await page.goto(BASE + '/next' + path, { waitUntil: 'networkidle0' })
-  await page.waitForSelector('main h1', { timeout: 15000 })
+  // A fresh browser fetches the whole bundle on its first load, which can outlast one wait; try again before giving up.
+  for (let n = 0; ; n++) {
+    await page.goto(BASE + '/next' + path, { waitUntil: 'networkidle0', timeout: 90000 })
+    if (await page.waitForSelector('main h1', { timeout: 20000 }).then(() => true, () => false)) return
+    if (n >= 3) throw new Error('page did not render: ' + path)
+  }
 }
 
 /** Call the backend as the signed-in browser does. */

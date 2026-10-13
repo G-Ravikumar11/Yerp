@@ -45,6 +45,8 @@ from app.services.employee_portal import (
 from app.services.procurement import purchase_order_to_dict
 from app.services.projects import (
     _apply_activity,
+    _free_code,
+    status_after_progress,
     _d,
     _hit,
     _replace_diary_lines,
@@ -59,9 +61,12 @@ from app.services.projects import (
     job_or_404,
     job_to_dict,
     parse_position,
+    project_money_moved,
     preload_pnl,
     project_pnl,
+    apply_work_updates,
     check_task,
+    planning_note,
     schedule_day,
     schedule_view,
     sync_progress_from_tasks,
@@ -341,8 +346,10 @@ def delete_job_preview(job_id: int, request: Request, db: Session = Depends(get_
     require_owner(request, db)
     job = job_or_404(db, client.id, job_id)
     rep = purge.project_report(db, client, job)
+    moved = project_money_moved(db, client.id, job)
     return {"numbers": [job.number or job.name or "Project"], "counts": rep["counts"], "kept": rep["kept"],
-            "blockers": [], "warnings": [], "can_delete": True}
+            "blockers": ["Money has moved through it: %s. Reverse those first, or set the project to cancelled." % "; ".join(moved)] if moved else [],
+            "warnings": [], "can_delete": not moved}
 
 
 @router.delete("/api/jobs/{job_id}")
@@ -354,6 +361,10 @@ def delete_job(job_id: int, request: Request, db: Session = Depends(get_db)):
     require_owner(request, db)
     job = job_or_404(db, client.id, job_id)
     name = job.number or job.name or "Project"
+    moved = project_money_moved(db, client.id, job)
+    if moved:
+        raise HTTPException(409, "%s cannot be deleted: money has moved through it - %s. Reverse those first, or set the "
+                                 "project to cancelled." % (name, "; ".join(moved)))
     try:
         counts = purge.delete_project(db, request, client, job)
     except IntegrityError as exc:
@@ -552,10 +563,11 @@ def create_diary(body: DiaryIn, request: Request, db: Session = Depends(get_db))
     db.add(diary)
     db.flush()
     _replace_diary_lines(db, diary, body.labour, body.plant)
+    moved = apply_work_updates(db, client.id, job, body.work_updates, on, actor_name)
     db.commit()
     db.refresh(diary)
-    return {"ok": True, "diary": diary_dict(db, diary, detail=True),
-            "message": "Diary opened for %s." % on}
+    return {"ok": True, "diary": diary_dict(db, diary, detail=True), "planning": {"tasks": moved[0], "activities": moved[1]},
+            "message": "Diary opened for %s.%s" % (on, planning_note(*moved))}
 
 
 @router.get("/api/diary/{diary_id}")
@@ -567,7 +579,7 @@ def get_diary(diary_id: int, request: Request, db: Session = Depends(get_db)):
 @router.put("/api/diary/{diary_id}")
 def update_diary(diary_id: int, body: DiaryIn, request: Request,
                  db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db, "site.record")
+    client, _, actor_name = wo_actor(request, db, "site.record")
     diary = diary_or_404(db, client.id, diary_id)
     if (diary.status or "DRAFT") != "DRAFT":
         raise HTTPException(
@@ -587,9 +599,11 @@ def update_diary(diary_id: int, body: DiaryIn, request: Request,
     if body.work_order_id is not None:
         diary.work_order_id = owned_or_404(db, models.DBWorkOrder, client.id, body.work_order_id, "Work order")
     _replace_diary_lines(db, diary, body.labour, body.plant)
+    moved = apply_work_updates(db, client.id, job_or_404(db, client.id, diary.job_id), body.work_updates, diary.diary_date, actor_name)
     db.commit()
     db.refresh(diary)
-    return {"ok": True, "diary": diary_dict(db, diary, detail=True)}
+    return {"ok": True, "diary": diary_dict(db, diary, detail=True), "planning": {"tasks": moved[0], "activities": moved[1]},
+            "message": "Saved.%s" % planning_note(*moved)}
 
 
 @router.post("/api/diary/{diary_id}/submit")
@@ -923,29 +937,29 @@ def delete_task(task_id: int, request: Request, db: Session = Depends(get_db)):
 
 @router.post("/api/jobs/{job_id}/schedule/activities")
 def add_activity(job_id: int, body: ActivityIn, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db)
     job = job_or_404(db, client.id, job_id)
     n = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.job_id == job.id).count()
     a = models.DBScheduleActivity(client_id=client.id, job_id=job.id, display_order=n)
     db.add(a)
     db.flush()
-    _apply_activity(db, client.id, job, a, body)
+    _apply_activity(db, client.id, job, a, body, actor_name)
     if not a.code:
-        a.code = "A%d" % ((n + 1) * 10)
+        a.code = _free_code(db, job.id, a.id, n)
     db.commit()
     return {"ok": True, "schedule": schedule_view(db, client.id, job)}
 
 
 @router.put("/api/schedule/activities/{activity_id}")
 def edit_activity(activity_id: int, body: ActivityIn, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db)
     a = db.query(models.DBScheduleActivity).filter(
         models.DBScheduleActivity.id == activity_id,
         models.DBScheduleActivity.client_id == client.id).first()
     if not a:
         raise HTTPException(404, "Activity not found")
     job = job_or_404(db, client.id, a.job_id)
-    _apply_activity(db, client.id, job, a, body)
+    _apply_activity(db, client.id, job, a, body, actor_name)
     db.commit()
     return {"ok": True, "schedule": schedule_view(db, client.id, job)}
 
@@ -994,6 +1008,7 @@ def report_progress(activity_id: int, body: ProgressIn, request: Request, db: Se
         a.actual_start = on
     if pct >= 100 and not a.actual_finish:
         a.actual_finish = on
+    status_after_progress(a, pct)
     db.commit()
     return {"ok": True, "schedule": schedule_view(db, client.id, job_or_404(db, client.id, a.job_id))}
 

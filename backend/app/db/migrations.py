@@ -15,6 +15,38 @@ def migration_report():
     return list(MIGRATION_ERRORS)
 
 
+QUALITY_COLUMNS = (
+    # (table, column, Postgres type, SQLite type) - what the quality module grew after it was first created.
+    ("qc_inspections", "building", "VARCHAR DEFAULT ''"), ("qc_inspections", "floor_area", "VARCHAR DEFAULT ''"),
+    ("qc_inspections", "work_activity", "VARCHAR DEFAULT ''"), ("qc_inspections", "assigned_to", "VARCHAR DEFAULT ''"),
+    ("qc_inspections", "measurements", "TEXT DEFAULT ''"), ("qc_inspections", "approval_status", "VARCHAR DEFAULT ''"),
+    ("qc_inspections", "submitted_by", "VARCHAR DEFAULT ''"), ("qc_inspections", "submitted_on", "VARCHAR DEFAULT ''"),
+    ("qc_inspections", "approved_by", "VARCHAR DEFAULT ''"), ("qc_inspections", "approved_on", "VARCHAR DEFAULT ''"),
+    ("qc_inspections", "return_note", "TEXT DEFAULT ''"), ("qc_inspections", "reinspection_of", "INTEGER"),
+    ("qc_cube_sets", "pour_ref", "VARCHAR DEFAULT ''"), ("qc_cube_sets", "cube_ids", "VARCHAR DEFAULT ''"),
+    ("qc_cube_sets", "test_ages", "VARCHAR DEFAULT ''"), ("qc_cube_sets", "acceptance", "VARCHAR DEFAULT ''"),
+    ("qc_cube_sets", "acceptance_note", "TEXT DEFAULT ''"), ("qc_cube_sets", "accepted_by", "VARCHAR DEFAULT ''"),
+    ("qc_cube_sets", "accepted_on", "VARCHAR DEFAULT ''"), ("qc_cube_sets", "reviewed_results", "INTEGER DEFAULT 0"),
+    ("qc_cube_results", "remarks", "TEXT DEFAULT ''"), ("qc_cube_results", "flagged", "BOOLEAN DEFAULT FALSE"),
+    ("qc_cube_results", "evaluation", "VARCHAR DEFAULT ''"), ("qc_cube_results", "criteria_min", "FLOAT DEFAULT 0"),
+    ("qc_cube_results", "criteria_single", "FLOAT DEFAULT 0"), ("qc_cube_results", "criteria_ref", "VARCHAR DEFAULT ''"),
+    ("qc_ncrs", "source_ref", "VARCHAR DEFAULT ''"), ("qc_ncrs", "root_cause", "TEXT DEFAULT ''"),
+    ("qc_ncrs", "assigned_by", "VARCHAR DEFAULT ''"), ("qc_ncrs", "assigned_on", "VARCHAR DEFAULT ''"),
+    ("qc_ncrs", "corrective_done", "TEXT DEFAULT ''"), ("qc_ncrs", "corrective_on", "VARCHAR DEFAULT ''"),
+    ("qc_ncrs", "verification_result", "VARCHAR DEFAULT ''"), ("qc_ncrs", "verification_note", "TEXT DEFAULT ''"),
+    ("qc_ncrs", "verified_by", "VARCHAR DEFAULT ''"), ("qc_ncrs", "verified_on", "VARCHAR DEFAULT ''"),
+    ("qc_ncrs", "reinspection_ref", "VARCHAR DEFAULT ''"),
+    # Project chat
+    ("project_threads", "description", "TEXT DEFAULT ''"), ("project_threads", "category", "VARCHAR DEFAULT 'General'"),
+    ("project_threads", "priority", "VARCHAR DEFAULT 'Normal'"), ("project_threads", "members", "VARCHAR DEFAULT ''"),
+    ("project_threads", "link_type", "VARCHAR DEFAULT ''"), ("project_threads", "link_ref", "VARCHAR DEFAULT ''"),
+    ("project_threads", "link_id", "INTEGER"),
+    ("schedule_activities", "assigned_to_id", "INTEGER"),
+    ("schedule_activities", "status", "VARCHAR DEFAULT ''"), ("schedule_activities", "notes", "TEXT DEFAULT ''"),
+    ("project_messages", "parent_id", "INTEGER"), ("project_messages", "edited_at", "VARCHAR DEFAULT ''"),
+)
+
+
 def ensure_columns():
     """Add missing columns to existing tables."""
     if DATABASE_URL.startswith("sqlite"):
@@ -1526,6 +1558,18 @@ def ensure_columns():
                 except Exception:
                     pass
 
+            # Quality: the workflow columns. Additive, defaulted, safe on a live database.
+            try:
+                for table, column, typedef in QUALITY_COLUMNS:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step quality: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
     except Exception as e:
         print(f"Column check skipped: {e}")
 
@@ -1592,6 +1636,8 @@ def migrate_sqlite():
                 add_col("subcontract_orders", column, "FLOAT DEFAULT 0")
             add_col("subcontract_items", "technical_spec", "TEXT DEFAULT ''")
             add_col("business_units", "logo_url", "TEXT DEFAULT ''")
+            for table, column, typedef in QUALITY_COLUMNS:
+                add_col(table, column, typedef.replace("BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"))
 
             # The goods receipt columns. Both migrations have to be fed, not
             # one: the Postgres list alone left every existing SQLite database

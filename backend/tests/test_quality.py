@@ -44,41 +44,62 @@ def test_passed_when_all_is_well_failed_when_anything_is_not(tenant):
     assert any(a["kind"] == "qc_failed" for a in alerts)
 
 
+def set_criteria(tenant, j, grade="M25", age=28, mean=25.0, single=0, standard="IS 456:2000 cl.16 / project spec 03300"):
+    res = tenant.post("/api/qc/criteria", json={"job_id": j["id"], "grade": grade, "age_days": age,
+                                                 "min_mean": mean, "min_single": single, "standard": standard})
+    assert res.status_code == 200, res.text
+    return res.json()["criteria"]
+
+
+def overdue(tenant, ncr_id):
+    """Back-date an NCR's due date: the API refuses a date already past, as it should."""
+    from app import db as database, models
+    s = database.SessionLocal()
+    try:
+        s.query(models.DBNcr).filter(models.DBNcr.id == ncr_id).update({"target_date": (date.today() - timedelta(days=1)).isoformat()})
+        s.commit()
+    finally:
+        s.close()
+
+
 def test_a_failed_inspection_becomes_an_ncr_with_what_failed(tenant):
     j = job(tenant)
     bad = mark(tenant, inspection(tenant, j), bad=(2,))
     tenant.post("/api/qc/inspections/%d/close" % bad["id"])
     n = tenant.post("/api/qc/ncrs", json={"source_type": "inspection", "source_id": bad["id"],
-                                          "responsible": "Sri Sai Constructions", "severity": "Major",
-                                          "target_date": (date.today() - timedelta(days=1)).isoformat()}).json()["ncr"]
+                                          "responsible": "Sri Sai Constructions", "severity": "Major"}).json()["ncr"]
     assert n["number"] == "NCR-0001" and "Lap lengths" in n["description"] and "lap short" in n["description"]
-    assert n["overdue"] and n["location"] == "Raft, grid A-C"
+    assert n["location"] == "Raft, grid A-C" and n["status"] == "OPEN"
+    overdue(tenant, n["id"])
     kinds = {i["kind"] for i in tenant.get("/api/attention").json()["items"]}
     assert "ncr_overdue" in kinds
-    assert tenant.post("/api/qc/ncrs/%d/close" % n["id"], json={"closure_note": ""}).status_code == 400
-    closed = tenant.post("/api/qc/ncrs/%d/close" % n["id"],
-                         json={"closure_note": "Laps extended to 50d, re-inspected"}).json()["ncr"]
-    assert closed["status"] == "CLOSED" and not closed["overdue"]
+    # It cannot be closed on the word of whoever closes it: the correction is verified first.
+    assert tenant.post("/api/qc/ncrs/%d/close" % n["id"], json={"closure_note": "done"}).status_code == 409
 
 
-def test_cubes_are_read_against_the_grade(tenant):
+def test_cubes_are_read_against_the_projects_criteria(tenant):
     j = job(tenant)
+    set_criteria(tenant, j, "M25", 28, 25.0)
+    set_criteria(tenant, j, "M25", 7, 16.0)
     s = tenant.post("/api/qc/cubes", json={"job_id": j["id"], "grade": "m25", "location": "Raft pour 1",
                                            "cast_on": (date.today() - timedelta(days=30)).isoformat()}).json()["cube_set"]
     assert s["fck"] == 25 and s["number"] == "CT-0001" and s["status"] == "awaiting results"
+    assert s["test_ages"] == [7, 28]
     assert {d["age_days"] for d in s["due"] if d["overdue"]} == {7, 28}
     kinds = {i["kind"] for i in tenant.get("/api/attention").json()["items"]}
     assert "cubes_due" in kinds
     early = tenant.post("/api/qc/cubes/%d/results" % s["id"], json={"age_days": 7, "strengths": "17.5, 18.2, 16.9"}).json()["cube_set"]
-    assert early["results"][0]["ok"] and early["results"][0]["verdict"] == "on course"
+    assert early["results"][0]["ok"] and "meets the criteria" in early["results"][0]["verdict"]
     final = tenant.post("/api/qc/cubes/%d/results" % s["id"], json={"age_days": 28, "strengths": "31.2, 29.8, 30.5"}).json()["cube_set"]
-    assert final["status"] == "meets grade" and final["due"] == []
+    # Passing the numbers is not acceptance: the engineer accepts the concrete.
+    assert final["status"] == "for engineering review" and final["needs_review"] and final["due"] == []
     again = tenant.post("/api/qc/cubes/%d/results" % s["id"], json={"age_days": 28, "strengths": "30"})
     assert again.status_code == 409
 
 
 def test_a_set_below_grade_is_called_out_and_becomes_an_ncr(tenant):
     j = job(tenant)
+    set_criteria(tenant, j, "M30", 28, 30.0)
     s = tenant.post("/api/qc/cubes", json={"job_id": j["id"], "grade": "M30", "location": "Column C4"}).json()["cube_set"]
     out = tenant.post("/api/qc/cubes/%d/results" % s["id"], json={"age_days": 28, "strengths": "26.1, 27.0, 25.4"}).json()["cube_set"]
     assert out["status"] == "below grade"

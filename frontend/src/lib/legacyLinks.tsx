@@ -8,7 +8,7 @@ const SCREENS: Record<string, string> = {
   '#subcontracts': '/subcontractors/work-orders',
   '#vendors': '/subcontractors/vendors',
   '#diary-view': '/projects/diary',
-  '#chat-view': '/projects/chat',
+  '#chat-view': '/projects/chart',
   '#drawings-view': '/projects/drawings',
 }
 

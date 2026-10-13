@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 
 from app import models
 
@@ -15,6 +15,30 @@ from app.core.permissions import employee_can
 from app.core.queries import by_id, chain_rows, forget_chain
 from app.core.units import canonical_unit
 from app.schemas.items import ItemIn
+from app.services.items import CATEGORY_BY_KIND
+
+
+def boq_client_orders(db, boq):
+    """The client's work orders against a BOQ: those made from it, and any opened for its project straight from the
+    Client Work Orders page, which are the same project's order and so are against the same BOQ."""
+    return db.query(models.DBWorkOrder).filter(
+        models.DBWorkOrder.client_id == boq.client_id,
+        or_(models.DBWorkOrder.boq_id == boq.id,
+            and_(models.DBWorkOrder.boq_id.is_(None), models.DBWorkOrder.job_id == boq.job_id))).order_by(models.DBWorkOrder.id).all()
+
+
+def boq_of_job(db, client_id, job_id):
+    """The project's BOQ (a project has one), or None."""
+    if not job_id:
+        return None
+    return db.query(models.DBBoq).filter(models.DBBoq.client_id == client_id, models.DBBoq.job_id == job_id).first()
+
+
+def boq_link_orders(db, boq):
+    """Ties the project's client work orders that were opened before its BOQ, or without going through it, to the BOQ."""
+    for wo in boq_client_orders(db, boq):
+        if not wo.boq_id:
+            wo.boq_id = boq.id
 
 
 def boq_or_404(db, client_id, boq_id):
@@ -31,6 +55,56 @@ def boq_revision_of(db, boq, rev_no=None):
     if not rev:
         raise HTTPException(404, "That revision of the BOQ does not exist")
     return rev
+
+
+def _norm(text):
+    return re.sub(r"\s+", " ", (text or "").split("\n")[0]).strip().lower()
+
+
+def boq_lines_of_job(db, client_id, job_id):
+    """The priced lines of the project's BOQ as it stands (its current revision), or [] when the project has no BOQ."""
+    boq = boq_of_job(db, client_id, job_id)
+    if boq is None:
+        return []
+    rev = db.query(models.DBBoqRevision).filter(models.DBBoqRevision.boq_id == boq.id,
+                                                models.DBBoqRevision.rev_no == boq.current_rev).first()
+    if rev is None:
+        return []
+    return db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id,
+                                             models.DBBoqLine.kind.in_(BOQ_PRICED)).order_by(models.DBBoqLine.display_order).all()
+
+
+def boq_tie_subcontract_lines(db, client_id, job_id, lines):
+    """A sub contractor work order goes along with the project's BOQ: each of its lines is tied to the BOQ line it is part of. A line
+    already tied keeps its tie if that line is on this project's BOQ; one that is not is tied by its item code, or else by
+    a description that matches one BOQ line exactly. `lines` are objects with item_code, item_description, boq_key and
+    is_header; their boq_key (and a blank item_code) are filled in place. Returns the lines still not on the BOQ."""
+    boq_lines = boq_lines_of_job(db, client_id, job_id)
+    if not boq_lines:
+        return []
+    keys = {l.key for l in boq_lines}
+    by_code = {(l.item_code or "").upper(): l for l in boq_lines if l.item_code}
+    by_desc = {}
+    for l in boq_lines:
+        by_desc.setdefault(_norm(l.description), []).append(l)
+    loose = []
+    for line in lines:
+        if getattr(line, "is_header", False) or not (line.item_description or "").strip():
+            continue
+        if line.boq_key and line.boq_key in keys:
+            continue
+        hit = by_code.get((line.item_code or "").strip().upper())
+        if hit is None:
+            same = by_desc.get(_norm(line.item_description), [])
+            hit = same[0] if len(same) == 1 else None
+        if hit is None:
+            line.boq_key = ""
+            loose.append(line)
+            continue
+        line.boq_key = hit.key
+        if not (line.item_code or "").strip():
+            line.item_code = hit.item_code or ""
+    return loose
 
 
 def boq_amount(kind, qty, rate, rate_only=False):
@@ -172,10 +246,15 @@ def boq_save_lines(db, boq, rev, rows, issue_codes, client_id):
     return kept, issued
 
 
+# What a person may type as an item code on a BOQ line: letters, numbers and - _ / . in any pattern (CIV-RCC-25, RCC025X).
+BOQ_ITEM_CODE = re.compile(r"^[A-Z0-9][A-Z0-9._/\-]{0,29}$")
+
+
 def boq_check_typed_codes(db, client_id, lines):
-    """An item code typed on a line must be one code for one line, and must be a finished good in the item master:
-    the code of an item that is already there is taken as it is, and one that is not is added to the master under
-    the line's own name. The master's own rules on what a code looks like apply, and are reported in its words."""
+    """An item code typed on a line is the code of that work everywhere: it must be one code for one line, and it becomes a
+    finished good in the item master under that code if it is not there already - so the client's work order, the gangs'
+    orders, the measurement book and the bills all carry the very code that was typed. A code that is already one of
+    this business's finished goods is taken as it is."""
     seen = {}
     for l in lines:
         if l.kind not in BOQ_PRICED or not l.item_code:
@@ -183,6 +262,8 @@ def boq_check_typed_codes(db, client_id, lines):
         if l.item_code in seen:
             raise HTTPException(400, "Item code %s is on two lines (%s and %s). A code is for one line only." % (
                 l.item_code, boq_line_label(seen[l.item_code]), boq_line_label(l)))
+        if not BOQ_ITEM_CODE.match(l.item_code):
+            raise HTTPException(400, "Item code %s: use letters, numbers and - _ / . only, up to 30 characters, with no spaces." % l.item_code)
         seen[l.item_code] = l
     if not seen:
         return
@@ -195,8 +276,9 @@ def boq_check_typed_codes(db, client_id, lines):
                                          "Leave the code blank to be given one." % code)
             continue
         name = re.sub(r"\s+", " ", (l.description or "").split("\n")[0]).strip()[:200]
-        build_item(db, client_id, ItemIn(kind="FG", item_code=code, item_name=name, description=(l.description or "").strip(),
-                                         units_of_measure=canonical_unit(l.uom) or "Nos"), set())
+        db.add(models.DBItem(client_id=client_id, kind="FG", item_code=code, item_name=name,
+                             description=(l.description or "").strip() or name, category=CATEGORY_BY_KIND["FG"], sub_category="FG",
+                             item_type="Purchased", units_of_measure=canonical_unit(l.uom) or "Nos"))
         db.flush()
 
 
@@ -284,7 +366,7 @@ def boq_tracker_data(db, client, boq):
         models.DBSubBillLine.item_id.in_(item_ids or [0]), models.DBSubBill.status != "CANCELLED").group_by(models.DBSubBillLine.item_id).all())
     # The client's side: orders drawn from this BOQ, by item code.
     client_done, client_billed = {}, {}
-    for wo in db.query(models.DBWorkOrder).filter(models.DBWorkOrder.boq_id == boq.id).all():
+    for wo in boq_client_orders(db, boq):
         m, b = measured_to_date(db, wo.id), billed_qty_to_date(db, wo.id)
         for wl in db.query(models.DBWorkOrderLine).filter(models.DBWorkOrderLine.work_order_id == wo.id).all():
             code = (wl.fg_code or "").upper()
@@ -542,7 +624,8 @@ def bv_apply(db, client, boq, vo):
     boq_issue_codes(db, client.id, copies)                    # the extra items get their codes from the item master
     boq.current_rev = nxt.rev_no
     # The client's work order drawn from this BOQ follows it.
-    for wo in db.query(models.DBWorkOrder).filter(models.DBWorkOrder.boq_id == boq.id, models.DBWorkOrder.status != "Closed").all():
+    for wo in [w for w in boq_client_orders(db, boq) if w.status not in ("Closed", "Rejected")]:
+        wo.boq_id = boq.id
         lines = db.query(models.DBWorkOrderLine).filter(models.DBWorkOrderLine.work_order_id == wo.id).all()
         for vl in db.query(models.DBBoqVariationLine).filter(models.DBBoqVariationLine.variation_id == vo.id).all():
             if vl.kind == "quantity":
