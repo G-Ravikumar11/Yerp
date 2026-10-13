@@ -8,6 +8,7 @@ export interface Employee {
   last_name: string
   full_name: string
   email: string
+  org_email?: string
   phone: string
   department_id: number | null
   department_name: string
@@ -101,6 +102,7 @@ export interface EmployeeInput {
   first_name: string
   last_name: string
   email: string
+  org_email?: string
   password?: string
   phone: string
   job_title: string

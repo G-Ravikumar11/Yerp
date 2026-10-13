@@ -233,8 +233,15 @@ def boq_given_to_gangs(db, client_id, keys=None):
         models.DBSubcontractItem.boq_key.isnot(None), models.DBSubcontractOrder.status.notin_(BOQ_NOT_LIVE))
     if keys is not None:
         q = q.filter(models.DBSubcontractItem.boq_key.in_(list(keys) or [""]))
+    # An order being amended is still live until its revision is approved, and the revision carries the same
+    # lines, so counting both would give the same work to the contractor twice. The revision stands for it meanwhile.
+    amended = {r[0] for r in db.query(models.DBSubcontractOrder.supersedes_id).filter(
+        models.DBSubcontractOrder.client_id == client_id, models.DBSubcontractOrder.supersedes_id.isnot(None),
+        models.DBSubcontractOrder.status.notin_(BOQ_NOT_LIVE)).all()}
     out = {}
     for it, order in q.all():
+        if order.id in amended:
+            continue
         g = out.setdefault(it.boq_key, {"qty": 0.0, "cost": 0.0, "items": [], "orders": []})
         g["qty"] += it.quantity or 0
         g["cost"] += it.total_amount or 0
@@ -261,7 +268,7 @@ def boq_over_allotments(db, client_id, keys):
                                                models.DBBoqLine.revision_id.in_(list(current) or [0])).all():
         g = given.get(l.key)
         if g and g["qty"] > (l.quantity or 0) + 0.0001:
-            out.append("%s: %s given to gangs against %s in the BOQ" % (boq_line_label(l), money(g["qty"]), money(l.quantity)))
+            out.append("%s: %s given to contractors against %s in the BOQ" % (boq_line_label(l), money(g["qty"]), money(l.quantity)))
     return out
 
 

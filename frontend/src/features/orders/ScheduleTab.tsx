@@ -63,7 +63,7 @@ export const toPayload = (rows: LineRow[]): Partial<OrderItem>[] =>
 const amount = (r: LineRow) => (r.is_header || !r.quantity || !r.unit_rate ? null : Math.round(r.quantity * r.unit_rate * 100) / 100)
 
 /**
- * The schedule of quantities: what the gang is to build, in what quantity, at
+ * The schedule of quantities: what the contractor is to build, in what quantity, at
  * what rate, and which cost centre pays for it. Edited as a sheet; saved as a
  * whole. A line can be a heading, which prices and measures nothing.
  */
@@ -92,6 +92,7 @@ export function ScheduleTab({
   const [chargeTo, setChargeTo] = useState('')
   const [pending, setPending] = useState<File | null>(null)
   const [picking, setPicking] = useState(false)
+  const offBoq = rows.filter((r) => !r.is_header && r.item_description.trim() && !r.boq_key).length
 
   const columns = useMemo<Column<LineRow>[]>(
     () => [
@@ -147,6 +148,14 @@ export function ScheduleTab({
         options: budgets.map((b) => ({ value: String(b.id), label: b.name || b.code })),
       },
       { id: 'is_header', header: 'Heading', type: 'checkbox', width: 84 },
+      {
+        id: 'against_boq',
+        header: 'BOQ',
+        hint: 'Against the project BOQ?',
+        width: 110,
+        readOnly: true,
+        get: (r) => (r.is_header || !r.item_description.trim() ? '' : r.boq_key ? 'In BOQ' : 'Not in BOQ'),
+      },
     ],
     [vocab, budgets],
   )
@@ -195,17 +204,19 @@ export function ScheduleTab({
                 else read.mutate(f)
               }}
             />
+            {order.job_id ? (
+              <Button size="sm" onClick={() => setPicking(true)}>
+                <ListTree /> Add from the project BOQ
+              </Button>
+            ) : (
+              <span className="text-[13px] text-muted-foreground">Choose and save the project, then build this order from its BOQ.</span>
+            )}
             <Button variant="outline" size="sm" loading={read.isPending} onClick={() => file.current?.click()}>
               <FileUp /> Import from Excel
             </Button>
             <Button variant="ghost" size="sm" asChild>
               <a href="/api/wo/boq/template">Template</a>
             </Button>
-            {order.job_id ? (
-              <Button variant="outline" size="sm" onClick={() => setPicking(true)}>
-                <ListTree /> From the project BOQ
-              </Button>
-            ) : null}
             <span className="mx-1 hidden h-5 w-px bg-border sm:block" aria-hidden />
             {order.job_id ? (
               <>
@@ -232,6 +243,11 @@ export function ScheduleTab({
               <span className="text-[13px] text-muted-foreground">Choose and save the project to charge lines to its budget.</span>
             )}
           </>
+        )}
+        {order.job_id && offBoq > 0 && (
+          <Badge tone="warning" title="These lines are not tied to a line of the project BOQ, so they are not counted against what the client's BOQ allows.">
+            {offBoq} {offBoq === 1 ? 'line' : 'lines'} not against the BOQ
+          </Badge>
         )}
         {dirty && !disabled && <Badge tone="warning">Unsaved changes</Badge>}
       </div>

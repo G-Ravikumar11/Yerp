@@ -22,6 +22,7 @@ class EmployeeCreate(BaseModel):
     first_name: str
     last_name: str
     email: Optional[str] = ""
+    org_email: Optional[str] = ""
     phone: Optional[str] = ""
     address: Optional[str] = ""
     department_id: Optional[int] = None
