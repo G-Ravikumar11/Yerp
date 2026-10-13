@@ -13,6 +13,8 @@ export function Stat({
   tone,
   loading,
   to,
+  onClick,
+  active,
   className,
 }: {
   label: string
@@ -22,13 +24,17 @@ export function Stat({
   loading?: boolean
   /** Makes the whole tile a link to the page this figure comes from. */
   to?: string
+  /** Makes the tile a button instead - a figure that narrows the list below it. */
+  onClick?: () => void
+  /** Marks the tile whose filter is applied. */
+  active?: boolean
   className?: string
 }) {
   const body = (
     <>
       <div className="flex items-center justify-between gap-2">
         <p className="text-[12.5px] text-muted-foreground">{label}</p>
-        {to && <ArrowUpRight className="size-3.5 shrink-0 text-subtle transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-foreground" />}
+        {(to || onClick) && <ArrowUpRight className="size-3.5 shrink-0 text-subtle transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-foreground" />}
       </div>
       {loading ? (
         <Skeleton className="mt-2.5 h-7 w-28" />
@@ -39,6 +45,17 @@ export function Stat({
     </>
   )
   const box = 'min-w-0 rounded-xl border border-border bg-card p-4 shadow-card'
+  if (onClick)
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        aria-pressed={active}
+        className={cn(box, 'group block w-full text-left transition-all hover:-translate-y-0.5 hover:border-ring/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', active && 'border-ring ring-1 ring-ring/60', className)}
+      >
+        {body}
+      </button>
+    )
   if (!to) return <div className={cn(box, className)}>{body}</div>
   return (
     <Link

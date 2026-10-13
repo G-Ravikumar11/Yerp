@@ -122,6 +122,12 @@ def attachment_target(db, client_id, attached_type, attached_id):
         if not i:
             raise HTTPException(404, "Inspection not found")
         return i.job_id, False
+    if t == "cube_set":
+        c = db.query(models.DBCubeSet).filter(models.DBCubeSet.id == attached_id,
+                                              models.DBCubeSet.client_id == client_id).first()
+        if not c:
+            raise HTTPException(404, "Cube set not found")
+        return c.job_id, False
     if t == "incident":
         x = db.query(models.DBSafetyIncident).filter(models.DBSafetyIncident.id == attached_id,
                                                      models.DBSafetyIncident.client_id == client_id).first()
@@ -165,7 +171,7 @@ def attachment_target(db, client_id, attached_type, attached_id):
             raise HTTPException(404, "Work order not found")
         return w.job_id, False
     raise HTTPException(400, "Files are kept against a project, a work order, a diary day, a measurement, "
-                             "a variation, a drawing, an inspection or an NCR.")
+                             "a variation, a drawing, an inspection, a cube set or an NCR.")
 
 
 # How far a picture is made smaller. A site photo reads at 1600 pixels; a
