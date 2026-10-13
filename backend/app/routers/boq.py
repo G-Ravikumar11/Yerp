@@ -344,7 +344,7 @@ def boq_make_client_order(boq_id: int, body: dict, request: Request, db: Session
 
 @router.get("/api/boqs/{boq_id}/available")
 def boq_available(boq_id: int, request: Request, db: Session = Depends(get_db)):
-    """The BOQ's priced lines with how much of each is still to be given to a gang - for adding lines to an order."""
+    """The BOQ's priced lines with how much of each is still to be given to a contractor - for adding lines to an order."""
     client = require_erp_read(request, db)
     boq = boq_or_404(db, client.id, boq_id)
     rev = boq_revision_of(db, boq)
