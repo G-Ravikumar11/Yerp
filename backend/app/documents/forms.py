@@ -162,7 +162,7 @@ def wo_special_conditions(doc):
 
 def wo_form_spec(db, client, order):
     """The subcontract work order in the trade's own form, line for line as
-    the sample the firm works to: the company and the order box, the contractor with
+    the sample the firm works to: the company and the order box, the gang with
     its PAN and GSTIN, the schedule, the value in words, taxes, the payment
     terms and the signatures; the general conditions on the page after."""
     doc = wo_document_payload(db, client, order)
@@ -485,7 +485,7 @@ def short_entry_code(entry):
 
 
 def sub_bill_certificate(db, client, bill):
-    """The contractor's RA bill as the three sheets it is signed on - the Top Sheet
+    """The gang's RA bill as the three sheets it is signed on - the Top Sheet
     (certificate of payment), AB-1 (abstract) and MB-1 (measurement book) -
     as one description the PDF and the workbook are both drawn from."""
     b = sub_bill_dict(db, bill, detail=True)
@@ -780,7 +780,7 @@ def _q(v):
 
 
 def sub_bill_form_spec(db, client, bill):
-    """The contractor's RA bill in its three sheets: Top Sheet, AB-1 and MB-1."""
+    """The gang's RA bill in its three sheets: Top Sheet, AB-1 and MB-1."""
     c = sub_bill_certificate(db, client, bill)
     b = c["bill"]
     stage = {"SUBMITTED": "submitted", "CERTIFIED": "approved", "PAID": "approved"}.get(b["status"])

@@ -7,7 +7,6 @@ from sqlalchemy import func as sqlfunc
 
 from app import models
 
-from app.constants.approvals import GONE_STATUSES
 from app.constants.hr import DEFAULT_DOCUMENT_REQUIREMENTS, DEFAULT_ONBOARDING_ITEMS, ORG_DOMAIN_KEY
 from app.core.currency import money
 from app.core.dates import _parse_date
@@ -142,9 +141,7 @@ def _dept_dict(dept, members):
     return {
         "id": dept.id, "name": dept.name, "description": dept.description,
         "color": dept.color or "#00f0ff", "icon": dept.icon or "building",
-        # Current staff, the figure the org chart and the head count use; the list still shows who has left.
-        "employee_count": len([e for e in members if (e.status or "").lower() not in GONE_STATUSES]),
-        "created_at": dept.created_at,
+        "employee_count": len(members), "created_at": dept.created_at,
         "employees": [_member_dict(e) for e in members],
     }
 

@@ -1,6 +1,6 @@
 """One-off: take the GST off retention releases that were raised before releases stopped carrying it.
 
-GST is charged on the whole of every RA bill and every contractor bill, retention included. A retention release used to
+GST is charged on the whole of every RA bill and every gang bill, retention included. A retention release used to
 charge it again, on both sides, so the GST registers were overstated by the tax on every release.
 
     python backend/scripts/fix_release_gst.py            # dry run: lists what would change, changes nothing

@@ -4,7 +4,7 @@ Head office is two people who look after every site at once. They sign in at the
 everybody else and land on the HO portal. HO QS is the only one in the business - with the Master -
 who opens a vendor code, a work order (the client's or a sub contractor's) or a BOQ. The coordinator
 sees all of it, follows up what is waiting and keeps drafts up to date, but opens none of them. Three
-sites each registering contractors and raising orders is how one contractor ends up with two vendor codes.
+sites each registering gangs and raising orders is how one gang ends up with two vendor codes.
 """
 import uuid
 

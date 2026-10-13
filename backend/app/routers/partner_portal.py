@@ -175,7 +175,7 @@ def portal_bills(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/api/portal/bills/{bill_id}/accept")
 def portal_accept_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
-    """The contractor signs the certificate of payment from their own login -
+    """The gang signs the certificate of payment from their own login -
     "Accepted for Sub Contractor" - once it has been sent to them."""
     u, client, party, name = get_portal_user(request, db)
     if u.party_type != "contractor":

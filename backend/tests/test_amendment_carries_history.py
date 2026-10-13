@@ -1,7 +1,7 @@
 """An amended work order carries on the running account of the one it replaces.
 
 The book says "amend the order to measure beyond it". The revision used to
-start again at nothing - no measurements, no bills - so the contractor's next bill
+start again at nothing - no measurements, no bills - so the gang's next bill
 had nothing previously billed and work already paid for could be billed again.
 """
 import copy
@@ -114,11 +114,11 @@ def test_an_order_with_bills_or_measurements_is_not_cancelled(tenant):
     order = live_order(tenant, pay_advance=False)
     item = book(tenant, order["id"])["lines"][0]["item_id"]
     measure(tenant, order["id"], item, 5)
-    res = tenant.post("/api/wo/orders/%d/cancel" % order["id"], json={"comments": "Contractor left"})
+    res = tenant.post("/api/wo/orders/%d/cancel" % order["id"], json={"comments": "Gang left"})
     assert res.status_code == 409
     assert "measured" in res.json()["detail"]
 
     certified_bill(tenant, order["id"], item, 5)
-    res = tenant.post("/api/wo/orders/%d/cancel" % order["id"], json={"comments": "Contractor left"})
+    res = tenant.post("/api/wo/orders/%d/cancel" % order["id"], json={"comments": "Gang left"})
     assert res.status_code == 409
     assert "RA bills" in res.json()["detail"]

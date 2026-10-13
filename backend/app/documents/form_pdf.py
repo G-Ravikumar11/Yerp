@@ -5,7 +5,7 @@ as one printed form: a grid of boxes, the company and its GSTIN top left, the
 document's number and dates in a box top right, the party with their PAN and
 GSTIN underneath, the schedule ruled line by line, the total stated in figures
 and in words, the taxes and the payment terms in their own boxes, and a row of
-signatures across the bottom. Contractors, clients and contractors read that layout
+signatures across the bottom. Contractors, clients and gangs read that layout
 without looking for anything; a document laid out any other way gets queried.
 
 So there is one engine and every document is a description handed to it: a

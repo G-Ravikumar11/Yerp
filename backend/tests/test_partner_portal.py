@@ -1,4 +1,4 @@
-"""The partner portal: a contractor or a supplier signs in and sees their own
+"""The partner portal: a gang or a supplier signs in and sees their own
 orders, bills, payments and statement - and nothing of anybody else's."""
 from urllib.parse import urlparse, parse_qs
 
@@ -53,7 +53,7 @@ def test_a_gang_is_invited_sets_a_password_and_sees_its_own_work(tenant, portal)
     assert bills[0]["left"] == bill["net_payable"]
     s = portal.get("/api/portal/summary").json()
     assert s["balance"] == bill["net_payable"] and s["retention_held"] == bill["retention_amount"]
-    # The office pays; the contractor sees it land.
+    # The office pays; the gang sees it land.
     tenant.post("/api/money/entries", json={"doc_type": "sub_bill", "doc_id": bill["id"],
                                             "amount": bill["net_payable"], "mode": "NEFT", "reference": "UTR77"})
     pays = portal.get("/api/portal/payments").json()["payments"]

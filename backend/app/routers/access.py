@@ -176,7 +176,7 @@ def list_portal_access(request: Request, db: Session = Depends(get_db)):
 @router.post("/api/portal-access")
 def invite_to_portal(body: PortalInviteIn, request: Request, background_tasks: BackgroundTasks,
                      db: Session = Depends(get_db)):
-    """Give one person at a contractor or a supplier their own login. Letting an
+    """Give one person at a gang or a supplier their own login. Letting an
     outsider in is an approver's decision, like passing their bill."""
     client, _, actor_name = wo_actor(request, db, "subcontracts.approve")
     if body.party_type not in PORTAL_PARTY_TYPES:

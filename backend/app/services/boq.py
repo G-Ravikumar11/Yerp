@@ -226,7 +226,7 @@ def boq_issue_codes(db, client_id, lines):
 
 
 def boq_given_to_gangs(db, client_id, keys=None):
-    """{boq key: what the contractors have been given against it}, from the orders that are still alive."""
+    """{boq key: what the gangs have been given against it}, from the orders that are still alive."""
     q = db.query(models.DBSubcontractItem, models.DBSubcontractOrder).join(
         models.DBSubcontractOrder, models.DBSubcontractOrder.id == models.DBSubcontractItem.order_id).filter(
         models.DBSubcontractOrder.client_id == client_id, models.DBSubcontractItem.boq_key != "",
@@ -252,7 +252,7 @@ def boq_given_to_gangs(db, client_id, keys=None):
 
 
 def boq_over_allotments(db, client_id, keys):
-    """Words for each BOQ line the given keys name whose contractor orders now add up to more than the BOQ quantity."""
+    """Words for each BOQ line the given keys name whose gang orders now add up to more than the BOQ quantity."""
     keys = {k for k in keys if k}
     if not keys:
         return []

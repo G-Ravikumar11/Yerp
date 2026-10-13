@@ -43,18 +43,14 @@ def ho_vendor_counts(db, client_id):
 
 
 def ho_subcontract_counts(db, client_id):
-    rows = db.query(models.DBSubcontractOrder.status, models.DBSubcontractOrder.gross_amount,
-                    models.DBSubcontractOrder.net_order_value).filter(
+    rows = db.query(models.DBSubcontractOrder.status, models.DBSubcontractOrder.net_order_value).filter(
         models.DBSubcontractOrder.client_id == client_id).all()
     return {
         "draft": _count(rows, lambda r: r.status == "DRAFT"),
         "awaiting": _count(rows, lambda r: r.status == "PROVISIONAL"),
         "approved": _count(rows, lambda r: r.status in ("APPROVED", "EXECUTED")),
         "total": _count(rows, lambda r: r.status not in ("CANCELLED", "AMENDED")),
-        # The value of the work ordered, the figure a project's commitments are added up from. The net order
-        # value has the GST and TDS in it, so this total did not agree with the projects it is the sum of.
-        "value": money(sum(r.gross_amount or r.net_order_value or 0 for r in rows
-                           if r.status not in ("CANCELLED", "AMENDED", "DRAFT"))),
+        "value": money(sum(r.net_order_value or 0 for r in rows if r.status not in ("CANCELLED", "AMENDED", "DRAFT"))),
     }
 
 
@@ -66,8 +62,7 @@ def ho_client_order_counts(db, client_id):
         "awaiting": _count(rows, lambda r: r.approval_status == "pending"),
         "placed": _count(rows, lambda r: (r.status or "Draft") != "Draft"),
         "total": len(rows),
-        # Rejected orders are not work sold; a project leaves them out of its order value, so this does too.
-        "value": money(sum(r.total_value or 0 for r in rows if (r.approval_status or "none") != "rejected")),
+        "value": money(sum(r.total_value or 0 for r in rows)),
     }
 
 

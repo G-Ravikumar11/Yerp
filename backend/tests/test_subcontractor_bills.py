@@ -1,7 +1,7 @@
 """Subcontractor bills - the money going out.
 
 A work order is what the client buys from us and an RA bill against it is
-money coming in. A subcontract order is what we buy from a contractor, and until now
+money coming in. A subcontract order is what we buy from a gang, and until now
 it could be signed but never measured or billed. The money going out to the
 people actually doing the work was not in the app, and every project's profit
 was flattered by exactly that amount.
@@ -56,7 +56,7 @@ def raise_bill(tenant, order_id, **extra):
     return tenant.post("/api/sub-bills", json=body)
 
 
-# --- Measuring the contractor's work --------------------------------------------------
+# --- Measuring the gang's work --------------------------------------------------
 
 def test_the_book_opens_with_every_ordered_item(tenant):
     order = live_order(tenant)
@@ -129,7 +129,7 @@ def test_the_deductions_are_made_in_the_right_order(tenant):
     measure(tenant, order["id"], item, 100)           # 6,80,000 of work
     bill = raise_bill(tenant, order["id"]).json()["bill"]
     # 18% GST on the 6,80,000 gross - retention is money held back, not a
-    # discount on the contractor's invoice. 5% retention and 1% TDS off the work.
+    # discount on the gang's invoice. 5% retention and 1% TDS off the work.
     assert bill["gst_amount"] == 122400
     assert bill["retention_amount"] == 34000
     assert bill["tds_amount"] == 6800
@@ -313,7 +313,7 @@ def test_the_advance_is_never_recovered_twice_over(tenant):
 
 def test_an_advance_never_paid_is_never_recovered(tenant):
     """The agreed advance used to come off the first bill whether or not the
-    contractor had ever been paid it."""
+    gang had ever been paid it."""
     order = live_order(tenant, pay_advance=False, mobilization_advance_percent=10,
                        advance_recovery_percent=10)
     item = book(tenant, order["id"])["lines"][0]["item_id"]
@@ -348,7 +348,7 @@ def test_a_draft_order_takes_no_advance(tenant):
 
 def test_the_gangs_ledger_shows_only_the_advance_still_owed(tenant):
     """Paid 10% advance, part of it taken back on a bill that was then paid
-    in full: the contractor owes exactly what has not come back yet."""
+    in full: the gang owes exactly what has not come back yet."""
     order = live_order(tenant, mobilization_advance_percent=10, advance_recovery_percent=10)
     item = book(tenant, order["id"])["lines"][0]["item_id"]
     measure(tenant, order["id"], item, 100)
@@ -361,11 +361,11 @@ def test_the_gangs_ledger_shows_only_the_advance_still_owed(tenant):
         "doc_type": "sub_bill", "doc_id": bill["id"], "amount": bill["net_payable"],
         "mode": "Bank transfer", "reference": "UTR-BILL"})
     assert paid.status_code == 200, paid.text
-    contractor = [p for p in tenant.get("/api/ledger/parties").json()["parties"]
+    gang = [p for p in tenant.get("/api/ledger/parties").json()["parties"]
             if p["party_type"] == "contractor"][0]
     still_out = round(order["mobilization_advance_amount"] - bill["advance_recovery"], 2)
     assert bill["advance_recovery"] > 0
-    assert contractor["balance"] == -still_out
+    assert gang["balance"] == -still_out
 
 
 def test_a_revision_says_what_stops_it_being_approved_before_anyone_tries(tenant):

@@ -5,7 +5,7 @@ import { useAction } from '@/lib/mutate'
 import { today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 
-/** Give retention back (to a contractor) or claim it back (from the client), in whole or in stages. */
+/** Give retention back (to a gang) or claim it back (from the client), in whole or in stages. */
 export function ReleaseModal({ position, stages, onClose }: { position: Position | null; stages: string[]; onClose: () => void }) {
   const client = position?.side === 'client'
   return (

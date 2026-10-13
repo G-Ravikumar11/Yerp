@@ -176,7 +176,7 @@ class DBAuditLog(Base):
 
 # THE PARTNER PORTAL
 #
-# A contractor or a supplier signs in to see their own orders, bills, payments and
+# A gang or a supplier signs in to see their own orders, bills, payments and
 # statement - the phone call asking "has my bill been passed?" answered
 # without anybody in the office picking up. One login is one person at one
 # party, and it sees nothing of anybody else's.

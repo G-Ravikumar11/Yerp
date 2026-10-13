@@ -175,7 +175,7 @@ def test_the_owner_raising_their_own_paper_needs_nobody(tenant):
 # --- Work orders to subcontractors ---------------------------------------------
 
 def take_on(con):
-    """A contractor registered by somebody on site waits for its registration form
+    """A gang registered by somebody on site waits for its registration form
     to be signed off before an order can be issued to it. These tests are
     about the order's route, so the owner signs the form off - in a browser of
     their own, as they would from the inbox."""
