@@ -39,4 +39,5 @@ QC_CHECKLISTS = {
 CUBE_AGES = (7, 28)
 EARLY_SHARE = 0.65            # a 7-day set is expected near two-thirds of the grade
 
-SERIOUS_KINDS = ("Lost time injury", "Dangerous occurrence", "Fatality")
+SERIOUS_KINDS = ("Lost time injury", "Dangerous occurrence", "Fatality", "Fire or explosion",
+                 "Structural failure or collapse")

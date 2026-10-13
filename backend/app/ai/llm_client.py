@@ -31,6 +31,8 @@ MESSAGES = {
     "too_big": "That picture is too large to read. Upload a smaller photo (under 3 MB).",
     "bad_key": "The AI key was rejected. Check the key in the settings.",
     "rate_limited": "The AI is busy right now. Try again in a moment.",
+    "no_credit": "The Anthropic account has no credit left. Add credit in Plans & Billing at console.anthropic.com.",
+    "local_down": "The local model is not running. Start Ollama and pull the model, then try again.",
     "timeout": "The AI took too long to answer. Try again.",
     "network_error": "Could not reach the AI service.",
     "upstream_error": "The AI service returned an error.",
@@ -97,6 +99,8 @@ def _claude(system, prompt, attachments, model, max_tokens, temperature) -> AiRe
     if resp.status_code != 200:
         logger.error("Claude API error %d: %s", resp.status_code, resp.text[:300])
         reason = {401: "bad_key", 403: "bad_key", 429: "rate_limited", 529: "rate_limited"}.get(resp.status_code, "upstream_error")
+        if resp.status_code == 400 and "credit balance" in resp.text:
+            reason = "no_credit"
         return AiResult(False, reason=reason, provider="anthropic", model=model)
     body = resp.json()
     text = "".join(b.get("text", "") for b in body.get("content", []) if b.get("type") == "text").strip()
@@ -149,6 +153,31 @@ def _groq(system, prompt, max_tokens, temperature, as_json=False, images: Option
     return AiResult(True, text=text, provider="groq", model=model, usage=usage)
 
 
+def _local(system, prompt, max_tokens, temperature, images: Optional[List[Attachment]] = None) -> AiResult:
+    """A model running on this machine through an OpenAI-style endpoint such as Ollama's."""
+    model = config.local_model()
+    if images:
+        user = [{"type": "text", "text": prompt}] + [{"type": "image_url", "image_url": {"url": _data_url(a)}} for a in images]
+    else:
+        user = prompt
+    body = {"model": model, "temperature": temperature, "max_tokens": max_tokens, "stream": False,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+    try:
+        resp = httpx.post(config.local_url(), json=body, timeout=config.local_timeout())
+    except httpx.TimeoutException:
+        return AiResult(False, reason="timeout", provider="local", model=model)
+    except Exception as exc:
+        logger.error("Local model call failed: %s", exc)
+        return AiResult(False, reason="local_down", provider="local", model=model)
+    if resp.status_code != 200:
+        logger.error("Local model error %d: %s", resp.status_code, resp.text[:300])
+        return AiResult(False, reason="upstream_error", provider="local", model=model)
+    payload = resp.json()
+    text = (payload["choices"][0]["message"].get("content") or "").strip()
+    usage = {"input": (payload.get("usage") or {}).get("prompt_tokens", 0), "output": (payload.get("usage") or {}).get("completion_tokens", 0)}
+    return AiResult(True, text=text, provider="local", model=model, usage=usage)
+
+
 def _split(attachments: List[Attachment]):
     """(words from PDFs that have text, pictures and scanned PDFs the model has to look at)."""
     words, looks = [], []
@@ -164,15 +193,24 @@ def _split(attachments: List[Attachment]):
 
 def ask(system: str, prompt: str, attachments: Optional[List[Attachment]] = None, smart: bool = True,
         max_tokens: int = 2048, temperature: float = 0.1, as_json: bool = False,
-        groq_extra: Optional[dict] = None) -> AiResult:
-    """Ask the model something. Groq by default for text, photos and PDFs that have text; Claude for what Groq cannot read."""
+        groq_extra: Optional[dict] = None, prefer_claude: bool = False, use_local: bool = False) -> AiResult:
+    """Ask the model something. Groq by default for text, photos and PDFs that have text; Claude for what Groq cannot read.
+
+    prefer_claude sends this one call to Claude when an Anthropic key is set, whatever AI_PROVIDER says.
+    use_local sends it to the model on this machine (LOCAL_AI_URL) when one is set up."""
     if not config.enabled():
         return AiResult(False, reason="off")
     words, looks = _split(attachments or [])
     if words:
         prompt = prompt + "\n\nText of the document:\n" + "\n\n---\n\n".join(words)
+    if use_local and config.local_url():
+        if looks and not all(a.media_type in GROQ_IMAGE_TYPES for a in looks):
+            return AiResult(False, reason="scanned_pdf")
+        return _local(system, prompt, max_tokens, temperature, images=looks or None)
     claude_model = config.model_smart() if smart else config.model_fast()
     use_groq_first = bool(config.groq_key()) and (config.prefer_groq() or not config.anthropic_key())
+    if prefer_claude and config.anthropic_key():
+        use_groq_first = False
 
     if not looks:                                           # words only
         if use_groq_first:
