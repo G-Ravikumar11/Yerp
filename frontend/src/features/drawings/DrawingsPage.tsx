@@ -5,14 +5,37 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { ProjectPicker } from '@/components/data/ProjectPicker'
 import { Badge, Button, Input, Select, Stat, StatGrid } from '@/components/ui'
-import { useDrawings, type Drawing, type DrawingRegister } from '@/api/drawings'
+import { deleteDrawing, drwKeys, useDrawings, type Drawing, type DrawingRegister } from '@/api/drawings'
+import { ConfirmDialog } from '@/components/ui/confirm'
+import { DeleteButton } from '@/features/deleteorder/DeleteButton'
+import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
 import { AddDrawingModal, HistoryModal, RevisionModal } from './DrawingModals'
 import { Plan3DModal } from './Plan3DModal'
-import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 const tone = (s: string) => (s === 'Good for construction' ? 'success' : s === 'For approval' ? 'warning' : 'neutral') as 'success' | 'warning' | 'neutral'
+
+/** The trash icon for a sheet, with its confirmation. Shown to everyone who manages drawings, not only the Master. */
+function DrawingDelete({ drawing, onDeleted }: { drawing: Drawing; onDeleted: () => void }) {
+  const [open, setOpen] = useState(false)
+  const del = useAction(() => deleteDrawing(drawing.id), { invalidate: [drwKeys.all], success: (r) => r.message, onSuccess: () => { setOpen(false); onDeleted() } })
+  return (
+    <>
+      <DeleteButton label={drawing.number} onClick={() => setOpen(true)} />
+      <ConfirmDialog
+        open={open}
+        onOpenChange={setOpen}
+        title={`Delete ${drawing.number}?`}
+        description={`This removes the sheet${drawing.revisions > 1 ? ` and all ${drawing.revisions} of its revisions` : drawing.revisions === 1 ? ' and its revision' : ''}, with their files. It cannot be undone.`}
+        confirmLabel="Delete the drawing"
+        tone="danger"
+        loading={del.isPending}
+        onConfirm={() => del.mutate()}
+      />
+    </>
+  )
+}
 
 /** Every sheet and every revision, the one to build to marked. */
 export default function DrawingsPage() {
@@ -30,6 +53,10 @@ export default function DrawingsPage() {
   const [view3d, setView3d] = useState<Drawing | null>(null)
   const words = search.toLowerCase()
   const rows = (d?.drawings ?? []).filter((w) => (!words || `${w.number} ${w.title}`.toLowerCase().includes(words)) && (!disc || w.discipline === disc) && (!status || (status === 'none' ? !w.current_revision : w.status === status)))
+  const removeRow = (id: number) =>
+    qc.setQueryData<DrawingRegister>(['drawings', 'register', job], (old) =>
+      old ? { ...old, drawings: old.drawings.filter((w) => w.id !== id), summary: { ...old.summary, drawings: old.summary.drawings - 1 } } : old,
+    )
   const columns: TableColumn<Drawing>[] = [
     { id: 'no', header: 'Number', sort: (w) => w.number, cell: (w) => <span className="font-mono text-[13px] font-semibold">{w.number}</span> },
     { id: 'title', header: 'Title', cell: (w) => w.title },
@@ -50,17 +77,13 @@ export default function DrawingsPage() {
         </div>
       ),
     },
-    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete
-        kind="drawing"
-        id={r.id}
-        label={String(r.number)}
-        noun="drawing"
-        optimistic={() =>
-          qc.setQueryData<DrawingRegister>(['drawings', 'register', job], (old) =>
-            old ? { ...old, drawings: old.drawings.filter((w) => w.id !== r.id), summary: { ...old.summary, drawings: old.summary.drawings - 1 } } : old,
-          )
-        }
-      /> },
+    {
+      id: 'del',
+      header: '',
+      align: 'right',
+      width: '3.5rem',
+      cell: (r) => (can('workorders.manage') ? <DrawingDelete drawing={r} onDeleted={() => removeRow(r.id)} /> : null),
+    },
   ]
   return (
     <>
