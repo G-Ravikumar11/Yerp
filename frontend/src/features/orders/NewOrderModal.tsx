@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button, Field, Input, Modal, Select } from '@/components/ui'
 import { createOrder, orderKeys, useBusinessUnits, useContractors, useOrderVocabulary } from '@/api/orders'
+import { useBoqs } from '@/api/boq'
 import { useAction } from '@/lib/mutate'
 
 /**
@@ -14,6 +15,7 @@ export function NewOrderModal({ open, onOpenChange }: { open: boolean; onOpenCha
   const vocab = useOrderVocabulary()
   const units = useBusinessUnits()
   const contractors = useContractors()
+  const boqs = useBoqs()
   const [f, setF] = useState({ contractor_id: '', job_id: '', department: '', subject: '' })
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((s) => ({ ...s, [k]: e.target.value }))
 
@@ -32,11 +34,13 @@ export function NewOrderModal({ open, onOpenChange }: { open: boolean; onOpenCha
       onSuccess: (res) => {
         onOpenChange(false)
         setF({ contractor_id: '', job_id: '', department: '', subject: '' })
-        nav(`/subcontractors/work-orders/${res.order.id}`)
+        // On a project with a BOQ the order is built from it: open its schedule with the BOQ to pick from.
+        nav(`/subcontractors/work-orders/${res.order.id}${boq ? '?boq=1' : ''}`)
       },
     },
   )
 
+  const boq = f.job_id ? (boqs.data?.boqs ?? []).find((b) => b.job_id === Number(f.job_id)) : undefined
   const registered = (contractors.data?.contractors ?? []).filter((c) => c.registration_status === 'APPROVED')
 
   return (
@@ -60,7 +64,11 @@ export function NewOrderModal({ open, onOpenChange }: { open: boolean; onOpenCha
         <Field label="Sub contractor" htmlFor="no-con" hint="Only contractors whose registration form has been signed off can be issued an order.">
           <Select id="no-con" value={f.contractor_id} onChange={set('contractor_id')} placeholder="Choose later" options={registered.map((c) => ({ value: c.id, label: c.company_name + (c.vendor_code ? ` (${c.vendor_code})` : '') }))} />
         </Field>
-        <Field label="Project" htmlFor="no-job">
+        <Field
+          label="Project"
+          htmlFor="no-job"
+          hint={!f.job_id ? 'The order is built from the project\'s BOQ.' : boq ? `Against ${boq.number}: you pick this order's lines from it next.` : boqs.isPending ? undefined : 'This project has no BOQ yet. Open one under Projects, BOQ to build orders against it.'}
+        >
           <Select id="no-job" value={f.job_id} onChange={set('job_id')} placeholder="Choose later" options={(vocab.data?.jobs ?? []).map((j) => ({ value: j.id, label: `${j.number} ${j.name}` }))} />
         </Field>
         <div className="grid gap-4 sm:grid-cols-2">

@@ -76,6 +76,8 @@ export function ScheduleTab({
   onCostCentre,
   dirty,
   onCharged,
+  startPicking = false,
+  onPicked,
 }: {
   order: Order
   rows: LineRow[]
@@ -86,12 +88,15 @@ export function ScheduleTab({
   dirty: boolean
   /** The server changed the lines (their cost centres): start the form again from what it now holds. */
   onCharged: () => void
+  /** Open the BOQ picker straight away: the order was just opened on a project with a BOQ. */
+  startPicking?: boolean
+  onPicked?: () => void
 }) {
   const budgets = order.budgets ?? []
   const file = useRef<HTMLInputElement>(null)
   const [chargeTo, setChargeTo] = useState('')
   const [pending, setPending] = useState<File | null>(null)
-  const [picking, setPicking] = useState(false)
+  const [picking, setPicking] = useState(startPicking)
   const offBoq = rows.filter((r) => !r.is_header && r.item_description.trim() && !r.boq_key).length
 
   const columns = useMemo<Column<LineRow>[]>(
@@ -279,7 +284,7 @@ export function ScheduleTab({
         orderId={order.id}
         jobId={order.job_id ?? 0}
         open={picking}
-        onOpenChange={setPicking}
+        onOpenChange={(o) => { setPicking(o); if (!o) onPicked?.() }}
         onAdd={(added) => onRows([...rows.filter((r) => r.item_description.trim()), ...added.map((l) => ({ ...blankLine(), ...l }) as LineRow)])}
       />
       <ConfirmDialog
