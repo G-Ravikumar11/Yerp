@@ -25,6 +25,8 @@ from sqlalchemy.orm import Session
 from app import models
 from app.ai import config, guard
 from app.ai.llm_client import AiResult, Attachment, ask, parse_json
+from app.ai.rooms import rooms_from_walls
+from app.ai.wall_detect import detect_walls
 from app.core.auth import require_erp_read
 from app.core.files import file_bytes
 from app.db import get_db
@@ -35,7 +37,7 @@ ACTION_KEY = "ai_drawing_3d"
 IMAGE_TYPES = ("image/jpeg", "image/png", "image/webp", "image/gif")
 MAX_WALLS, MAX_ROOMS, MAX_OPENINGS = 400, 60, 120
 PICTURE_PX = 1280
-MAX_TOKENS = 900                      # the provider's output limit is 1000 a minute
+MAX_TOKENS = 900                      # the provider's output limit is 1000 a minute (rooms and doors need far fewer)
 MAX_ATTEMPTS = 4
 MAX_WAIT_S = 20
 
@@ -62,6 +64,16 @@ PROMPT = (
     '  "confidence": 0 to 1\n'
     "Answer with the JSON object only."
 )
+
+
+PROMPT_LABELS = (
+    "This is a floor plan with a red labelled grid (0 to 100 from the left and from the top). "
+    "List every room name printed on the plan, with the grid position of the middle of that printed name, as "
+    "whole-number percentages. Return one JSON object: "
+    '{"labels": [["NAME", x, y], ...], "width_m": real width in metres of the whole plan from its printed '
+    "dimensions or scale, or null}. Only names that are printed on the plan. JSON only."
+)
+MIN_FOUND_WALLS = 4                   # fewer than this and the pixels did not show a plan: ask the model for the walls too
 
 
 def _picture_of(data: bytes, media: str):
@@ -258,18 +270,54 @@ def clean(read: dict) -> dict:
             "confidence": conf if isinstance(conf, (int, float)) else None}
 
 
-def _trace(picture: bytes) -> AiResult:
-    """One model call, retried after the wait the provider names (or a short back-off) when it is busy or refuses."""
+def _labels(raw):
+    """[(name, x, y)] from the model's list of printed names; anything unusable is dropped. The positions are read off
+    the red grid (0 to 100); a model that answered on a 0 to 1000 scale is brought back to it."""
+    pts = []
+    for item in _as_list(raw)[:30]:
+        if isinstance(item, (list, tuple)) and len(item) >= 3:
+            name, x, y = item[0], item[1], item[2]
+        elif isinstance(item, dict):
+            name, x, y = item.get("name"), item.get("x"), item.get("y")
+        else:
+            continue
+        try:
+            x, y = float(x), float(y)
+        except (TypeError, ValueError):
+            continue
+        name = str(name or "").strip()
+        if not name or len(name) > 40 or name.replace(".", "").isdigit():
+            continue
+        pts.append((name, x, y))
+    if pts and any(x > 100 or y > 100 for _, x, y in pts):
+        pts = [(n, x / 10, y / 10) for n, x, y in pts]
+    return [(n, min(100.0, max(0.0, x)), min(100.0, max(0.0, y))) for n, x, y in pts]
+
+
+def _trace(picture: bytes, found_walls=None) -> AiResult:
+    """One model call, retried after the wait the provider names (or a short back-off) when it is busy or refuses.
+
+    found_walls are the walls read from the pixels. With them the model only names rooms and doors, which is a much
+    shorter answer, and if it fails or is busy the walls are still returned: the 3D view works without it."""
+    found = list(found_walls or [])
+    have_walls = len(found) >= MIN_FOUND_WALLS
     result = AiResult(False, reason="upstream_error")
     who = config.drawing_3d_provider()
     attempts = 1 if who == "local" else MAX_ATTEMPTS      # a local model can take minutes: do not stack retries
     for attempt in range(attempts):
-        result = ask(SYSTEM, PROMPT, [Attachment(picture, "image/jpeg")], smart=True, max_tokens=MAX_TOKENS,
-                     groq_extra={"reasoning_effort": "none"}, prefer_claude=who != "groq", use_local=who == "local")
+        result = ask(SYSTEM, PROMPT_LABELS if have_walls else PROMPT, [Attachment(picture, "image/jpeg")], smart=True,
+                     max_tokens=500 if have_walls else MAX_TOKENS, groq_extra={"reasoning_effort": "none"}, prefer_claude=who != "groq",
+                     use_local=who == "local")
         if result.ok:
             data = parse_json(result.text)
             if not isinstance(data, dict):
                 data = salvage(result.text)
+            if isinstance(data, dict) and have_walls:
+                # the pixels know the walls, and the walls know the rooms; the model only supplies the names
+                result.data = {"walls": found, "rooms": rooms_from_walls(found, _labels(data.get("labels"))),
+                               "openings": [], "width_m": data.get("width_m"), "storeys": 1,
+                               "confidence": data.get("confidence")}
+                return result
             if isinstance(data, dict) and (data.get("walls") or data.get("rooms")):
                 result.data = data
                 return result
@@ -278,6 +326,10 @@ def _trace(picture: bytes) -> AiResult:
         if result.reason not in _RETRY_REASONS or attempt == attempts - 1:
             break
         time.sleep(min(max(result.retry_after + 0.5, 2.0 * (attempt + 1)), MAX_WAIT_S))
+    if have_walls and result.reason in _RETRY_REASONS + ("local_down", "no_credit", "bad_key", "no_key", "off"):
+        # No answer from the model, but the walls are known: show the shell, with the rooms named Room 1, Room 2...
+        return AiResult(True, data={"walls": found, "rooms": rooms_from_walls(found), "openings": [], "confidence": None},
+                        provider="pixels", model="wall detector")
     return result
 
 
@@ -306,6 +358,7 @@ def drawing_to_3d(drawing_id: int, request: Request, db: Session = Depends(get_d
         raise HTTPException(400, "Only a picture (JPG, PNG) or a PDF of a plan can be shown in 3D. DWG and DXF are not supported yet.")
     data = file_bytes(db, f)
     picture = prepare(data, media) if data else None
+    found = detect_walls(_picture_of(data, media)) if picture else []
     if not picture:
         raise HTTPException(400, "No picture could be read from this file. A PDF drawn as lines (not a scan) cannot be traced: "
                                  "export the plan as a JPG or PNG and add it as the revision.")
@@ -314,7 +367,7 @@ def drawing_to_3d(drawing_id: int, request: Request, db: Session = Depends(get_d
         if key in _CACHE:                   # another click traced it while this one waited
             return _CACHE[key]
         result = guard.run_feature(db, request, client, ACTION_KEY, "3D view %s" % d.number, d.number or "",
-                                   lambda: _trace(picture))
+                                   lambda: _trace(picture, found))
     if not result.ok:
         message = result.message
         if result.reason == "bad_answer":
