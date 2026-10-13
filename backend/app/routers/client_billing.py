@@ -290,6 +290,15 @@ def create_variation(body: VariationIn, request: Request,
             409, "Nothing is over the ordered quantity, so there is nothing to vary. "
                  "Measure the extra work first, or add the lines yourself.")
 
+    # A line number is only a number: it has to be a line of this very order, not of another company's.
+    named = {int(r["line_id"]) for r in rows if r.get("line_id")}
+    if named:
+        own = {i for (i,) in db.query(models.DBWorkOrderLine.id).filter(
+            models.DBWorkOrderLine.work_order_id == wo.id,
+            models.DBWorkOrderLine.id.in_(named)).all()}
+        if named - own:
+            raise HTTPException(404, "A line named in the variation is not on %s." % (wo.number or "this order"))
+
     number, seq = next_vo_number(db, wo)
     vo = models.DBVariationOrder(
         client_id=client.id, work_order_id=wo.id, job_id=wo.job_id,

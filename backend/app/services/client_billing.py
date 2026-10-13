@@ -428,8 +428,10 @@ def apply_variation(db, vo):
     for l in db.query(models.DBVariationLine).filter(
             models.DBVariationLine.variation_order_id == vo.id).all():
         if l.line_id:
+            # Only a line of this order: a variation never reaches into another order, or another company's.
             line = db.query(models.DBWorkOrderLine).filter(
-                models.DBWorkOrderLine.id == l.line_id).first()
+                models.DBWorkOrderLine.id == l.line_id,
+                models.DBWorkOrderLine.work_order_id == wo.id).first()
             if not line:
                 continue
             line.qty = money((line.qty or 0) + l.extra_qty)
