@@ -67,11 +67,14 @@ def client_register(body: ClientRegister, request: Request, db: Session = Depend
                    "not by registering.")
 
     validate_password_strength(body.password)
-    existing = db.query(models.DBClient).filter(models.DBClient.email == body.email).first()
+    email = (body.email or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+    existing = db.query(models.DBClient).filter(sqlfunc.lower(models.DBClient.email) == email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
     client = models.DBClient(
-        email=body.email,
+        email=email,
         password_hash=hash_password(body.password),
         company_name=body.company_name,
         contact_name=body.contact_name,
@@ -87,13 +90,15 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
     ip = request.client.host if request.client else "unknown"
     if rate_limiter.is_rate_limited(f"login:{ip}", max_requests=10, window=60):
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
-    client = db.query(models.DBClient).filter(models.DBClient.email == body.email).first()
+    # Emails are not case-sensitive and a stray space from a paste or autofill is not part of one.
+    email = (body.email or "").strip().lower()
+    client = db.query(models.DBClient).filter(sqlfunc.lower(models.DBClient.email) == email).first()
     if client and verify_password(body.password, client.password_hash):
         upgrade_password_hash(client, "password_hash", body.password)
     if not client or not verify_password(body.password, client.password_hash):
         # Not the account owner - it may be one of their colleagues.
         member = db.query(models.DBTeamMember).filter(
-            sqlfunc.lower(models.DBTeamMember.email) == (body.email or "").strip().lower()
+            sqlfunc.lower(models.DBTeamMember.email) == email
         ).first()
         if (member and member.is_active and member.password_hash
                 and verify_password(body.password, member.password_hash)):
