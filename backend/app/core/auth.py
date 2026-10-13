@@ -3,6 +3,7 @@ import contextvars
 import hashlib
 import os
 import secrets
+import time
 
 from fastapi import HTTPException, Request
 from sqlalchemy.orm import Session
@@ -68,6 +69,14 @@ def get_client_user(request: Request, db: Session):
             raise HTTPException(status_code=403,
                                 detail="Your account has read-only access.")
     return client
+
+
+def set_session_lifetime(request: Request, remember: bool):
+    """Stamp this sign-in as persistent (Remember me) or browser-session only. The middleware turns the stamp
+    into the cookie's lifetime and enforces `exp` on every later request, so a copied cookie cannot outlive it."""
+    from app.core.config import REMEMBER_MAX_AGE, SESSION_MAX_AGE
+    request.session["remember"] = bool(remember)
+    request.session["exp"] = int(time.time()) + (REMEMBER_MAX_AGE if remember else SESSION_MAX_AGE)
 
 
 def end_every_session(request: Request):

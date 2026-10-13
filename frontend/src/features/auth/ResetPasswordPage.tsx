@@ -4,7 +4,7 @@ import { api, ApiError } from '@/lib/api'
 import { AuthLayout, Notice } from './AuthLayout'
 import { appUrl } from '@/lib/paths'
 
-type Stage = 'checking' | 'dead' | 'form' | 'done'
+type Stage = 'checking' | 'dead' | 'form'
 
 /** The page a "reset your password" email opens. The link is checked before the form shows, so nobody types a password into a dead link. */
 export default function ResetPasswordPage() {
@@ -25,11 +25,13 @@ export default function ResetPasswordPage() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    if (password.length < 8 || !/[A-Z]/.test(password) || !/\d/.test(password)) return setError('Use at least 8 characters, with one capital letter and one number.')
     if (password !== confirm) return setError('Those two do not match.')
     setBusy(true)
     try {
       await api('/api/client/reset-password', { method: 'POST', body: { token, password }, quiet: true })
-      setStage('done')
+      window.location.assign(appUrl('login') + '?reset=1')
+      return
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Something went wrong. Try again.')
     } finally {
@@ -54,12 +56,6 @@ export default function ResetPasswordPage() {
           {error && <Notice tone="error">{error}</Notice>}
           <Button type="submit" loading={busy}>Set new password</Button>
         </form>
-      )}
-      {stage === 'done' && (
-        <div className="grid gap-3 text-center">
-          <Notice tone="success">Password updated.</Notice>
-          <div><Button asChild><a href={appUrl('login')}>Sign in</a></Button></div>
-        </div>
       )}
     </AuthLayout>
   )

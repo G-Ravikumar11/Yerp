@@ -13,6 +13,7 @@ import HomePage from '@/features/dashboard/HomePage'
 import NotFound from '@/pages/NotFound'
 
 const LoginPage = lazy(() => import('@/features/auth/LoginPage'))
+const ForgotPasswordPage = lazy(() => import('@/features/auth/ForgotPasswordPage'))
 const ResetPasswordPage = lazy(() => import('@/features/auth/ResetPasswordPage'))
 const OnboardPage = lazy(() => import('@/features/auth/OnboardPage'))
 const PortalPage = lazy(() => import('@/features/portal/PortalPage'))
@@ -65,6 +66,7 @@ export default function App() {
             <Route path="meeting" element={<MeetingPage />} />
             <Route path="onboard" element={<OnboardPage />} />
             <Route path="portal" element={<PortalPage />} />
+            <Route path="forgot-password" element={<ForgotPasswordPage />} />
             <Route path="reset-password" element={<ResetPasswordPage />} />
             <Route path="superadmin" element={<SuperadminPage />} />
             <Route path="superadmin/login" element={<SuperadminLoginPage />} />
