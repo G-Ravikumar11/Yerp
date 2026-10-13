@@ -204,6 +204,26 @@
   --shadow-pop: 0 1px 0 0 oklch(1 0 0 / 0.06) inset, 0 32px 80px -16px oklch(0 0 0 / 0.75);
 }
 
+/* ---- App backdrop ---------------------------------------------------------
+   Soft pastel washes (peach, lilac, mint) behind every screen. Light in the light theme, a gentle glow in the dark one. */
+.app-backdrop {
+  /* fades out towards the bottom so it never ends in a visible edge */
+  -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+  background:
+    radial-gradient(55% 60% at 8% 0%, oklch(0.9 0.085 65 / 0.75), transparent 72%),
+    radial-gradient(48% 55% at 92% 4%, oklch(0.9 0.075 300 / 0.7), transparent 72%),
+    radial-gradient(55% 50% at 52% 46%, oklch(0.93 0.06 175 / 0.55), transparent 74%),
+    radial-gradient(50% 45% at 100% 100%, oklch(0.92 0.07 20 / 0.5), transparent 72%);
+}
+.dark .app-backdrop {
+  background:
+    radial-gradient(55% 60% at 8% 0%, oklch(0.58 0.12 60 / 0.34), transparent 72%),
+    radial-gradient(48% 55% at 92% 4%, oklch(0.5 0.12 295 / 0.3), transparent 72%),
+    radial-gradient(55% 50% at 52% 46%, oklch(0.5 0.08 180 / 0.2), transparent 74%),
+    radial-gradient(50% 45% at 100% 100%, oklch(0.5 0.1 20 / 0.2), transparent 72%);
+}
+
 /* ---- Base --------------------------------------------------------------- */
 @layer base {
   * {

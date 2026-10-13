@@ -48,7 +48,9 @@ export function AppShell() {
   }, [pathname])
 
   return (
-    <div className="min-h-dvh">
+    <div className="relative isolate min-h-dvh">
+      {/* Soft pastel washes behind every screen; the cards and the sidebar sit on top of it. */}
+      <div aria-hidden className="app-backdrop pointer-events-none fixed inset-0 -z-10" />
       <a
         href="#main"
         className="sr-only z-[60] rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground focus:not-sr-only focus:fixed focus:left-4 focus:top-4"
