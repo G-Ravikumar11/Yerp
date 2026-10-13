@@ -156,7 +156,7 @@ export default function BoqPage() {
   const columns = useMemo<Column<Row>[]>(
     () => [
       { id: 'group_code', header: 'Group code', hint: 'Pick one, or type your own', type: 'select', freeText: true, customLabel: 'Customize...', width: 190, pin: true, options: groupOptions },
-      { id: 'item_code', header: 'Item code', hint: 'Type one, or leave blank to be given one on save', width: 120, mono: true, placeholder: 'Auto' },
+      { id: 'item_code', header: 'Item code', hint: 'Type this work\u2019s item code (any pattern, e.g. CIV-RCC-25). It is kept everywhere. Blank: one is given on save.', width: 150, mono: true, placeholder: 'Type the code' },
       { id: 'description', header: 'Description', hint: 'Paste the client’s lines here', width: 420, required: true, placeholder: 'What is the work?' },
       { id: 'material', header: 'Material', hint: 'Grade or material: M40, Fe550/550D', type: 'select', freeText: true, customLabel: 'Add an item...', width: 130, options: materialOptions, readOnly: locked },
       { id: 'uom', header: 'Unit', type: 'select', freeText: true, width: 84, options: ['cum', 'sqm', 'rmt', 'nos', 'kg', 'MT', 'ltr', 'LS'], readOnly: locked },
