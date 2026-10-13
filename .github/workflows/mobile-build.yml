@@ -129,9 +129,11 @@ jobs:
           n=${{ github.run_number }}
           min=$(tr -dc '0-9' < mobile/web-min-native.txt); min=${min:-0}
           (cd frontend/dist && zip -qr "$GITHUB_WORKSPACE/web-$n.zip" .)
+          sum=$(sha256sum "web-$n.zip" | cut -d' ' -f1)
           gh release delete "web-v$n" --yes --cleanup-tag 2>/dev/null || true
           gh release create "web-v$n" "web-$n.zip" --target "$GITHUB_SHA" --title "Screens $n"             --notes "Screens of build $n (${GITHUB_SHA::7}).
-          min_native=$min"
+          min_native=$min
+          sha256=$sum"
           # Keep the newest ten.
           gh release list --limit 200 --json tagName -q '.[].tagName' | grep '^web-v' | sed 's/^web-v//' | sort -n | head -n -10 |
             while read -r old; do gh release delete "web-v$old" --yes --cleanup-tag; done

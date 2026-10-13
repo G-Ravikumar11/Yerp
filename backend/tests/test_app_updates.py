@@ -39,21 +39,30 @@ def test_nothing_published_or_github_down(client, monkeypatch):
     assert client.get("/api/app/android/latest").json() == {"version_code": 0}
 
 
+H12, H15 = "a" * 64, "B" * 64
+
+
 def test_newest_web_bundle_and_what_app_it_needs(client, monkeypatch):
     _fresh(monkeypatch, [
-        {"tag_name": "web-v12", "body": "Screens 12\nmin_native=0", "assets": [{"name": "web-12.zip", "browser_download_url": "z12"}]},
-        {"tag_name": "web-v15", "body": "min_native=4", "assets": [{"name": "web-15.zip", "browser_download_url": "z15"}]},
-        {"tag_name": "web-v20", "assets": []},
-        {"tag_name": "web-v30", "prerelease": True, "assets": [{"name": "web-30.zip", "browser_download_url": "z30"}]},
+        {"tag_name": "web-v12", "body": "Screens 12\nmin_native=0\nsha256=" + H12, "assets": [{"name": "web-12.zip", "browser_download_url": "z12"}]},
+        {"tag_name": "web-v15", "body": "min_native=4\nsha256=" + H15, "assets": [{"name": "web-15.zip", "browser_download_url": "z15"}]},
+        {"tag_name": "web-v20", "body": "sha256=" + H15, "assets": []},
+        {"tag_name": "web-v30", "prerelease": True, "body": "sha256=" + H15, "assets": [{"name": "web-30.zip", "browser_download_url": "z30"}]},
         {"tag_name": "android-v99", "assets": [{"name": "a.apk", "browser_download_url": "a99"}]},
     ])
-    assert client.get("/api/app/web/latest").json() == {"version": 15, "zip_url": "z15", "min_native": 4}
+    assert client.get("/api/app/web/latest").json() == {"version": 15, "zip_url": "z15", "checksum": H15.lower(), "min_native": 4}
     # The two kinds of release do not get in each other's way.
     assert client.get("/api/app/android/latest").json()["version_code"] == 99
 
 
-def test_web_bundle_without_a_note_works_in_any_app_and_none_published(client, monkeypatch):
-    _fresh(monkeypatch, [{"tag_name": "web-v3", "assets": [{"name": "web-3.zip", "browser_download_url": "z3"}]}])
-    assert client.get("/api/app/web/latest").json() == {"version": 3, "zip_url": "z3", "min_native": 0}
+def test_a_web_bundle_with_no_fingerprint_is_not_offered(client, monkeypatch):
+    """The phone's updater refuses a download it cannot check, so such a release is skipped for an older one that can."""
+    _fresh(monkeypatch, [
+        {"tag_name": "web-v9", "body": "min_native=0", "assets": [{"name": "web-9.zip", "browser_download_url": "z9"}]},
+        {"tag_name": "web-v8", "body": "sha256=" + H12, "assets": [{"name": "web-8.zip", "browser_download_url": "z8"}]},
+    ])
+    assert client.get("/api/app/web/latest").json() == {"version": 8, "zip_url": "z8", "checksum": H12, "min_native": 0}
+    _fresh(monkeypatch, [{"tag_name": "web-v9", "assets": [{"name": "web-9.zip", "browser_download_url": "z9"}]}])
+    assert client.get("/api/app/web/latest").json() == {"version": 0}
     _fresh(monkeypatch, [])
     assert client.get("/api/app/web/latest").json() == {"version": 0}

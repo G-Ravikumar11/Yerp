@@ -4,7 +4,9 @@ The mobile workflow publishes two kinds of GitHub Release:
   android-v<n>  a signed APK. A new native shell: installed by the person, from the "Update available" prompt.
   web-v<n>      web-<n>.zip, the app's screens only. Downloaded by the app itself and used the next time it opens,
                 with nothing to install. Its notes carry "min_native=<n>": the oldest installed APK (by version code)
-                the screens work in, so a bundle that needs a newer native plugin is never pushed to an older app.
+                the screens work in, so a bundle that needs a newer native plugin is never pushed to an older app, and
+                "sha256=<hex>": the zip's fingerprint, which the phone checks the download against. A release without
+                one is not offered: the phone's updater refuses a download it cannot check.
 The app asks here rather than GitHub itself: one place to change where builds live, and no browser cross-origin rules
 to get round.
 """
@@ -23,6 +25,7 @@ router = APIRouter()
 _ANDROID_TAG = re.compile(r"^android-v(\d+)$")
 _WEB_TAG = re.compile(r"^web-v(\d+)$")
 _MIN_NATIVE = re.compile(r"min_native=(\d+)")
+_SHA256 = re.compile(r"sha256=([0-9a-fA-F]{64})")
 _CACHE_SECONDS = 600
 _cache = {"at": 0.0, "releases": []}
 
@@ -73,10 +76,18 @@ def latest_android_app():
 
 @router.get("/api/app/web/latest")
 def latest_web_bundle():
-    """{version, zip_url, min_native}: the newest screens, and the oldest installed app they work in. {version: 0} when none."""
-    found = _newest(_WEB_TAG, ".zip")
-    if not found:
+    """{version, zip_url, checksum, min_native}: the newest screens that can be checked, and the oldest installed app they
+    work in. {version: 0} when there are none."""
+    best = None
+    for rel in _releases():
+        m = _WEB_TAG.match(rel.get("tag_name") or "")
+        digest = _SHA256.search(rel.get("body") or "")
+        zipped = next((a for a in rel.get("assets") or [] if (a.get("name") or "").endswith(".zip")), None)
+        if m and digest and zipped and (best is None or int(m.group(1)) > best[0]):
+            best = (int(m.group(1)), rel, zipped, digest.group(1).lower())
+    if not best:
         return {"version": 0}
-    number, rel, zipped = found
-    m = _MIN_NATIVE.search(rel.get("body") or "")
-    return {"version": number, "zip_url": zipped["browser_download_url"], "min_native": int(m.group(1)) if m else 0}
+    number, rel, zipped, checksum = best
+    floor = _MIN_NATIVE.search(rel.get("body") or "")
+    return {"version": number, "zip_url": zipped["browser_download_url"], "checksum": checksum,
+            "min_native": int(floor.group(1)) if floor else 0}

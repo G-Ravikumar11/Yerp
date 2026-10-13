@@ -66,13 +66,14 @@ async function checkForWebUpdate() {
   try {
     const [{ build }, latest, now, listed] = await Promise.all([
       App.getInfo(),
-      api<{ version: number; zip_url?: string; min_native?: number }>('/api/app/web/latest', { quiet: true }),
+      api<{ version: number; zip_url?: string; checksum?: string; min_native?: number }>('/api/app/web/latest', { quiet: true }),
       CapacitorUpdater.current(),
       CapacitorUpdater.list(),
     ])
     const running = Math.max(BAKED_WEB, Number(now.bundle.version) || 0)
-    const url = latest.zip_url
-    if (!url || latest.version <= running || latest.version === offeredWeb) return
+    const { zip_url: url, checksum } = latest
+    // The updater will not take a download it cannot check against the fingerprint the release was published with.
+    if (!url || !checksum || latest.version <= running || latest.version === offeredWeb) return
     if ((Number(build) || 0) < (latest.min_native ?? 0)) return
     // Only ever our own releases, over https.
     if (!url.startsWith('https://github.com/')) return
@@ -81,7 +82,7 @@ async function checkForWebUpdate() {
     const have = listed.bundles.find((b) => b.version === version)
     // One that already failed on this phone is not tried again; the next build replaces it.
     if (have?.status === 'error') return
-    const bundle = have ?? (await CapacitorUpdater.download({ url, version }))
+    const bundle = have ?? (await CapacitorUpdater.download({ url, version, checksum }))
     await CapacitorUpdater.next({ id: bundle.id })
     offeredWeb = latest.version
     toast.withAction('New screens are ready for Y ERP.', 'Restart now', () => {
