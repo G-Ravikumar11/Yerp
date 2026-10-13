@@ -58,6 +58,7 @@ class AiResult:
     provider: str = ""
     model: str = ""
     usage: Dict[str, int] = field(default_factory=dict)
+    retry_after: float = 0.0    # seconds the provider asked us to wait, when it said so
 
     @property
     def message(self) -> str:
@@ -103,7 +104,8 @@ def _claude(system, prompt, attachments, model, max_tokens, temperature) -> AiRe
     return AiResult(True, text=text, provider="anthropic", model=model, usage=usage)
 
 
-def _groq(system, prompt, max_tokens, temperature, as_json=False, images: Optional[List[Attachment]] = None) -> AiResult:
+def _groq(system, prompt, max_tokens, temperature, as_json=False, images: Optional[List[Attachment]] = None,
+          extra: Optional[dict] = None) -> AiResult:
     model = config.groq_vision_model() if images else config.groq_model()
     if images:
         user = [{"type": "text", "text": prompt}] + [{"type": "image_url", "image_url": {"url": _data_url(a)}} for a in images]
@@ -113,13 +115,21 @@ def _groq(system, prompt, max_tokens, temperature, as_json=False, images: Option
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
     if as_json:
         body["response_format"] = {"type": "json_object"}
+    sent = dict(body, **(extra or {}))
     try:
         resp = httpx.post(
             config.GROQ_URL,
             headers={"Authorization": "Bearer " + config.groq_key(), "Content-Type": "application/json"},
-            json=body,
+            json=sent,
             timeout=config.timeout(),
         )
+        if resp.status_code == 400 and extra:          # a model that does not know the extra settings: ask plainly
+            resp = httpx.post(
+                config.GROQ_URL,
+                headers={"Authorization": "Bearer " + config.groq_key(), "Content-Type": "application/json"},
+                json=body,
+                timeout=config.timeout(),
+            )
     except httpx.TimeoutException:
         return AiResult(False, reason="timeout", provider="groq", model=model)
     except Exception as exc:
@@ -128,7 +138,11 @@ def _groq(system, prompt, max_tokens, temperature, as_json=False, images: Option
     if resp.status_code != 200:
         logger.error("Groq API error %d: %s", resp.status_code, resp.text[:300])
         reason = {401: "bad_key", 403: "bad_key", 429: "rate_limited", 413: "too_big"}.get(resp.status_code, "upstream_error")
-        return AiResult(False, reason=reason, provider="groq", model=model)
+        try:
+            wait = float(resp.headers.get("retry-after") or 0)
+        except ValueError:
+            wait = 0.0
+        return AiResult(False, reason=reason, provider="groq", model=model, retry_after=wait)
     payload = resp.json()
     text = payload["choices"][0]["message"]["content"].strip()
     usage = {"input": (payload.get("usage") or {}).get("prompt_tokens", 0), "output": (payload.get("usage") or {}).get("completion_tokens", 0)}
@@ -149,7 +163,8 @@ def _split(attachments: List[Attachment]):
 
 
 def ask(system: str, prompt: str, attachments: Optional[List[Attachment]] = None, smart: bool = True,
-        max_tokens: int = 2048, temperature: float = 0.1, as_json: bool = False) -> AiResult:
+        max_tokens: int = 2048, temperature: float = 0.1, as_json: bool = False,
+        groq_extra: Optional[dict] = None) -> AiResult:
     """Ask the model something. Groq by default for text, photos and PDFs that have text; Claude for what Groq cannot read."""
     if not config.enabled():
         return AiResult(False, reason="off")
@@ -161,7 +176,7 @@ def ask(system: str, prompt: str, attachments: Optional[List[Attachment]] = None
 
     if not looks:                                           # words only
         if use_groq_first:
-            return _groq(system, prompt, max_tokens, temperature, as_json)
+            return _groq(system, prompt, max_tokens, temperature, as_json, extra=groq_extra)
         if config.anthropic_key():
             return _claude(system, prompt, [], claude_model, max_tokens, temperature)
         return AiResult(False, reason="no_key")
@@ -169,7 +184,7 @@ def ask(system: str, prompt: str, attachments: Optional[List[Attachment]] = None
     pictures_only = all(a.media_type in GROQ_IMAGE_TYPES for a in looks)
     fits_groq = pictures_only and len(looks) <= GROQ_MAX_IMAGES and all(len(a.data) <= GROQ_MAX_IMAGE_BYTES for a in looks)
     if use_groq_first and fits_groq:
-        return _groq(system, prompt, max_tokens, temperature, as_json, images=looks)
+        return _groq(system, prompt, max_tokens, temperature, as_json, images=looks, extra=groq_extra)
     if config.anthropic_key():
         return _claude(system, prompt, looks, claude_model, max_tokens, temperature)
     if not config.groq_key():
