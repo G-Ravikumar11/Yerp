@@ -57,6 +57,56 @@ def boq_revision_of(db, boq, rev_no=None):
     return rev
 
 
+def _norm(text):
+    return re.sub(r"\s+", " ", (text or "").split("\n")[0]).strip().lower()
+
+
+def boq_lines_of_job(db, client_id, job_id):
+    """The priced lines of the project's BOQ as it stands (its current revision), or [] when the project has no BOQ."""
+    boq = boq_of_job(db, client_id, job_id)
+    if boq is None:
+        return []
+    rev = db.query(models.DBBoqRevision).filter(models.DBBoqRevision.boq_id == boq.id,
+                                                models.DBBoqRevision.rev_no == boq.current_rev).first()
+    if rev is None:
+        return []
+    return db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id,
+                                             models.DBBoqLine.kind.in_(BOQ_PRICED)).order_by(models.DBBoqLine.display_order).all()
+
+
+def boq_tie_subcontract_lines(db, client_id, job_id, lines):
+    """A sub contractor work order goes along with the project's BOQ: each of its lines is tied to the BOQ line it is part of. A line
+    already tied keeps its tie if that line is on this project's BOQ; one that is not is tied by its item code, or else by
+    a description that matches one BOQ line exactly. `lines` are objects with item_code, item_description, boq_key and
+    is_header; their boq_key (and a blank item_code) are filled in place. Returns the lines still not on the BOQ."""
+    boq_lines = boq_lines_of_job(db, client_id, job_id)
+    if not boq_lines:
+        return []
+    keys = {l.key for l in boq_lines}
+    by_code = {(l.item_code or "").upper(): l for l in boq_lines if l.item_code}
+    by_desc = {}
+    for l in boq_lines:
+        by_desc.setdefault(_norm(l.description), []).append(l)
+    loose = []
+    for line in lines:
+        if getattr(line, "is_header", False) or not (line.item_description or "").strip():
+            continue
+        if line.boq_key and line.boq_key in keys:
+            continue
+        hit = by_code.get((line.item_code or "").strip().upper())
+        if hit is None:
+            same = by_desc.get(_norm(line.item_description), [])
+            hit = same[0] if len(same) == 1 else None
+        if hit is None:
+            line.boq_key = ""
+            loose.append(line)
+            continue
+        line.boq_key = hit.key
+        if not (line.item_code or "").strip():
+            line.item_code = hit.item_code or ""
+    return loose
+
+
 def boq_amount(kind, qty, rate, rate_only=False):
     """What a line comes to. A rate-only line (R/o) has a rate and no quantity, so it comes to nothing yet."""
     if rate_only:

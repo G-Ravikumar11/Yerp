@@ -816,6 +816,13 @@ def wo_ready_to_submit(db, order):
     if not (order.completion_date or "").strip():
         missing.append("a completion date")
     missing += wo_budget_missing(db, order)
+    # On a project with a BOQ, every line given to a sub contractor must be a line of that BOQ, so what is given out adds up against it.
+    items = db.query(models.DBSubcontractItem).filter(models.DBSubcontractItem.order_id == order.id).all()
+    loose = boq_tie_subcontract_lines(db, order.client_id, order.job_id, items)
+    if loose:
+        missing.append("every schedule line on the project BOQ (%d %s not, first: %s - pick %s from the BOQ, or add %s to the BOQ)"
+                       % (len(loose), "is" if len(loose) == 1 else "are", loose[0].item_description[:40],
+                          "it" if len(loose) == 1 else "them", "it" if len(loose) == 1 else "them"))
     return missing
 
 
@@ -1774,4 +1781,4 @@ from app.services.client_billing import billed_qty_to_date, measured_to_date
 from app.services.crm import advance_paid, next_item_code, norm_name, settled_on, standard_unit
 from app.services.invoicing import active_irn
 from app.services.subcontract_billing import _live_releases, released_retention, sub_gross_measured
-from app.services.boq import boq_of_job
+from app.services.boq import boq_of_job, boq_tie_subcontract_lines
