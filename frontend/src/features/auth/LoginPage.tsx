@@ -40,6 +40,8 @@ export default function LoginPage() {
   const code = params.get('error')
   const [error, setError] = useState(code ? (ERRORS[code] ?? 'Something went wrong. Please try again.') : '')
   const [company, setCompany] = useState('')
+  // The company's own logo, which the server shows to anyone before they sign in; the blue Y until it has loaded or if there is none.
+  const [logo, setLogo] = useState(`${import.meta.env.BASE_URL}favicon.svg`)
   const [google, setGoogle] = useState(false)
   const [yahoo, setYahoo] = useState(false)
   const [email, setEmail] = useState('')
@@ -49,7 +51,7 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    api<{ company_name?: string }>('/api/public/brand', { quiet: true }).then((b) => b?.company_name && setCompany(b.company_name)).catch(() => undefined)
+    api<{ company_name?: string; logo_url?: string }>('/api/public/brand', { quiet: true }).then((b) => { if (b?.company_name) setCompany(b.company_name); if (b?.logo_url) setLogo(b.logo_url) }).catch(() => undefined)
     api<{ configured?: boolean }>('/api/auth/google/status', { quiet: true }).then((d) => setGoogle(!!d?.configured)).catch(() => undefined)
     api<{ configured?: boolean }>('/api/auth/yahoo/status', { quiet: true }).then((d) => setYahoo(!!d?.configured)).catch(() => undefined)
     if (params.get('signedout')) {
@@ -120,7 +122,7 @@ export default function LoginPage() {
   )
 
   return (
-    <AuthLayout title="Y ERP" subtitle="Sign in to your account" aside={pitch}>
+    <AuthLayout title="Y ERP" subtitle="Sign in to your account" logo={logo} aside={pitch}>
       {params.get('reset') && !error && <Notice tone="success">Your password has been updated. Sign in with the new one.</Notice>}
       {error && <Notice tone="error">{error}</Notice>}
       <form onSubmit={submit} className="grid gap-4">
