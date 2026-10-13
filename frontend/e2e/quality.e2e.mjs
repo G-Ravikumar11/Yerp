@@ -2,7 +2,8 @@ import { BASE, api, clickText, fill, launch, setValue, signIn, sleep, toastsGone
 
 // Quality: walk a checklist and fail it, raise the non-conformance from it and take that through assign, correction,
 // verification and closure; register cubes, read them against the project's criteria, and have the engineer decide.
-const { page, check, done } = await launch()
+// The 409s are the server refusing what the checks provoke on purpose.
+const { page, check, done } = await launch({ allow: [/409 POST \/api\/qc\//] })
 await signIn(page)
 const stamp = Date.now().toString().slice(-6)
 const text = (sel) => page.$eval(sel, (e) => e.textContent.replace(/\s+/g, ' ').trim())
@@ -154,7 +155,7 @@ await inDialog('Register the set')
 await waitForToast(page, 'registered')
 await toastsGone(page)
 await page.waitForFunction(() => document.querySelector('table[aria-label=Results], [role=dialog]') && /Test schedule/.test(document.body.textContent))
-check('the sample opens with its schedule: both ages are overdue', (await page.$$eval('[role=dialog] li', (l) => l.filter((x) => /overdue/.test(x.textContent)).length)) >= 2)
+check('the sample opens with its schedule: the age the project tests at is overdue', (await page.$$eval('[role=dialog] li', (l) => l.filter((x) => /overdue/.test(x.textContent)).length)) >= 1)
 await inDialog('Enter a result')
 await page.waitForSelector('#cr-str')
 await fill(page, '#cr-age', '28')

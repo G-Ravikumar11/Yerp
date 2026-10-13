@@ -36,6 +36,14 @@ QUALITY_COLUMNS = (
     ("qc_ncrs", "verification_result", "VARCHAR DEFAULT ''"), ("qc_ncrs", "verification_note", "TEXT DEFAULT ''"),
     ("qc_ncrs", "verified_by", "VARCHAR DEFAULT ''"), ("qc_ncrs", "verified_on", "VARCHAR DEFAULT ''"),
     ("qc_ncrs", "reinspection_ref", "VARCHAR DEFAULT ''"),
+    # Project chat
+    ("project_threads", "description", "TEXT DEFAULT ''"), ("project_threads", "category", "VARCHAR DEFAULT 'General'"),
+    ("project_threads", "priority", "VARCHAR DEFAULT 'Normal'"), ("project_threads", "members", "VARCHAR DEFAULT ''"),
+    ("project_threads", "link_type", "VARCHAR DEFAULT ''"), ("project_threads", "link_ref", "VARCHAR DEFAULT ''"),
+    ("project_threads", "link_id", "INTEGER"),
+    ("schedule_activities", "assigned_to_id", "INTEGER"),
+    ("schedule_activities", "status", "VARCHAR DEFAULT ''"), ("schedule_activities", "notes", "TEXT DEFAULT ''"),
+    ("project_messages", "parent_id", "INTEGER"), ("project_messages", "edited_at", "VARCHAR DEFAULT ''"),
 )
 
 

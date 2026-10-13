@@ -87,7 +87,7 @@ export function attentionHref(view: string): { to: string; external: boolean } {
     'registers-view': '/money/registers',
     'stock-view': '/store/stock',
     'diary-view': '/projects/diary',
-    'chat-view': '/projects/chat',
+    'chat-view': '/projects/chart',
     'attendance-view': '/people/attendance',
     'leave-view': '/people/leave',
     'payroll-view': '/people/payroll',

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { FileSpreadsheet, Image, Plus, Settings2 } from 'lucide-react'
+import { ClipboardCheck, FileSpreadsheet, Image, Plus, Settings2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilesModal } from '@/components/data/FilesModal'
@@ -11,6 +11,7 @@ import { formatDate } from '@/lib/format'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 import { CubeModal, CubeSetModal } from './CubeModals'
 import { InspectionModal, NewInspectionModal } from './InspectionModal'
+import { RegisterInspectionModal } from './RegisterInspectionModal'
 import { NcrDetail, NcrModal, type NcrSource } from './NcrModals'
 import { SetupModal } from './SetupModal'
 import { ListBar, LoadError, Pager, cubeTone, inspectionTone, ncrTone } from './parts'
@@ -51,6 +52,7 @@ export default function QualityPage() {
   const active = { inspections: ins, cubes, ncrs }[tab]
 
   const [starting, setStarting] = useState(false)
+  const [registering, setRegistering] = useState(false)
   const [cubing, setCubing] = useState(false)
   const [setup, setSetup] = useState(false)
   const [ncrFrom, setNcrFrom] = useState<NcrSource | 'new' | null>(null)
@@ -60,6 +62,8 @@ export default function QualityPage() {
   const [photos, setPhotos] = useState<{ type: string; id: number; title: string } | null>(null)
 
   const go = (to: Tab, status: string) => { setTab(to); setFilters((all) => ({ ...all, [to]: { ...emptyQuery(), size: all[to].size, status } })) }
+  // Register puts on the record what has been done: an inspection carried out, a pour's cubes, a defect found.
+  const register = () => (tab === 'cubes' ? setCubing(true) : tab === 'ncrs' ? setNcrFrom('new') : setRegistering(true))
   const add = () => (tab === 'cubes' ? setCubing(true) : tab === 'ncrs' ? setNcrFrom('new') : setStarting(true))
   const filtered = !!(f.q || f.status || f.from || f.to || f.severity)
   const s = sum.data
@@ -81,7 +85,7 @@ export default function QualityPage() {
         </div>
       ),
     },
-    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="inspection" id={r.id} label={String(r.number)} noun="inspection" /> },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="inspection" simple id={r.id} label={String(r.number)} noun="inspection" /> },
   ]
 
   const cubeCols: TableColumn<CubeSet>[] = [
@@ -114,7 +118,7 @@ export default function QualityPage() {
         </div>
       ),
     },
-    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="cube_set" id={r.id} label={String(r.number)} noun="cube set" /> },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="cube_set" simple id={r.id} label={String(r.number)} noun="cube set" /> },
   ]
 
   const ncrCols: TableColumn<Ncr>[] = [
@@ -134,7 +138,7 @@ export default function QualityPage() {
         </div>
       ),
     },
-    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="ncr" id={r.id} label={String(r.number)} noun="NCR" /> },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="ncr" simple id={r.id} label={String(r.number)} noun="NCR" /> },
   ]
 
   const empty = filtered ? `No ${TAB_LABEL[tab].toLowerCase()} match these filters.` : { inspections: 'No inspections yet. Walk the checklist before work is covered up.', cubes: "No cube samples yet. Register each pour's cubes the day they are cast.", ncrs: 'No non-conformances.' }[tab]
@@ -148,7 +152,8 @@ export default function QualityPage() {
         actions={
           <>
             {can('site.signoff') && <Button variant="outline" onClick={() => setSetup(true)}><Settings2 /> Checklists and criteria</Button>}
-            <Button variant="outline" asChild><a href={exportUrl(tab, f)}><FileSpreadsheet /> Register</a></Button>
+            <Button variant="outline" asChild><a href={exportUrl(tab, f)} title="Download the register as a spreadsheet"><FileSpreadsheet /> Export</a></Button>
+            {can('site.record') && <Button variant="outline" onClick={register}><ClipboardCheck /> Register</Button>}
             {can('site.record') && <Button onClick={add}><Plus /> New</Button>}
           </>
         }
@@ -176,6 +181,7 @@ export default function QualityPage() {
         </Card>
       )}
 
+      <RegisterInspectionModal job={job} open={registering} onClose={() => setRegistering(false)} onRegistered={(i) => { setRegistering(false); setTab('inspections'); setOpenIns(i.id) }} />
       <NewInspectionModal job={job} open={starting} onClose={() => setStarting(false)} onStarted={(i) => { setStarting(false); setTab('inspections'); setOpenIns(i.id) }} />
       <InspectionModal id={openIns} onClose={() => setOpenIns(null)} onPhotos={(i) => setPhotos({ type: 'inspection', id: i.id, title: i.number })} onNcr={(i) => setNcrFrom({ type: 'inspection', id: i.id })} onOpen={setOpenIns} />
       <CubeSetModal job={job} open={cubing} onClose={() => setCubing(false)} onLogged={(c) => { setCubing(false); setTab('cubes'); setOpenCube(c.id) }} />
