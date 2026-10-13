@@ -13,7 +13,7 @@ import { compactINR, formatINR } from '@/lib/utils'
 /** What HO QS opens. Each lands on its register with the form already open. */
 const OPEN = [
   { key: 'vendors', to: '/subcontractors/vendors?new=1', label: 'Open a vendor code', hint: 'Register a sub contractor', icon: UserPlus },
-  { key: 'work_orders', to: '/subcontractors/work-orders?new=1', label: 'New sub contractor work order', hint: 'Issue work to a gang', icon: HardHat },
+  { key: 'work_orders', to: '/subcontractors/work-orders?new=1', label: 'New sub contractor work order', hint: 'Issue work to a contractor', icon: HardHat },
   { key: 'work_orders', to: '/clients/work-orders?new=1', label: 'New client work order', hint: 'The order the client gave us', icon: FilePlus2 },
   { key: 'boq', to: '/projects/boq?new=1', label: 'Open a BOQ', hint: "A project's bill of quantities", icon: Layers },
 ] as const

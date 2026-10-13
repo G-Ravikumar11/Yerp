@@ -59,6 +59,16 @@ DEFAULT_PRICING = [
      "Charged per question answered about a measurement book. Priced at zero until set."),
     ("ai_document_read",  "AI compliance paper reader", "subcontracts", 0, 0,
      "Charged per licence or insurance paper read. Priced at zero until set."),
+    ("ai_plan_draft",     "AI programme draft",     "projects",  0, 0,
+     "Charged per programme drafted from a work order. Priced at zero until set."),
+    ("ai_plan_day",       "AI day plan",            "projects",  0, 0,
+     "Charged per set of tasks suggested for a day. Priced at zero until set."),
+    ("ai_plan_review",    "AI programme review",    "projects",  0, 0,
+     "Charged per programme summary. Priced at zero until set."),
+    ("ai_plan_ask",       "AI programme question",  "projects",  0, 0,
+     "Charged per question answered about a programme. Priced at zero until set."),
+    ("ai_drawing_3d",     "AI drawing 3D view",     "projects", 0, 0,
+     "Charged per floor plan traced into a 3D view. Priced at zero until set."),
 ]
 
 # PAYMENT GATEWAYS

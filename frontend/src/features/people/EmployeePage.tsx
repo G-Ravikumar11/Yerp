@@ -13,13 +13,41 @@ import { EMPLOYEE_TONE } from './EmployeesPage'
 type Tab = 'profile' | 'access'
 
 function Profile({ e }: { e: EmployeeDetail }) {
+  const { isOwner } = useSession()
+  const [editing, setEditing] = useState(false)
+  const cat = useHrCatalogue()
+  const rows: [string, string | number | null | undefined][] = [
+    ['First name', e.first_name], ['Last name', e.last_name], ['Email (their login)', e.email], ['Phone', e.phone],
+    ['Job title', e.job_title], ['Department', e.department_name], ['Reports to', e.manager_name],
+    ['Level', cat.data?.levels.find((l) => l.code === e.level)?.label ?? e.level],
+    ['Reporting role', cat.data?.roles.find((r) => r.code === e.role)?.label ?? e.role],
+    ['Start date', e.start_date], ['Salary', e.salary], ['Tax rate %', e.tax_rate],
+    ['Emergency contact', e.emergency_contact], ['Emergency phone', e.emergency_phone],
+  ]
+  if (editing) return <ProfileForm e={e} onDone={() => setEditing(false)} />
+  return (
+    <div>
+      {isOwner && <div className="mb-4 flex justify-end"><Button variant="outline" onClick={() => setEditing(true)}>Edit</Button></div>}
+      <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+        {rows.map(([label, value]) => (
+          <div key={label}>
+            <dt className="text-[13px] text-muted-foreground">{label}</dt>
+            <dd className="mt-0.5 text-sm">{value === null || value === undefined || value === '' ? '—' : value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  )
+}
+
+function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
   const depts = useDepartments()
   const people = useEmployees('')
   const cat = useHrCatalogue()
   const [f, setF] = useState({ first_name: e.first_name, last_name: e.last_name, email: e.email, org_email: e.org_email ?? '', phone: e.phone, job_title: e.job_title, department_id: e.department_id, reports_to: e.reports_to, level: e.level, role: e.role, employment_type: e.employment_type, pay_frequency: e.pay_frequency, salary: e.salary, tax_rate: e.tax_rate, start_date: e.start_date, emergency_contact: e.emergency_contact, emergency_phone: e.emergency_phone })
   const { isOwner } = useSession()
   const set = (k: keyof typeof f) => (ev: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((s) => ({ ...s, [k]: ev.target.value }))
-  const save = useAction(() => updateEmployee(e.id, f), { invalidate: [peopleKeys.all], success: 'Saved' })
+  const save = useAction(() => updateEmployee(e.id, f), { invalidate: [peopleKeys.all], success: 'Saved', onSuccess: onDone })
   return (
     <div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -41,6 +69,7 @@ function Profile({ e }: { e: EmployeeDetail }) {
       </div>
       <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
         {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
+        <Button variant="outline" onClick={onDone}>Cancel</Button>
         <Button loading={save.isPending} onClick={() => save.mutate()}>Save changes</Button>
       </div>
     </div>
