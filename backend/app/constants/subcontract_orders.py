@@ -114,7 +114,7 @@ UNREGISTERED_VENDOR_LIMIT = 1950000.0
 # taking the order away would leave them standing against nothing.
 # Rows that belong to an order and go with it, whether or not their link column may be empty.
 OWNED_BY_AN_ORDER = {
-    "retention_releases", "measurement_dimensions", "material_recoveries", "sub_bill_lines", "sub_measurements",
+    "retention_releases", "credit_notes", "credit_note_lines", "measurement_dimensions", "material_recoveries", "sub_bill_lines", "sub_measurements",
     "sub_bills", "measurements", "ra_bills", "ra_bill_lines", "variation_orders", "variation_lines",
     "work_order_lines", "bom_lines", "subcontract_items", "subcontract_terms", "subcontract_approvals", "order_access",
 }

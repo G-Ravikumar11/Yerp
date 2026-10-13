@@ -76,7 +76,7 @@ from app.schemas.subcontract_orders import (
     WorkTypeIn,
 )
 from app.services.approvals import owner_label, raised_by_owner
-from app.services.boq import boq_given_to_gangs, boq_over_allotments
+from app.services.boq import boq_given_to_gangs, boq_lines_of_job, boq_over_allotments, boq_tie_subcontract_lines
 from app.services.crm import norm_name
 from app.services.subcontract_orders import (
     _vendor_or_404,
@@ -915,10 +915,17 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
         kept += 1
 
     db.flush()
+    # The order goes along with the project's BOQ: lines typed or pasted in are tied to the BOQ line they are part of.
+    saved = db.query(models.DBSubcontractItem).filter(models.DBSubcontractItem.order_id == order.id).all()
+    loose = boq_tie_subcontract_lines(db, client.id, order.job_id, saved)
     recost_order(db, order)
     db.commit()
     db.refresh(order)
-    over = boq_over_allotments(db, client.id, [(l.boq_key or "").strip() for l in body.lines])
+    over = boq_over_allotments(db, client.id, [l.boq_key or "" for l in saved])
+    if loose:
+        over = over + ["%d line%s not on the project BOQ (first: %s) - pick %s from the BOQ, or add %s to the BOQ first" % (
+            len(loose), "" if len(loose) == 1 else "s", loose[0].item_description[:40],
+            "it" if len(loose) == 1 else "them", "it" if len(loose) == 1 else "them")]
     return {"order": wo_dict(db, order, detail=True), "warnings": over,
             "message": "%d line%s saved. Gross %s.%s" % (kept, "" if kept == 1 else "s", inr(order.gross_amount),
                                                         (" Over the BOQ - " + "; ".join(over) + ".") if over else "")}
@@ -1566,8 +1573,7 @@ def wo_add_boq_lines(order_id: int, body: dict, request: Request, db: Session = 
     order = wo_or_404(db, client.id, order_id)
     wanted = body.get("lines") or []
     keys = [str(w.get("key") or "") for w in wanted]
-    found = {l.key: l for l in db.query(models.DBBoqLine).join(models.DBBoq, models.DBBoq.id == models.DBBoqLine.boq_id).filter(
-        models.DBBoq.client_id == client.id, models.DBBoqLine.key.in_(keys or [""])).all()}
+    found = {l.key: l for l in boq_lines_of_job(db, client.id, order.job_id) if l.key in set(keys)}
     given = boq_given_to_gangs(db, client.id, set(keys))
     out, warn = [], []
     for w in wanted:

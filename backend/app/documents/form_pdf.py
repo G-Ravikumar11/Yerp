@@ -548,6 +548,34 @@ def _flow(blocks, st):
     return out
 
 
+def _draw_logo_watermark(canvas, page_width, page_height, value):
+    """The company's mark, large and faint, centred behind the text of every page.
+
+    Like the letterhead logo, only a data: URI is drawn - nothing is fetched from an address for the sake of a PDF - and
+    a mark that will not decode simply leaves the page without one."""
+    if not value or not str(value).startswith("data:image"):
+        return
+    try:
+        import base64
+        from reportlab.lib.utils import ImageReader
+        raw = base64.b64decode(str(value).partition(",")[2], validate=False)
+        reader = ImageReader(io.BytesIO(raw))
+        w, h = reader.getSize()
+        if not w or not h:
+            return
+        scale = min(page_width * 0.55 / float(w), page_height * 0.55 / float(h))
+        canvas.saveState()
+        try:
+            canvas.setFillAlpha(0.07)
+        except AttributeError:      # pragma: no cover - very old reportlab
+            return
+        canvas.drawImage(reader, (page_width - w * scale) / 2.0, (page_height - h * scale) / 2.0,
+                         width=w * scale, height=h * scale, mask="auto")
+        canvas.restoreState()
+    except Exception:
+        return
+
+
 def build_form_pdf(spec):
     """The document as PDF bytes, from its description."""
     if _IMPORT_ERROR is not None:  # pragma: no cover
@@ -556,6 +584,7 @@ def build_form_pdf(spec):
     buf = io.BytesIO()
     footer = spec.get("footer") or ""
     watermark = spec.get("watermark") or ""
+    watermark_logo = spec.get("watermark_logo") or ""
 
     class Numbered(pdfcanvas.Canvas):
         def __init__(self, *a, **k):
@@ -580,6 +609,7 @@ def build_form_pdf(spec):
             super().save()
 
     def on_page(canvas, _doc):
+        _draw_logo_watermark(canvas, page[0], page[1], watermark_logo)
         _draw_watermark(canvas, page[0], page[1], watermark)
 
     page = (A4[1], A4[0]) if spec.get("landscape") else A4

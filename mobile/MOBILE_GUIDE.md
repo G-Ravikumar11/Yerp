@@ -50,6 +50,21 @@ Once the workflow run finishes:
 
 ---
 
+## 3b. Updating phones without a new APK (over the air)
+
+Most changes are screens. Those reach phones on their own:
+
+1. Push to `abhi` or `master`. The workflow builds the screens and publishes them as a release tagged `web-v<run number>` (a `web-<n>.zip`).
+2. The server's `GET /api/app/web/latest` reports the newest one (read from GitHub, cached for 10 minutes).
+3. Each phone checks when the app opens and when it is brought back. A newer bundle is downloaded quietly, and a "New screens are ready" message offers **Restart now**. Otherwise the new screens are used the next time the app starts. Nothing to install, and the person stays signed in.
+4. If the new screens fail to start, the phone goes back to the last ones that worked, and does not try that bundle again.
+
+What still needs a new APK: anything native (a new plugin, permissions, the icon, `capacitor.config.ts`). When a build adds one, set `mobile/web-min-native.txt` to that build's run number, so phones on an older APK are not handed screens they cannot run; they get the "Update available" prompt instead. The first APK that contains the updater has to be installed by hand once; after that, screens arrive by themselves.
+
+The screens' release is public (the repository is), and the app only accepts a bundle whose address is on `https://github.com/`.
+
+---
+
 ## 4. Connecting the Mobile App to Your Backend
 
 When running inside a native mobile wrapper (Android / iOS), the app needs to know where your live API lives:

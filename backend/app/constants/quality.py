@@ -62,4 +62,5 @@ NCR_ROOT_CAUSE_FROM = ("Major", "Critical")
 CUBE_DECISIONS = {"accepted": "Accepted", "conditional": "Accepted with conditions", "rejected": "Rejected"}
 CUBE_SPREAD = 0.15            # IS 516: a cube more than 15% off the set's average makes the set doubtful
 
-SERIOUS_KINDS = ("Lost time injury", "Dangerous occurrence", "Fatality")
+SERIOUS_KINDS = ("Lost time injury", "Dangerous occurrence", "Fatality", "Fire or explosion",
+                 "Structural failure or collapse")

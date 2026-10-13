@@ -1,15 +1,18 @@
 import { takePhoto } from '@/lib/mobile'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Camera, X } from 'lucide-react'
 import { Button, Field, Input, Modal, NumField, Select, Skeleton, Textarea } from '@/components/ui'
-import { TRADES, WEATHER, diaryKeys, signOffDiary, useDiary, type DiaryDetail, type DiaryInput, type LabourLine, type PlantLine } from '@/api/diary'
-import { fileKeys, uploadFiles } from '@/api/files'
+import { TRADES, WEATHER, diaryKeys, signOffDiary, useDiary, type DiaryDetail, type DiaryInput, type LabourLine, type PlantLine, type WorkUpdate } from '@/api/diary'
+import { schKeys, type DayRow, type DayTask } from '@/api/schedule'
+import { fileKeys, noFilter, uploadFiles, useFiles } from '@/api/files'
+import { Tile } from '@/components/data/FilesModal'
 import { sendOrQueue } from '@/stores/offline'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { toast } from '@/stores/toast'
 import { today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
+import { PlannedWork } from './PlannedWork'
 
 const blankLabour = (): LabourLine => ({ trade: TRADES[0], agency: 'Own', headcount: 0, hours: 0, rate: 0 })
 const blankPlant = (): PlantLine => ({ plant: '', worked_hours: 0, idle_hours: 0, rate: 0 })
@@ -39,7 +42,23 @@ function Form({ job, day, onClose }: { job: number; day: DiaryDetail | null; onC
   const [labour, setLabour] = useState<LabourLine[]>([...(day?.labour ?? []), blankLabour(), blankLabour()])
   const [plant, setPlant] = useState<PlantLine[]>([...(day?.plant ?? []), blankPlant()])
   const [photos, setPhotos] = useState<File[]>([])
+  // What the day reports about the planned work, kept as differences from what the plan says now.
+  const [taskDone, setTaskDone] = useState<Record<number, boolean>>({})
+  const [percent, setPercent] = useState<Record<number, number>>({})
+  const [planned, setPlanned] = useState<{ tasks: Record<number, DayTask>; rows: Record<number, DayRow> }>({ tasks: {}, rows: {} })
+  useEffect(() => { setTaskDone({}); setPercent({}); setPlanned({ tasks: {}, rows: {} }) }, [date])
+  const tickTask = (t: DayTask, done: boolean) => {
+    setTaskDone((m) => ({ ...m, [t.id]: done }))
+    setPlanned((p) => ({ ...p, tasks: { ...p.tasks, [t.id]: t } }))
+    // A task ticked is work that was done: it goes into the day's account of it, once.
+    if (done && !work.includes(t.text)) setWork((w) => (w.trim() ? `${w.trim()}\n` : '') + t.text)
+  }
+  const setProgressOf = (r: DayRow, pct: number) => {
+    setPercent((m) => ({ ...m, [r.id]: pct }))
+    setPlanned((p) => ({ ...p, rows: { ...p.rows, [r.id]: r } }))
+  }
   const camera = useRef<HTMLInputElement>(null)
+  const saved = useFiles('diary', day?.id ?? 0, noFilter)
   const edit = <T,>(list: T[], set: (l: T[]) => void, i: number, patch: Partial<T>) => set(list.map((r, j) => (j === i ? { ...r, ...patch } : r)))
   const totals = useMemo(() => {
     const d = hours || 8
@@ -52,6 +71,10 @@ function Form({ job, day, onClose }: { job: number; day: DiaryDetail | null; onC
     job_id: job, diary_date: date, weather, rain_hours: rain, working_hours: hours, work_done: work, holdups, instructions, visitors, safety_note: safety,
     labour: labour.filter((l) => l.headcount > 0).map((l) => ({ ...l, hours: l.hours || hours })),
     plant: plant.filter((p) => p.plant.trim()),
+    work_updates: [
+      ...Object.entries(taskDone).filter(([id, done]) => planned.tasks[Number(id)] && planned.tasks[Number(id)].done !== done).map(([id, done]): WorkUpdate => ({ task_id: Number(id), done })),
+      ...Object.entries(percent).filter(([id, pct]) => planned.rows[Number(id)] && Math.round(planned.rows[Number(id)].actual_percent) !== Math.round(pct)).map(([id, pct]): WorkUpdate => ({ activity_id: Number(id), percent: pct })),
+    ],
   })
   const save = useAction(
     async (signOff: boolean) => {
@@ -65,7 +88,7 @@ function Form({ job, day, onClose }: { job: number; day: DiaryDetail | null; onC
       if (signOff) return { message: (await signOffDiary(id)).message }
       return { message: sent.result.message ?? 'Saved.' }
     },
-    { invalidate: [diaryKeys.all, fileKeys.all], success: (r) => r.message, onSuccess: onClose },
+    { invalidate: [diaryKeys.all, fileKeys.all, schKeys.all], success: (r) => r.message, onSuccess: onClose },
   )
   const pickPhotos = (list: ArrayLike<File> | null) => {
     const chosen = list ? Array.from(list) : [] // copied now: the input is emptied straight after, and a FileList empties with it
@@ -87,6 +110,7 @@ function Form({ job, day, onClose }: { job: number; day: DiaryDetail | null; onC
           <Field label="Visitors" htmlFor="dy-vis"><Textarea id="dy-vis" rows={2} value={visitors} onChange={(e) => setVisitors(e.target.value)} /></Field>
           <Field label="Safety note" htmlFor="dy-safe"><Textarea id="dy-safe" rows={2} value={safety} onChange={(e) => setSafety(e.target.value)} /></Field>
         </div>
+        <PlannedWork job={job} date={date} taskDone={taskDone} onTask={tickTask} percent={percent} onPercent={setProgressOf} disabled={locked} />
         <h3 className="mb-2 mt-5 text-sm font-semibold">Labour on site</h3>
         <div className="grid gap-2">
           {labour.map((l, i) => (
@@ -118,9 +142,12 @@ function Form({ job, day, onClose }: { job: number; day: DiaryDetail | null; onC
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <input ref={camera} type="file" accept="image/*" capture="environment" multiple className="sr-only" aria-label="Photos of the day" onChange={(e) => { pickPhotos(e.target.files); e.target.value = '' }} />
           <Button variant="outline" size="sm" onClick={() => void takePhoto(camera.current, pickPhotos)}><Camera /> Photos of the day</Button>
-          {photos.map((f, i) => <span key={i} className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-xs">{f.name.slice(0, 18)}<button type="button" aria-label={`Remove ${f.name}`} onClick={() => setPhotos(photos.filter((_, j) => j !== i))}><X className="size-3" /></button></span>)}
+          {photos.map((f, i) => <PickedPhoto key={i} f={f} onRemove={() => setPhotos(photos.filter((_, j) => j !== i))} />)}
         </div>
       )}
+      {saved.data?.files.length ? (
+        <div className="mt-4"><p className="mb-2 text-sm font-medium">Photos kept on this day</p><div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{saved.data.files.map((f) => <Tile key={f.id} f={f} />)}</div></div>
+      ) : null}
       <div className="mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
         {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
         <Button variant="ghost" onClick={onClose}>{locked ? 'Close' : 'Cancel'}</Button>
@@ -128,5 +155,21 @@ function Form({ job, day, onClose }: { job: number; day: DiaryDetail | null; onC
         {!locked && can('site.signoff') && <Button loading={save.isPending} onClick={() => save.mutate(true)}>Save and sign off</Button>}
       </div>
     </div>
+  )
+}
+
+/** A photo just taken, shown at once from the phone itself, before it has gone up. */
+function PickedPhoto({ f, onRemove }: { f: File; onRemove: () => void }) {
+  const [src, setSrc] = useState('')
+  useEffect(() => {
+    const u = URL.createObjectURL(f)
+    setSrc(u)
+    return () => URL.revokeObjectURL(u)
+  }, [f])
+  return (
+    <span className="relative inline-block">
+      {src && <img src={src} alt={f.name} className="size-20 rounded-md border border-border object-cover" />}
+      <button type="button" aria-label={`Remove ${f.name}`} onClick={onRemove} className="absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full bg-foreground text-background"><X className="size-3" /></button>
+    </span>
   )
 }

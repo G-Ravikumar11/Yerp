@@ -76,7 +76,9 @@ TRADES = ("Mason", "Helper", "Carpenter", "Bar bender", "Fitter", "Electrician",
 SUB_TRANSITIONS = {
     "DRAFT":     {"SUBMIT": "SUBMITTED", "CANCEL": "CANCELLED"},
     "SUBMITTED": {"CERTIFY": "CERTIFIED", "REJECT": "DRAFT", "CANCEL": "CANCELLED"},
-    "CERTIFIED": {"PAY": "PAID", "CANCEL": "CANCELLED"},
+    # A certified bill is not cancelled: its GST and TDS are in a return that may be filed. What was over-billed is
+    # taken back by a credit note (services/credit_notes.py). Only a bill nobody has certified can be cancelled.
+    "CERTIFIED": {"PAY": "PAID"},
     "PAID":      {},
     "CANCELLED": {},
 }
@@ -102,8 +104,14 @@ DRAWING_STATUSES = ("For information", "For approval", "Approved", "Good for con
 # stood through it, and dangerous work - hot work, heights, confined spaces -
 # only on a permit that says until when, on which precautions, and is closed
 # when the work stops.
-INCIDENT_KINDS = ("Near miss", "First aid", "Medical treatment", "Lost time injury",
+INCIDENT_KINDS = ("Near miss", "Unsafe act", "Unsafe condition", "First aid", "Medical treatment",
+                  "Restricted work case", "Lost time injury", "Occupational illness", "Fall from height",
+                  "Fire or explosion", "Electrical incident", "Vehicle or plant accident",
+                  "Structural failure or collapse", "Spill or environmental release",
                   "Property damage", "Dangerous occurrence", "Fatality")
+# Kinds where a person was hurt or made ill, so the report must say who.
+INJURY_KINDS = ("First aid", "Medical treatment", "Restricted work case", "Lost time injury",
+                "Occupational illness", "Fatality")
 
 PERMIT_PRECAUTIONS = {
     "Work at height": ["Full body harness, anchored", "Scaffold tagged and inspected", "Guard rails and toe boards",

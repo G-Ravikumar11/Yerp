@@ -156,7 +156,7 @@ export default function BoqPage() {
   const columns = useMemo<Column<Row>[]>(
     () => [
       { id: 'group_code', header: 'Group code', hint: 'Pick one, or type your own', type: 'select', freeText: true, customLabel: 'Customize...', width: 190, pin: true, options: groupOptions },
-      { id: 'item_code', header: 'Item code', hint: 'Type one, or leave blank to be given one on save', width: 120, mono: true, placeholder: 'Auto' },
+      { id: 'item_code', header: 'Item code', hint: 'Type this work\u2019s item code (any pattern, e.g. CIV-RCC-25). It is kept everywhere. Blank: one is given on save.', width: 150, mono: true, placeholder: 'Type the code' },
       { id: 'description', header: 'Description', hint: 'Paste the client’s lines here', width: 420, required: true, placeholder: 'What is the work?' },
       { id: 'material', header: 'Material', hint: 'Grade or material: M40, Fe550/550D', type: 'select', freeText: true, customLabel: 'Add an item...', width: 130, options: materialOptions, readOnly: locked },
       { id: 'uom', header: 'Unit', type: 'select', freeText: true, width: 84, options: ['cum', 'sqm', 'rmt', 'nos', 'kg', 'MT', 'ltr', 'LS'], readOnly: locked },
@@ -468,6 +468,7 @@ function TrackerView({ rows, flags, totals, loading, denied }: { rows: TrackerRo
   if (denied) return <p className="rounded-lg border border-border px-4 py-8 text-center text-sm text-muted-foreground">The tracker shows the contractor rates against ours, so it is for those who see the reports.</p>
   const columns: TableColumn<TrackerRow>[] = [
     { id: 'group', header: 'Group', width: '6rem', cell: (r) => <span className={cn('font-mono text-xs', r.kind === 'section' && 'font-semibold')}>{r.group_code}</span> },
+    { id: 'code', header: 'Item code', width: '7rem', cell: (r) => <span className="whitespace-nowrap font-mono text-xs">{r.item_code ?? ''}</span> },
     { id: 'd', header: 'Description', cell: (r) => (r.kind === 'section' ? <span className="font-semibold">{r.description}</span> : <div className="max-w-sm truncate" title={r.description}>{r.description}</div>) },
     { id: 'qty', header: 'BOQ qty', align: 'right', cell: (r) => (r.kind === 'section' ? '' : `${formatQty(r.quantity ?? 0)} ${r.uom ?? ''}`) },
     { id: 'rate', header: 'Our rate', align: 'right', hideBelow: 'md', cell: (r) => (r.kind === 'section' ? '' : formatINR(r.rate ?? 0)) },

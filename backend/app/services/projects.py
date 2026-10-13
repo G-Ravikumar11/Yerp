@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, func as sqlfunc
 
 from app import models
+from app.services.credit_notes import preload_credits
 
 from app.constants.client_billing import RA_CREDIT_DAYS
 from app.constants.invoicing import EWAY_THRESHOLD
@@ -162,6 +163,38 @@ def job_to_dict(db, job, costing=False):
     if costing:
         row["costing"] = job_costing(db, job.client_id, job)
     return row
+
+
+def project_retention(db, client_id, job_id, fallback=5.0):
+    """The retention a project's bills are drawn at: the project's own percentage when it has one set, else the usual 5%.
+    A bill that is given a percentage on the screen uses that instead."""
+    job = db.query(models.DBJob).filter(models.DBJob.id == job_id, models.DBJob.client_id == client_id).first() if job_id else None
+    return float(job.retention_percent) if job is not None and (job.retention_percent or 0) > 0 else fallback
+
+
+def project_money_moved(db, client_id, job):
+    """What real money has been recorded against a project, in words, or nothing if none has.
+
+    Deleting a project takes its receipts and payments with it, which takes them out of the bank book and every ledger
+    while the money itself has really moved. So a project with any is not deleted: reverse or void the entries first,
+    or keep the project and set it to cancelled."""
+    said = []
+    receipts = db.query(func.count(models.DBMoneyEntry.id), func.coalesce(func.sum(models.DBMoneyEntry.amount), 0.0)).filter(
+        models.DBMoneyEntry.client_id == client_id, models.DBMoneyEntry.job_id == job.id,
+        models.DBMoneyEntry.voided.isnot(True)).one()
+    if receipts[0]:
+        said.append("%d receipt%s or payment%s in the bank book (%s)" % (
+            receipts[0], "" if receipts[0] == 1 else "s", "" if receipts[0] == 1 else "s", inr(receipts[1])))
+    on_invoices = db.query(func.count(models.DBPayment.id), func.coalesce(func.sum(models.DBPayment.amount), 0.0)).join(
+        models.DBInvoice, models.DBInvoice.id == models.DBPayment.invoice_id).filter(
+        models.DBInvoice.client_id == client_id, models.DBInvoice.job_id == job.id).one()
+    if on_invoices[0]:
+        said.append("%d payment%s received on its invoices (%s)" % (on_invoices[0], "" if on_invoices[0] == 1 else "s", inr(on_invoices[1])))
+    paid_bills = db.query(func.count(models.DBBill.id), func.coalesce(func.sum(models.DBBill.amount_paid), 0.0)).filter(
+        models.DBBill.client_id == client_id, models.DBBill.job_id == job.id, models.DBBill.amount_paid > 0).one()
+    if paid_bills[0]:
+        said.append("%d supplier bill%s already paid (%s)" % (paid_bills[0], "" if paid_bills[0] == 1 else "s", inr(paid_bills[1])))
+    return said
 
 
 def clamp_percent(value) -> float:
@@ -485,6 +518,7 @@ def preload_pnl_for_job(db, client_id, job_id):
         "subs": one(db.query(models.DBSubcontractOrder).filter(
             models.DBSubcontractOrder.client_id == client_id, models.DBSubcontractOrder.job_id == job_id).all()),
         "settled": settled_amounts(db, client_id),
+        "credits": preload_credits(db, client_id),
     }
 
 
@@ -540,6 +574,7 @@ def preload_pnl(db, client_id):
         "subs": by_job(db.query(models.DBSubcontractOrder).filter(
             models.DBSubcontractOrder.client_id == client_id).all()),
         "settled": settled_amounts(db, client_id),
+        "credits": preload_credits(db, client_id),
     }
 
 
@@ -559,8 +594,12 @@ def project_pnl(db, client_id, job, pre=None):
     collected = money(sum(i.paid or 0 for i in invoices))
 
     bills = pre["ra"].get(job.id, [])
-    certified = money(sum(b.this_bill or 0 for b in bills))
-    retention = money(sum(b.retention_amount or 0 for b in bills)
+    # Work a credit note took back is neither certified nor held to the project's account.
+    credits = pre.get("credits") or {}
+    taken_ra = (credits.get("client_job") or {}).get(job.id, {})
+    taken_sub = (credits.get("sub_job") or {}).get(job.id, {})
+    certified = money(sum(b.this_bill or 0 for b in bills) - taken_ra.get("taxable", 0.0))
+    retention = money(sum(b.retention_amount or 0 for b in bills) - taken_ra.get("retention", 0.0)
                       - sum(r.amount or 0 for r in (pre.get("released") or {}).get(job.id, [])))
 
     # --- what it cost ----------------------------------------------------
@@ -596,7 +635,7 @@ def project_pnl(db, client_id, job, pre=None):
     # What the gangs have billed us for and we have agreed to pay. This was
     # missing entirely, which flattered every project by the whole of its
     # subcontract cost.
-    subcontract = money(sum(b.this_bill or 0 for b in pre["sub"].get(job.id, [])))
+    subcontract = money(sum(b.this_bill or 0 for b in pre["sub"].get(job.id, [])) - taken_sub.get("taxable", 0.0))
 
     # Diesel, hire and repairs on the machines that worked this site - kept
     # in the equipment register, so the diary lists only plant that is not.
@@ -1143,7 +1182,7 @@ def task_dict(t, names=None):
             "created_by_name": t.created_by_name or ""}
 
 
-def sync_progress_from_tasks(db, client_id, activity_id, actor_name):
+def sync_progress_from_tasks(db, client_id, activity_id, actor_name, on=None):
     """An activity's progress follows its tasks: the share of them that are done. Each tick (or un-tick, add or removal)
     writes a dated report like any other, so the history is kept and the S-curve still reads true.
 
@@ -1159,7 +1198,7 @@ def sync_progress_from_tasks(db, client_id, activity_id, actor_name):
     if not tasks:
         return None
     pct = round(sum(1 for t in tasks if t.done) / len(tasks) * 100.0, 1)
-    on = date.today().isoformat()
+    on = on or date.today().isoformat()
     last = db.query(models.DBScheduleProgress).filter(models.DBScheduleProgress.activity_id == a.id).order_by(
         models.DBScheduleProgress.reported_on.desc(), models.DBScheduleProgress.id.desc()).first()
     if last is None or abs((last.percent or 0) - pct) > 0.001:
@@ -1171,6 +1210,64 @@ def sync_progress_from_tasks(db, client_id, activity_id, actor_name):
     a.actual_finish = on if pct >= 100 else ""
     status_after_progress(a, pct)
     return pct
+
+
+def apply_work_updates(db, client_id, job, updates, on, actor_name):
+    """Carry what a site diary says about the planned work into Planning & Progress: tasks ticked done (or put back), and
+    an activity that has no tasks now so far along. Dated the diary's day, and recorded like any other progress report.
+
+    Returns how many tasks and activities it moved. Anything that is not this site's, or whose progress is not the
+    diary's to set (it comes from the measurement book, or from the activity's own tasks), is refused with the reason."""
+    moved_tasks, moved_activities, touched = 0, 0, set()
+    for u in updates or []:
+        if u.task_id:
+            t = db.query(models.DBScheduleTask).filter(models.DBScheduleTask.id == u.task_id,
+                                                       models.DBScheduleTask.client_id == client_id,
+                                                       models.DBScheduleTask.job_id == job.id).first()
+            if t is None:
+                raise HTTPException(400, "A task in the work done is not on this site.")
+            if u.done is not None and bool(u.done) != bool(t.done):
+                t.done = bool(u.done)
+                t.done_by_name = actor_name if t.done else ""
+                t.done_at = ("%s %s" % (on, datetime.now().strftime("%H:%M"))) if t.done else ""
+                moved_tasks += 1
+                touched.add(t.activity_id)
+        elif u.activity_id and u.percent is not None:
+            a = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.id == u.activity_id,
+                                                           models.DBScheduleActivity.client_id == client_id,
+                                                           models.DBScheduleActivity.job_id == job.id).first()
+            if a is None:
+                raise HTTPException(400, "An activity in the work done is not on this site.")
+            pct = float(u.percent)
+            if pct < 0 or pct > 100:
+                raise HTTPException(400, "Progress is a percentage between 0 and 100.")
+            if a.work_order_line_id:
+                raise HTTPException(409, "%s takes its progress from the measurement book. Measure the work instead." % (a.code or a.name))
+            if db.query(models.DBScheduleTask.id).filter(models.DBScheduleTask.activity_id == a.id).first():
+                raise HTTPException(409, "%s follows its tasks. Tick the tasks that were done instead." % (a.code or a.name))
+            ctx = ScheduleContext(db, client_id, job.id)
+            if abs(ctx.actual(a, _d(on) or date.today()) - pct) > 0.001:
+                db.add(models.DBScheduleProgress(client_id=client_id, activity_id=a.id, reported_on=on, percent=pct,
+                                                 note="From the site diary", by_name=actor_name))
+                if pct > 0 and not a.actual_start:
+                    a.actual_start = on
+                if pct >= 100 and not a.actual_finish:
+                    a.actual_finish = on
+                moved_activities += 1
+    db.flush()
+    for under in touched:
+        sync_progress_from_tasks(db, client_id, under, actor_name, on)
+    return moved_tasks, moved_activities
+
+
+def planning_note(tasks, activities):
+    """The words for what a saved diary moved in the plan, or nothing if it moved none."""
+    bits = []
+    if tasks:
+        bits.append("%d task%s" % (tasks, "" if tasks == 1 else "s"))
+    if activities:
+        bits.append("%d activit%s" % (activities, "y" if activities == 1 else "ies"))
+    return (" Planning & Progress updated: %s." % " and ".join(bits)) if bits else ""
 
 
 def task_or_404(db, client_id, task_id):

@@ -1,50 +1,30 @@
 import type { Activity, CurvePoint } from '@/api/schedule'
-import { today } from '@/lib/format'
-import { ProgressBar } from './ProgressBar'
+import { ProgressRing } from './ProgressRing'
 import { ProgressControl } from './ProgressControl'
 
-const STATE: Record<string, string> = { done: 'bg-success', late: 'bg-danger', behind: 'bg-warning', 'on track': 'bg-primary', 'not started': 'bg-subtle' }
+const RING: Record<string, string> = { done: 'stroke-success', late: 'stroke-danger', behind: 'stroke-warning', 'on track': 'stroke-primary', 'not started': 'stroke-subtle' }
 const STATE_TEXT: Record<string, string> = { done: 'text-success', late: 'text-danger', behind: 'text-warning', 'on track': 'text-primary', 'not started': 'text-muted-foreground' }
-const day = 86400000
-const at = (iso: string) => new Date(iso).getTime()
 
-/** Every activity as a bar across its planned dates, filled as far as it is done, its forecast finish drawn past it when it is slipping. */
+/** Every activity with a ring showing how far along it is (a dot where the plan has it), its dates, state and what it slips by. */
 export function Bars({ activities, onEdit }: { activities: Activity[]; onEdit: (a: Activity) => void }) {
-  const dates = activities.flatMap((a) => [a.planned_start, a.planned_finish, a.forecast_finish]).filter(Boolean).sort()
-  const t0 = at(dates[0])
-  const t = at(today())
-  const t1 = Math.max(at(dates[dates.length - 1]), t)
-  const span = Math.max(1, (t1 - t0) / day + 1)
-  const pos = (iso: string) => ((at(iso) - t0) / day / span) * 100
-  const todayAt = pos(today())
   return (
     <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-card">
       <table aria-label="Programme" className="w-full border-collapse text-[13.5px]">
         <thead className="bg-surface text-left text-xs text-muted-foreground">
-          <tr><th className="px-3 py-2">Code</th><th className="px-3 py-2">Activity</th><th className="px-3 py-2">Done</th><th className="min-w-[360px] px-3 py-2">{dates[0]} <span className="float-right">{new Date(t1).toISOString().slice(0, 10)}</span></th><th className="px-3 py-2">State</th><th /></tr>
+          <tr><th className="px-3 py-2">Code</th><th className="px-3 py-2">Activity</th><th className="px-3 py-2">Done</th><th className="px-3 py-2">Plan</th><th className="px-3 py-2">Forecast finish</th><th className="px-3 py-2">State</th><th /></tr>
         </thead>
         <tbody>
-          {activities.map((a) => {
-            const left = pos(a.planned_start)
-            const width = Math.max(0.8, pos(a.planned_finish) - left + 100 / span)
-            const slips = a.forecast_finish && a.forecast_finish > a.planned_finish
-            return (
-              <tr key={a.id} className="border-t border-border [&>td]:py-1.5">
-                <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">{a.code}</td>
-                <td className="min-w-52 px-3 py-2"><button type="button" className="text-left font-semibold text-primary underline-offset-2 hover:underline" onClick={() => onEdit(a)}>{a.name}</button><div className="text-[11px] text-muted-foreground">{a.planned_start} to {a.planned_finish}{a.depends_on && ` - after ${a.depends_on}`} - {a.progress_from}</div></td>
-                <td className="min-w-36 px-3 py-1.5"><ProgressBar thin percent={a.actual_percent} planned={a.planned_percent} tone={STATE[a.state]} label={`${a.name} done`} /><div className="text-right text-[10px] text-muted-foreground">plan {a.planned_percent}%</div></td>
-                <td className="relative px-3 py-2">
-                  <div className="relative h-6">
-                    <div className="absolute inset-y-0 w-px bg-danger/50" style={{ left: `${todayAt}%` }} aria-hidden />
-                    <div className="absolute top-[5px] h-3.5 overflow-hidden rounded bg-border" style={{ left: `${left}%`, width: `${width}%` }}><div className={`h-full ${STATE[a.state] ?? 'bg-primary'}`} style={{ width: `${Math.min(100, a.actual_percent)}%` }} /></div>
-                    {slips && <div title={`Forecast finish ${a.forecast_finish}`} className="absolute top-[9px] h-1.5 opacity-80" style={{ left: `${left + width}%`, width: `${Math.max(0.5, pos(a.forecast_finish) - left - width + 100 / span)}%`, background: 'repeating-linear-gradient(90deg,var(--color-danger) 0 4px,transparent 4px 7px)' }} />}
-                  </div>
-                </td>
-                <td className={`whitespace-nowrap px-3 py-2 text-xs ${STATE_TEXT[a.state] ?? ''}`}>{a.state}{a.slip_days > 0 && <div className="text-[11px]">+{a.slip_days} days</div>}</td>
-                <td className="px-3 py-2 text-right">{!a.work_order_line_id && <ProgressControl id={a.id} percent={a.actual_percent} compact />}</td>
-              </tr>
-            )
-          })}
+          {activities.map((a) => (
+            <tr key={a.id} className="border-t border-border">
+              <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">{a.code}</td>
+              <td className="min-w-52 px-3 py-2"><button type="button" className="text-left font-semibold text-primary underline-offset-2 hover:underline" onClick={() => onEdit(a)}>{a.name}</button><div className="text-[11px] text-muted-foreground">{a.planned_start} to {a.planned_finish}{a.depends_on && ` - after ${a.depends_on}`} - {a.progress_from}</div></td>
+              <td className="px-3 py-1.5"><ProgressRing percent={a.actual_percent} planned={a.planned_percent} tone={RING[a.state]} label={`${a.name} done`} /></td>
+              <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground tabular">{a.planned_percent}%</td>
+              <td className="whitespace-nowrap px-3 py-2 text-xs tabular">{a.forecast_finish || '-'}</td>
+              <td className={`whitespace-nowrap px-3 py-2 text-xs ${STATE_TEXT[a.state] ?? ''}`}>{a.state}{a.slip_days > 0 && <div className="text-[11px]">+{a.slip_days} days</div>}</td>
+              <td className="px-3 py-2 text-right">{!a.work_order_line_id && <ProgressControl id={a.id} percent={a.actual_percent} compact />}</td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </div>

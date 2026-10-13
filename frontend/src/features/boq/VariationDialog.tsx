@@ -70,7 +70,7 @@ export function VariationDialog({ boqId, id, lines, open, onOpenChange }: { boqI
   const columns = useMemo<Column<Row>[]>(
     () => [
       { id: 'kind', header: 'What', type: 'select', width: 116, options: KINDS, countsAsData: false },
-      { id: 'boq_key', header: 'BOQ line', hint: 'For a quantity change', type: 'select', width: 190, options: priced.map((l) => ({ value: l.key, label: `${l.group_code} ${l.description}`.trim().slice(0, 60) })), readOnly: (r) => r.kind === 'extra' },
+      { id: 'boq_key', header: 'BOQ line', hint: 'For a quantity change', type: 'select', width: 190, options: priced.map((l) => ({ value: l.key, label: `${l.item_code ? l.item_code + ' - ' : ''}${l.description}`.slice(0, 60) })), readOnly: (r) => r.kind === 'extra' },
       { id: 'section_key', header: 'Under section', hint: 'For an extra item', type: 'select', width: 130, options: [{ value: '', label: 'At the end' }, ...sections.map((s) => ({ value: s.key, label: `${s.group_code} ${s.description}`.trim().slice(0, 40) }))], readOnly: (r) => r.kind === 'quantity', countsAsData: false },
       { id: 'description', header: 'Description', hint: 'The new item’s words', width: 200, readOnly: (r) => r.kind === 'quantity', get: (r) => (r.kind === 'quantity' ? (byKey.get(r.boq_key)?.description ?? '') : r.description) },
       { id: 'uom', header: 'Unit', width: 62, readOnly: (r) => r.kind === 'quantity', get: (r) => (r.kind === 'quantity' ? (byKey.get(r.boq_key)?.uom ?? '') : r.uom) },

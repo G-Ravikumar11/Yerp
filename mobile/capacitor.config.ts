@@ -15,6 +15,12 @@ const config: CapacitorConfig = {
       backgroundColor: '#ffffff',
       showSpinner: false,
     },
+    // Over-the-air screens, driven by the app itself (lib/mobile.ts) from our own server: no Capgo account, and the
+    // plugin's own checks and usage reports to Capgo's servers are off.
+    CapacitorUpdater: {
+      autoUpdate: false,
+      statsUrl: '',
+    },
     StatusBar: {
       style: 'DARK',
       backgroundColor: '#0b0b0e',

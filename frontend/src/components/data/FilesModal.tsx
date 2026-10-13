@@ -2,9 +2,13 @@ import { takePhoto } from '@/lib/mobile'
 import { useRef, useState } from 'react'
 import { Camera, Paperclip } from 'lucide-react'
 import { Button, ConfirmDialog, Input, Modal, Skeleton, Tabs } from '@/components/ui'
+import { drwKeys } from '@/api/drawings'
 import { fileKeys, fileSize, noFilter, removeFile, uploadFiles, useFiles, type FileItem } from '@/api/files'
 import { useAction } from '@/lib/mutate'
 import { useQueryClient } from '@tanstack/react-query'
+import { apiUrl } from '@/lib/api'
+import { FileViewer, openOutside, useFileBlob } from '@/components/data/FileView'
+import { Capacitor } from '@capacitor/core'
 import { toast } from '@/stores/toast'
 
 const KIND: Record<string, string> = { drawing: 'Drawing', photo: 'Photo', document: 'Document' }
@@ -19,7 +23,7 @@ export function FilesModal({ type, id, title, onClose }: { type: string; id: num
   const camera = useRef<HTMLInputElement>(null)
   const qc = useQueryClient()
   const q = useFiles(type, id, { ...noFilter, kind })
-  const remove = useAction((f: FileItem) => removeFile(f.id), { invalidate: [fileKeys.all], success: 'File removed', onSuccess: () => setRemoving(null) })
+  const remove = useAction((f: FileItem) => removeFile(f.id), { invalidate: [fileKeys.all, drwKeys.all], success: 'File removed', onSuccess: () => setRemoving(null) })
   const s = q.data?.summary
   const send = async (list: ArrayLike<File> | null) => {
     if (!list?.length) return
@@ -27,7 +31,7 @@ export function FilesModal({ type, id, title, onClose }: { type: string; id: num
     const { done, failed } = await uploadFiles(Array.from(list), type, id, caption.trim() ? { caption: caption.trim() } : {})
     setBusy(false)
     setCaption('')
-    await qc.invalidateQueries({ queryKey: fileKeys.all })
+    await Promise.all([qc.invalidateQueries({ queryKey: fileKeys.all }), qc.invalidateQueries({ queryKey: drwKeys.all })])
     if (failed.length) toast.error(failed.join(' - '))
     else if (done) toast.success(`${done} file${done === 1 ? '' : 's'} added`)
   }
@@ -58,16 +62,26 @@ export function FilesModal({ type, id, title, onClose }: { type: string; id: num
 }
 
 export function Tile({ f, onRemove }: { f: FileItem; onRemove?: () => void }) {
+  const [open, setOpen] = useState(false)
+  const thumb = useFileBlob(f.thumb_url, f.is_image)
   return (
     <figure className="rounded-lg border border-border p-1.5">
-      <a href={f.url} target="_blank" rel="noopener">
-        {f.is_image ? <img src={f.thumb_url} alt={f.caption || f.name} loading="lazy" className="h-28 w-full rounded-md object-cover" /> : <span className="grid h-28 place-items-center rounded-md bg-muted text-sm font-bold text-muted-foreground">{(f.name.split('.').pop() || 'file').toUpperCase()}</span>}
-      </a>
+      {f.is_image ? (
+        <button type="button" className="block w-full" onClick={() => setOpen(true)} aria-label={`Open ${f.caption || f.name}`}>
+          {thumb.src ? <img src={thumb.src} alt={f.caption || f.name} className="h-28 w-full rounded-md object-cover" />
+            : <span className="grid h-28 place-items-center rounded-md bg-muted text-xs text-muted-foreground">{thumb.failed ? 'Tap to open' : 'Loading...'}</span>}
+        </button>
+      ) : (
+        <a href={apiUrl(f.url)} target="_blank" rel="noopener" onClick={Capacitor.isNativePlatform() ? (e) => { e.preventDefault(); void openOutside(f.id) } : undefined}>
+          <span className="grid h-28 place-items-center rounded-md bg-muted text-sm font-bold text-muted-foreground">{(f.name.split('.').pop() || 'file').toUpperCase()}</span>
+        </a>
+      )}
       <figcaption className="mt-1 text-xs leading-snug">
         <span className="mr-1 rounded bg-primary-soft px-1 text-[10px] font-semibold text-primary">{KIND[f.kind] ?? f.kind}</span>{f.caption || f.name}
         <span className="block text-[11px] text-muted-foreground">{fileSize(f.size)}{f.taken_on && ` - ${f.taken_on}`}{f.uploaded_by_name && ` - ${f.uploaded_by_name}`}</span>
       </figcaption>
       {onRemove && <button type="button" className="mt-1 text-[11px] text-danger underline-offset-2 hover:underline" onClick={onRemove}>Remove</button>}
+      {open && <FileViewer name={f.caption || f.name} id={f.id} onClose={() => setOpen(false)} />}
     </figure>
   )
 }

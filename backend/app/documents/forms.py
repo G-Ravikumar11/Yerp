@@ -946,7 +946,7 @@ def _cell_text(v):
     return text
 
 
-def sheet_report_spec(headers, rows, filename, preamble=None, closing=None, client=None):
+def sheet_report_spec(headers, rows, filename, preamble=None, closing=None, client=None, logo_watermark=False):
     """A workbook's rows as a ruled report."""
     pre = [list(r) for r in (preamble or []) if r and any(str(x).strip() for x in r)]
     title = str(pre[0][0]).strip() if pre else re.sub(r"[_\-]+", " ", filename.rsplit(".", 1)[0]).upper()
@@ -989,9 +989,12 @@ def sheet_report_spec(headers, rows, filename, preamble=None, closing=None, clie
     for note in notes:
         blocks.append({"type": "text", "style": "small", "text": note})
     blocks.append({"type": "table", "columns": columns, "rows": body, "foot": foot})
-    return {"title": title, "author": company.get("name", ""), "landscape": landscape, "blocks": blocks,
+    spec = {"title": title, "author": company.get("name", ""), "landscape": landscape, "blocks": blocks,
             "footer": "%s  |  %s  |  Printed %s" % (title.title(), company.get("name", ""),
                                                     datetime.now().strftime("%d/%m/%Y %H:%M"))}
+    if logo_watermark and company.get("logo_url"):
+        spec["watermark_logo"] = company["logo_url"]       # the mark, faint behind every page
+    return spec
 
 
 def _pre(client, title, *facts):

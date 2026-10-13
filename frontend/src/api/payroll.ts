@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { del, get, post } from '@/lib/api'
+import { del, get, post, put } from '@/lib/api'
 
 export const payKeys = { all: ['payroll'] as const }
 const k = (...p: unknown[]) => ['payroll', ...p] as const
@@ -24,7 +24,8 @@ export interface PayslipRow {
 export interface PayslipDetail {
   id: number
   number: string
-  employee: { full_name: string; employee_id: string; email: string; job_title: string; department_name: string; bank_name: string; bank_account: string; tax_id: string }
+  employee: { full_name: string; employee_id: string; email: string; job_title: string; department_name: string; bank_name: string; bank_account: string; tax_id: string; start_date: string; work_location: string }
+  days: { total: number; work: number; balance_leaves: number }
   period_start: string
   period_end: string
   pay_date: string
@@ -46,7 +47,7 @@ export interface PayslipDetail {
   status: string
   sent: boolean
   notes: string
-  company: { name: string; address: string; email: string; phone: string }
+  company: { name: string; address: string; email: string; phone: string; logo_url?: string }
 }
 
 export interface PayDetails {
@@ -93,3 +94,6 @@ export const markPaid = (id: number) => post<{ message?: string }>(`/api/payslip
 export const reopenPayslip = (id: number) => post<{ message?: string }>(`/api/payslips/${id}/unmark-paid`)
 export const deletePayslip = (id: number, force: boolean) => del<{ message?: string }>(`/api/payslips/${id}${force ? '?force=true' : ''}`)
 export const emailPayslip = (id: number) => post<{ message?: string }>(`/api/payslips/${id}/send`)
+
+export const useAutoPayroll = () => useQuery({ queryKey: k('auto'), queryFn: () => get<{ enabled: boolean }>('/api/payroll/auto') })
+export const setAutoPayroll = (enabled: boolean) => put<{ enabled: boolean; message: string }>('/api/payroll/auto', { enabled })

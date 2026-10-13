@@ -82,6 +82,10 @@ export interface RaBill {
   taxable_value: number
   created_at?: string
   certified_by_name: string
+  /** Taken back by credit notes: before tax, and net. */
+  credited: number
+  credited_net: number
+  can_credit: boolean
   actions: string[]
 }
 

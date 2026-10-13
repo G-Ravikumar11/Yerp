@@ -56,6 +56,7 @@ export function MasterDeleteDialog({ open, onOpenChange, kind, id, label, noun, 
         <p className="text-sm text-danger">Could not check what this is tied to. Try again.</p>
       ) : (
         <div className="grid gap-3 text-sm">
+          {p.blockers.length > 0 && <p role="alert" className="rounded-md border border-danger/30 bg-danger-soft p-2 font-medium text-danger">{p.blockers.join(' ')}</p>}
           <p>{goes ? <>Along with it: <strong>{goes}</strong>.</> : 'Nothing else hangs off it.'}</p>
           {kept && <p className="text-muted-foreground">Kept, and no longer linked to it: {kept}.</p>}
           {kind === 'project' && <p className="text-muted-foreground">Everything recorded against the project goes: its orders and bills, measurements, purchase orders, payments, diary, drawings, quality and safety records, schedule, budgets, chat and photos.</p>}

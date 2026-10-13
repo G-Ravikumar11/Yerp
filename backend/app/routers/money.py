@@ -20,6 +20,7 @@ from app.core.sheets import sheet_response
 from app.documents.forms import _pre, form_pdf_response, statement_form_spec
 from app.documents.letterhead import our_party
 from app.schemas.money import BankAccountIn, MoneyIn
+from app.services.credit_notes import credit_totals_by_bill, credits_by_job
 from app.services.crm import (
     _ledger_rows,
     invoice_overdue_days,
@@ -342,11 +343,13 @@ def receivables(request: Request, db: Session = Depends(get_db)):
     # just as an invoice is. Aged from certification. What has already been
     # received against it comes off - a part-paid bill owes what is left.
     settled = settled_amounts(db, client.id)
+    ra_credits = credit_totals_by_bill(db, client.id, "client")
     for r in db.query(models.DBRABill).filter(
             models.DBRABill.client_id == client.id,
             models.DBRABill.status == "CERTIFIED").all():
         received = settled.get(("ra_bill", r.id), 0.0)
-        outstanding = money((r.net_payable or 0) - received)
+        # What a credit note took back is no longer owed.
+        outstanding = money((r.net_payable or 0) - ra_credits.get(r.id, {}).get("net", 0.0) - received)
         if outstanding <= 0:
             continue
         # Due a month after the signature, as the dashboard already reads it -
@@ -360,7 +363,8 @@ def receivables(request: Request, db: Session = Depends(get_db)):
             "customer": job.customer_name if job else "",
             "project": job.name if job else "", "job_id": r.job_id,
             "issue_date": (r.certified_at or "")[:10], "due_date": due or (r.certified_at or "")[:10],
-            "total": money(r.net_payable), "paid": money(received), "outstanding": outstanding,
+            "total": money((r.net_payable or 0) - ra_credits.get(r.id, {}).get("net", 0.0)),
+            "paid": money(received), "outstanding": outstanding,
             "doc_type": "ra_bill",
             "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
             "status": r.status or "",
@@ -453,10 +457,12 @@ def payables(request: Request, db: Session = Depends(get_db)):
     settled = settled_amounts(db, client.id)
     terms_of = dict(db.query(models.DBSubcontractOrder.id, models.DBSubcontractOrder.payment_days).filter(
         models.DBSubcontractOrder.client_id == client.id).all())
+    sub_credits = credit_totals_by_bill(db, client.id, "contractor")
     for r in db.query(models.DBSubBill).filter(
             models.DBSubBill.client_id == client.id,
             models.DBSubBill.status == "CERTIFIED").all():
-        outstanding = money((r.net_payable or 0) - settled.get(("sub_bill", r.id), 0.0))
+        outstanding = money((r.net_payable or 0) - sub_credits.get(r.id, {}).get("net", 0.0)
+                            - settled.get(("sub_bill", r.id), 0.0))
         if outstanding <= 0:
             continue
         # The order says how many days after certification the gang is paid.
@@ -551,9 +557,14 @@ def retention_register(request: Request, db: Session = Depends(get_db)):
             "certified_at": (b.certified_at or "")[:10],
         })
 
-    # What has been released is no longer held; held is what is left.
+    # What has been released is no longer held; held is what is left. Retention on work a credit note took back
+    # is not held either.
     released = released_by_job(db, client.id)
+    credited = credits_by_job(db, client.id, "client")
     for r in by_job.values():
+        cn = credited.get(r["job_id"], {})
+        r["held"] = money(max(0.0, r["held"] - cn.get("retention", 0.0)))
+        r["claimed_value"] = money(max(0.0, r["claimed_value"] - cn.get("taxable", 0.0)))
         r["retained"] = r["held"]
         r["released"] = money(released.get(r["job_id"], 0.0))
         r["held"] = money(max(0.0, r["retained"] - r["released"]))

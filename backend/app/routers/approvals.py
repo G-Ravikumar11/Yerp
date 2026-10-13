@@ -234,6 +234,10 @@ def get_my_submissions(request: Request, db: Session = Depends(get_db)):
 def get_approval_history(entity_type: str, entity_id: int, request: Request, db: Session = Depends(get_db)):
     """Get the full approval chain history for a document."""
     client = get_client_user(request, db)
+    # Only a document of this company: ids run in sequence across every company, so counting through them
+    # must not read another company's approvers and notes.
+    if not approval_doc(db, entity_type, entity_id, client.id):
+        raise HTTPException(status_code=404, detail="Document not found")
     chain = get_approval_chain_history(entity_type, entity_id, db)
     return {"history": chain}
 

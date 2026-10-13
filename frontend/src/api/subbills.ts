@@ -82,6 +82,10 @@ export interface SubBill {
   created_at: string
   route: BillStep[]
   waiting_on: string
+  credited?: number
+  credited_net?: number
+  can_credit?: boolean
+  credit_notes?: { id: number; number: string; note_date: string; reason: string; taxable: number; gst_amount: number; net_amount: number }[]
   // detail only
   lines?: BillLine[]
   amount_in_words?: string

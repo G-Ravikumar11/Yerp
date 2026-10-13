@@ -81,6 +81,7 @@ from app.services.invoicing import (
 )
 from app.services.procurement import resolve_order_id, resolve_po_line_id, supplier_payment_days
 from app.services.projects import resolve_job_id
+from app.services.credit_notes import credit_gst_rows
 from app.services.subcontract_billing import release_gst_rows
 from app.services.wallet_ai import require_credit
 from app.validators.common import (
@@ -1046,6 +1047,8 @@ def gst_outward(request: Request, date_from: str = "", date_to: str = "",
             "total": money(taxable + (b.tax_amount or 0)),
         })
     rows.extend(release_gst_rows(db, client.id, "client", date_from, date_to))
+    # A credit note reverses the tax in the month it is issued, as a negative line - the filed month is not touched.
+    rows.extend(credit_gst_rows(db, client.id, "client", date_from, date_to))
     irns = {r.doc_number: r.irn for r in db.query(models.DBEinvoiceIrn).filter(
         models.DBEinvoiceIrn.client_id == client.id, models.DBEinvoiceIrn.status == "ACTIVE").all()}
     for r in rows:
@@ -1107,6 +1110,7 @@ def gst_inward(request: Request, date_from: str = "", date_to: str = "",
             "igst": money(b.igst_amount), "tax": money(b.gst_amount),
         })
     rows.extend(release_gst_rows(db, client.id, "contractor", date_from, date_to))
+    rows.extend(credit_gst_rows(db, client.id, "contractor", date_from, date_to))
     # The supplier's GSTIN is on the supplier list; the bill only has a name.
     # Without it every supplier bill sat in the register with no GSTIN and
     # its tax in one lump - nothing to reconcile the input credit against.

@@ -12,6 +12,7 @@ from app.core.audit import log_audit
 from app.core.auth import wo_actor
 from app.core.currency import amount_in_words, inr, money, unit_rate
 from app.core.gst import GST_STATES, our_state, split_gst, supply_state_for_job
+from app.services.credit_notes import bill_credit_summary, credited_qty_by_item
 
 
 def measured_to_date(db, work_order_id):
@@ -40,6 +41,10 @@ def billed_qty_to_date(db, work_order_id, exclude_bill_id=None):
     for l in db.query(models.DBRABillLine).filter(
             models.DBRABillLine.ra_bill_id.in_(ids)).all():
         totals[l.line_id] = totals.get(l.line_id, 0.0) + (l.this_bill_qty or 0.0)
+    # Work a credit note took back is no longer claimed: it can be measured and billed again.
+    for line_id, qty in credited_qty_by_item(db, "client", work_order_id).items():
+        if line_id in totals:
+            totals[line_id] = max(0.0, totals[line_id] - qty)
     return totals
 
 
@@ -84,6 +89,29 @@ def write_ra_bill_lines(db, bill, claimable):
     return recost_ra_bill(db, bill)
 
 
+DEFAULT_RETENTION_PERCENT = 5.0  # when the project states no retention
+DEFAULT_GST_PERCENT = 18.0     # works contract, when the company has set no default rate
+DEFAULT_TDS_PERCENT = 1.0      # 194C, payments to a company
+
+
+def contract_rates(db, work_order):
+    """The retention, GST and TDS a new bill on this order is drawn at.
+
+    Retention is a term of the contract, kept on the project: when the project states one, that is used. A project
+    that states none (0 is what an empty field holds) is billed at the usual 5%, and the draft can be changed.
+    GST is the company's default tax rate (Settings > Tax rates), and TDS the usual 1%. A screen that sends nothing
+    therefore gets the contract's terms where there are any, not a fixed 5 / 18 / 1 whatever the project says.
+    """
+    job = db.query(models.DBJob).filter(models.DBJob.id == work_order.job_id).first() if work_order.job_id else None
+    retention = float(job.retention_percent or 0.0) if job else 0.0
+    if retention <= 0:
+        retention = DEFAULT_RETENTION_PERCENT
+    default_tax = db.query(models.DBTaxRate).filter(
+        models.DBTaxRate.client_id == work_order.client_id, models.DBTaxRate.is_default.is_(True)).first()
+    gst = float(default_tax.percent) if default_tax and default_tax.percent else DEFAULT_GST_PERCENT
+    return {"retention_percent": retention, "tax_percent": gst, "tds_percent": DEFAULT_TDS_PERCENT}
+
+
 def ra_bill_or_404(db, client_id, bill_id):
     row = db.query(models.DBRABill).filter(
         models.DBRABill.id == bill_id,
@@ -125,7 +153,7 @@ def recost_ra_bill(db, bill):
     return bill
 
 
-def ra_bill_dict(db, bill, detail=False):
+def ra_bill_dict(db, bill, detail=False, credits=None):
     wo = db.query(models.DBWorkOrder).filter(
         models.DBWorkOrder.id == bill.work_order_id).first()
     job = db.query(models.DBJob).filter(models.DBJob.id == bill.job_id).first()
@@ -161,7 +189,17 @@ def ra_bill_dict(db, bill, detail=False):
         "actions": sorted(RA_TRANSITIONS.get(bill.status or "DRAFT", {}).keys()),
         "created_at": bill.created_at or "",
     }
+    if not detail:
+        # A list passes one batched {bill id: totals}; a lone row has none to show.
+        c = (credits or {}).get(bill.id, {})
+        row["credited"] = c.get("taxable", 0.0)
+        row["credited_net"] = c.get("net", 0.0)
+    row["can_credit"] = (bill.status or "") in ("CERTIFIED", "PAID")
     if detail:
+        credit =bill_credit_summary(db, "client", bill)
+        row["credited"] = credit["credited"]
+        row["credited_net"] = credit["credited_net"]
+        row["credit_notes"] = credit["credit_notes"]
         row["lines"] = [{
             "id": l.id, "line_id": l.line_id, "fg_code": l.fg_code or "",
             "description": (l.description or "").split("\n")[0],
@@ -171,6 +209,8 @@ def ra_bill_dict(db, bill, detail=False):
             "this_bill_qty": money(l.this_bill_qty),
             "rate": unit_rate(l.rate), "amount": money(l.amount),
             "upto_date_amount": money(money(l.measured_to_date) * unit_rate(l.rate)),
+            "credited_qty": money(credit["credited_qty"].get(l.id, 0.0)),
+            "creditable_qty": money((l.this_bill_qty or 0) - credit["credited_qty"].get(l.id, 0.0)),
         } for l in db.query(models.DBRABillLine).filter(
             models.DBRABillLine.ra_bill_id == bill.id).order_by(
                 models.DBRABillLine.display_order, models.DBRABillLine.id).all()]
@@ -209,6 +249,10 @@ def ra_apply(db, client, bill, action, actor_id, actor_name, comments=""):
     """One door for every state change on a bill."""
     was = bill.status or "DRAFT"
     allowed = RA_TRANSITIONS.get(was, {})
+    if action == "CANCEL" and was in ("CERTIFIED", "PAID"):
+        raise HTTPException(
+            409, "%s is %s and is not cancelled: its GST and TDS are in the returns. Take back what was "
+                 "over-billed with a credit note." % (bill.number, was.lower()))
     if action not in allowed:
         raise HTTPException(
             409, "%s is %s; it cannot be %s from there." %
@@ -284,7 +328,7 @@ def _ra_action(bill_id, action, body, request, db, permission="billing.manage"):
     bill = ra_bill_or_404(db, client.id, bill_id)
     if action == "CERTIFY" and actor_id is not None and bill.submitted_by == actor_id:
         raise HTTPException(403, "You raised this bill, so somebody else has to certify it.")
-    if action == "CANCEL":
+    if action == "CANCEL" and (bill.status or "") not in ("CERTIFIED", "PAID"):
         refuse_cancel_with_money(db, client.id, "ra_bill", bill, "received")
         refuse_cancel_with_irn(db, client.id, "ra_bill", bill)
     ra_apply(db, client, bill, action, actor_id, actor_name, body.comments)
@@ -428,8 +472,10 @@ def apply_variation(db, vo):
     for l in db.query(models.DBVariationLine).filter(
             models.DBVariationLine.variation_order_id == vo.id).all():
         if l.line_id:
+            # Only a line of this order: a variation never reaches into another order, or another company's.
             line = db.query(models.DBWorkOrderLine).filter(
-                models.DBWorkOrderLine.id == l.line_id).first()
+                models.DBWorkOrderLine.id == l.line_id,
+                models.DBWorkOrderLine.work_order_id == wo.id).first()
             if not line:
                 continue
             line.qty = money((line.qty or 0) + l.extra_qty)

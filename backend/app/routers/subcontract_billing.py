@@ -32,13 +32,15 @@ from app.core.auth import (
 from app.core.currency import format_money_plain, inr, money, qty_text, sheet_number, unit_rate
 from app.core.dates import _parse_date
 from app.core.files import _file_or_404, drop_files_of, file_bytes, file_headers, served_type, store_file
-from app.core.gst import WORKS_CONTRACT_SAC, our_state, split_gst, supply_state_for_job
+from app.core.gst import WORKS_CONTRACT_SAC, supply_state_for_job
 from app.core.lifecycle import convert_legacy_holds
 from app.core.notifications import notify, notify_employee
 from app.core.queries import prime, prime_chains
 from app.core.sheets import sheet_response
 from app.documents.forms import form_pdf_response, sub_bill_certificate, sub_bill_form_spec
 from app.documents.pdf_twins import SHEET_AS_PDF
+from app.schemas.client_billing import CreditNoteIn
+from app.services.credit_notes import credit_note_dict, credit_totals_by_bill, raise_credit_note
 from app.schemas.subcontract_billing import (
     DimensionIn,
     MeasurementIn,
@@ -95,7 +97,6 @@ from app.services.subcontract_billing import (
 )
 from app.services.subcontract_orders import (
     cascade_delete_referrers,
-    contractor_state,
     drop_alerts_about,
     item_ceiling,
     run_bulk_delete,
@@ -850,7 +851,8 @@ def list_sub_bills(request: Request, order_id: int = 0, db: Session = Depends(ge
     prime(db, models.DBJob, [b.job_id for b in bills])
     prime_chains(db, "sub_bill", [b.id for b in bills])
     prime(db, models.DBEmployee, [r.approver_id for b in bills for r in sub_bill_chain_rows(db, b.id)])
-    rows = [sub_bill_dict(db, b) for b in bills]
+    taken_back = credit_totals_by_bill(db, client.id, "contractor")     # one query for every row
+    rows = [sub_bill_dict(db, b, credits=taken_back) for b in bills]
     seen_orders = {e.order_id for e in every}
     released = money(sum(r.amount or 0 for r in _live_releases(db, client.id, "contractor")
                          if (not order_id or r.sub_order_id == order_id)
@@ -1056,6 +1058,36 @@ def edit_sub_bill(bill_id: int, body: SubBillEditIn, request: Request, db: Sessi
     return {"ok": True, "bill": sub_bill_dict(db, bill, detail=True), "message": "%s saved." % bill.number}
 
 
+@router.post("/api/sub-bills/{bill_id}/credit-notes")
+def credit_sub_bill(bill_id: int, body: CreditNoteIn, request: Request, db: Session = Depends(get_db)):
+    """The gang's bill was for more than was done: take the difference back with a credit note instead of
+    cancelling a certified bill. Reverses its GST (so the input credit comes down), TDS, retention and cess on those
+    quantities in today's period, and frees the quantities to be measured and billed again. Defined ahead of the
+    /{action} route below, which would otherwise take "credit-notes" for an action."""
+    refuse_ho_coordinator(request, db, "credit notes")
+    client, actor_id, actor_name = wo_actor(request, db, "subcontracts.approve")
+    bill = sub_bill_or_404(db, client.id, bill_id)
+    note = raise_credit_note(db, "contractor", client.id, bill, body.lines, body.reason, body.note_date, actor_name)
+    log_audit(db, client.id, "credit_note_raised", "sub_bill", bill.id, bill.number or "",
+              "%s: %s taken back (%s)" % (note.number, inr(note.taxable), (body.reason or "").strip()[:200]), request)
+    db.commit()
+    db.refresh(note)
+    return {"credit_note": credit_note_dict(db, note, detail=True),
+            "bill": sub_bill_dict(db, bill, detail=True),
+            "message": "%s issued: %s of work taken back, %s off what we owe them." % (
+                note.number, inr(note.taxable), inr(note.net_amount))}
+
+
+@router.get("/api/sub-bills/{bill_id}/credit-notes")
+def list_sub_bill_credit_notes(bill_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_items_access(request, db, "bills.view_all")
+    bill = sub_bill_or_404(db, client.id, bill_id)
+    notes = db.query(models.DBCreditNote).filter(
+        models.DBCreditNote.side == "contractor", models.DBCreditNote.sub_bill_id == bill.id).order_by(
+            models.DBCreditNote.id).all()
+    return {"credit_notes": [credit_note_dict(db, n, detail=True) for n in notes]}
+
+
 @router.post("/api/sub-bills/{bill_id}/{action}")
 def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = None,
                     db: Session = Depends(get_db)):
@@ -1087,6 +1119,9 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
                 "message": "%s marked as accepted by %s." % (bill.number, bill.accepted_by_name)}
 
     allowed = SUB_TRANSITIONS.get(bill.status or "DRAFT", {})
+    if move == "CANCEL" and (bill.status or "") in ("CERTIFIED", "PAID"):
+        raise HTTPException(409, "%s is %s and is not cancelled: its GST and TDS are in the returns. Take back what "
+                                 "was over-billed with a credit note." % (bill.number, bill.status.lower()))
     if move not in allowed:
         raise HTTPException(409, "A %s bill cannot be %s."
                                  % ((bill.status or "draft").lower(), past_tense(move)))
@@ -1281,9 +1316,8 @@ def retention_overview(request: Request, db: Session = Depends(get_db)):
 def create_release(body: RetentionReleaseIn, request: Request, db: Session = Depends(get_db)):
     """Release retention: claim it from the client, or owe it to a gang.
 
-    Never more than is still held on that order. The tax is worked out the
-    way the order's own bills worked theirs out - the site's state against
-    ours, or against the gang's for their side."""
+    Never more than is still held on that order. It carries no GST of its own: the bills it comes out of were
+    taxed on their whole value, retention included."""
     side = (body.side or "").strip().lower()
     if side not in ("client", "contractor"):
         raise HTTPException(400, "Is this retention the client holds, or retention we hold from a contractor?")
@@ -1306,14 +1340,12 @@ def create_release(body: RetentionReleaseIn, request: Request, db: Session = Dep
     on = (body.release_on or date.today().isoformat())[:10]
     if not _parse_date(on):
         raise HTTPException(400, "Release date should be YYYY-MM-DD.")
-    rate = pos["gst_percent"] if body.gst_percent is None else max(0.0, min(28.0, float(body.gst_percent)))
-
+    # GST was charged on the whole of every bill, retention included (recost_ra_bill / recost_sub_bill), and
+    # returned for the month of that bill. Giving the retention back is not a second supply: a release carries no
+    # tax, whatever rate the form sends, or the registers count the same work twice.
+    rate = 0.0
     supply = supply_state_for_job(db, pos["job_id"]) if pos["job_id"] else ""
-    if side == "client":
-        origin = our_state(db, client.id)
-    else:
-        origin = contractor_state(db, pos.get("contractor_id")) or our_state(db, client.id)
-    gst = split_gst(amount, rate, origin, supply)
+    gst = {"total": 0.0, "cgst": 0.0, "sgst": 0.0, "igst": 0.0}
 
     stem = "RET" if side == "client" else "RETG"
     n = db.query(models.DBRetentionRelease).filter(
@@ -1337,15 +1369,15 @@ def create_release(body: RetentionReleaseIn, request: Request, db: Session = Dep
     db.refresh(r)
     if side == "client":
         notify(db, client.id, "retention_released", "%s - retention to claim from %s" % (r.number, pos["party"] or "the client"),
-               "%s released at %s on %s, %s with GST." % (inr(amount), stage.lower(), pos["project"], inr(r.net_amount)),
+               "%s released at %s on %s." % (inr(amount), stage.lower(), pos["project"]),
                view="money-view", ref_type="retention_release", ref_id=r.id, severity="money")
     else:
         notify(db, client.id, "retention_released", "%s - retention due to %s" % (r.number, pos["party"] or "the contractor"),
-               "%s released at %s on %s, %s with GST." % (inr(amount), stage.lower(), pos["order_number"], inr(r.net_amount)),
+               "%s released at %s on %s." % (inr(amount), stage.lower(), pos["order_number"]),
                view="money-view", ref_type="retention_release", ref_id=r.id, severity="action")
     db.refresh(r)
     return {"release": release_dict(db, r),
-            "message": "%s raised: %s released, %s with GST." % (r.number, inr(amount), inr(r.net_amount))}
+            "message": "%s raised: %s released. GST was charged on the bills, so none is added here." % (r.number, inr(amount))}
 
 
 @router.get("/api/retention/releases/{release_id}")
