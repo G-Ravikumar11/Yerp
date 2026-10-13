@@ -106,7 +106,9 @@ def test_a_bill_deleted_does_not_stop_the_order_being_billed_again(tenant):
     assert third.json()["bill"]["number"] not in (second["number"],)
 
 
-def test_claimed_before_follows_a_cancelled_earlier_bill(tenant):
+def test_claimed_before_follows_a_credited_earlier_bill(tenant):
+    """A certified bill is never cancelled - its GST and TDS are in the returns - so what it over-billed is taken
+    back by a credit note, and the next bill's "claimed before" follows that."""
     order = live_order(tenant, pay_advance=False)
     item = book(tenant, order["id"])["lines"][0]["item_id"]
     first = measure_and_bill(tenant, order, item).json()["bill"]
@@ -114,7 +116,11 @@ def test_claimed_before_follows_a_cancelled_earlier_bill(tenant):
     tenant.post("/api/sub-bills/%d/certify" % first["id"], json={})
     second = measure_and_bill(tenant, order, item, 2).json()["bill"]
     assert second["previously_billed"] == first["this_bill"]
-    tenant.post("/api/sub-bills/%d/cancel" % first["id"], json={"comments": "wrong"})
+    assert tenant.post("/api/sub-bills/%d/cancel" % first["id"], json={"comments": "wrong"}).status_code == 409
+    lines = tenant.get("/api/sub-bills/%d" % first["id"]).json()["lines"]
+    note = tenant.post("/api/sub-bills/%d/credit-notes" % first["id"], json={
+        "reason": "wrong", "lines": [{"bill_line_id": l["id"], "qty": l["this_bill_qty"]} for l in lines if l.get("this_bill_qty")]})
+    assert note.status_code == 200, note.text
     sent = tenant.post("/api/sub-bills/%d/submit" % second["id"], json={}).json()["bill"]
     assert sent["previously_billed"] == 0
     assert sent["gross_to_date"] == sent["this_bill"]

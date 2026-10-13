@@ -62,7 +62,7 @@ def test_groq_alone_reads_photos_and_text_pdfs_but_not_scanned_pdfs(monkeypatch)
     monkeypatch.setenv("GROQ_API_KEY", "g")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     seen = []
-    monkeypatch.setattr(llm_client, "_groq", lambda system, prompt, mt, t, as_json=False, images=None: seen.append((prompt, images)) or AiResult(True, text="x", provider="groq"))
+    monkeypatch.setattr(llm_client, "_groq", lambda system, prompt, mt, t, as_json=False, images=None, extra=None: seen.append((prompt, images)) or AiResult(True, text="x", provider="groq"))
     monkeypatch.setattr(llm_client, "_claude", lambda *a, **k: (_ for _ in ()).throw(AssertionError("Claude must not be called")))
     assert llm_client.ask("s", "p", [llm_client.Attachment(b"x", "image/png")]).ok
     assert seen[-1][1] and seen[-1][1][0].media_type == "image/png", "a photo goes to Groq's vision model"
