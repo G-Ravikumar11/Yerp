@@ -403,3 +403,62 @@ def test_remarks_are_kept_and_go_to_the_excel(tenant):
     cells = [c.value for ws in openpyxl.load_workbook(io.BytesIO(x.content)).worksheets for row in ws.iter_rows() for c in row if c.value is not None]
     assert "Remarks" in cells and "Rate includes pumping" in cells
     assert tenant.get("/api/boqs/%d/export.pdf" % boq["id"]).status_code == 200
+
+
+# --- the company logo on the BOQ's PDF ------------------------------------------------------------------------------
+
+def logo_uri():
+    import base64
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (240, 80), (200, 40, 40)).save(buf, "PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def set_logo(account, uri):
+    from app import models
+    from app.db.session import SessionLocal
+    db = SessionLocal()
+    db.query(models.DBClient).filter(models.DBClient.email == account["email"]).update({"logo_url": uri})
+    db.commit()
+    db.close()
+
+
+def test_the_boq_pdf_carries_the_company_logo_in_the_heading_and_as_a_watermark(tenant, account, monkeypatch):
+    from app.documents import form_pdf
+    _, boq = make_boq(tenant)
+    saved(tenant, boq)
+    plain = tenant.get("/api/boqs/%d/export.pdf" % boq["id"])
+    assert plain.status_code == 200 and b"/Subtype /Image" not in plain.content
+
+    set_logo(account, logo_uri())
+    drawn = []
+    real = form_pdf._draw_logo_watermark
+    monkeypatch.setattr(form_pdf, "_draw_logo_watermark", lambda *a: (drawn.append(1), real(*a))[1])
+    branded = tenant.get("/api/boqs/%d/export.pdf" % boq["id"])
+    assert branded.status_code == 200 and b"/Subtype /Image" in branded.content
+    assert len(drawn) >= 1, "the watermark is drawn on the page"
+    assert len(branded.content) > len(plain.content)
+
+
+def test_the_watermark_is_on_every_page_of_a_long_boq(tenant, account, monkeypatch):
+    from pypdf import PdfReader
+    from app.documents import form_pdf
+    _, boq = make_boq(tenant)
+    lines = [{"kind": "item", "description": "Item %d of the schedule" % n, "uom": "cum", "quantity": 1, "rate": 10} for n in range(160)]
+    assert tenant.put("/api/boqs/%d/lines" % boq["id"], json={"lines": lines, "issue_codes": False}).status_code == 200
+    set_logo(account, logo_uri())
+    drawn = []
+    real = form_pdf._draw_logo_watermark
+    monkeypatch.setattr(form_pdf, "_draw_logo_watermark", lambda *a: (drawn.append(1), real(*a))[1])
+    pdf = tenant.get("/api/boqs/%d/export.pdf" % boq["id"]).content
+    pages = len(PdfReader(io.BytesIO(pdf)).pages)
+    assert pages >= 2 and len(drawn) == pages
+
+
+def test_a_logo_that_is_only_an_address_is_left_off_the_pdf_rather_than_fetched(tenant, account):
+    _, boq = make_boq(tenant)
+    saved(tenant, boq)
+    set_logo(account, "http://example.invalid/logo.png")
+    res = tenant.get("/api/boqs/%d/export.pdf" % boq["id"])
+    assert res.status_code == 200 and b"/Subtype /Image" not in res.content

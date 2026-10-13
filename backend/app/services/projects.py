@@ -1123,7 +1123,7 @@ def task_dict(t, names=None):
             "created_by_name": t.created_by_name or ""}
 
 
-def sync_progress_from_tasks(db, client_id, activity_id, actor_name):
+def sync_progress_from_tasks(db, client_id, activity_id, actor_name, on=None):
     """An activity's progress follows its tasks: the share of them that are done. Each tick (or un-tick, add or removal)
     writes a dated report like any other, so the history is kept and the S-curve still reads true.
 
@@ -1139,7 +1139,7 @@ def sync_progress_from_tasks(db, client_id, activity_id, actor_name):
     if not tasks:
         return None
     pct = round(sum(1 for t in tasks if t.done) / len(tasks) * 100.0, 1)
-    on = date.today().isoformat()
+    on = on or date.today().isoformat()
     last = db.query(models.DBScheduleProgress).filter(models.DBScheduleProgress.activity_id == a.id).order_by(
         models.DBScheduleProgress.reported_on.desc(), models.DBScheduleProgress.id.desc()).first()
     if last is None or abs((last.percent or 0) - pct) > 0.001:
@@ -1150,6 +1150,64 @@ def sync_progress_from_tasks(db, client_id, activity_id, actor_name):
     # Finished is what the tasks say: ticking the last one finishes it, un-ticking one opens it again.
     a.actual_finish = on if pct >= 100 else ""
     return pct
+
+
+def apply_work_updates(db, client_id, job, updates, on, actor_name):
+    """Carry what a site diary says about the planned work into Planning & Progress: tasks ticked done (or put back), and
+    an activity that has no tasks now so far along. Dated the diary's day, and recorded like any other progress report.
+
+    Returns how many tasks and activities it moved. Anything that is not this site's, or whose progress is not the
+    diary's to set (it comes from the measurement book, or from the activity's own tasks), is refused with the reason."""
+    moved_tasks, moved_activities, touched = 0, 0, set()
+    for u in updates or []:
+        if u.task_id:
+            t = db.query(models.DBScheduleTask).filter(models.DBScheduleTask.id == u.task_id,
+                                                       models.DBScheduleTask.client_id == client_id,
+                                                       models.DBScheduleTask.job_id == job.id).first()
+            if t is None:
+                raise HTTPException(400, "A task in the work done is not on this site.")
+            if u.done is not None and bool(u.done) != bool(t.done):
+                t.done = bool(u.done)
+                t.done_by_name = actor_name if t.done else ""
+                t.done_at = ("%s %s" % (on, datetime.now().strftime("%H:%M"))) if t.done else ""
+                moved_tasks += 1
+                touched.add(t.activity_id)
+        elif u.activity_id and u.percent is not None:
+            a = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.id == u.activity_id,
+                                                           models.DBScheduleActivity.client_id == client_id,
+                                                           models.DBScheduleActivity.job_id == job.id).first()
+            if a is None:
+                raise HTTPException(400, "An activity in the work done is not on this site.")
+            pct = float(u.percent)
+            if pct < 0 or pct > 100:
+                raise HTTPException(400, "Progress is a percentage between 0 and 100.")
+            if a.work_order_line_id:
+                raise HTTPException(409, "%s takes its progress from the measurement book. Measure the work instead." % (a.code or a.name))
+            if db.query(models.DBScheduleTask.id).filter(models.DBScheduleTask.activity_id == a.id).first():
+                raise HTTPException(409, "%s follows its tasks. Tick the tasks that were done instead." % (a.code or a.name))
+            ctx = ScheduleContext(db, client_id, job.id)
+            if abs(ctx.actual(a, _d(on) or date.today()) - pct) > 0.001:
+                db.add(models.DBScheduleProgress(client_id=client_id, activity_id=a.id, reported_on=on, percent=pct,
+                                                 note="From the site diary", by_name=actor_name))
+                if pct > 0 and not a.actual_start:
+                    a.actual_start = on
+                if pct >= 100 and not a.actual_finish:
+                    a.actual_finish = on
+                moved_activities += 1
+    db.flush()
+    for under in touched:
+        sync_progress_from_tasks(db, client_id, under, actor_name, on)
+    return moved_tasks, moved_activities
+
+
+def planning_note(tasks, activities):
+    """The words for what a saved diary moved in the plan, or nothing if it moved none."""
+    bits = []
+    if tasks:
+        bits.append("%d task%s" % (tasks, "" if tasks == 1 else "s"))
+    if activities:
+        bits.append("%d activit%s" % (activities, "y" if activities == 1 else "ies"))
+    return (" Planning & Progress updated: %s." % " and ".join(bits)) if bits else ""
 
 
 def task_or_404(db, client_id, task_id):

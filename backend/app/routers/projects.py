@@ -62,7 +62,9 @@ from app.services.projects import (
     project_money_moved,
     preload_pnl,
     project_pnl,
+    apply_work_updates,
     check_task,
+    planning_note,
     schedule_day,
     schedule_view,
     sync_progress_from_tasks,
@@ -559,10 +561,11 @@ def create_diary(body: DiaryIn, request: Request, db: Session = Depends(get_db))
     db.add(diary)
     db.flush()
     _replace_diary_lines(db, diary, body.labour, body.plant)
+    moved = apply_work_updates(db, client.id, job, body.work_updates, on, actor_name)
     db.commit()
     db.refresh(diary)
-    return {"ok": True, "diary": diary_dict(db, diary, detail=True),
-            "message": "Diary opened for %s." % on}
+    return {"ok": True, "diary": diary_dict(db, diary, detail=True), "planning": {"tasks": moved[0], "activities": moved[1]},
+            "message": "Diary opened for %s.%s" % (on, planning_note(*moved))}
 
 
 @router.get("/api/diary/{diary_id}")
@@ -574,7 +577,7 @@ def get_diary(diary_id: int, request: Request, db: Session = Depends(get_db)):
 @router.put("/api/diary/{diary_id}")
 def update_diary(diary_id: int, body: DiaryIn, request: Request,
                  db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db, "site.record")
+    client, _, actor_name = wo_actor(request, db, "site.record")
     diary = diary_or_404(db, client.id, diary_id)
     if (diary.status or "DRAFT") != "DRAFT":
         raise HTTPException(
@@ -594,9 +597,11 @@ def update_diary(diary_id: int, body: DiaryIn, request: Request,
     if body.work_order_id is not None:
         diary.work_order_id = owned_or_404(db, models.DBWorkOrder, client.id, body.work_order_id, "Work order")
     _replace_diary_lines(db, diary, body.labour, body.plant)
+    moved = apply_work_updates(db, client.id, job_or_404(db, client.id, diary.job_id), body.work_updates, diary.diary_date, actor_name)
     db.commit()
     db.refresh(diary)
-    return {"ok": True, "diary": diary_dict(db, diary, detail=True)}
+    return {"ok": True, "diary": diary_dict(db, diary, detail=True), "planning": {"tasks": moved[0], "activities": moved[1]},
+            "message": "Saved.%s" % planning_note(*moved)}
 
 
 @router.post("/api/diary/{diary_id}/submit")

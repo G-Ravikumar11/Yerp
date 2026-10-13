@@ -40,7 +40,10 @@ export interface DiaryInput {
   safety_note: string
   labour: LabourLine[]
   plant: PlantLine[]
+  /** Planned work the day reports done: tasks ticked, activities now so far along. Applied to Planning & Progress on save. */
+  work_updates?: WorkUpdate[]
 }
+export type WorkUpdate = { task_id: number; done: boolean } | { activity_id: number; percent: number }
 export interface LabourHistory { summary: { mandays: number; days_worked: number; average_gang: number; labour_cost: number; rain_hours: number }; by_trade: { trade: string; mandays: number; cost: number }[] }
 
 export const useDiaries = (job: number) => useQuery({ queryKey: ['diary', 'list', job], enabled: job > 0, queryFn: () => get<{ diaries: DiaryRow[]; summary: DiarySummary }>(`/api/diary?job_id=${job}`) })
