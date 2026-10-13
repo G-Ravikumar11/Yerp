@@ -3,6 +3,9 @@ import { ArrowLeft, Paperclip } from 'lucide-react'
 import { Button, ConfirmDialog, Skeleton } from '@/components/ui'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 import { chatKeys, removeMessage, setClosed, useThread, type Message } from '@/api/chat'
+import { apiUrl } from '@/lib/api'
+import { FileViewer, openOutside, useFileBlob } from '@/components/data/FileView'
+import { Capacitor } from '@capacitor/core'
 import { useAction } from '@/lib/mutate'
 import { cn } from '@/lib/utils'
 import { Composer } from './Composer'
@@ -44,8 +47,8 @@ export function MessagePane({ id, onBack }: { id: number; onBack: () => void }) 
             <div className={cn('inline-block whitespace-pre-wrap rounded-2xl px-3 py-2 text-left text-sm', m.mine ? 'bg-primary text-primary-foreground' : 'bg-muted')}>
               {m.deleted ? <em className="opacity-70">message removed</em> : body(m.body)}
               {m.files.map((f) => f.is_image
-                ? <a key={f.id} href={f.url} target="_blank" rel="noopener"><img src={f.thumb_url} alt={f.name} className="mt-1 block max-h-56 max-w-56 rounded-lg" onError={(e) => { e.currentTarget.src = f.url }} /></a>
-                : <a key={f.id} href={f.url} target="_blank" rel="noopener" className="mt-1 flex items-center gap-1 text-xs underline"><Paperclip className="size-3" /> {f.name}</a>)}
+                ? <ChatPicture key={f.id} f={f} />
+                : <a key={f.id} href={apiUrl(f.url)} target="_blank" rel="noopener" onClick={Capacitor.isNativePlatform() ? (e) => { e.preventDefault(); void openOutside(f.id) } : undefined} className="mt-1 flex items-center gap-1 text-xs underline"><Paperclip className="size-3" /> {f.name}</a>)}
             </div>
             <p className="mx-1.5 mt-0.5 text-[11px] text-subtle">{when(m.created_at)}{m.mine && !m.deleted && <> - <button type="button" className="underline-offset-2 hover:underline" onClick={() => setRemoving(m)}>remove</button></>}</p>
           </div>
@@ -55,5 +58,18 @@ export function MessagePane({ id, onBack }: { id: number; onBack: () => void }) 
       {t.closed ? <p className="border-t border-border p-3 text-center text-sm text-muted-foreground">This thread is closed. Reopen it to say more.</p> : <Composer thread={id} />}
       <ConfirmDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)} title="Take this message back?" description="It stays in the thread as removed." confirmLabel="Remove it" tone="danger" loading={remove.isPending} onConfirm={() => { if (removing) remove.mutate(removing) }} />
     </div>
+  )
+}
+
+function ChatPicture({ f }: { f: { id: number; name: string; url: string; thumb_url: string } }) {
+  const [open, setOpen] = useState(false)
+  const thumb = useFileBlob(f.thumb_url)
+  return (
+    <>
+      <button type="button" className="mt-1 block" onClick={() => setOpen(true)} aria-label={`Open ${f.name}`}>
+        {thumb.src ? <img src={thumb.src} alt={f.name} className="block max-h-56 max-w-56 rounded-lg" /> : <span className="text-xs underline">{thumb.failed ? `Open ${f.name}` : 'Loading...'}</span>}
+      </button>
+      {open && <FileViewer name={f.name} id={f.id} onClose={() => setOpen(false)} />}
+    </>
   )
 }

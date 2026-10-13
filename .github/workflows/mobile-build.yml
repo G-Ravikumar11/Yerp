@@ -10,6 +10,7 @@ on:
   push:
     branches:
       - main
+      - master
       - abhi
     paths:
       - 'frontend/**'
@@ -23,14 +24,16 @@ jobs:
   build-android:
     name: Build Android (APK & Play Store AAB)
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # to publish the screens as a release (over-the-air updates)
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: 'npm'
           cache-dependency-path: |
             frontend/package.json
@@ -53,6 +56,7 @@ jobs:
         working-directory: frontend
         env:
           VITE_API_BASE_URL: ${{ inputs.api_base_url || secrets.VITE_API_BASE_URL || 'https://yerp-production.up.railway.app' }}
+          VITE_WEB_VERSION: ${{ github.run_number }}
         run: npm run build:mobile
 
       - name: Initialize Android Platform & Sync Capacitor
@@ -83,11 +87,16 @@ jobs:
 
       - name: Build Debug APK (For Immediate Phone Testing)
         working-directory: mobile/android
+        env:
+          APP_VERSION_CODE: ${{ github.run_number }}
+          APP_VERSION_NAME: 1.0.${{ github.run_number }}
         run: ./gradlew assembleDebug --no-daemon
 
       - name: Build Release App Bundle (AAB for Google Play Store)
         working-directory: mobile/android
         env:
+          APP_VERSION_CODE: ${{ github.run_number }}
+          APP_VERSION_NAME: 1.0.${{ github.run_number }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -107,6 +116,26 @@ jobs:
           path: mobile/android/app/build/outputs/bundle/release/*.aab
           retention-days: 14
 
+      # Over-the-air updates: the screens alone, as web-<run>.zip on a release tagged web-v<run>. The server's
+      # /api/app/web/latest points phones at the newest one, and they fetch it themselves, with no APK to install.
+      # mobile/web-min-native.txt is the oldest APK (by version code) the screens work in: raise it to the run number
+      # of the build that first carries any new native plugin, so older phones are not given screens they cannot run.
+      - name: Publish the screens for over-the-air updates
+        if: github.ref_name == 'master' || github.ref_name == 'abhi'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          n=${{ github.run_number }}
+          min=$(tr -dc '0-9' < mobile/web-min-native.txt); min=${min:-0}
+          (cd frontend/dist && zip -qr "$GITHUB_WORKSPACE/web-$n.zip" .)
+          gh release delete "web-v$n" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "web-v$n" "web-$n.zip" --target "$GITHUB_SHA" --title "Screens $n"             --notes "Screens of build $n (${GITHUB_SHA::7}).
+          min_native=$min"
+          # Keep the newest ten.
+          gh release list --limit 200 --json tagName -q '.[].tagName' | grep '^web-v' | sed 's/^web-v//' | sort -n | head -n -10 |
+            while read -r old; do gh release delete "web-v$old" --yes --cleanup-tag; done
+
   # =========================================================================
   # 2. iOS Build (macOS Apple Silicon Runner) -> Produces Xcode Archive
   # =========================================================================
@@ -117,10 +146,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: 'npm'
           cache-dependency-path: |
             frontend/package.json
@@ -136,6 +165,7 @@ jobs:
         working-directory: frontend
         env:
           VITE_API_BASE_URL: ${{ inputs.api_base_url || secrets.VITE_API_BASE_URL || 'https://yerp-production.up.railway.app' }}
+          VITE_WEB_VERSION: ${{ github.run_number }}
         run: npm run build:mobile
 
       - name: Initialize iOS Platform & Sync Capacitor
