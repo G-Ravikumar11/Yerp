@@ -104,6 +104,8 @@ for a code offered beside the cell, and every edit to the head written into the
 history. Their measurement book and RA bills follow the client-side shape,
 with the retention held by us.
 
+**AI in Planning** — on the Planning & Progress page, with the Groq key already used by the other AI features: *Draft with AI* proposes an order of work and dates for the lines of a work order, *Suggest tasks* turns the day's running, overdue and starting activities into a short list, *Check for delays* flags late and slipping work, and a question box answers from the programme's own figures. The model only writes words; every suggestion is checked against the project's real work order lines, activities and dates, and nothing is saved until someone presses Add. The delay flags are plain rules and work with no key.
+
 **Subcontractor register** — every gang with its vendor code (IV0001 onwards)
 and its Sub Contractor Registration Form, box for box: personal details, PAN,
 GST, Aadhaar, bank, the documents collected and the declaration. A gang
@@ -151,7 +153,7 @@ projects have no BOQ yet. HO QS is the only one in the business, with the
 Master, who opens a vendor code, a work order (the client's or a sub
 contractor's, a copy or an amendment) or a BOQ; nobody on a site does, and the
 boxes cannot be ticked for anybody else by hand. The coordinator sees all of it,
-follows it up and keeps drafts up to date. A tender won by somebody else waits
+follows it up and keeps drafts up to date, and starts nothing new (no project, tender, bill or variation either). A tender won by somebody else waits
 for HO QS to draw up its work order.
 
 HO QS also sits on the approval ladder, right after the project manager: what a site raises goes to

@@ -62,6 +62,13 @@ class ProgressIn(BaseModel):
     note: Optional[str] = ""
 
 
+class TaskIn(BaseModel):
+    text: Optional[str] = None
+    date: Optional[str] = None
+    activity_id: Optional[int] = None
+    done: Optional[bool] = None
+
+
 class FromWorkOrderIn(BaseModel):
     start: str
     finish: str

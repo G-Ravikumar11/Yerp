@@ -64,33 +64,16 @@ def test_days_are_stored_tidily():
     assert main.clean_working_days("1, 2 ,3") == "1,2,3"
 
 
-def test_switching_auto_clock_in_off_stops_it_on_a_working_day_too():
-    class S:
-        working_days = "1,2,3,4,5"
-        auto_clock_in = False
-    assert main.should_auto_clock_in(S(), date(2026, 8, 10)) is False
-
-    class T:
-        working_days = "1,2,3,4,5"
-        auto_clock_in = True
-    assert main.should_auto_clock_in(T(), date(2026, 8, 10)) is True
-    assert main.should_auto_clock_in(T(), date(2026, 8, 9)) is False
-
-
 # --- settings ----------------------------------------------------------------
 
 def test_settings_expose_the_new_fields(tenant):
     body = tenant.get("/api/attendance/settings").json()
     assert body["working_days"] == "1,2,3,4,5"
-    assert body["auto_clock_in"] is True
 
 
 def test_hr_can_change_them(tenant):
-    tenant.put("/api/attendance/settings",
-               json={"working_days": "1,2,3,4,5,6", "auto_clock_in": False})
-    body = tenant.get("/api/attendance/settings").json()
-    assert body["working_days"] == "1,2,3,4,5,6"
-    assert body["auto_clock_in"] is False
+    tenant.put("/api/attendance/settings", json={"working_days": "1,2,3,4,5,6"})
+    assert tenant.get("/api/attendance/settings").json()["working_days"] == "1,2,3,4,5,6"
 
 
 def test_saving_nonsense_days_cannot_empty_the_week(tenant):
@@ -100,13 +83,12 @@ def test_saving_nonsense_days_cannot_empty_the_week(tenant):
 
 # --- signing in --------------------------------------------------------------
 
-def test_sign_in_does_not_clock_in_when_auto_is_off(portal, tenant, staffer):
-    tenant.put("/api/attendance/settings", json={"auto_clock_in": False})
+def test_signing_in_does_not_clock_in(portal, tenant, staffer):
+    tenant.put("/api/attendance/settings", json={"working_days": "1,2,3,4,5,6,7"})
 
     res = login(portal, staffer)
     assert res.status_code == 200, res.text
     assert res.json()["clock_in"] == ""
-    assert res.json()["auto_clock_in"] is False
 
     today = portal.get("/api/employee/attendance/today").json()
     assert today["clocked_in"] is False
@@ -114,7 +96,6 @@ def test_sign_in_does_not_clock_in_when_auto_is_off(portal, tenant, staffer):
 
 def test_they_can_still_clock_in_by_hand(portal, tenant, staffer):
     """A day off is not a lock-out; people do work weekends."""
-    tenant.put("/api/attendance/settings", json={"auto_clock_in": False})
     login(portal, staffer)
 
     res = portal.post("/api/employee/attendance/clock-in", json={})
@@ -123,7 +104,6 @@ def test_they_can_still_clock_in_by_hand(portal, tenant, staffer):
 
 
 def test_hr_sees_no_attendance_for_a_sign_in_that_was_not_a_shift(portal, tenant, staffer):
-    tenant.put("/api/attendance/settings", json={"auto_clock_in": False})
     login(portal, staffer)
 
     rows = tenant.get("/api/attendance").json()
@@ -131,26 +111,17 @@ def test_hr_sees_no_attendance_for_a_sign_in_that_was_not_a_shift(portal, tenant
     assert mine == []
 
 
-def test_sign_in_still_clocks_in_when_the_tenant_wants_it(portal, tenant, staffer):
-    """Unchanged for anyone happy with the old behaviour, on a working day."""
-    tenant.put("/api/attendance/settings",
-               json={"auto_clock_in": True, "working_days": "1,2,3,4,5,6,7"})
-    res = login(portal, staffer)
-    assert res.json()["clock_in"]
-    assert portal.get("/api/employee/attendance/today").json()["clocked_in"] is True
-
-
-def test_a_second_sign_in_does_not_start_a_second_shift(portal, tenant, staffer):
-    tenant.put("/api/attendance/settings",
-               json={"auto_clock_in": True, "working_days": "1,2,3,4,5,6,7"})
-    first = login(portal, staffer).json()["clock_in"]
+def test_a_second_sign_in_after_clocking_in_keeps_the_same_shift(portal, tenant, staffer):
+    tenant.put("/api/attendance/settings", json={"working_days": "1,2,3,4,5,6,7"})
+    login(portal, staffer)
+    first = portal.post("/api/employee/attendance/clock-in", json={}).json()["clock_in"]
     again = login(portal, staffer).json()
     assert again["clock_in"] == first
 
 
 def test_the_portal_is_told_whether_today_is_a_working_day(portal, tenant, staffer):
     tenant.put("/api/attendance/settings",
-               json={"auto_clock_in": False, "working_days": "1,2,3,4,5,6,7"})
+               json={"working_days": "1,2,3,4,5,6,7"})
     login(portal, staffer)
     assert portal.get("/api/employee/attendance/today").json()["is_working_day"] is True
 

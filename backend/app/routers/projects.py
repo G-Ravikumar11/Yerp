@@ -13,7 +13,7 @@ from app.constants.common import DRAWING_STATUSES
 from app.constants.crm import OPEN_INVOICE_STATUSES
 from app.constants.projects import DRAWING_DISCIPLINES, JOB_CLOSED_STATUSES, JOB_FINISHED, WEATHER
 from app.core.audit import log_audit
-from app.core.auth import (get_client_user, owned_or_404, require_erp_read, require_items_access, require_owner,
+from app.core.auth import (get_client_user, owned_or_404, refuse_ho_coordinator, require_erp_read, require_items_access, require_owner,
                             session_person, wo_actor)
 from app.core.cache import cached_read
 from app.core.config import logger
@@ -31,6 +31,7 @@ from app.schemas.projects import (
     JobIn,
     JobStateIn,
     ProgressIn,
+    TaskIn,
     SiteLocationIn,
 )
 from app.services import purge
@@ -60,7 +61,12 @@ from app.services.projects import (
     parse_position,
     preload_pnl,
     project_pnl,
+    check_task,
+    schedule_day,
     schedule_view,
+    sync_progress_from_tasks,
+    task_dict,
+    task_or_404,
 )
 from app.services.subcontract_orders import work_order_or_404
 from app.validators.common import validate_job_money, validate_job_status
@@ -231,6 +237,7 @@ def get_job(job_id: int, request: Request, db: Session = Depends(get_db)):
 
 @router.post("/api/jobs")
 def create_job(body: JobIn, request: Request, db: Session = Depends(get_db)):
+    refuse_ho_coordinator(request, db, "Projects")
     client = require_items_access(request, db, "workorders.manage")
     name = (body.name or "").strip()
     if not name:
@@ -853,6 +860,67 @@ def job_schedule(job_id: int, request: Request, db: Session = Depends(get_db)):
     return schedule_view(db, client.id, job_or_404(db, client.id, job_id))
 
 
+@router.get("/api/jobs/{job_id}/schedule/day")
+def job_schedule_day(job_id: int, request: Request, on: str = "", db: Session = Depends(get_db)):
+    """The plan for one day (today when none is given): the work due, how far along it is, what is overdue, what is next."""
+    client = require_erp_read(request, db)
+    day = _d(on) if on else None
+    if on and day is None:
+        raise HTTPException(400, "Give the date as YYYY-MM-DD.")
+    return schedule_day(db, client.id, job_or_404(db, client.id, job_id), day)
+
+
+@router.post("/api/jobs/{job_id}/schedule/tasks")
+def add_task(job_id: int, body: TaskIn, request: Request, db: Session = Depends(get_db)):
+    """Something to be done on a day, optionally under one of the project's activities."""
+    client, _, actor_name = wo_actor(request, db, "site.record")
+    job = job_or_404(db, client.id, job_id)
+    words, day = check_task(db, client.id, job, body.text, body.date, body.activity_id)
+    t = models.DBScheduleTask(client_id=client.id, job_id=job.id, activity_id=body.activity_id or None, task_date=day,
+                              text=words, created_by_name=actor_name)
+    db.add(t)
+    db.flush()
+    sync_progress_from_tasks(db, client.id, t.activity_id, actor_name)
+    db.commit()
+    return {"ok": True, "task": task_dict(t)}
+
+
+@router.put("/api/schedule/tasks/{task_id}")
+def edit_task(task_id: int, body: TaskIn, request: Request, db: Session = Depends(get_db)):
+    """Change a task's words, day or activity, or tick it done (or back)."""
+    client, _, actor_name = wo_actor(request, db, "site.record")
+    t = task_or_404(db, client.id, task_id)
+    was_under = t.activity_id
+    if body.text is not None or body.date is not None or body.activity_id is not None:
+        job = job_or_404(db, client.id, t.job_id)
+        t.text, t.task_date = check_task(db, client.id, job, body.text if body.text is not None else t.text,
+                                         body.date if body.date is not None else t.task_date,
+                                         body.activity_id if body.activity_id is not None else t.activity_id)
+        if body.activity_id is not None:
+            t.activity_id = body.activity_id or None
+    if body.done is not None and bool(body.done) != bool(t.done):
+        t.done = bool(body.done)
+        t.done_by_name = actor_name if t.done else ""
+        t.done_at = datetime.now().strftime("%Y-%m-%d %H:%M") if t.done else ""
+    db.flush()
+    for under in {was_under, t.activity_id}:
+        sync_progress_from_tasks(db, client.id, under, actor_name)
+    db.commit()
+    return {"ok": True, "task": task_dict(t)}
+
+
+@router.delete("/api/schedule/tasks/{task_id}")
+def delete_task(task_id: int, request: Request, db: Session = Depends(get_db)):
+    client, _, actor_name = wo_actor(request, db, "site.record")
+    t = task_or_404(db, client.id, task_id)
+    under = t.activity_id
+    db.delete(t)
+    db.flush()
+    sync_progress_from_tasks(db, client.id, under, actor_name)
+    db.commit()
+    return {"ok": True}
+
+
 @router.post("/api/jobs/{job_id}/schedule/activities")
 def add_activity(job_id: int, body: ActivityIn, request: Request, db: Session = Depends(get_db)):
     client, _, _ = wo_actor(request, db)
@@ -895,6 +963,9 @@ def delete_activity(activity_id: int, request: Request, db: Session = Depends(ge
             {"depends_on_id": a.depends_on_id}, synchronize_session=False)
     db.query(models.DBScheduleProgress).filter(
         models.DBScheduleProgress.activity_id == a.id).delete()
+    # A task that was under it stays on its day, as a task of the project.
+    db.query(models.DBScheduleTask).filter(models.DBScheduleTask.activity_id == a.id).update(
+        {"activity_id": None}, synchronize_session=False)
     job_id = a.job_id
     db.delete(a)
     db.commit()

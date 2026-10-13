@@ -51,8 +51,11 @@ export const persistOptions = {
   buster: typeof __BUILD__ === 'undefined' ? 'dev' : __BUILD__,
   dehydrateOptions: {
     // What was read and is still held - including a query whose refresh has just failed for want of signal, which keeps its last answer.
-    // Never one with nothing to show.
-    shouldDehydrateQuery: (q: { state: { status: string; data: unknown } }) => q.state.data !== undefined && q.state.status !== 'pending',
+    // Never one with nothing to show, and never the clock: whether somebody is working right now is not something to
+    // read back from yesterday's tab. A saved "working" outlived the shift it described and showed a counter still
+    // running for somebody who had signed out.
+    shouldDehydrateQuery: (q: { queryKey: readonly unknown[]; state: { status: string; data: unknown } }) =>
+      q.state.data !== undefined && q.state.status !== 'pending' && !(q.queryKey[0] === 'staff' && (q.queryKey[1] === 'clock' || q.queryKey[1] === 'today')),
   },
 }
 

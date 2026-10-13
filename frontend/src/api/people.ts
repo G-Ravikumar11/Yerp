@@ -123,10 +123,9 @@ export interface EmployeeInput {
 export const createEmployee = (b: EmployeeInput) => post<{ id: number; employee_id: string; first_name: string; site_names?: string[]; message: string }>('/api/employees', b)
 export const updateEmployee = (id: number, b: Partial<EmployeeInput> & Record<string, unknown>) => put<{ message?: string }>(`/api/employees/${id}`, b)
 export const setAccess = (id: number, b: { permission_role: string; permissions: string[] }) => put<{ message: string }>(`/api/employees/${id}/permissions`, b)
-export const resetPassword = (id: number, password: string) => post<{ message: string }>(`/api/employees/${id}/reset-password`, { password })
 /** Removes the person for good, with their payslips, attendance, leave and documents. The Master only. */
 export const deleteEmployee = (id: number) => del<{ message: string }>(`/api/employees/${id}`)
-export const startOffboarding = (id: number) => post<{ message: string }>(`/api/employees/${id}/offboard`)
+export const setEmployeeStatus = (id: number, to: 'onboard' | 'offboard' | 'terminate') => post<{ message: string; status: string }>(`/api/employees/${id}/${to}`)
 
 export type DepartmentInput = { name: string; description: string; color: string; icon: string }
 export const saveDepartment = (id: number | null, b: DepartmentInput) => (id ? put<Department>(`/api/departments/${id}`, b) : post<Department>('/api/departments', b))

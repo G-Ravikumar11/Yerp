@@ -18,6 +18,7 @@
     measurement_reader.py    read a measurement sheet (photo, PDF, text) into book rows
     measurement_ask.py       answer a question about an order's measurement book
     compliance_reader.py     read a licence or insurance paper into the add-a-paper form
+    planning.py              draft a programme from a work order, suggest the day's tasks, flag delays, answer questions about the plan
     drawing_3d.py            trace a floor plan picture into walls and rooms for the Drawings 3D view
 
 To add a function: write a new file here with its own `router = APIRouter()`, call `llm_client.ask` / `ask_json`
@@ -25,9 +26,9 @@ inside `guard.run_feature`, and add the module to FEATURES below. Nothing else i
 The model reads and writes words; anything that changes money, approves or deletes is done by a person.
 """
 from app.ai import (bill_review, compliance_reader, contractor_brief, drawing_3d, hard_copy_check, measurement_analysis,
-                    measurement_ask, measurement_reader, po_review, po_supplier_email, quote_comparison, quote_reader, status)
+                    measurement_ask, measurement_reader, planning, po_review, po_supplier_email, quote_comparison, quote_reader, status)
 
 FEATURES = (status, hard_copy_check, bill_review, contractor_brief, po_review, po_supplier_email, quote_comparison, quote_reader,
-            measurement_analysis, measurement_reader, compliance_reader, measurement_ask, drawing_3d)
+            measurement_analysis, measurement_reader, compliance_reader, measurement_ask, planning, drawing_3d)
 
 routers = [module.router for module in FEATURES]

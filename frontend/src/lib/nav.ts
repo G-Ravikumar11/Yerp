@@ -58,7 +58,7 @@ export const NAV: NavEntry[] = [
     icon: Building2,
     items: [
       { label: 'Projects', path: '/projects', perm: 'reports.view' },
-      { label: 'Programme & Progress', path: '/projects/programme' },
+      { label: 'Planning & Progress', path: '/projects/programme' },
       { label: 'Drawings', path: '/projects/drawings' },
       { label: 'Quality', path: '/projects/quality' },
       { label: 'Safety', path: '/projects/safety' },

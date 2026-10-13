@@ -1,12 +1,10 @@
-"""Signing in starts a shift only on a working day.
+"""Signing in never clocks anybody in; a shift starts when the person presses Clock in.
 
-That rule is deliberate - somebody opening the portal on a Sunday to check a
-document is not at work - but four tests had been asserting the opposite by
-accident, because they ran on weekdays and never on a Saturday. This pins both
-halves of the rule against a fixed day rather than against today.
+Opening the portal to read a payslip, or to check a document on a Sunday, is not
+being at work - and with a shift started for them the time counted from the
+moment they signed in rather than from when they arrived. So the button is the
+only way a shift starts, for each employee separately, on any day.
 """
-from datetime import date
-
 import pytest
 
 import main
@@ -19,76 +17,105 @@ def _reset_limiter():
     yield
 
 
-class Settings:
-    """Only the two attributes the rule reads."""
-
-    def __init__(self, working_days="1,2,3,4,5", auto_clock_in=True):
-        self.working_days = working_days
-        self.auto_clock_in = auto_clock_in
+def sign_in(client, emp):
+    res = client.post("/api/employee/auth/login", json={"email": emp["email"], "password": "EmpPass123"})
+    assert res.status_code == 200, res.text
+    return res.json()
 
 
-MONDAY = date(2026, 8, 17)
-SATURDAY = date(2026, 8, 15)
-SUNDAY = date(2026, 8, 16)
+def test_signing_in_does_not_clock_you_in(client, tenant):
+    work_every_day(tenant)     # a working day whenever the suite runs
+    emp = make_employee(tenant, password="EmpPass123")
+    body = sign_in(client, emp)
+    assert not body["clock_in"]
+    today = client.get("/api/employee/attendance/today").json()
+    assert today["clocked_in"] is False
 
 
-# --- the rule itself, against fixed dates ------------------------------------
-
-def test_a_weekday_starts_a_shift():
-    assert main.should_auto_clock_in(Settings(), MONDAY) is True
-
-
-@pytest.mark.parametrize("day", [SATURDAY, SUNDAY])
-def test_the_weekend_does_not(day):
-    assert main.should_auto_clock_in(Settings(), day) is False
+def test_signing_in_on_a_day_off_does_not_either(client, tenant):
+    emp = make_employee(tenant, password="EmpPass123")
+    assert not sign_in(client, emp)["clock_in"]
 
 
-def test_a_tenant_can_choose_to_work_weekends():
-    weekends_too = Settings(working_days="1,2,3,4,5,6,7")
-    assert main.should_auto_clock_in(weekends_too, SATURDAY) is True
-    assert main.should_auto_clock_in(weekends_too, SUNDAY) is True
-
-
-def test_a_tenant_can_turn_the_whole_thing_off():
-    """Some businesses do not want signing in to count as attendance at all."""
-    off = Settings(auto_clock_in=False)
-    assert main.should_auto_clock_in(off, MONDAY) is False
-
-
-def test_a_saturday_only_business():
-    assert main.should_auto_clock_in(Settings(working_days="6"), SATURDAY) is True
-    assert main.should_auto_clock_in(Settings(working_days="6"), MONDAY) is False
-
-
-# --- and through the API, so the wiring is covered too ------------------------
-
-def test_signing_in_on_a_working_day_clocks_you_in(client, tenant):
+def test_pressing_clock_in_starts_the_shift(client, tenant):
     work_every_day(tenant)
     emp = make_employee(tenant, password="EmpPass123")
-    res = client.post("/api/employee/auth/login",
-                      json={"email": emp["email"], "password": "EmpPass123"})
-    assert res.status_code == 200, res.text
-    assert res.json()["clock_in"], "a working day must start the shift"
-
-
-def test_signing_in_on_a_non_working_day_does_not(client, tenant):
-    """The setting is emptied of every day, so no date can be a working day -
-    the assertion then holds whatever day the suite runs on."""
-    tenant.put("/api/attendance/settings", json={"auto_clock_in": False})
-    emp = make_employee(tenant, password="EmpPass123")
-    res = client.post("/api/employee/auth/login",
-                      json={"email": emp["email"], "password": "EmpPass123"})
-    assert res.status_code == 200, res.text
-    assert not res.json()["clock_in"]
-
-
-def test_they_can_still_clock_in_by_hand(client, tenant):
-    """The point of the rule: coming in on a day off is allowed, it just is not
-    automatic."""
-    tenant.put("/api/attendance/settings", json={"auto_clock_in": False})
-    emp = make_employee(tenant, password="EmpPass123")
-    client.post("/api/employee/auth/login",
-                json={"email": emp["email"], "password": "EmpPass123"})
-
+    sign_in(client, emp)
     res = client.post("/api/employee/attendance/clock-in", json={})
     assert res.status_code == 200, res.text
+    today = client.get("/api/employee/attendance/today").json()
+    assert today["clocked_in"] is True and today["clock_in"] == res.json()["clock_in"]
+    assert client.post("/api/employee/attendance/clock-in", json={}).status_code == 400, "once a day"
+
+
+def test_they_can_clock_in_by_hand_on_a_day_off(client, tenant):
+    """Coming in on a day off is allowed; it just is not automatic."""
+    emp = make_employee(tenant, password="EmpPass123")
+    sign_in(client, emp)
+    assert client.post("/api/employee/attendance/clock-in", json={}).status_code == 200
+
+
+def test_a_break_can_only_be_taken_once_clocked_in(client, tenant):
+    emp = make_employee(tenant, password="EmpPass123")
+    sign_in(client, emp)
+    assert client.post("/api/employee/attendance/break-start").status_code == 400, "not clocked in yet"
+    client.post("/api/employee/attendance/clock-in", json={})
+    assert client.post("/api/employee/attendance/break-start").status_code == 200
+    today = client.get("/api/employee/attendance/today").json()
+    assert today["is_on_break"] is True
+    assert client.post("/api/employee/attendance/break-stop").status_code == 200
+    assert client.get("/api/employee/attendance/today").json()["is_on_break"] is False
+
+
+def test_each_employee_clocks_in_for_themselves(client, portal, tenant):
+    a = make_employee(tenant, password="EmpPass123")
+    b = make_employee(tenant, password="EmpPass123")
+    sign_in(client, a)
+    sign_in(portal, b)
+    client.post("/api/employee/attendance/clock-in", json={})
+    assert client.get("/api/employee/attendance/today").json()["clocked_in"] is True
+    assert portal.get("/api/employee/attendance/today").json()["clocked_in"] is False, "one person's click is not everybody's"
+
+
+def test_the_old_setting_is_gone_from_the_settings(tenant):
+    assert "auto_clock_in" not in tenant.get("/api/attendance/settings").json()
+
+
+def test_the_server_gives_the_second_the_counter_starts_from(client, tenant):
+    emp = make_employee(tenant, password="EmpPass123")
+    sign_in(client, emp)
+    client.post("/api/employee/attendance/clock-in", json={})
+    body = client.get("/api/employee/attendance/today").json()
+    assert isinstance(body["elapsed_seconds"], int) and 0 <= body["elapsed_seconds"] < 60
+    assert body["break_elapsed_seconds"] == 0
+    client.post("/api/employee/attendance/break-start")
+    on_break = client.get("/api/employee/attendance/today").json()
+    assert on_break["is_on_break"] and on_break["break_elapsed_seconds"] >= 0
+
+
+def test_a_short_break_is_not_rounded_to_a_tenth_of_a_minute(client, tenant):
+    """Rounded to 6 seconds, the counter on the clock jumped when a break ended."""
+    import time
+    emp = make_employee(tenant, password="EmpPass123")
+    sign_in(client, emp)
+    client.post("/api/employee/attendance/clock-in", json={})
+    client.post("/api/employee/attendance/break-start")
+    time.sleep(1.2)
+    spent = client.post("/api/employee/attendance/break-stop").json()["break_minutes"]
+    assert 0.015 <= spent < 0.1, "a second or two is kept as a second or two, not rounded to 0 or 0.1: %r" % spent
+
+
+def test_the_clock_is_told_how_long_a_working_day_is(client, tenant):
+    emp = make_employee(tenant, password="EmpPass123")
+    sign_in(client, emp)
+    assert client.get("/api/employee/attendance/today").json()["target_hours"] == 8.0, "8 hours until HR sets the day"
+
+
+def test_the_working_day_follows_the_start_and_end_hr_set(client, tenant):
+    # set first: the owner and the member of staff share this browser, and signing in replaces the owner
+    assert tenant.put("/api/attendance/settings", json={"work_start": "09:00", "work_end": "17:30"}).status_code == 200
+    emp = make_employee(tenant, password="EmpPass123")
+    sign_in(client, emp)
+    assert client.get("/api/employee/attendance/today").json()["target_hours"] == 8.5
+    client.post("/api/employee/attendance/clock-in", json={})
+    assert client.get("/api/employee/attendance/today").json()["target_hours"] == 8.5, "and once they are working"

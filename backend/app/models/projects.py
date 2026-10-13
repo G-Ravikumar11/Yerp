@@ -169,6 +169,24 @@ class DBScheduleActivity(Base):
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
+class DBScheduleTask(Base):
+    """A thing to be done on a given day: "pour the slab, 8 labourers", optionally under one of the project's
+    activities. Ticked off when it is done, with who ticked it and when."""
+    __tablename__ = "schedule_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    activity_id = Column(Integer, ForeignKey("schedule_activities.id"), nullable=True, index=True)
+    task_date = Column(String, default="", index=True)
+    text = Column(String, default="")
+    done = Column(Boolean, default=False)
+    done_by_name = Column(String, default="")
+    done_at = Column(String, default="")
+    created_by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
 class DBScheduleProgress(Base):
     """Progress reported on an activity that is not measured in the book -
     dated, so the S-curve can be drawn for any week in the past."""

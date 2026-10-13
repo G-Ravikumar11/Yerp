@@ -124,6 +124,9 @@ PERMISSION_KEYS = {p["key"] for p in PORTAL_PERMISSIONS}
 # The rights only HO QS (and the Master) can hold, whatever else is ticked.
 HO_QS_ONLY = frozenset(p["key"] for p in PORTAL_PERMISSIONS if p.get("only_role") == "ho_qs")
 HO_QS_ONLY_ROLES = frozenset({"ho_qs", "owner"})
+# The HO Coordinator follows up and keeps drafts current; it starts nothing new: no project, tender, bill
+# or variation. (It still edits what is already open.)
+HO_FOLLOW_UP_ONLY_ROLES = frozenset({"ho_coordinator"})
 # What is said to somebody who tries one of them: who does it instead.
 HO_QS_ONLY_REFUSAL = {
     "vendors.create": "Vendor codes are opened by HO QS",
@@ -242,8 +245,8 @@ PERMISSION_ROLES = [
         "code": "ho_coordinator", "label": "HO Coordinator", "rank": 2, "head_office": True,
         "description": "Head office coordinator. Sees every vendor, work order, BOQ and "
                        "bill on every site, follows up whatever is waiting and keeps "
-                       "drafts up to date. Does not open vendor codes, work orders or "
-                       "BOQs - HO QS does.",
+                       "drafts up to date. Starts nothing new: no vendor codes, work "
+                       "orders, BOQs, projects, tenders, bills or variations.",
         "permissions": list(_HEAD_OFFICE),
     },
     # The first presets, before the list followed the departments. Still

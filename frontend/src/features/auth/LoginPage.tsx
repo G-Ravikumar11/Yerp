@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Button, Field, Input } from '@/components/ui'
-import { api } from '@/lib/api'
+import { Capacitor } from '@capacitor/core'
+import { api, ApiError } from '@/lib/api'
 import { AuthLayout, Notice, nextTarget } from './AuthLayout'
 import { appUrl } from '@/lib/paths'
 
@@ -12,6 +13,11 @@ const ERRORS: Record<string, string> = {
   google_unknown: 'No account here uses that Google address. Ask whoever set up your access.',
   account_disabled: 'That account has been disabled.',
   google_unconfigured: 'Google sign-in is not set up on this server yet.',
+  yahoo_failed: 'Yahoo sign-in did not complete. Try again.',
+  yahoo_no_email: 'Yahoo did not share an email address.',
+  yahoo_unverified: 'That Yahoo address is not verified.',
+  yahoo_unknown: 'No account here uses that Yahoo address. Ask whoever set up your access.',
+  yahoo_unconfigured: 'Yahoo sign-in is not set up on this server yet.',
   gmail_sign_in_first: 'Sign in first, then connect Gmail from inside the app.',
 }
 
@@ -24,6 +30,8 @@ const STEPS: [string, string][] = [
 ]
 
 const go = (to: string) => window.location.assign(to)
+// Inside the native app there is no website to go back to, and Google's sign-in page cannot hand its cookie back.
+const native = Capacitor.isNativePlatform()
 
 /** One door for the whole business: the server decides whether the address is the account holder's or a member of staff's. */
 export default function LoginPage() {
@@ -32,6 +40,7 @@ export default function LoginPage() {
   const [error, setError] = useState(code ? (ERRORS[code] ?? 'Something went wrong. Please try again.') : '')
   const [company, setCompany] = useState('')
   const [google, setGoogle] = useState(false)
+  const [yahoo, setYahoo] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
@@ -39,6 +48,7 @@ export default function LoginPage() {
   useEffect(() => {
     api<{ company_name?: string }>('/api/public/brand', { quiet: true }).then((b) => b?.company_name && setCompany(b.company_name)).catch(() => undefined)
     api<{ configured?: boolean }>('/api/auth/google/status', { quiet: true }).then((d) => setGoogle(!!d?.configured)).catch(() => undefined)
+    api<{ configured?: boolean }>('/api/auth/yahoo/status', { quiet: true }).then((d) => setYahoo(!!d?.configured)).catch(() => undefined)
     if (params.get('signedout')) {
       // Arrived from Sign out: end whatever sign-in this browser still holds, and show the form.
       for (const u of ['/api/client/logout', '/api/employee/auth/logout', '/api/portal/logout']) void api(u, { method: 'POST', quiet: true }).catch(() => undefined)
@@ -61,11 +71,17 @@ export default function LoginPage() {
     setBusy(true)
     setError('')
     try {
-      const owner = await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password }, quiet: true }).catch(() => null)
+      // A refused password is an answer; no answer at all (no signal, server down) is a different problem.
+      let unreachable = false
+      const none = (e: unknown) => {
+        if (!(e instanceof ApiError)) unreachable = true
+        return null
+      }
+      const owner = await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password }, quiet: true }).catch(none)
       if (owner) return go(owner.is_onboarded === false ? nextTarget(appUrl('onboard')) : nextTarget(appUrl()))
-      const staff = await api('/api/employee/auth/login', { method: 'POST', body: { email: email.trim(), password, device_info: navigator.userAgent.slice(0, 200) }, quiet: true }).catch(() => null)
+      const staff = await api('/api/employee/auth/login', { method: 'POST', body: { email: email.trim(), password, device_info: navigator.userAgent.slice(0, 200) }, quiet: true }).catch(none)
       if (staff) return go(nextTarget(appUrl()))
-      setError('That email and password did not match an account.')
+      setError(unreachable ? 'Could not reach the server. Check the connection and try again.' : 'That email and password did not match an account.')
     } finally {
       setBusy(false)
     }
@@ -99,13 +115,16 @@ export default function LoginPage() {
         <Field label="Password" htmlFor="password"><Input id="password" type="password" autoComplete="current-password" required placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
         <Button type="submit" loading={busy} className="w-full">Sign in</Button>
       </form>
-      {google && (
+      {(google || yahoo) && !native && (
         <>
           <div className="my-5 flex items-center gap-3 text-xs uppercase text-muted-foreground"><span className="h-px flex-1 bg-border" />or<span className="h-px flex-1 bg-border" /></div>
-          <Button type="button" variant="outline" className="w-full" onClick={() => go('/api/auth/google/start?next=' + encodeURIComponent(nextTarget(appUrl())))}>Continue with Google</Button>
+          <div className="grid gap-2">
+            {google && <Button type="button" variant="outline" className="w-full" onClick={() => go('/api/auth/google/start?next=' + encodeURIComponent(nextTarget(appUrl())))}>Continue with Google</Button>}
+            {yahoo && <Button type="button" variant="outline" className="w-full" onClick={() => go('/api/auth/yahoo/start?next=' + encodeURIComponent(nextTarget(appUrl())))}>Continue with Yahoo</Button>}
+          </div>
         </>
       )}
-      <p className="mt-5 text-center text-sm"><a className="text-muted-foreground hover:text-primary" href="/">&larr; Back to website</a></p>
+      {!native && <p className="mt-5 text-center text-sm"><a className="text-muted-foreground hover:text-primary" href="/">&larr; Back to website</a></p>}
     </AuthLayout>
   )
 }
