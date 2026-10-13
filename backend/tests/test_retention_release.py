@@ -1,4 +1,4 @@
-"""Retention released: claimed back from the client, or paid out to a gang.
+"""Retention released: claimed back from the client, or paid out to a contractor.
 
 Retention is held on every certified bill. Until now the app could say how
 much was held and nothing more - no document ever brought it back, so it
@@ -117,7 +117,7 @@ def test_the_project_money_counts_it(tenant):
     assert after["outstanding"] == before.json()["outstanding"] + 2500
 
 
-def gang_with_retention(tenant, **over):
+def contractor_with_retention(tenant, **over):
     order = live_order(tenant, retention_percent=5, **over)
     item = sub_book(tenant, order["id"])["lines"][0]["item_id"]
     sub_measure(tenant, order["id"], item, 100)
@@ -127,8 +127,8 @@ def gang_with_retention(tenant, **over):
     return order, tenant.get("/api/sub-bills/%d" % bill["id"]).json()
 
 
-def test_a_gangs_retention_is_released_as_money_we_owe(tenant):
-    order, bill = gang_with_retention(tenant)
+def test_a_contractors_retention_is_released_as_money_we_owe(tenant):
+    order, bill = contractor_with_retention(tenant)
     held = bill["retention_amount"]
     p = position(tenant, "contractor", order["id"])
     assert p["held"] == held and p["party"].startswith("Sri Balaji")
@@ -143,18 +143,18 @@ def test_a_gangs_retention_is_released_as_money_we_owe(tenant):
     assert paid.json()["entry"]["direction"] == "OUT"
     assert tenant.get("/api/sub-bills?order_id=%d" % order["id"]).json()["summary"]["retention_held"] == held - held / 2
     inward = [x for x in tenant.get("/api/gst/inward").json()["supplies"] if x["kind"] == "Retention release"]
-    assert not inward          # the gang's bill already carried the GST
+    assert not inward          # the contractor's bill already carried the GST
     assert r["gst_amount"] == 0 and r["net_amount"] == held / 2
 
 
-def test_a_gang_whose_defects_period_has_run_out_is_flagged(tenant):
-    order, bill = gang_with_retention(tenant, commencement_date="2024-01-01", completion_date="2024-06-30")
+def test_a_contractor_whose_defects_period_has_run_out_is_flagged(tenant):
+    order, bill = contractor_with_retention(tenant, commencement_date="2024-01-01", completion_date="2024-06-30")
     p = position(tenant, "contractor", order["id"])
     assert p["dlp_ends"] == "2025-06-30" and p["dlp_over"]
     items = {i["kind"]: i for i in tenant.get("/api/attention").json()["items"]}
-    assert items["retention_gangs"]["value"] == bill["retention_amount"]
+    assert items["retention_contractors"]["value"] == bill["retention_amount"]
     release(tenant, "contractor", order["id"], bill["retention_amount"], stage="End of defects period")
-    assert "retention_gangs" not in {i["kind"] for i in tenant.get("/api/attention").json()["items"]}
+    assert "retention_contractors" not in {i["kind"] for i in tenant.get("/api/attention").json()["items"]}
 
 
 def test_the_release_prints(tenant):

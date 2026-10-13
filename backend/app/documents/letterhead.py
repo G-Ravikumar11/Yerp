@@ -95,7 +95,7 @@ def party_facts(gstin, pan, state=""):
 
 
 def party_card(db, client_id, name):
-    """Whoever a statement is for, looked up by name among the gangs, the
+    """Whoever a statement is for, looked up by name among the contractors, the
     suppliers and the customers, with what is on file about them."""
     key = norm_name(name or "")
     for con in db.query(models.DBContractor).filter(models.DBContractor.client_id == client_id).all():

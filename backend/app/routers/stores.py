@@ -17,7 +17,7 @@ from app.schemas.stores import AdjustmentIn, StockIssueIn, TransferIn
 from app.services.projects import job_or_404
 from app.services.stores import (
     _replace_issue_lines,
-    charge_issue_to_gang,
+    charge_issue_to_contractor,
     issue_dict,
     issue_or_404,
     item_rate,
@@ -235,7 +235,7 @@ def post_stock_issue(issue_id: int, request: Request, body: dict = None,
                                  "delivery in first, or post it anyway if the "
                                  "store is behind." % "; ".join(short[:4]))
 
-    # Handed to a gang whose rate includes the material: the order says which
+    # Handed to a contractor whose rate includes the material: the order says which
     # project it was spent on, and it has to be known before the stock moves
     # or the movements are written against no project at all.
     recover_order = None
@@ -262,7 +262,7 @@ def post_stock_issue(issue_id: int, request: Request, body: dict = None,
     # It is theirs to pay for, recovered from their next bill on its own.
     charged = 0.0
     if recover_order:
-        charged = charge_issue_to_gang(db, client.id, issue, recover_order,
+        charged = charge_issue_to_contractor(db, client.id, issue, recover_order,
                                        float((body or {}).get("markup_percent") or 0))
         issue.issued_to = issue.issued_to or ("Recover from " + (recover_order.wo_number or ""))
     log_audit(db, client.id, "stock_issued", "stock_issue", issue.id,

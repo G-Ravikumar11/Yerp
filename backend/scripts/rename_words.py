@@ -1,4 +1,4 @@
-"""Renames the words people read - "owner" to "Master", "gang" to "contractor" - in the server's messages and the
+"""Renames the words people read - "owner" to "Master" - in the server's messages and the
 text it prints on documents. Only string literals that read as words (they hold a space, or are one of the label
 words) are touched, and never docstrings: identifiers, keys and stored values stay as they are.
 
@@ -9,7 +9,7 @@ import re
 import sys
 import tokenize
 
-LABELS = {"Owner", "Owners", "Gang", "Gangs", "OWNER", "GANG"}
+LABELS = {"Owner", "Owners", "OWNER"}
 
 
 def replace_words(text):
@@ -17,10 +17,6 @@ def replace_words(text):
     text = re.sub(r"\bOWNERS\b", "MASTERS", text)
     text = re.sub(r"\bOWNER\b", "MASTER", text)
     text = re.sub(r"\b[Oo]wner(s?)('s|s')?(?![A-Za-z])", lambda m: "Master%s%s" % (m.group(1), m.group(2) or ""), text)
-    text = re.sub(r"\bGANGS\b", "CONTRACTORS", text)
-    text = re.sub(r"\bGANG\b", "CONTRACTOR", text)
-    text = re.sub(r"\bGang(s?)('s|s')?(?![A-Za-z])", lambda m: "Contractor%s%s" % (m.group(1), m.group(2) or ""), text)
-    text = re.sub(r"\bgang(s?)('s|s')?(?![A-Za-z])", lambda m: "contractor%s%s" % (m.group(1), m.group(2) or ""), text)
     return text
 
 

@@ -693,7 +693,7 @@ def labour_history(job_id: int, request: Request, db: Session = Depends(get_db))
             "mandays": money(sum(r["mandays"] for r in daily)),
             "labour_cost": money(sum(r["labour_cost"] for r in daily)),
             "plant_cost": money(sum(r["plant_cost"] for r in daily)),
-            "average_gang": (round(sum(r["mandays"] for r in worked) / len(worked), 1)
+            "average_crew": (round(sum(r["mandays"] for r in worked) / len(worked), 1)
                              if worked else 0.0),
             "rain_hours": money(sum(r["rain_hours"] for r in daily)),
         },

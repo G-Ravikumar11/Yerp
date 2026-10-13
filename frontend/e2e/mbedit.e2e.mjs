@@ -5,7 +5,7 @@ await signIn(page)
 
 // --- An approved order with one entry, made through the API -------------------------------------
 const vocab = (await api(page, 'GET', '/api/wo/vocabulary')).data
-const gang = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
+const contractor = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
 const unit = (await api(page, 'GET', '/api/wo/business-units')).data.business_units[0]
 const job = vocab.jobs[0]
 let budgets = (await api(page, 'GET', `/api/wo/projects/${job.id}/budgets`)).data.budgets
@@ -13,7 +13,7 @@ if (!budgets.length) {
   await api(page, 'POST', `/api/wo/projects/${job.id}/budgets`, { name: 'E2E civil', code: 'E2E', allocated_amount: 90000000 })
   budgets = (await api(page, 'GET', `/api/wo/projects/${job.id}/budgets`)).data.budgets
 }
-const created = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: gang.id, job_id: job.id, department: 'Civil', subject: 'E2E change a measurement', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
+const created = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: contractor.id, job_id: job.id, department: 'Civil', subject: 'E2E change a measurement', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
 await api(page, 'PUT', `/api/wo/orders/${created.id}/boq`, {
   lines: [{ activity_no: '1.0', item_description: 'Plastering walls', uom: 'sqm', quantity: 500, unit_rate: 300, budget_id: budgets[0].id }],
 })

@@ -7,7 +7,7 @@ laid out the way the site office has always set them:
   column A and what was written against them in column B: the vendor code,
   the personal details, the bank, the documents collected, the declaration.
 
-  The gang's RA bill - three sheets. The Top Sheet is the certificate of
+  The contractor's RA bill - three sheets. The Top Sheet is the certificate of
   payment (what was earned, the GST on it, what comes off, what is paid);
   AB-1 is the abstract (each item up to the previous bill, in this bill, and
   up to this bill); MB-1 is the measurement book the abstract's quantities

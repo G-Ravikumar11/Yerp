@@ -83,7 +83,7 @@ export function Orders() {
 
 const tone = (where: string) => (/paid/.test(where) ? 'success' : /sent back/.test(where) ? 'danger' : /passed|accepted/.test(where) ? 'warning' : 'neutral') as 'success' | 'danger' | 'warning' | 'neutral'
 
-export function Bills({ gang }: { gang: boolean }) {
+export function Bills({ contractor }: { contractor: boolean }) {
   const qc = useQueryClient()
   const q = usePortal<{ bills: PortalBill[] }>('bills', '/api/portal/bills')
   const [error, setError] = useState('')
@@ -100,18 +100,18 @@ export function Bills({ gang }: { gang: boolean }) {
     <div className="grid gap-5">
       <h2 className="text-lg font-semibold">Your bills</h2>
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
-      <Table label="Bills" head={['Bill', 'Where it is', gang ? 'Work claimed' : 'Before tax', 'Payable', 'Paid', 'Left']} empty="No bills yet." right={[2, 3, 4, 5]}>
+      <Table label="Bills" head={['Bill', 'Where it is', contractor ? 'Work claimed' : 'Before tax', 'Payable', 'Paid', 'Left']} empty="No bills yet." right={[2, 3, 4, 5]}>
         {(q.data?.bills ?? []).map((b) => (
           <tr key={b.id}>
             <td className={td}><span className="font-mono">{b.number}</span><div className="text-xs text-muted-foreground">{formatDate(b.date)}</div></td>
             <td className={td}><Badge tone={tone(b.where)}>{b.where}</Badge>{b.note && <div className="text-xs text-muted-foreground">{b.note}</div>}</td>
-            <td className={td + ' text-right'}>{formatINR(b.claimed)}<div className="text-xs text-muted-foreground">{gang && (b.retention || b.tds || b.deductions) ? `retention ${formatINR(b.retention)}${b.deductions ? `, recoveries ${formatINR(b.deductions)}` : ''}, TDS ${formatINR(b.tds)}, GST ${formatINR(b.gst)}` : `GST ${formatINR(b.gst)}`}</div></td>
+            <td className={td + ' text-right'}>{formatINR(b.claimed)}<div className="text-xs text-muted-foreground">{contractor && (b.retention || b.tds || b.deductions) ? `retention ${formatINR(b.retention)}${b.deductions ? `, recoveries ${formatINR(b.deductions)}` : ''}, TDS ${formatINR(b.tds)}, GST ${formatINR(b.gst)}` : `GST ${formatINR(b.gst)}`}</div></td>
             <td className={td + ' text-right font-semibold'}>{formatINR(b.net)}</td>
             <td className={td + ' text-right'}>{formatINR(b.paid)}</td>
             <td className={td + ' text-right'}>
               {formatINR(b.left)}
               {b.pdf && <div><Button size="sm" variant="outline" asChild><a href={b.pdf} target="_blank" rel="noopener noreferrer">PDF</a></Button></div>}
-              {gang && b.pdf && (b.can_accept ? <div><Button size="sm" variant="outline" onClick={() => accept(b.id)}>Accept</Button></div> : <div className="text-xs text-muted-foreground">Accepted by {b.accepted_by}{b.accepted_at ? `, ${b.accepted_at}` : ''}</div>)}
+              {contractor && b.pdf && (b.can_accept ? <div><Button size="sm" variant="outline" onClick={() => accept(b.id)}>Accept</Button></div> : <div className="text-xs text-muted-foreground">Accepted by {b.accepted_by}{b.accepted_at ? `, ${b.accepted_at}` : ''}</div>)}
             </td>
           </tr>
         ))}

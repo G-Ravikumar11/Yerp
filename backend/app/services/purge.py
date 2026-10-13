@@ -209,7 +209,7 @@ def project_owned(db):
 
 def delete_project(db, request, client, job):
     counts = {}
-    # A gang's work orders first, each with everything its own delete takes (its bills, measurements, payments).
+    # A contractor's work orders first, each with everything its own delete takes (its bills, measurements, payments).
     from app.services.subcontract_orders import wo_delete_order_now
     for o in db.query(models.DBSubcontractOrder.id).filter(
             models.DBSubcontractOrder.client_id == client.id, models.DBSubcontractOrder.job_id == job.id).all():

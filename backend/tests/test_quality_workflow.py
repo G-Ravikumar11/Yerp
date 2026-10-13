@@ -344,8 +344,8 @@ def test_who_may_do_what_on_an_ncr(tenant, portal):
     n = tenant.post("/api/qc/ncrs", json={"job_id": j["id"], "description": "Cover short on slab"}).json()["ncr"]
     base = "/api/qc/ncrs/%d" % n["id"]
     signed_in(tenant, portal, "staff")                    # may record, may not sign off
-    assert portal.post(base + "/assign", json={"responsible": "Gang A", "target_date": day(4)}).status_code == 403
-    tenant.post(base + "/assign", json={"responsible": "Gang A", "target_date": day(4)})
+    assert portal.post(base + "/assign", json={"responsible": "Contractor A", "target_date": day(4)}).status_code == 403
+    tenant.post(base + "/assign", json={"responsible": "Contractor A", "target_date": day(4)})
     assert portal.post(base + "/work", json={"corrective_done": "Re-laid"}).status_code == 200
     assert portal.post(base + "/request-verification").status_code == 200
     assert portal.post(base + "/verify", json={"result": "verified"}).status_code == 403
@@ -358,7 +358,7 @@ def test_a_serious_ncr_needs_its_root_cause_and_evidence_before_verification(ten
     n = tenant.post("/api/qc/ncrs", json={"job_id": j["id"], "description": "Column out of plumb", "severity": "Major"}).json()["ncr"]
     base = "/api/qc/ncrs/%d" % n["id"]
     assert n["needs_root_cause"]
-    tenant.post(base + "/assign", json={"responsible": "Gang A", "target_date": day(4)})
+    tenant.post(base + "/assign", json={"responsible": "Contractor A", "target_date": day(4)})
     tenant.post(base + "/work", json={"corrective_done": "Jacked and propped"})
     assert tenant.post(base + "/request-verification").status_code == 409                    # no root cause
     tenant.post(base + "/work", json={"corrective_done": "Jacked and propped", "root_cause": "Shuttering moved during the pour"})

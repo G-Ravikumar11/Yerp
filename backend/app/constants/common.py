@@ -85,11 +85,11 @@ SUB_TRANSITIONS = {
 
 HARDCOPY_TYPES = ("application/pdf", "image/jpeg", "image/png")
 
-# STORES: SITE TO SITE, AND MATERIAL CHARGED TO A GANG
+# STORES: SITE TO SITE, AND MATERIAL CHARGED TO A CONTRACTOR
 #
 # Cement left over at one site is sent to the next; that is a transfer, not
 # consumption, and it moves at what the stock cost rather than at a new price.
-# Material handed to a gang whose rate includes it is theirs to pay for: it is
+# Material handed to a contractor whose rate includes it is theirs to pay for: it is
 # recovered from their next bill on its own, up to what that bill can bear,
 # and the project is credited back so the same cement is not counted twice.
 TRANSFER_KINDS = ("TRANSFER_OUT", "TRANSFER_IN")
@@ -132,7 +132,7 @@ PERMIT_PRECAUTIONS = {
 #
 # The register above says how much is being held. This is what brings it
 # back: a release on the client at practical completion or at the end of the
-# defects period, and the same thing the other way for the gangs whose
+# defects period, and the same thing the other way for the contractors whose
 # retention we hold. A release is a bill in its own right - it goes in the
 # party's ledger, is received or paid through the same box as any other, ages
 # in what is owed, and carries the GST the RA bills left off, because each of
@@ -143,7 +143,7 @@ RETENTION_STAGES = ("Practical completion", "End of defects period",
 # THE PARTNER PORTAL
 #
 # "Has my bill been passed? When is the money coming?" is most of the phone
-# calls a site office takes from gangs and suppliers. Each of them can now
+# calls a site office takes from contractors and suppliers. Each of them can now
 # sign in and see it for themselves: their orders, their bills and where each
 # one is, what has been paid and when, and a running statement. A supplier
 # can send an invoice in, which lands as a draft for the office to check.
@@ -222,7 +222,7 @@ IMPORT_SHEETS = {
         "columns": [("contractor", "Contractor"), ("project", "Project"), ("department", "Department"),
                     ("subject", "Subject"), ("commencement_date", "Start Date"), ("completion_date", "End Date")],
         "aliases": {
-            "contractor": ["contractor", "subcontractor", "vendor", "vendorname", "gang", "party",
+            "contractor": ["contractor", "subcontractor", "vendor", "vendorname", "party",
                           "company", "contractorname", "agency"],
             "project": ["project", "job", "site", "projectname", "jobname", "sitename"],
             "department": ["department", "dept", "trade", "discipline"],

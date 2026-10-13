@@ -67,7 +67,7 @@ check('the decision is in the trail with its author', /Approved - failed/.test(a
 // ---- the NCR, from the failed inspection
 await inDialog('Raise NCR')
 await page.waitForSelector('#nc-who')
-await fill(page, '#nc-who', `Shuttering gang ${stamp}`)
+await fill(page, '#nc-who', `Shuttering contractor ${stamp}`)
 await setValue(page, '#nc-sev', 'Major')
 await setValue(page, '#nc-by', nextDate(5))
 await inDialog('Raise it')
@@ -84,7 +84,7 @@ check('one failure gets one NCR', dup.status === 409, dup.data?.detail)
 
 await inDialog('Assign')
 await page.waitForSelector('#na-who')
-await fill(page, '#na-who', `Shuttering gang ${stamp}`)
+await fill(page, '#na-who', `Shuttering contractor ${stamp}`)
 await setValue(page, '#na-by', nextDate(5))
 await inDialog('Assign')
 await waitForToast(page, 'assigned')

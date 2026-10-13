@@ -20,7 +20,7 @@ export const useIssues = () => useQuery({ queryKey: ['stock', 'issues'], queryFn
 export const useStores = () => useQuery({ queryKey: ['stock', 'stores'], queryFn: async () => (await get<{ stores: { store: string; value: number }[] }>('/api/stock/stores')).stores ?? [] })
 export const useConsumption = (wo: number) => useQuery({ queryKey: ['stock', 'consumption', wo], enabled: wo > 0, queryFn: () => get<Consumption>(`/api/stock/consumption/${wo}`) })
 export const usePlacedOrders = () => useQuery({ queryKey: ['stock', 'placed-orders'], queryFn: async () => ((await get<{ work_orders: { id: number; number: string; job_name: string; status: string }[] }>('/api/erp/work-orders')).work_orders ?? []).filter((w) => w.status !== 'Draft') })
-export const useGangOrders = () => useQuery({ queryKey: ['stock', 'gang-orders'], queryFn: async () => ((await get<{ orders: { id: number; wo_number: string; contractor: string; status: string }[] }>('/api/wo/orders')).orders ?? []).filter((o) => o.status === 'APPROVED' || o.status === 'EXECUTED') })
+export const useContractorOrders = () => useQuery({ queryKey: ['stock', 'contractor-orders'], queryFn: async () => ((await get<{ orders: { id: number; wo_number: string; contractor: string; status: string }[] }>('/api/wo/orders')).orders ?? []).filter((o) => o.status === 'APPROVED' || o.status === 'EXECUTED') })
 
 export const countStock = (item_code: string, counted: number) => post<{ message: string; difference: number }>('/api/stock/adjustments', { item_code, counted, remarks: 'Physical count' })
 export interface IssueInput { work_order_id: number | null; job_id: number | null; store: string; issued_on: string; issued_to: string; purpose: string; lines: { item_code: string; quantity: number; rate: number }[] }

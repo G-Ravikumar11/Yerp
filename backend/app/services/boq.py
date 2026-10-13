@@ -252,7 +252,7 @@ BOQ_ITEM_CODE = re.compile(r"^[A-Z0-9][A-Z0-9._/\-]{0,29}$")
 
 def boq_check_typed_codes(db, client_id, lines):
     """An item code typed on a line is the code of that work everywhere: it must be one code for one line, and it becomes a
-    finished good in the item master under that code if it is not there already - so the client's work order, the gangs'
+    finished good in the item master under that code if it is not there already - so the client's work order, the contractors'
     orders, the measurement book and the bills all carry the very code that was typed. A code that is already one of
     this business's finished goods is taken as it is."""
     seen = {}
@@ -307,8 +307,8 @@ def boq_issue_codes(db, client_id, lines):
     return given
 
 
-def boq_given_to_gangs(db, client_id, keys=None):
-    """{boq key: what the gangs have been given against it}, from the orders that are still alive."""
+def boq_given_to_contractors(db, client_id, keys=None):
+    """{boq key: what the contractors have been given against it}, from the orders that are still alive."""
     q = db.query(models.DBSubcontractItem, models.DBSubcontractOrder).join(
         models.DBSubcontractOrder, models.DBSubcontractOrder.id == models.DBSubcontractItem.order_id).filter(
         models.DBSubcontractOrder.client_id == client_id, models.DBSubcontractItem.boq_key != "",
@@ -334,11 +334,11 @@ def boq_given_to_gangs(db, client_id, keys=None):
 
 
 def boq_over_allotments(db, client_id, keys):
-    """Words for each BOQ line the given keys name whose gang orders now add up to more than the BOQ quantity."""
+    """Words for each BOQ line the given keys name whose contractor orders now add up to more than the BOQ quantity."""
     keys = {k for k in keys if k}
     if not keys:
         return []
-    given = boq_given_to_gangs(db, client_id, keys)
+    given = boq_given_to_contractors(db, client_id, keys)
     current = {}
     for boq in db.query(models.DBBoq).filter(models.DBBoq.client_id == client_id).all():
         rev = db.query(models.DBBoqRevision.id).filter(
@@ -357,7 +357,7 @@ def boq_over_allotments(db, client_id, keys):
 def boq_tracker_data(db, client, boq):
     rev = boq_revision_of(db, boq)
     lines = db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id).order_by(models.DBBoqLine.display_order).all()
-    given = boq_given_to_gangs(db, client.id, {l.key for l in lines if l.kind in BOQ_PRICED})
+    given = boq_given_to_contractors(db, client.id, {l.key for l in lines if l.kind in BOQ_PRICED})
     item_ids = [i for g in given.values() for i in g["items"]]
     done = dict(db.query(models.DBSubMeasurement.item_id, func.coalesce(func.sum(models.DBSubMeasurement.quantity), 0.0)).filter(
         models.DBSubMeasurement.item_id.in_(item_ids or [0])).group_by(models.DBSubMeasurement.item_id).all())
@@ -372,8 +372,8 @@ def boq_tracker_data(db, client, boq):
             code = (wl.fg_code or "").upper()
             client_done[code] = client_done.get(code, 0.0) + m.get(wl.id, 0.0)
             client_billed[code] = client_billed.get(code, 0.0) + b.get(wl.id, 0.0)
-    rows, flags = [], {"no_gang": 0, "over_allotted": 0, "loss": 0, "over_executed": 0}
-    totals = {"value": 0.0, "given_cost": 0.0, "client_billed": 0.0, "gang_billed": 0.0}
+    rows, flags = [], {"no_contractor": 0, "over_allotted": 0, "loss": 0, "over_executed": 0}
+    totals = {"value": 0.0, "given_cost": 0.0, "client_billed": 0.0, "contractor_billed": 0.0}
     for l in lines:
         if l.kind == "section":
             rows.append({"kind": "section", "group_code": l.group_code or "", "description": l.description})
@@ -381,17 +381,17 @@ def boq_tracker_data(db, client, boq):
         if l.kind not in BOQ_PRICED:
             continue
         g = given.get(l.key, {"qty": 0.0, "cost": 0.0, "items": [], "orders": []})
-        gang_rate = unit_rate(g["cost"] / g["qty"]) if g["qty"] else 0.0
+        contractor_rate = unit_rate(g["cost"] / g["qty"]) if g["qty"] else 0.0
         executed = money(sum(done.get(i, 0.0) for i in g["items"]))
-        gang_billed = money(sum(billed.get(i, 0.0) for i in g["items"]))
+        contractor_billed = money(sum(billed.get(i, 0.0) for i in g["items"]))
         code = (l.item_code or "").upper()
         c_done, c_billed = money(client_done.get(code, 0.0)), money(client_billed.get(code, 0.0))
         row_flags = []
         if (l.quantity or 0) > 0 and not g["qty"]:
-            row_flags.append("no_gang")
+            row_flags.append("no_contractor")
         if g["qty"] > (l.quantity or 0) + 0.0001:
             row_flags.append("over_allotted")
-        if g["qty"] and gang_rate > (l.rate or 0) + 0.0001:
+        if g["qty"] and contractor_rate > (l.rate or 0) + 0.0001:
             row_flags.append("loss")
         if max(executed, c_done) > (l.quantity or 0) + 0.0001:
             row_flags.append("over_executed")
@@ -400,13 +400,13 @@ def boq_tracker_data(db, client, boq):
         totals["value"] += l.amount or 0
         totals["given_cost"] += g["cost"]
         totals["client_billed"] += c_billed * (l.rate or 0)
-        totals["gang_billed"] += gang_billed * gang_rate
+        totals["contractor_billed"] += contractor_billed * contractor_rate
         rows.append({"kind": l.kind, "key": l.key, "group_code": l.group_code or "", "description": l.description, "uom": l.uom or "",
                      "item_code": l.item_code or "", "quantity": money(l.quantity), "rate": unit_rate(l.rate), "amount": money(l.amount),
-                     "given": money(g["qty"]), "gang_rate": gang_rate, "gang_cost": money(g["cost"]), "orders": g["orders"],
+                     "given": money(g["qty"]), "contractor_rate": contractor_rate, "contractor_cost": money(g["cost"]), "orders": g["orders"],
                      "left_to_give": money(max(0.0, (l.quantity or 0) - g["qty"])),
-                     "executed": executed, "gang_billed": gang_billed, "client_executed": c_done, "client_billed": c_billed,
-                     "margin_percent": round(((l.rate or 0) - gang_rate) / l.rate * 100, 1) if g["qty"] and l.rate else None,
+                     "executed": executed, "contractor_billed": contractor_billed, "client_executed": c_done, "client_billed": c_billed,
+                     "margin_percent": round(((l.rate or 0) - contractor_rate) / l.rate * 100, 1) if g["qty"] and l.rate else None,
                      "percent_done": round(max(executed, c_done) / l.quantity * 100, 1) if l.quantity else 0.0,
                      "flags": row_flags})
     return {"boq": boq_head(db, boq, rev), "rows": rows, "flags": flags,

@@ -76,7 +76,7 @@ from app.schemas.subcontract_orders import (
     WorkTypeIn,
 )
 from app.services.approvals import owner_label, raised_by_owner
-from app.services.boq import boq_given_to_gangs, boq_lines_of_job, boq_over_allotments, boq_tie_subcontract_lines
+from app.services.boq import boq_given_to_contractors, boq_lines_of_job, boq_over_allotments, boq_tie_subcontract_lines
 from app.services.crm import norm_name
 from app.services.subcontract_orders import (
     _vendor_or_404,
@@ -1158,7 +1158,7 @@ def work_orders_delete_all_preview(request: Request, db: Session = Depends(get_d
 
 @router.post("/api/work-orders/delete-all")
 def work_orders_delete_all(request: Request, body: dict = None, db: Session = Depends(get_db)):
-    """Every work order - given to gangs and received from clients - with everything attached
+    """Every work order - given to contractors and received from clients - with everything attached
     to each. The owner's alone, and only with the phrase typed out: there is no undoing it,
     so a backup is taken first (Settings, Alerts & data)."""
     client = get_client_user(request, db)
@@ -1292,7 +1292,7 @@ def wo_update_business_unit(unit_id: int, body: BusinessUnitIn, request: Request
 @router.put("/api/wo/contractors/{con_id}")
 def wo_update_contractor(con_id: int, body: ContractorIn, request: Request,
                          db: Session = Depends(get_db)):
-    """The gang's particulars as the order, the bill and the TDS return need them."""
+    """The contractor's particulars as the order, the bill and the TDS return need them."""
     client = require_items_access(request, db, ("workorders.manage", "billing.manage"))
     con = db.query(models.DBContractor).filter(models.DBContractor.id == con_id,
                                                models.DBContractor.client_id == client.id).first()
@@ -1567,14 +1567,14 @@ def wo_charge_budget(order_id: int, body: ChargeBudgetIn, request: Request,
 
 @router.post("/api/wo/orders/{order_id}/boq-lines")
 def wo_add_boq_lines(order_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
-    """Lines of the project BOQ, ready to go into a gang order's schedule: pick them by key, give the quantity and the
-    gang's rate. Returns them as schedule lines (nothing saved) with a warning where a line would be over-allotted."""
+    """Lines of the project BOQ, ready to go into a contractor order's schedule: pick them by key, give the quantity and the
+    contractor's rate. Returns them as schedule lines (nothing saved) with a warning where a line would be over-allotted."""
     client, _, _ = wo_actor(request, db)
     order = wo_or_404(db, client.id, order_id)
     wanted = body.get("lines") or []
     keys = [str(w.get("key") or "") for w in wanted]
     found = {l.key: l for l in boq_lines_of_job(db, client.id, order.job_id) if l.key in set(keys)}
-    given = boq_given_to_gangs(db, client.id, set(keys))
+    given = boq_given_to_contractors(db, client.id, set(keys))
     out, warn = [], []
     for w in wanted:
         l = found.get(str(w.get("key") or ""))

@@ -632,7 +632,7 @@ def project_pnl(db, client_id, job, pre=None):
         if p.id not in billed_pos
         and (p.status or "") in ("Approved", "Awaiting Approval")))
 
-    # What the gangs have billed us for and we have agreed to pay. This was
+    # What the contractors have billed us for and we have agreed to pay. This was
     # missing entirely, which flattered every project by the whole of its
     # subcontract cost.
     subcontract = money(sum(b.this_bill or 0 for b in pre["sub"].get(job.id, [])) - taken_sub.get("taxable", 0.0))
@@ -641,7 +641,7 @@ def project_pnl(db, client_id, job, pre=None):
     # in the equipment register, so the diary lists only plant that is not.
     equipment = money((pre.get("equipment") or {}).get(job.id, 0.0))
 
-    # Material issued to a gang and taken back out of their bill: its cost is
+    # Material issued to a contractor and taken back out of their bill: its cost is
     # inside what they billed, so it comes off here or it is counted twice.
     recovered = money((pre.get("recovered") or {}).get(job.id, 0.0))
 
@@ -673,7 +673,7 @@ def project_pnl(db, client_id, job, pre=None):
             "labour": labour,
             "plant": plant,
             "equipment": equipment,
-            "material_recovered_from_gangs": recovered,
+            "material_recovered_from_contractors": recovered,
             "incurred": incurred,
             "committed_not_yet_billed": committed,
             "forecast": money(incurred + committed),

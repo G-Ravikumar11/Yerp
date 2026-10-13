@@ -26,7 +26,7 @@ def test_material_bought_for_a_job_and_issued_to_it_is_counted_once(tenant):
 
 
 def test_cost_by_project_agrees_with_project_profit(tenant):
-    """The two screens told two stories: a job with a gang bill, a signed
+    """The two screens told two stories: a job with a contractor bill, a signed
     diary and cement issued from the store showed nothing incurred."""
     wo = placed_order(tenant, qty=1000, rate=100)
     job_id = tenant.get("/api/erp/work-orders/%d" % wo["id"]).json()["job_id"]

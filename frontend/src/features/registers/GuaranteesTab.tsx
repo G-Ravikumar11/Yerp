@@ -34,7 +34,7 @@ export function GuaranteesTab() {
   )
 }
 
-/** Advances given to gangs, and how much has come back through their bills. */
+/** Advances given to contractors, and how much has come back through their bills. */
 export function AdvancesTab() {
   const q = useAdvances()
   const s = q.data?.summary

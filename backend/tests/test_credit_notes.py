@@ -83,7 +83,7 @@ def test_work_taken_back_can_be_billed_again(tenant):
     assert again.status_code in (200, 400, 409)
 
 
-def test_a_gang_bill_is_credited_too(tenant):
+def test_a_contractor_bill_is_credited_too(tenant):
     order = live_order(tenant, retention_percent=5)
     item = sub_book(tenant, order["id"])["lines"][0]["item_id"]
     sub_measure(tenant, order["id"], item, 100)

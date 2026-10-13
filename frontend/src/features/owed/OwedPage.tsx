@@ -59,17 +59,17 @@ export default function OwedPage() {
     { id: 'age', header: 'Age', cell: (r) => <div className="flex items-center gap-2"><Age r={r} />{r.doc_type && r.approved !== false && canPay && <Button size="sm" variant="outline" onClick={() => setSettle({ type: r.doc_type!, id: r.id, title: r.number, verb: 'Pay' })}>Pay</Button>}</div> },
   ]
 
-  const posCols = (gang: boolean): TableColumn<Position>[] => [
+  const posCols = (contractor: boolean): TableColumn<Position>[] => [
     { id: 'order', header: 'Order', cell: (p) => <div><span className="font-mono text-[13px] font-semibold">{p.order_number || '-'}</span><div className="text-xs text-muted-foreground">{p.project}</div></div> },
-    { id: 'party', header: gang ? 'Contractor' : 'Client', cell: (p) => p.party || '-' },
+    { id: 'party', header: contractor ? 'Contractor' : 'Client', cell: (p) => p.party || '-' },
     { id: 'held', header: 'Held', hideBelow: 'md', align: 'right', cell: (p) => <span className={money}>{formatINR(p.held)}</span> },
     { id: 'rel', header: 'Released', hideBelow: 'md', align: 'right', cell: (p) => <span className={money}>{formatINR(p.released)}</span> },
     { id: 'bal', header: 'Still held', align: 'right', cell: (p) => <span className={`${money} font-bold`}>{formatINR(p.balance)}</span> },
     {
       id: 'st',
-      header: gang ? 'Defects period' : 'Job',
+      header: contractor ? 'Defects period' : 'Job',
       cell: (p) =>
-        gang ? (p.dlp_ends ? (p.dlp_over && p.balance > 0 ? <Badge tone="warning">ended {p.dlp_ends} - pay it</Badge> : `ends ${p.dlp_ends}`) : <span className="text-muted-foreground">not set on the order</span>) : p.balance <= 0 ? <Badge tone="success">all released</Badge> : p.finished ? <Badge tone="danger">job finished - claim it</Badge> : <Badge>{p.job_status || 'running'}</Badge>,
+        contractor ? (p.dlp_ends ? (p.dlp_over && p.balance > 0 ? <Badge tone="warning">ended {p.dlp_ends} - pay it</Badge> : `ends ${p.dlp_ends}`) : <span className="text-muted-foreground">not set on the order</span>) : p.balance <= 0 ? <Badge tone="success">all released</Badge> : p.finished ? <Badge tone="danger">job finished - claim it</Badge> : <Badge>{p.job_status || 'running'}</Badge>,
     },
     { id: 'act', header: '', align: 'right', cell: (p) => (p.balance > 0 && canPay ? <Button size="sm" variant="outline" onClick={() => setReleasing(p)}>Release</Button> : null) },
   ]

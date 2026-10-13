@@ -1,4 +1,4 @@
-"""The project BOQ: read as the client sends it, coded from the item master, revised, and tracked against the gangs."""
+"""The project BOQ: read as the client sends it, coded from the item master, revised, and tracked against the contractors."""
 import io
 
 import openpyxl
@@ -152,7 +152,7 @@ def test_an_issued_revision_cannot_be_edited_by_saving(tenant):
     assert tenant.get("/api/boqs/%d" % boq["id"], params={"rev": 0}).json()["total"] == 1472800
 
 
-# --- gang orders against the BOQ ---------------------------------------------------------------------------------------
+# --- contractor orders against the BOQ ---------------------------------------------------------------------------------------
 
 def job_of_key(key):
     with main.SessionLocal() as db:
@@ -160,7 +160,7 @@ def job_of_key(key):
         return db.get(main.models.DBBoq, line.boq_id).job_id
 
 
-def gang_order(tenant, boq_lines, picks, order=None):
+def contractor_order(tenant, boq_lines, picks, order=None):
     """A draft sub contractor work order on the BOQ's project whose schedule is the BOQ lines picked: [(boq line, quantity, sub contractor rate)]."""
     order = order or draft(tenant, job_id=job_of_key(picks[0][0]["key"]))
     pulled = tenant.post("/api/wo/orders/%d/boq-lines" % order["id"],
@@ -170,10 +170,10 @@ def gang_order(tenant, boq_lines, picks, order=None):
     return order, pulled, res.json()
 
 
-def test_lines_are_pulled_from_the_boq_into_a_gang_order_and_keep_their_link(tenant):
+def test_lines_are_pulled_from_the_boq_into_a_contractor_order_and_keep_their_link(tenant):
     _, boq = make_boq(tenant)
     lines = {l["group_code"]: l for l in saved(tenant, boq)["lines"]}
-    order, pulled, res = gang_order(tenant, lines, [(lines["EXC"], 300, 150)])
+    order, pulled, res = contractor_order(tenant, lines, [(lines["EXC"], 300, 150)])
     assert pulled["lines"][0]["item_description"] == "Excavation in all types of soil" and pulled["warnings"] == []
     assert res["order"]["items"][0]["boq_key"] == lines["EXC"]["key"] and res["warnings"] == []
 
@@ -181,30 +181,30 @@ def test_lines_are_pulled_from_the_boq_into_a_gang_order_and_keep_their_link(ten
 def test_giving_more_than_the_boq_allows_is_warned_not_refused(tenant):
     _, boq = make_boq(tenant)
     lines = {l["group_code"]: l for l in saved(tenant, boq)["lines"]}
-    gang_order(tenant, lines, [(lines["EXC"], 300, 150)])
+    contractor_order(tenant, lines, [(lines["EXC"], 300, 150)])
     pulled = tenant.post("/api/wo/orders/%d/boq-lines" % draft(tenant, job_id=job_of_key(lines["EXC"]["key"]))["id"],
                          json={"lines": [{"key": lines["EXC"]["key"], "quantity": 300, "rate": 150}]}).json()
     assert "600" in pulled["warnings"][0] and "500" in pulled["warnings"][0]
-    _, _, res = gang_order(tenant, lines, [(lines["EXC"], 300, 150)])
+    _, _, res = contractor_order(tenant, lines, [(lines["EXC"], 300, 150)])
     assert res["warnings"] and "Over the BOQ" in res["message"]
 
 
-def test_the_tracker_adds_up_what_the_gangs_have_and_flags_what_is_wrong(tenant):
+def test_the_tracker_adds_up_what_the_contractors_have_and_flags_what_is_wrong(tenant):
     _, boq = make_boq(tenant)
     lines = {l["group_code"]: l for l in saved(tenant, boq)["lines"]}
-    gang_order(tenant, lines, [(lines["EXC"], 300, 150), (lines["RCC"], 120, 9000)])      # the second is at a loss
+    contractor_order(tenant, lines, [(lines["EXC"], 300, 150), (lines["RCC"], 120, 9000)])      # the second is at a loss
     t = tenant.get("/api/boqs/%d/tracker" % boq["id"]).json()
     rows = {r["group_code"]: r for r in t["rows"] if r["kind"] != "section"}
-    assert rows["EXC"]["given"] == 300 and rows["EXC"]["gang_rate"] == 150 and rows["EXC"]["left_to_give"] == 200
+    assert rows["EXC"]["given"] == 300 and rows["EXC"]["contractor_rate"] == 150 and rows["EXC"]["left_to_give"] == 200
     assert rows["EXC"]["margin_percent"] == round((180 - 150) / 180 * 100, 1) and rows["EXC"]["flags"] == []
-    assert "loss" in rows["RCC"]["flags"] and "no_gang" in rows["MAS"]["flags"] and "no_gang" in rows["FWK"]["flags"]
-    assert t["flags"]["loss"] == 1 and t["flags"]["no_gang"] == 2
+    assert "loss" in rows["RCC"]["flags"] and "no_contractor" in rows["MAS"]["flags"] and "no_contractor" in rows["FWK"]["flags"]
+    assert t["flags"]["loss"] == 1 and t["flags"]["no_contractor"] == 2
 
 
-def test_a_cancelled_gang_order_no_longer_counts_against_the_boq(tenant):
+def test_a_cancelled_contractor_order_no_longer_counts_against_the_boq(tenant):
     _, boq = make_boq(tenant)
     lines = {l["group_code"]: l for l in saved(tenant, boq)["lines"]}
-    order, _, _ = gang_order(tenant, lines, [(lines["EXC"], 300, 150)])
+    order, _, _ = contractor_order(tenant, lines, [(lines["EXC"], 300, 150)])
     tenant.post("/api/wo/orders/%d/cancel" % order["id"], json={"comments": "x"})
     rows = {r["group_code"]: r for r in tenant.get("/api/boqs/%d/tracker" % boq["id"]).json()["rows"] if r["kind"] != "section"}
     assert rows["EXC"]["given"] == 0
@@ -402,7 +402,7 @@ def test_the_code_typed_on_the_boq_is_the_code_on_every_document_made_from_it(te
     wo = tenant.post("/api/boqs/%d/client-order" % boq["id"], json={}).json()["work_order"]
     full = tenant.get("/api/erp/work-orders/%d" % wo["id"]).json()
     assert sorted(l["fg_code"] for l in full["lines"]) == sorted(typed.values())
-    # a gang's order pulls the line with the same code, and the tracker shows it
+    # a contractor's order pulls the line with the same code, and the tracker shows it
     key = [l for l in saved_boq["lines"] if l["item_code"] == "CIV-RCC-25"][0]["key"]
     pulled = tenant.post("/api/wo/orders/%d/boq-lines" % draft(tenant, job_id=job_of_key(key))["id"], json={"lines": [{"key": key, "quantity": 10, "rate": 100}]}).json()
     assert pulled["lines"][0]["item_code"] == "CIV-RCC-25"
@@ -573,7 +573,7 @@ def test_a_sub_contractor_line_typed_in_is_tied_to_its_boq_line_by_code_or_descr
 def test_a_sub_contractor_order_with_a_line_off_the_boq_cannot_go_for_approval(tenant):
     _, boq = make_boq(tenant)
     lines = {l["group_code"]: l for l in saved(tenant, boq)["lines"]}
-    order, _, _ = gang_order(tenant, lines, [(lines["EXC"], 10, 150)])
+    order, _, _ = contractor_order(tenant, lines, [(lines["EXC"], 10, 150)])
     full = tenant.get("/api/wo/orders/%d" % order["id"]).json()["order"]
     sched = full["items"] + [{"item_description": "Something not in the BOQ", "uom": "nos", "quantity": 1, "unit_rate": 500}]
     res = tenant.put("/api/wo/orders/%d/boq" % order["id"], json={"lines": sched})

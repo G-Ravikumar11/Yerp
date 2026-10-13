@@ -30,7 +30,7 @@ from app.schemas.client_orders import DocLineIn, WorkOrderIn
 from app.services.approvals import owner_label
 from app.services.boq import (
     boq_client_orders,
-    boq_given_to_gangs,
+    boq_given_to_contractors,
     boq_link_orders,
     boq_head,
     boq_kind_of,
@@ -352,7 +352,7 @@ def boq_available(boq_id: int, request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     boq = boq_or_404(db, client.id, boq_id)
     rev = boq_revision_of(db, boq)
-    given = boq_given_to_gangs(db, client.id)
+    given = boq_given_to_contractors(db, client.id)
     rows = []
     for l in db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id).order_by(models.DBBoqLine.display_order).all():
         if l.kind == "section":
@@ -367,7 +367,7 @@ def boq_available(boq_id: int, request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/boqs/{boq_id}/tracker")
 def boq_tracker(boq_id: int, request: Request, db: Session = Depends(get_db)):
-    """Per BOQ line: the client's quantity and rate, what the gangs have been given (and at what rate), what they have
+    """Per BOQ line: the client's quantity and rate, what the contractors have been given (and at what rate), what they have
     executed and billed, what the client has been billed, and the flags worth looking at."""
     client = require_items_access(request, db, ("reports.view",))
     return boq_tracker_data(db, client, boq_or_404(db, client.id, boq_id))

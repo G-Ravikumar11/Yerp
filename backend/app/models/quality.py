@@ -107,7 +107,7 @@ class DBNcr(Base):
     location = Column(String, default="")
     description = Column(Text, default="")
     severity = Column(String, default="Minor")                  # Minor | Major
-    responsible = Column(String, default="")                    # the gang, the supplier...
+    responsible = Column(String, default="")                    # the contractor, the supplier...
     corrective_action = Column(Text, default="")
     target_date = Column(String, default="")
     source_type = Column(String, default="")                    # inspection | cube_set | manual

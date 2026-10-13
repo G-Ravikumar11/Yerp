@@ -93,7 +93,7 @@ def test_issuing_takes_it_out_and_prices_it_from_the_store(tenant):
     receive(tenant, code, 100, 50)
     wo = placed_order(tenant)
     made = tenant.post("/api/stock-issues", json={
-        "work_order_id": wo["id"], "issued_to": "Ganger Raju",
+        "work_order_id": wo["id"], "issued_to": "Foreman Raju",
         "lines": [{"item_code": code, "quantity": 30}]}).json()["issue"]
     # Rate is taken from the store, not typed in.
     assert made["lines"][0]["rate"] == 50

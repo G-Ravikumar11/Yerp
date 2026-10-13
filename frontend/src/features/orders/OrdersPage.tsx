@@ -31,7 +31,7 @@ export default function OrdersPage() {
     search: (o) => [o.wo_number, o.contractor, o.vendor_code, o.project, o.subject, o.work_type, o.department, o.status, o.net_order_value].join(' '),
     status: (o) => o.status,
     date: (o) => o.created_at,
-    facets: { project: { label: 'Projects', get: (o) => o.project }, gang: { label: 'Contractors', get: (o) => o.contractor }, trade: { label: 'Trades', get: (o) => o.department } },
+    facets: { project: { label: 'Projects', get: (o) => o.project }, contractor: { label: 'Contractors', get: (o) => o.contractor }, trade: { label: 'Trades', get: (o) => o.department } },
   })
 
   const s = orders.data?.summary

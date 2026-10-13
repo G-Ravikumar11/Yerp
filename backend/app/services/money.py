@@ -73,7 +73,7 @@ def job_money(db, client_id, job, pre=None):
 
     # What the site has actually cost, taken from the project's profit
     # account so the two screens say the same thing: this one read only
-    # supplier bills and clock-in hours, and a job with a gang bill, a signed
+    # supplier bills and clock-in hours, and a job with a contractor bill, a signed
     # diary and cement issued from the store showed nothing incurred at all.
     pnl = project_pnl(db, client_id, job, pre=pre)
     c = pnl["cost"]
@@ -93,18 +93,18 @@ def job_money(db, client_id, job, pre=None):
 
     subs = pre["subs"].get(job.id, [])
     live_subs = [x for x in subs if (x.status or "") not in ("CANCELLED", "AMENDED")]
-    # What the gangs have still to bill. Their bills are incurred already;
+    # What the contractors have still to bill. Their bills are incurred already;
     # counting the whole order on top counted every rupee billed twice.
-    gang_billed = {}
+    contractor_billed = {}
     for b in pre["sub"].get(job.id, []):
-        gang_billed[b.order_id] = money(gang_billed.get(b.order_id, 0.0) + (b.this_bill or 0))
+        contractor_billed[b.order_id] = money(contractor_billed.get(b.order_id, 0.0) + (b.this_bill or 0))
     # Work a credit note took back is not billed any more, so the order has that much left to bill.
     credits = pre.get("credits") or {}
     for order_id, taxable in (credits.get("sub_order") or {}).items():
-        if order_id in gang_billed:
-            gang_billed[order_id] = money(gang_billed[order_id] - taxable)
+        if order_id in contractor_billed:
+            contractor_billed[order_id] = money(contractor_billed[order_id] - taxable)
     subcontracted = money(sum(max(0.0, (x.gross_amount or x.net_order_value or 0)
-                                  - gang_billed.get(x.id, 0.0)) for x in live_subs))
+                                  - contractor_billed.get(x.id, 0.0)) for x in live_subs))
 
     commitment = money(committed + subcontracted)
 
@@ -172,7 +172,7 @@ def job_money(db, client_id, job, pre=None):
         by_category[key] = money(by_category[key]
                                  + (b.total or b.amount or 0) * (1.0 - stocked.get(b.id, 0.0)))
     by_category["materials"] = money(by_category["materials"] + c["material_from_store"]
-                                     - c["material_recovered_from_gangs"])
+                                     - c["material_recovered_from_contractors"])
     by_category["subcontract"] = money(by_category["subcontract"] + c["subcontractors"] + subcontracted)
     by_category["plant"] = money(by_category["plant"] + c["plant"] + c["equipment"])
     for p in open_pos:
@@ -247,7 +247,7 @@ def account_balance(db, client_id, account):
 
 class AdvanceDoc:
     """A subcontract order, seen as the mobilisation advance it promises the
-    gang - what a payment of the advance is recorded against."""
+    contractor - what a payment of the advance is recorded against."""
 
     def __init__(self, order):
         self.id = order.id
@@ -372,8 +372,8 @@ def _doc_for_any(db, client_id, doc_type, doc_id):
 
 
 def material_recovered_by_job(db, client_id, job_id=None):
-    """Recovered on a certified or paid gang bill - credited back to the
-    project, because that material's cost is already in the gang's bill."""
+    """Recovered on a certified or paid contractor bill - credited back to the
+    project, because that material's cost is already in the contractor's bill."""
     q = db.query(models.DBMaterialRecovery.job_id, models.DBMaterialRecovery.amount).join(
         models.DBSubBill, models.DBSubBill.id == models.DBMaterialRecovery.sub_bill_id).filter(
         models.DBMaterialRecovery.client_id == client_id,

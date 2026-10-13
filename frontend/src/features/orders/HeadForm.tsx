@@ -39,7 +39,7 @@ export function HeadForm({ head, onChange, disabled, order }: { head: OrderHead;
   const contractors = useContractors()
   const v = vocab.data
 
-  const gang = (contractors.data?.contractors ?? []).filter((c) => c.registration_status === 'APPROVED' || c.id === head.contractor_id)
+  const contractor = (contractors.data?.contractors ?? []).filter((c) => c.registration_status === 'APPROVED' || c.id === head.contractor_id)
   const workTypes = (v?.work_types ?? []).filter((w) => !head.department || w.department === head.department)
 
   return (
@@ -54,7 +54,7 @@ export function HeadForm({ head, onChange, disabled, order }: { head: OrderHead;
             <Select id="h-unit" disabled={disabled} value={head.business_unit_id ?? ''} onChange={(e) => onChange({ business_unit_id: id(e.target.value) })} placeholder="Choose" options={(units.data ?? []).map((u) => ({ value: u.id, label: u.name }))} />
           </Field>
           <Field label="Sub contractor" htmlFor="h-con" hint="Only registered contractors can be issued an order.">
-            <Select id="h-con" disabled={disabled} value={head.contractor_id ?? ''} onChange={(e) => onChange({ contractor_id: id(e.target.value) })} placeholder="Choose" options={gang.map((c) => ({ value: c.id, label: c.company_name + (c.vendor_code ? ` (${c.vendor_code})` : '') }))} />
+            <Select id="h-con" disabled={disabled} value={head.contractor_id ?? ''} onChange={(e) => onChange({ contractor_id: id(e.target.value) })} placeholder="Choose" options={contractor.map((c) => ({ value: c.id, label: c.company_name + (c.vendor_code ? ` (${c.vendor_code})` : '') }))} />
           </Field>
           <Field label="Project" htmlFor="h-job" hint="Its budget is what this order is held against.">
             <Select id="h-job" disabled={disabled} value={head.job_id ?? ''} onChange={(e) => onChange({ job_id: id(e.target.value) })} placeholder="Choose" options={(v?.jobs ?? []).map((j) => ({ value: j.id, label: `${j.number} ${j.name}` }))} />

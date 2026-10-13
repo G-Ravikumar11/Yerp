@@ -21,7 +21,7 @@ check('and on once it is typed exactly', !(await btn()))
 await clickText(page, '[role=dialog] button', 'Delete everything')
 await page.waitForFunction(async () => { const r = await (await fetch('/api/work-orders/delete-all-preview', { credentials: 'include' })).json(); return r.subcontract === 0 && r.client === 0 }, { timeout: 15000, polling: 500 })
 const orders = (await api(page, 'GET', '/api/wo/orders')).data.orders
-check('every gang work order is gone', orders.length === 0, String(orders.length))
+check('every contractor work order is gone', orders.length === 0, String(orders.length))
 check('and the client ones', ((await api(page, 'GET', '/api/erp/work-orders')).data.work_orders ?? []).length === 0)
 check('and the bills', (await api(page, 'GET', '/api/sub-bills')).data.bills?.length === 0 || !(await api(page, 'GET', '/api/sub-bills')).data.bills)
 await done()

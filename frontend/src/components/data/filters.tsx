@@ -10,7 +10,7 @@ export interface FilterOptions<T> {
   status?: (row: T) => string
   /** An ISO date (or a datetime); the range filters on its first ten characters. */
   date?: (row: T) => string
-  /** Further things to narrow by - the project, the gang, the trade - each a drop-down of what the list holds. */
+  /** Further things to narrow by - the project, the contractor, the trade - each a drop-down of what the list holds. */
   facets?: Record<string, { label: string; get: (row: T) => string }>
 }
 

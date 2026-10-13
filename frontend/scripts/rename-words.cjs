@@ -1,5 +1,5 @@
 /*
- * Renames the words people read - "owner" to "Master", "gang" to "contractor" - in the app's screens, and only
+ * Renames the words people read - "owner" to "Master" - in the app's screens, and only
  * there: string literals, template text and JSX text, never identifiers, object keys or values the code
  * compares against. Uses the TypeScript parser so code is never touched.
  *
@@ -18,14 +18,10 @@ function replaceWords(text) {
     .replace(/\bOWNERS\b/g, 'MASTERS')
     .replace(/\bOWNER\b/g, 'MASTER')
     .replace(/\b[Oo]wner(s?)('s|s')?(?![A-Za-z])/g, (_, s, poss) => `Master${s}${poss ?? ''}`)
-    .replace(/\bGANGS\b/g, 'CONTRACTORS')
-    .replace(/\bGANG\b/g, 'CONTRACTOR')
-    .replace(/\bGang(s?)('s|s')?(?![A-Za-z])/g, (_, s, poss) => `Contractor${s}${poss ?? ''}`)
-    .replace(/\bgang(s?)('s|s')?(?![A-Za-z])/g, (_, s, poss) => `contractor${s}${poss ?? ''}`)
 }
 
-// A string with no space is a value the code uses ('owner', 'gang-orders') unless it is one of these labels.
-const LABELS = new Set(['Owner', 'Owners', 'Gang', 'Gangs'])
+// A string with no space is a value the code uses ('owner', 'stock-orders') unless it is one of these labels.
+const LABELS = new Set(['Owner', 'Owners'])
 
 function walk(dir, out) {
   for (const name of fs.readdirSync(dir)) {

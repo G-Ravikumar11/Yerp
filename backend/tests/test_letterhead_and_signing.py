@@ -1,6 +1,6 @@
 """What prints on a work order is only as good as what is on file.
 
-The company's letterhead (logo, GSTIN, PAN, address), the gang's particulars,
+The company's letterhead (logo, GSTIN, PAN, address), the contractor's particulars,
 the company's own general conditions and the signatures and seal can all be
 kept up; a signature prints only once the paper has earned it; every order
 spends a budget; and only an approved order is billed.
@@ -54,7 +54,7 @@ def an_order(tenant):
     return fund_order(tenant, order), unit, con
 
 
-# --- The letterhead and the gang's particulars ----------------------------------
+# --- The letterhead and the contractor's particulars ----------------------------------
 
 def test_the_letterhead_can_be_corrected_and_prints(tenant):
     order, unit, _ = an_order(tenant)
@@ -81,7 +81,7 @@ def test_a_bad_gstin_or_a_pan_that_does_not_match_is_refused(tenant):
     assert notpic.status_code == 400
 
 
-def test_the_gangs_particulars_can_be_filled_in_later(tenant):
+def test_the_contractors_particulars_can_be_filled_in_later(tenant):
     order, _, con = an_order(tenant)
     res = tenant.put("/api/wo/contractors/%d" % con["id"], json={
         "company_name": "Rani Labour Contractors", "contact_person": "K. Rani", "phone_number": "9848012345",
@@ -176,7 +176,7 @@ def test_a_client_order_is_billed_only_once_approved(tenant):
     assert res.status_code == 200, res.text
 
 
-def test_another_company_cannot_edit_our_letterhead_or_gangs(tenant, second_tenant):
+def test_another_company_cannot_edit_our_letterhead_or_contractors(tenant, second_tenant):
     _, unit, con = an_order(tenant)
     assert second_tenant.put("/api/wo/business-units/%d" % unit["id"], json={"name": "X"}).status_code == 404
     assert second_tenant.put("/api/wo/contractors/%d" % con["id"], json={"company_name": "X"}).status_code == 404

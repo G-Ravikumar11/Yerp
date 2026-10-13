@@ -24,8 +24,8 @@ BOQ_HEADER_ALIASES = {
 #
 # The client's bill of quantities for a project, kept once: sections, items and sub-items as their sheet
 # numbers them, with revisions (R0 tender, R1 award, R2 after variations). Everything else hangs off it: the
-# client's work order is drawn from it, a gang's order takes its lines (each keeps the line's key), and the
-# tracker adds it all up per line - what the client pays, what the gangs are given, executed, billed.
+# client's work order is drawn from it, a contractor's order takes its lines (each keeps the line's key), and the
+# tracker adds it all up per line - what the client pays, what the contractors are given, executed, billed.
 #
 # Item codes come from the item master's own single series, so a line is matched to the item it already is, or
 # issued a new code, and nobody types one.

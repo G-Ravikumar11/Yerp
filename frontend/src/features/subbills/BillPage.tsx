@@ -78,7 +78,7 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
   const [dialog, setDialog] = useState<'certify' | 'reject' | 'cancel' | 'accept' | null>(null)
   const [paying, setPaying] = useState(false)
   const [crediting, setCrediting] = useState(false)
-  const [gangName, setGangName] = useState('')
+  const [signerName, setSignerName] = useState('')
 
   const editable = bill.editable && can('billing.manage')
   const set = <K extends keyof BillEdit>(k: K, v: BillEdit[K]) => setF((s) => ({ ...s, [k]: v }))
@@ -409,14 +409,14 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
             <Button variant="ghost" onClick={() => setDialog(null)}>
               Not now
             </Button>
-            <Button loading={move.isPending} onClick={() => move.mutate({ action: 'accept', name: gangName })}>
+            <Button loading={move.isPending} onClick={() => move.mutate({ action: 'accept', name: signerName })}>
               Record it
             </Button>
           </>
         }
       >
         <Field label="Who signed for them?" htmlFor="b-signer" hint="Blank: the contractor's contact person.">
-          <Input id="b-signer" value={gangName} onChange={(e) => setGangName(e.target.value)} autoFocus />
+          <Input id="b-signer" value={signerName} onChange={(e) => setSignerName(e.target.value)} autoFocus />
         </Field>
       </Modal>
       <DeleteOrderDialog open={deleting} onOpenChange={setDeleting} kind="bill" id={bill.id} number={bill.number} onDeleted={() => nav(`/subcontractors/ra-bills?order=${bill.order_id}`)} />

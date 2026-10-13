@@ -94,7 +94,7 @@ and what earlier bills already claimed. Retention off the work, tax on the
 remainder, TDS off the whole claim. Draft → submitted → certified → paid, and
 the person who measured cannot be the one who certifies.
 
-**Subcontract work orders** — work issued out to a gang, as the letter that
+**Subcontract work orders** — work issued out to a contractor, as the letter that
 gets signed. A schedule with heading rows and a tolerance on each item (the
 book cannot be measured past order-plus-tolerance without an amendment), the
 billing terms laid out head by head (CGST/SGST or IGST by the contractor's
@@ -106,14 +106,14 @@ with the retention held by us.
 
 **AI in Planning** — on the Planning & Progress page, with the Groq key already used by the other AI features: *Draft with AI* proposes an order of work and dates for the lines of a work order, *Suggest tasks* turns the day's running, overdue and starting activities into a short list, *Check for delays* flags late and slipping work, and a question box answers from the programme's own figures. The model only writes words; every suggestion is checked against the project's real work order lines, activities and dates, and nothing is saved until someone presses Add. The delay flags are plain rules and work with no key.
 
-**Subcontractor register** — every gang with its vendor code (IV0001 onwards)
+**Subcontractor register** — every contractor with its vendor code (IV0001 onwards)
 and its Sub Contractor Registration Form, box for box: personal details, PAN,
-GST, Aadhaar, bank, the documents collected and the declaration. A gang
+GST, Aadhaar, bank, the documents collected and the declaration. A contractor
 registered by somebody on site waits in Approvals, and no order is approved for
-a gang whose form has not been signed off. The form prints and downloads in the
+a contractor whose form has not been signed off. The form prints and downloads in the
 office's layout; the old vendor-codes workbook (a form per sheet) imports once.
 
-**The gang's bill is the three sheets it was always signed on** — the Top
+**The contractor's bill is the three sheets it was always signed on** — the Top
 Sheet (certificate of payment), AB-1 (abstract: up to previous, this bill, up to
 this bill) and MB-1 (the book: No's × NoM × Length × Width × Height, headings,
 deductions, a block measured once and counted for every block built). GST is
@@ -121,7 +121,7 @@ charged on the gross; retention and TDS come off the value of the work; every
 figure after the work is whole rupees. The MB sheet imports from Excel, or its
 lines paste straight into the book. Certifying climbs the hierarchy — prepared
 by the QS, certified by the Head QS, approved by the site incharge — and the
-gang signs "Accepted for Sub Contractor" from the partner portal.
+contractor signs "Accepted for Sub Contractor" from the partner portal.
 
 **Purchase orders and goods receipt** — what was ordered against what arrived.
 Received and accepted are separate numbers, so material that turns up broken is
@@ -137,7 +137,7 @@ what the store actually paid, using a weighted average.
 **Material used vs costed** — the BOM against the issues. The gap is waste,
 theft, or a BOM nobody updated after a variation.
 
-**Site diary** — the daily record: who turned up by trade and by gang, what
+**Site diary** — the daily record: who turned up by trade and by contractor, what
 plant stood idle, what the weather did, what got built and what stopped it.
 One diary per site per day, and a signed-off day cannot be rewritten. It is
 also where the labour cost comes from.

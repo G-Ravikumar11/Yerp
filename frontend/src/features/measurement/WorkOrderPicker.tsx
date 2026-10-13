@@ -18,12 +18,12 @@ export type JobCodeOf<T = PickerOrder> = (o: T) => string
 const TAGS: Record<string, string> = { AMENDED: 'amended', PROVISIONAL: 'awaiting approval', DRAFT: 'draft', CANCELLED: 'cancelled' }
 const tagOf = (o: PickerOrder) => TAGS[o.status] ?? ''
 
-/** Everything a person might type to find an order: its number, job code, project, gang or subject. */
+/** Everything a person might type to find an order: its number, job code, project, contractor or subject. */
 const haystack = <T extends PickerOrder>(o: T, jobCode: JobCodeOf<T>) => [o.wo_number, jobCode(o), o.project, o.contractor, o.vendor_code, o.subject, o.work_type].join(' ').toLowerCase()
 
 /**
  * Pick from every work order by typing any part of its number, job code,
- * project or gang. Keyboard all the way: arrows move, Enter chooses, Esc closes.
+ * project or contractor. Keyboard all the way: arrows move, Enter chooses, Esc closes.
  */
 export function WorkOrderPicker<T extends PickerOrder>({ orders, value, onChange, jobCode, loading, selected }: { orders: T[]; value: number; onChange: (id: number) => void; jobCode: JobCodeOf<T>; loading?: boolean; selected?: T }) {
   const [open, setOpen] = useState(false)

@@ -112,7 +112,7 @@ def heads(order):
 
 
 def test_the_schedule_splits_gst_by_the_contractors_state(tenant):
-    """Telangana gang on a Telangana site: CGST and SGST, half each."""
+    """Telangana contractor on a Telangana site: CGST and SGST, half each."""
     order = priced(tenant)                       # contractor GSTIN 36..., our GSTIN 36...
     job_id = order["job_id"]
     tenant.put("/api/jobs/%d/place-of-supply" % job_id, json={"state_code": "36"})
@@ -135,8 +135,8 @@ def test_a_site_across_the_border_is_igst_on_the_order_and_the_bill(tenant):
     assert bill["igst_amount"] == bill["gst_amount"] > 0
 
 
-def test_it_is_the_gangs_state_that_counts_not_ours(tenant):
-    """We are in Telangana, the site is in Telangana, but the gang is
+def test_it_is_the_contractors_state_that_counts_not_ours(tenant):
+    """We are in Telangana, the site is in Telangana, but the contractor is
     registered in Andhra: their supply crosses a border, so it is IGST."""
     tenant.put("/api/gst/settings", json={"gstin": "36AABCY1234H1ZX"})
     unit = tenant.post("/api/wo/business-units", json={"name": "YP", "code": "YP"}).json()
@@ -152,7 +152,7 @@ def test_it_is_the_gangs_state_that_counts_not_ours(tenant):
 
 
 def test_labour_cess_comes_off_like_tds(tenant):
-    """1% BOCW cess: withheld from the gang and remitted, never received."""
+    """1% BOCW cess: withheld from the contractor and remitted, never received."""
     order = priced(tenant, labour_cess_percent=1)
     gross = order["gross_amount"]
     assert order["labour_cess_amount"] == round(gross * 0.01, 2)

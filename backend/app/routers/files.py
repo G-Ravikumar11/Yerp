@@ -68,7 +68,7 @@ def tds_register(request: Request, year: str = "", quarter: str = "",
                  db: Session = Depends(get_db)):
     """TDS both ways, by quarter.
 
-    Deducted: what we withheld from the gangs' bills under 194C, which has to
+    Deducted: what we withheld from the contractors' bills under 194C, which has to
     be deposited by the 7th and filed in the 26Q. Suffered: what our clients
     withheld from our bills, which has to be matched against the 26AS before
     it can be claimed. Two directions, one screen, because both are checked
@@ -194,7 +194,7 @@ def guarantee_register(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/registers/advances")
 def advance_register(request: Request, db: Session = Depends(get_db)):
-    """Mobilisation advances given to the gangs, and how much has come back.
+    """Mobilisation advances given to the contractors, and how much has come back.
 
     Summed from the bills, not stored: a cancelled bill gives its recovery
     back without anybody having to remember to.
@@ -539,10 +539,10 @@ def import_bills(body: dict, request: Request, db: Session = Depends(get_db)):
 
 @router.post("/api/sheets/subcontract_orders/import")
 def import_subcontract_orders(body: dict, request: Request, db: Session = Depends(get_db)):
-    """A register of gangs and dates, brought in as one draft order each - the
+    """A register of contractors and dates, brought in as one draft order each - the
     contractor and project matched by name where they are already on file,
     left blank to be picked when they are not, so a mistyped name never
-    silently attaches an order to the wrong gang. Each is a new order, so HO QS's to bring in."""
+    silently attaches an order to the wrong contractor. Each is a new order, so HO QS's to bring in."""
     client, actor_id, actor_name = wo_actor(request, db, "workorders.create")
     contractors = {norm_name(c.company_name): c for c in db.query(models.DBContractor).filter(
         models.DBContractor.client_id == client.id).all()}

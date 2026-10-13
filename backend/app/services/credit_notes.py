@@ -5,9 +5,9 @@ certified, and that month may already be filed. What was over-billed is taken ba
 against that bill, line by line. It reverses the GST, TDS and retention the bill charged on those quantities, in
 the period it is issued, and the quantities become claimable again if the work is measured again.
 
-Side "client" is against our RA bill (we credit the client); side "contractor" is against a gang's bill (the gang
+Side "client" is against our RA bill (we credit the client); side "contractor" is against a contractor's bill (the contractor
 credits us). The arithmetic is the bill's own: the same rates, the same CGST/SGST-or-IGST decision, the same
-rounding (paise on our bills, whole rupees on the gangs').
+rounding (paise on our bills, whole rupees on the contractors').
 """
 from datetime import date
 
@@ -32,7 +32,7 @@ def credit_notes_query(db, client_id, side=None):
 
 
 def credited_qty_by_item(db, side, order_id):
-    """{item id: quantity taken back by credit notes} on one order - the client's work order, or a gang's
+    """{item id: quantity taken back by credit notes} on one order - the client's work order, or a contractor's
     subcontract order. Subtracted from what has been billed, so work taken back can be billed again."""
     if not order_id:
         return {}
@@ -263,7 +263,7 @@ def raise_credit_note(db, side, client_id, bill, lines, reason, note_date="", ac
 # ---- what the credit notes do to the returns and the books ------------------------------------------------------
 
 def credit_gst_rows(db, client_id, side, date_from="", date_to=""):
-    """Credit notes as negative lines for the GST registers: outward for ours, inward for the gangs'. They fall
+    """Credit notes as negative lines for the GST registers: outward for ours, inward for the contractors'. They fall
     in the month they were issued, not the month of the bill, so a return already filed is not disturbed."""
     rows = []
     for n in credit_notes_query(db, client_id, side).all():
@@ -313,7 +313,7 @@ def credit_tds_rows(db, client_id, side, fy_quarter):
 
 
 def credit_ledger_rows(db, client_id):
-    """Credit notes in the party ledgers: a sum the client no longer owes us, or that we no longer owe a gang."""
+    """Credit notes in the party ledgers: a sum the client no longer owes us, or that we no longer owe a contractor."""
     rows = []
     for n in credit_notes_query(db, client_id).all():
         job = db.query(models.DBJob).filter(models.DBJob.id == n.job_id).first() if n.job_id else None

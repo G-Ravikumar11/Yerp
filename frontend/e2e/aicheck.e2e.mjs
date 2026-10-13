@@ -18,7 +18,7 @@ check('the plain checks answer without a key', /No hard copy/.test(review), revi
 
 await open(page, '/subcontractors/compliance')
 await page.waitForSelector('table[aria-label="Contractor compliance"]')
-const row = await page.evaluateHandle((name) => [...document.querySelectorAll('table[aria-label="Contractor compliance"] tbody tr')].find((r) => r.textContent.includes(name)), order.gang.company_name)
+const row = await page.evaluateHandle((name) => [...document.querySelectorAll('table[aria-label="Contractor compliance"] tbody tr')].find((r) => r.textContent.includes(name)), order.contractor.company_name)
 await row.click()
 await page.waitForSelector('[role=dialog]')
 await clickText(page, '[role=dialog] button', 'Get a brief')

@@ -1,7 +1,7 @@
 """Drawings and photos kept against a work order, stored as small as they
 can be and found again by filtering.
 
-A work order is issued with its drawings, and the gang's work is proved by
+A work order is issued with its drawings, and the contractor's work is proved by
 photographs. Both are kept against the order itself. A phone photo is made
 smaller before it is stored, a drawing photographed on site keeps enough
 pixels to be read, and a sheet attached to four orders is stored once.

@@ -1,7 +1,7 @@
-"""Stores: material between sites, and material charged to a gang.
+"""Stores: material between sites, and material charged to a contractor.
 
 Cement left at one site goes to the next as a transfer, at what it cost, and
-is not consumption. Material handed to a gang whose rate includes it comes
+is not consumption. Material handed to a contractor whose rate includes it comes
 off their next bill on its own, up to what that bill can bear; the project is
 credited back so the same cement is not counted twice.
 """
@@ -87,9 +87,9 @@ def test_the_stores_and_the_transfers_are_listed(tenant):
     assert t["lines"][0]["qty"] == 40
 
 
-# --- Material charged to a gang -------------------------------------------------------
+# --- Material charged to a contractor -------------------------------------------------------
 
-def issue_to_gang(tenant, code, order, bags, **extra):
+def issue_to_contractor(tenant, code, order, bags, **extra):
     iss = tenant.post("/api/stock-issues", json={"lines": [{"item_code": code, "qty": bags}]}).json()["issue"]
     body = {"recover_from_order_id": order["id"]}
     body.update(extra)
@@ -98,10 +98,10 @@ def issue_to_gang(tenant, code, order, bags, **extra):
     return iss
 
 
-def test_material_issued_to_a_gang_comes_off_their_bill(tenant):
+def test_material_issued_to_a_contractor_comes_off_their_bill(tenant):
     code = cement(tenant)
     order = live_order(tenant)
-    issue_to_gang(tenant, code, order, 20)
+    issue_to_contractor(tenant, code, order, 20)
     waiting = tenant.get("/api/material-recoveries?order_id=%d" % order["id"]).json()
     assert waiting["summary"]["waiting"] == 20 * 390
     item = sub_book(tenant, order["id"])["lines"][0]["item_id"]
@@ -116,7 +116,7 @@ def test_material_issued_to_a_gang_comes_off_their_bill(tenant):
 def test_a_markup_is_recovered_on_top_of_cost(tenant):
     code = cement(tenant)
     order = live_order(tenant)
-    issue_to_gang(tenant, code, order, 10, markup_percent=10)
+    issue_to_contractor(tenant, code, order, 10, markup_percent=10)
     got = tenant.get("/api/material-recoveries?order_id=%d" % order["id"]).json()["recoveries"][0]
     assert got["rate"] == 429 and got["amount"] == 4290
 
@@ -124,7 +124,7 @@ def test_a_markup_is_recovered_on_top_of_cost(tenant):
 def test_a_small_bill_recovers_what_it_can_and_the_rest_waits(tenant):
     code = cement(tenant, bags=400)
     order = live_order(tenant)
-    issue_to_gang(tenant, code, order, 300)                     # 1,17,000 of cement
+    issue_to_contractor(tenant, code, order, 300)                     # 1,17,000 of cement
     item = sub_book(tenant, order["id"])["lines"][0]["item_id"]
     sub_measure(tenant, order["id"], item, 10)                  # 68,000 of work
     bill = raise_bill(tenant, order["id"]).json()["bill"]
@@ -137,7 +137,7 @@ def test_a_small_bill_recovers_what_it_can_and_the_rest_waits(tenant):
 def test_a_cancelled_bill_gives_the_material_back(tenant):
     code = cement(tenant)
     order = live_order(tenant)
-    issue_to_gang(tenant, code, order, 20)
+    issue_to_contractor(tenant, code, order, 20)
     item = sub_book(tenant, order["id"])["lines"][0]["item_id"]
     sub_measure(tenant, order["id"], item, 100)
     bill = raise_bill(tenant, order["id"]).json()["bill"]
@@ -149,11 +149,11 @@ def test_a_cancelled_bill_gives_the_material_back(tenant):
 
 
 def test_the_project_is_credited_so_nothing_is_counted_twice(tenant):
-    """The cement's cost is in the store issue and again inside the gang's
+    """The cement's cost is in the store issue and again inside the contractor's
     bill; the recovery takes one of them back out."""
     code = cement(tenant)
     order = live_order(tenant)
-    issue_to_gang(tenant, code, order, 20)
+    issue_to_contractor(tenant, code, order, 20)
     item = sub_book(tenant, order["id"])["lines"][0]["item_id"]
     sub_measure(tenant, order["id"], item, 100)
     bill = raise_bill(tenant, order["id"]).json()["bill"]
@@ -161,7 +161,7 @@ def test_the_project_is_credited_so_nothing_is_counted_twice(tenant):
     tenant.post("/api/sub-bills/%d/certify" % bill["id"], json={})
     cost = tenant.get("/api/jobs/%d/pnl" % order["job_id"]).json()["cost"]
     assert cost["material_from_store"] == 7800
-    assert cost["material_recovered_from_gangs"] == 7800
+    assert cost["material_recovered_from_contractors"] == 7800
     assert cost["incurred"] == round(cost["subcontractors"] + cost["supplier_bills"] + cost["labour"]
                                      + cost["plant"] + cost["equipment"], 2)
 

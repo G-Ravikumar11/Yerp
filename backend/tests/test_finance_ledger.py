@@ -92,7 +92,7 @@ def test_a_cheque_needs_its_number(tenant):
     assert r.status_code == 400 and "cheque number" in r.json()["detail"]
 
 
-def test_a_gang_is_paid_in_parts_too(tenant):
+def test_a_contractor_is_paid_in_parts_too(tenant):
     b = certified_sub(tenant)
     r = money_in(tenant, doc_type="sub_bill", doc_id=b["id"], amount=1000)
     assert r.status_code == 200, r.text

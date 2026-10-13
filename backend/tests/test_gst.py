@@ -113,7 +113,7 @@ def test_the_net_payable_is_unchanged_by_the_split(tenant):
     assert b["net_payable"] == round(taxable + b["tax_amount"] - b["tds_amount"], 2)
 
 
-def test_the_gangs_bill_is_split_the_same_way(tenant):
+def test_the_contractors_bill_is_split_the_same_way(tenant):
     registered(tenant, "36AABCY1234H1ZX")
     order = live_order(tenant, retention_percent=5)
     site_in(tenant, order["job_id"], "36")
@@ -154,7 +154,7 @@ def test_a_draft_bill_is_not_an_outward_supply(tenant):
     assert tenant.get("/api/gst/outward").json()["summary"]["bills"] == 0
 
 
-def test_inward_lists_the_gangs_bills_with_their_gstin(tenant):
+def test_inward_lists_the_contractors_bills_with_their_gstin(tenant):
     registered(tenant, "36AABCY1234H1ZX")
     order = live_order(tenant)
     item = sub_book(tenant, order["id"])["lines"][0]["item_id"]

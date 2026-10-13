@@ -29,7 +29,7 @@ await open(page, '/subcontractors/vendors')
 await page.waitForSelector('table[aria-label=Vendors] tbody tr')
 check('the Vendor Register has the filter bar: search, status and dates', (await page.$('input[aria-label=Search]')) !== null && (await page.$('select[aria-label=Status]')) !== null && (await page.$('input[aria-label="From date"]')) !== null)
 const n = await page.$$eval('table[aria-label=Vendors] tbody tr', (r) => r.length)
-await fill(page, 'input[aria-label=Search]', 'zzzz-no-such-gang')
+await fill(page, 'input[aria-label=Search]', 'zzzz-no-such-contractor')
 await sleep(300)
 check('and searching it narrows the list', (await text()).includes('Nobody matches') || (await page.$$eval('table[aria-label=Vendors] tbody tr', (r) => r.length)) < n)
 

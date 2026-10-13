@@ -33,7 +33,7 @@ def test_the_app_says_what_company_details_are_still_missing(tenant):
     assert "logo" not in now["missing"] and "GSTIN" not in now["missing"] and "PAN" not in now["missing"]
 
 
-def test_the_gang_bill_and_the_registration_form_carry_the_logo_in_pdf_and_excel(tenant):
+def test_the_contractor_bill_and_the_registration_form_carry_the_logo_in_pdf_and_excel(tenant):
     order = live_order(tenant, pay_advance=False)
     unit = tenant.get("/api/wo/business-units").json()["business_units"][0]
     tenant.put("/api/wo/business-units/%d" % unit["id"], json={
