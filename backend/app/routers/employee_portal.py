@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy import func, func as sqlfunc, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app import models
 from app.core import passwords
@@ -890,7 +890,7 @@ def employee_document_requests(request: Request, db: Session = Depends(get_db)):
     emp_id = request.session.get('employee_id')
     if not emp_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    rows = db.query(models.DBDocumentRequest).filter(
+    rows = db.query(models.DBDocumentRequest).options(selectinload(models.DBDocumentRequest.requirement)).filter(
         models.DBDocumentRequest.employee_id == emp_id
     ).order_by(models.DBDocumentRequest.id.asc()).all()
     outstanding = sum(1 for r in rows if r.status in ("pending", "rejected"))

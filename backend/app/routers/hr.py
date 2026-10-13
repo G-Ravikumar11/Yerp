@@ -3,8 +3,8 @@ import json
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import func, func as sqlfunc, or_
-from sqlalchemy.orm import Session
+from sqlalchemy import case, func, func as sqlfunc, or_
+from sqlalchemy.orm import Session, selectinload
 
 from app import models
 from app.core import passwords
@@ -501,7 +501,7 @@ def get_employee(emp_id: int, request: Request, db: Session = Depends(get_db)):
     documents = db.query(models.DBDocument).filter(
         models.DBDocument.employee_id == emp.id
     ).order_by(models.DBDocument.id.desc()).all()
-    doc_requests = db.query(models.DBDocumentRequest).filter(
+    doc_requests = db.query(models.DBDocumentRequest).options(selectinload(models.DBDocumentRequest.requirement)).filter(
         models.DBDocumentRequest.employee_id == emp.id
     ).order_by(models.DBDocumentRequest.id.asc()).all()
 
@@ -778,6 +778,13 @@ def set_employee_permissions(emp_id: int, request: Request, body: dict = None,
         emp.extra_permissions = ",".join(sorted(wanted - from_role))
         emp.denied_permissions = ",".join(sorted(from_role - wanted))
 
+    # Sites are part of access too, so they save together with the rights;
+    # an empty list means every site, and leaving the key out changes nothing.
+    if "site_ids" in body:
+        if not isinstance(body["site_ids"], list):
+            raise HTTPException(status_code=400, detail="site_ids must be a list")
+        set_employee_sites(db, client.id, emp, body["site_ids"])
+
     after = sorted(permissions_for(emp))
     detail = "Access changed from %s to %s" % (old_role, new_role)
     if before != after:
@@ -811,7 +818,993 @@ def _set_status(emp_id: int, request: Request, db: Session, status: str, message
         setattr(emp, k, v)
     log_audit(db, client.id, "employee_status_changed", "employee", emp.id, "%s: %s -> %s" % (emp.full_name if hasattr(emp, "full_name") else emp.id, before, status), "", request)
     db.commit()
-    return {"message": message, "status": emp.status}
+    return {"message": message, "status": emp.status, "end_date": emp.end_date or ""}
+
+
+@router.post("/api/employees/{emp_id}/onboard")
+def start_onboarding_status(emp_id: int, request: Request, db: Session = Depends(get_db)):
+    return _set_status(emp_id, request, db, "onboarding", "Employee is onboarding", offboarding_complete=False, end_date="")
+
+
+@router.post("/api/employees/{emp_id}/offboard")
+def start_offboarding(emp_id: int, request: Request, db: Session = Depends(get_db)):
+    return _set_status(emp_id, request, db, "offboarding", "Offboarding started")
+
+
+@router.post("/api/employees/{emp_id}/terminate")
+def terminate_employee(emp_id: int, request: Request, db: Session = Depends(get_db)):
+    return _set_status(emp_id, request, db, "terminated", "Employee terminated", end_date=datetime.now().strftime("%Y-%m-%d"))
+
+
+@router.post("/api/employees/{emp_id}/complete-offboard")
+def complete_offboarding(emp_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    end_date = body.get("end_date", "") if body else ""
+    emp.status = "terminated"
+    emp.end_date = end_date
+    emp.offboarding_complete = True
+    db.commit()
+    return {"message": "Employee offboarded"}
+
+
+@router.get("/api/onboarding/hub")
+def get_onboarding_hub(request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    employees = db.query(models.DBEmployee).filter(
+        models.DBEmployee.client_id == client.id,
+        models.DBEmployee.status.in_(["onboarding", "active"])
+    ).all()
+    result = []
+    for emp in employees:
+        items = db.query(models.DBOnboardingItem).filter(models.DBOnboardingItem.employee_id == emp.id).all()
+        completed = sum(1 for i in items if i.is_completed)
+        overdue = 0
+        today = datetime.now().strftime("%Y-%m-%d")
+        for i in items:
+            if not i.is_completed and i.due_date and i.due_date < today:
+                overdue += 1
+        result.append({
+            "id": emp.id, "name": (emp.first_name + " " + emp.last_name).strip(),
+            "job_title": emp.job_title or "", "department": emp.department.name if emp.department else "",
+            "status": emp.status or "", "start_date": emp.start_date or "",
+            "total": len(items), "completed": completed,
+            "progress": round((completed / len(items)) * 100) if items else 0,
+            "overdue": overdue,
+        })
+    result.sort(key=lambda x: (-x["overdue"], x["progress"]))
+    return result
+
+
+@router.get("/api/employees/{emp_id}/onboarding")
+def get_onboarding(emp_id: int, request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    items = db.query(models.DBOnboardingItem).filter(models.DBOnboardingItem.employee_id == emp_id).order_by(models.DBOnboardingItem.sort_order).all()
+    completed = sum(1 for i in items if i.is_completed)
+    return {
+        "total": len(items), "completed": completed,
+        "progress": round((completed / len(items)) * 100) if items else 0,
+        "items": [{"id": i.id, "title": i.title, "description": i.description,
+                    "category": i.category, "is_completed": i.is_completed,
+                    "completed_at": i.completed_at, "assigned_to": i.assigned_to,
+                    "due_date": i.due_date, "sort_order": i.sort_order} for i in items],
+    }
+
+
+@router.put("/api/onboarding/{item_id}")
+def update_onboarding_item(item_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    item = db.query(models.DBOnboardingItem).filter(models.DBOnboardingItem.id == item_id, models.DBOnboardingItem.client_id == client.id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    if body:
+        if "is_completed" in body:
+            item.is_completed = body["is_completed"]
+            if body["is_completed"]:
+                item.completed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                item.completed_at = ""
+        if "title" in body:
+            item.title = body["title"]
+        if "description" in body:
+            item.description = body["description"]
+        if "category" in body:
+            item.category = body["category"]
+        if "assigned_to" in body:
+            item.assigned_to = body["assigned_to"]
+        if "due_date" in body:
+            item.due_date = body["due_date"]
+    db.commit()
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == item.employee_id).first()
+    if maybe_complete_onboarding(db, emp):
+        db.commit()
+    return {"message": "Item updated"}
+
+
+@router.delete("/api/onboarding/{item_id}")
+def delete_onboarding_item(item_id: int, request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    item = db.query(models.DBOnboardingItem).filter(models.DBOnboardingItem.id == item_id, models.DBOnboardingItem.client_id == client.id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    db.delete(item)
+    db.commit()
+    return {"message": "Item deleted"}
+
+
+@router.post("/api/employees/{emp_id}/onboarding")
+def add_onboarding_item(emp_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    max_order = db.query(func.max(models.DBOnboardingItem.sort_order)).filter(models.DBOnboardingItem.employee_id == emp_id).scalar() or 0
+    item = models.DBOnboardingItem(
+        client_id=client.id, employee_id=emp_id,
+        title=body.get("title", ""), description=body.get("description", ""),
+        category=body.get("category", "general"), assigned_to=body.get("assigned_to", ""),
+        due_date=body.get("due_date", ""), sort_order=max_order + 1,
+    )
+    db.add(item)
+    db.commit()
+    return {"id": item.id, "title": item.title, "message": "Item added"}
+
+
+@router.post("/api/employees/{emp_id}/onboarding/bulk")
+def bulk_add_onboarding(emp_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    items = body.get("items", []) if body else []
+    max_order = db.query(func.max(models.DBOnboardingItem.sort_order)).filter(models.DBOnboardingItem.employee_id == emp_id).scalar() or 0
+    added = []
+    for i, item_data in enumerate(items):
+        oitem = models.DBOnboardingItem(
+            client_id=client.id, employee_id=emp_id,
+            title=item_data.get("title", ""), description=item_data.get("description", ""),
+            category=item_data.get("category", "general"), assigned_to=item_data.get("assigned_to", ""),
+            due_date=item_data.get("due_date", ""), sort_order=max_order + i + 1,
+        )
+        db.add(oitem)
+        added.append(item_data.get("title", ""))
+    db.commit()
+    return {"added": len(added), "message": f"Added {len(added)} items"}
+
+
+@router.post("/api/onboarding/apply-template")
+def apply_onboarding_template(request: Request, body: dict = None, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    emp_ids = body.get("employee_ids", []) if body else []
+    template_items = body.get("items", []) if body else []
+    count = 0
+    for emp_id in emp_ids:
+        emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+        if not emp:
+            continue
+        max_order = db.query(func.max(models.DBOnboardingItem.sort_order)).filter(models.DBOnboardingItem.employee_id == emp_id).scalar() or 0
+        for i, item_data in enumerate(template_items):
+            db.add(models.DBOnboardingItem(
+                client_id=client.id, employee_id=emp_id,
+                title=item_data.get("title", ""), description=item_data.get("description", ""),
+                category=item_data.get("category", "general"), assigned_to=item_data.get("assigned_to", ""),
+                due_date=item_data.get("due_date", ""), sort_order=max_order + i + 1,
+            ))
+            count += 1
+    db.commit()
+    return {"added": count, "message": f"Added {count} items to {len(emp_ids)} employees"}
+
+
+@router.get("/api/onboarding/templates")
+def get_onboarding_templates(request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    templates = db.query(models.DBOnboardingTemplate).filter(models.DBOnboardingTemplate.client_id == client.id).all()
+    return [{"id": t.id, "name": t.name, "items": json.loads(t.items_json) if t.items_json else [], "created_at": t.created_at} for t in templates]
+
+
+@router.post("/api/onboarding/templates")
+def create_onboarding_template(request: Request, body: dict = None, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    if not body or not body.get("name"):
+        raise HTTPException(status_code=400, detail="Name required")
+    template = models.DBOnboardingTemplate(
+        client_id=client.id, name=body["name"],
+        items_json=json.dumps(body.get("items", [])),
+    )
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+    return {"id": template.id, "name": template.name, "message": "Template created"}
+
+
+@router.delete("/api/onboarding/templates/{template_id}")
+def delete_onboarding_template(template_id: int, request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    template = db.query(models.DBOnboardingTemplate).filter(models.DBOnboardingTemplate.id == template_id, models.DBOnboardingTemplate.client_id == client.id).first()
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+    db.delete(template)
+    db.commit()
+    return {"message": "Template deleted"}
+
+
+@router.get("/api/employees/{emp_id}/pay-details")
+def get_employee_pay_details(emp_id: int, request: Request, period_start: str = "", period_end: str = "", db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    hours_worked = 0.0
+    if period_start and period_end:
+        records = db.query(models.DBAttendance).filter(
+            models.DBAttendance.employee_id == emp_id,
+            models.DBAttendance.client_id == client.id,
+            models.DBAttendance.date >= period_start,
+            models.DBAttendance.date <= period_end,
+        ).all()
+        for r in records:
+            hours_worked += r.total_hours or 0
+        hours_worked = round(hours_worked, 2)
+
+    overtime_hours = 0.0
+    if period_start and period_end:
+        ot_logs = db.query(models.DBOvertimeLog).filter(
+            models.DBOvertimeLog.employee_id == emp_id,
+            models.DBOvertimeLog.client_id == client.id,
+            models.DBOvertimeLog.date >= period_start,
+            models.DBOvertimeLog.date <= period_end,
+            models.DBOvertimeLog.status == "announced",
+        ).all()
+        for log in ot_logs:
+            overtime_hours += log.hours or 0
+        overtime_hours = round(overtime_hours, 2)
+
+    ot_rate = emp.hourly_rate or 0.0
+    if ot_rate == 0 and (emp.salary or 0) > 0:
+        ot_rate = round(emp.salary / 160 * 1.5, 2)
+
+    # Hourly staff have salary == 0; paying them their (zero) salary produced a
+    # blank payslip. Derive basic from the hours actually worked instead.
+    basic = resolve_basic_pay(emp, None, hours_worked)
+    ot_pay = money(overtime_hours * ot_rate) if overtime_hours > 0 else 0
+    bonus = emp.bonus or 0.0
+    allowances = emp.allowances or 0.0
+    gross = money(basic + ot_pay + bonus + allowances)
+    tax_rate = emp.tax_rate or 0.0
+    tax_amount = money(gross * (tax_rate / 100)) if tax_rate > 0 else 0
+    deductions = emp.deductions or 0.0
+    total_deductions = money(tax_amount + deductions)
+    net_pay = money(gross - total_deductions)
+
+    return {
+        "employee_id": emp.id,
+        "full_name": f"{emp.first_name} {emp.last_name}",
+        "employee_id_code": emp.employee_id,
+        "job_title": emp.job_title,
+        "pay_frequency": emp.pay_frequency,
+        "bank_name": emp.bank_name,
+        "bank_account": emp.bank_account,
+        "tax_id": emp.tax_id,
+        "salary": basic,
+        "is_hourly": (emp.salary or 0) <= 0 and (emp.hourly_rate or 0) > 0,
+        "hourly_rate": emp.hourly_rate or 0.0,
+        "tax_rate": tax_rate,
+        "deductions": deductions,
+        "allowances": allowances,
+        "bonus": bonus,
+        "hours_worked": hours_worked,
+        "overtime_hours": overtime_hours,
+        "overtime_rate": ot_rate,
+        "overtime_pay": ot_pay,
+        "gross_pay": round(gross, 2),
+        "tax_amount": tax_amount,
+        "total_deductions": round(total_deductions, 2),
+        "net_pay": net_pay,
+    }
+
+
+@router.get("/api/employees/{emp_id}/ytd")
+def employee_ytd(emp_id: int, request: Request, year: str = "", db: Session = Depends(get_db)):
+    """Year-to-date totals - required on most statutory payslip formats."""
+    client = get_client_user(request, db)
+    emp = db.query(models.DBEmployee).filter(
+        models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id
+    ).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    year = year or datetime.now().strftime("%Y")
+    slips = db.query(models.DBPayslip).filter(
+        models.DBPayslip.client_id == client.id,
+        models.DBPayslip.employee_id == emp_id,
+        models.DBPayslip.status != "Void",
+    ).all()
+    in_year = [s for s in slips if (s.period_end or s.pay_date or "").startswith(year)]
+    return {
+        "year": year,
+        "payslip_count": len(in_year),
+        "gross_pay": money(sum(s.gross_pay or 0 for s in in_year)),
+        "tax_amount": money(sum(s.tax_amount or 0 for s in in_year)),
+        "total_deductions": money(sum(s.total_deductions or 0 for s in in_year)),
+        "net_pay": money(sum(s.net_pay or 0 for s in in_year)),
+    }
+
+
+@router.get("/api/org-chart")
+def get_org_chart(request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    employees = db.query(models.DBEmployee).filter(
+        models.DBEmployee.client_id == client.id,
+        models.DBEmployee.status.in_(["active", "onboarding"])
+    ).all()
+    departments = db.query(models.DBDepartment).filter(models.DBDepartment.client_id == client.id).all()
+
+    emp_map = {}
+    for e in employees:
+        dept_name = ""
+        if e.department_id:
+            dept = db.query(models.DBDepartment).filter(models.DBDepartment.id == e.department_id).first()
+            dept_name = dept.name if dept else ""
+        emp_map[e.id] = {
+            "id": e.id, "employee_id": e.employee_id,
+            "name": f"{e.first_name} {e.last_name}",
+            "job_title": e.job_title, "email": e.email,
+            "level": e.level or "", "role": e.role or "employee",
+            "department": dept_name, "reports_to": e.reports_to,
+            "status": e.status,
+        }
+
+    roots = []
+    for e_id, e_data in emp_map.items():
+        if e_data["reports_to"] and e_data["reports_to"] in emp_map:
+            parent = emp_map[e_data["reports_to"]]
+            if "children" not in parent:
+                parent["children"] = []
+            parent["children"].append(e_data)
+        else:
+            roots.append(e_data)
+
+    dept_groups = {}
+    for d in departments:
+        dept_employees = [e for e in emp_map.values() if e["department"] == d.name]
+        if dept_employees:
+            dept_groups[d.name] = dept_employees
+
+    return {"roots": roots, "departments": dept_groups, "total_employees": len(employees)}
+
+
+@router.get("/api/hr/stats")
+def get_hr_stats(request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    by_status = dict(db.query(models.DBEmployee.status, sqlfunc.count(models.DBEmployee.id)).filter(
+        models.DBEmployee.client_id == client.id).group_by(models.DBEmployee.status).all())
+    total = sum(by_status.values())
+    active, onboarding = by_status.get("active", 0), by_status.get("onboarding", 0)
+    offboarding, terminated = by_status.get("offboarding", 0), by_status.get("terminated", 0)
+    depts = db.query(models.DBDepartment).filter(
+        models.DBDepartment.client_id == client.id).order_by(models.DBDepartment.name).all()
+    return departments_to_dicts(db, client.id, depts)
+
+
+@router.get("/api/departments/{dept_id}")
+def get_department(dept_id: int, request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    return department_to_dict(db, department_or_404(db, client.id, dept_id))
+
+
+# Departments are set up and staffed by the Master alone; everybody signed in
+# may read them, since pickers, the org chart and work orders all show them.
+
+@router.post("/api/departments")
+def create_department(request: Request, body: DepartmentCreate, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    name = clean_department_name(body.name)
+    assert_department_name_free(db, client.id, name)
+    dept = models.DBDepartment(name=name, description=body.description, color=body.color, icon=body.icon, client_id=client.id)
+    db.add(dept)
+    db.flush()
+    log_audit(db, client.id, "department_created", "department", dept.id, dept.name, "", request)
+    # Read back before the commit: afterwards every attribute is expired and
+    # reading one is another trip to the database.
+    out = {"id": dept.id, "name": dept.name, "description": dept.description,
+           "color": dept.color or "#00f0ff", "icon": dept.icon or "building",
+           "employee_count": 0, "created_at": dept.created_at, "employees": []}
+    db.commit()
+    return out
+
+
+@router.put("/api/departments/{dept_id}")
+def update_department(dept_id: int, request: Request, body: DepartmentCreate, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    dept = department_or_404(db, client.id, dept_id)
+    name = clean_department_name(body.name)
+    # Create checked for duplicates but update did not, so a rename could
+    # produce two departments with the same name.
+    assert_department_name_free(db, client.id, name, exclude_id=dept.id)
+    dept.name = name
+    dept.description = body.description
+    dept.color = body.color
+    dept.icon = body.icon
+    log_audit(db, client.id, "department_updated", "department", dept.id, dept.name, "", request)
+    db.flush()  # what the commit would send anyway, so the answer sees it
+    out = department_to_dict(db, dept)
+    db.commit()
+    return out
+
+
+@router.delete("/api/departments/{dept_id}")
+def delete_department(dept_id: int, request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    dept = department_or_404(db, client.id, dept_id)
+    db.query(models.DBEmployee).filter(models.DBEmployee.department_id == dept_id).update(
+        {"department_id": None}, synchronize_session=False
+    )
+    # Goals hang off departments too and would block the delete on Postgres.
+    db.query(models.DBDepartmentGoal).filter(models.DBDepartmentGoal.department_id == dept_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.DBEmployeeGoal).filter(models.DBEmployeeGoal.department_id == dept_id).update(
+        {"department_id": None}, synchronize_session=False
+    )
+    log_audit(db, client.id, "department_deleted", "department", dept.id, dept.name, "", request)
+    db.delete(dept)
+    db.commit()
+    return {"message": "Department deleted"}
+
+
+@router.post("/api/departments/{dept_id}/employees")
+def add_to_department(dept_id: int, request: Request, body: DepartmentMembersIn, db: Session = Depends(get_db)):
+    """Put people in this department. Anyone already in another one moves
+    across, which is how somebody changes department.
+
+    A fixed handful of queries however many people are moved: on a remote
+    database each one is a third of a second.
+    """
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    ids = list(dict.fromkeys(body.employee_ids))
+    if not ids:
+        raise HTTPException(status_code=400, detail="Choose at least one employee")
+    depts = {d.id: d for d in db.query(models.DBDepartment).filter(
+        models.DBDepartment.client_id == client.id).all()}
+    dept = depts.get(dept_id)
+    if not dept:
+        raise HTTPException(status_code=404, detail="Department not found")
+    people = db.query(models.DBEmployee).filter(
+        models.DBEmployee.client_id == client.id, models.DBEmployee.id.in_(ids)).all()
+    if len(people) != len(ids):
+        raise HTTPException(status_code=404, detail="Employee not found")
+    moving = [e for e in people if e.department_id != dept.id]
+    if moving:
+        # As one at a time did: the first to join is handed the goals nobody has yet.
+        hand_out_department_goals(db, client.id, moving[0].id, dept.id,
+                                  pending_department_goals(db, client.id, dept.id))
+        log_audit_many(db, client.id, "employee_department_changed", "employee", [
+            (emp.id, f"{emp.first_name} {emp.last_name}",
+             "Moved from %s to %s" % (depts[emp.department_id].name if emp.department_id in depts
+                                      else "no department", dept.name))
+            for emp in moving], request)
+        # One statement for everybody rather than one per person.
+        db.query(models.DBEmployee).filter(
+            models.DBEmployee.client_id == client.id,
+            models.DBEmployee.id.in_([e.id for e in moving]),
+        ).update({"department_id": dept.id}, synchronize_session="evaluate")
+    db.flush()  # what the commit would send anyway, so the answer sees it
+    out = department_to_dict(db, dept)
+    db.commit()
+    return out
+
+
+@router.delete("/api/departments/{dept_id}/employees/{emp_id}")
+def remove_from_department(dept_id: int, emp_id: int, request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    dept = department_or_404(db, client.id, dept_id)
+    emp = db.query(models.DBEmployee).filter(
+        models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id,
+        models.DBEmployee.department_id == dept.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="That employee is not in this department")
+    move_to_department(db, client.id, emp, None)
+    log_audit(db, client.id, "employee_department_changed", "employee", emp.id,
+              f"{emp.first_name} {emp.last_name}", "Removed from %s" % dept.name, request)
+    db.flush()  # what the commit would send anyway, so the answer sees it
+    out = department_to_dict(db, dept)
+    db.commit()
+    return out
+
+
+@router.get("/api/employees")
+def get_employees(request: Request, q: str = "", status: str = "", db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    query = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id)
+    if status:
+        query = query.filter(models.DBEmployee.status == status)
+    if q:
+        query = query.filter(or_(
+            models.DBEmployee.first_name.ilike(f"%{q}%"),
+            models.DBEmployee.last_name.ilike(f"%{q}%"),
+            models.DBEmployee.email.ilike(f"%{q}%"),
+            models.DBEmployee.job_title.ilike(f"%{q}%"),
+        ))
+    employees = query.order_by(models.DBEmployee.created_at.desc()).all()
+    # Each person's department, manager and site count were three queries
+    # apiece - a hundred staff was three hundred trips to the database.
+    dept_names = {d.id: d.name for d in db.query(models.DBDepartment.id, models.DBDepartment.name).filter(
+        models.DBDepartment.client_id == client.id).all()}
+    manager_ids = {e.reports_to for e in employees if e.reports_to}
+    managers = {m.id: f"{m.first_name} {m.last_name}" for m in db.query(
+        models.DBEmployee.id, models.DBEmployee.first_name, models.DBEmployee.last_name).filter(
+        models.DBEmployee.client_id == client.id, models.DBEmployee.id.in_(manager_ids)).all()} if manager_ids else {}
+    site_counts = dict(db.query(models.DBEmployeeSite.employee_id, sqlfunc.count(models.DBEmployeeSite.id)).filter(
+        models.DBEmployeeSite.employee_id.in_([e.id for e in employees])).group_by(
+        models.DBEmployeeSite.employee_id).all()) if employees else {}
+    result = []
+    for e in employees:
+        dept_name = dept_names.get(e.department_id, "") if e.department_id else ""
+        manager_name = managers.get(e.reports_to, "") if e.reports_to else ""
+        result.append({
+            "site_count": site_counts.get(e.id, 0),
+            "id": e.id, "employee_id": e.employee_id,
+            "first_name": e.first_name, "last_name": e.last_name,
+            "full_name": f"{e.first_name} {e.last_name}",
+            "email": e.email, "phone": e.phone,
+            "department_id": e.department_id, "department_name": dept_name,
+            "reports_to": e.reports_to, "manager_name": manager_name,
+            "job_title": e.job_title, "role": e.role, "level": e.level or "",
+            "permission_role": e.permission_role or DEFAULT_PERMISSION_ROLE,
+            "employment_type": e.employment_type,
+            "pay_frequency": e.pay_frequency,
+            "salary": e.salary, "hourly_rate": e.hourly_rate,
+            "tax_rate": e.tax_rate, "deductions": e.deductions,
+            "allowances": e.allowances, "bonus": e.bonus,
+            "bank_name": e.bank_name, "bank_account": e.bank_account, "tax_id": e.tax_id,
+            "emergency_contact": e.emergency_contact, "emergency_phone": e.emergency_phone,
+            "start_date": e.start_date, "end_date": e.end_date,
+            "status": e.status, "onboarding_complete": e.onboarding_complete,
+            "offboarding_complete": e.offboarding_complete,
+            "created_at": e.created_at,
+        })
+    return result
+
+
+@router.post("/api/employees")
+def create_employee(request: Request, body: EmployeeCreate, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    serialise(db, "employee-create:%d" % client.id)
+    first_name = clean_person_name(body.first_name, "First name")
+    last_name = clean_person_name(body.last_name, "Last name")
+    email = clean_employee_email(db, client.id, body.email, required=bool(body.password))
+    validate_employee_money(body.model_dump())
+    employee_code = assert_employee_code_free(db, client.id, body.employee_id)
+
+    level = validate_level(body.level)
+    role = validate_role(body.role)
+    permission_role = validate_permission_role(body.permission_role)
+    if permission_role != DEFAULT_PERMISSION_ROLE:
+        require_owner(request, db)
+    reports_to = validate_manager(db, client.id, None, body.reports_to)
+    if body.department_id:
+        require_owner(request, db)
+        department_or_404(db, client.id, body.department_id)
+
+    max_num = db.query(sqlfunc.coalesce(sqlfunc.max(models.DBEmployee.id), 0)).filter(models.DBEmployee.client_id == client.id).scalar()
+    emp_number = employee_code or f"EMP-{max_num + 1:04d}"
+
+    emp = models.DBEmployee(
+        client_id=client.id, employee_id=emp_number,
+        first_name=first_name, last_name=last_name,
+        email=email, phone=body.phone, address=body.address,
+        reports_to=reports_to,
+        job_title=body.job_title, role=role, level=level,
+        permission_role=permission_role,
+        employment_type=body.employment_type, pay_frequency=body.pay_frequency,
+        salary=body.salary, hourly_rate=body.hourly_rate,
+        tax_rate=body.tax_rate, deductions=body.deductions,
+        allowances=body.allowances, bonus=body.bonus,
+        bank_name=body.bank_name, bank_account=body.bank_account,
+        tax_id=body.tax_id,
+        emergency_contact=body.emergency_contact, emergency_phone=body.emergency_phone,
+        start_date=body.start_date, status="onboarding",
+        password_hash=passwords.hash_password(validated_staff_password(body.password)) if body.password else "",
+    )
+    db.add(emp)
+    db.flush()
+    # Before the checklist: some document requirements apply to one department only.
+    move_to_department(db, client.id, emp, body.department_id)
+
+    # Create default onboarding checklist
+    start_onboarding(db, client.id, emp)
+
+    db.commit()
+    db.refresh(emp)
+    set_employee_sites(db, client.id, emp, body.site_ids)
+    log_audit(db, client.id, "employee_created", "employee", emp.id, f"{emp.first_name} {emp.last_name}", f"Dept: {body.department_id or 'None'}", request)
+    db.commit()
+    return {
+        **employee_sites_payload(db, emp),
+        "id": emp.id, "employee_id": emp.employee_id,
+        "first_name": emp.first_name, "last_name": emp.last_name,
+        "email": emp.email, "status": emp.status, "level": emp.level or "", "role": emp.role,
+        "permission_role": emp.permission_role or DEFAULT_PERMISSION_ROLE,
+        "department_id": emp.department_id, "reports_to": emp.reports_to,
+        "message": "Employee created. Onboarding checklist generated.",
+    }
+
+
+@router.get("/api/employees/{emp_id}")
+def get_employee(emp_id: int, request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    dept_name = ""
+    if emp.department_id:
+        dept = db.query(models.DBDepartment).filter(models.DBDepartment.id == emp.department_id).first()
+        dept_name = dept.name if dept else ""
+    manager_name = ""
+    if emp.reports_to:
+        mgr = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp.reports_to).first()
+        manager_name = f"{mgr.first_name} {mgr.last_name}" if mgr else ""
+    payslips = db.query(models.DBPayslip).filter(models.DBPayslip.employee_id == emp.id).order_by(models.DBPayslip.created_at.desc()).limit(12).all()
+    onboarding = db.query(models.DBOnboardingItem).filter(models.DBOnboardingItem.employee_id == emp.id).all()
+
+    # The profile is the one place HR looks up a person, so it answers every
+    # question about them rather than sending the user hunting across tabs.
+    leave_rows = db.query(models.DBLeaveRequest).filter(
+        models.DBLeaveRequest.employee_id == emp.id
+    ).order_by(models.DBLeaveRequest.id.desc()).limit(10).all()
+
+    today = datetime.now().date()
+    on_leave_today = False
+    for l in leave_rows:
+        if l.status != "approved":
+            continue
+        start, end = _parse_date(l.start_date), _parse_date(l.end_date)
+        if start and end and start <= today <= end:
+            on_leave_today = True
+            break
+
+    since = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    attendance = db.query(models.DBAttendance).filter(
+        models.DBAttendance.employee_id == emp.id,
+        models.DBAttendance.date >= since,
+    ).order_by(models.DBAttendance.date.desc()).all()
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_row = next((a for a in attendance if a.date == today_str), None)
+
+    goals = db.query(models.DBEmployeeGoal).filter(
+        models.DBEmployeeGoal.employee_id == emp.id
+    ).order_by(models.DBEmployeeGoal.id.desc()).limit(10).all()
+    documents = db.query(models.DBDocument).filter(
+        models.DBDocument.employee_id == emp.id
+    ).order_by(models.DBDocument.id.desc()).all()
+    doc_requests = db.query(models.DBDocumentRequest).options(selectinload(models.DBDocumentRequest.requirement)).filter(
+        models.DBDocumentRequest.employee_id == emp.id
+    ).order_by(models.DBDocumentRequest.id.asc()).all()
+
+    # Where this person came from, if they were hired through recruitment.
+    origin = db.query(models.DBFormSubmission).filter(
+        models.DBFormSubmission.hired_employee_id == emp.id
+    ).first()
+
+    direct_reports = db.query(models.DBEmployee).filter(
+        models.DBEmployee.reports_to == emp.id,
+        models.DBEmployee.client_id == client.id,
+    ).all()
+
+    return {
+        **employee_sites_payload(db, emp),
+        "id": emp.id, "employee_id": emp.employee_id,
+        "first_name": emp.first_name, "last_name": emp.last_name,
+        "full_name": f"{emp.first_name} {emp.last_name}",
+        "email": emp.email, "phone": emp.phone, "address": emp.address,
+        "department_id": emp.department_id, "department_name": dept_name,
+        "reports_to": emp.reports_to, "manager_name": manager_name,
+        "job_title": emp.job_title, "role": emp.role, "level": emp.level or "",
+        "permission_role": emp.permission_role or DEFAULT_PERMISSION_ROLE,
+        "permissions": sorted(permissions_for(emp)),
+        # What the role gives, so a screen can show which boxes were ticked by
+        # the role and which by hand, rather than one undifferentiated list.
+        "role_permissions": sorted(ROLE_PERMISSIONS.get(
+            (emp.permission_role or DEFAULT_PERMISSION_ROLE).lower(), set())),
+        "extra_permissions": sorted(permission_list(emp.extra_permissions)),
+        "denied_permissions": sorted(permission_list(emp.denied_permissions)),
+        "employment_type": emp.employment_type, "pay_frequency": emp.pay_frequency,
+        "salary": emp.salary, "hourly_rate": emp.hourly_rate,
+        "tax_rate": emp.tax_rate, "deductions": emp.deductions,
+        "allowances": emp.allowances, "bonus": emp.bonus,
+        "bank_name": emp.bank_name, "bank_account": emp.bank_account, "tax_id": emp.tax_id,
+        "emergency_contact": emp.emergency_contact, "emergency_phone": emp.emergency_phone,
+        "start_date": emp.start_date, "end_date": emp.end_date,
+        "status": emp.status, "onboarding_complete": emp.onboarding_complete,
+        "offboarding_complete": emp.offboarding_complete,
+        "created_at": emp.created_at,
+        "payslips": [{"id": p.id, "number": p.number, "period_start": p.period_start, "period_end": p.period_end,
+                       "pay_date": p.pay_date, "gross_pay": p.gross_pay, "net_pay": p.net_pay,
+                       "status": p.status, "sent": p.sent} for p in payslips],
+        "onboarding_items": [{"id": o.id, "title": o.title, "description": o.description,
+                               "category": o.category, "is_completed": o.is_completed,
+                               "completed_at": o.completed_at, "assigned_to": o.assigned_to,
+                               "due_date": o.due_date} for o in onboarding],
+        "leave_balance": leave_balance_for(db, emp),
+        "on_leave_today": on_leave_today,
+        "leave_requests": [{
+            "id": l.id, "leave_type": l.leave_type, "start_date": l.start_date,
+            "end_date": l.end_date, "days": l.days, "status": l.status,
+            "reason": l.reason, "created_at": l.created_at,
+        } for l in leave_rows],
+        "attendance_summary": {
+            "days_present": sum(1 for a in attendance if a.clock_in),
+            "days_late": sum(1 for a in attendance if a.status == "late"),
+            "hours_30d": round(sum(a.total_hours or 0 for a in attendance), 2),
+            "overtime_30d": round(sum(a.overtime_hours or 0 for a in attendance), 2),
+            "clocked_in_today": bool(today_row and today_row.clock_in and not today_row.clock_out),
+            "today_clock_in": today_row.clock_in if today_row else "",
+            "today_clock_out": today_row.clock_out if today_row else "",
+        },
+        "goals": [{
+            "id": g.id, "title": g.title, "status": g.status,
+            "current_value": g.current_value, "target_value": g.target_value,
+            "unit": g.unit, "due_date": g.due_date, "priority": g.priority,
+        } for g in goals],
+        "documents": [{
+            "id": d.id, "title": d.title, "doc_type": d.doc_type,
+            "file_name": d.file_name, "uploaded_by": d.uploaded_by,
+            "created_at": d.created_at,
+        } for d in documents],
+        "document_requests": [request_to_dict(r) for r in doc_requests],
+        "documents_outstanding": sum(
+            1 for r in doc_requests if r.status in ("pending", "rejected")
+        ),
+        "direct_reports": [{
+            "id": r.id, "full_name": f"{r.first_name} {r.last_name}",
+            "job_title": r.job_title, "level": r.level or "", "status": r.status,
+        } for r in direct_reports],
+        "hired_from": {
+            "submission_id": origin.id, "form_id": origin.form_id,
+            "applied_on": origin.created_at,
+        } if origin else None,
+    }
+
+
+@router.put("/api/employees/{emp_id}")
+def update_employee(emp_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    body = body or {}
+    # Everything a blind setattr would have accepted unchecked.
+    if "first_name" in body:
+        body["first_name"] = clean_person_name(body["first_name"], "First name")
+    if "last_name" in body:
+        body["last_name"] = clean_person_name(body["last_name"], "Last name")
+    if "email" in body:
+        body["email"] = clean_employee_email(db, client.id, body["email"], exclude_id=emp.id,
+                                             required=bool(emp.password_hash or body.get("password")))
+    validate_employee_money(body)
+    # Hierarchy fields go through the same checks as on create; a blind
+    # setattr let callers set an unknown level or build a reporting loop.
+    if "level" in body:
+        body["level"] = validate_level(body["level"])
+    if "role" in body:
+        body["role"] = validate_role(body["role"])
+    # Access is the Master's alone. A blind setattr below would otherwise let
+    # any team member widen their own or anybody's rights through this route.
+    if ACCESS_FIELDS & body.keys():
+        require_owner(request, db)
+    # So is the department: only the Master moves people between them. The
+    # profile form sends the current one back unchanged, which is fine.
+    new_dept = body.pop("department_id", emp.department_id) or None
+    if new_dept != emp.department_id:
+        require_owner(request, db)
+    if "permission_role" in body:
+        body["permission_role"] = validate_permission_role(body["permission_role"])
+    if "reports_to" in body:
+        body["reports_to"] = validate_manager(db, client.id, emp.id, body["reports_to"])
+    site_ids = body.pop("site_ids", None)
+    for key, val in body.items():
+        if hasattr(emp, key) and key not in ("id", "client_id", "created_at", "password_hash", "employee_id"):
+            setattr(emp, key, val)
+    set_employee_sites(db, client.id, emp, site_ids)
+    if move_to_department(db, client.id, emp, new_dept) != new_dept:
+        log_audit(db, client.id, "employee_department_changed", "employee", emp.id,
+                  f"{emp.first_name} {emp.last_name}", "Department set to %s" % (new_dept or "none"), request)
+    log_audit(db, client.id, "employee_updated", "employee", emp.id, f"{emp.first_name} {emp.last_name}", f"Fields: {', '.join(body.keys()) if body else 'none'}", request)
+    db.commit()
+    return {"message": "Employee updated"}
+
+
+@router.delete("/api/employees/{emp_id}")
+def delete_employee(emp_id: int, request: Request, db: Session = Depends(get_db)):
+    """Remove somebody for good. The Master's call alone: it takes their payslips,
+    attendance, leave and documents with them, which nobody else may decide."""
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    emp_name = f"{emp.first_name} {emp.last_name}"
+    # Everything that points at the person is dealt with first, otherwise the delete fails on a foreign key violation
+    # (on Postgres - SQLite would let it through). Their own records (payslips, attendance, leave, documents, sites)
+    # go with them; records that only name them (the bills they submitted, the jobs they managed, anyone reporting to
+    # them) stay, with nobody against them.
+    release_references(db, "employees", emp_id)
+    log_audit(db, client.id, "employee_deleted", "employee", emp.id, emp_name, "", request)
+    db.delete(emp)
+    db.commit()
+    return {"message": "Employee deleted"}
+
+
+@router.get("/api/hr/org-domain")
+def get_org_domain(request: Request, db: Session = Depends(get_db)):
+    client = get_client_user(request, db)
+    domain = org_domain_for(db, client.id)
+    off_domain = 0
+    if domain:
+        off_domain = sum(
+            1 for e in db.query(models.DBEmployee).filter(
+                models.DBEmployee.client_id == client.id).all()
+            if not (e.email or "").lower().endswith("@" + domain)
+        )
+    return {
+        "domain": domain,
+        # Existing people are left alone when a domain is first set; this is
+        # how many of them still sign in with an address off it.
+        "employees_off_domain": off_domain,
+    }
+
+
+@router.put("/api/hr/org-domain")
+def set_org_domain(request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """Set the domain staff accounts are issued on.
+
+    Existing employees are deliberately not rewritten: changing somebody's
+    address changes what they sign in with, and doing that to a whole workforce
+    behind a settings save would lock everyone out at once.
+    """
+    client = get_client_user(request, db)
+    domain = clean_org_domain((body or {}).get("domain", ""))
+    setting = db.query(models.DBSettings).filter(
+        models.DBSettings.client_id == client.id,
+        models.DBSettings.key == ORG_DOMAIN_KEY,
+    ).first()
+    if setting:
+        setting.value = domain
+    else:
+        db.add(models.DBSettings(
+            client_id=client.id, key=ORG_DOMAIN_KEY, value=domain,
+            description="Domain that staff portal accounts are issued on",
+        ))
+    log_audit(db, client.id, "org_domain_set", "settings", None, ORG_DOMAIN_KEY,
+              f"Set to {domain or '(none)'}", request)
+    db.commit()
+    return {"domain": domain, "message": "Organisation domain saved"}
+
+
+@router.get("/api/hr/suggest-email")
+def suggest_employee_email(request: Request, first_name: str = "", last_name: str = "",
+                           db: Session = Depends(get_db)):
+    """The address a new starter would be given, so HR does not type it."""
+    client = get_client_user(request, db)
+    domain = org_domain_for(db, client.id)
+    return {
+        "domain": domain,
+        "email": suggest_org_email(db, client.id, first_name, last_name),
+    }
+
+
+@router.get("/api/master/access")
+def master_access_overview(request: Request, db: Session = Depends(get_db)):
+    """Every permission in the system, every access level, and what each employee holds.
+
+    For the Master's access screen: one read gives the whole picture, and
+    PUT /api/employees/{id}/permissions changes it.
+    """
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    people = db.query(models.DBEmployee).filter(
+        models.DBEmployee.client_id == client.id,
+    ).order_by(models.DBEmployee.first_name, models.DBEmployee.last_name).all()
+    return {
+        "permissions": PORTAL_PERMISSIONS,
+        "permission_roles": PERMISSION_ROLES,
+        "employees": [{
+            "id": e.id, "employee_id": e.employee_id,
+            "full_name": f"{e.first_name} {e.last_name}".strip(),
+            "job_title": e.job_title, "status": e.status,
+            "permission_role": (e.permission_role or DEFAULT_PERMISSION_ROLE),
+            "permissions": sorted(permissions_for(e)),
+            "extra_permissions": sorted(permission_list(e.extra_permissions)),
+            "denied_permissions": sorted(permission_list(e.denied_permissions)),
+        } for e in people],
+    }
+
+
+@router.put("/api/employees/{emp_id}/permissions")
+def set_employee_permissions(emp_id: int, request: Request, body: dict = None,
+                             db: Session = Depends(get_db)):
+    """The Master decides what a member of staff may do in the portal, whenever they like.
+
+    Recorded in the audit log because it is a change of access, not a change of
+    detail: who widened somebody's rights, and when, is the first question
+    asked after a cost is approved by the wrong person.
+    """
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    emp = db.query(models.DBEmployee).filter(
+        models.DBEmployee.id == emp_id,
+        models.DBEmployee.client_id == client.id,
+    ).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    body = body or {}
+    new_role = validate_permission_role(body.get("permission_role"))
+    old_role = emp.permission_role or DEFAULT_PERMISSION_ROLE
+    before = sorted(permissions_for(emp))
+    emp.permission_role = new_role
+
+    # Anything named here is measured against the role rather than stored on
+    # top of it, so the record says what was actually decided: a right the
+    # role already carries is not written as a grant, and one it never had is
+    # not written as a denial. Otherwise the two lists fill up with entries
+    # that mean nothing and hide the one that does.
+    if "permissions" in body:
+        wanted = {p for p in (body.get("permissions") or []) if p in PERMISSION_KEYS}
+        from_role = set(ROLE_PERMISSIONS.get(new_role, set()))
+        emp.extra_permissions = ",".join(sorted(wanted - from_role))
+        emp.denied_permissions = ",".join(sorted(from_role - wanted))
+
+    # Sites are part of access too, so they save together with the rights;
+    # an empty list means every site, and leaving the key out changes nothing.
+    if "site_ids" in body:
+        if not isinstance(body["site_ids"], list):
+            raise HTTPException(status_code=400, detail="site_ids must be a list")
+        set_employee_sites(db, client.id, emp, body["site_ids"])
+
+    after = sorted(permissions_for(emp))
+    detail = "Access changed from %s to %s" % (old_role, new_role)
+    if before != after:
+        gained = sorted(set(after) - set(before))
+        lost = sorted(set(before) - set(after))
+        if gained:
+            detail += "; gained " + ", ".join(gained)
+        if lost:
+            detail += "; lost " + ", ".join(lost)
+    log_audit(db, client.id, "employee_permissions_changed", "employee", emp.id,
+              f"{emp.first_name} {emp.last_name}", detail, request)
+    db.commit()
+    return {
+        "message": "Access updated",
+        "permission_role": new_role,
+        "permissions": after,
+        "role_permissions": sorted(ROLE_PERMISSIONS.get(new_role, set())),
+    }
+
+
+def _set_status(emp_id: int, request: Request, db: Session, status: str, message: str, **fields):
+    """Master-only: move an employee to another stage of their time with the company."""
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    before = emp.status
+    emp.status = status
+    for k, v in fields.items():
+        setattr(emp, k, v)
+    log_audit(db, client.id, "employee_status_changed", "employee", emp.id, "%s: %s -> %s" % (emp.full_name if hasattr(emp, "full_name") else emp.id, before, status), "", request)
+    db.commit()
+    return {"message": message, "status": emp.status, "end_date": emp.end_date or ""}
 
 
 @router.post("/api/employees/{emp_id}/onboard")
@@ -1180,8 +2173,10 @@ def get_hr_stats(request: Request, db: Session = Depends(get_db)):
     offboarding = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id, models.DBEmployee.status == "offboarding").count()
     terminated = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id, models.DBEmployee.status == "terminated").count()
     depts = db.query(models.DBDepartment).filter(models.DBDepartment.client_id == client.id).count()
-    total_payroll = db.query(sqlfunc.coalesce(sqlfunc.sum(models.DBPayslip.net_pay), 0)).filter(models.DBPayslip.client_id == client.id, models.DBPayslip.status == "Paid").scalar()
-    pending_payroll = db.query(sqlfunc.coalesce(sqlfunc.sum(models.DBPayslip.net_pay), 0)).filter(models.DBPayslip.client_id == client.id, models.DBPayslip.status != "Paid").scalar()
+    total_payroll, pending_payroll = db.query(
+        sqlfunc.coalesce(sqlfunc.sum(case((models.DBPayslip.status == "Paid", models.DBPayslip.net_pay), else_=0)), 0),
+        sqlfunc.coalesce(sqlfunc.sum(case((models.DBPayslip.status != "Paid", models.DBPayslip.net_pay), else_=0)), 0),
+    ).filter(models.DBPayslip.client_id == client.id).one()
     return {
         "total_employees": total, "active": active, "onboarding": onboarding,
         "offboarding": offboarding, "terminated": terminated,
@@ -1336,7 +2331,7 @@ def list_employee_document_requests(emp_id: int, request: Request, db: Session =
     ).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
-    rows = db.query(models.DBDocumentRequest).filter(
+    rows = db.query(models.DBDocumentRequest).options(selectinload(models.DBDocumentRequest.requirement)).filter(
         models.DBDocumentRequest.employee_id == emp_id
     ).order_by(models.DBDocumentRequest.id.asc()).all()
     return [request_to_dict(r) for r in rows]

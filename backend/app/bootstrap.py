@@ -165,6 +165,7 @@ from app.routers import (
     devices,
     app_updates,
     head_office,
+    holiday_calendar,
 )
 
 for _module in (
@@ -206,6 +207,7 @@ for _module in (
     devices,
     app_updates,
     head_office,
+    holiday_calendar,
 ):
     app.include_router(_module.router)
 

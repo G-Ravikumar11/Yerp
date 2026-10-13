@@ -1,13 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, ChevronDown } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Button, ConfirmDialog, Field, Input, NumField, Select, Skeleton, Tabs } from '@/components/ui'
-import { deleteEmployee, peopleKeys, setAccess, setEmployeeStatus, updateEmployee, useDepartments, useEmployee, useEmployees, useHrCatalogue, type EmployeeDetail } from '@/api/people'
+import { deleteEmployee, peopleKeys, setEmployeeStatus, updateEmployee, useDepartments, useEmployee, useEmployees, useHrCatalogue, type EmployeeDetail } from '@/api/people'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
-import { AccessPicker } from './AccessPicker'
+import { EmployeeAccess } from './EmployeeAccess'
 import { EMPLOYEE_TONE } from './EmployeesPage'
 
 type Tab = 'profile' | 'access'
@@ -75,27 +75,6 @@ function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
   )
 }
 
-function Access({ e }: { e: EmployeeDetail }) {
-  const { isOwner } = useSession()
-  const cat = useHrCatalogue()
-  const [role, setRole] = useState(e.permission_role)
-  const [granted, setGranted] = useState(e.permissions)
-  useEffect(() => { setRole(e.permission_role); setGranted(e.permissions) }, [e.permission_role, e.permissions])
-  const save = useAction(() => setAccess(e.id, { permission_role: role, permissions: granted }), { invalidate: [peopleKeys.all], success: 'Access updated' })
-  if (!isOwner) return <p className="text-[13px] text-muted-foreground">Only the Master can change what somebody is allowed to do. They currently hold {e.permissions.length} permission{e.permissions.length === 1 ? '' : 's'}.</p>
-  if (!cat.data) return <Skeleton className="h-40 w-full" />
-  return (
-    <div>
-      <AccessPicker catalogue={cat.data} role={role} granted={granted} onRole={(code, rights) => { setRole(code); setGranted(rights) }} onGranted={setGranted} />
-      <p className="mt-3 text-[13px] text-muted-foreground">Sites: {e.all_sites || e.site_names.length === 0 ? 'every site' : e.site_names.join(', ')}</p>
-      <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
-        {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
-        <Button loading={save.isPending} onClick={() => save.mutate()}>Save access</Button>
-      </div>
-    </div>
-  )
-}
-
 /** Moves the employee between stages; the Master only. The status shown in the header follows. */
 function StatusMenu({ e }: { e: EmployeeDetail }) {
   const navigate = useNavigate()
@@ -103,7 +82,17 @@ function StatusMenu({ e }: { e: EmployeeDetail }) {
   const [open, setOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [asking, setAsking] = useState<null | 'offboard' | 'terminate'>(null)
-  const change = useAction((to: 'onboard' | 'offboard' | 'terminate') => setEmployeeStatus(e.id, to), { invalidate: [peopleKeys.all], success: (r) => r.message, onSuccess: () => setAsking(null) })
+  // The screen follows the server's reply at once; the lists are read again behind it rather than ahead of it.
+  const change = useAction((to: 'onboard' | 'offboard' | 'terminate') => setEmployeeStatus(e.id, to), {
+    success: (r) => r.message,
+    onSuccess: (r) => {
+      setAsking(null)
+      qc.setQueryData<EmployeeDetail>(['people', 'employee', e.id], (old) => old && { ...old, status: r.status, ...(r.end_date !== undefined && { end_date: r.end_date }) })
+      qc.setQueriesData<{ id: number; status: string }[]>({ queryKey: ['people', 'employees'] }, (old) => Array.isArray(old) ? old.map((p) => (p.id === e.id ? { ...p, status: r.status } : p)) : old)
+      void qc.invalidateQueries({ queryKey: ['people', 'employees'] })
+      void qc.invalidateQueries({ queryKey: ['people', 'departments'] })
+    },
+  })
   // Gone from every list, department and count, so those are read again; this page's own record is dropped first so it is not asked for.
   const del = useAction(() => deleteEmployee(e.id), {
     success: `${e.full_name} was deleted`,
@@ -140,9 +129,10 @@ function StatusMenu({ e }: { e: EmployeeDetail }) {
 export default function EmployeePage() {
   const id = Number(useParams().id)
   const q = useEmployee(id)
-  const [tab, setTab] = useState<Tab>('profile')
+  const [tab, setTab] = useState<Tab | null>(null)
   const e = q.data
   const { isOwner } = useSession()
+  const shown: Tab = isOwner ? (tab ?? 'profile') : 'profile'
   if (q.isPending) return <Skeleton className="h-64 w-full" />
   if (!e) return <p role="alert" className="py-10 text-center text-sm text-danger">Could not open that employee.</p>
   return (
@@ -150,11 +140,11 @@ export default function EmployeePage() {
       <Link to="/people/employees" className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Employees</Link>
       <PageHeader eyebrow={e.employee_id} title={e.full_name} description={[e.job_title, e.department_name, e.manager_name && `reports to ${e.manager_name}`].filter(Boolean).join(' · ') || undefined} actions={<Badge tone={EMPLOYEE_TONE[e.status] ?? 'neutral'}>{e.status}</Badge>} />
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <Tabs label="Section" value={tab} onChange={setTab} items={isOwner ? [{ value: 'profile', label: 'Profile' }, { value: 'access', label: 'Access' }] : [{ value: 'profile', label: 'Profile' }]} />
+        <Tabs label="Section" value={shown} onChange={setTab} items={isOwner ? [{ value: 'profile', label: 'Profile' }, { value: 'access', label: 'Access' }] : [{ value: 'profile', label: 'Profile' }]} />
         {isOwner && <StatusMenu e={e} />}
       </div>
-      {tab === 'profile' && <Profile key={e.id} e={e} />}
-      {tab === 'access' && isOwner && <Access e={e} />}
+      {shown === 'profile' && <Profile key={e.id} e={e} />}
+      {shown === 'access' && <EmployeeAccess key={e.id} e={e} />}
     </>
   )
 }
