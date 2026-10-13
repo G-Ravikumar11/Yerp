@@ -390,6 +390,7 @@ def boq_export(boq_id: int, request: Request, rev: Optional[int] = None, db: Ses
                           "boq_%s.xlsx" % re.sub(r"[^A-Za-z0-9]+", "_", head["number"]),
                           preamble=_pre(client, "BILL OF QUANTITIES", ("Project", head["project"]), ("Revision", head["revision"]),
                                         ("BOQ", head["number"])),
+                          logo_watermark=True,
                           closing=[(), ("Total", "", "", "", "", "", "", total, ""),
                                    ("GST @%g%%" % summary["gst_percent"], "", "", "", "", "", "", summary["gst"], ""),
                                    ("Total incl. GST", "", "", "", "", "", "", summary["total_with_gst"], "")])

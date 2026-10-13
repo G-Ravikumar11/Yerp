@@ -286,3 +286,74 @@ def test_adding_or_removing_a_task_moves_the_share(tenant):
     assert activity_row(tenant, j, aid)["actual_percent"] == 33.3        # a new task is more still to do
     tenant.delete("/api/schedule/tasks/%d" % b)
     assert activity_row(tenant, j, aid)["actual_percent"] == 50
+
+
+# --- the site diary reports the planned work done -----------------------------------------------------------------------
+
+def start_diary(tenant, j, updates, on=None):
+    return tenant.post("/api/diary", json={"job_id": j["id"], "diary_date": on or d(0), "work_done": "Slab", "work_updates": updates})
+
+
+def test_a_diary_ticks_planned_tasks_and_the_activitys_progress_follows(tenant):
+    j = job(tenant)
+    aid = act(tenant, j, "Excavation", d(-4), d(5))["activities"][0]["id"]
+    ids = [tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json={"text": "Task %d" % n, "date": d(0), "activity_id": aid}).json()["task"]["id"] for n in range(4)]
+    res = start_diary(tenant, j, [{"task_id": ids[0], "done": True}, {"task_id": ids[1], "done": True}])
+    assert res.status_code == 200, res.text
+    assert res.json()["planning"] == {"tasks": 2, "activities": 0} and "Planning & Progress updated: 2 tasks" in res.json()["message"]
+    row = day_of(tenant, j)["today"][0]
+    assert row["actual_percent"] == 50 and row["tasks_done"] == 2
+    done = [t for t in row["tasks"] if t["done"]]
+    assert len(done) == 2 and all(t["done_by_name"] for t in done)
+
+
+def test_a_diary_sets_progress_on_an_activity_without_tasks(tenant):
+    j = job(tenant)
+    aid = act(tenant, j, "Excavation", d(-4), d(5))["activities"][0]["id"]
+    res = start_diary(tenant, j, [{"activity_id": aid, "percent": 35}])
+    assert res.status_code == 200, res.text
+    assert res.json()["planning"] == {"tasks": 0, "activities": 1}
+    assert day_of(tenant, j)["today"][0]["actual_percent"] == 35
+
+
+def test_saving_the_diary_again_does_not_move_the_plan_twice(tenant):
+    j = job(tenant)
+    aid = act(tenant, j, "Excavation", d(-4), d(5))["activities"][0]["id"]
+    diary_id = start_diary(tenant, j, [{"activity_id": aid, "percent": 35}]).json()["diary"]["id"]
+    again = tenant.put("/api/diary/%d" % diary_id, json={"work_updates": [{"activity_id": aid, "percent": 35}]})
+    assert again.status_code == 200 and again.json()["planning"] == {"tasks": 0, "activities": 0}
+    moved = tenant.put("/api/diary/%d" % diary_id, json={"work_updates": [{"activity_id": aid, "percent": 60}]})
+    assert moved.json()["planning"]["activities"] == 1 and day_of(tenant, j)["today"][0]["actual_percent"] == 60
+
+
+def test_a_diary_can_put_a_task_back(tenant):
+    j = job(tenant)
+    aid = act(tenant, j, "Excavation", d(-4), d(5))["activities"][0]["id"]
+    tid = tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json={"text": "Dig", "date": d(0), "activity_id": aid}).json()["task"]["id"]
+    diary_id = start_diary(tenant, j, [{"task_id": tid, "done": True}]).json()["diary"]["id"]
+    assert tenant.get("/api/jobs/%d/schedule" % j["id"]).json()["activities"][0]["state"] == "done"
+    tenant.put("/api/diary/%d" % diary_id, json={"work_updates": [{"task_id": tid, "done": False}]})
+    assert tenant.get("/api/jobs/%d/schedule" % j["id"]).json()["activities"][0]["actual_percent"] == 0
+
+
+def test_a_diary_cannot_move_work_that_is_not_its_to_move(tenant, second_tenant):
+    j, other = job(tenant), job(second_tenant)
+    theirs = act(second_tenant, other, "Elsewhere", d(-4), d(5))["activities"][0]["id"]
+    their_task = second_tenant.post("/api/jobs/%d/schedule/tasks" % other["id"], json={"text": "x", "date": d(0), "activity_id": theirs}).json()["task"]["id"]
+    # another company's, and another project's, are refused
+    assert start_diary(tenant, j, [{"task_id": their_task, "done": True}]).status_code == 400
+    assert start_diary(tenant, j, [{"activity_id": theirs, "percent": 100}], on=d(-1)).status_code == 400
+    mine = act(tenant, j, "Excavation", d(-4), d(5))["activities"][0]["id"]
+    assert start_diary(tenant, j, [{"activity_id": mine, "percent": 120}], on=d(-2)).status_code == 400
+    # an activity that follows its tasks is not set by a percentage
+    tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json={"text": "y", "date": d(0), "activity_id": mine})
+    refused = start_diary(tenant, j, [{"activity_id": mine, "percent": 50}], on=d(-3))
+    assert refused.status_code == 409 and "follows its tasks" in refused.json()["detail"]
+    assert second_tenant.get("/api/jobs/%d/schedule/day" % other["id"]).json()["tasks"][0]["done"] is False
+
+
+def test_a_diary_without_work_updates_still_saves_as_before(tenant):
+    j = job(tenant)
+    res = start_diary(tenant, j, None)
+    assert res.status_code == 200 and res.json()["planning"] == {"tasks": 0, "activities": 0}
+    assert res.json()["message"] == "Diary opened for %s." % d(0)

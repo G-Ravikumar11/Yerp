@@ -15,6 +15,7 @@ from app.core.permissions import employee_can
 from app.core.queries import by_id, chain_rows, forget_chain
 from app.core.units import canonical_unit
 from app.schemas.items import ItemIn
+from app.services.items import CATEGORY_BY_KIND
 
 
 def boq_or_404(db, client_id, boq_id):
@@ -172,10 +173,15 @@ def boq_save_lines(db, boq, rev, rows, issue_codes, client_id):
     return kept, issued
 
 
+# What a person may type as an item code on a BOQ line: letters, numbers and - _ / . in any pattern (CIV-RCC-25, RCC025X).
+BOQ_ITEM_CODE = re.compile(r"^[A-Z0-9][A-Z0-9._/\-]{0,29}$")
+
+
 def boq_check_typed_codes(db, client_id, lines):
-    """An item code typed on a line must be one code for one line, and must be a finished good in the item master:
-    the code of an item that is already there is taken as it is, and one that is not is added to the master under
-    the line's own name. The master's own rules on what a code looks like apply, and are reported in its words."""
+    """An item code typed on a line is the code of that work everywhere: it must be one code for one line, and it becomes a
+    finished good in the item master under that code if it is not there already - so the client's work order, the gangs'
+    orders, the measurement book and the bills all carry the very code that was typed. A code that is already one of
+    this business's finished goods is taken as it is."""
     seen = {}
     for l in lines:
         if l.kind not in BOQ_PRICED or not l.item_code:
@@ -183,6 +189,8 @@ def boq_check_typed_codes(db, client_id, lines):
         if l.item_code in seen:
             raise HTTPException(400, "Item code %s is on two lines (%s and %s). A code is for one line only." % (
                 l.item_code, boq_line_label(seen[l.item_code]), boq_line_label(l)))
+        if not BOQ_ITEM_CODE.match(l.item_code):
+            raise HTTPException(400, "Item code %s: use letters, numbers and - _ / . only, up to 30 characters, with no spaces." % l.item_code)
         seen[l.item_code] = l
     if not seen:
         return
@@ -195,8 +203,9 @@ def boq_check_typed_codes(db, client_id, lines):
                                          "Leave the code blank to be given one." % code)
             continue
         name = re.sub(r"\s+", " ", (l.description or "").split("\n")[0]).strip()[:200]
-        build_item(db, client_id, ItemIn(kind="FG", item_code=code, item_name=name, description=(l.description or "").strip(),
-                                         units_of_measure=canonical_unit(l.uom) or "Nos"), set())
+        db.add(models.DBItem(client_id=client_id, kind="FG", item_code=code, item_name=name,
+                             description=(l.description or "").strip() or name, category=CATEGORY_BY_KIND["FG"], sub_category="FG",
+                             item_type="Purchased", units_of_measure=canonical_unit(l.uom) or "Nos"))
         db.flush()
 
 
