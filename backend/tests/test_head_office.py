@@ -277,3 +277,61 @@ def test_a_tender_won_by_the_planner_leaves_the_work_order_to_ho_qs(tenant, port
 def test_a_tender_won_by_the_master_still_draws_up_its_order(tenant):
     out = _won_tender(tenant)
     assert out["work_order"]["status"] == "Draft"
+
+
+# --- Where HO QS sits on the approval ladder ----------------------------------------------
+
+def _route(tenant, raiser):
+    """The people a paper from `raiser` passes, lowest first, as the approval chain builds it."""
+    import main
+    from app.services.approvals import hierarchy_chain
+    db = main.database.SessionLocal()
+    try:
+        emp = db.query(main.models.DBEmployee).filter(main.models.DBEmployee.id == raiser["id"]).first()
+        rungs = hierarchy_chain(db, emp.client_id, emp.id, "subcontracts.approve")
+        return [r["name"] for r in rungs]
+    finally:
+        db.close()
+
+
+def test_what_a_site_raises_goes_project_manager_then_ho_qs_then_head_projects_then_the_master(tenant):
+    site = person(tenant, "construction")
+    pm = person(tenant, "project_manager")
+    qs = person(tenant, "ho_qs")
+    head = person(tenant, "head_projects")
+    person(tenant, "ho_coordinator")
+    names = _route(tenant, site)
+    first = lambda e: "%s %s" % (e["first_name"], e["last_name"])
+    assert names[:4] == [first(pm), first(qs), first(head), names[3]]
+    assert names[3].endswith("(Master)") or names[3] == "the Master"
+    assert len(names) == 4
+
+
+def test_the_coordinator_is_never_on_the_route(tenant):
+    site = person(tenant, "construction")
+    co = person(tenant, "ho_coordinator")
+    assert "%s %s" % (co["first_name"], co["last_name"]) not in _route(tenant, site)
+
+
+def test_the_order_ho_qs_raises_still_goes_to_the_project_manager_first(tenant):
+    qs = person(tenant, "ho_qs")
+    pm = person(tenant, "project_manager")
+    assert _route(tenant, qs)[0] == "%s %s" % (pm["first_name"], pm["last_name"])
+
+
+# --- The coordinator follows up; it starts nothing ------------------------------------------
+
+def test_the_coordinator_starts_no_project_tender_bill_or_variation_but_ho_qs_can(tenant, portal):
+    job = project(tenant)
+    co = sign_in(portal, person(tenant, "ho_coordinator"))
+    for url, body in (("/api/jobs", {"name": "Another", "customer_name": "x"}),
+                      ("/api/estimates", {"title": "Tender", "job_id": job["id"]}),
+                      ("/api/ra-bills", {"work_order_id": 1}),
+                      ("/api/variations", {"work_order_id": 1, "title": "v"}),
+                      ("/api/sub-bills", {"order_id": 1})):
+        res = co.post(url, json=body)
+        assert res.status_code == 403, (url, res.text)
+        assert "coordinator" in res.json()["detail"]
+    qs = sign_in(portal, person(tenant, "ho_qs"))
+    assert qs.post("/api/estimates", json={"title": "Tender", "job_id": job["id"]}).status_code == 200
+    assert qs.post("/api/jobs", json={"name": "QS job", "customer_name": "x"}).status_code == 200

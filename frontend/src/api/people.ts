@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, type QueryClient } from '@tanstack/react-query'
 import { del, get, post, put } from '@/lib/api'
 
 export interface Employee {
@@ -123,12 +123,47 @@ export interface EmployeeInput {
 export const createEmployee = (b: EmployeeInput) => post<{ id: number; employee_id: string; first_name: string; site_names?: string[]; message: string }>('/api/employees', b)
 export const updateEmployee = (id: number, b: Partial<EmployeeInput> & Record<string, unknown>) => put<{ message?: string }>(`/api/employees/${id}`, b)
 export const setAccess = (id: number, b: { permission_role: string; permissions: string[] }) => put<{ message: string }>(`/api/employees/${id}/permissions`, b)
-export const resetPassword = (id: number, password: string) => post<{ message: string }>(`/api/employees/${id}/reset-password`, { password })
-export const startOffboarding = (id: number) => post<{ message: string }>(`/api/employees/${id}/offboard`)
+/** Removes the person for good, with their payslips, attendance, leave and documents. The Master only. */
+export const deleteEmployee = (id: number) => del<{ message: string }>(`/api/employees/${id}`)
+export const setEmployeeStatus = (id: number, to: 'onboard' | 'offboard' | 'terminate') => post<{ message: string; status: string }>(`/api/employees/${id}/${to}`)
 
 export type DepartmentInput = { name: string; description: string; color: string; icon: string }
-export const saveDepartment = (id: number | null, b: DepartmentInput) => (id ? put<{ id: number }>(`/api/departments/${id}`, b) : post<{ id: number }>('/api/departments', b))
+export const saveDepartment = (id: number | null, b: DepartmentInput) => (id ? put<Department>(`/api/departments/${id}`, b) : post<Department>('/api/departments', b))
 export const deleteDepartment = (id: number) => del<{ message: string }>(`/api/departments/${id}`)
+/**
+ * Shows a department change straight away from what the server sent back, then refreshes the rest
+ * quietly behind it. Waiting for every People list to reload first held each click open for
+ * several seconds on a far-away database.
+ */
+export function showDepartmentChange(qc: QueryClient, change: { saved?: Department; deletedId?: number }, { refresh = true } = {}) {
+  const { saved, deletedId } = change
+  const inSaved = new Set(saved?.employees.map((e) => e.id) ?? [])
+  qc.setQueryData<Department[]>(k('departments'), (list) => {
+    if (!list) return list
+    let next = list.filter((d) => d.id !== deletedId)
+    if (saved) {
+      // Whoever is in this one now has left wherever they were.
+      next = next.map((d) => {
+        if (d.id === saved.id) return saved
+        const kept = d.employees.filter((e) => !inSaved.has(e.id))
+        return kept.length === d.employees.length ? d : { ...d, employees: kept, employee_count: kept.length }
+      })
+      if (!next.some((d) => d.id === saved.id)) next = [...next, saved].sort((a, b) => a.name.localeCompare(b.name))
+    }
+    return next
+  })
+  qc.setQueriesData<Employee[]>({ queryKey: k('employees') }, (list) =>
+    list?.map((e) => {
+      if (saved && inSaved.has(e.id)) return e.department_id === saved.id && e.department_name === saved.name ? e : { ...e, department_id: saved.id, department_name: saved.name }
+      if ((saved && e.department_id === saved.id) || (deletedId && e.department_id === deletedId)) return { ...e, department_id: null, department_name: '' }
+      return e
+    }),
+  )
+  if (!refresh) return
+  void qc.invalidateQueries({ queryKey: peopleKeys.all })
+  void qc.invalidateQueries({ queryKey: ['orders', 'vocabulary'] })
+}
+
 /** Puts these people in the department, moving any already in another one. The Master only. */
 export const addToDepartment = (id: number, employee_ids: number[]) => post<Department>(`/api/departments/${id}/employees`, { employee_ids })
 export const removeFromDepartment = (id: number, employeeId: number) => del<Department>(`/api/departments/${id}/employees/${employeeId}`)

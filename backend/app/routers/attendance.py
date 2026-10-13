@@ -316,8 +316,6 @@ def update_attendance_settings(request: Request, body: dict = None, db: Session 
                 # Normalised, so a stray value cannot leave a tenant with no
                 # working days at all.
                 val = clean_working_days(val)
-            elif key == "auto_clock_in":
-                val = bool(val)
             setattr(settings, key, val)
     db.commit()
     return {"message": "Settings saved"}
@@ -333,7 +331,7 @@ def get_attendance_settings(request: Request, db: Session = Depends(get_db)):
             "geofence_radius": 200.0, "work_start": "09:00", "work_end": "17:30",
             "grace_minutes": 15.0, "auto_clockout_hours": 10.0, "max_overtime_hours": 4.0,
             "allow_remote": True, "require_location": True,
-            "working_days": DEFAULT_WORKING_DAYS, "auto_clock_in": True,
+            "working_days": DEFAULT_WORKING_DAYS,
         }
     return {
         "office_name": settings.office_name, "office_lat": settings.office_lat,
@@ -344,7 +342,6 @@ def get_attendance_settings(request: Request, db: Session = Depends(get_db)):
         "max_overtime_hours": settings.max_overtime_hours,
         "allow_remote": settings.allow_remote, "require_location": settings.require_location,
         "working_days": clean_working_days(settings.working_days),
-        "auto_clock_in": bool(settings.auto_clock_in),
     }
 
 

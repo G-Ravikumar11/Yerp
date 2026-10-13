@@ -21,7 +21,7 @@ from app.constants.crm import (
     SALES_STAGES,
 )
 from app.core.audit import log_audit
-from app.core.auth import get_client_user, owned_or_404, require_erp_read, require_items_access, session_can, wo_actor
+from app.core.auth import get_client_user, owned_or_404, refuse_ho_coordinator, require_erp_read, require_items_access, session_can, wo_actor
 from app.core.currency import (
     DEFAULT_CURRENCY,
     compute_invoice_totals,
@@ -835,6 +835,7 @@ def list_estimates(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/api/estimates")
 def create_estimate(body: EstimateIn, request: Request, db: Session = Depends(get_db)):
+    refuse_ho_coordinator(request, db, "Tenders")
     client, actor_id, actor_name = wo_actor(request, db, "billing.manage")
     if not (body.title or "").strip():
         raise HTTPException(400, "Give the tender a name.")

@@ -1,12 +1,13 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { AlertTriangle, ArrowUpRight, CheckCheck } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Skeleton, Stat } from '@/components/ui'
+import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Select, Skeleton, Stat } from '@/components/ui'
 import { useInbox } from '@/api/approvals'
 import { attentionHref, useAttention, useCashFlow, usePayables, useProjectPnl, useReceivables, useRetention, type AttentionItem } from '@/api/dashboard'
 import { Figure } from './Figure'
+import { useCosts } from '@/api/costs'
 import { useSession } from '@/lib/session'
 import { compactINR, formatINR } from '@/lib/utils'
 
@@ -14,6 +15,29 @@ import { compactINR, formatINR } from '@/lib/utils'
 const ProfitChart = lazy(() => import('./Charts').then((m) => ({ default: m.ProfitChart })))
 const CashFlowChart = lazy(() => import('./Charts').then((m) => ({ default: m.CashFlowChart })))
 const AgeingChart = lazy(() => import('./Charts').then((m) => ({ default: m.AgeingChart })))
+const MarginChart = lazy(() => import('./Charts').then((m) => ({ default: m.MarginChart })))
+const BudgetChart = lazy(() => import('./Charts').then((m) => ({ default: m.BudgetChart })))
+const CostMixChart = lazy(() => import('./Charts').then((m) => ({ default: m.CostMixChart })))
+
+
+type View = 'profit' | 'budget' | 'cost' | 'margin' | 'cash' | 'ageing'
+const VIEWS: { value: View; label: string; hint: string; needs: 'reports' | 'money' }[] = [
+  { value: 'profit', label: 'Money earned vs spent', hint: 'For each project: how much money it has brought in, and how much it has cost. Biggest projects first.', needs: 'reports' },
+  { value: 'budget', label: 'Planned vs actual cost', hint: 'For each project: the contract amount, what we expect it to cost, and what we have spent so far.', needs: 'reports' },
+  { value: 'cost', label: 'Where our money goes', hint: 'How the money we spend is split between materials, labour, contractors and the rest.', needs: 'reports' },
+  { value: 'margin', label: 'Profit or loss per project', hint: 'Green bars are projects making money. Red bars are projects losing money.', needs: 'reports' },
+  { value: 'cash', label: 'Money in and out', hint: 'Money received and money paid out each month, and the balance left.', needs: 'money' },
+  { value: 'ageing', label: 'Unpaid money, by how old', hint: 'Money we are waiting to receive and money we still have to pay, grouped by how long it has been pending.', needs: 'money' },
+]
+const VIEW_KEY = 'yerp-dashboard-chart'
+const savedView = (): View => {
+  try {
+    const v = localStorage.getItem(VIEW_KEY)
+    return VIEWS.some((x) => x.value === v) ? (v as View) : 'profit'
+  } catch {
+    return 'profit'
+  }
+}
 
 const greeting = () => {
   const h = new Date().getHours()
@@ -83,11 +107,41 @@ export default function DashboardPage() {
   const pnl = useProjectPnl(reports)
   const cash = useCashFlow(money)
 
+  const costs = useCosts(reports)
+
   const first = user?.name?.split(' ')[0]
   const waiting = inbox.data?.mine ?? 0
   const today = new Intl.DateTimeFormat('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date())
   const items = attention.data?.items ?? []
   const cashHasData = (cash.data ?? []).some((m) => m.received || m.paid)
+
+  const [pickedView, setView] = useState<View>(savedView)
+  const available = VIEWS.filter((v) => (v.needs === 'reports' ? reports : money))
+  const view = available.some((v) => v.value === pickedView) ? pickedView : (available[0]?.value ?? 'profit')
+  const pickView = (v: View) => {
+    setView(v)
+    try {
+      localStorage.setItem(VIEW_KEY, v)
+    } catch {
+      /* private window: the choice just lasts until the page is closed */
+    }
+  }
+
+  const fallback = <ChartSkeleton h={300} />
+  let chart: React.ReactNode = null
+  if (view === 'profit') {
+    chart = pnl.isPending ? fallback : pnl.isError ? <Empty>Could not load the projects.</Empty> : pnl.data.projects.length === 0 ? <Empty>No projects yet.</Empty> : <Suspense fallback={fallback}><ProfitChart projects={pnl.data.projects} /></Suspense>
+  } else if (view === 'margin') {
+    chart = pnl.isPending ? fallback : pnl.isError || pnl.data.projects.length === 0 ? <Empty>No projects to show.</Empty> : <Suspense fallback={fallback}><MarginChart projects={pnl.data.projects} /></Suspense>
+  } else if (view === 'budget') {
+    chart = costs.isPending ? fallback : costs.isError ? <Empty>Could not load the costs.</Empty> : costs.data.projects.length === 0 ? <Empty>No projects yet.</Empty> : <Suspense fallback={fallback}><BudgetChart projects={costs.data.projects} /></Suspense>
+  } else if (view === 'cost') {
+    chart = costs.isPending ? fallback : costs.isError ? <Empty>Could not load this.</Empty> : !costs.data.summary.categories.some((c) => c.amount > 0) ? <Empty>No cost has been booked yet.</Empty> : <Suspense fallback={fallback}><CostMixChart categories={costs.data.summary.categories} /></Suspense>
+  } else if (view === 'cash') {
+    chart = cash.isPending ? fallback : cash.isError ? <Empty>Could not load the ledger.</Empty> : !cashHasData ? <Empty>Nothing received or paid in the last twelve months.</Empty> : <Suspense fallback={fallback}><CashFlowChart months={cash.data} /></Suspense>
+  } else {
+    chart = receivables.isPending || payables.isPending ? fallback : receivables.isError && payables.isError ? <Empty>Could not load this.</Empty> : <Suspense fallback={fallback}><AgeingChart receivable={receivables.data?.buckets} payable={payables.data?.buckets} /></Suspense>
+  }
 
   const fig = (n: number | undefined, loading: boolean) => (loading ? undefined : <Figure value={n ?? 0} format={compactINR} />)
   const looks = attention.data?.summary.items
@@ -135,26 +189,21 @@ export default function DashboardPage() {
           </motion.div>
         )}
 
-        {reports && (
-          <Panel title="Project profitability" description="Revenue earned against cost incurred, biggest projects first." className="lg:col-span-2">
-            {pnl.isPending ? (
-              <ChartSkeleton h={300} />
-            ) : pnl.isError ? (
-              <Empty>Could not load the projects.</Empty>
-            ) : pnl.data.projects.length === 0 ? (
-              <Empty>No projects yet.</Empty>
-            ) : (
-              <Suspense fallback={<ChartSkeleton h={300} />}>
-                <ProfitChart projects={pnl.data.projects} />
-              </Suspense>
-            )}
+        {(reports || money) && (
+          <Panel
+            title="How the business is doing"
+            description={VIEWS.find((v) => v.value === view)?.hint}
+            className="lg:col-span-2"
+            action={<Select aria-label="Chart" className="h-9 w-56" value={view} onChange={(e) => pickView(e.target.value as View)} options={available} />}
+          >
+            {chart}
           </Panel>
         )}
 
         <Panel
           title="What needs you"
           description={attention.data ? `${formatINR(attention.data.summary.money_at_stake)} at stake` : undefined}
-          className={reports ? '' : 'lg:col-span-3'}
+          className={reports || money ? '' : 'lg:col-span-3'}
           action={
             attention.data && attention.data.summary.looks_wrong > 0 ? (
               <Badge tone="danger">
@@ -185,34 +234,6 @@ export default function DashboardPage() {
           )}
         </Panel>
 
-        {money && (
-          <>
-            <Panel title="Cash flow" description="Money received and paid out each month, and the running balance." className="lg:col-span-2">
-              {cash.isPending ? (
-                <ChartSkeleton h={300} />
-              ) : cash.isError ? (
-                <Empty>Could not load the ledger.</Empty>
-              ) : !cashHasData ? (
-                <Empty>Nothing received or paid in the last twelve months.</Empty>
-              ) : (
-                <Suspense fallback={<ChartSkeleton h={300} />}>
-                  <CashFlowChart months={cash.data} />
-                </Suspense>
-              )}
-            </Panel>
-            <Panel title="Payments due, by age" description="Money to receive and money to pay, grouped by how long it has been pending.">
-              {receivables.isPending || payables.isPending ? (
-                <ChartSkeleton />
-              ) : receivables.isError && payables.isError ? (
-                <Empty>Could not load this.</Empty>
-              ) : (
-                <Suspense fallback={<ChartSkeleton />}>
-                  <AgeingChart receivable={receivables.data?.buckets} payable={payables.data?.buckets} />
-                </Suspense>
-              )}
-            </Panel>
-          </>
-        )}
       </motion.div>
     </>
   )

@@ -35,3 +35,18 @@ def log_audit(db, client_id, action, entity_type="", entity_id=None, entity_name
         entity_name=entity_name, details=details, ip_address=ip,
     )
     db.add(log)
+
+
+def log_audit_many(db, client_id, action, entity_type, entries, request=None, user_type="client", user_name=""):
+    """Several entries of one kind as a single insert. `entries` are
+    (entity_id, entity_name, details). Added one by one, each is its own trip
+    to the database when it is written."""
+    if not entries:
+        return
+    from sqlalchemy import insert
+    ip = (request.client.host or "") if request and request.client else ""
+    db.execute(insert(models.DBAuditLog), [{
+        "client_id": client_id, "user_type": user_type, "user_name": user_name,
+        "action": action, "entity_type": entity_type, "entity_id": eid,
+        "entity_name": name, "details": details, "ip_address": ip,
+    } for eid, name, details in entries])

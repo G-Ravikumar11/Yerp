@@ -23,6 +23,7 @@ from app.services.compliance import free_back_charges_of
 from app.core.auth import (
     STAFF_VIEWER,
     get_client_user,
+    refuse_ho_coordinator,
     require_erp_read,
     require_items_access,
     require_owner,
@@ -869,6 +870,7 @@ def list_sub_bills(request: Request, order_id: int = 0, db: Session = Depends(ge
 
 @router.post("/api/sub-bills")
 def create_sub_bill(body: SubBillIn, request: Request, db: Session = Depends(get_db)):
+    refuse_ho_coordinator(request, db, "Sub contractor bills")
     client, actor_id, actor_name = wo_actor(request, db, "billing.manage")
     order = wo_or_404(db, client.id, body.order_id)
     if (order.status or "") not in ("APPROVED", "EXECUTED"):

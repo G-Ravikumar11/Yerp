@@ -27,7 +27,7 @@ from app.constants.approvals import (
 )
 from app.core.audit import log_audit
 from app.core.currency import formatted_money, inr, money
-from app.core.permissions import employee_can, role_rank
+from app.core.permissions import employee_can, raising_rank, role_rank
 from app.core.queries import by_id, prime, prime_chains
 from app.core.tenant_settings import tenant_setting
 
@@ -461,7 +461,7 @@ def ladder_approver(db, client_id, submitted_by, entity_type, job_id=None):
     """
     right = APPROVE_RIGHT.get(entity_type, "bills.approve")
     me = db.query(models.DBEmployee).filter(models.DBEmployee.id == submitted_by).first()
-    mine = role_rank(me) if me else 0
+    mine = raising_rank(me) if me else 0
     my_sites = (employee_site_ids(db, me) if me else None) or set()
     if job_id:
         my_sites = set(my_sites) | {job_id}
@@ -774,7 +774,7 @@ def hierarchy_chain(db, client_id, submitter_id, right, job_id=None, owner_signs
             if boss and boss.id not in seen and employee_can(boss, right):
                 chain.append(boss)
                 seen.add(boss.id)
-    floor = max([role_rank(me) if me else 0] + [role_rank(e) for e in chain])
+    floor = max([raising_rank(me) if me else 0] + [role_rank(e) for e in chain])
     sites = (employee_site_ids(db, me) if me else None) or set()
     if job_id:
         sites = set(sites) | {job_id}

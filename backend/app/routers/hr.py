@@ -11,7 +11,7 @@ from app.core import passwords
 from app.db import get_db
 
 from app.constants.hr import ONBOARDING_STAGES, ORG_DOMAIN_KEY
-from app.core.audit import log_audit
+from app.core.audit import log_audit, log_audit_many
 from app.core.auth import get_client_user, owned_or_404, require_owner
 from app.core.currency import money
 from app.core.dates import _parse_date
@@ -36,9 +36,12 @@ from app.services.hr import (
     assign_document_requests,
     department_or_404,
     department_to_dict,
+    departments_to_dicts,
     employee_sites_payload,
     maybe_complete_onboarding,
+    hand_out_department_goals,
     move_to_department,
+    pending_department_goals,
     onboarding_snapshot,
     org_domain_for,
     request_to_dict,
@@ -199,7 +202,7 @@ def get_departments(request: Request, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
     depts = db.query(models.DBDepartment).filter(
         models.DBDepartment.client_id == client.id).order_by(models.DBDepartment.name).all()
-    return [department_to_dict(db, d) for d in depts]
+    return departments_to_dicts(db, client.id, depts)
 
 
 @router.get("/api/departments/{dept_id}")
@@ -221,8 +224,13 @@ def create_department(request: Request, body: DepartmentCreate, db: Session = De
     db.add(dept)
     db.flush()
     log_audit(db, client.id, "department_created", "department", dept.id, dept.name, "", request)
+    # Read back before the commit: afterwards every attribute is expired and
+    # reading one is another trip to the database.
+    out = {"id": dept.id, "name": dept.name, "description": dept.description,
+           "color": dept.color or "#00f0ff", "icon": dept.icon or "building",
+           "employee_count": 0, "created_at": dept.created_at, "employees": []}
     db.commit()
-    return department_to_dict(db, dept)
+    return out
 
 
 @router.put("/api/departments/{dept_id}")
@@ -239,8 +247,10 @@ def update_department(dept_id: int, request: Request, body: DepartmentCreate, db
     dept.color = body.color
     dept.icon = body.icon
     log_audit(db, client.id, "department_updated", "department", dept.id, dept.name, "", request)
+    db.flush()  # what the commit would send anyway, so the answer sees it
+    out = department_to_dict(db, dept)
     db.commit()
-    return department_to_dict(db, dept)
+    return out
 
 
 @router.delete("/api/departments/{dept_id}")
@@ -267,27 +277,44 @@ def delete_department(dept_id: int, request: Request, db: Session = Depends(get_
 @router.post("/api/departments/{dept_id}/employees")
 def add_to_department(dept_id: int, request: Request, body: DepartmentMembersIn, db: Session = Depends(get_db)):
     """Put people in this department. Anyone already in another one moves
-    across, which is how somebody changes department."""
+    across, which is how somebody changes department.
+
+    A fixed handful of queries however many people are moved: on a remote
+    database each one is a third of a second.
+    """
     client = get_client_user(request, db)
     require_owner(request, db)
-    dept = department_or_404(db, client.id, dept_id)
     ids = list(dict.fromkeys(body.employee_ids))
     if not ids:
         raise HTTPException(status_code=400, detail="Choose at least one employee")
+    depts = {d.id: d for d in db.query(models.DBDepartment).filter(
+        models.DBDepartment.client_id == client.id).all()}
+    dept = depts.get(dept_id)
+    if not dept:
+        raise HTTPException(status_code=404, detail="Department not found")
     people = db.query(models.DBEmployee).filter(
         models.DBEmployee.client_id == client.id, models.DBEmployee.id.in_(ids)).all()
     if len(people) != len(ids):
         raise HTTPException(status_code=404, detail="Employee not found")
-    names = {d.id: d.name for d in db.query(models.DBDepartment).filter(
-        models.DBDepartment.client_id == client.id).all()}
-    for emp in people:
-        old = move_to_department(db, client.id, emp, dept.id)
-        if old != dept.id:
-            log_audit(db, client.id, "employee_department_changed", "employee", emp.id,
-                      f"{emp.first_name} {emp.last_name}",
-                      "Moved from %s to %s" % (names.get(old, "no department"), dept.name), request)
+    moving = [e for e in people if e.department_id != dept.id]
+    if moving:
+        # As one at a time did: the first to join is handed the goals nobody has yet.
+        hand_out_department_goals(db, client.id, moving[0].id, dept.id,
+                                  pending_department_goals(db, client.id, dept.id))
+        log_audit_many(db, client.id, "employee_department_changed", "employee", [
+            (emp.id, f"{emp.first_name} {emp.last_name}",
+             "Moved from %s to %s" % (depts[emp.department_id].name if emp.department_id in depts
+                                      else "no department", dept.name))
+            for emp in moving], request)
+        # One statement for everybody rather than one per person.
+        db.query(models.DBEmployee).filter(
+            models.DBEmployee.client_id == client.id,
+            models.DBEmployee.id.in_([e.id for e in moving]),
+        ).update({"department_id": dept.id}, synchronize_session="evaluate")
+    db.flush()  # what the commit would send anyway, so the answer sees it
+    out = department_to_dict(db, dept)
     db.commit()
-    return department_to_dict(db, dept)
+    return out
 
 
 @router.delete("/api/departments/{dept_id}/employees/{emp_id}")
@@ -303,8 +330,10 @@ def remove_from_department(dept_id: int, emp_id: int, request: Request, db: Sess
     move_to_department(db, client.id, emp, None)
     log_audit(db, client.id, "employee_department_changed", "employee", emp.id,
               f"{emp.first_name} {emp.last_name}", "Removed from %s" % dept.name, request)
+    db.flush()  # what the commit would send anyway, so the answer sees it
+    out = department_to_dict(db, dept)
     db.commit()
-    return department_to_dict(db, dept)
+    return out
 
 
 @router.get("/api/employees")
@@ -321,19 +350,23 @@ def get_employees(request: Request, q: str = "", status: str = "", db: Session =
             models.DBEmployee.job_title.ilike(f"%{q}%"),
         ))
     employees = query.order_by(models.DBEmployee.created_at.desc()).all()
+    # Each person's department, manager and site count were three queries
+    # apiece - a hundred staff was three hundred trips to the database.
+    dept_names = {d.id: d.name for d in db.query(models.DBDepartment.id, models.DBDepartment.name).filter(
+        models.DBDepartment.client_id == client.id).all()}
+    manager_ids = {e.reports_to for e in employees if e.reports_to}
+    managers = {m.id: f"{m.first_name} {m.last_name}" for m in db.query(
+        models.DBEmployee.id, models.DBEmployee.first_name, models.DBEmployee.last_name).filter(
+        models.DBEmployee.client_id == client.id, models.DBEmployee.id.in_(manager_ids)).all()} if manager_ids else {}
+    site_counts = dict(db.query(models.DBEmployeeSite.employee_id, sqlfunc.count(models.DBEmployeeSite.id)).filter(
+        models.DBEmployeeSite.employee_id.in_([e.id for e in employees])).group_by(
+        models.DBEmployeeSite.employee_id).all()) if employees else {}
     result = []
     for e in employees:
-        dept_name = ""
-        if e.department_id:
-            dept = db.query(models.DBDepartment).filter(models.DBDepartment.id == e.department_id).first()
-            dept_name = dept.name if dept else ""
-        manager_name = ""
-        if e.reports_to:
-            mgr = db.query(models.DBEmployee).filter(models.DBEmployee.id == e.reports_to).first()
-            manager_name = f"{mgr.first_name} {mgr.last_name}" if mgr else ""
+        dept_name = dept_names.get(e.department_id, "") if e.department_id else ""
+        manager_name = managers.get(e.reports_to, "") if e.reports_to else ""
         result.append({
-            "site_count": db.query(models.DBEmployeeSite).filter(
-                models.DBEmployeeSite.employee_id == e.id).count(),
+            "site_count": site_counts.get(e.id, 0),
             "id": e.id, "employee_id": e.employee_id,
             "first_name": e.first_name, "last_name": e.last_name,
             "full_name": f"{e.first_name} {e.last_name}",
@@ -607,7 +640,10 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
 
 @router.delete("/api/employees/{emp_id}")
 def delete_employee(emp_id: int, request: Request, db: Session = Depends(get_db)):
+    """Remove somebody for good. The Master's call alone: it takes their payslips,
+    attendance, leave and documents with them, which nobody else may decide."""
     client = get_client_user(request, db)
+    require_owner(request, db)
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
@@ -621,19 +657,6 @@ def delete_employee(emp_id: int, request: Request, db: Session = Depends(get_db)
     db.delete(emp)
     db.commit()
     return {"message": "Employee deleted"}
-
-
-@router.post("/api/employees/{emp_id}/reset-password")
-def reset_employee_password(emp_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
-    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
-    if not emp:
-        raise HTTPException(status_code=404, detail="Employee not found")
-    new_pass = body.get("password", "")
-    validate_password_strength(new_pass)
-    emp.password_hash = passwords.hash_password(new_pass)
-    db.commit()
-    return {"message": "Password updated successfully"}
 
 
 @router.get("/api/hr/org-domain")
@@ -775,15 +798,35 @@ def set_employee_permissions(emp_id: int, request: Request, body: dict = None,
     }
 
 
-@router.post("/api/employees/{emp_id}/offboard")
-def start_offboarding(emp_id: int, request: Request, db: Session = Depends(get_db)):
+def _set_status(emp_id: int, request: Request, db: Session, status: str, message: str, **fields):
+    """Master-only: move an employee to another stage of their time with the company."""
     client = get_client_user(request, db)
+    require_owner(request, db)
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
-    emp.status = "offboarding"
+    before = emp.status
+    emp.status = status
+    for k, v in fields.items():
+        setattr(emp, k, v)
+    log_audit(db, client.id, "employee_status_changed", "employee", emp.id, "%s: %s -> %s" % (emp.full_name if hasattr(emp, "full_name") else emp.id, before, status), "", request)
     db.commit()
-    return {"message": "Offboarding started"}
+    return {"message": message, "status": emp.status}
+
+
+@router.post("/api/employees/{emp_id}/onboard")
+def start_onboarding_status(emp_id: int, request: Request, db: Session = Depends(get_db)):
+    return _set_status(emp_id, request, db, "onboarding", "Employee is onboarding", offboarding_complete=False, end_date="")
+
+
+@router.post("/api/employees/{emp_id}/offboard")
+def start_offboarding(emp_id: int, request: Request, db: Session = Depends(get_db)):
+    return _set_status(emp_id, request, db, "offboarding", "Offboarding started")
+
+
+@router.post("/api/employees/{emp_id}/terminate")
+def terminate_employee(emp_id: int, request: Request, db: Session = Depends(get_db)):
+    return _set_status(emp_id, request, db, "terminated", "Employee terminated", end_date=datetime.now().strftime("%Y-%m-%d"))
 
 
 @router.post("/api/employees/{emp_id}/complete-offboard")

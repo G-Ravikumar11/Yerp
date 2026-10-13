@@ -19,6 +19,10 @@ def google_configured() -> bool:
     return bool(os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET"))
 
 
+def yahoo_configured() -> bool:
+    return bool(os.getenv("YAHOO_CLIENT_ID") and os.getenv("YAHOO_CLIENT_SECRET"))
+
+
 def find_valid_reset(db, token: str):
     """The reset a token refers to, or None if it is unknown, spent or expired."""
     if not token:

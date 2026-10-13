@@ -7,8 +7,8 @@ Put these in backend/.env (locally) or in the Railway Variables tab (live):
     ANTHROPIC_API_KEY   optional. Claude is used only for what Groq cannot read (a PDF that is a scan, a very large
                         picture), or for everything if AI_PROVIDER=claude.
     AI_PROVIDER         "groq" (default) or "claude": which one answers text tasks when both keys are set.
-    GROQ_MODEL          the Groq text model: default llama-3.3-70b-versatile
-    GROQ_VISION_MODEL   the Groq model for photos: default meta-llama/llama-4-scout-17b-16e-instruct
+    GROQ_MODEL          the Groq text model: default openai/gpt-oss-120b
+    GROQ_VISION_MODEL   the Groq model for photos: default qwen/qwen3.8-27b
     AI_ENABLED          "1" (default) or "0" to switch every AI feature off at once.
     AI_MODEL_SMART      the model for reading documents and judging: default claude-sonnet-5-5
     AI_MODEL_FAST       the model for short, cheap tasks: default claude-haiku-5-5
@@ -30,11 +30,11 @@ def groq_key() -> str:
 
 
 def groq_model() -> str:
-    return (os.getenv("GROQ_MODEL") or "llama-3.3-70b-versatile").strip()
+    return (os.getenv("GROQ_MODEL") or "openai/gpt-oss-120b").strip()
 
 
 def groq_vision_model() -> str:
-    return (os.getenv("GROQ_VISION_MODEL") or "meta-llama/llama-4-scout-17b-16e-instruct").strip()
+    return (os.getenv("GROQ_VISION_MODEL") or "qwen/qwen3.8-27b").strip()
 
 
 def prefer_groq() -> bool:

@@ -381,3 +381,25 @@ def test_the_sample_sheet_imports_as_it_is(tenant):
     assert [l["description"] for l in lines if l["kind"] == "section"][0] == "PLAIN CEMENT CONCRETE"
     assert any(l["rate_only"] for l in lines) and any(l["group_code"] == "SUB STRUCTURE WORKS" for l in lines)
     assert not out.json()["warnings"]
+
+
+def test_a_material_added_once_is_offered_on_every_boq(tenant):
+    _, boq = make_boq(tenant)
+    res = save_with(tenant, boq, {"material": "Anti-termite chemical"})
+    assert res.status_code == 200, res.text
+    got = tenant.get("/api/boqs/materials")
+    assert got.status_code == 200 and "Anti-termite chemical" in got.json()["materials"]
+    # A second project's BOQ sees it too.
+    _, other = make_boq(tenant, "Another site")
+    assert "Anti-termite chemical" in tenant.get("/api/boqs/materials").json()["materials"]
+
+
+def test_remarks_are_kept_and_go_to_the_excel(tenant):
+    _, boq = make_boq(tenant)
+    res = save_with(tenant, boq, {"remarks": "Rate includes pumping"})
+    assert res.status_code == 200, res.text
+    assert "Rate includes pumping" in [l["remarks"] for l in res.json()["lines"]]
+    x = tenant.get("/api/boqs/%d/export.xlsx" % boq["id"])
+    cells = [c.value for ws in openpyxl.load_workbook(io.BytesIO(x.content)).worksheets for row in ws.iter_rows() for c in row if c.value is not None]
+    assert "Remarks" in cells and "Rate includes pumping" in cells
+    assert tenant.get("/api/boqs/%d/export.pdf" % boq["id"]).status_code == 200
