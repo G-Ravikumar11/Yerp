@@ -468,6 +468,7 @@ function TrackerView({ rows, flags, totals, loading, denied }: { rows: TrackerRo
   if (denied) return <p className="rounded-lg border border-border px-4 py-8 text-center text-sm text-muted-foreground">The tracker shows the gang rates against ours, so it is for those who see the reports.</p>
   const columns: TableColumn<TrackerRow>[] = [
     { id: 'group', header: 'Group', width: '6rem', cell: (r) => <span className={cn('font-mono text-xs', r.kind === 'section' && 'font-semibold')}>{r.group_code}</span> },
+    { id: 'code', header: 'Item code', width: '7rem', cell: (r) => <span className="whitespace-nowrap font-mono text-xs">{r.item_code ?? ''}</span> },
     { id: 'd', header: 'Description', cell: (r) => (r.kind === 'section' ? <span className="font-semibold">{r.description}</span> : <div className="max-w-sm truncate" title={r.description}>{r.description}</div>) },
     { id: 'qty', header: 'BOQ qty', align: 'right', cell: (r) => (r.kind === 'section' ? '' : `${formatQty(r.quantity ?? 0)} ${r.uom ?? ''}`) },
     { id: 'rate', header: 'Our rate', align: 'right', hideBelow: 'md', cell: (r) => (r.kind === 'section' ? '' : formatINR(r.rate ?? 0)) },

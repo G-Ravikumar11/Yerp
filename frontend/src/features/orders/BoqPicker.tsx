@@ -76,6 +76,7 @@ export function BoqPicker({ orderId, jobId, open, onOpenChange, onAdd }: { order
               <tr>
                 <th className="w-10 px-3 py-2" />
                 <th className="px-2 py-2">Group</th>
+                <th className="px-2 py-2">Item code</th>
                 <th className="px-2 py-2">Description</th>
                 <th className="px-2 py-2 text-right">BOQ qty</th>
                 <th className="px-2 py-2 text-right">Left to give</th>
@@ -87,7 +88,7 @@ export function BoqPicker({ orderId, jobId, open, onOpenChange, onAdd }: { order
               {lines.map((l, i) =>
                 l.kind === 'section' ? (
                   <tr key={i} className="border-t border-border bg-surface/60">
-                    <td colSpan={7} className="px-3 py-1.5 font-semibold">
+                    <td colSpan={8} className="px-3 py-1.5 font-semibold">
                       {l.group_code} {l.description}
                     </td>
                   </tr>
@@ -97,6 +98,7 @@ export function BoqPicker({ orderId, jobId, open, onOpenChange, onAdd }: { order
                       <input type="checkbox" aria-label={`Take ${l.description}`} checked={!!picks[l.key!]} onChange={(e) => toggle(l.key!, l.left ?? 0, e.target.checked)} />
                     </td>
                     <td className="px-2 py-1.5 font-mono text-xs">{l.group_code}</td>
+                    <td className="whitespace-nowrap px-2 py-1.5 font-mono text-xs">{l.item_code}</td>
                     <td className="max-w-xs truncate px-2 py-1.5" title={l.description}>{l.description}</td>
                     <td className="tabular px-2 py-1.5 text-right">{formatQty(l.quantity ?? 0)} {l.uom}</td>
                     <td className={cn('tabular px-2 py-1.5 text-right', !l.left && 'text-muted-foreground')}>{formatQty(l.left ?? 0)}</td>
