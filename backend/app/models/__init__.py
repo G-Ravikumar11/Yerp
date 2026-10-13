@@ -134,6 +134,8 @@ from app.models.quality import (
     DBCubeSet,
     DBCubeResult,
     DBNcr,
+    DBQcChecklist,
+    DBQcCriteria,
 )
 from app.models.recruitment import (
     DBInterviewReminder,

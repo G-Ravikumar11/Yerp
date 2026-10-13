@@ -1,7 +1,7 @@
 """Inspections, cube tests and non-conformances."""
 from datetime import datetime
 
-from sqlalchemy import Column, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text
 
 from app.db.session import Base
 
@@ -24,6 +24,21 @@ class DBInspection(Base):
     items = Column(Text, default="[]")                          # [{item, result: ok|not ok|na, remark}]
     result = Column(String, default="OPEN", index=True)         # OPEN | PASSED | FAILED
     remarks = Column(Text, default="")
+    # Where on the project, what work, who is to inspect it, what was measured.
+    building = Column(String, default="")
+    floor_area = Column(String, default="")
+    work_activity = Column(String, default="")
+    assigned_to = Column(String, default="")
+    measurements = Column(Text, default="")
+    # The inspector submits; somebody who signs off decides. "" | submitted | returned | approved
+    approval_status = Column(String, default="")
+    submitted_by = Column(String, default="")
+    submitted_on = Column(String, default="")
+    approved_by = Column(String, default="")
+    approved_on = Column(String, default="")
+    return_note = Column(Text, default="")
+    # The inspection this one re-checks after corrective work.
+    reinspection_of = Column(Integer, nullable=True, index=True)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
@@ -44,6 +59,15 @@ class DBCubeSet(Base):
     docket = Column(String, default="")
     cast_by = Column(String, default="")
     remarks = Column(Text, default="")
+    pour_ref = Column(String, default="")                       # the pour's own reference
+    cube_ids = Column(String, default="")                       # A1, A2, A3 - how each cube is marked
+    test_ages = Column(String, default="")                      # "7,28": the schedule this project asked for
+    # The engineer's decision on the concrete, taken over all its results.
+    acceptance = Column(String, default="")                     # "" | accepted | conditional | rejected
+    acceptance_note = Column(Text, default="")
+    accepted_by = Column(String, default="")
+    accepted_on = Column(String, default="")
+    reviewed_results = Column(Integer, default=0)               # how many results the decision covered
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
@@ -58,6 +82,14 @@ class DBCubeResult(Base):
     average = Column(Float, default=0.0)
     lab = Column(String, default="")
     recorded_by_name = Column(String, default="")
+    remarks = Column(Text, default="")
+    flagged = Column(Boolean, default=False)                    # sent for engineering review by whoever recorded it
+    # What the result was read against, as it stood when it was recorded - so a later change
+    # to the criteria never rewrites an old verdict.
+    evaluation = Column(String, default="")                     # meets | below | no_criteria
+    criteria_min = Column(Float, default=0.0)
+    criteria_single = Column(Float, default=0.0)
+    criteria_ref = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
@@ -84,4 +116,52 @@ class DBNcr(Base):
     closed_on = Column(String, default="")
     closure_note = Column(Text, default="")
     closed_by = Column(String, default="")
+    source_ref = Column(String, default="")                     # which result of the source, e.g. "28" days
+    root_cause = Column(Text, default="")
+    assigned_by = Column(String, default="")
+    assigned_on = Column(String, default="")
+    corrective_done = Column(Text, default="")                  # what was actually done, recorded by whoever did it
+    corrective_on = Column(String, default="")
+    verification_result = Column(String, default="")            # "" | verified | rejected
+    verification_note = Column(Text, default="")
+    verified_by = Column(String, default="")
+    verified_on = Column(String, default="")
+    reinspection_ref = Column(String, default="")               # the inspection that re-checked it
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBQcChecklist(Base):
+    """A checklist a company keeps for itself: the items and what each must meet, drawn from the
+    approved specification. The standard lists are built in; one of these with the same name replaces
+    it for the company, or for one project."""
+    __tablename__ = "qc_checklists"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    name = Column(String, default="")
+    work_type = Column(String, default="")
+    spec_ref = Column(String, default="")                       # the specification clause it comes from
+    items = Column(Text, default="[]")                          # [{item, criteria}]
+    is_active = Column(Boolean, default=True)
+    created_by = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBQcCriteria(Base):
+    """What a grade of concrete must reach at an age on one project, as the approved specification says.
+    Nothing here is assumed: a result with no row to read against is sent for engineering review."""
+    __tablename__ = "qc_criteria"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    grade = Column(String, default="")                          # M25
+    age_days = Column(Integer, default=28)
+    min_mean = Column(Float, default=0.0)                       # the set's average must reach this, N/mm2
+    min_single = Column(Float, default=0.0)                     # no single cube below this (0 = not specified)
+    standard = Column(String, default="")                       # IS 456:2000 cl. 16, or the project specification
+    approved_by = Column(String, default="")
+    approved_on = Column(String, default="")
+    is_active = Column(Boolean, default=True)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
