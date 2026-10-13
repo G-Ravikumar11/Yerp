@@ -39,6 +39,7 @@ from app.services.client_billing import (
     write_ra_bill_lines,
 )
 from app.services.invoicing import einvoice_payload
+from app.services.projects import project_retention
 from app.services.subcontract_billing import past_tense
 from app.services.subcontract_orders import work_order_or_404
 
@@ -91,7 +92,7 @@ def raise_ra_bill(body: RABillIn, request: Request, db: Session = Depends(get_db
         status="DRAFT",
         previously_billed=money(sum(
             money(billed.get(l.id, 0.0)) * unit_rate(l.rate) for l in lines)),
-        retention_percent=body.retention_percent if body.retention_percent is not None else 5.0,
+        retention_percent=body.retention_percent if body.retention_percent is not None else project_retention(db, client.id, wo.job_id),
         advance_recovery=money(body.advance_recovery or 0),
         other_deductions=money(body.other_deductions or 0),
         deduction_notes=(body.deduction_notes or "").strip(),

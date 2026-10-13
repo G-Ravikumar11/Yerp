@@ -59,6 +59,7 @@ from app.services.projects import (
     job_or_404,
     job_to_dict,
     parse_position,
+    project_money_moved,
     preload_pnl,
     project_pnl,
     check_task,
@@ -341,8 +342,10 @@ def delete_job_preview(job_id: int, request: Request, db: Session = Depends(get_
     require_owner(request, db)
     job = job_or_404(db, client.id, job_id)
     rep = purge.project_report(db, client, job)
+    moved = project_money_moved(db, client.id, job)
     return {"numbers": [job.number or job.name or "Project"], "counts": rep["counts"], "kept": rep["kept"],
-            "blockers": [], "warnings": [], "can_delete": True}
+            "blockers": ["Money has moved through it: %s. Reverse those first, or set the project to cancelled." % "; ".join(moved)] if moved else [],
+            "warnings": [], "can_delete": not moved}
 
 
 @router.delete("/api/jobs/{job_id}")
@@ -354,6 +357,10 @@ def delete_job(job_id: int, request: Request, db: Session = Depends(get_db)):
     require_owner(request, db)
     job = job_or_404(db, client.id, job_id)
     name = job.number or job.name or "Project"
+    moved = project_money_moved(db, client.id, job)
+    if moved:
+        raise HTTPException(409, "%s cannot be deleted: money has moved through it - %s. Reverse those first, or set the "
+                                 "project to cancelled." % (name, "; ".join(moved)))
     try:
         counts = purge.delete_project(db, request, client, job)
     except IntegrityError as exc:

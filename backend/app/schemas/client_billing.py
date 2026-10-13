@@ -8,7 +8,8 @@ class RABillIn(BaseModel):
     work_order_id: int
     period_from: Optional[str] = ""
     period_to: Optional[str] = ""
-    retention_percent: Optional[float] = 5.0
+    # Left out, the bill takes the project's own retention (5% where the project has none set).
+    retention_percent: Optional[float] = None
     advance_recovery: Optional[float] = 0.0
     other_deductions: Optional[float] = 0.0
     deduction_notes: Optional[str] = ""
