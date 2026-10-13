@@ -6,6 +6,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 from sqlalchemy import or_
 from sqlalchemy.orm import defer, Session
 
@@ -14,6 +15,7 @@ from app.db import get_db
 
 from app.core.audit import log_audit
 from app.core.auth import get_client_user, require_erp_read, require_items_access, session_employee, wo_actor
+from app.core.config import SECRET_KEY
 from app.core.currency import money, sheet_number
 from app.core.files import (
     _file_or_404,
@@ -314,17 +316,46 @@ def list_files(request: Request, attached_type: str = "", attached_id: int = 0, 
                         "uploaders": sorted({f["uploaded_by_name"] for f in out if f["uploaded_by_name"]})}}
 
 
-@router.get("/api/files/{fid}")
-def get_file(fid: int, request: Request, download: int = 0, db: Session = Depends(get_db)):
-    client = require_erp_read(request, db)
-    f = _file_or_404(db, client.id, fid, bytes_too=True)
+def _file_response(db, f, download=0, cache="private, max-age=86400"):
     media = served_type(f.content_type)
     inline = not download and media != "application/octet-stream"
     disp = '%s; filename="%s"' % ("inline" if inline else "attachment",
                                   re.sub(r'[^A-Za-z0-9._ -]', "_", f.name or "file"))
     return StreamingResponse(io.BytesIO(file_bytes(db, f) or b""), media_type=media,
                              headers=dict(file_headers(media), **{"Content-Disposition": disp,
-                                                                  "Cache-Control": "private, max-age=86400"}))
+                                                                  "Cache-Control": cache}))
+
+
+@router.get("/api/files/{fid}")
+def get_file(fid: int, request: Request, download: int = 0, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return _file_response(db, _file_or_404(db, client.id, fid, bytes_too=True), download)
+
+
+# A file opened outside the app. In the phone app a PDF or a drawing cannot be shown inside it, so it is handed to the
+# phone's own browser - which has none of the app's sign-in. The app asks here for a link good for that one file for
+# a few minutes, signed so it cannot be altered, and opens it there.
+FILE_LINK_SECONDS = 300
+_file_links = URLSafeTimedSerializer(SECRET_KEY, salt="file-link")
+
+
+@router.post("/api/files/{fid}/link")
+def file_link(fid: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    f = _file_or_404(db, client.id, fid)
+    token = _file_links.dumps([f.id, client.id])
+    return {"url": "/api/files/%d/shared?t=%s" % (f.id, token), "expires_in": FILE_LINK_SECONDS}
+
+
+@router.get("/api/files/{fid}/shared")
+def get_shared_file(fid: int, t: str = "", db: Session = Depends(get_db)):
+    try:
+        file_id, client_id = _file_links.loads(t, max_age=FILE_LINK_SECONDS)
+    except BadSignature:
+        raise HTTPException(403, "This link has expired. Open the file again from the app.")
+    if file_id != fid:
+        raise HTTPException(403, "This link is for a different file.")
+    return _file_response(db, _file_or_404(db, client_id, fid, bytes_too=True), cache="private, no-store")
 
 
 @router.get("/api/files/{fid}/thumb")

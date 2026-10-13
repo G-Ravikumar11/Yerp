@@ -1,3 +1,4 @@
+import { OpenFile } from '@/components/data/FileView'
 import { useState } from 'react'
 import { Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -42,7 +43,7 @@ export default function DrawingsPage() {
       align: 'right',
       cell: (w) => (
         <div className="flex flex-wrap justify-end gap-1.5">
-          {w.current_file_id && <Button size="sm" variant="outline" asChild><a href={`/api/files/${w.current_file_id}`} target="_blank" rel="noopener">Open</a></Button>}
+          {w.current_file_id && <Button size="sm" variant="outline" asChild><OpenFile id={w.current_file_id} name={`${w.number} ${w.title}`}>Open</OpenFile></Button>}
           <Button size="sm" variant="outline" onClick={() => setRevising(w)}>New revision</Button>
           <Button size="sm" variant="outline" onClick={() => setHistory(w.id)}>History</Button>
         </div>

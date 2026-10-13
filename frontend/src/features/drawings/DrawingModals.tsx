@@ -1,3 +1,4 @@
+import { OpenFile } from '@/components/data/FileView'
 import { useState } from 'react'
 import { Button, Field, Input, Modal, Select, Skeleton, Textarea } from '@/components/ui'
 import { addDrawing, addRevision, drwKeys, setDrawingStatus, useDrawing, type Drawing } from '@/api/drawings'
@@ -74,7 +75,7 @@ export function HistoryModal({ id, onClose }: { id: number | null; onClose: () =
           <div className="overflow-x-auto rounded-lg border border-border">
             <table aria-label="Revisions" className="w-full text-[13px]">
               <thead className="bg-surface text-left text-xs text-muted-foreground"><tr><th className="px-3 py-2">Rev</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Received</th><th className="px-3 py-2">From</th><th className="px-3 py-2">Remarks</th><th /></tr></thead>
-              <tbody>{d.history.map((h, i) => <tr key={i} className={`border-t border-border ${h.current ? 'font-semibold' : 'text-muted-foreground'}`}><td className="px-3 py-2 font-mono">{h.revision}</td><td className="px-3 py-2">{h.status}</td><td className="px-3 py-2">{formatDate(h.received_on)}</td><td className="px-3 py-2">{h.received_from}</td><td className="px-3 py-2">{h.remarks}</td><td className="px-3 py-2 text-right">{h.file_id && <a className="text-primary hover:underline" href={`/api/files/${h.file_id}`} target="_blank" rel="noopener">Open</a>}</td></tr>)}</tbody>
+              <tbody>{d.history.map((h, i) => <tr key={i} className={`border-t border-border ${h.current ? 'font-semibold' : 'text-muted-foreground'}`}><td className="px-3 py-2 font-mono">{h.revision}</td><td className="px-3 py-2">{h.status}</td><td className="px-3 py-2">{formatDate(h.received_on)}</td><td className="px-3 py-2">{h.received_from}</td><td className="px-3 py-2">{h.remarks}</td><td className="px-3 py-2 text-right">{h.file_id && <OpenFile className="text-primary hover:underline" id={h.file_id} name={`${d.number} rev ${h.revision}`}>Open</OpenFile>}</td></tr>)}</tbody>
             </table>
           </div>
           {d.current_revision && <div className="mt-4 flex flex-wrap gap-2">{['For approval', 'Approved', 'Good for construction'].map((s) => <Button key={s} size="sm" variant="outline" loading={move.isPending && move.variables === s} onClick={() => move.mutate(s)}>Mark {s.toLowerCase()}</Button>)}</div>}
