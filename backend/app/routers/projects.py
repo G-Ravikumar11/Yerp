@@ -45,6 +45,8 @@ from app.services.employee_portal import (
 from app.services.procurement import purchase_order_to_dict
 from app.services.projects import (
     _apply_activity,
+    _free_code,
+    status_after_progress,
     _d,
     _hit,
     _replace_diary_lines,
@@ -923,29 +925,29 @@ def delete_task(task_id: int, request: Request, db: Session = Depends(get_db)):
 
 @router.post("/api/jobs/{job_id}/schedule/activities")
 def add_activity(job_id: int, body: ActivityIn, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db)
     job = job_or_404(db, client.id, job_id)
     n = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.job_id == job.id).count()
     a = models.DBScheduleActivity(client_id=client.id, job_id=job.id, display_order=n)
     db.add(a)
     db.flush()
-    _apply_activity(db, client.id, job, a, body)
+    _apply_activity(db, client.id, job, a, body, actor_name)
     if not a.code:
-        a.code = "A%d" % ((n + 1) * 10)
+        a.code = _free_code(db, job.id, a.id, n)
     db.commit()
     return {"ok": True, "schedule": schedule_view(db, client.id, job)}
 
 
 @router.put("/api/schedule/activities/{activity_id}")
 def edit_activity(activity_id: int, body: ActivityIn, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db)
     a = db.query(models.DBScheduleActivity).filter(
         models.DBScheduleActivity.id == activity_id,
         models.DBScheduleActivity.client_id == client.id).first()
     if not a:
         raise HTTPException(404, "Activity not found")
     job = job_or_404(db, client.id, a.job_id)
-    _apply_activity(db, client.id, job, a, body)
+    _apply_activity(db, client.id, job, a, body, actor_name)
     db.commit()
     return {"ok": True, "schedule": schedule_view(db, client.id, job)}
 
@@ -994,6 +996,7 @@ def report_progress(activity_id: int, body: ProgressIn, request: Request, db: Se
         a.actual_start = on
     if pct >= 100 and not a.actual_finish:
         a.actual_finish = on
+    status_after_progress(a, pct)
     db.commit()
     return {"ok": True, "schedule": schedule_view(db, client.id, job_or_404(db, client.id, a.job_id))}
 

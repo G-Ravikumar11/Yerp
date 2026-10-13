@@ -57,7 +57,7 @@ export default function SchedulePage() {
           <Curve curve={d.curve} />
         </>
       ) : job > 0 ? <p className="rounded-lg border border-border bg-muted/40 p-4 text-sm">No programme yet. Add activities, or draw one from a work order: each line becomes an activity whose progress comes from the measurement book.</p> : null)}
-      <ActivityModal job={job} activity={editing && editing !== 'new' ? editing : null} others={d?.activities ?? []} open={!!editing} onClose={() => setEditing(null)} />
+      <ActivityModal job={job} activity={editing && editing !== 'new' ? editing : null} others={d?.activities ?? []} employees={d?.employees ?? []} teamScope={d?.team_scope} open={!!editing} onClose={() => setEditing(null)} />
       <DrawModal job={job} open={drawing} onClose={() => setDrawing(false)} />
       <AiDraftModal job={job} open={drafting} onClose={() => setDrafting(false)} />
     </>

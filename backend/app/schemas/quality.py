@@ -20,6 +20,23 @@ class InspectionIn(BaseModel):
     measurements: Optional[str] = None
 
 
+class RegisterInspectionIn(BaseModel):
+    """An inspection already carried out, put on the record in one go."""
+    job_id: int
+    work_activity: str = ""                 # the activity or work item inspected
+    checklist: str = ""
+    inspected_on: Optional[str] = None
+    inspector: str = ""                     # who inspected it
+    location: Optional[str] = ""
+    building: Optional[str] = ""
+    floor_area: Optional[str] = ""
+    witnessed_by: Optional[str] = ""
+    items: Optional[list] = None            # [{item, criteria, result: ok|not ok|na, remark}]
+    result: str = ""                        # Pass | Fail | "" for one not yet decided
+    defects: Optional[str] = ""             # remarks or defects found
+    status: str = "Pending"                 # Pending | Passed | Failed | Awaiting Approval
+
+
 class NoteIn(BaseModel):
     note: Optional[str] = ""
 

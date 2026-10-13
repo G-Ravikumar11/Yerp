@@ -22,6 +22,9 @@ export interface ModalProps {
  * movement, and AnimatePresence keeps the panel mounted until it has left.
  */
 export function Modal({ open, onOpenChange, title, description, size = 'md', footer, children }: ModalProps) {
+  // A confirmation has a title, a sentence and two buttons and nothing between them: with no body, no body box is drawn,
+  // rather than an empty one with its padding keeping the buttons away from the words.
+  const hasBody = React.Children.toArray(children).length > 0
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <AnimatePresence>
@@ -56,7 +59,7 @@ export function Modal({ open, onOpenChange, title, description, size = 'md', foo
                   exit={{ opacity: 0, y: 16, scale: 0.98 }}
                   transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.8 }}
                 >
-                  <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
+                  <header className={cn('flex items-start justify-between gap-4 px-6 py-4', hasBody ? 'border-b border-border' : footer ? 'pb-4 pt-5' : '')}>
                     <div className="min-w-0">
                       <Dialog.Title className="font-display text-lg font-semibold leading-tight">{title}</Dialog.Title>
                       <Dialog.Description
@@ -72,9 +75,9 @@ export function Modal({ open, onOpenChange, title, description, size = 'md', foo
                       <X className="size-4" />
                     </Dialog.Close>
                   </header>
-                  <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">{children}</div>
+                  {hasBody && <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">{children}</div>}
                   {footer && (
-                    <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-border bg-surface/60 px-6 py-3.5">
+                    <footer className={cn('flex flex-wrap items-center justify-end gap-2 bg-surface/60 px-6 py-3.5', 'border-t border-border')}>
                       {footer}
                     </footer>
                   )}

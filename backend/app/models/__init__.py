@@ -126,6 +126,9 @@ from app.models.projects import (
     DBProjectThread,
     DBProjectMessage,
     DBThreadRead,
+    DBChatReaction,
+    DBChatTask,
+    DBChatNotice,
 )
 from app.models.quality import (
     DBInspection,

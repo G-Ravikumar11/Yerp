@@ -10,7 +10,7 @@ Every change of status is written to the audit trail.
 """
 import json
 import re
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
@@ -26,7 +26,7 @@ from app.core.sheets import sheet_response
 from app.documents.forms import _field_doc, _job_line, _pre, form_pdf_response
 from app.schemas.quality import (
     ChecklistIn, CriteriaIn, CubeDecisionIn, CubeResultIn, CubeSetIn, InspectionIn, NcrAssignIn, NcrCloseIn,
-    NcrIn, NcrVerifyIn, NcrWorkIn, NoteIn,
+    NcrIn, NcrVerifyIn, NcrWorkIn, NoteIn, RegisterInspectionIn,
 )
 from app.services.quality import (
     INSPECTION_SORTS, NCR_SORTS,
@@ -309,6 +309,101 @@ def create_inspection(body: InspectionIn, request: Request, db: Session = Depend
     db.flush()
     qc_log(db, client.id, "qc.inspection.created", "inspection", i, "%s at %s" % (i.checklist, i.location or job.name), actor_name, request)
     db.commit()
+    return {"inspection": inspection_dict(i, job_names(db, client.id, [i.job_id]))}
+
+
+def _may(request, db, permission):
+    """Whether the person asking holds a right - asked, not enforced."""
+    try:
+        wo_actor(request, db, permission)
+        return True
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            return False
+        raise
+
+
+REGISTER_STATUSES = ("Pending", "Passed", "Failed", "Awaiting Approval")
+
+
+@router.post("/api/qc/inspections/register")
+def register_inspection(body: RegisterInspectionIn, request: Request, db: Session = Depends(get_db)):
+    """Put an inspection that has been carried out on the record: what was looked at, by whom, what was found and what
+    it came to. Recording is for whoever records; a final Passed or Failed is the decision of whoever signs off, so
+    anybody else sends it for approval instead. Every check on the form is made here as well as on the screen."""
+    client, _, actor = wo_actor(request, db, "site.record")
+    job = _qc_job(db, client.id, body.job_id)
+    activity = (body.work_activity or "").strip()
+    inspector = (body.inspector or "").strip()
+    if not activity:
+        raise HTTPException(400, "Which activity or work item was inspected?")
+    if not inspector:
+        raise HTTPException(400, "Who carried out the inspection?")
+    on = clean_date(body.inspected_on, "inspection date", required=True)
+    if on > _today():
+        raise HTTPException(400, "An inspection cannot be dated in the future.")
+    status = (body.status or "Pending").strip()
+    if status not in REGISTER_STATUSES:
+        raise HTTPException(400, "Status is one of: %s." % ", ".join(REGISTER_STATUSES))
+    outcome = (body.result or "").strip().title()
+    if outcome not in ("", "Pass", "Fail"):
+        raise HTTPException(400, "The result is Pass or Fail.")
+    name = (body.checklist or "").strip()
+    items = body.items
+    if items is None:
+        templates = {t["name"]: t for t in checklist_templates(db, client.id, job.id)}
+        if name not in templates:
+            raise HTTPException(400, "Pick a checklist, or give the items to check.")
+        items = [{"item": x["item"], "criteria": x.get("criteria", ""), "result": "", "remark": ""} for x in templates[name]["items"]]
+    items = _clean_items(items)
+    if not items:
+        raise HTTPException(400, "The inspection has nothing to check.")
+    defects = (body.defects or "").strip()
+    bad = [x for x in items if x["result"] == "not ok"]
+    unchecked = [x["item"] for x in items if not x["result"]]
+    if outcome and unchecked:
+        raise HTTPException(409, "Not looked at yet: %s." % "; ".join(unchecked[:3]))
+    if outcome == "Pass" and bad:
+        raise HTTPException(409, "It cannot pass with a check marked not ok: %s." % bad[0]["item"])
+    if outcome == "Fail" and not bad:
+        if not defects:
+            raise HTTPException(400, "A failed inspection needs the defect found - mark the check that failed, or describe it.")
+        items.append({"item": "Defect found", "criteria": "", "result": "not ok", "measured": "", "remark": defects[:300]})
+    if status in ("Passed", "Failed", "Awaiting Approval") and not outcome:
+        raise HTTPException(400, "Say whether it passed or failed before giving it that status.")
+    if (status == "Passed" and outcome != "Pass") or (status == "Failed" and outcome != "Fail"):
+        raise HTTPException(409, "The status %s does not match the result %s." % (status, outcome))
+    if status in ("Passed", "Failed") and not _may(request, db, "site.signoff"):
+        raise HTTPException(403, "Only somebody who signs off site work records a final result - choose Awaiting Approval and it goes to them.")
+    # The same inspection sent twice - a double click, a retry - is one record.
+    M = models.DBInspection
+    twin = db.query(M).filter(M.client_id == client.id, M.job_id == job.id, M.work_activity == activity,
+                              M.checklist == (name or "Custom"), M.inspected_on == on, M.inspected_by == inspector,
+                              M.created_at >= (datetime.now() - timedelta(seconds=60)).strftime("%Y-%m-%d %H:%M:%S")).first()
+    if twin:
+        raise HTTPException(409, "%s was registered a moment ago - it is the same inspection." % twin.number)
+    i = M(client_id=client.id, job_id=job.id, number=unique_number(db, M, client.id, "INS"), checklist=(name or "Custom")[:120],
+          location=(body.location or "").strip()[:200], inspected_on=on, inspected_by=inspector[:120],
+          witnessed_by=(body.witnessed_by or "").strip()[:120], items=json.dumps(items), remarks=defects,
+          building=(body.building or "").strip()[:120], floor_area=(body.floor_area or "").strip()[:120],
+          work_activity=activity[:200], assigned_to=inspector[:120])
+    db.add(i)
+    db.flush()
+    qc_log(db, client.id, "qc.inspection.registered", "inspection", i, "%s: %s, %s" % (activity, outcome or "no result yet", status), actor, request)
+    if status == "Awaiting Approval":
+        i.approval_status, i.submitted_by, i.submitted_on = "submitted", actor, _today()
+        qc_log(db, client.id, "qc.inspection.submitted", "inspection", i, "%d not ok" % len(bad), actor, request)
+    elif status in ("Passed", "Failed"):
+        i.result = "PASSED" if status == "Passed" else "FAILED"
+        i.approval_status, i.approved_by, i.approved_on = "approved", actor, _today()
+        qc_log(db, client.id, "qc.inspection." + i.result.lower(), "inspection", i, "Registered with its result", actor, request)
+    db.commit()
+    if status == "Awaiting Approval":
+        notify(db, client.id, "qc_failed", "%s is waiting for approval" % i.number, "%s at %s, registered by %s." % (activity, i.location or job.name, actor),
+               view="quality-view", ref_type="inspection", ref_id=i.id, severity="action")
+    elif i.result == "FAILED":
+        notify(db, client.id, "qc_failed", "%s failed at %s" % (i.number, i.location or activity), (defects or bad[0]["item"] if bad else defects)[:400],
+               view="quality-view", ref_type="inspection", ref_id=i.id, severity="wrong")
     return {"inspection": inspection_dict(i, job_names(db, client.id, [i.job_id]))}
 
 

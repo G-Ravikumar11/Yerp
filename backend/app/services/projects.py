@@ -988,6 +988,37 @@ class ScheduleContext:
         return round(pct, 1)
 
 
+def _effective_status(a, done, state, slip):
+    """What to show. Complete is complete. Otherwise what was set by hand stands - it is what the person editing said
+    - except that work measured in the book, which nobody can set by hand, and work that has begun since "Not Started"
+    was said. With nothing said, it is worked out: late or slipping, then under way, then not started. Whether it is
+    overdue or slipping is shown beside the status in any case."""
+    if done >= 100 or (a.status == "Completed" and not a.work_order_line_id):
+        return "Completed"
+    said = a.status if not a.work_order_line_id else ""
+    if said == "Not Started" and done > 0:
+        said = "In Progress"
+    if said in ("Not Started", "In Progress", "Delayed"):
+        return said
+    if state == "late" or slip > 0:
+        return "Delayed"
+    if done > 0 or a.actual_start:
+        return "In Progress"
+    return "Not Started"
+
+
+def status_after_progress(a, pct):
+    """Work reported moves the status with it: begun is under way, finished is complete."""
+    if a.work_order_line_id:
+        return
+    if pct >= 100:
+        a.status = "Completed"
+    elif pct > 0 and (a.status or "") in ("", "Not Started", "Completed"):
+        a.status = "In Progress"
+    elif pct <= 0 and (a.status or "") == "Completed":
+        a.status = "Not Started"
+
+
 def schedule_view(db, client_id, job):
     """The activities with their planned and actual progress, the forecast
     that follows from both, and the curve."""
@@ -1026,6 +1057,13 @@ def schedule_view(db, client_id, job):
         return fin
 
     total_weight = sum(a.weight or 0 for a in ctx.acts) or float(len(ctx.acts) or 1)
+    staff = {e.id: employee_name(e) for e in db.query(models.DBEmployee).filter(
+        models.DBEmployee.client_id == client_id, models.DBEmployee.status != "terminated").all()}
+    team_ids = {r[0] for r in db.query(models.DBEmployeeSite.employee_id).filter(
+        models.DBEmployeeSite.client_id == client_id, models.DBEmployeeSite.job_id == job.id).all()}
+    if job.manager_id:
+        team_ids.add(job.manager_id)
+    team_ids |= {a.assigned_to_id for a in ctx.acts if a.assigned_to_id}      # whoever already has work here stays listed
     for a in ctx.acts:
         w = (a.weight or 0) if any(x.weight for x in ctx.acts) else 1.0
         plan = planned_percent(a, today)
@@ -1047,7 +1085,12 @@ def schedule_view(db, client_id, job):
             "work_order_line_id": a.work_order_line_id, "is_milestone": bool(a.is_milestone),
             "progress_from": "measurement book" if a.work_order_line_id else "reported",
             "planned_percent": plan, "actual_percent": done,
-            "forecast_finish": fin.isoformat() if fin else "", "slip_days": slip, "state": state})
+            "forecast_finish": fin.isoformat() if fin else "", "slip_days": slip, "state": state,
+            "status": _effective_status(a, done, state, slip), "stored_status": a.status or "", "notes": a.notes or "",
+            "assigned_to_id": a.assigned_to_id, "assigned_to": staff.get(a.assigned_to_id, "") if a.assigned_to_id else "",
+            "overdue": bool(pf and today > pf and done < 100), "days_late": (today - pf).days if pf and today > pf and done < 100 else 0,
+            "delayed": bool(done < 100 and (slip > 0 or (pf and today > pf))) or state == "behind",
+            "predecessor_code": pred.code or pred.name if pred else ""})
 
     def overall(on):
         if not ctx.acts:
@@ -1072,9 +1115,18 @@ def schedule_view(db, client_id, job):
     project_finish = max([f for f in forecast_finish.values() if f] or [None]) if forecast_finish else None
     planned_end = max(finishes) if finishes else None
     return {
-        "job": {"id": job.id, "number": job.number, "name": job.name},
+        "job": {"id": job.id, "number": job.number, "name": job.name, "customer_name": job.customer_name or "",
+                "site_address": job.site_address or "", "status": job.status or ""},
         "activities": rows, "curve": curve,
+        # The project's own people: those placed on it, its manager, anyone already given work on it. A project with
+        # nobody placed yet offers the whole company rather than an empty list.
+        "employees": sorted(({"id": i, "name": n} for i, n in staff.items() if i in team_ids or not team_ids), key=lambda e: e["name"].lower()),
+        "team_scope": "project" if team_ids else "company",
         "summary": {
+            "start": min(starts).isoformat() if starts else "", "end": planned_end.isoformat() if planned_end else "",
+            "duration_days": ((planned_end - min(starts)).days + 1) if starts and planned_end else 0,
+            "overdue": len([r for r in rows if r["overdue"]]), "milestones": len([r for r in rows if r["is_milestone"]]),
+            "milestones_done": len([r for r in rows if r["is_milestone"] and r["state"] == "done"]),
             "activities": len(rows), "planned_percent": plan_now, "actual_percent": done_now,
             "variance": round(done_now - plan_now, 1),
             "late": len([r for r in rows if r["state"] == "late"]),
@@ -1117,6 +1169,7 @@ def sync_progress_from_tasks(db, client_id, activity_id, actor_name):
         a.actual_start = on
     # Finished is what the tasks say: ticking the last one finishes it, un-ticking one opens it again.
     a.actual_finish = on if pct >= 100 else ""
+    status_after_progress(a, pct)
     return pct
 
 
@@ -1213,7 +1266,20 @@ def schedule_day(db, client_id, job, on=None, ahead_days=7):
                         "done_percent": overall, "planned_percent": planned, "variance": round(overall - planned, 1)}}
 
 
-def _apply_activity(db, client_id, job, a, body):
+ACTIVITY_STATUSES = ("Not Started", "In Progress", "Completed", "Delayed")
+
+
+def _free_code(db, job_id, own_id, n):
+    """A10, A20... - the first one on this project nobody has used."""
+    have = {(c or "").strip().lower() for (c,) in db.query(models.DBScheduleActivity.code).filter(
+        models.DBScheduleActivity.job_id == job_id, models.DBScheduleActivity.id != own_id).all()}
+    k = n + 1
+    while ("a%d" % (k * 10)) in have:
+        k += 1
+    return "A%d" % (k * 10)
+
+
+def _apply_activity(db, client_id, job, a, body, actor_name=""):
     name = (body.name or "").strip()
     if not name:
         raise HTTPException(400, "What is the activity?")
@@ -1243,6 +1309,27 @@ def _apply_activity(db, client_id, job, a, body):
             models.DBWorkOrder.client_id == client_id, models.DBWorkOrder.job_id == job.id).first()
         if not line:
             raise HTTPException(400, "That work order line is not on this project.")
+    code = (body.code or "").strip()
+    if code:
+        clash = db.query(models.DBScheduleActivity).filter(
+            models.DBScheduleActivity.job_id == job.id, models.DBScheduleActivity.id != a.id,
+            func.lower(models.DBScheduleActivity.code) == code.lower()).first()
+        if clash:
+            raise HTTPException(409, "%s is already the code of \"%s\" on this project - codes are not repeated." % (clash.code, clash.name))
+    status = (getattr(body, "status", "") or "").strip()
+    if status and status not in ACTIVITY_STATUSES:
+        raise HTTPException(400, "Status is one of: %s." % ", ".join(ACTIVITY_STATUSES))
+    for what, raw in (("actual start", body.actual_start), ("actual finish", body.actual_finish)):
+        if (raw or "").strip() and not _d(raw):
+            raise HTTPException(400, "The %s as a date: 2026-09-30." % what)
+    if _d(body.actual_start) and _d(body.actual_finish) and _d(body.actual_finish) < _d(body.actual_start):
+        raise HTTPException(400, "It cannot finish before it starts.")
+    if body.assigned_to_id:
+        emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == body.assigned_to_id,
+                                                 models.DBEmployee.client_id == client_id).first()
+        if not emp:
+            raise HTTPException(400, "That person is not an employee of this company.")
+    a.assigned_to_id = body.assigned_to_id or None
     a.name, a.code = name, (body.code or "").strip()
     a.planned_start, a.planned_finish = s.isoformat(), f.isoformat()
     a.weight = max(0.0, float(body.weight or 0))
@@ -1251,6 +1338,37 @@ def _apply_activity(db, client_id, job, a, body):
     a.is_milestone = bool(body.is_milestone)
     a.actual_start = (body.actual_start or "").strip()
     a.actual_finish = (body.actual_finish or "").strip()
+    a.notes = (getattr(body, "notes", "") or "").strip()[:2000]
+    _set_status(db, client_id, a, status, actor_name)
+
+
+def _set_status(db, client_id, a, status, actor_name):
+    """A status picked by hand. Completed means it is done, so it reports 100% (dated, with whoever said so); an
+    activity whose progress is measured in the book cannot be called complete until the book says so."""
+    if status in ("Not Started", "In Progress", "Delayed") and not a.work_order_line_id:
+        last = db.query(models.DBScheduleProgress).filter(models.DBScheduleProgress.activity_id == a.id).order_by(
+            models.DBScheduleProgress.id.desc()).first()
+        reported = (last.percent or 0) if last else 0
+        if reported >= 100:
+            raise HTTPException(409, "%s is reported 100%% complete. Report less progress first to open it again." % (a.code or a.name))
+        if status == "Not Started" and reported > 0:
+            raise HTTPException(409, "%s has %g%% reported, so it has started - choose In Progress, or report 0%% first." % (a.code or a.name, reported))
+    a.status = status
+    if status == "Completed":
+        if a.work_order_line_id:
+            raise HTTPException(409, "%s takes its progress from the measurement book - it is complete when the book says so." % (a.code or a.name))
+        on = date.today().isoformat()
+        last = db.query(models.DBScheduleProgress).filter(models.DBScheduleProgress.activity_id == a.id).order_by(
+            models.DBScheduleProgress.id.desc()).first()
+        if not last or (last.percent or 0) < 100:
+            db.add(models.DBScheduleProgress(client_id=client_id, activity_id=a.id, reported_on=on, percent=100.0,
+                                             note="Marked completed", by_name=actor_name))
+        if not a.actual_start:
+            a.actual_start = a.planned_start
+        if not a.actual_finish:
+            a.actual_finish = on
+    elif status in ("In Progress", "Delayed") and not a.actual_start and not a.work_order_line_id:
+        a.actual_start = date.today().isoformat()
 
 
 def attention_elsewhere(db, client_id, jobs, today):

@@ -20,14 +20,27 @@ export interface Activity {
   planned_percent: number
   state: string
   slip_days: number
+  assigned_to_id?: number | null
+  assigned_to?: string
+  overdue?: boolean
+  days_late?: number
+  delayed?: boolean
+  predecessor_code?: string
+  status?: string
+  stored_status?: string
+  notes?: string
 }
+export interface Employee { id: number; name: string }
 export interface CurvePoint { week: string; planned: number | null; actual: number | null }
 export interface Schedule {
+  job?: { id: number; number: string; name: string; customer_name?: string; site_address?: string; status?: string }
   activities: Activity[]
   curve: CurvePoint[]
-  summary: { activities: number; planned_percent: number; actual_percent: number; variance: number; late: number; behind: number; done: number; planned_finish: string; forecast_finish: string; slip_days: number }
+  employees?: Employee[]
+  team_scope?: string
+  summary: { start?: string; end?: string; duration_days?: number; overdue?: number; milestones?: number; milestones_done?: number; activities: number; planned_percent: number; actual_percent: number; variance: number; late: number; behind: number; done: number; planned_finish: string; forecast_finish: string; slip_days: number }
 }
-export interface ActivityInput { name: string; code: string; planned_start: string; planned_finish: string; weight: number; depends_on_id: number | null; work_order_line_id: number | null; is_milestone: boolean }
+export interface ActivityInput { name: string; code: string; planned_start: string; planned_finish: string; weight: number; depends_on_id: number | null; work_order_line_id: number | null; is_milestone: boolean; assigned_to_id?: number | null; status?: string; notes?: string }
 export interface WoLite { id: number; number: string; job_id: number; status: string }
 export interface WoLine { id: number; label: string }
 
@@ -86,7 +99,7 @@ export interface DayPlan {
 }
 
 export const useDayPlan = (job: number, on: string) => useQuery({ queryKey: ['schedule', 'day', job, on], enabled: job > 0, queryFn: () => get<DayPlan>(`/api/jobs/${job}/schedule/day?on=${on}`) })
-export const useSchedule = (job: number) => useQuery({ queryKey: ['schedule', job], enabled: job > 0, queryFn: () => get<Schedule>(`/api/jobs/${job}/schedule`) })
+export const useSchedule = (job: number) => useQuery({ queryKey: ['schedule', job], enabled: job > 0, staleTime: 0, refetchOnMount: 'always', queryFn: () => get<Schedule>(`/api/jobs/${job}/schedule`) })
 
 /** The placed work orders of a project - each of their lines can carry an activity's progress. */
 export const useWorkOrdersOf = (job: number) =>

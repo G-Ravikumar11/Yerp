@@ -116,6 +116,12 @@ export interface InspectionForm {
   job_id: number; checklist: string; location: string; building: string; floor_area: string; work_activity: string
   assigned_to: string; inspected_on: string; witnessed_by: string; measurements: string; remarks: string
 }
+export interface RegisterForm {
+  job_id: number; work_activity: string; checklist: string; inspected_on: string; inspector: string; location: string; building: string
+  floor_area: string; witnessed_by: string; items: CheckItem[]; result: '' | 'Pass' | 'Fail'; defects: string; status: string
+}
+/** An inspection already carried out, put on the record. The server checks it and answers with what it saved. */
+export const registerInspection = (b: RegisterForm) => post<{ inspection: Inspection }>('/api/qc/inspections/register', b)
 export const startInspection = (b: InspectionForm) => post<{ inspection: Inspection }>('/api/qc/inspections', b)
 export const saveInspection = (i: Pick<Inspection, 'id' | 'job_id'> & Partial<Inspection>) =>
   put<{ inspection: Inspection }>(`/api/qc/inspections/${i.id}`, { job_id: i.job_id, items: i.items, remarks: i.remarks, measurements: i.measurements, location: i.location, building: i.building, floor_area: i.floor_area, work_activity: i.work_activity, assigned_to: i.assigned_to, witnessed_by: i.witnessed_by, inspected_on: i.inspected_on })
