@@ -122,6 +122,15 @@ def attachment_target(db, client_id, attached_type, attached_id):
         if not i:
             raise HTTPException(404, "Inspection not found")
         return i.job_id, False
+    plant = {"equipment": (models.DBAsset, "Machine"), "plant_rental": (models.DBPlantRental, "Rental"),
+             "plant_maintenance": (models.DBAssetService, "Maintenance job"), "plant_fuel": (models.DBPlantFuel, "Fuel entry"),
+             "plant_expense": (models.DBPlantExpense, "Expense")}
+    if t in plant:
+        model, what = plant[t]
+        r = db.query(model).filter(model.id == attached_id, model.client_id == client_id).first()
+        if not r:
+            raise HTTPException(404, "%s not found" % what)
+        return getattr(r, "current_job_id", None) or getattr(r, "job_id", None), False
     if t == "cube_set":
         c = db.query(models.DBCubeSet).filter(models.DBCubeSet.id == attached_id,
                                               models.DBCubeSet.client_id == client_id).first()

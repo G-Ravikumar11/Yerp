@@ -26,6 +26,25 @@ class AssetIn(BaseModel):
     insurance_until: Optional[str] = ""
     fitness_until: Optional[str] = ""
     notes: Optional[str] = ""
+    code: Optional[str] = ""               # blank: the next EQP number
+    condition: Optional[str] = "Good"
+    service_interval_type: Optional[str] = None   # Both | Meter | Days | None; not sent = read from the intervals
+    reminder_meter: Optional[float] = None        # blank: a tenth of the interval
+    reminder_days: Optional[float] = None         # blank: a tenth of the interval, at least 3
+
+
+class ServiceDoneIn(BaseModel):
+    """A scheduled service, done."""
+    completed_on: Optional[str] = ""
+    meter_at_service: Optional[float] = None
+    work_performed: Optional[str] = ""
+    parts_used: Optional[str] = ""
+    parts_cost: Optional[float] = 0
+    labour_cost: Optional[float] = 0
+    vendor: Optional[str] = ""
+    invoice_no: Optional[str] = ""
+    next_service_meter: Optional[float] = None   # blank: this reading plus the interval
+    next_service_on: Optional[str] = ""          # blank: this date plus the interval
 
 
 class AssetMoveIn(BaseModel):

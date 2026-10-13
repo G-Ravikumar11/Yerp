@@ -31,6 +31,15 @@ from app.models.assets import (
     DBAssetService,
     DBAssetBook,
 )
+from app.models.plant import (
+    DBPlantAllocation,
+    DBPlantExpense,
+    DBPlantFuel,
+    DBPlantRental,
+    DBPlantRentalExtension,
+    DBPlantRentalInvoice,
+    DBPlantRentalProvider,
+)
 from app.models.boq import (
     DBBoq,
     DBBoqRevision,
