@@ -15,6 +15,7 @@ from app.db import get_db
 from app.core.audit import log_audit
 from app.core.auth import get_client_user, require_erp_read, require_items_access, session_employee, wo_actor
 from app.core.currency import money, sheet_number
+from app.services.credit_notes import credit_tds_rows
 from app.core.files import (
     _file_or_404,
     attachment_target,
@@ -114,6 +115,10 @@ def tds_register(request: Request, year: str = "", quarter: str = "",
             "amount_credited": money(b.this_bill), "tds": money(b.tds_amount),
             "status": b.status,
         })
+
+    # A credit note takes its TDS back in the quarter it is issued, as a negative line.
+    deducted.extend(r for r in credit_tds_rows(db, client.id, "contractor", fy_quarter) if wanted(r["year"], r["quarter"]))
+    suffered.extend(r for r in credit_tds_rows(db, client.id, "client", fy_quarter) if wanted(r["year"], r["quarter"]))
 
     def by_quarter(rows):
         out = {}

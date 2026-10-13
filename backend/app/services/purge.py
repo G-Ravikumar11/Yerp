@@ -27,6 +27,8 @@ OWNED = {
     ("measurements", "work_order_id"), ("measurements", "line_id"),
     ("measurement_dimensions", "measurement_id"), ("measurement_dimensions", "sub_measurement_id"),
     ("ra_bills", "work_order_id"), ("retention_releases", "work_order_id"),
+    ("credit_notes", "ra_bill_id"), ("credit_notes", "sub_bill_id"), ("credit_notes", "work_order_id"),
+    ("credit_notes", "sub_order_id"), ("credit_note_lines", "credit_note_id"),
 }
 
 # What the Master can delete one at a time: kind -> (table, model, what it is called, the column that names it).

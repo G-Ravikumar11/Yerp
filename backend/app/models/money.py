@@ -92,3 +92,62 @@ class DBRetentionRelease(Base):
     created_by_name = Column(String, default="")
     paid_at = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+# A certified bill is never cancelled or rewritten: GST and TDS on it go into the return of the month it was
+# certified, and that month may be filed. When the work billed turns out to be more than the book supports - a
+# measurement corrected downwards, work rejected, a rate wrong - the correction is a credit note issued today,
+# against that bill, for the quantities taken back. It reverses the same GST, TDS and retention the bill charged,
+# in the period it is issued, and the quantities it takes back are claimable again if the work is measured again.
+# One table both ways, as retention releases are: side "client" is against our RA bill, "contractor" against a
+# gang's bill.
+class DBCreditNote(Base):
+    __tablename__ = "credit_notes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    side = Column(String, default="client", index=True)      # client | contractor
+    ra_bill_id = Column(Integer, ForeignKey("ra_bills.id"), nullable=True, index=True)
+    sub_bill_id = Column(Integer, ForeignKey("sub_bills.id"), nullable=True, index=True)
+    work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True, index=True)
+    sub_order_id = Column(Integer, ForeignKey("subcontract_orders.id"), nullable=True, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    contractor_id = Column(Integer, ForeignKey("contractors.id"), nullable=True, index=True)
+
+    number = Column(String, default="", index=True)         # <bill number>/CN-01
+    sequence = Column(Integer, default=1)                   # CN-01, CN-02 ... on that bill
+    note_date = Column(String, default="")
+    reason = Column(Text, default="")
+
+    taxable = Column(Float, default=0.0)                    # the work taken back, at the bill's rates
+    gst_percent = Column(Float, default=0.0)
+    gst_amount = Column(Float, default=0.0)
+    cgst_amount = Column(Float, default=0.0)
+    sgst_amount = Column(Float, default=0.0)
+    igst_amount = Column(Float, default=0.0)
+    place_of_supply = Column(String, default="")
+    retention_amount = Column(Float, default=0.0)           # retention no longer held on the work taken back
+    tds_percent = Column(Float, default=0.0)
+    tds_amount = Column(Float, default=0.0)                 # TDS no longer deducted on it
+    cess_amount = Column(Float, default=0.0)                # labour cess (gang bills)
+    net_amount = Column(Float, default=0.0)                 # what the bill's net payable is reduced by
+
+    status = Column(String, default="ISSUED", index=True)
+    created_by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBCreditNoteLine(Base):
+    __tablename__ = "credit_note_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    credit_note_id = Column(Integer, ForeignKey("credit_notes.id"), nullable=False, index=True)
+    # The bill line it takes back from: ra_bill_lines.id or sub_bill_lines.id. The item it is
+    # (work_order_lines.id / subcontract_items.id) is what the billed quantity is counted against.
+    bill_line_id = Column(Integer, nullable=False, index=True)
+    item_id = Column(Integer, nullable=True, index=True)
+    description = Column(Text, default="")
+    uom = Column(String, default="")
+    qty = Column(Float, default=0.0)
+    rate = Column(Float, default=0.0)
+    amount = Column(Float, default=0.0)

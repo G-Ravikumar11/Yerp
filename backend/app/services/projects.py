@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, func as sqlfunc
 
 from app import models
+from app.services.credit_notes import preload_credits
 
 from app.constants.client_billing import RA_CREDIT_DAYS
 from app.constants.invoicing import EWAY_THRESHOLD
@@ -485,6 +486,7 @@ def preload_pnl_for_job(db, client_id, job_id):
         "subs": one(db.query(models.DBSubcontractOrder).filter(
             models.DBSubcontractOrder.client_id == client_id, models.DBSubcontractOrder.job_id == job_id).all()),
         "settled": settled_amounts(db, client_id),
+        "credits": preload_credits(db, client_id),
     }
 
 
@@ -540,6 +542,7 @@ def preload_pnl(db, client_id):
         "subs": by_job(db.query(models.DBSubcontractOrder).filter(
             models.DBSubcontractOrder.client_id == client_id).all()),
         "settled": settled_amounts(db, client_id),
+        "credits": preload_credits(db, client_id),
     }
 
 
@@ -559,8 +562,12 @@ def project_pnl(db, client_id, job, pre=None):
     collected = money(sum(i.paid or 0 for i in invoices))
 
     bills = pre["ra"].get(job.id, [])
-    certified = money(sum(b.this_bill or 0 for b in bills))
-    retention = money(sum(b.retention_amount or 0 for b in bills)
+    # Work a credit note took back is neither certified nor held to the project's account.
+    credits = pre.get("credits") or {}
+    taken_ra = (credits.get("client_job") or {}).get(job.id, {})
+    taken_sub = (credits.get("sub_job") or {}).get(job.id, {})
+    certified = money(sum(b.this_bill or 0 for b in bills) - taken_ra.get("taxable", 0.0))
+    retention = money(sum(b.retention_amount or 0 for b in bills) - taken_ra.get("retention", 0.0)
                       - sum(r.amount or 0 for r in (pre.get("released") or {}).get(job.id, [])))
 
     # --- what it cost ----------------------------------------------------
@@ -596,7 +603,7 @@ def project_pnl(db, client_id, job, pre=None):
     # What the gangs have billed us for and we have agreed to pay. This was
     # missing entirely, which flattered every project by the whole of its
     # subcontract cost.
-    subcontract = money(sum(b.this_bill or 0 for b in pre["sub"].get(job.id, [])))
+    subcontract = money(sum(b.this_bill or 0 for b in pre["sub"].get(job.id, [])) - taken_sub.get("taxable", 0.0))
 
     # Diesel, hire and repairs on the machines that worked this site - kept
     # in the equipment register, so the diary lists only plant that is not.

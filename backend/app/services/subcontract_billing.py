@@ -19,6 +19,8 @@ from app.core.gst import GST_STATES, WORKS_CONTRACT_SAC, our_state, split_gst, s
 from app.core.permissions import employee_can
 from app.core.queries import by_id, chain_rows, forget_chain
 from app.services.compliance import contractor_compliance
+from app.services.credit_notes import (
+    bill_credit_summary, credited_qty_by_item, credited_retention_by_order, credited_taxable_by_order)
 
 
 #
@@ -127,6 +129,10 @@ def sub_billed_to_date(db, order_id, exclude_bill_id=None):
     for l in db.query(models.DBSubBillLine).filter(
             models.DBSubBillLine.sub_bill_id.in_(ids)).all():
         totals[l.item_id] = totals.get(l.item_id, 0.0) + (l.this_bill_qty or 0.0)
+    # Work a credit note took back is no longer claimed: it can be measured and billed again.
+    for item_id, qty in credited_qty_by_item(db, "contractor", order_id).items():
+        if item_id in totals:
+            totals[item_id] = max(0.0, totals[item_id] - qty)
     return totals
 
 
@@ -177,7 +183,8 @@ def recost_sub_bill(db, bill):
         # An earlier bill cancelled since this one was drawn up has handed its work to it: it is no longer "claimed before".
         bill.previously_billed = money(sum(b.this_bill or 0 for b in db.query(models.DBSubBill).filter(
             models.DBSubBill.order_id == bill.order_id, models.DBSubBill.id < bill.id,
-            models.DBSubBill.status != "CANCELLED").all()))
+            models.DBSubBill.status != "CANCELLED").all())
+            - credited_taxable_by_order(db, "contractor", bill.order_id))
     bill.gross_to_date = money((bill.previously_billed or 0) + this_bill)
     bill.debit_notes = money(getattr(bill, "debit_notes", 0) or 0)
     gross = rupees(this_bill - bill.debit_notes)
@@ -217,7 +224,7 @@ def bill_scan_required():
     return os.getenv("REQUIRE_BILL_SCAN", "1").strip() not in ("0", "false", "no")
 
 
-def sub_bill_dict(db, bill, detail=False):
+def sub_bill_dict(db, bill, detail=False, credits=None):
     order = by_id(db, models.DBSubcontractOrder, bill.order_id)
     con = by_id(db, models.DBContractor, bill.contractor_id)
     job = by_id(db, models.DBJob, bill.job_id)
@@ -280,7 +287,16 @@ def sub_bill_dict(db, bill, detail=False):
     row["route"] = route
     row["waiting_on"] = next((r["name"] for r in route if r["status"] == "waiting"), "")
     row["waiting_on_id"] = next((r["approver_id"] for r in route if r["status"] == "waiting"), None)
+    if not detail:
+        c = (credits or {}).get(bill.id, {})
+        row["credited"] = c.get("taxable", 0.0)
+        row["credited_net"] = c.get("net", 0.0)
+    row["can_credit"] = (bill.status or "") in ("CERTIFIED", "PAID")
     if detail:
+        credit = bill_credit_summary(db, "contractor", bill)
+        row["credited"] = credit["credited"]
+        row["credited_net"] = credit["credited_net"]
+        row["credit_notes"] = credit["credit_notes"]
         # What would make paying them unsafe - a lapsed licence, a missing registration - shown where the bill is read.
         row["compliance_warnings"] = contractor_compliance(db, bill.client_id, bill.contractor_id)["warnings"]
         row["open_back_charges"] = [{"id": c.id, "number": c.number, "kind": c.kind, "reason": c.reason, "amount": money(c.amount)}
@@ -300,6 +316,8 @@ def sub_bill_dict(db, bill, detail=False):
             "this_bill_qty": money(l.this_bill_qty), "rate": unit_rate(l.rate),
             "amount": money(l.amount),
             "upto_date_amount": money(money(l.measured_to_date) * unit_rate(l.rate)),
+            "credited_qty": money(credit["credited_qty"].get(l.id, 0.0)),
+            "creditable_qty": money((l.this_bill_qty or 0) - credit["credited_qty"].get(l.id, 0.0)),
         } for l in db.query(models.DBSubBillLine).filter(
             models.DBSubBillLine.sub_bill_id == bill.id).order_by(
                 models.DBSubBillLine.display_order, models.DBSubBillLine.id).all()]
@@ -874,8 +892,12 @@ def retention_positions(db, client_id, today=None):
     jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client_id).all()}
     out = []
 
+    credited = {"client": credited_retention_by_order(db, client_id, "client"),
+                "contractor": credited_retention_by_order(db, client_id, "contractor")}
+
     def position(side, order_id, order_number, job, party, bills, rate_of, released, extra):
-        held = money(sum(b.retention_amount or 0 for b in bills))
+        # Retention on work a credit note took back is no longer held.
+        held = money(max(0.0, sum(b.retention_amount or 0 for b in bills) - credited[side].get(order_id, 0.0)))
         if held <= 0:
             return
         gone = money(released.get(order_id, 0.0))
@@ -964,12 +986,15 @@ def release_ledger_rows(db, client_id):
 
 def release_gst_rows(db, client_id, side, date_from="", date_to=""):
     """Releases as supplies for the GST registers - ours outward, the gangs'
-    inward. Taxable is the retention released; the bills taxed the rest."""
+    inward. A release raised now carries no tax (the bills it comes out of were taxed whole), so it has nothing
+    to report and is left out; only an older release that still carries tax - until it is corrected - is listed."""
     rows = []
     for r in db.query(models.DBRetentionRelease).filter(
             models.DBRetentionRelease.client_id == client_id,
             models.DBRetentionRelease.side == side,
             models.DBRetentionRelease.status.in_(("CERTIFIED", "PAID"))).all():
+        if not (r.gst_amount or 0):
+            continue
         on = (r.release_on or r.created_at or "")[:10]
         if (date_from and on < date_from) or (date_to and on > date_to):
             continue

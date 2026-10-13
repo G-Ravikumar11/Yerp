@@ -19,7 +19,8 @@ from app.core.currency import inr, money, unit_rate
 from app.core.notifications import notify
 from app.core.sheets import sheet_response
 from app.documents.forms import form_pdf_response, ra_form_spec
-from app.schemas.client_billing import RAActionIn, RABillIn, VariationIn
+from app.schemas.client_billing import CreditNoteIn, RAActionIn, RABillIn, VariationIn
+from app.services.credit_notes import credit_note_dict, credit_totals_by_bill, raise_credit_note
 from app.services.client_billing import (
     _ra_action,
     apply_variation,
@@ -29,6 +30,7 @@ from app.services.client_billing import (
     next_vo_number,
     order_variations,
     over_measured_lines,
+    contract_rates,
     ra_bill_dict,
     ra_bill_or_404,
     recost_ra_bill,
@@ -81,6 +83,7 @@ def raise_ra_bill(body: RABillIn, request: Request, db: Session = Depends(get_db
             409, "Nothing has been measured since the last bill. Record the "
                  "work in the measurement book first.")
 
+    rates = contract_rates(db, wo)
     seq = (db.query(func.max(models.DBRABill.sequence)).filter(
         models.DBRABill.work_order_id == wo.id).scalar() or 0) + 1
     bill = models.DBRABill(
@@ -91,12 +94,12 @@ def raise_ra_bill(body: RABillIn, request: Request, db: Session = Depends(get_db
         status="DRAFT",
         previously_billed=money(sum(
             money(billed.get(l.id, 0.0)) * unit_rate(l.rate) for l in lines)),
-        retention_percent=body.retention_percent if body.retention_percent is not None else 5.0,
+        retention_percent=body.retention_percent if body.retention_percent is not None else rates["retention_percent"],
         advance_recovery=money(body.advance_recovery or 0),
         other_deductions=money(body.other_deductions or 0),
         deduction_notes=(body.deduction_notes or "").strip(),
-        tax_percent=body.tax_percent if body.tax_percent is not None else 18.0,
-        tds_percent=body.tds_percent if body.tds_percent is not None else 1.0)
+        tax_percent=body.tax_percent if body.tax_percent is not None else rates["tax_percent"],
+        tds_percent=body.tds_percent if body.tds_percent is not None else rates["tds_percent"])
     db.add(bill)
     db.flush()
 
@@ -118,7 +121,8 @@ def list_ra_bills(request: Request, work_order_id: int = 0, status: str = "",
         q = q.filter(models.DBRABill.work_order_id == work_order_id)
     if status:
         q = q.filter(models.DBRABill.status == status.upper())
-    rows = [ra_bill_dict(db, b) for b in q.order_by(models.DBRABill.id.desc()).limit(300).all()]
+    taken_back = credit_totals_by_bill(db, client.id, "client")     # one query for every row
+    rows = [ra_bill_dict(db, b, credits=taken_back) for b in q.order_by(models.DBRABill.id.desc()).limit(300).all()]
     live = [r for r in rows if r["status"] not in ("CANCELLED",)]
     return {
         "bills": rows,
@@ -127,8 +131,9 @@ def list_ra_bills(request: Request, work_order_id: int = 0, status: str = "",
             "awaiting_certification": len([r for r in rows if r["status"] == "SUBMITTED"]),
             "certified_unpaid": money(sum(r["net_payable"] for r in rows
                                           if r["status"] == "CERTIFIED")),
-            "claimed": money(sum(r["this_bill"] for r in live)),
-            "retention_held": money(sum(r["retention_amount"] for r in live)),
+            "claimed": money(sum(r["this_bill"] - r["credited"] for r in live)),
+            "retention_held": money(sum(r["retention_amount"] - taken_back.get(r["id"], {}).get("retention", 0.0)
+                                        for r in live)),
             "paid": money(sum(r["net_payable"] for r in rows if r["status"] == "PAID")),
         },
     }
@@ -191,6 +196,36 @@ def reject_ra_bill(bill_id: int, body: RAActionIn, request: Request,
 def pay_ra_bill(bill_id: int, body: RAActionIn, request: Request,
                 db: Session = Depends(get_db)):
     return _ra_action(bill_id, "PAY", body, request, db, "bills.pay")
+
+
+@router.post("/api/ra-bills/{bill_id}/credit-notes")
+def credit_ra_bill(bill_id: int, body: CreditNoteIn, request: Request, db: Session = Depends(get_db)):
+    """Take back work that was billed and should not have been: a measurement corrected downwards after the bill
+    was certified, work rejected, a wrong quantity. Reverses the bill's GST, TDS and retention on those quantities
+    in today's period and frees the quantities to be measured and billed again. The bill itself is not touched."""
+    refuse_ho_coordinator(request, db, "credit notes")
+    # Reducing what a client owes is a decision, as certifying the bill was.
+    client, actor_id, actor_name = wo_actor(request, db, "subcontracts.approve")
+    bill = ra_bill_or_404(db, client.id, bill_id)
+    note = raise_credit_note(db, "client", client.id, bill, body.lines, body.reason, body.note_date, actor_name)
+    log_audit(db, client.id, "credit_note_raised", "ra_bill", bill.id, bill.number,
+              "%s: %s taken back (%s)" % (note.number, inr(note.taxable), (body.reason or "").strip()[:200]), request)
+    db.commit()
+    db.refresh(note)
+    return {"credit_note": credit_note_dict(db, note, detail=True),
+            "bill": ra_bill_dict(db, bill, detail=True),
+            "message": "%s issued: %s of work taken back, %s off what %s owes." % (
+                note.number, inr(note.taxable), inr(note.net_amount), "the client")}
+
+
+@router.get("/api/ra-bills/{bill_id}/credit-notes")
+def list_ra_bill_credit_notes(bill_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    bill = ra_bill_or_404(db, client.id, bill_id)
+    notes = db.query(models.DBCreditNote).filter(
+        models.DBCreditNote.side == "client", models.DBCreditNote.ra_bill_id == bill.id).order_by(
+            models.DBCreditNote.id).all()
+    return {"credit_notes": [credit_note_dict(db, n, detail=True) for n in notes]}
 
 
 @router.post("/api/ra-bills/{bill_id}/cancel")

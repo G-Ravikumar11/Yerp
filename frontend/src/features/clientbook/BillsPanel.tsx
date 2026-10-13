@@ -9,6 +9,7 @@ import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { compactINR, formatINR } from '@/lib/utils'
 import { FilterBar, useListFilters } from '@/components/data/filters'
+import { CreditNoteModal } from '@/features/credit/CreditNoteModal'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 const TONE: Record<string, 'neutral' | 'warning' | 'success' | 'danger'> = { DRAFT: 'neutral', SUBMITTED: 'warning', CERTIFIED: 'success', PAID: 'success', CANCELLED: 'danger' }
@@ -21,6 +22,7 @@ export function BillsPanel({ workOrderId }: { workOrderId: number }) {
   const [paying, setPaying] = useState<RaBill | null>(null)
   const [sendingBack, setSendingBack] = useState<RaBill | null>(null)
   const [einvoice, setEinvoice] = useState<number | null>(null)
+  const [crediting, setCrediting] = useState<number | null>(null)
   const refresh = [bookKeys.all]
   const act = useAction((a: { b: RaBill; action: 'submit' | 'certify' | 'reject'; comments?: string }) => actOnRaBill(a.b.id, a.action, a.comments ?? ''), { invalidate: refresh, onSuccess: () => setSendingBack(null) })
 
@@ -90,7 +92,17 @@ export function BillsPanel({ workOrderId }: { workOrderId: number }) {
         </div>
       ),
     },
-    { id: 'net', header: 'Net payable', align: 'right', cell: (b) => <span className="font-semibold">{formatINR(b.net_payable)}</span> },
+    {
+      id: 'net',
+      header: 'Net payable',
+      align: 'right',
+      cell: (b) => (
+        <div>
+          <span className="font-semibold">{formatINR(b.net_payable)}</span>
+          {b.credited > 0 && <div className="text-xs text-muted-foreground">credit note {formatINR(b.credited_net)}</div>}
+        </div>
+      ),
+    },
     { id: 'cum', header: 'Cumulative net', hideBelow: 'xl', align: 'right', cell: (b) => formatINR(cumulative.get(b.id)) },
     {
       id: 'status',
@@ -117,6 +129,11 @@ export function BillsPanel({ workOrderId }: { workOrderId: number }) {
           <a className={`${link} text-xs`} href={`/api/ra-bills/${b.id}/export.xlsx`} title="As a workbook">
             Excel
           </a>
+          {b.can_credit && can('subcontracts.approve') && (
+            <button type="button" className={`${link} text-xs`} onClick={() => setCrediting(b.id)} title="Take back what was over-billed. A certified bill is not cancelled.">
+              Credit note
+            </button>
+          )}
           {(b.status === 'CERTIFIED' || b.status === 'PAID') && can('accounts.manage') && (
             <button type="button" className={`${link} text-xs`} onClick={() => setEinvoice(b.id)} title="The file for the GST Invoice Registration Portal">
               e-Invoice
@@ -146,6 +163,7 @@ export function BillsPanel({ workOrderId }: { workOrderId: number }) {
       <FilterBar filters={filters} placeholder="Search by bill, status, amount..." />
       <DataTable label="Running account bills" rows={filters.filtered} columns={columns} rowKey={(b) => b.id} loading={q.isPending} empty="No bills yet. Measure the work, then draw one up." />
 
+      <CreditNoteModal side="client" billId={crediting} onClose={() => setCrediting(null)} invalidate={[bookKeys.all, ['costs'], ['money']]} />
       <EInvoiceModal docType="ra_bill" docId={einvoice} onClose={() => setEinvoice(null)} />
       {paying && <PayModal docType="ra_bill" docId={paying.id} title={paying.number} verb="Receive" open onOpenChange={(o) => !o && setPaying(null)} invalidate={[bookKeys.all]} />}
       <ConfirmDialog

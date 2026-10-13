@@ -12,6 +12,7 @@ from app.core.currency import compute_invoice_totals, line_net_amount, money, pa
 from app.core.dates import _days_until, _parse_date
 from app.core.gst import GST_STATES, state_from_gstin
 from app.core.units import canonical_unit
+from app.services.credit_notes import credit_ledger_rows
 
 
 def invoice_overdue_days(inv, today=None) -> int:
@@ -462,6 +463,7 @@ def _ledger_rows(db, client_id):
                          "moved": pre_ledger, "job_id": b.job_id})
 
     rows.extend(release_ledger_rows(db, client_id))
+    rows.extend(credit_ledger_rows(db, client_id))
 
     for e in db.query(models.DBMoneyEntry).filter(
             models.DBMoneyEntry.client_id == client_id,

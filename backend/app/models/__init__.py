@@ -103,6 +103,8 @@ from app.models.money import (
     DBBankAccount,
     DBMoneyEntry,
     DBRetentionRelease,
+    DBCreditNote,
+    DBCreditNoteLine,
 )
 from app.models.procurement import (
     DBPurchaseOrder,

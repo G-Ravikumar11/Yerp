@@ -76,7 +76,9 @@ TRADES = ("Mason", "Helper", "Carpenter", "Bar bender", "Fitter", "Electrician",
 SUB_TRANSITIONS = {
     "DRAFT":     {"SUBMIT": "SUBMITTED", "CANCEL": "CANCELLED"},
     "SUBMITTED": {"CERTIFY": "CERTIFIED", "REJECT": "DRAFT", "CANCEL": "CANCELLED"},
-    "CERTIFIED": {"PAY": "PAID", "CANCEL": "CANCELLED"},
+    # A certified bill is not cancelled: its GST and TDS are in a return that may be filed. What was over-billed is
+    # taken back by a credit note (services/credit_notes.py). Only a bill nobody has certified can be cancelled.
+    "CERTIFIED": {"PAY": "PAID"},
     "PAID":      {},
     "CANCELLED": {},
 }
