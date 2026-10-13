@@ -1141,38 +1141,50 @@ def get_org_chart(request: Request, db: Session = Depends(get_db)):
     ).all()
     departments = db.query(models.DBDepartment).filter(models.DBDepartment.client_id == client.id).all()
 
+    dept_names = {d.id: d.name for d in departments}          # one query, not one per person
     emp_map = {}
     for e in employees:
-        dept_name = ""
-        if e.department_id:
-            dept = db.query(models.DBDepartment).filter(models.DBDepartment.id == e.department_id).first()
-            dept_name = dept.name if dept else ""
         emp_map[e.id] = {
             "id": e.id, "employee_id": e.employee_id,
             "name": f"{e.first_name} {e.last_name}",
             "job_title": e.job_title, "email": e.email,
             "level": e.level or "", "role": e.role or "employee",
-            "department": dept_name, "reports_to": e.reports_to,
-            "status": e.status,
+            "department": dept_names.get(e.department_id, ""), "department_id": e.department_id,
+            "reports_to": e.reports_to, "status": e.status,
         }
 
+    # A person whose manager has left the chart (or was never in it) starts a line of their own.
     roots = []
     for e_id, e_data in emp_map.items():
-        if e_data["reports_to"] and e_data["reports_to"] in emp_map:
-            parent = emp_map[e_data["reports_to"]]
-            if "children" not in parent:
-                parent["children"] = []
-            parent["children"].append(e_data)
+        if e_data["reports_to"] and e_data["reports_to"] in emp_map and e_data["reports_to"] != e_id:
+            emp_map[e_data["reports_to"]].setdefault("children", []).append(e_data)
         else:
             roots.append(e_data)
 
+    # A reporting loop already in the data would leave its members off the chart altogether, so the chart
+    # would add up to fewer people than the company has. Put one person from each loop at the top.
+    def reach(node, seen):
+        seen.add(node["id"])
+        for c in node.get("children", []):
+            if c["id"] not in seen:
+                reach(c, seen)
+    seen = set()
+    for r in roots:
+        reach(r, seen)
+    for e_id, e_data in emp_map.items():
+        if e_id not in seen:
+            roots.append(e_data)
+            reach(e_data, seen)
+
+    # By department id: two departments can never share a name, but a name can be edited under a person.
     dept_groups = {}
     for d in departments:
-        dept_employees = [e for e in emp_map.values() if e["department"] == d.name]
-        if dept_employees:
-            dept_groups[d.name] = dept_employees
+        members = [e for e in emp_map.values() if e["department_id"] == d.id]
+        if members:
+            dept_groups[d.name] = members
+    unassigned = [e for e in emp_map.values() if e["department_id"] not in dept_names]
 
-    return {"roots": roots, "departments": dept_groups, "total_employees": len(employees)}
+    return {"roots": roots, "departments": dept_groups, "unassigned": unassigned, "total_employees": len(employees)}
 
 
 @router.get("/api/hr/stats")
@@ -1183,12 +1195,13 @@ def get_hr_stats(request: Request, db: Session = Depends(get_db)):
     onboarding = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id, models.DBEmployee.status == "onboarding").count()
     offboarding = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id, models.DBEmployee.status == "offboarding").count()
     terminated = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id, models.DBEmployee.status == "terminated").count()
+    other = total - active - onboarding - offboarding - terminated      # any other status, so the parts add up
     depts = db.query(models.DBDepartment).filter(models.DBDepartment.client_id == client.id).count()
     total_payroll = db.query(sqlfunc.coalesce(sqlfunc.sum(models.DBPayslip.net_pay), 0)).filter(models.DBPayslip.client_id == client.id, models.DBPayslip.status == "Paid").scalar()
     pending_payroll = db.query(sqlfunc.coalesce(sqlfunc.sum(models.DBPayslip.net_pay), 0)).filter(models.DBPayslip.client_id == client.id, models.DBPayslip.status != "Paid").scalar()
     return {
         "total_employees": total, "active": active, "onboarding": onboarding,
-        "offboarding": offboarding, "terminated": terminated,
+        "offboarding": offboarding, "terminated": terminated, "other": other,
         "departments": depts,
         "total_payroll": round(float(total_payroll), 2),
         "pending_payroll": round(float(pending_payroll), 2),

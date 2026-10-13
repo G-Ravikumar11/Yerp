@@ -235,7 +235,7 @@ def post_stock_issue(issue_id: int, request: Request, body: dict = None,
                                  "delivery in first, or post it anyway if the "
                                  "store is behind." % "; ".join(short[:4]))
 
-    # Handed to a gang whose rate includes the material: the order says which
+    # Handed to a contractor whose rate includes the material: the order says which
     # project it was spent on, and it has to be known before the stock moves
     # or the movements are written against no project at all.
     recover_order = None

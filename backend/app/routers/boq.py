@@ -363,7 +363,7 @@ def boq_available(boq_id: int, request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/boqs/{boq_id}/tracker")
 def boq_tracker(boq_id: int, request: Request, db: Session = Depends(get_db)):
-    """Per BOQ line: the client's quantity and rate, what the gangs have been given (and at what rate), what they have
+    """Per BOQ line: the client's quantity and rate, what the contractors have been given (and at what rate), what they have
     executed and billed, what the client has been billed, and the flags worth looking at."""
     client = require_items_access(request, db, ("reports.view",))
     return boq_tracker_data(db, client, boq_or_404(db, client.id, boq_id))

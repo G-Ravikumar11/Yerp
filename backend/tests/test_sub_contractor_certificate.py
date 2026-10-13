@@ -1,6 +1,6 @@
 """The sub contractor, from registration form to certificate of payment.
 
-The office kept two workbooks: a Sub Contractor Registration Form per gang,
+The office kept two workbooks: a Sub Contractor Registration Form per contractor,
 numbered IV0001 onwards, and for every bill three sheets - the Top Sheet
 (certificate of payment), AB-1 (abstract) and MB-1 (measurement book). These
 tests are the rules those papers carry: who is taken on and by whom, how the
@@ -99,7 +99,7 @@ def test_a_form_sent_back_says_why_and_goes_back_when_put_right(tenant, portal):
 def test_no_order_is_approved_for_a_gang_not_yet_taken_on(tenant, portal):
     qs = staff(tenant, "ho_qs")
     sign_in(portal, qs)
-    con = portal.post("/api/wo/contractors", json={"company_name": "Pending Gang"}).json()
+    con = portal.post("/api/wo/contractors", json={"company_name": "Pending Contractor"}).json()
     order = draft(tenant, contractor_id=con["id"])
     res = tenant.put("/api/wo/orders/%d/boq" % order["id"], json={"lines": [
         {"activity_no": "1", "item_description": "Plaster", "uom": "Sqm", "quantity": 10, "unit_rate": 100}]})
@@ -183,7 +183,7 @@ def test_the_vendor_codes_workbook_is_brought_in_once(tenant):
 # --- The measurement book -----------------------------------------------------------
 
 def painting_order(tenant, **over):
-    """An order shaped like the painting gang's: a heading and two items,
+    """An order shaped like the painting contractor's: a heading and two items,
     priced as the abstract prices them."""
     order = draft(tenant, gst_rate=0, tds_rate=2, retention_percent=5, **over)
     res = tenant.put("/api/wo/orders/%d/boq" % order["id"], json={"lines": [
@@ -235,7 +235,7 @@ def test_a_block_measured_once_counts_for_every_block_built(tenant):
 
 
 def mb_workbook():
-    """The MB-1 sheet as the site keeps it - the painting gang's bill in small."""
+    """The MB-1 sheet as the site keeps it - the painting contractor's bill in small."""
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "MB-1 (2)"

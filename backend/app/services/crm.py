@@ -387,7 +387,7 @@ def _advance_set_off_row(party_type, party, on, bill):
 
     A bill's net payable already has the recovery taken off, so counting the
     bill at its net alone left the advance looking wholly unpaid for ever: a
-    gang paid a 78,000 advance, with 7,800 of it taken back, showed as owing
+    contractor paid a 78,000 advance, with 7,800 of it taken back, showed as owing
     all 78,000. The recovery is value the party earned and settled against
     the advance, so it goes on their account beside the bill."""
     back = money(bill.advance_recovery or 0)

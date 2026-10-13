@@ -104,7 +104,7 @@ PORTAL_PERMISSIONS = [
     #
     # A vendor code, a work order and a BOQ are opened at head office, by its
     # quantity surveyor, and by nobody else in the business. Three sites each
-    # registering gangs and raising orders is how one gang ends up with two
+    # registering contractors and raising orders is how one contractor ends up with two
     # vendor codes and one project with two BOQs. The Master holds these as
     # well. They are never handed out one by one (see HO_QS_ONLY): the way to
     # give somebody them is to make that person HO QS.

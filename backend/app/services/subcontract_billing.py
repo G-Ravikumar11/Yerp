@@ -96,7 +96,7 @@ def write_dimensions(db, client_id, dims, measurement_id=None, sub_measurement_i
 # SUBCONTRACTOR MEASUREMENT AND BILLS - THE MONEY GOING OUT
 #
 # A work order is what the client buys from us; an RA bill against it is money
-# coming in. A subcontract order is what we buy from a gang, and until now it
+# coming in. A subcontract order is what we buy from a contractor, and until now it
 # could be signed but never measured or billed. The money going out to the
 # people actually doing the work was not in the app, and the P&L was
 # flattered by exactly that amount.
@@ -168,7 +168,7 @@ def recost_sub_bill(db, bill):
     4.01 is the work measured in this bill, and it is the base for every tax:
     GST (4.05 to 4.08), retention (5.03), TDS (5.04) and labour cess are all
     on it. Recoveries in debit notes (4.04) come off the payable, not off the
-    value the tax is charged on - the gang's invoice is for the whole of the
+    value the tax is charged on - the contractor's invoice is for the whole of the
     work; what we hold back is not a discount on it. Then the deductions: the advance and
     the material or other recoveries (5.01, 5.02), retention (5.03) and TDS
     (5.04), both on the value of the work, and the labour cess where the
@@ -189,7 +189,7 @@ def recost_sub_bill(db, bill):
     bill.debit_notes = money(getattr(bill, "debit_notes", 0) or 0)
     gross = rupees(this_bill - bill.debit_notes)
     supply = supply_state_for_job(db, bill.job_id)
-    # It is the gang's supply, so it is their registration against the site
+    # It is the contractor's supply, so it is their registration against the site
     # that decides the split - ours only when they have none on file.
     origin = contractor_state(db, bill.contractor_id) or our_state(db, bill.client_id)
     gst = split_gst(rupees(this_bill), bill.gst_percent or 0, origin, supply)
@@ -209,7 +209,7 @@ def recost_sub_bill(db, bill):
 
 def sub_bill_room(bill):
     """What more this bill can have taken off it: the gross, less everything
-    already deducted. The GST on top is left alone - it is the gang's to pay
+    already deducted. The GST on top is left alone - it is the contractor's to pay
     over to the government, and recovering an advance out of it leaves them
     owing tax on money they never received."""
     return money(rupees((bill.this_bill or 0) - (bill.debit_notes or 0))
@@ -355,7 +355,7 @@ def sub_measure_multiplier(value):
 
 
 def add_sub_measurement(db, client, order, item, body, actor_id, actor_name):
-    """One entry in the gang's book, checked and written."""
+    """One entry in the contractor's book, checked and written."""
     if item.is_header:
         raise HTTPException(400, "%s is a heading, not a measurable item."
                                  % (item.activity_no or "That line"))
@@ -592,7 +592,7 @@ def sub_advance_recovery(db, order, bill, asked=None):
     the next one.
     """
     # What was actually handed over, not what the order allows. Recovering
-    # the agreed figure took an advance back out of a gang's bill that had
+    # the agreed figure took an advance back out of a contractor's bill that had
     # never been paid to them.
     advance = min(money(order.mobilization_advance_amount or 0),
                   advance_paid(db, order.client_id, order.id))
@@ -755,7 +755,7 @@ def material_recovery_dict(r):
 
 
 def apply_material_recovery(db, client_id, order, bill):
-    """Take what the gang owes for material off this bill, as far as it can
+    """Take what the contractor owes for material off this bill, as far as it can
     bear - the rest waits for the next one, the way an advance does."""
     waiting = db.query(models.DBMaterialRecovery).filter(
         models.DBMaterialRecovery.client_id == client_id,
@@ -811,7 +811,7 @@ def _live_releases(db, client_id, side=None):
 
 def released_retention(db, client_id, side):
     """{order id: retention released on it} - the client's work orders, or
-    the gangs' subcontract orders. Cancelled releases gave nothing back."""
+    the contractors' subcontract orders. Cancelled releases gave nothing back."""
     out = {}
     for r in _live_releases(db, client_id, side):
         key = r.work_order_id if side == "client" else r.sub_order_id
@@ -836,7 +836,7 @@ def release_or_404(db, client_id, release_id):
 
 
 def release_party(db, r):
-    """(party type, name, id) - the client of the job, or the gang."""
+    """(party type, name, id) - the client of the job, or the contractor."""
     if r.side == "client":
         job = db.query(models.DBJob).filter(models.DBJob.id == r.job_id).first()
         return "client", (job.customer_name if job else ""), None
@@ -940,7 +940,7 @@ def retention_positions(db, client_id, today=None):
                  job.customer_name if job else "", bills,
                  lambda b: b.tax_percent, released, {})
 
-    # The gangs' side: retention we held on their bills, per subcontract order.
+    # The contractors' side: retention we held on their bills, per subcontract order.
     sub_by_order = {}
     for b in db.query(models.DBSubBill).filter(
             models.DBSubBill.client_id == client_id,
@@ -971,7 +971,7 @@ def retention_positions(db, client_id, today=None):
 
 def release_ledger_rows(db, client_id):
     """Releases in the party ledgers: a claim on the client, or a sum owed to
-    a gang, the day it was raised."""
+    a contractor, the day it was raised."""
     rows = []
     for r in db.query(models.DBRetentionRelease).filter(
             models.DBRetentionRelease.client_id == client_id,
@@ -985,7 +985,7 @@ def release_ledger_rows(db, client_id):
 
 
 def release_gst_rows(db, client_id, side, date_from="", date_to=""):
-    """Releases as supplies for the GST registers - ours outward, the gangs'
+    """Releases as supplies for the GST registers - ours outward, the contractors'
     inward. A release raised now carries no tax (the bills it comes out of were taxed whole), so it has nothing
     to report and is left out; only an older release that still carries tax - until it is corrected - is listed."""
     rows = []
@@ -1015,7 +1015,7 @@ def release_gst_rows(db, client_id, side, date_from="", date_to=""):
 
 
 def release_attention(db, client_id, today):
-    """A gang's defects period that has run out with their retention still
+    """A contractor's defects period that has run out with their retention still
     held: they will be asking for it, and should be paid it on time."""
     over = [p for p in retention_positions(db, client_id, today)
             if p["side"] == "contractor" and p["dlp_over"] and p["balance"] > 0]

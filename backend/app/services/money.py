@@ -73,7 +73,7 @@ def job_money(db, client_id, job, pre=None):
 
     # What the site has actually cost, taken from the project's profit
     # account so the two screens say the same thing: this one read only
-    # supplier bills and clock-in hours, and a job with a gang bill, a signed
+    # supplier bills and clock-in hours, and a job with a contractor bill, a signed
     # diary and cement issued from the store showed nothing incurred at all.
     pnl = project_pnl(db, client_id, job, pre=pre)
     c = pnl["cost"]
@@ -93,7 +93,7 @@ def job_money(db, client_id, job, pre=None):
 
     subs = pre["subs"].get(job.id, [])
     live_subs = [x for x in subs if (x.status or "") not in ("CANCELLED", "AMENDED")]
-    # What the gangs have still to bill. Their bills are incurred already;
+    # What the contractors have still to bill. Their bills are incurred already;
     # counting the whole order on top counted every rupee billed twice.
     gang_billed = {}
     for b in pre["sub"].get(job.id, []):
@@ -247,7 +247,7 @@ def account_balance(db, client_id, account):
 
 class AdvanceDoc:
     """A subcontract order, seen as the mobilisation advance it promises the
-    gang - what a payment of the advance is recorded against."""
+    contractor - what a payment of the advance is recorded against."""
 
     def __init__(self, order):
         self.id = order.id
@@ -372,8 +372,8 @@ def _doc_for_any(db, client_id, doc_type, doc_id):
 
 
 def material_recovered_by_job(db, client_id, job_id=None):
-    """Recovered on a certified or paid gang bill - credited back to the
-    project, because that material's cost is already in the gang's bill."""
+    """Recovered on a certified or paid contractor bill - credited back to the
+    project, because that material's cost is already in the contractor's bill."""
     q = db.query(models.DBMaterialRecovery.job_id, models.DBMaterialRecovery.amount).join(
         models.DBSubBill, models.DBSubBill.id == models.DBMaterialRecovery.sub_bill_id).filter(
         models.DBMaterialRecovery.client_id == client_id,

@@ -187,7 +187,7 @@ def notify_employee(db, client_id, employee_id, title, message, link=""):
 
 # NOTIFICATIONS
 #
-# A bill waiting on a signature, a receipt from a client, a gang bill to pay:
+# A bill waiting on a signature, a receipt from a client, a contractor bill to pay:
 # each used to sit until somebody happened to open the right screen. They are
 # announced now - on the bell in the app for everybody in the office, and by
 # email or WhatsApp to whoever the company has named for each kind - and every

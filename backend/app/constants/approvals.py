@@ -33,7 +33,7 @@ FINANCE_ABOVE_KEY = "approval_finance_above"
 # it, then one person at each rank above, someone on the same site first -
 # and is certified only when the last of them signs. The owner may sign at
 # any point, and that is the last word; whether the owner must also sign
-# every gang bill is a setting, on unless switched off (Settings > Approval rules).
+# every contractor bill is a setting, on unless switched off (Settings > Approval rules).
 SUB_BILL_OWNER_SIGNS_KEY = "sub_bill_owner_signs"
 
 #

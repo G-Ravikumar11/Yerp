@@ -269,7 +269,7 @@ def item_ceiling(item):
 
 
 def contractor_state(db, contractor_id):
-    """The state the gang is registered in, read off their GSTIN. It is their
+    """The state the contractor is registered in, read off their GSTIN. It is their
     supply, so it is their state against the site's that decides the split."""
     con = db.query(models.DBContractor).filter(
         models.DBContractor.id == contractor_id).first() if contractor_id else None
@@ -1091,7 +1091,7 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
                      "It is waiting with: " + ", ".join(
                          wo_pending_with(db, client.id, actor_id)) + ".")
         # An order is issued only to a sub contractor whose registration form
-        # has been signed off - otherwise the gang is taken on by whoever
+        # has been signed off - otherwise the contractor is taken on by whoever
         # typed their name, PAN and bank account.
         too_big = unregistered_vendor_breach(db, order)
         if too_big:
@@ -1130,7 +1130,7 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
         order.executed_at = now
     elif action == "CANCEL":
         # Work measured, billed or advanced against an order is a running
-        # account with the gang; cancelling the order left it pointing at
+        # account with the contractor; cancelling the order left it pointing at
         # nothing, with bills still certifiable against it.
         billed = [b.number for b in db.query(models.DBSubBill).filter(
             models.DBSubBill.order_id == order.id, models.DBSubBill.status != "CANCELLED").all()]

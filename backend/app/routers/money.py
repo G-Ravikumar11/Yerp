@@ -447,7 +447,7 @@ def payables(request: Request, db: Session = Depends(get_db)):
             "approved": (b.approval_status or "none") == "approved",
         })
 
-    # A subcontractor's certified bill is money we owe the gang. Aged from
+    # A subcontractor's certified bill is money we owe the contractor. Aged from
     # the day it was certified, because that is the day the promise was made.
     # (Client RA bills used to be listed here too, which was wrong - those are
     # money coming in and belong on the other page. Counting them on both
@@ -465,7 +465,7 @@ def payables(request: Request, db: Session = Depends(get_db)):
                             - settled.get(("sub_bill", r.id), 0.0))
         if outstanding <= 0:
             continue
-        # The order says how many days after certification the gang is paid.
+        # The order says how many days after certification the contractor is paid.
         terms = terms_of.get(r.order_id) or 0
         due = days_after(r.certified_at, terms)
         bucket, days = ageing_bucket(due or r.certified_at, today)
@@ -480,7 +480,7 @@ def payables(request: Request, db: Session = Depends(get_db)):
             "status": r.status or "", "approved": True,
         })
 
-    # A gang's retention, once released, is owed on their order's terms.
+    # A contractor's retention, once released, is owed on their order's terms.
     for rel in db.query(models.DBRetentionRelease).filter(
             models.DBRetentionRelease.client_id == client.id,
             models.DBRetentionRelease.side == "contractor",

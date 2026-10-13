@@ -2,7 +2,6 @@
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlalchemy import or_
 
 from app import models
 
@@ -48,7 +47,6 @@ def build_approval_chain(employee_id, client_id, db):
         emp = db.query(models.DBEmployee).filter(
             models.DBEmployee.id == current_id,
             models.DBEmployee.client_id == client_id,
-            or_(models.DBEmployee.status.is_(None), models.DBEmployee.status.notin_(GONE_STATUSES))
         ).first()
         if not emp:
             break
@@ -58,10 +56,13 @@ def build_approval_chain(employee_id, client_id, db):
         manager = db.query(models.DBEmployee).filter(
             models.DBEmployee.id == emp.reports_to,
             models.DBEmployee.client_id == client_id,
-            or_(models.DBEmployee.status.is_(None), models.DBEmployee.status.notin_(GONE_STATUSES))
         ).first()
         if not manager:
             break
+        if (manager.status or "").lower() in GONE_STATUSES:
+            # Somebody who has left is passed over, not the end of the line: the people above still approve.
+            current_id = manager.id
+            continue
         chain.append({
             "employee_id": manager.id,
             "level": manager.level or "",
@@ -741,10 +742,9 @@ def approval_inbox(db, client, emp):
         if emp is not None:
             q = q.filter(models.DBLeaveRequest.employee_id != emp.id)
             if not employee_can(emp, "people.manage"):
-                team = [e.id for e in db.query(models.DBEmployee.id).filter(
-                    models.DBEmployee.client_id == client.id,
-                    models.DBEmployee.reports_to == emp.id).all()]
-                q = q.filter(models.DBLeaveRequest.employee_id.in_(team or [0]))
+                # Everybody below, however many levels down: a director signs for the whole line.
+                from app.services.employee_portal import all_report_ids_for
+                q = q.filter(models.DBLeaveRequest.employee_id.in_(list(all_report_ids_for(db, emp)) or [0]))
         for lv in q.order_by(models.DBLeaveRequest.id).all():
             who = _person(db, lv.employee_id)
             items.append(_row(

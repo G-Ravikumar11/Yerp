@@ -161,7 +161,7 @@ def test_the_lines_executed_past_the_boq_are_suggested(tenant):
     boq, lines, _ = ready(tenant)
     order = draft(tenant)
     pulled = tenant.post("/api/wo/orders/%d/boq-lines" % order["id"], json={"lines": [{"key": lines["EXC"]["key"], "quantity": 500, "rate": 150}]}).json()
-    sched = dict(pulled["lines"][0], tolerance_percent=50)                          # the gang may measure 50% over
+    sched = dict(pulled["lines"][0], tolerance_percent=50)                          # the contractor may measure 50% over
     order = tenant.put("/api/wo/orders/%d/boq" % order["id"], json={"lines": [sched]}).json()["order"]
     fund_order(tenant, order)
     assert tenant.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 200

@@ -165,38 +165,6 @@ def job_to_dict(db, job, costing=False):
     return row
 
 
-def project_retention(db, client_id, job_id, fallback=5.0):
-    """The retention a project's bills are drawn at: the project's own percentage when it has one set, else the usual 5%.
-    A bill that is given a percentage on the screen uses that instead."""
-    job = db.query(models.DBJob).filter(models.DBJob.id == job_id, models.DBJob.client_id == client_id).first() if job_id else None
-    return float(job.retention_percent) if job is not None and (job.retention_percent or 0) > 0 else fallback
-
-
-def project_money_moved(db, client_id, job):
-    """What real money has been recorded against a project, in words, or nothing if none has.
-
-    Deleting a project takes its receipts and payments with it, which takes them out of the bank book and every ledger
-    while the money itself has really moved. So a project with any is not deleted: reverse or void the entries first,
-    or keep the project and set it to cancelled."""
-    said = []
-    receipts = db.query(func.count(models.DBMoneyEntry.id), func.coalesce(func.sum(models.DBMoneyEntry.amount), 0.0)).filter(
-        models.DBMoneyEntry.client_id == client_id, models.DBMoneyEntry.job_id == job.id,
-        models.DBMoneyEntry.voided.isnot(True)).one()
-    if receipts[0]:
-        said.append("%d receipt%s or payment%s in the bank book (%s)" % (
-            receipts[0], "" if receipts[0] == 1 else "s", "" if receipts[0] == 1 else "s", inr(receipts[1])))
-    on_invoices = db.query(func.count(models.DBPayment.id), func.coalesce(func.sum(models.DBPayment.amount), 0.0)).join(
-        models.DBInvoice, models.DBInvoice.id == models.DBPayment.invoice_id).filter(
-        models.DBInvoice.client_id == client_id, models.DBInvoice.job_id == job.id).one()
-    if on_invoices[0]:
-        said.append("%d payment%s received on its invoices (%s)" % (on_invoices[0], "" if on_invoices[0] == 1 else "s", inr(on_invoices[1])))
-    paid_bills = db.query(func.count(models.DBBill.id), func.coalesce(func.sum(models.DBBill.amount_paid), 0.0)).filter(
-        models.DBBill.client_id == client_id, models.DBBill.job_id == job.id, models.DBBill.amount_paid > 0).one()
-    if paid_bills[0]:
-        said.append("%d supplier bill%s already paid (%s)" % (paid_bills[0], "" if paid_bills[0] == 1 else "s", inr(paid_bills[1])))
-    return said
-
-
 def clamp_percent(value) -> float:
     """A percentage that cannot be nonsense. Retention outside 0-100 is a typo,
     and a negative one would quietly increase what the job appears to collect."""
@@ -632,7 +600,7 @@ def project_pnl(db, client_id, job, pre=None):
         if p.id not in billed_pos
         and (p.status or "") in ("Approved", "Awaiting Approval")))
 
-    # What the gangs have billed us for and we have agreed to pay. This was
+    # What the contractors have billed us for and we have agreed to pay. This was
     # missing entirely, which flattered every project by the whole of its
     # subcontract cost.
     subcontract = money(sum(b.this_bill or 0 for b in pre["sub"].get(job.id, [])) - taken_sub.get("taxable", 0.0))
@@ -641,7 +609,7 @@ def project_pnl(db, client_id, job, pre=None):
     # in the equipment register, so the diary lists only plant that is not.
     equipment = money((pre.get("equipment") or {}).get(job.id, 0.0))
 
-    # Material issued to a gang and taken back out of their bill: its cost is
+    # Material issued to a contractor and taken back out of their bill: its cost is
     # inside what they billed, so it comes off here or it is counted twice.
     recovered = money((pre.get("recovered") or {}).get(job.id, 0.0))
 

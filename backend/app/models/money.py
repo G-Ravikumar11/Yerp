@@ -58,9 +58,9 @@ class DBMoneyEntry(Base):
 # RETENTION RELEASED
 #
 # Retention is held on every certified bill, both ways: the client holds it
-# from us, and we hold it from the gangs. A release is the document that
+# from us, and we hold it from the contractors. A release is the document that
 # brings it back - a claim on the client at practical completion or at the
-# end of the defects period, or a payment due to a gang. It carries the GST
+# end of the defects period, or a payment due to a contractor. It carries the GST
 # the bills did not, because each bill charged tax only on what it asked for.
 class DBRetentionRelease(Base):
     __tablename__ = "retention_releases"
@@ -100,7 +100,7 @@ class DBRetentionRelease(Base):
 # against that bill, for the quantities taken back. It reverses the same GST, TDS and retention the bill charged,
 # in the period it is issued, and the quantities it takes back are claimable again if the work is measured again.
 # One table both ways, as retention releases are: side "client" is against our RA bill, "contractor" against a
-# gang's bill.
+# contractor's bill.
 class DBCreditNote(Base):
     __tablename__ = "credit_notes"
 
@@ -129,7 +129,7 @@ class DBCreditNote(Base):
     retention_amount = Column(Float, default=0.0)           # retention no longer held on the work taken back
     tds_percent = Column(Float, default=0.0)
     tds_amount = Column(Float, default=0.0)                 # TDS no longer deducted on it
-    cess_amount = Column(Float, default=0.0)                # labour cess (gang bills)
+    cess_amount = Column(Float, default=0.0)                # labour cess (contractor bills)
     net_amount = Column(Float, default=0.0)                 # what the bill's net payable is reduced by
 
     status = Column(String, default="ISSUED", index=True)

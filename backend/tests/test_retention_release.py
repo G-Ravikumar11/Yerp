@@ -1,4 +1,4 @@
-"""Retention released: claimed back from the client, or paid out to a gang.
+"""Retention released: claimed back from the client, or paid out to a contractor.
 
 Retention is held on every certified bill. Until now the app could say how
 much was held and nothing more - no document ever brought it back, so it
@@ -143,7 +143,7 @@ def test_a_gangs_retention_is_released_as_money_we_owe(tenant):
     assert paid.json()["entry"]["direction"] == "OUT"
     assert tenant.get("/api/sub-bills?order_id=%d" % order["id"]).json()["summary"]["retention_held"] == held - held / 2
     inward = [x for x in tenant.get("/api/gst/inward").json()["supplies"] if x["kind"] == "Retention release"]
-    assert not inward          # the gang's bill already carried the GST
+    assert not inward          # the contractor's bill already carried the GST
     assert r["gst_amount"] == 0 and r["net_amount"] == held / 2
 
 

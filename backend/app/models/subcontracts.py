@@ -1,4 +1,4 @@
-"""Subcontract orders, budgets, the gangs' measurement and their bills."""
+"""Subcontract orders, budgets, the contractors' measurement and their bills."""
 from datetime import datetime
 
 from sqlalchemy import (
@@ -91,7 +91,7 @@ class DBContractor(Base):
 
     # The rest of the Sub Contractor Registration Form, box for box: the
     # project they were taken on for, where they are from, what they do, and
-    # the documents collected. A gang is paid on what this form says, so it is
+    # the documents collected. A contractor is paid on what this form says, so it is
     # held here rather than in a folder of printouts.
     registered_project = Column(String, default="")
     joining_date = Column(String, default="")
@@ -109,7 +109,7 @@ class DBContractor(Base):
     document_files = deferred(Column(Text, default="{}"))
     document_names = Column(Text, default="{}")
     declaration_signed = Column(Boolean, default=False)
-    # PENDING | APPROVED | REJECTED. Somebody on site can register a gang; it
+    # PENDING | APPROVED | REJECTED. Somebody on site can register a contractor; it
     # is signed off before an order is issued to them. Rows from before the
     # form existed were never questioned and read as approved.
     registration_status = Column(String, default="APPROVED", index=True)
@@ -255,7 +255,7 @@ class DBSubcontractItem(Base):
     # How far the measured quantity may run past the ordered one before the
     # order has to be amended. Nought means exactly what was ordered.
     tolerance_percent = Column(Float, default=0.0)
-    # The line of the project BOQ this is part of (its stable key), so what is given to gangs can be added up
+    # The line of the project BOQ this is part of (its stable key), so what is given to contractors can be added up
     # against what the client's BOQ allows.
     boq_key = Column(String, default="", index=True)
 
@@ -304,7 +304,7 @@ class DBSubcontractApproval(Base):
 #
 # The other side of the ledger. A work order is what the client buys from us
 # and an RA bill against it is money coming in. A subcontract order is what we
-# buy from a gang, and until now it could be signed but never measured or
+# buy from a contractor, and until now it could be signed but never measured or
 # billed - so the money going out to the people actually doing the work was
 # not in the app at all, and the P&L was flattered by exactly that amount.
 #
@@ -352,7 +352,7 @@ class DBMeasurementDimension(Base):
     what the dimensions come to, and the dimensions are what get checked on
     site - so the book has to hold them, or the real book stays in a
     spreadsheet and the app only ever sees its answer. Held against either
-    book, the client's or the gang's. A deduction (an opening in a wall) is a
+    book, the client's or the contractor's. A deduction (an opening in a wall) is a
     line that takes away.
     """
     __tablename__ = "measurement_dimensions"
@@ -406,7 +406,7 @@ class DBSubBill(Base):
     back_charges = Column(Float, default=0.0)         # open back-charges taken off this bill (back_charges table)
     deduction_notes = Column(String, default="")
     gst_percent = Column(Float, default=0.0)
-    gst_amount = Column(Float, default=0.0)           # the gang charges us
+    gst_amount = Column(Float, default=0.0)           # the contractor charges us
     cgst_amount = Column(Float, default=0.0)
     sgst_amount = Column(Float, default=0.0)
     igst_amount = Column(Float, default=0.0)
@@ -449,7 +449,7 @@ class DBSubBill(Base):
     submitted_by_name = Column(String, default="")
     submitted_at = Column(String, default="")
     approved_by_name = Column(String, default="")    # the last signature - Approved By
-    # "Accepted for Sub Contractor": the gang's own signature on the certificate.
+    # "Accepted for Sub Contractor": the contractor's own signature on the certificate.
     accepted_by_name = Column(String, default="")
     accepted_at = Column(String, default="")
 
@@ -473,7 +473,7 @@ class DBSubBillLine(Base):
 
 
 class DBMaterialRecovery(Base):
-    """Material issued to a gang that is to be taken back out of their bills.
+    """Material issued to a contractor that is to be taken back out of their bills.
 
     One row per issue line; split when a bill can bear only part of it, so a
     row is always either waiting or taken by exactly one bill - and a bill

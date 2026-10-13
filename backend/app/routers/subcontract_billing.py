@@ -398,7 +398,7 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
                                       db: Session = Depends(get_db)):
     """The measurement book as the site keeps it in Excel - S.No, Description,
     UoM, No's, NoM, Length, Width, Height, Total Quantity - read into the
-    gang's book. Each section of the sheet is matched to an item on the order
+    contractor's book. Each section of the sheet is matched to an item on the order
     by its description; the first call shows what would go in, and a second
     with commit=1 (and any corrected matches) records it. All of it goes in
     or none of it does."""
@@ -913,7 +913,7 @@ def create_sub_bill(body: SubBillIn, request: Request, db: Session = Depends(get
         period_from=(body.period_from or ""), period_to=(body.period_to or
                                                           datetime.now().strftime("%Y-%m-%d")),
         bill_date=(body.bill_date or datetime.now().strftime("%Y-%m-%d"))[:10],
-        # What the certificate calls the type of work: what the gang was
+        # What the certificate calls the type of work: what the contractor was
         # registered to do, else the order's trade.
         work_type=((body.work_type or "").strip() or (con.nature_of_work if con else "") or
                    order.work_type or "")[:200],
@@ -1060,7 +1060,7 @@ def edit_sub_bill(bill_id: int, body: SubBillEditIn, request: Request, db: Sessi
 
 @router.post("/api/sub-bills/{bill_id}/credit-notes")
 def credit_sub_bill(bill_id: int, body: CreditNoteIn, request: Request, db: Session = Depends(get_db)):
-    """The gang's bill was for more than was done: take the difference back with a credit note instead of
+    """The contractor's bill was for more than was done: take the difference back with a credit note instead of
     cancelling a certified bill. Reverses its GST (so the input credit comes down), TDS, retention and cess on those
     quantities in today's period, and frees the quantities to be measured and billed again. Defined ahead of the
     /{action} route below, which would otherwise take "credit-notes" for an action."""
@@ -1100,8 +1100,8 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     if move == "ACCEPT":
-        # "Accepted for Sub Contractor": the gang signed the certificate -
-        # recorded by the office from the signed copy, or by the gang itself
+        # "Accepted for Sub Contractor": the contractor signed the certificate -
+        # recorded by the office from the signed copy, or by the contractor itself
         # from the portal.
         require_items_access(request, db, "billing.manage")
         if (bill.status or "") not in ("SUBMITTED", "CERTIFIED", "PAID"):
@@ -1195,22 +1195,22 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
     if move in ("SUBMIT", "CERTIFY"):
         con = db.query(models.DBContractor).filter(models.DBContractor.id == bill.contractor_id).first() \
             if bill.contractor_id else None
-        gang = (con.company_name if con else "") or "the contractor"
+        contractor = (con.company_name if con else "") or "the contractor"
         if move == "SUBMIT":
             step = sub_bill_current_step(db, bill)
-            notify(db, client.id, "sub_bill_submitted", "%s from %s is waiting to be certified" % (bill.number, gang),
+            notify(db, client.id, "sub_bill_submitted", "%s from %s is waiting to be certified" % (bill.number, contractor),
                    "%s of work billed - with %s." % (inr(bill.this_bill), sub_bill_step_name(db, step) or "the Master"),
                    view="subbills-view", ref_type="sub_bill", ref_id=bill.id, severity="action")
             if step is not None and step.approver_id:
                 notify_employee(db, client.id, step.approver_id, "Subcontractor bill awaiting your certification",
                                 "%s from %s - %s of work, net %s." % (
-                                    bill.number, gang, format_money_plain(bill.this_bill),
+                                    bill.number, contractor, format_money_plain(bill.this_bill),
                                     format_money_plain(bill.net_payable)),
                                 link="/next/approvals")
             db.commit()
         else:
             notify(db, client.id, "sub_bill_certified", "%s certified - %s to pay %s" % (
-                bill.number, inr(bill.net_payable), gang), "Pay it from Subcontractor Bills.",
+                bill.number, inr(bill.net_payable), contractor), "Pay it from Subcontractor Bills.",
                    view="subbills-view", ref_type="sub_bill", ref_id=bill.id, severity="money")
         db.refresh(bill)
     return {"ok": True, "bill": sub_bill_dict(db, bill, detail=True),
@@ -1219,7 +1219,7 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
 
 @router.get("/api/sub-bills.xlsx")
 def sub_bills_register_xlsx(request: Request, order_id: int = 0, db: Session = Depends(get_db)):
-    """Every gang bill as the register the office reconciles - with its PDF
+    """Every contractor bill as the register the office reconciles - with its PDF
     twin beside it, like every other register. The screen only offered to
     print the page."""
     bills = list_sub_bills(request, order_id, db)["bills"]
@@ -1314,14 +1314,14 @@ def retention_overview(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/api/retention/releases")
 def create_release(body: RetentionReleaseIn, request: Request, db: Session = Depends(get_db)):
-    """Release retention: claim it from the client, or owe it to a gang.
+    """Release retention: claim it from the client, or owe it to a contractor.
 
     Never more than is still held on that order. It carries no GST of its own: the bills it comes out of were
     taxed on their whole value, retention included."""
     side = (body.side or "").strip().lower()
     if side not in ("client", "contractor"):
         raise HTTPException(400, "Is this retention the client holds, or retention we hold from a contractor?")
-    # Owing a gang money is a decision, as certifying their bill is.
+    # Owing a contractor money is a decision, as certifying their bill is.
     client, actor_id, actor_name = wo_actor(
         request, db, ("billing.manage", "accounts.manage") if side == "client" else "subcontracts.approve")
     stage = (body.stage or "").strip()
