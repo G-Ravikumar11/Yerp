@@ -1492,6 +1492,8 @@ def work_order_from_estimate(db, client, est, request):
         reference=est.tender_reference or est.number or "",
         notes="From %s - %s" % (est.number, est.title or ""),
         status="Draft", total_value=0.0)
+    boq = boq_of_job(db, client.id, est.job_id)
+    wo.boq_id = boq.id if boq else None
     db.add(wo)
     db.flush()
     total = 0.0
@@ -1570,9 +1572,10 @@ def contractor_released(db, client_id, order_id=0):
 def wo_variations(db, wo, cutoff):
     """The variations agreed on a client order drawn from a BOQ, up to a date: the order's value as first placed, each
     variation, and the value as varied. None for an order with no BOQ or no approved variation by then."""
-    if not wo or not wo.boq_id:
+    boq_id = (wo.boq_id or getattr(boq_of_job(db, wo.client_id, wo.job_id), "id", None)) if wo else None
+    if not boq_id:
         return None
-    every = db.query(models.DBBoqVariation).filter(models.DBBoqVariation.boq_id == wo.boq_id,
+    every = db.query(models.DBBoqVariation).filter(models.DBBoqVariation.boq_id == boq_id,
                                                    models.DBBoqVariation.status == "APPROVED").order_by(models.DBBoqVariation.id).all()
     if not every:
         return None
@@ -1771,3 +1774,4 @@ from app.services.client_billing import billed_qty_to_date, measured_to_date
 from app.services.crm import advance_paid, next_item_code, norm_name, settled_on, standard_unit
 from app.services.invoicing import active_irn
 from app.services.subcontract_billing import _live_releases, released_retention, sub_gross_measured
+from app.services.boq import boq_of_job

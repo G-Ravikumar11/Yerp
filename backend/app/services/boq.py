@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 
 from app import models
 
@@ -16,6 +16,29 @@ from app.core.queries import by_id, chain_rows, forget_chain
 from app.core.units import canonical_unit
 from app.schemas.items import ItemIn
 from app.services.items import CATEGORY_BY_KIND
+
+
+def boq_client_orders(db, boq):
+    """The client's work orders against a BOQ: those made from it, and any opened for its project straight from the
+    Client Work Orders page, which are the same project's order and so are against the same BOQ."""
+    return db.query(models.DBWorkOrder).filter(
+        models.DBWorkOrder.client_id == boq.client_id,
+        or_(models.DBWorkOrder.boq_id == boq.id,
+            and_(models.DBWorkOrder.boq_id.is_(None), models.DBWorkOrder.job_id == boq.job_id))).order_by(models.DBWorkOrder.id).all()
+
+
+def boq_of_job(db, client_id, job_id):
+    """The project's BOQ (a project has one), or None."""
+    if not job_id:
+        return None
+    return db.query(models.DBBoq).filter(models.DBBoq.client_id == client_id, models.DBBoq.job_id == job_id).first()
+
+
+def boq_link_orders(db, boq):
+    """Ties the project's client work orders that were opened before its BOQ, or without going through it, to the BOQ."""
+    for wo in boq_client_orders(db, boq):
+        if not wo.boq_id:
+            wo.boq_id = boq.id
 
 
 def boq_or_404(db, client_id, boq_id):
@@ -293,7 +316,7 @@ def boq_tracker_data(db, client, boq):
         models.DBSubBillLine.item_id.in_(item_ids or [0]), models.DBSubBill.status != "CANCELLED").group_by(models.DBSubBillLine.item_id).all())
     # The client's side: orders drawn from this BOQ, by item code.
     client_done, client_billed = {}, {}
-    for wo in db.query(models.DBWorkOrder).filter(models.DBWorkOrder.boq_id == boq.id).all():
+    for wo in boq_client_orders(db, boq):
         m, b = measured_to_date(db, wo.id), billed_qty_to_date(db, wo.id)
         for wl in db.query(models.DBWorkOrderLine).filter(models.DBWorkOrderLine.work_order_id == wo.id).all():
             code = (wl.fg_code or "").upper()
@@ -551,7 +574,8 @@ def bv_apply(db, client, boq, vo):
     boq_issue_codes(db, client.id, copies)                    # the extra items get their codes from the item master
     boq.current_rev = nxt.rev_no
     # The client's work order drawn from this BOQ follows it.
-    for wo in db.query(models.DBWorkOrder).filter(models.DBWorkOrder.boq_id == boq.id, models.DBWorkOrder.status != "Closed").all():
+    for wo in [w for w in boq_client_orders(db, boq) if w.status not in ("Closed", "Rejected")]:
+        wo.boq_id = boq.id
         lines = db.query(models.DBWorkOrderLine).filter(models.DBWorkOrderLine.work_order_id == wo.id).all()
         for vl in db.query(models.DBBoqVariationLine).filter(models.DBBoqVariationLine.variation_id == vo.id).all():
             if vl.kind == "quantity":

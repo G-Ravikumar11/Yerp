@@ -503,3 +503,47 @@ def test_a_logo_that_is_only_an_address_is_left_off_the_pdf_rather_than_fetched(
     set_logo(account, "http://example.invalid/logo.png")
     res = tenant.get("/api/boqs/%d/export.pdf" % boq["id"])
     assert res.status_code == 200 and b"/Subtype /Image" not in res.content
+
+
+# --- a client work order opened outside the BOQ is still against it ---------------------------------------------------
+
+def build_order(tenant, jid, boq_lines):
+    priced = [l for l in boq_lines if l["kind"] != "section" and l["quantity"]]
+    res = tenant.post("/api/erp/work-orders/build", json={"job_id": jid, "lines": [
+        {"code": l["item_code"], "qty": l["quantity"], "rate": l["rate"]} for l in priced]})
+    assert res.status_code == 200, res.text
+    return res.json()["work_order"]
+
+
+def test_an_order_opened_from_the_client_work_orders_page_is_against_the_projects_boq(tenant):
+    jid, boq = make_boq(tenant)
+    lines = saved(tenant, boq)["lines"]
+    wo = build_order(tenant, jid, lines)
+    with main.SessionLocal() as db:
+        assert db.get(main.models.DBWorkOrder, wo["id"]).boq_id == boq["id"]
+    # the BOQ knows it has its order, so a second one is not made from it
+    again = tenant.post("/api/boqs/%d/client-order" % boq["id"], json={})
+    assert again.status_code == 409 and wo["number"] in again.json()["detail"]
+
+
+def test_an_order_never_tied_to_the_boq_is_still_found_as_the_projects_order(tenant):
+    jid, boq = make_boq(tenant)
+    lines = saved(tenant, boq)["lines"]
+    wo = build_order(tenant, jid, lines)
+    with main.SessionLocal() as db:                         # as an order made before this change was
+        db.get(main.models.DBWorkOrder, wo["id"]).boq_id = None
+        db.commit()
+    # read straight away, it is still the project's order against the BOQ
+    assert tenant.post("/api/boqs/%d/client-order" % boq["id"], json={}).status_code == 409
+    assert tenant.get("/api/boqs/%d/tracker" % boq["id"]).status_code == 200
+
+
+def test_a_rejected_order_does_not_stop_the_boq_making_the_next(tenant):
+    jid, boq = make_boq(tenant)
+    lines = saved(tenant, boq)["lines"]
+    wo = build_order(tenant, jid, lines)
+    with main.SessionLocal() as db:
+        db.get(main.models.DBWorkOrder, wo["id"]).status = "Rejected"
+        db.commit()
+    made = tenant.post("/api/boqs/%d/client-order" % boq["id"], json={})
+    assert made.status_code == 200, made.text

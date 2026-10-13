@@ -41,6 +41,7 @@ from app.services.approvals import (
     owner_label,
     start_approval,
 )
+from app.services.boq import boq_of_job
 from app.services.client_orders import budget_report, preload_work_orders
 from app.services.hr import employee_name
 from app.services.procurement import purchase_order_to_dict
@@ -115,6 +116,9 @@ def erp_build_work_order(body: WorkOrderIn, request: Request,
         order_date=datetime.now().strftime("%Y-%m-%d"),
         reference=(body.reference or "").strip(), notes=(body.notes or "").strip(),
         status="Draft", total_value=total)
+    # A project's order is against its BOQ, however it is opened, so the BOQ's tracker and variations follow it.
+    boq = boq_of_job(db, client.id, job.id)
+    wo.boq_id = boq.id if boq else None
     db.add(wo)
     db.flush()
     for l in lines:
@@ -234,6 +238,8 @@ async def erp_wo_upload(request: Request, file: UploadFile = File(...),
         number=next_sequence_number(db, models.DBWorkOrder, client.id, "WO-"),
         order_date=datetime.now().strftime("%Y-%m-%d"),
         status="Draft", total_value=result["total_value"])
+    boq = boq_of_job(db, client.id, job.id)
+    wo.boq_id = boq.id if boq else None
     db.add(wo)
     db.flush()
     for l in result["lines"]:
