@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app import models
-from app.ai import guard
+from app.ai import config, guard
 from app.ai.llm_client import AiResult, Attachment, ask, parse_json
 from app.core.auth import require_erp_read
 from app.core.files import file_bytes
@@ -261,9 +261,11 @@ def clean(read: dict) -> dict:
 def _trace(picture: bytes) -> AiResult:
     """One model call, retried after the wait the provider names (or a short back-off) when it is busy or refuses."""
     result = AiResult(False, reason="upstream_error")
-    for attempt in range(MAX_ATTEMPTS):
+    who = config.drawing_3d_provider()
+    attempts = 1 if who == "local" else MAX_ATTEMPTS      # a local model can take minutes: do not stack retries
+    for attempt in range(attempts):
         result = ask(SYSTEM, PROMPT, [Attachment(picture, "image/jpeg")], smart=True, max_tokens=MAX_TOKENS,
-                     groq_extra={"reasoning_effort": "none"})
+                     groq_extra={"reasoning_effort": "none"}, prefer_claude=who != "groq", use_local=who == "local")
         if result.ok:
             data = parse_json(result.text)
             if not isinstance(data, dict):
@@ -273,7 +275,7 @@ def _trace(picture: bytes) -> AiResult:
                 return result
             result = AiResult(False, text=result.text, reason="bad_answer", provider=result.provider,
                               model=result.model, usage=result.usage)
-        if result.reason not in _RETRY_REASONS or attempt == MAX_ATTEMPTS - 1:
+        if result.reason not in _RETRY_REASONS or attempt == attempts - 1:
             break
         time.sleep(min(max(result.retry_after + 0.5, 2.0 * (attempt + 1)), MAX_WAIT_S))
     return result

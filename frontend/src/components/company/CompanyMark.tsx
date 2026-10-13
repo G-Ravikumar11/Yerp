@@ -11,9 +11,9 @@ export function CompanyMark({ className }: { className?: string }) {
       </span>
     )
   }
-  // Not yet loaded, or no logo given: the Y, the same picture as the tab icon.
+  // Not yet loaded, or no logo given: the Y, the same picture as the tab icon. It is its own rounded tile, so no white box.
   return (
-    <span className={cn('grid shrink-0 place-items-center overflow-hidden rounded-xl bg-white ring-1 ring-border', className)}>
+    <span className={cn('grid shrink-0 place-items-center overflow-hidden rounded-xl', className)}>
       <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="Y ERP" className="size-full object-contain" />
     </span>
   )
