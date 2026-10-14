@@ -8,10 +8,9 @@ class AssetIn(BaseModel):
     name: str
     category: Optional[str] = "Other"
     ownership: Optional[str] = "Owned"
-    make: Optional[str] = ""
+    brand: Optional[str] = ""
     model: Optional[str] = ""
     reg_no: Optional[str] = ""
-    serial_no: Optional[str] = ""
     purchase_date: Optional[str] = ""
     purchase_value: Optional[float] = 0
     hired_from: Optional[str] = ""
@@ -28,6 +27,8 @@ class AssetIn(BaseModel):
     notes: Optional[str] = ""
     code: Optional[str] = ""               # blank: the next EQP number
     condition: Optional[str] = "Good"
+    location_type: Optional[str] = None    # Yard | Site | Transit; None leaves where it is alone
+    location_id: Optional[int] = None      # the site (project), when location_type is Site
     service_interval_type: Optional[str] = None   # Both | Meter | Days | None; not sent = read from the intervals
     reminder_meter: Optional[float] = None        # blank: a tenth of the interval
     reminder_days: Optional[float] = None         # blank: a tenth of the interval, at least 3

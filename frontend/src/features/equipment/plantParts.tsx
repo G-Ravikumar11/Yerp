@@ -46,10 +46,10 @@ export function usePaged<T>(rows: readonly T[] | undefined, size = 25) {
 }
 
 /** A machine from the register (not archived). `filter` narrows it - only rented machines, say. */
-export function MachineSelect({ id, value, onChange, filter, placeholder = 'Choose the machine' }: { id: string; value: number; onChange: (id: number) => void; filter?: (m: { ownership: string; status: string }) => boolean; placeholder?: string }) {
+export function MachineSelect({ id, value, onChange, filter, placeholder = 'Choose the machine', emptyText }: { id: string; value: number; onChange: (id: number) => void; filter?: (m: { ownership: string; status: string }) => boolean; placeholder?: string; emptyText?: string }) {
   const q = useRegister('')
   const rows = (q.data?.assets ?? []).filter((m) => m.status !== 'Disposed' && (!filter || filter(m)))
-  return <Select id={id} value={value || ''} placeholder={q.isPending ? 'Loading...' : placeholder} onChange={(e) => onChange(Number(e.target.value) || 0)} options={rows.map((m) => ({ value: m.id, label: `${m.code} ${m.name} - ${STATUS_LABEL[m.status] ?? m.status}` }))} />
+  return <Select id={id} value={value || ''} placeholder={q.isPending ? 'Loading...' : emptyText && !rows.length ? emptyText : placeholder} onChange={(e) => onChange(Number(e.target.value) || 0)} options={rows.map((m) => ({ value: m.id, label: `${m.code} ${m.name} - ${STATUS_LABEL[m.status] ?? m.status}` }))} />
 }
 
 /** An employee from HR - the plant screens keep no people of their own. */

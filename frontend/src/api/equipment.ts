@@ -3,16 +3,17 @@ import { get, post, put } from '@/lib/api'
 
 export const eqKeys = { all: ['equipment'] as const }
 
+export type LocationType = 'Yard' | 'Site' | 'Transit'
+
 export interface Machine {
   id: number
   code: string
   name: string
   category: string
   ownership: string
-  make: string
+  brand: string
   model: string
   reg_no: string
-  serial_no: string
   purchase_date: string
   purchase_value: number
   hired_from: string
@@ -31,6 +32,9 @@ export interface Machine {
   fitness_until: string
   current_job_id: number | null
   current_job: string
+  location_type: LocationType | ''
+  location_id: number | null
+  where: string
   status: string
   notes: string
   service: { due: boolean; soon: boolean; reasons: string[]; status: ServiceStatus; schedule: Schedule }
@@ -58,7 +62,7 @@ export interface MachineService {
 export interface MachineMove { moved_on: string; from: string; to: string; note: string }
 export interface ScheduleEvent { at: string; action: string; details: string; by: string }
 export interface MachineDetail extends Machine { utilisation_percent: number; litres_per_hour: number; logs: MachineLog[]; services: MachineService[]; moves: MachineMove[]; schedule_history: ScheduleEvent[] }
-export type MachineInput = Omit<Machine, 'id' | 'code' | 'current_job_id' | 'current_job' | 'status' | 'service' | 'cost_to_date' | 'ownership_label' | 'is_archived'> & { code: string }
+export type MachineInput = Omit<Machine, 'id' | 'code' | 'current_job_id' | 'current_job' | 'status' | 'service' | 'cost_to_date' | 'ownership_label' | 'is_archived' | 'location_type' | 'location_id' | 'where'> & { code: string; location_type?: LocationType; location_id?: number }
 
 export const useRegister = (status: string, archived = false) => useQuery({ queryKey: ['equipment', 'register', status, archived], queryFn: () => get<Register>(`/api/assets?archived=${archived}${status ? `&status=${encodeURIComponent(status)}` : ''}`) })
 export const archiveMachine = (id: number, restore = false) => post<{ message: string }>(`/api/assets/${id}/archive`, { restore })

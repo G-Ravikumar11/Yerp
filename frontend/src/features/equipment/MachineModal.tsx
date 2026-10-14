@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { CalendarClock } from 'lucide-react'
 import { Button, Field, Input, Modal, NumField, Select, Textarea } from '@/components/ui'
-import { eqKeys, saveMachine, type IntervalType, type Machine } from '@/api/equipment'
+import { eqKeys, saveMachine, type IntervalType, type LocationType, type Machine } from '@/api/equipment'
+import { projectLabel, useProjects } from '@/api/projects'
 import { useAction } from '@/lib/mutate'
 import { today } from '@/lib/format'
 import { ServiceBadge } from './plantParts'
@@ -23,12 +24,15 @@ const toNum = (s: string) => (s.trim() === '' || s === '.' ? null : Number(s))
 
 function Form({ machine: a, categories, onClose }: { machine: Machine | null; categories: string[]; onClose: () => void }) {
   const [f, setF] = useState({
-    name: a?.name ?? '', category: a?.category ?? 'Earthmoving', ownership: a?.ownership ?? 'Owned', make: a?.make ?? '', model: a?.model ?? '', reg_no: a?.reg_no ?? '', serial_no: a?.serial_no ?? '',
+    name: a?.name ?? '', category: a?.category ?? 'Earthmoving', ownership: a?.ownership ?? 'Owned', brand: a?.brand ?? '', model: a?.model ?? '', reg_no: a?.reg_no ?? '',
     hired_from: a?.hired_from ?? '', hire_basis: a?.hire_basis ?? 'Day', meter_unit: a?.meter_unit ?? 'Hours', last_service_on: a?.last_service_on ?? '', purchase_date: a?.purchase_date ?? '',
     insurance_until: a?.insurance_until ?? '', fitness_until: a?.fitness_until ?? '', notes: a?.notes ?? '', code: a?.code ?? '', condition: a?.condition ?? 'Good',
   })
   const [n, setN] = useState({ hire_rate: a?.hire_rate ?? 0, meter_reading: a?.meter_reading ?? 0, service_every: a?.service_every ?? 0, service_every_days: a?.service_every_days ?? 0, purchase_value: a?.purchase_value ?? 0 })
   const [type, setType] = useState<IntervalType>(a?.service_interval_type ?? 'Both')
+  const jobs = useProjects()
+  // Never assumed: a new machine has to be said to be in the yard, on a site, or in transit.
+  const [where, setWhere] = useState<{ kind: LocationType | ''; site: string }>({ kind: a?.location_type ?? '', site: a?.location_id ? String(a.location_id) : '' })
   const [opt, setOpt] = useState({
     lastMeter: a?.last_service_meter != null ? String(a.last_service_meter) : '',
     remMeter: a?.reminder_meter != null ? String(a.reminder_meter) : '',
@@ -46,6 +50,7 @@ function Form({ machine: a, categories, onClose }: { machine: Machine | null; ca
   const remDays = toNum(opt.remDays)
   const p = previewSchedule({ type, unit: f.meter_unit, meterNow: n.meter_reading, everyMeter: n.service_every, everyDays: n.service_every_days, lastMeter, lastOn: f.last_service_on, reminderMeter: remMeter, reminderDays: remDays })
   const errors = {
+    where: where.kind === 'Site' && !where.site ? 'Choose the site.' : !a && where.kind === '' ? 'Say where the machine is.' : '',
     meter: n.meter_reading < 0 ? 'A meter reading cannot be negative.' : '',
     every: p.usesMeter && !(n.service_every > 0) ? `How many ${unit} between services?` : '',
     days: p.usesDays && !(n.service_every_days > 0) ? 'How many days between services?' : p.usesDays && !Number.isInteger(n.service_every_days) ? 'A whole number of days.' : '',
@@ -57,6 +62,7 @@ function Form({ machine: a, categories, onClose }: { machine: Machine | null; ca
   const invalid = Object.values(errors).some(Boolean)
   const save = useAction(() => saveMachine(a?.id ?? null, {
     ...f, ...n, service_interval_type: type,
+    location_type: where.kind || undefined, location_id: where.kind === 'Site' ? Number(where.site) : undefined,
     service_every: p.usesMeter ? n.service_every : 0, service_every_days: p.usesDays ? n.service_every_days : 0,
     last_service_meter: toNum(opt.lastMeter), reminder_meter: p.usesMeter ? remMeter : null, reminder_days: p.usesDays ? remDays : null,
   }), { invalidate: [eqKeys.all], success: (r) => `${r.code} ${r.name} saved`, onSuccess: onClose })
@@ -67,12 +73,18 @@ function Form({ machine: a, categories, onClose }: { machine: Machine | null; ca
         <Field label="Equipment ID" htmlFor="mc-code" hint={a ? undefined : 'Left blank, the next EQP number'}><Input id="mc-code" value={f.code} maxLength={30} onChange={set('code')} /></Field>
         <Field label="Machine" htmlFor="mc-name" className="sm:col-span-2"><Input id="mc-name" value={f.name} onChange={set('name')} autoFocus /></Field>
         <Field label="Category" htmlFor="mc-cat"><Select id="mc-cat" value={f.category} onChange={set('category')} options={(categories.length ? categories : ['Other']).map((c) => ({ value: c, label: c }))} /></Field>
-        <Field label="Make" htmlFor="mc-make"><Input id="mc-make" value={f.make} onChange={set('make')} /></Field>
+        <Field label="Brand" htmlFor="mc-brand"><Input id="mc-brand" value={f.brand} placeholder="e.g. JCB" onChange={set('brand')} /></Field>
         <Field label="Model" htmlFor="mc-model"><Input id="mc-model" value={f.model} onChange={set('model')} /></Field>
         <Field label="Registration no." htmlFor="mc-reg"><Input id="mc-reg" value={f.reg_no} onChange={set('reg_no')} /></Field>
-        <Field label="Serial no." htmlFor="mc-serial"><Input id="mc-serial" value={f.serial_no} onChange={set('serial_no')} /></Field>
         <Field label="Ownership" htmlFor="mc-own"><Select id="mc-own" value={f.ownership} onChange={set('ownership')} options={[{ value: 'Owned', label: 'Owned' }, { value: 'Hired', label: 'Rented' }, { value: 'Leased', label: 'Leased' }]} /></Field>
         <Field label="Condition" htmlFor="mc-cond"><Select id="mc-cond" value={f.condition} onChange={set('condition')} options={['Good', 'Fair', 'Poor'].map((c) => ({ value: c, label: c }))} /></Field>
+        <Field label="Where is it" htmlFor="mc-where" error={errors.where}><Select id="mc-where" value={where.kind} placeholder="Choose" onChange={(e) => setWhere({ kind: e.target.value as LocationType | '', site: '' })} options={[{ value: 'Yard', label: 'Yard' }, { value: 'Site', label: 'Site' }, { value: 'Transit', label: 'In transit' }]} /></Field>
+        {where.kind === 'Site' && (
+          <Field label="Site" htmlFor="mc-site" className="sm:col-span-2"><Select id="mc-site" value={where.site} placeholder={jobs.isPending ? 'Loading...' : 'Choose the site'} onChange={(e) => setWhere((w) => ({ ...w, site: e.target.value }))} options={(jobs.data ?? []).filter((j) => String(j.id) === where.site || !['complete', 'cancelled'].includes(j.status)).map((j) => ({ value: j.id, label: projectLabel(j) }))} /></Field>
+        )}
+      </div>
+      {/* Hired machines have three of these and owned ones two, so each set has its own row and none is left half full. */}
+      <div className={`mt-4 grid gap-4 ${hired ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
         {hired ? (
           <>
             <Field label={f.ownership === 'Leased' ? 'Leased from' : 'Rented from'} htmlFor="mc-from"><Input id="mc-from" value={f.hired_from} onChange={set('hired_from')} /></Field>
@@ -85,6 +97,8 @@ function Form({ machine: a, categories, onClose }: { machine: Machine | null; ca
             <Field label="Cost" htmlFor="mc-value"><NumField id="mc-value" value={n.purchase_value} onValue={num('purchase_value')} /></Field>
           </>
         )}
+      </div>
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
         <Field label="Insurance until" htmlFor="mc-ins"><Input id="mc-ins" type="date" value={f.insurance_until} onChange={set('insurance_until')} /></Field>
         <Field label="Fitness until" htmlFor="mc-fit"><Input id="mc-fit" type="date" value={f.fitness_until} onChange={set('fitness_until')} /></Field>
       </div>

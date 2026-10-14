@@ -28,6 +28,7 @@ from app.services.assets import (
     UNIT_WORD,
     _apply_asset,
     _apply_book,
+    apply_location,
     apply_schedule,
     describe_changes,
     interval_type,
@@ -100,6 +101,7 @@ def create_asset(body: AssetIn, request: Request, db: Session = Depends(get_db))
     changes = apply_schedule(a, body, before)
     db.add(a)
     db.flush()
+    apply_location(db, client.id, a, body, actor_name)
     log_audit(db, client.id, "plant.machine.created", "equipment", a.id, a.code, a.name, request=request, user_name=actor_name)
     if a.service_interval_type != "None":
         log_audit(db, client.id, "plant.schedule.set", "equipment", a.id, a.code, describe_changes(changes),
@@ -130,6 +132,7 @@ def update_asset(asset_id: int, body: AssetIn, request: Request, db: Session = D
             raise HTTPException(400, "A meter reading cannot be negative.")
         a.last_service_meter = float(body.last_service_meter)
     changes = apply_schedule(a, body, before)
+    apply_location(db, client.id, a, body, actor_name)
     if changes:
         log_audit(db, client.id, "plant.schedule.changed", "equipment", a.id, a.code, describe_changes(changes),
                   request=request, user_name=actor_name)
@@ -226,6 +229,7 @@ def move_asset(asset_id: int, body: AssetMoveIn, request: Request, db: Session =
                               note=(body.note or "").strip(), by_name=actor_name))
     a.current_job_id = body.to_job_id or None
     a.status = "Deployed" if body.to_job_id else "Available"
+    a.location_type = "Site" if body.to_job_id else "Yard"
     db.commit()
     return {"ok": True, "asset": asset_dict(db, a),
             "message": "%s %s." % (a.code, ("moved to " + asset_dict(db, a)["current_job"])
