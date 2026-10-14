@@ -63,7 +63,7 @@ export const NAV: NavEntry[] = [
       { label: 'Planning & Progress', path: '/projects/programme' },
       { label: 'Drawings', path: '/projects/drawings' },
       { label: 'Quality', path: '/projects/quality' },
-      { label: 'Safety', path: '/projects/safety' },
+      { label: 'Workers and Safety', path: '/projects/safety' },
       { label: 'Site Diary', path: '/projects/diary' },
       { label: 'Project Chart', path: '/projects/chart' },
       { label: 'Equipment & Plant', path: '/projects/equipment' },

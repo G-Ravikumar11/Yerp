@@ -10,14 +10,14 @@ from app.documents import form_pdf
 from app import models
 from app.db import get_db
 
-from app.constants.common import INCIDENT_KINDS, INJURY_KINDS, PERMIT_PRECAUTIONS
+from app.constants.common import INCIDENT_KINDS, INJURY_KINDS, PERMIT_PRECAUTIONS, WORKER_MIN_AGE, WORKER_TRADES
 from app.constants.quality import SERIOUS_KINDS
 from app.core.auth import require_erp_read, wo_actor
 from app.core.notifications import notify
 from app.core.serials import next_number
 from app.core.sheets import sheet_response
 from app.documents.forms import _field_doc, _job_line, _pre, form_pdf_response
-from app.schemas.safety import IncidentCloseIn, IncidentIn, PermitCloseIn, PermitIn, TalkIn
+from app.schemas.safety import IncidentCloseIn, IncidentIn, PermitCloseIn, PermitIn, TalkIn, WorkerIn
 from app.services.projects import job_or_404
 from app.services.safety import incident_dict, permit_dict
 
@@ -259,3 +259,78 @@ def incident_pdf(iid: int, request: Request, db: Session = Depends(get_db)):
     return form_pdf_response(_field_doc(db, client, "INCIDENT REPORT",
                                         [("Report No", d["number"]), ("Kind", d["kind"]), ("Status", d["status"])],
                                         blocks, sig, d["number"]), d["number"])
+
+
+# ---- Workers: screened before they start on site -------------------------------------------------------------------
+
+def _worker_dict(w, files):
+    mine = [f for f in files if f.attached_id == w.id]
+    photo = next((f for f in mine if (f.caption or "") == "Photo"), None) or next(
+        (f for f in mine if (f.content_type or "").startswith("image/") and (f.caption or "") != "Medical certificate"), None)
+    medical = [f for f in mine if (f.caption or "") == "Medical certificate"]
+    return {"id": w.id, "job_id": w.job_id, "number": w.number or "", "name": w.name or "", "age": w.age or 0,
+            "address": w.address or "", "trade": w.trade or "", "screened_on": w.screened_on or "",
+            "screened_by": w.screened_by or "",
+            "photo_url": ("/api/files/%d/thumb" % photo.id) if photo else "",
+            "photo_full_url": ("/api/files/%d" % photo.id) if photo else "",
+            "medical": [{"id": f.id, "name": f.name or "", "url": "/api/files/%d" % f.id} for f in medical]}
+
+
+@router.get("/api/workers")
+def worker_list(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+    """Every worker screened for one project, or every project: in the order they were screened."""
+    client = require_erp_read(request, db)
+    q = db.query(models.DBWorkerScreening).filter(models.DBWorkerScreening.client_id == client.id)
+    if job_id:
+        q = q.filter(models.DBWorkerScreening.job_id == job_id)
+    rows = q.order_by(models.DBWorkerScreening.id.asc()).all()
+    files = db.query(models.DBFile.id, models.DBFile.attached_id, models.DBFile.caption, models.DBFile.name,
+                     models.DBFile.content_type).filter(
+        models.DBFile.client_id == client.id, models.DBFile.attached_type == "worker",
+        models.DBFile.attached_id.in_([w.id for w in rows] or [0])).order_by(models.DBFile.id.desc()).all()
+    workers = [_worker_dict(w, files) for w in rows]
+    by_trade = {t: 0 for t in WORKER_TRADES}
+    for w in workers:
+        by_trade[w["trade"]] = by_trade.get(w["trade"], 0) + 1
+    return {"workers": workers, "trades": list(WORKER_TRADES), "min_age": WORKER_MIN_AGE,
+            "summary": {"workers": len(workers), "by_trade": by_trade,
+                        "without_medical": len([w for w in workers if not w["medical"]]),
+                        "without_photo": len([w for w in workers if not w["photo_url"]])}}
+
+
+@router.post("/api/workers")
+def worker_screen(body: WorkerIn, request: Request, db: Session = Depends(get_db)):
+    """Screen a worker: name, age, address and trade. The photo and the medical certificate follow as files."""
+    client, _, actor_name = wo_actor(request, db, "site.record")
+    job = job_or_404(db, client.id, body.job_id)
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "The worker's name.")
+    if body.trade not in WORKER_TRADES:
+        raise HTTPException(400, "Trade: " + ", ".join(WORKER_TRADES))
+    if not body.age or body.age < WORKER_MIN_AGE:
+        raise HTTPException(400, "A worker on site must be at least %d." % WORKER_MIN_AGE)
+    if body.age > 75:
+        raise HTTPException(400, "Check the age: %d is past working age on a site." % body.age)
+    w = models.DBWorkerScreening(
+        client_id=client.id, job_id=job.id, number=next_number(db, models.DBWorkerScreening, client.id, "WKR"),
+        name=name[:120], age=int(body.age), address=(body.address or "").strip()[:500], trade=body.trade,
+        screened_on=(body.screened_on or date.today().isoformat())[:10], screened_by=actor_name)
+    db.add(w)
+    db.commit()
+    return {"worker": _worker_dict(w, [])}
+
+
+@router.delete("/api/workers/{wid}")
+def worker_remove(wid: int, request: Request, db: Session = Depends(get_db)):
+    """Take a worker off the list, with their photo and certificate."""
+    client, _, _ = wo_actor(request, db, "site.signoff")
+    w = db.query(models.DBWorkerScreening).filter(models.DBWorkerScreening.id == wid,
+                                                  models.DBWorkerScreening.client_id == client.id).first()
+    if not w:
+        raise HTTPException(404, "Worker not found")
+    db.query(models.DBFile).filter(models.DBFile.client_id == client.id, models.DBFile.attached_type == "worker",
+                                   models.DBFile.attached_id == w.id).delete(synchronize_session=False)
+    db.delete(w)
+    db.commit()
+    return {"message": "%s taken off the list." % (w.name or w.number)}
