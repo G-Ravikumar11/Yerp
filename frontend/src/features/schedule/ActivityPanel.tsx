@@ -20,6 +20,8 @@ export function ActivityPanel({ job, row, on, can, tone }: { job: number; row: P
   const tick = useAction((v: { id: number; done: boolean }) => editTask(v.id, { done: v.done }), { invalidate: [schKeys.all] })
   // Only part of a task is done: say how much, and the activity's bar moves by that share of it.
   const [partly, setPartly] = useState<{ id: number; value: number } | null>(null)
+  const shareOf = (t: PanelRow['tasks'][number]) => (partly?.id === t.id ? partly.value : t.done ? 100 : t.percent)
+  const preview = row.tasks.length > 0 && partly ? row.tasks.reduce((sum, t) => sum + shareOf(t), 0) / row.tasks.length : row.actual_percent
   const part = useAction((v: { id: number; percent: number }) => editTask(v.id, { percent: v.percent }), { invalidate: [schKeys.all], success: 'Progress recorded', onSuccess: () => setPartly(null) })
   const remove = useAction((id: number) => deleteTask(id), { invalidate: [schKeys.all], success: 'Task removed' })
   return (
@@ -32,7 +34,8 @@ export function ActivityPanel({ job, row, on, can, tone }: { job: number; row: P
         </div>
         <span className="text-xs text-muted-foreground">{row.tasks_done} of {row.tasks_total} tasks done</span>
       </div>
-      <ProgressBar percent={row.actual_percent} planned={row.planned_percent} tone={tone} label={`${row.name} done`} className="mb-3" />
+      {/* While a percentage is being typed the bar already shows what the activity will be at. */}
+      <ProgressBar percent={preview} planned={row.planned_percent} tone={tone} label={`${row.name} done`} className="mb-3" />
 
       {row.tasks.length === 0 ? (
         <p className="mb-2 text-sm text-muted-foreground">No tasks under this activity yet. Add what is to be done below; each one you finish moves the bar.</p>
@@ -63,12 +66,16 @@ export function ActivityPanel({ job, row, on, can, tone }: { job: number; row: P
                     </div>
                   )}
                 </div>
-                {part_done && !editing && <ProgressBar thin percent={t.percent} tone="bg-warning" label={`${t.text} part done`} className="mt-1" />}
+                {(part_done || editing) && <ProgressBar thin percent={editing && partly ? partly.value : t.percent} tone="bg-warning" label={`${t.text} part done`} className="mt-1" />}
                 {editing && partly && (
                   <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2">
                     <span className="text-xs text-muted-foreground">How much of it is done?</span>
-                    <input type="range" min={5} max={95} step={5} value={partly.value} aria-label={`How much of ${t.text} is done`} onChange={(e) => setPartly({ id: t.id, value: Number(e.target.value) })} className="h-2 min-w-32 flex-1 cursor-pointer accent-[var(--primary)]" />
-                    <span className="w-10 text-right text-xs font-semibold tabular">{partly.value}%</span>
+                    <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <input type="number" inputMode="numeric" min={0} max={100} step={1} value={partly.value} aria-label={`Percentage of ${t.text} done`} autoFocus
+                        onChange={(e) => setPartly({ id: t.id, value: Math.max(0, Math.min(100, Math.round(Number(e.target.value) || 0))) })}
+                        className="h-8 w-16 rounded-md border border-input bg-background px-2 text-right text-sm text-foreground tabular" />%
+                    </label>
+                    <input type="range" min={0} max={100} step={5} value={partly.value} aria-label={`How much of ${t.text} is done`} onChange={(e) => setPartly({ id: t.id, value: Number(e.target.value) })} className="h-2 min-w-32 flex-1 cursor-pointer accent-[var(--primary)]" />
                     <Button size="sm" loading={part.isPending} onClick={() => part.mutate({ id: t.id, percent: partly.value })}>Save</Button>
                     <Button size="sm" variant="ghost" onClick={() => setPartly(null)}>Cancel</Button>
                   </div>

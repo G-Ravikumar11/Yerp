@@ -58,13 +58,17 @@ export function PlannedWork({ job, date, taskState, onTask, percent, onPercent, 
             </div>
           )}
         </div>
-        {!s.done && s.percent > 0 && !editing && <ProgressBar thin percent={s.percent} tone="bg-warning" label={`${t.text} part done`} className="mt-1" />}
+        {((!s.done && s.percent > 0) || editing) && <ProgressBar thin percent={editing && partly ? partly.value : s.percent} tone="bg-warning" label={`${t.text} part done`} className="mt-1" />}
         {editing && partly && (
           <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2">
             <span className="text-xs text-muted-foreground">How much of it is done?</span>
-            <input type="range" min={5} max={95} step={5} value={partly.value} aria-label={`How much of ${t.text} is done`} onChange={(e) => setPartly({ id: t.id, value: Number(e.target.value) })} className="h-2 min-w-32 flex-1 cursor-pointer accent-[var(--primary)]" />
-            <span className="w-10 text-right text-xs font-semibold tabular">{partly.value}%</span>
-            <Button size="sm" onClick={() => { onTask(t, { done: false, percent: partly.value }); setPartly(null) }}>Set</Button>
+            <label className="flex items-center gap-1 text-xs text-muted-foreground">
+              <input type="number" inputMode="numeric" min={0} max={100} step={1} value={partly.value} aria-label={`Percentage of ${t.text} done`} autoFocus
+                onChange={(e) => setPartly({ id: t.id, value: Math.max(0, Math.min(100, Math.round(Number(e.target.value) || 0))) })}
+                className="h-8 w-16 rounded-md border border-input bg-background px-2 text-right text-sm text-foreground tabular" />%
+            </label>
+            <input type="range" min={0} max={100} step={5} value={partly.value} aria-label={`How much of ${t.text} is done`} onChange={(e) => setPartly({ id: t.id, value: Number(e.target.value) })} className="h-2 min-w-32 flex-1 cursor-pointer accent-[var(--primary)]" />
+            <Button size="sm" onClick={() => { onTask(t, partly.value >= 100 ? { done: true, percent: 100 } : { done: false, percent: partly.value }); setPartly(null) }}>Set</Button>
             <Button size="sm" variant="ghost" onClick={() => setPartly(null)}>Cancel</Button>
           </div>
         )}
@@ -74,7 +78,8 @@ export function PlannedWork({ job, date, taskState, onTask, percent, onPercent, 
 
   const card = (r: DayRow) => {
           const hasTasks = r.tasks.length > 0
-          const now = hasTasks ? r.tasks.reduce((sum, t) => sum + share(stateOf(t, taskState)), 0) / r.tasks.length : (percent[r.id] ?? r.actual_percent)
+          const typing = (t: DayTask) => (partly?.id === t.id ? partly.value : share(stateOf(t, taskState)))
+          const now = hasTasks ? r.tasks.reduce((sum, t) => sum + typing(t), 0) / r.tasks.length : (percent[r.id] ?? r.actual_percent)
           const value = percent[r.id] ?? r.actual_percent
           return (
             <div key={r.id} className="rounded-md border border-border bg-background/40 p-2.5">
