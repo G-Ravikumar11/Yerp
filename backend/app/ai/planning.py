@@ -4,12 +4,14 @@ The model reads and writes words; plain code decides. Every suggestion is checke
 before it is shown (only real work order lines, real activities, real dates), and nothing is saved until a person
 presses the button that saves it. The delay findings are plain code and work with no key.
 
-    POST /api/ai/planning/jobs/{job_id}/draft            {"work_order_id", "start", "finish"}   a proposed programme, not saved
-    POST /api/ai/planning/jobs/{job_id}/draft/apply      {"work_order_id", "activities": [...]}  saves it, after a person checks it
+    POST /api/ai/planning/jobs/{job_id}/draft            {"boq": true | "work_order_id", "start", "finish"}  a proposed programme, not saved
+    POST /api/ai/planning/jobs/{job_id}/draft/apply      {"boq": true | "work_order_id", "activities"}       saves it, after a person checks it
     POST /api/ai/planning/jobs/{job_id}/day-plan         {"on": "YYYY-MM-DD"}                    suggested tasks for a day, not saved
     GET  /api/ai/planning/jobs/{job_id}/review                                                   delay findings, with a short summary
     POST /api/ai/planning/jobs/{job_id}/ask              {"question": "..."}                     an answer from the plan's own figures
 """
+import re
+from dataclasses import dataclass
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -21,7 +23,7 @@ from app.ai.llm_client import ask, ask_json
 from app.core.auth import require_erp_read, wo_actor
 from app.core.currency import money
 from app.db import get_db
-from app.services.projects import _d, job_or_404, schedule_day, schedule_view
+from app.services.projects import _d, boq_order_lines, job_or_404, schedule_day, schedule_view
 from app.services.subcontract_orders import work_order_or_404
 
 router = APIRouter()
@@ -59,7 +61,7 @@ def _off(result):
     return {"available": False, "reason": result.reason, "message": result.message}
 
 
-# --- draft a programme from a work order ------------------------------------------------------------------------
+# --- draft a programme from the BOQ or a work order ------------------------------------------------------------------------
 
 def _span(start, finish):
     s, f = _d(start), _d(finish)
@@ -76,6 +78,52 @@ def _open_lines(db, job, wo):
     if not lines:
         raise HTTPException(409, "Every line of %s is already on the schedule." % wo.number)
     return lines
+
+
+@dataclass
+class BoqDraftLine:
+    """A priced line of the project's BOQ, in the shape a work order line is drafted from."""
+    id: int
+    description: str
+    amount: float
+    qty: float
+    uom: str
+    key: str
+    item_code: str
+    item_name: str = ""
+    fg_code: str = ""
+
+
+def _boq_open_lines(db, client_id, job):
+    """The BOQ's priced lines that are not yet on the programme. For this business the BOQ is the client's order."""
+    boq = db.query(models.DBBoq).filter(models.DBBoq.client_id == client_id, models.DBBoq.job_id == job.id).first()
+    if boq is None:
+        raise HTTPException(409, "This project has no BOQ yet. Make one under Clients, BOQ, then draft the programme from it.")
+    rev = db.query(models.DBBoqRevision).filter(models.DBBoqRevision.boq_id == boq.id,
+                                                models.DBBoqRevision.rev_no == boq.current_rev).first()
+    rows = db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id).order_by(
+        models.DBBoqLine.display_order, models.DBBoqLine.id).all() if rev else []
+    have = {a.boq_key for a in db.query(models.DBScheduleActivity.boq_key).filter(
+        models.DBScheduleActivity.client_id == client_id, models.DBScheduleActivity.job_id == job.id).all() if a.boq_key}
+    lines = [BoqDraftLine(id=l.id, description=re.sub(r"\s+", " ", (l.description or "").split("\n")[0]).strip(),
+                          amount=0.0 if l.rate_only else (l.amount or 0.0), qty=l.quantity or 0.0, uom=l.uom or "",
+                          key=l.key, item_code=l.item_code or "")
+             for l in rows if l.kind in ("item", "sub") and l.key not in have]
+    if not lines:
+        raise HTTPException(409, "Everything in %s is already on the programme." % (boq.number or "the BOQ"))
+    return boq, lines
+
+
+def _source(db, client_id, job, body):
+    """What a draft is made from: the project's BOQ, or the lines of one of its placed work orders.
+    Returns (its number, its open lines, the BOQ or None, the work order or None)."""
+    if body.get("boq"):
+        boq, lines = _boq_open_lines(db, client_id, job)
+        return boq.number or "the BOQ", lines, boq, None
+    wo = work_order_or_404(db, client_id, int(body.get("work_order_id") or 0))
+    if wo.job_id != job.id:
+        raise HTTPException(400, "%s is not on this project." % wo.number)
+    return wo.number or "", _open_lines(db, job, wo), None, wo
 
 
 def _label(l):
@@ -131,16 +179,13 @@ def _lines_facts(lines, s, f):
 def draft_programme(job_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     job = job_or_404(db, client.id, job_id)
-    wo = work_order_or_404(db, client.id, int(body.get("work_order_id") or 0))
-    if wo.job_id != job.id:
-        raise HTTPException(400, "%s is not on this project." % wo.number)
+    number, lines, boq, wo = _source(db, client.id, job, body)
     s, f = _span(body.get("start"), body.get("finish"))
-    lines = _open_lines(db, job, wo)
-    result = guard.run_feature(db, request, client, KEY_DRAFT, "Draft programme %s" % wo.number, wo.number or "",
+    result = guard.run_feature(db, request, client, KEY_DRAFT, "Draft programme %s" % number, number,
                                lambda: ask_json(DRAFT_SYSTEM, _lines_facts(lines, s, f), smart=False, max_tokens=2500))
     if not result.ok:
         return {**_off(result), "activities": []}
-    return {"available": True, "message": "", "work_order_id": wo.id,
+    return {"available": True, "message": "", "work_order_id": wo.id if wo else None, "boq_id": boq.id if boq else None,
             "activities": clean_draft((result.data or {}).get("activities"), lines, s, f)}
 
 
@@ -149,28 +194,39 @@ def apply_draft(job_id: int, body: dict, request: Request, db: Session = Depends
     """Saves a programme a person has looked at. It is checked again here, so a hand-edited request cannot slip past."""
     client, _, _ = wo_actor(request, db)
     job = job_or_404(db, client.id, job_id)
-    wo = work_order_or_404(db, client.id, int(body.get("work_order_id") or 0))
-    if wo.job_id != job.id:
-        raise HTTPException(400, "%s is not on this project." % wo.number)
     rows = body.get("activities")
     if not isinstance(rows, list) or not rows:
         raise HTTPException(400, "There is nothing to add.")
-    lines = _open_lines(db, job, wo)
+    number, lines, boq, wo = _source(db, client.id, job, body)
     dates = [d for r in rows if isinstance(r, dict) for d in (_d(r.get("start")), _d(r.get("finish"))) if d]
     if not dates:
         raise HTTPException(400, "Give the dates of each activity.")
     checked = clean_draft(rows, lines, min(dates), max(dates))
     n = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.job_id == job.id).count()
+    by_id = {l.id: l for l in lines}
+    # From the BOQ: tied to its line, and - where a client order was made from this BOQ - to that order's line, so the
+    # activity's progress comes from the measurement book, as it does when the programme is drawn from the BOQ by item.
+    order_line = boq_order_lines(db, client.id, boq.id) if boq else {}
+    used = {a.work_order_line_id for a in db.query(models.DBScheduleActivity.work_order_line_id).filter(
+        models.DBScheduleActivity.job_id == job.id).all() if a.work_order_line_id}
     made = {}
     for i, c in enumerate(checked):
+        if boq:
+            line = by_id[c["line_id"]]
+            wo_line = order_line.get(line.item_code.upper()) if line.item_code else None
+            wo_line = wo_line if wo_line not in used else None
+            used.add(wo_line)
+            tie = {"boq_key": line.key, "work_order_line_id": wo_line}
+        else:
+            tie = {"work_order_line_id": c["line_id"]}
         a = models.DBScheduleActivity(client_id=client.id, job_id=job.id, code="A%d" % ((n + i + 1) * 10), name=c["name"],
                                       planned_start=c["start"], planned_finish=c["finish"], weight=c["weight"],
-                                      work_order_line_id=c["line_id"], depends_on_id=made.get(c["after_line_id"]), display_order=n + i)
+                                      depends_on_id=made.get(c["after_line_id"]), display_order=n + i, **tie)
         db.add(a)
         db.flush()
         made[c["line_id"]] = a.id
     db.commit()
-    return {"ok": True, "schedule": schedule_view(db, client.id, job), "message": "%d activities added from %s." % (len(checked), wo.number)}
+    return {"ok": True, "schedule": schedule_view(db, client.id, job), "message": "%d activities added from %s." % (len(checked), number)}
 
 
 # --- suggest the day's tasks -------------------------------------------------------------------------------------

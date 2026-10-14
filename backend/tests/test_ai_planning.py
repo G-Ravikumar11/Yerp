@@ -11,6 +11,7 @@ from app.ai.llm_client import AiResult
 from test_ai_subcontracts import unkeyed  # noqa: F401  (fixture)
 from test_measurement_and_ra_bills import placed_order
 from test_schedule import act, d, job
+from test_boq import make_boq, saved
 
 S, F = date(2026, 1, 1), date(2026, 1, 31)
 
@@ -70,6 +71,52 @@ def test_applying_refuses_an_empty_or_foreign_request(tenant, second_tenant):
     wo, job_id = wo_job(tenant)
     assert tenant.post("/api/ai/planning/jobs/%d/draft/apply" % job_id, json={"work_order_id": wo["id"], "activities": []}).status_code == 400
     assert second_tenant.post("/api/ai/planning/jobs/%d/draft/apply" % job_id, json={"work_order_id": wo["id"], "activities": [{"line_id": 1}]}).status_code == 404
+
+
+# --- drafting from the BOQ: for this business the BOQ is the client's order -----------------------------------------
+
+def boq_draft(tenant, job_id, **extra):
+    return tenant.post("/api/ai/planning/jobs/%d/draft" % job_id, json={"boq": True, "start": d(0), "finish": d(60), **extra})
+
+
+def test_a_project_with_only_a_boq_is_drafted_from_it(tenant, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.setattr(planning, "ask_json", lambda *a, **k: AiResult(True, model="t", data={"activities": []}))
+    jid, boq = make_boq(tenant)
+    saved(tenant, boq)
+    out = boq_draft(tenant, jid).json()
+    assert out["available"] and out["boq_id"] == boq["id"]
+    assert [a["name"] for a in out["activities"]] == ["Excavation in all types of soil", "M25 grade RCC in raft",
+                                                      "Shuttering to raft edges", "Brick masonry in CM 1:6"]
+    assert tenant.get("/api/jobs/%d/schedule" % jid).json()["activities"] == []              # nothing saved yet
+    res = tenant.post("/api/ai/planning/jobs/%d/draft/apply" % jid, json={"boq": True, "activities": out["activities"]})
+    assert res.status_code == 200, res.text
+    acts = res.json()["schedule"]["activities"]
+    assert len(acts) == 4 and acts[0]["planned_start"] == d(0) and acts[-1]["planned_finish"] == d(60)
+    again = boq_draft(tenant, jid)
+    assert again.status_code == 409 and "already on the programme" in again.json()["detail"]
+    # drawing from the BOQ by item afterwards finds the same lines already placed
+    assert tenant.post("/api/jobs/%d/schedule/from-boq" % jid, json={"start": d(0), "finish": d(60), "by": "item"}).status_code == 409
+
+
+def test_a_boq_draft_takes_its_progress_from_the_book_when_a_client_order_was_made_from_the_boq(tenant, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.setattr(planning, "ask_json", lambda *a, **k: AiResult(True, model="t", data={"activities": []}))
+    jid, boq = make_boq(tenant)
+    saved(tenant, boq)
+    assert tenant.post("/api/boqs/%d/client-order" % boq["id"], json={}).status_code == 200
+    out = boq_draft(tenant, jid).json()
+    acts = tenant.post("/api/ai/planning/jobs/%d/draft/apply" % jid, json={"boq": True, "activities": out["activities"]}).json()["schedule"]["activities"]
+    assert all(a["work_order_line_id"] for a in acts) and all(a["progress_from"] == "measurement book" for a in acts)
+
+
+def test_drafting_from_a_boq_needs_one(tenant, second_tenant):
+    job = tenant.post("/api/jobs", json={"name": "No BOQ site", "customer_name": "X"}).json()
+    res = boq_draft(tenant, job["id"])
+    assert res.status_code == 409 and "no BOQ" in res.json()["detail"]
+    jid, boq = make_boq(second_tenant, "Rival site")
+    saved(second_tenant, boq)
+    assert boq_draft(tenant, jid).status_code == 404
 
 
 def test_day_tasks_are_tied_to_real_activities_and_not_repeated(tenant, monkeypatch):
