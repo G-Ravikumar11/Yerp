@@ -13,6 +13,7 @@ import { useState } from 'react'
 import { ConfirmDialog, Skeleton, Tooltip } from '@/components/ui'
 import { NotificationBell } from './NotificationBell'
 import { SyncIndicator } from './SyncIndicator'
+import { ActivityIndicator } from './ActivityIndicator'
 import { appUrl } from '@/lib/paths'
 
 function Breadcrumbs() {
@@ -156,6 +157,7 @@ export function Topbar() {
         <div className="ml-auto flex items-center gap-3">
           <InstallButton />
           {user?.type === 'employee' && <NotificationBell />}
+          <ActivityIndicator />
           <SyncIndicator />
           <ThemeSwitch />
           <span className="hidden h-6 w-px bg-border sm:block" aria-hidden />
