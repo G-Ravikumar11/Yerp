@@ -256,3 +256,16 @@ def test_a_delete_does_not_read_the_database_schema_again(tenant):
     finally:
         event.remove(main.engine, "before_cursor_execute", count)
     assert seen == [], "schema read %d times during a delete: %s" % (len(seen), seen[:3])
+
+
+def test_deleting_a_project_takes_its_screened_workers_with_their_photos_and_certificates(tenant):
+    client_id = _client_id()
+    with _db() as db:
+        job = _add(db, "jobs", client_id=client_id, name="Screened site", number="JOB-WK")
+        worker = _add(db, "worker_screenings", client_id=client_id, job_id=job, number="WKR-DL", name="Suresh")
+        _add(db, "project_files", client_id=client_id, attached_type="worker", attached_id=worker, name="photo.jpg")
+    pre = tenant.get("/api/jobs/%d/delete-preview" % job).json()
+    assert pre["counts"].get("screened workers") == 1, pre
+    assert tenant.delete("/api/jobs/%d" % job).status_code == 200
+    assert _count("worker_screenings", id=worker) == 0
+    assert _count("project_files", attached_type="worker", attached_id=worker) == 0, "their photo and certificate go too"
