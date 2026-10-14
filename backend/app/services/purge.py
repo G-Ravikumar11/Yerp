@@ -102,6 +102,7 @@ POLY = {
     "asset_services": {"files": ["plant_maintenance"]},
     "plant_expenses": {"files": ["plant_expense"]},
     "plant_fuel": {"files": ["plant_fuel"]},
+    "worker_screenings": {"files": ["worker"]},
 }
 
 # Kept, with the link to the project cleared, when a project goes: they exist before and apart from it.
@@ -184,7 +185,7 @@ LABELS = {
     "rfq_quotes": "supplier quotes", "rfq_quote_lines": "quoted rates", "plant_rentals": "rentals",
     "plant_rental_invoices": "rental invoices", "plant_rental_extensions": "rental extensions",
     "plant_rental_providers": "rental providers", "plant_allocations": "allocations", "asset_services": "service records",
-    "plant_expenses": "plant expenses", "plant_fuel": "fuel records", "employees": "employees", "suppliers": "suppliers", "contractors": "vendors",
+    "plant_expenses": "plant expenses", "plant_fuel": "fuel records", "employees": "employees", "worker_screenings": "screened workers", "suppliers": "suppliers", "contractors": "vendors",
 }
 
 

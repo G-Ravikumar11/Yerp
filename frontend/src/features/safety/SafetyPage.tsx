@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { FileSpreadsheet, FileText, Image, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
@@ -13,13 +14,22 @@ import { formatDate } from '@/lib/format'
 import { IncidentModal } from './IncidentModal'
 import { PermitModal } from './PermitModal'
 import { SafeDays } from './SafeDays'
+import { WorkersTab } from './WorkersTab'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 type Tab = 'incidents' | 'talks' | 'permits' | 'safe'
+type View = 'workers' | 'safety'
 
-/** Incidents and near misses with their cause and fix, the morning toolbox talk, and permits to work. */
+/**
+ * Workers and Safety: two tabs. Workers is the screening of every worker before they start; Safety is incidents and near misses with their cause
+ * and fix, the morning toolbox talk, and permits to work. The tab is in the address (?view=safety), so a link can open
+ * either one.
+ */
 export default function SafetyPage() {
   const { can } = useSession()
+  const [params, setParams] = useSearchParams()
+  const view: View = params.get('view') === 'safety' ? 'safety' : 'workers'
+  const setView = (v: View) => setParams((p) => { const n = new URLSearchParams(p); n.set('view', v); return n }, { replace: true })
   const [job, setJob] = useState(0)
   const [tab, setTab] = useState<Tab>('incidents')
   const q = useSafety(job)
@@ -90,7 +100,16 @@ export default function SafetyPage() {
   const noPermit = tab === 'permits' && !signoff
   return (
     <>
-      <PageHeader eyebrow="Projects" title="Safety" description="Incidents and near misses with their cause and fix, the morning toolbox talk, and permits to work." actions={<><Button variant="outline" asChild><a href={register}><FileSpreadsheet /> Register</a></Button><Button disabled={!job || noPermit} title={noPermit ? 'A permit to work is issued by a supervisor.' : undefined} onClick={add}><Plus /> New</Button></>} />
+      <PageHeader
+        eyebrow="Projects"
+        title="Workers and Safety"
+        description={view === 'safety' ? 'Incidents and near misses with their cause and fix, the morning toolbox talk, and permits to work.' : 'Every worker screened before they start: name, age, address, trade, photo and medical certificate.'}
+        actions={view === 'safety' && <><Button variant="outline" asChild><a href={register}><FileSpreadsheet /> Register</a></Button><Button disabled={!job || noPermit} title={noPermit ? 'A permit to work is issued by a supervisor.' : undefined} onClick={add}><Plus /> New</Button></>}
+      />
+      <div className="mb-6"><Tabs size="lg" label="Workers and Safety" value={view} onChange={setView} items={[{ value: 'workers', label: 'Workers' }, { value: 'safety', label: 'Safety' }]} /></div>
+      {view === 'workers' && <WorkersTab />}
+      {view === 'safety' && (
+        <>
       <div className="mb-6"><ProjectPicker value={job} onChange={setJob} id="sf-job" allowAll /></div>
       <StatGrid className="lg:grid-cols-3 xl:grid-cols-6">
         <Stat label="Days without a lost-time injury" value={s ? (s.days_without_lti === null ? 'none yet' : s.days_without_lti) : 0} loading={q.isPending} />
@@ -105,6 +124,8 @@ export default function SafetyPage() {
       {tab === 'talks' && <DataTable label="Toolbox talks" rows={d?.talks ?? []} columns={talks} rowKey={(t) => t.id} loading={q.isPending} empty="No talks recorded." />}
       {tab === 'permits' && <DataTable label="Permits" rows={d?.permits ?? []} columns={permits} rowKey={(p) => p.id} loading={q.isPending} empty="No permits issued." />}
       {tab === 'safe' && <SafeDays incidents={d?.incidents ?? []} loading={q.isPending} />}
+        </>
+      )}
 
       <IncidentModal job={job} kinds={d?.kinds ?? []} open={reporting} onClose={() => setReporting(false)} />
       <PermitModal job={job} kinds={d?.permit_kinds ?? {}} open={permitting} onClose={() => setPermitting(false)} />
