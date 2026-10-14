@@ -78,7 +78,7 @@ function RentalForm({ providers, billing, onClose }: { providers: Provider[]; bi
   return (
     <div>
       <div className="grid gap-4 sm:grid-cols-3">
-        <Field label="Machine" htmlFor="rn-m" error={tried ? errors.asset : ''} hint="Machines marked Rented or Leased on the register" className="sm:col-span-2"><MachineSelect id="rn-m" value={f.asset_id} onChange={(v) => setF((x) => ({ ...x, asset_id: v }))} filter={(m) => m.ownership !== 'Owned'} /></Field>
+        <Field label="Machine" htmlFor="rn-m" error={tried ? errors.asset : ''} hint="Machines marked Rented or Leased on the register" className="sm:col-span-2"><MachineSelect id="rn-m" value={f.asset_id} onChange={(v) => setF((x) => ({ ...x, asset_id: v }))} filter={(m) => m.ownership !== 'Owned'} emptyText="No rented machines - mark one Rented on the register" /></Field>
         <Field label="Provider" htmlFor="rn-p" error={tried ? errors.prov : ''}><Select id="rn-p" value={f.provider_id || ''} placeholder={providers.length ? 'Choose' : 'Add one under Providers'} onChange={(e) => setF((x) => ({ ...x, provider_id: Number(e.target.value) || 0 }))} options={providers.map((p) => ({ value: p.id, label: p.name }))} /></Field>
         <Field label="Agreement no." htmlFor="rn-a" error={tried ? errors.ag : ''}><Input id="rn-a" value={f.agreement_no} onChange={set('agreement_no')} /></Field>
         <Field label="Start" htmlFor="rn-s"><Input id="rn-s" type="date" value={f.start_date} onChange={set('start_date')} /></Field>

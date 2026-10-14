@@ -146,14 +146,56 @@ def asset_service_state(a, today=None):
     return {"due": due, "soon": soon and not due, "reasons": reasons, "status": sch["status"], "schedule": sch}
 
 
+LOCATION_TYPES = ("Yard", "Site", "Transit")
+LOCATION_LABEL = {"Yard": "Yard", "Transit": "In transit"}
+
+
+def location_type_of(a):
+    """Where the machine is kept, as said - a machine on a site is on a site whatever else was recorded."""
+    return "Site" if a.current_job_id else (a.location_type or "")
+
+
+def apply_location(db, client_id, a, body, by_name=""):
+    """The Yard / Site / In transit chosen on the form. Not sent: where it is stays as it is.
+    A change of site is written to the machine's move history, the same as a move."""
+    kind = body.location_type
+    if kind in (None, ""):
+        return
+    if kind not in LOCATION_TYPES:
+        raise HTTPException(400, "Where is it - the yard, a site, or in transit?")
+    if kind == "Site":
+        if not body.location_id:
+            raise HTTPException(400, "Which site is it on?")
+        job = db.query(models.DBJob).filter(models.DBJob.id == body.location_id, models.DBJob.client_id == client_id).first()
+        if not job:
+            raise HTTPException(404, "That site was not found.")
+        if a.current_job_id != job.id:
+            if a.status in ("Under repair", "Breakdown", "Returned", "Disposed"):
+                raise HTTPException(409, "%s is %s - it cannot be sent to a site." % (a.code or "The machine", (a.status or "").lower()))
+            if a.id:
+                db.add(models.DBAssetMove(client_id=client_id, asset_id=a.id, from_job_id=a.current_job_id, to_job_id=job.id,
+                                          moved_on=datetime.now().strftime("%Y-%m-%d"), note="Set on the register", by_name=by_name))
+            a.current_job_id = job.id
+            a.status = "Deployed"
+    else:
+        if a.current_job_id:
+            if a.id:
+                db.add(models.DBAssetMove(client_id=client_id, asset_id=a.id, from_job_id=a.current_job_id, to_job_id=None,
+                                          moved_on=datetime.now().strftime("%Y-%m-%d"), note="Set on the register", by_name=by_name))
+            a.current_job_id = None
+            if a.status == "Deployed":
+                a.status = "Available"
+    a.location_type = kind
+
+
 def asset_dict(db, a, jobs=None, costs=None):
     job = (jobs or {}).get(a.current_job_id) if jobs is not None else (
         db.query(models.DBJob).filter(models.DBJob.id == a.current_job_id).first()
         if a.current_job_id else None)
     c = (costs or {}).get(a.id, {})
     return {"id": a.id, "code": a.code or "", "name": a.name or "", "category": a.category or "",
-            "ownership": a.ownership or "Owned", "make": a.make or "", "model": a.model or "",
-            "reg_no": a.reg_no or "", "serial_no": a.serial_no or "",
+            "ownership": a.ownership or "Owned", "brand": a.brand or "", "model": a.model or "",
+            "reg_no": a.reg_no or "",
             "purchase_date": a.purchase_date or "", "purchase_value": money(a.purchase_value),
             "hired_from": a.hired_from or "", "hire_rate": money(a.hire_rate),
             "hire_basis": a.hire_basis or "Day", "meter_unit": a.meter_unit or "Hours",
@@ -164,7 +206,11 @@ def asset_dict(db, a, jobs=None, costs=None):
             "reminder_days": a.reminder_days,
             "insurance_until": a.insurance_until or "", "fitness_until": a.fitness_until or "",
             "current_job_id": a.current_job_id,
+            "location_type": location_type_of(a), "location_id": a.current_job_id,
             "current_job": ("%s %s" % (job.number, job.name)).strip() if job else "",
+            "where": ("With its owner" if a.status == "Returned" else
+                      ("%s %s" % (job.number, job.name)).strip() if job else
+                      LOCATION_LABEL.get(a.location_type or "", "Not set")),
             "status": a.status or "Available", "notes": a.notes or "",
             # "Hired" is how the register has always stored a machine hired in; it is shown as Rented.
             "ownership_label": {"Hired": "Rented"}.get(a.ownership or "Owned", a.ownership or "Owned"),
@@ -186,9 +232,8 @@ def _apply_asset(a, body):
     a.name = name
     a.category = body.category if body.category in ASSET_CATEGORIES else "Other"
     a.ownership = ownership
-    a.make, a.model = (body.make or "").strip(), (body.model or "").strip()
+    a.brand, a.model = (body.brand or "").strip(), (body.model or "").strip()
     a.reg_no = (body.reg_no or "").strip().upper()
-    a.serial_no = (body.serial_no or "").strip()
     a.purchase_date = (body.purchase_date or "").strip()
     a.purchase_value = money(body.purchase_value or 0)
     a.hired_from = (body.hired_from or "").strip()
@@ -317,13 +362,12 @@ def record_service_done(a, done_on, meter, next_meter=None, next_on=None):
 
 
 def check_unique_asset(db, client_id, a, code=None):
-    """No two machines with the same equipment ID, registration or serial number."""
+    """No two machines with the same equipment ID or registration number."""
     q = db.query(models.DBAsset).filter(models.DBAsset.client_id == client_id)
     if a.id:
         q = q.filter(models.DBAsset.id != a.id)
     for what, col, value in (("equipment ID", models.DBAsset.code, code if code is not None else a.code),
-                             ("registration number", models.DBAsset.reg_no, a.reg_no),
-                             ("serial number", models.DBAsset.serial_no, a.serial_no)):
+                             ("registration number", models.DBAsset.reg_no, a.reg_no)):
         v = (value or "").strip()
         if v and q.filter(sqlfunc.lower(col) == v.lower()).first():
             raise HTTPException(409, "Another machine already has the %s %s." % (what, v))

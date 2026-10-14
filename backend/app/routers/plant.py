@@ -1229,11 +1229,11 @@ def plant_report(kind: str, request: Request, date_from: str = "", date_to: str 
             if (asset_id and a.id != asset_id) or (ownership and d["ownership_label"] != ownership and d["ownership"] != ownership) or (status and a.status != status):
                 continue
             sch = d["service"]["schedule"]
-            rows.append((d["code"], d["name"], d["category"], d["ownership_label"], d["make"], d["model"], d["reg_no"], d["serial_no"], d["status"],
-                         d["condition"], d["current_job"] or "Yard", d["meter_reading"], sch["status"],
+            rows.append((d["code"], d["name"], d["category"], d["ownership_label"], d["brand"], d["model"], d["reg_no"], d["status"],
+                         d["condition"], d["where"], d["meter_reading"], sch["status"],
                          "" if sch["next_meter"] is None else sch["next_meter"], sch["next_on"] or "",
                          "; ".join(d["service"]["reasons"]), "Archived" if d["is_archived"] else ""))
-        head = ("ID", "Machine", "Category", "Ownership", "Make", "Model", "Registration", "Serial", "Status", "Condition", "Where", "Meter",
+        head = ("ID", "Machine", "Category", "Ownership", "Brand", "Model", "Registration", "Status", "Condition", "Where", "Meter",
                 "Service status", "Next service at", "Next service on", "Service", "")
     elif kind == "allocations":
         d = list_allocations(request, asset_id, employee_id, status, db)["allocations"]

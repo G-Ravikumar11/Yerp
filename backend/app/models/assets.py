@@ -21,10 +21,9 @@ class DBAsset(Base):
     name = Column(String, default="")                        # "JCB 3DX backhoe"
     category = Column(String, default="")                    # Earthmoving | Concrete | Lifting | ...
     ownership = Column(String, default="Owned")              # Owned | Hired
-    make = Column(String, default="")
+    brand = Column(String, default="")                       # "JCB" - was make
     model = Column(String, default="")
     reg_no = Column(String, default="")
-    serial_no = Column(String, default="")
     purchase_date = Column(String, default="")
     purchase_value = Column(Float, default=0.0)
     hired_from = Column(String, default="")
@@ -44,7 +43,8 @@ class DBAsset(Base):
     next_service_on = Column(String, default="")             # the date it falls due on
     insurance_until = Column(String, default="")
     fitness_until = Column(String, default="")               # RTO fitness for vehicles
-    current_job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    current_job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)   # the site, when location_type is Site
+    location_type = Column(String, default="")               # Yard | Site | Transit; "" = never said, not assumed to be the yard
     status = Column(String, default="Available", index=True)  # Available | Deployed | Under repair | Breakdown | Returned | Disposed
     notes = Column(Text, default="")
     condition = Column(String, default="Good")                # Good | Fair | Poor

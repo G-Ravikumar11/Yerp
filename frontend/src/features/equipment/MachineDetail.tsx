@@ -24,7 +24,7 @@ export function MachineDetail({ id, onClose }: { id: number; onClose: () => void
     <section aria-label={`${d.code} history`} className="mt-6 rounded-xl border border-border bg-card p-5 shadow-card">
       <div className="mb-3 flex items-center justify-between"><h2 className="font-semibold">{d.code} {d.name}</h2><Button size="sm" variant="outline" onClick={onClose}>Close</Button></div>
       <StatGrid className="lg:grid-cols-4 xl:grid-cols-4">
-        <Stat label="Where" value={d.current_job || 'Yard'} />
+        <Stat label="Where" value={d.where} />
         <Stat label="Utilisation" value={`${d.utilisation_percent}%`} />
         <Stat label="Diesel" value={`${d.litres_per_hour} L/h`} />
         <Stat label="Cost to date" value={formatINR(d.cost_to_date)} />

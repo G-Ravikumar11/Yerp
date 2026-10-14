@@ -42,8 +42,10 @@ def log(tenant, m, e, **over):
 # ---- 1, 2: the register ---------------------------------------------------------------------------
 
 def test_a_machine_is_registered_edited_viewed_and_archived(tenant):
-    m = machine(tenant, reg_no="ap 39 ab 1234", serial_no="SN-1", condition="Fair")
+    m = machine(tenant, brand=" JCB ", model="3DX", reg_no="ap 39 ab 1234", serial_no="SN-1", condition="Fair")
     assert m["code"] == "EQP-0001" and m["reg_no"] == "AP 39 AB 1234" and m["condition"] == "Fair" and m["ownership_label"] == "Owned"
+    # The make is now the brand; the serial number is no longer taken or given back.
+    assert m["brand"] == "JCB" and m["model"] == "3DX" and "make" not in m and "serial_no" not in m
     ed = tenant.put("/api/assets/%d" % m["id"], json=dict(m, name="JCB 3DX Super", condition="Good")).json()
     assert ed["name"] == "JCB 3DX Super" and ed["condition"] == "Good"
     assert tenant.get("/api/assets/%d" % m["id"]).json()["code"] == "EQP-0001"
@@ -53,10 +55,10 @@ def test_a_machine_is_registered_edited_viewed_and_archived(tenant):
     assert tenant.post("/api/assets/%d/archive" % m["id"], json={"restore": True}).json()["asset"]["is_archived"] is False
 
 
-def test_ids_registrations_and_serials_are_not_repeated(tenant):
-    m = machine(tenant, code="JCB-01", reg_no="AP39AB1234", serial_no="SN-9")
+def test_ids_and_registrations_are_not_repeated(tenant):
+    m = machine(tenant, code="JCB-01", reg_no="AP39AB1234")
     assert m["code"] == "JCB-01"
-    for clash in ({"code": "jcb-01"}, {"reg_no": "ap39ab1234"}, {"serial_no": "sn-9"}):
+    for clash in ({"code": "jcb-01"}, {"reg_no": "ap39ab1234"}):
         res = tenant.post("/api/assets", json={"name": "Other", **clash})
         assert res.status_code == 409, clash
     assert tenant.post("/api/assets", json={"name": "Other", "condition": "Shiny"}).status_code == 400
@@ -397,3 +399,35 @@ def test_attachments_go_against_plant_records(tenant):
     for kind, rid in (("equipment", m["id"]), ("plant_fuel", f["id"])):
         up = tenant.post("/api/files", files={"file": ("x.jpg", io.BytesIO(b"\xff\xd8\xff" + b"0" * 300), "image/jpeg")}, data={"attached_type": kind, "attached_id": str(rid)})
         assert up.status_code == 200, (kind, up.text)
+
+
+def test_an_older_database_keeps_its_makes_as_brands():
+    from sqlalchemy import create_engine, text
+    from app.db.migrations import rename_asset_make_to_brand
+    eng = create_engine("sqlite://")
+    with eng.connect() as conn:
+        conn.execute(text("CREATE TABLE assets (id INTEGER PRIMARY KEY, make VARCHAR, serial_no VARCHAR)"))
+        conn.execute(text("INSERT INTO assets (make, serial_no) VALUES ('JCB', 'SN-1')"))
+        for _ in range(2):  # a second start finds nothing left to rename
+            rename_asset_make_to_brand(conn, {r[1] for r in conn.execute(text("PRAGMA table_info(assets)")).fetchall()})
+        assert conn.execute(text("SELECT brand, serial_no FROM assets")).fetchone() == ("JCB", "SN-1")
+
+
+def test_where_a_machine_is_is_said_not_assumed(tenant):
+    j = job(tenant)
+    m = machine(tenant)
+    assert m["location_type"] == "" and m["where"] == "Not set" and m["current_job_id"] is None
+    # a site needs the site
+    assert tenant.put("/api/assets/%d" % m["id"], json=dict(m, location_type="Site")).status_code == 400
+    assert tenant.put("/api/assets/%d" % m["id"], json=dict(m, location_type="Moon")).status_code == 400
+    on = tenant.put("/api/assets/%d" % m["id"], json=dict(m, location_type="Site", location_id=j["id"])).json()
+    assert on["location_type"] == "Site" and on["location_id"] == j["id"] and on["status"] == "Deployed" and "Vizag STP" in on["where"]
+    yard = tenant.put("/api/assets/%d" % m["id"], json=dict(on, location_type="Yard", location_id=None)).json()
+    assert yard["location_type"] == "Yard" and yard["where"] == "Yard" and yard["current_job_id"] is None and yard["status"] == "Available"
+    transit = tenant.put("/api/assets/%d" % m["id"], json=dict(yard, location_type="Transit")).json()
+    assert transit["where"] == "In transit"
+    # an edit that does not mention where leaves it be
+    kept = tenant.put("/api/assets/%d" % m["id"], json={k: v for k, v in dict(transit, name="Renamed").items() if k not in ("location_type", "location_id")}).json()
+    assert kept["where"] == "In transit"
+    new = machine(tenant, name="Roller", location_type="Site", location_id=j["id"])
+    assert new["status"] == "Deployed" and new["location_id"] == j["id"]

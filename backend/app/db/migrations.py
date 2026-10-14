@@ -44,6 +44,7 @@ QUALITY_COLUMNS = (
     ("schedule_activities", "assigned_to_id", "INTEGER"),
     # Equipment & Plant
     ("assets", "condition", "VARCHAR DEFAULT 'Good'"),
+    ("assets", "location_type", "VARCHAR DEFAULT ''"),
     ("assets", "is_archived", "BOOLEAN DEFAULT FALSE"),
     ("assets", "service_interval_type", "VARCHAR DEFAULT ''"),
     ("assets", "reminder_meter", "FLOAT"),
@@ -94,6 +95,20 @@ SCHEDULE_BACKFILL = (
     "WHEN COALESCE(service_every, 0) > 0 THEN 'Meter' "
     "WHEN COALESCE(service_every_days, 0) > 0 THEN 'Days' ELSE 'None' END "
     "WHERE service_interval_type IS NULL OR service_interval_type = ''")
+
+
+# A machine already on a site is on a site; one in the yard is not guessed at, it is left to be said.
+LOCATION_BACKFILL = (
+    "UPDATE assets SET location_type = 'Site' "
+    "WHERE current_job_id IS NOT NULL AND (location_type IS NULL OR location_type = '')")
+
+
+def rename_asset_make_to_brand(conn, columns):
+    """A machine's make is now its brand: the column is renamed, so every value stays.
+    Runs once - after it, there is no make column to rename. serial_no is left in place,
+    no longer read or written, so the numbers already entered are not lost."""
+    if "make" in columns and "brand" not in columns:
+        conn.execute(text("ALTER TABLE assets RENAME COLUMN make TO brand"))
 
 
 def ensure_columns():
@@ -1620,9 +1635,21 @@ def ensure_columns():
                     pass
             try:
                 conn.execute(text(SCHEDULE_BACKFILL))
+                conn.execute(text(LOCATION_BACKFILL))
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step service schedule: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            try:
+                cols = {r[0] for r in conn.execute(text(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = 'assets'")).fetchall()}
+                rename_asset_make_to_brand(conn, cols)
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step asset brand: {sys.exc_info()[1]}")
                 try:
                     conn.rollback()
                 except Exception:
@@ -1698,8 +1725,13 @@ def migrate_sqlite():
                 add_col(table, column, typedef.replace("BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"))
             try:
                 conn.execute(text(SCHEDULE_BACKFILL))
+                conn.execute(text(LOCATION_BACKFILL))
             except Exception:
                 MIGRATION_ERRORS.append(f"sqlite service schedule: {sys.exc_info()[1]}")
+            try:
+                rename_asset_make_to_brand(conn, {r[1] for r in conn.execute(text("PRAGMA table_info(assets)")).fetchall()})
+            except Exception:
+                MIGRATION_ERRORS.append(f"sqlite asset brand: {sys.exc_info()[1]}")
 
             # The goods receipt columns. Both migrations have to be fed, not
             # one: the Postgres list alone left every existing SQLite database

@@ -75,9 +75,9 @@ function Register() {
   const manage = can('stores.manage|workorders.manage')
   const columns: TableColumn<Machine>[] = [
     { id: 'code', header: 'ID', sort: (m) => m.code, cell: (m) => <span className="font-mono text-[13px] font-semibold">{m.code}</span> },
-    { id: 'name', header: 'Machine', sort: (m) => m.name, cell: (m) => <div><button type="button" className="font-semibold text-primary underline-offset-2 hover:underline" onClick={() => setOpen(m.id)}>{m.name}</button><div className="text-xs text-muted-foreground">{m.category}{m.make && ` - ${m.make} ${m.model}`}{m.reg_no && ` - ${m.reg_no}`} - {m.ownership_label ?? m.ownership}{m.ownership !== 'Owned' && m.hire_rate > 0 && ` at ${formatINR(m.hire_rate)}/${m.hire_basis.toLowerCase()}`}</div></div> },
+    { id: 'name', header: 'Machine', sort: (m) => m.name, cell: (m) => <div><button type="button" className="font-semibold text-primary underline-offset-2 hover:underline" onClick={() => setOpen(m.id)}>{m.name}</button><div className="text-xs text-muted-foreground">{m.category}{m.brand && ` - ${m.brand} ${m.model}`}{m.reg_no && ` - ${m.reg_no}`} - {m.ownership_label ?? m.ownership}{m.ownership !== 'Owned' && m.hire_rate > 0 && ` at ${formatINR(m.hire_rate)}/${m.hire_basis.toLowerCase()}`}</div></div> },
     { id: 'status', header: 'Status', cell: (m) => <div className="flex flex-col items-start gap-0.5"><StatusBadge status={m.status} />{m.condition && m.condition !== 'Good' && <span className="text-xs text-warning">{m.condition} condition</span>}</div> },
-    { id: 'where', header: 'Where', hideBelow: 'md', cell: (m) => m.current_job || (m.status === 'Returned' ? 'With its owner' : 'Yard') },
+    { id: 'where', header: 'Where', hideBelow: 'md', cell: (m) => m.where },
     { id: 'meter', header: 'Meter', hideBelow: 'lg', align: 'right', cell: (m) => <div>{m.meter_reading.toLocaleString('en-IN')} {m.meter_unit.toLowerCase()}{m.service.reasons.length > 0 && <div className={`text-xs ${m.service.due ? 'font-semibold text-danger' : 'text-warning'}`}>{m.service.reasons.join('; ')}</div>}</div> },
     {
       id: 'service', header: 'Service', hideBelow: 'md', sort: (m) => SERVICE_ORDER.indexOf(m.service.status),
@@ -107,7 +107,7 @@ function Register() {
     { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="equipment" id={r.id} label={String(r.name)} noun="equipment" /> },
   ]
   const filters = useListFilters(q.data?.assets, {
-    search: (m) => [m.code, m.name, m.category, m.make, m.model, m.reg_no, m.serial_no, m.current_job, m.hired_from, STATUS_LABEL[m.status] ?? m.status, m.ownership_label].join(' '),
+    search: (m) => [m.code, m.name, m.category, m.brand, m.model, m.reg_no, m.current_job, m.hired_from, STATUS_LABEL[m.status] ?? m.status, m.ownership_label].join(' '),
     status: (m) => STATUS_LABEL[m.status] ?? m.status,
     date: (m) => m.purchase_date,
     facets: { ownership: { label: 'Ownership', get: (m) => m.ownership_label ?? m.ownership }, service: { label: 'Service', get: (m) => m.service.status } },
@@ -120,7 +120,7 @@ function Register() {
         <label className="flex items-center gap-2 text-[13px]"><input type="checkbox" checked={archived} onChange={(e) => setArchived(e.target.checked)} /> Show archived</label>
         {manage && <Button className="ml-auto" onClick={() => setEditing('new')}><Plus /> Machine</Button>}
       </div>
-      <FilterBar filters={filters} placeholder="Search by ID, name, make, registration, serial..." />
+      <FilterBar filters={filters} placeholder="Search by ID, name, brand, registration..." />
       <Card className="overflow-hidden"><DataTable label="Machines" className="rounded-none border-0 shadow-none" rows={shown} columns={columns} rowKey={(m) => m.id} loading={q.isPending} empty={archived ? 'No archived machines.' : 'No machines on the register yet. Add what the business owns, and what it hires in.'} />{!q.isPending && pager}</Card>
       {open && <MachineDetail id={open} onClose={() => setOpen(null)} />}
       <MachineModal machine={editing && editing !== 'new' ? editing : null} categories={q.data?.categories ?? []} open={!!editing} onClose={() => setEditing(null)} />
