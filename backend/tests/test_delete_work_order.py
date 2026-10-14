@@ -128,6 +128,10 @@ def test_a_link_no_model_knows_about_does_not_stop_a_delete(tenant):
         conn.execute(text("CREATE TABLE IF NOT EXISTS zz_legacy_link (id INTEGER PRIMARY KEY, "
                           "bill_id INTEGER NOT NULL REFERENCES sub_bills(id))"))
         conn.execute(text("INSERT INTO zz_legacy_link (bill_id) VALUES (:b)"), {"b": bill["id"]})
+    # The schema is read once, when the server starts; a table that appears while it runs is read in again, as a
+    # restart would.
+    from app.services.subcontract_orders import forget_schema
+    forget_schema()
     try:
         assert tenant.delete("/api/wo/orders/%d" % order["id"]).status_code == 200
         with engine.begin() as conn:
@@ -135,6 +139,7 @@ def test_a_link_no_model_knows_about_does_not_stop_a_delete(tenant):
     finally:
         with engine.begin() as conn:
             conn.execute(text("DROP TABLE IF EXISTS zz_legacy_link"))
+        forget_schema()
 
 
 def test_a_bill_is_deleted_and_what_it_measured_is_free_to_bill_again(tenant):

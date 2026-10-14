@@ -1190,17 +1190,19 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
 _FK_LOCK = threading.Lock()
 
 
-def _fk_map(db):
-    """Every foreign key in the live database, by the table it points at. Reading the schema is slow, so it is
-    kept until the set of tables changes - which is when it could have."""
+def _schema(db):
+    """The live database's foreign keys (by the table they point at) and each table's columns.
+
+    Read once and kept for as long as the server runs. Tables change only when the server starts and brings an older
+    database up to date - before any delete - so reading the schema again on every step of a delete (as this once did,
+    to see whether the tables had changed) only made each delete slower: on Postgres every such read is a slow
+    catalogue query. forget_schema() reads it again."""
     from sqlalchemy import inspect as sa_inspect
     bind = db.get_bind()
-    insp = sa_inspect(bind)
-    names = tuple(sorted(insp.get_table_names()))
-    key = (str(bind.url), names)
+    key = str(bind.url)
     with _FK_LOCK:
         if key not in _FK_CACHE:
-            _FK_CACHE.clear()
+            insp = sa_inspect(bind)
             graph = {}
             # One query per kind for the whole schema; reading it a table at a time was hundreds of round trips.
             columns = insp.get_multi_columns()
@@ -1213,8 +1215,25 @@ def _fk_map(db):
                     cols = fk.get("constrained_columns", [])
                     if len(cols) == 1 and fk.get("referred_table"):
                         graph.setdefault(fk["referred_table"], []).append((table, cols[0], nullable.get(cols[0], True), pk))
-            _FK_CACHE[key] = graph
+            _FK_CACHE[key] = {"graph": graph,
+                              "columns": {table: {c["name"] for c in cols} for (schema, table), cols in columns.items()}}
     return _FK_CACHE[key]
+
+
+def _fk_map(db):
+    """Every foreign key in the live database, by the table it points at."""
+    return _schema(db)["graph"]
+
+
+def table_columns(db, table):
+    """The columns a table has in the live database."""
+    return _schema(db)["columns"].get(table, set())
+
+
+def forget_schema():
+    """Read the schema again at the next delete. Only for a table made or dropped while the server runs (a test)."""
+    with _FK_LOCK:
+        _FK_CACHE.clear()
 
 
 def referrers_present(db, edges, ids):
