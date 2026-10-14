@@ -9,6 +9,7 @@ import { useSession } from '@/lib/session'
 import { formatDate, today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { FormFoot, LoadError, MachineSelect, RangeBar, StatusBadge, usePaged } from './plantParts'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 // ---- fuel ----------------------------------------------------------------------------------------
 
@@ -129,6 +130,7 @@ export function Maintenance() {
         </div>
       ),
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (m) => <MasterDelete kind="service" id={m.id} label={m.number} noun="service record" /> },
   ]
   return (
     <div>

@@ -17,7 +17,6 @@ const routes = [
   ['/subcontractors/ra-bills', 'RA Bills'],
   ...(bill ? [[`/subcontractors/ra-bills/${bill.id}`, 'bill page']] : []),
   ['/subcontractors/vendors', 'Sub Contract Registration'],
-  ['/design/grid', 'Data grid'],
 ]
 
 for (const width of [375, 768, 1024]) {

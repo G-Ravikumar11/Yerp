@@ -15,6 +15,7 @@ from app.constants.quality import SERIOUS_KINDS
 from app.core.config import logger
 from app.core.currency import inr, money, unit_rate
 from app.core.dates import _days_until, ageing_bucket
+from app.core.permissions import employee_can
 from app.core.queries import by_id, on_job
 from app.services.assets import asset_service_state, equipment_cost_by_job
 from app.services.stores import stock_balances, stocked_share_of_bills
@@ -24,6 +25,44 @@ def job_or_404(db, client_id, job_id):
     job = db.query(models.DBJob).filter(
         models.DBJob.id == job_id, models.DBJob.client_id == client_id).first()
     if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+# Rights that let a member of staff see every project. Anyone who only holds the
+# site or billing rights sees the projects they are connected to.
+PROJECT_WIDE_RIGHTS = ("reports.view", "bills.view_all", "workorders.manage")
+
+
+def sees_every_project(emp) -> bool:
+    """The account owner (no employee) and admin-level staff see every project."""
+    return emp is None or any(employee_can(emp, right) for right in PROJECT_WIDE_RIGHTS)
+
+
+def employee_job_ids(db, client_id, emp):
+    """The projects a member of staff is connected to: put on them through HR,
+    or named as the project's manager."""
+    assigned = {r[0] for r in db.query(models.DBEmployeeSite.job_id).filter(
+        models.DBEmployeeSite.employee_id == emp.id).all()}
+    managed = {r[0] for r in db.query(models.DBJob.id).filter(
+        models.DBJob.client_id == client_id, models.DBJob.manager_id == emp.id).all()}
+    return assigned | managed
+
+
+def filter_jobs_for_employee(query, db, client_id, emp):
+    """Narrow a jobs query to what this person may see. Unchanged for the
+    owner and for admin-level staff; everyone else gets only their own
+    projects, and nothing at all if they have none."""
+    if sees_every_project(emp):
+        return query
+    return query.filter(models.DBJob.id.in_(list(employee_job_ids(db, client_id, emp)) or [0]))
+
+
+def job_or_404_for_employee(db, client_id, emp, job_id):
+    """The job, or a 404 for staff with no connection to it. A 404 rather than
+    a 403, so the existence of a project they cannot see is not given away."""
+    job = job_or_404(db, client_id, job_id)
+    if not sees_every_project(emp) and job.id not in employee_job_ids(db, client_id, emp):
         raise HTTPException(status_code=404, detail="Job not found")
     return job
 
@@ -1322,6 +1361,17 @@ def schedule_import_confirm(db, client_id, job, rows, actor_name=""):
                                                        tasks, "" if tasks == 1 else "s")
 
 
+def boq_order_lines(db, client_id, boq_id):
+    """Item code -> the line of a client work order made from this BOQ. An activity tied to that line takes its progress
+    from the measurement book."""
+    out = {}
+    for wo in db.query(models.DBWorkOrder).filter(models.DBWorkOrder.client_id == client_id, models.DBWorkOrder.boq_id == boq_id).all():
+        for wl in db.query(models.DBWorkOrderLine).filter(models.DBWorkOrderLine.work_order_id == wo.id).all():
+            if wl.fg_code:
+                out.setdefault(wl.fg_code.upper(), wl.id)
+    return out
+
+
 def schedule_from_boq(db, client_id, job, start, finish, by="section", actor_name=""):
     """Draw the programme from the project's BOQ: the work the client's sheet lists, put on the plan.
 
@@ -1369,12 +1419,7 @@ def schedule_from_boq(db, client_id, job, start, finish, by="section", actor_nam
         raise HTTPException(409, "Everything in %s is already on the programme." % (boq.number or "the BOQ"))
 
     # A client order made from this BOQ measures the work: an item drawn on its own takes its progress from that book.
-    wo_line = {}
-    if by == "item":
-        for wo in db.query(models.DBWorkOrder).filter(models.DBWorkOrder.client_id == client_id, models.DBWorkOrder.boq_id == boq.id).all():
-            for wl in db.query(models.DBWorkOrderLine).filter(models.DBWorkOrderLine.work_order_id == wo.id).all():
-                if wl.fg_code:
-                    wo_line.setdefault(wl.fg_code.upper(), wl.id)
+    wo_line = boq_order_lines(db, client_id, boq.id) if by == "item" else {}
     used_lines = {a.work_order_line_id for a in db.query(models.DBScheduleActivity.work_order_line_id).filter(
         models.DBScheduleActivity.job_id == job.id).all() if a.work_order_line_id}
 

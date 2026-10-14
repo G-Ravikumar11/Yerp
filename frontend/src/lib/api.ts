@@ -1,3 +1,5 @@
+import { noteAnswer } from './freshness'
+
 /** A failed call to the backend, carrying the message the server gave. */
 export class ApiError extends Error {
   status: number
@@ -32,6 +34,7 @@ export function apiUrl(path: string): string {
  * show the server's own plain-language reason.
  */
 export async function api<T = unknown>(path: string, { body, headers, quiet, ...init }: Options = {}): Promise<T> {
+  const method = (init.method || 'GET').toUpperCase()
   const isForm = typeof FormData !== 'undefined' && body instanceof FormData
   const targetUrl = apiUrl(path)
   const res = await fetch(targetUrl, {
@@ -40,6 +43,7 @@ export async function api<T = unknown>(path: string, { body, headers, quiet, ...
     headers: { ...(body !== undefined && !isForm ? { 'Content-Type': 'application/json' } : {}), ...headers },
     body: body === undefined ? undefined : isForm ? (body as FormData) : JSON.stringify(body),
   })
+  noteAnswer(res)
 
   const text = await res.text()
   let data: unknown = null
@@ -59,6 +63,8 @@ export async function api<T = unknown>(path: string, { body, headers, quiet, ...
     }
     throw new ApiError(res.status, message)
   }
+  // A record is gone: every screen that kept a copy of a list must stop showing it (App.tsx).
+  if (method === 'DELETE' || /\/bulk-delete$/.test(path)) window.dispatchEvent(new Event('yerp:deleted'))
   return data as T
 }
 

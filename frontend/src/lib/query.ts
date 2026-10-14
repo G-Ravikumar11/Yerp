@@ -54,8 +54,13 @@ export const persistOptions = {
     // Never one with nothing to show, and never the clock: whether somebody is working right now is not something to
     // read back from yesterday's tab. A saved "working" outlived the shift it described and showed a counter still
     // running for somebody who had signed out.
+    // Nor "nobody is signed in": read back after signing in, it sent the person straight back to the sign-in page,
+    // which saw them signed in and sent them on again - the page blinked between the two until a fresh answer won.
+    // A signed-in person is kept, so the app still opens with no signal.
     shouldDehydrateQuery: (q: { queryKey: readonly unknown[]; state: { status: string; data: unknown } }) =>
-      q.state.data !== undefined && q.state.status !== 'pending' && !(q.queryKey[0] === 'staff' && (q.queryKey[1] === 'clock' || q.queryKey[1] === 'today')),
+      q.state.data !== undefined && q.state.status !== 'pending'
+      && !(q.queryKey[0] === 'session' && q.state.data === null)
+      && !(q.queryKey[0] === 'staff' && (q.queryKey[1] === 'clock' || q.queryKey[1] === 'today')),
   },
 }
 

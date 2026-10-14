@@ -75,7 +75,7 @@ export function attentionHref(view: string): { to: string; external: boolean } {
     'approvals-view': '/approvals',
     'items-view': '/store/items',
     'measurement-view': '/clients/measurement',
-    'workorders-view': '/clients/work-orders',
+    'workorders-view': '/projects/boq',
     'leads-view': '/clients/pipeline',
     'estimates-view': '/clients/estimates',
     'customers-view': '/clients/customers',

@@ -10,7 +10,7 @@ import { Figure } from './Figure'
 import { useCosts } from '@/api/costs'
 import { useSafety } from '@/api/safety'
 import { useSession } from '@/lib/session'
-import { compactINR, formatINR } from '@/lib/utils'
+import { cn, compactINR, formatINR } from '@/lib/utils'
 
 // The chart library is the heaviest thing on this page, and the tiles above it should not wait for it.
 const ProfitChart = lazy(() => import('./Charts').then((m) => ({ default: m.ProfitChart })))
@@ -58,10 +58,10 @@ const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.05 } } }
 const rise = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.16, 1, 0.3, 1] as const } } }
 
 /** A panel that says what it is, and what became of it when there was nothing to show. */
-function Panel({ title, description, action, className, children }: { title: string; description?: string; action?: React.ReactNode; className?: string; children: React.ReactNode }) {
+function Panel({ id, title, description, action, className, children }: { id?: string; title: string; description?: string; action?: React.ReactNode; className?: string; children: React.ReactNode }) {
   return (
-    <motion.div variants={rise} className={className}>
-      <Card className="flex h-full flex-col">
+    <motion.div id={id} variants={rise} className={cn('scroll-mt-24', className)}>
+      <Card className="flex h-full flex-col transition-shadow duration-500">
         <CardHeader className="flex-row items-start justify-between gap-3 space-y-0">
           <div>
             <CardTitle>{title}</CardTitle>
@@ -152,6 +152,16 @@ export default function DashboardPage() {
     chart = receivables.isPending || payables.isPending ? fallback : receivables.isError && payables.isError ? <Empty>Could not load this.</Empty> : <Suspense fallback={fallback}><AgeingChart receivable={receivables.data?.buckets} payable={payables.data?.buckets} /></Suspense>
   }
 
+  // "4 things worth a look" takes the person to the list of them, and makes it glow for a moment so the eye finds it.
+  const showAttention = () => {
+    const panel = document.getElementById('what-needs-you')
+    if (!panel) return
+    panel.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const card = panel.firstElementChild as HTMLElement | null
+    card?.classList.add('ring-2', 'ring-primary', 'shadow-lift')
+    window.setTimeout(() => card?.classList.remove('ring-2', 'ring-primary', 'shadow-lift'), 1800)
+  }
+
   const fig = (n: number | undefined, loading: boolean) => (loading ? undefined : <Figure value={n ?? 0} format={compactINR} />)
   const looks = attention.data?.summary.items
 
@@ -160,7 +170,18 @@ export default function DashboardPage() {
       <PageHeader
         eyebrow="Command Center"
         title={first ? `${greeting()}, ${first}` : 'Welcome to Y ERP'}
-        description={`${today}. ${looks === undefined ? '' : looks ? `${looks} thing${looks === 1 ? '' : 's'} worth a look.` : 'Nothing needs you right now.'}`}
+        description={
+          <>
+            {today}.{' '}
+            {looks === undefined ? null : looks ? (
+              <button type="button" onClick={showAttention} className="font-medium text-primary underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none">
+                {looks} thing{looks === 1 ? '' : 's'} worth a look →
+              </button>
+            ) : (
+              'Nothing needs you right now.'
+            )}
+          </>
+        }
         actions={
           <>
             <Button variant={waiting ? 'primary' : 'outline'} asChild>
@@ -183,7 +204,7 @@ export default function DashboardPage() {
             )}
             {reports && (
               <>
-                <Stat label="Total contract value" to="/clients/work-orders" value={fig(pnl.data?.summary.order_value, pnl.isPending)} loading={pnl.isPending} sub={pnl.data ? `${compactINR(pnl.data.summary.revenue)} earned so far` : undefined} />
+                <Stat label="Total contract value" to="/projects/boq" value={fig(pnl.data?.summary.order_value, pnl.isPending)} loading={pnl.isPending} sub={pnl.data ? `${compactINR(pnl.data.summary.revenue)} earned so far` : undefined} />
                 <Stat
                   label="Profit so far"
                   to="/projects/profit"
@@ -214,6 +235,7 @@ export default function DashboardPage() {
         </Panel>
 
         <Panel
+          id="what-needs-you"
           title="What needs you"
           description={attention.data ? `${formatINR(attention.data.summary.money_at_stake)} at stake` : undefined}
           className=""

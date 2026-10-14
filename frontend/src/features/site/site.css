@@ -55,7 +55,7 @@ section[id]{scroll-margin-top:72px}
 .nav.solid{background:rgba(0,0,0,.86);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);padding-top:14px;padding-bottom:14px}
 .nav.hide{transform:translateY(-100%)}
 .brand{display:flex;align-items:center;gap:12px;font:600 1.35rem/1 var(--display);letter-spacing:.2em;text-transform:uppercase}
-.brand img{width:36px;height:auto}
+.brand img{width:36px;height:auto;border-radius:22%}
 .brand--lg{font-size:2rem}
 .brand--lg img{width:54px}
 .nav__links{display:flex;gap:34px;margin-left:auto}

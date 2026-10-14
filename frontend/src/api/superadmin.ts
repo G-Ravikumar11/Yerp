@@ -24,21 +24,21 @@ export interface Trends { months: string[]; revenue: number[]; active_users: num
 export interface LoginStats { today_logins: number; week_logins: number; failed_logins: number; clients_never_logged_in: number }
 export interface LoginLog { email: string; user_type: string; login_type: string; ip_address?: string; status: string; created_at?: string }
 
-const q = <T,>(key: string, url: string, enabled = true) => useQuery({ queryKey: ['sa', key, url], queryFn: () => get<T>(url), enabled, retry: false })
+const useSa = <T,>(key: string, url: string, enabled = true) => useQuery({ queryKey: ['sa', key, url], queryFn: () => get<T>(url), enabled, retry: false })
 
 export const useSaMe = () => useQuery({ queryKey: ['sa', 'me'], queryFn: () => api<SaMe>('/api/superadmin/me', { quiet: true }).catch(() => null), retry: false })
-export const useInsights = () => q<Insights>('insights', '/api/superadmin/insights')
-export const usePlatformStats = () => q<PlatformStats>('platform', '/api/superadmin/platform-stats')
-export const useRevenue = () => q<Revenue>('revenue', '/api/superadmin/revenue')
-export const useGateways = () => q<Gateways>('gateways', '/api/superadmin/gateways')
-export const usePricing = () => q<PriceRow[]>('pricing', '/api/superadmin/pricing')
-export const useWallets = () => q<WalletRow[]>('wallets', '/api/superadmin/wallets')
-export const useSaClients = () => q<SaClient[]>('clients', '/api/superadmin/clients')
-export const useSaClient = (id: number) => q<SaClientDetail>('client', `/api/superadmin/clients/${id}`, id > 0)
-export const useClientOverview = (id: number) => q<ClientOverview>('overview', `/api/superadmin/clients/${id}/overview`, id > 0)
-export const useTrends = () => q<Trends>('trends', '/api/superadmin/trends')
-export const useLoginStats = () => q<LoginStats>('loginstats', '/api/superadmin/login-stats')
-export const useLoginLogs = () => q<LoginLog[]>('loginlogs', '/api/superadmin/login-logs?limit=100')
+export const useInsights = () => useSa<Insights>('insights', '/api/superadmin/insights')
+export const usePlatformStats = () => useSa<PlatformStats>('platform', '/api/superadmin/platform-stats')
+export const useRevenue = () => useSa<Revenue>('revenue', '/api/superadmin/revenue')
+export const useGateways = () => useSa<Gateways>('gateways', '/api/superadmin/gateways')
+export const usePricing = () => useSa<PriceRow[]>('pricing', '/api/superadmin/pricing')
+export const useWallets = () => useSa<WalletRow[]>('wallets', '/api/superadmin/wallets')
+export const useSaClients = () => useSa<SaClient[]>('clients', '/api/superadmin/clients')
+export const useSaClient = (id: number) => useSa<SaClientDetail>('client', `/api/superadmin/clients/${id}`, id > 0)
+export const useClientOverview = (id: number) => useSa<ClientOverview>('overview', `/api/superadmin/clients/${id}/overview`, id > 0)
+export const useTrends = () => useSa<Trends>('trends', '/api/superadmin/trends')
+export const useLoginStats = () => useSa<LoginStats>('loginstats', '/api/superadmin/login-stats')
+export const useLoginLogs = () => useSa<LoginLog[]>('loginlogs', '/api/superadmin/login-logs?limit=100')
 
 export const saKeys = { all: ['sa'] as const }
 export const savePrice = (id: number, unit_price: number, free_allowance: number) => put<{ message: string }>(`/api/superadmin/pricing/${id}`, { unit_price, free_allowance })

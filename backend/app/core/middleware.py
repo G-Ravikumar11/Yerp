@@ -21,6 +21,8 @@ from app.core.application import app
 from app.core.auth import WRITE_METHODS
 from app.core.cache import _WRITE_VERSION
 from app.core.config import (
+    CLIENT_RESET,
+    current_build,
     BODY_LIMIT_APPLICATION,
     BODY_LIMIT_DEFAULT,
     BODY_LIMIT_FORMS,
@@ -101,6 +103,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
+    # The installed phone app talks to the server from another origin; these are read by lib/freshness.ts.
+    expose_headers=["X-App-Build", "X-Client-Reset"],
 )
 
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
@@ -247,6 +251,18 @@ async def security_middleware(request: Request, call_next):
         # fixes, and the person has no way to tell that is what they are
         # looking at. One conditional request is a cheap price for that.
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    if path.startswith("/api/"):
+        # Which build is live, on every answer: an open app that sees a newer one loads it at the next change of screen
+        # (frontend/src/lib/freshness.ts). Costs no extra request.
+        build = current_build()
+        if build:
+            response.headers["X-App-Build"] = build
+        if CLIENT_RESET:
+            response.headers["X-Client-Reset"] = CLIENT_RESET
+    if path.rstrip("/") == "/next/reset":
+        # The page that starts a device clean also empties the browser's own HTTP cache for this site. Only the cache:
+        # storage holds offline saves not yet sent, and cookies the sign-in; the page itself clears what is safe to.
+        response.headers["Clear-Site-Data"] = '"cache"'
     response.headers["X-Content-Type-Options"] = "nosniff"
     # A PDF may be shown inside the app's own pages - so what is on screen is
     # the document that prints - but never framed by anybody else's site.

@@ -12,6 +12,7 @@ export default defineConfig(({ mode, command }) => {
   const api = env.VITE_API_TARGET || 'http://127.0.0.1:8931'
 
   const isMobile = mode === 'mobile' || env.VITE_MOBILE === 'true'
+  const build = String(Date.now())
 
   return {
     // Built for web, the app is served by the backend under /next/; in development it owns the root.
@@ -21,12 +22,23 @@ export default defineConfig(({ mode, command }) => {
     // Built into frontend/dist, which is not committed: the deploy builds it (see nixpacks.toml).
     build: { outDir: 'dist', emptyOutDir: true },
     // Each build gets its own stamp, so data saved on the device by an older build is never trusted by a newer one.
-    define: { __BUILD__: JSON.stringify(String(Date.now())) },
+    // The same stamp is written to dist/build.json: the server puts it on every answer, and an open app that sees a
+    // newer one loads it (src/lib/freshness.ts).
+    define: { __BUILD__: JSON.stringify(build) },
     plugins: [
+      {
+        name: 'yerp-build-stamp',
+        apply: 'build',
+        generateBundle() {
+          this.emitFile({ type: 'asset', fileName: 'build.json', source: JSON.stringify({ build }) })
+        },
+      },
       react(),
       tailwindcss(),
       VitePWA({
-        registerType: 'prompt',
+        // A new build takes over as soon as it is installed. The page in front of the person is not reloaded under
+        // them (boot-app.tsx); the next page they open is simply the new one.
+        registerType: 'autoUpdate',
         injectRegister: false,
         includeAssets: ['favicon.svg', 'icons/apple-touch-icon.png'],
         manifest: {
@@ -56,8 +68,17 @@ export default defineConfig(({ mode, command }) => {
         // on sign-out) by the app's own query cache.
         workbox: {
           globPatterns: ['**/*.{js,css,html,svg,png,woff2,webmanifest}'],
-          navigateFallback: '/next/index.html',
-          navigateFallbackDenylist: [/^\/api\//],
+          // Opening a page asks the server first, always: answering it from the saved copy showed the build before the
+          // last deploy until the page reloaded itself. The saved app shell is the answer only when the server cannot be
+          // reached. The page itself is a couple of kilobytes; the scripts it names still come from the saved copy.
+          navigateFallback: null,
+          runtimeCaching: [
+            {
+              urlPattern: ({ request, url }) => request.mode === 'navigate' && url.pathname.startsWith('/next'),
+              handler: 'NetworkOnly',
+              options: { precacheFallback: { fallbackURL: '/next/index.html' } },
+            },
+          ],
           maximumFileSizeToCacheInBytes: 3_000_000,
           cleanupOutdatedCaches: true,
         },

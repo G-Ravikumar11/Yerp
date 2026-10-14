@@ -67,7 +67,6 @@ export const NAV: NavEntry[] = [
       { label: 'Site Diary', path: '/projects/diary' },
       { label: 'Project Chart', path: '/projects/chart' },
       { label: 'Equipment & Plant', path: '/projects/equipment' },
-      { label: 'BOQ', path: '/projects/boq', perm: 'workorders.manage|reports.view' },
       { label: 'Project Profit', path: '/projects/profit', perm: 'reports.view' },
       { label: 'Cost by Project', path: '/projects/costs', perm: 'reports.view' },
     ],
@@ -80,7 +79,7 @@ export const NAV: NavEntry[] = [
     items: [
       { label: 'Tender Pipeline', path: '/clients/pipeline', perm: 'billing.manage' },
       { label: 'Tenders & Estimates', path: '/clients/estimates', perm: 'billing.manage' },
-      { label: 'Client Work Orders', path: '/clients/work-orders', perm: 'workorders.manage' },
+      { label: 'BOQ', path: '/projects/boq', perm: 'workorders.manage|reports.view' },
       { label: 'Measurement & RA Bills', path: '/clients/measurement', perm: 'site.record|billing.manage' },
       { label: 'Customers', path: '/clients/customers', perm: 'customers.manage' },
       { label: 'Contacts', path: '/clients/contacts', perm: 'customers.manage' },
@@ -151,8 +150,6 @@ export type Trail = { label: string; path?: string }[]
 export function trailFor(pathname: string, staff = false): Trail {
   const home: Trail = [{ label: 'Home', path: '/' }]
   if (pathname === '/') return [{ label: staff ? 'Overview' : 'Command Center' }]
-  if (pathname === '/design') return [...home, { label: 'Design system' }]
-  if (pathname === '/design/grid') return [...home, { label: 'Design system', path: '/design' }, { label: 'Data grid' }]
   for (const e of NAV) {
     if (e.kind === 'link' && e.path === pathname) return [...home, { label: e.label }]
     if (e.kind === 'group') {

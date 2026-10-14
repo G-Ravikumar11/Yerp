@@ -6,6 +6,7 @@ import { Badge, Button, ConfirmDialog, Stat, StatGrid, Tabs } from '@/components
 import { decideLeave, leaveKeys, useLeaveRequests, type LeaveRow } from '@/api/leave'
 import { useAction } from '@/lib/mutate'
 import { formatDate, today } from '@/lib/format'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 type Filter = 'all' | 'pending' | 'approved' | 'rejected'
 const tone = (s: string) => (s === 'approved' ? 'success' : s === 'rejected' ? 'danger' : 'warning') as 'success' | 'danger' | 'warning'
@@ -37,6 +38,7 @@ export default function LeavePage() {
         <div className="flex justify-end gap-1.5"><Button size="sm" onClick={() => setDeciding({ row: l, action: 'approve' })}>Approve</Button><Button size="sm" variant="outline" className="text-danger" onClick={() => setDeciding({ row: l, action: 'reject' })}>Reject</Button></div>
       ) : <span className="text-xs text-muted-foreground">{l.approved_by}</span>,
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (l) => <MasterDelete kind="leave" id={l.id} label={`${l.employee_name} from ${formatDate(l.start_date)}`} noun="leave request" /> },
   ]
   return (
     <>
