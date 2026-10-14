@@ -2,7 +2,6 @@ import { Link, Navigate } from 'react-router-dom'
 import { Bell, BookOpen, ChevronRight, ListChecks, PackageCheck, Ruler, ShieldAlert, type LucideIcon } from 'lucide-react'
 import { useInbox } from '@/api/approvals'
 import { attentionHref, useAttention } from '@/api/dashboard'
-import { useProjects } from '@/api/projects'
 import { useDayPlan } from '@/api/schedule'
 import { useIdentity } from '@/api/identity'
 import { CompanyMark } from '@/components/company/CompanyMark'
@@ -10,7 +9,7 @@ import { Skeleton } from '@/components/ui'
 import { today } from '@/lib/format'
 import { useSession } from '@/lib/session'
 import { cn, compactINR } from '@/lib/utils'
-import { useSite } from './site'
+import { useCurrentSite, useSite } from './site'
 import { Label, LargeTitle, Pill, Sheet } from './ui'
 
 const greeting = () => {
@@ -43,10 +42,8 @@ const QUICK: { label: string; path: string; perm?: string; icon: LucideIcon; ton
 export default function TodayPage() {
   const { user, can, isLoading } = useSession()
   const identity = useIdentity()
-  const projects = useProjects()
-  const { id: chosen, set } = useSite()
-  const list = (projects.data ?? []).filter((p) => !['complete', 'cancelled'].includes(p.status))
-  const site = list.find((p) => p.id === chosen) ?? list[0]
+  const { site, sites: list, isPending: loadingSites } = useCurrentSite()
+  const set = useSite((s) => s.set)
   const plan = useDayPlan(site?.id ?? 0, today())
   const attention = useAttention()
   const inbox = useInbox()
@@ -79,7 +76,7 @@ export default function TodayPage() {
 
       <LargeTitle title="Today" sub={new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })} />
 
-      {projects.isPending ? <Skeleton className="h-9 w-2/3 rounded-full" /> : list.length > 0 && (
+      {loadingSites ? <Skeleton className="h-9 w-2/3 rounded-full" /> : list.length > 0 && (
         <div role="tablist" aria-label="Site" className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none]">
           {list.map((p) => (
             <button key={p.id} role="tab" aria-selected={p.id === site?.id} type="button" onClick={() => set(p.id)}
@@ -130,7 +127,7 @@ export default function TodayPage() {
             <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
           </Link>
         ))}
-        {waiting === 0 && items.length === 0 && (attention.isPending ? <Skeleton className="my-3 h-12 w-full" /> : <p className="py-4 text-center text-sm text-muted-foreground">Nothing needs you right now.</p>)}
+        {waiting === 0 && items.length === 0 && (attention.isPending ? <Skeleton className="my-3 h-12 w-full" /> : <p className="py-4 text-center text-sm text-muted-foreground">{attention.isError ? 'Could not load this. Pull down or reopen the app to try again.' : 'Nothing needs you right now.'}</p>)}
       </Sheet>
     </div>
   )

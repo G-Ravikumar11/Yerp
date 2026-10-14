@@ -13,6 +13,7 @@ import { TabBar } from './TabBar'
 
 /** The four places the tab bar goes to: these screens are tabs. Every other screen gets a back bar and a title. */
 const TABS = new Set(['/', '/projects', '/approvals', '/more'])
+const TAB_TITLES: Record<string, string> = { '/': 'Today', '/projects': 'Projects', '/approvals': 'Approvals', '/more': 'More' }
 
 /**
  * The frame of the phone app, in place of the website's sidebar and top bar: the screen, a bottom tab bar, and the
@@ -24,7 +25,7 @@ export default function MobileShell() {
   const { isLoading, isAnonymous, error, user } = useSession()
   const [adding, setAdding] = useState(false)
   const isTab = TABS.has(pathname)
-  const title = trailFor(pathname, user?.type === 'employee').at(-1)?.label ?? ''
+  const title = TAB_TITLES[pathname] ?? trailFor(pathname, user?.type === 'employee').at(-1)?.label ?? ''
 
   useEffect(() => {
     document.title = `${title || 'Y ERP'} - Y ERP`
@@ -52,7 +53,7 @@ export default function MobileShell() {
         </header>
       )}
       <main id="main" className={isTab ? 'mx-auto w-full max-w-xl px-4 pb-[calc(96px+env(safe-area-inset-bottom))] pt-3' : 'w-full min-w-0 overflow-x-clip px-4 pb-[calc(96px+env(safe-area-inset-bottom))] pt-4'}>
-        {!isLoading && !isAnonymous && !pathname.startsWith('/settings') && isTab && <CompanyNotice />}
+        {!isLoading && !isAnonymous && !pathname.startsWith('/settings') && pathname === '/more' && <CompanyNotice />}
         {isLoading ? (
           <div className="space-y-4" role="status" aria-label="Loading"><Skeleton className="h-9 w-48" /><Skeleton className="h-48 w-full rounded-3xl" /></div>
         ) : isAnonymous || error ? (

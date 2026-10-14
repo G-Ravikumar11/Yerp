@@ -1,10 +1,9 @@
 import { useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { AlertTriangle, BookOpen, ClipboardCheck, ListChecks, PackageCheck, Ruler, type LucideIcon } from 'lucide-react'
-import { useProjects } from '@/api/projects'
 import { useSession } from '@/lib/session'
 import { cn } from '@/lib/utils'
-import { useSite } from './site'
+import { useCurrentSite } from './site'
 
 /** The six things recorded on site, and where each is recorded. A tile appears only for someone who may do it. */
 const TILES: { label: string; hint: string; path: string; perm?: string; icon: LucideIcon; tone: string }[] = [
@@ -20,9 +19,8 @@ const TILES: { label: string; hint: string; path: string; perm?: string; icon: L
 export function AddSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const go = useNavigate()
   const { can } = useSession()
-  const projects = useProjects()
-  const site = useSite((s) => s.id)
-  const name = projects.data?.find((p) => p.id === site)?.name
+  const { site } = useCurrentSite()
+  const name = site?.name
   const tiles = TILES.filter((t) => !t.perm || can(t.perm))
   return (
     <AnimatePresence>

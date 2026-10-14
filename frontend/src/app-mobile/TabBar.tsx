@@ -13,7 +13,7 @@ export function TabBar({ onAdd }: { onAdd: () => void }) {
     <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl">
       <div className="mx-auto flex h-[64px] max-w-xl items-start justify-around px-2">
         <NavLink to="/" end className={tab}><House className="size-[22px]" />Today</NavLink>
-        <NavLink to="/projects" end className={tab}><FolderKanban className="size-[22px]" />Projects</NavLink>
+        <NavLink to="/projects" className={tab}><FolderKanban className="size-[22px]" />Projects</NavLink>
         <button type="button" onClick={onAdd} aria-label="Add a record" className="-mt-5 grid size-14 place-items-center rounded-full bg-primary text-primary-foreground shadow-[0_8px_24px_-6px_var(--primary)] ring-[5px] ring-background active:scale-95">
           <Plus className="size-7" strokeWidth={2.5} />
         </button>
