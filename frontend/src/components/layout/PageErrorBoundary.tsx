@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui'
+import { appUrl } from '@/lib/paths'
 
 interface State {
   error: Error | null
@@ -38,6 +39,10 @@ export class PageErrorBoundary extends Component<{ children: ReactNode; resetKey
         <Button className="mt-6" onClick={() => this.setState({ error: null })}>
           Try again
         </Button>
+        <p className="mt-4 text-[13px] text-muted-foreground">
+          Still failing? <a className="font-medium text-primary hover:underline" href={appUrl('reset')}>Clear the saved copy of the app on this device</a>.
+          You stay signed in.
+        </p>
       </div>
     )
   }

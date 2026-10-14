@@ -1,3 +1,5 @@
+import { noteAnswer } from './freshness'
+
 /** A failed call to the backend, carrying the message the server gave. */
 export class ApiError extends Error {
   status: number
@@ -40,6 +42,7 @@ export async function api<T = unknown>(path: string, { body, headers, quiet, ...
     headers: { ...(body !== undefined && !isForm ? { 'Content-Type': 'application/json' } : {}), ...headers },
     body: body === undefined ? undefined : isForm ? (body as FormData) : JSON.stringify(body),
   })
+  noteAnswer(res)
 
   const text = await res.text()
   let data: unknown = null

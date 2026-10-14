@@ -5,6 +5,7 @@ import { MotionConfig } from 'framer-motion'
 import { Loader2 } from 'lucide-react'
 import { AppShell } from '@/components/layout/AppShell'
 import { Toaster, TooltipProvider } from '@/components/ui'
+import { FreshBuild } from '@/lib/freshness'
 import { LegacyLinks } from '@/lib/legacyLinks'
 import { persistOptions, queryClient } from '@/lib/query'
 import { watchConnection } from '@/stores/offline'
@@ -23,6 +24,7 @@ const ApplyPage = lazy(() => import('@/features/careers/ApplyPage'))
 const MeetingPage = lazy(() => import('@/features/meeting/MeetingPage'))
 const SuperadminPage = lazy(() => import('@/features/superadmin/SuperadminPage'))
 const SuperadminLoginPage = lazy(() => import('@/features/auth/SuperadminLoginPage'))
+const ResetPage = lazy(() => import('@/features/auth/ResetPage'))
 
 /** While a page's code is still downloading. It appears only after a moment, so a quick load shows nothing at all
  * rather than a flash; a slow one (a site on a weak signal) shows that something is happening instead of a blank page. */
@@ -67,6 +69,7 @@ export default function App() {
       <TooltipProvider>
         <BrowserRouter basename={basename}>
           <LegacyLinks />
+          <FreshBuild />
           <Suspense fallback={<PageLoading />}>
           <Routes>
             <Route path="login" element={<LoginPage />} />
@@ -79,6 +82,7 @@ export default function App() {
             <Route path="reset-password" element={<ResetPasswordPage />} />
             <Route path="superadmin" element={<SuperadminPage />} />
             <Route path="superadmin/login" element={<SuperadminLoginPage />} />
+            <Route path="reset" element={<ResetPage />} />
             <Route element={<AppShell />}>
               <Route index element={<HomePage />} />
               {SCREENS.map(({ path, Component }) => (
