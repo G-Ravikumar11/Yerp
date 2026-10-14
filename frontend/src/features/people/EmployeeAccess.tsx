@@ -17,7 +17,7 @@ function Toggle({ on, disabled, label, onChange }: { on: boolean; disabled?: boo
 }
 
 /** Sites are listed only once the box is opened; the closed box says which are chosen. */
-function SitePicker({ id, jobs, value, onChange }: { id: string; jobs: { id: number; number?: string; name: string }[]; value: number[]; onChange: (v: number[]) => void }) {
+export function SitePicker({ id, jobs, value, onChange }: { id: string; jobs: { id: number; number?: string; name: string }[]; value: number[]; onChange: (v: number[]) => void }) {
   const [open, setOpen] = useState(false)
   const chosen = jobs.filter((j) => value.includes(j.id))
   const summary = chosen.length === 0 ? 'Every site' : chosen.length <= 2 ? chosen.map((j) => `${j.number ?? ''} ${j.name}`.trim()).join(', ') : `${chosen.length} sites selected`

@@ -1,6 +1,7 @@
 """The hr endpoints."""
 import json
 from datetime import datetime, timedelta
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import case, func, func as sqlfunc, or_
@@ -36,6 +37,8 @@ from app.services.hr import (
     assign_document_requests,
     department_or_404,
     department_to_dict,
+    department_site_map,
+    departments_on_site,
     departments_to_dicts,
     employee_sites_payload,
     maybe_complete_onboarding,
@@ -49,6 +52,7 @@ from app.services.hr import (
     resolve_basic_pay,
     seed_default_requirements,
     serialise,
+    set_department_sites,
     set_employee_sites,
     start_onboarding,
     suggest_org_email,
@@ -199,10 +203,13 @@ def get_hr_levels(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/departments")
-def get_departments(request: Request, db: Session = Depends(get_db)):
+def get_departments(request: Request, site_id: Optional[int] = None, db: Session = Depends(get_db)):
+    """Every department, or with ?site_id= only those added to that site."""
     client = get_client_user(request, db)
     depts = db.query(models.DBDepartment).filter(
         models.DBDepartment.client_id == client.id).order_by(models.DBDepartment.name).all()
+    if site_id is not None:
+        depts = departments_on_site(db, client.id, depts, site_id)
     return departments_to_dicts(db, client.id, depts)
 
 
@@ -224,12 +231,16 @@ def create_department(request: Request, body: DepartmentCreate, db: Session = De
     dept = models.DBDepartment(name=name, description=body.description, color=body.color, icon=body.icon, client_id=client.id)
     db.add(dept)
     db.flush()
+    set_department_sites(db, client.id, dept, body.site_ids)
+    db.flush()
+    saved_sites = sorted(department_site_map(db, client.id, [dept.id]).get(dept.id, []))
     log_audit(db, client.id, "department_created", "department", dept.id, dept.name, "", request)
     # Read back before the commit: afterwards every attribute is expired and
     # reading one is another trip to the database.
     out = {"id": dept.id, "name": dept.name, "description": dept.description,
            "color": dept.color or "#00f0ff", "icon": dept.icon or "building",
-           "employee_count": 0, "created_at": dept.created_at, "employees": []}
+           "employee_count": 0, "created_at": dept.created_at, "employees": [],
+           "site_ids": saved_sites}
     db.commit()
     return out
 
@@ -247,6 +258,7 @@ def update_department(dept_id: int, request: Request, body: DepartmentCreate, db
     dept.description = body.description
     dept.color = body.color
     dept.icon = body.icon
+    set_department_sites(db, client.id, dept, body.site_ids)
     log_audit(db, client.id, "department_updated", "department", dept.id, dept.name, "", request)
     db.flush()  # what the commit would send anyway, so the answer sees it
     out = department_to_dict(db, dept)
@@ -264,6 +276,9 @@ def delete_department(dept_id: int, request: Request, db: Session = Depends(get_
     )
     # Goals hang off departments too and would block the delete on Postgres.
     db.query(models.DBDepartmentGoal).filter(models.DBDepartmentGoal.department_id == dept_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.DBDepartmentSite).filter(models.DBDepartmentSite.department_id == dept_id).delete(
         synchronize_session=False
     )
     db.query(models.DBEmployeeGoal).filter(models.DBEmployeeGoal.department_id == dept_id).update(

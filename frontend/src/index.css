@@ -332,3 +332,26 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* The level chart on the Departments page: one row for each level, most senior at the top. A row hangs from the one above
+   by a bar, and the lines take the colour of the row they leave (--up for the line above a row, --down for the one below). */
+.lv-row { display: flex; justify-content: center; }
+.lv-item { position: relative; padding: 0 10px; }
+.lv-up .lv-item { padding-top: 28px; }
+.lv-down .lv-item { padding-bottom: 28px; }
+.lv-up .lv-item::before, .lv-up .lv-item::after { content: ''; position: absolute; top: 0; height: 28px; width: 50%; border-top: 2px solid var(--up); }
+.lv-up .lv-item::before { right: 50%; }
+.lv-up .lv-item::after { left: 50%; border-left: 2px solid var(--up); }
+.lv-up .lv-item:first-child::before, .lv-up .lv-item:last-child::after { border: 0 none; }
+.lv-up .lv-item:last-child::before { border-right: 2px solid var(--up); }
+.lv-up .lv-item:only-child::before { display: none; }
+.lv-up .lv-item:only-child::after { border-top: 0; border-left: 2px solid var(--up); }
+.lv-drop { position: absolute; left: 0; bottom: 0; width: 100%; height: 28px; pointer-events: none; }
+.lv-drop::before, .lv-drop::after { content: ''; position: absolute; bottom: 0; height: 28px; width: 50%; border-bottom: 2px solid var(--down); }
+.lv-drop::before { right: 50%; }
+.lv-drop::after { left: 50%; border-left: 2px solid var(--down); }
+.lv-item:first-child > .lv-drop::before, .lv-item:last-child > .lv-drop::after { border: 0 none; }
+.lv-item:last-child > .lv-drop::before { border-right: 2px solid var(--down); }
+.lv-item:only-child > .lv-drop::before { display: none; }
+.lv-item:only-child > .lv-drop::after { border-bottom: 0; border-left: 2px solid var(--down); }
+.lv-stem { width: 2px; height: 24px; background: var(--stem); }

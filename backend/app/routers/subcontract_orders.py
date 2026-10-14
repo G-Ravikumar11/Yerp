@@ -106,6 +106,7 @@ from app.services.subcontract_orders import (
     wo_delete_order_now,
     wo_delete_report,
     wo_department_choices,
+    wo_department_sites,
     wo_dict,
     wo_involved_ids,
     wo_matches,
@@ -539,6 +540,8 @@ def wo_vocabulary(request: Request, db: Session = Depends(get_db)):
             models.DBWorkType.department, models.DBWorkType.name).all()
     return {
         "departments": wo_department_choices(db, client.id),
+        # The sites each department was added to, by name: one missing here is on no site.
+        "department_sites": wo_department_sites(db, client.id),
         "uoms": list(UNITS_OF_MEASURE),
         "clause_categories": list(WO_CLAUSE_CATEGORIES),
         "statuses": list(WO_TRANSITIONS.keys()),

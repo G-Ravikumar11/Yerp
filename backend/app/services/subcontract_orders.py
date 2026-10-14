@@ -23,7 +23,6 @@ from app.constants.subcontract_orders import (
     WO_BILLING_CYCLES,
     WO_COMMITTED_STATUSES,
     WO_DEFAULT_WORK_TYPES,
-    WO_DEPARTMENTS,
     WO_EDITABLE,
     WO_TRACKED,
     WO_TRANSITIONS,
@@ -128,20 +127,32 @@ def erp_wo_delete_report(db, client, wo):
 
 
 def wo_department_choices(db, client_id):
-    """The departments an order can be raised for: the ones the owner has created.
+    """The departments an order can be raised for: the ones the owner has added to a site.
 
-    A business that has not created any yet gets the six trades it would have had, so the
-    picker is never empty. Any department already on an order stays in the list, so an
-    old order can still be opened and saved after a department has been renamed or removed."""
-    made = [d.name for d in db.query(models.DBDepartment).filter(
-        models.DBDepartment.client_id == client_id).order_by(models.DBDepartment.name).all() if (d.name or "").strip()]
-    names = made or list(WO_DEPARTMENTS)
+    There is no built-in list: a business with none added has none to choose from. Any
+    department already on an order stays in the list, so an old order can still be opened
+    and saved after a department has been renamed or removed."""
+    from app.services.hr import department_site_map
+    placed = department_site_map(db, client_id)
+    names = [d.name for d in db.query(models.DBDepartment).filter(
+        models.DBDepartment.client_id == client_id).order_by(models.DBDepartment.name).all()
+        if (d.name or "").strip() and placed.get(d.id)]
     used = db.query(models.DBSubcontractOrder.department).filter(
         models.DBSubcontractOrder.client_id == client_id).distinct().all()
     for (dept,) in used:
         if dept and dept not in names:
             names.append(dept)
     return names
+
+
+def wo_department_sites(db, client_id):
+    """{department name: [site ids]} for the departments added to a site."""
+    from app.services.hr import department_site_map
+    narrowed = department_site_map(db, client_id)
+    if not narrowed:
+        return {}
+    return {d.name: sorted(narrowed[d.id]) for d in db.query(models.DBDepartment).filter(
+        models.DBDepartment.client_id == client_id, models.DBDepartment.id.in_(list(narrowed))).all()}
 
 
 def recost_order(db, order):

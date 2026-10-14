@@ -1,5 +1,5 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, Field, Input, NumField, Select, Textarea } from '@/components/ui'
-import { useBusinessUnits, useContractors, useOrderVocabulary, type Order, type OrderHead } from '@/api/orders'
+import { departmentsForSite, useBusinessUnits, useContractors, useOrderVocabulary, type Order, type OrderHead } from '@/api/orders'
 
 export const BILLING_CYCLES = ['Monthly', 'Fortnightly', 'On milestone', 'On completion']
 
@@ -60,7 +60,7 @@ export function HeadForm({ head, onChange, disabled, order }: { head: OrderHead;
             <Select id="h-job" disabled={disabled} value={head.job_id ?? ''} onChange={(e) => onChange({ job_id: id(e.target.value) })} placeholder="Choose" options={(v?.jobs ?? []).map((j) => ({ value: j.id, label: `${j.number} ${j.name}` }))} />
           </Field>
           <Field label="Trade" htmlFor="h-dept" hint={disabled ? undefined : 'Changing it on a draft issues a new number.'}>
-            <Select id="h-dept" disabled={disabled} value={head.department} onChange={(e) => onChange({ department: e.target.value })} placeholder="Choose" options={(v?.departments ?? []).map((d) => ({ value: d, label: d }))} />
+            <Select id="h-dept" disabled={disabled} value={head.department} onChange={(e) => onChange({ department: e.target.value })} placeholder="Choose" options={departmentsForSite(v, head.job_id, head.department).map((d) => ({ value: d, label: d }))} />
           </Field>
           <Field label="Kind of work" htmlFor="h-type">
             <Select id="h-type" disabled={disabled} value={head.work_type} onChange={(e) => onChange({ work_type: e.target.value })} placeholder="Choose" options={workTypes.map((w) => ({ value: w.name, label: w.name }))} />
