@@ -21,7 +21,12 @@ export default defineConfig(({ mode, command }) => {
     // Built into frontend/dist, which is not committed: the deploy builds it (see nixpacks.toml).
     build: { outDir: 'dist', emptyOutDir: true },
     // Each build gets its own stamp, so data saved on the device by an older build is never trusted by a newer one.
-    define: { __BUILD__: JSON.stringify(String(Date.now())) },
+    define: {
+      __BUILD__: JSON.stringify(String(Date.now())),
+      // The phone app's own layout (src/app-mobile) is in the mobile build and the dev server only: for the website's build
+      // this is false, so that folder is not in it at all and nothing done there can change the website.
+      __MOBILE_UI__: JSON.stringify(isMobile || command === 'serve'),
+    },
     plugins: [
       react(),
       tailwindcss(),
