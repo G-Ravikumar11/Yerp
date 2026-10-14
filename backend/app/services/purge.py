@@ -13,7 +13,7 @@ from sqlalchemy import text, bindparam
 from app import models
 from app.core.audit import log_audit
 from app.core.files import drop_files_of
-from app.services.subcontract_orders import _fk_map, drop_alerts_about, sweep_referrers
+from app.services.subcontract_orders import _fk_map, drop_alerts_about, referrers_present, sweep_referrers
 
 # Rows that belong to the record they point at, even though the column may be left empty.
 OWNED = {
@@ -118,7 +118,7 @@ def purge(db, table, ids, counts=None, _depth=0):
     counts = {} if counts is None else counts
     if not ids or _depth > 10:
         return counts
-    for child, col, nullable, pk in _fk_map(db).get(table, []):
+    for child, col, nullable, pk in referrers_present(db, _fk_map(db).get(table, []), ids):
         if child == table:
             if nullable:
                 _in(db, "UPDATE %s SET %s = NULL WHERE %s IN :ids" % (child, col, col), ids)

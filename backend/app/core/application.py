@@ -1,12 +1,13 @@
 """The FastAPI application object and its start-up and shut-down."""
 import asyncio
 import os
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from app import models
-from app.db import engine, ensure_columns, migrate_sqlite
+from app.db import SessionLocal, engine, ensure_columns, migrate_sqlite
 
 from app.core.auth import ensure_admin_user, ensure_super_admin
 from app.core.config import logger
@@ -35,6 +36,13 @@ async def lifespan(app: FastAPI):
         _boot_step("number the entries of the measurement book", backfill_entry_codes)
     DB_READY["ok"] = ok
     if ok:
+        # Reading the schema's foreign keys is what the first delete after a restart used to wait for.
+        from app.services.subcontract_orders import _fk_map
+
+        def warm():
+            with SessionLocal() as db:
+                _fk_map(db)
+        _boot_step("read the schema for deletes", lambda: threading.Thread(target=warm, daemon=True).start())
         DB_READY["error"] = ""
         logger.info("Database initialized successfully")
     else:

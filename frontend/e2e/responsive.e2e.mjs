@@ -16,7 +16,7 @@ const routes = [
   [`/subcontractors/measurement-book?order=${live.id}`, 'Measurement Book'],
   ['/subcontractors/ra-bills', 'RA Bills'],
   ...(bill ? [[`/subcontractors/ra-bills/${bill.id}`, 'bill page']] : []),
-  ['/subcontractors/vendors', 'Vendor Register'],
+  ['/subcontractors/vendors', 'Sub Contract Registration'],
   ['/design/grid', 'Data grid'],
 ]
 

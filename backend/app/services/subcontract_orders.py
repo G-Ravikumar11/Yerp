@@ -1,4 +1,5 @@
 """The rules and workings behind the subcontract orders endpoints."""
+import threading
 import json
 import re
 from datetime import datetime
@@ -1175,6 +1176,9 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
     return order
 
 
+_FK_LOCK = threading.Lock()
+
+
 def _fk_map(db):
     """Every foreign key in the live database, by the table it points at. Reading the schema is slow, so it is
     kept until the set of tables changes - which is when it could have."""
@@ -1183,18 +1187,41 @@ def _fk_map(db):
     insp = sa_inspect(bind)
     names = tuple(sorted(insp.get_table_names()))
     key = (str(bind.url), names)
-    if key not in _FK_CACHE:
-        _FK_CACHE.clear()
-        graph = {}
-        for table in names:
-            nullable = {c["name"]: c.get("nullable", True) for c in insp.get_columns(table)}
-            pk = insp.get_pk_constraint(table).get("constrained_columns") or []
-            for fk in insp.get_foreign_keys(table):
-                cols = fk.get("constrained_columns", [])
-                if len(cols) == 1 and fk.get("referred_table"):
-                    graph.setdefault(fk["referred_table"], []).append((table, cols[0], nullable.get(cols[0], True), pk))
-        _FK_CACHE[key] = graph
+    with _FK_LOCK:
+        if key not in _FK_CACHE:
+            _FK_CACHE.clear()
+            graph = {}
+            # One query per kind for the whole schema; reading it a table at a time was hundreds of round trips.
+            columns = insp.get_multi_columns()
+            pks = insp.get_multi_pk_constraint()
+            fks = insp.get_multi_foreign_keys()
+            for (schema, table), table_fks in fks.items():
+                nullable = {c["name"]: c.get("nullable", True) for c in columns.get((schema, table), [])}
+                pk = (pks.get((schema, table)) or {}).get("constrained_columns") or []
+                for fk in table_fks:
+                    cols = fk.get("constrained_columns", [])
+                    if len(cols) == 1 and fk.get("referred_table"):
+                        graph.setdefault(fk["referred_table"], []).append((table, cols[0], nullable.get(cols[0], True), pk))
+            _FK_CACHE[key] = graph
     return _FK_CACHE[key]
+
+
+def referrers_present(db, edges, ids):
+    """Of these (table, column, ...) foreign keys, the ones that have a row pointing at `ids`. One round trip per
+    hundred keys instead of one blanket UPDATE or DELETE per key - against a remote database that is the difference
+    between a delete that takes seconds and one that is instant."""
+    from sqlalchemy import text, bindparam
+    ids = list(ids)
+    if not ids or not edges:
+        return []
+    hit = set()
+    for start in range(0, len(edges), 100):
+        chunk = edges[start:start + 100]
+        sql = " UNION ALL ".join(
+            "SELECT %d AS i WHERE EXISTS (SELECT 1 FROM %s WHERE %s IN :ids)" % (start + n, e[0], e[1])
+            for n, e in enumerate(chunk))
+        hit.update(r[0] for r in db.execute(text(sql).bindparams(bindparam("ids", expanding=True)), {"ids": ids}))
+    return [e for n, e in enumerate(edges) if n in hit]
 
 
 def cascade_delete_referrers(db, parent, ids, _depth=0):
@@ -1207,7 +1234,7 @@ def cascade_delete_referrers(db, parent, ids, _depth=0):
     ids = list(ids)
     if not ids or _depth > 8:
         return
-    for table, col, nullable, pk in _fk_map(db).get(parent, []):
+    for table, col, nullable, pk in referrers_present(db, _fk_map(db).get(parent, []), ids):
         where = "%s IN :ids" % col
         bind = lambda sql: db.execute(text(sql).bindparams(bindparam("ids", expanding=True)), {"ids": ids})
         if table == parent or (nullable and table not in OWNED_BY_AN_ORDER):
@@ -1229,9 +1256,8 @@ def sweep_referrers(db, parents):
         ids = list(ids or [])
         if not ids:
             continue
-        for table, col, nullable, pk in graph.get(parent, []):
-            if table == parent:
-                continue
+        edges = [e for e in graph.get(parent, []) if e[0] != parent]
+        for table, col, nullable, pk in referrers_present(db, edges, ids):
             sql = ("UPDATE %s SET %s = NULL WHERE %s IN :ids" if nullable else "DELETE FROM %s WHERE %s IN :ids") % (
                 (table, col, col) if nullable else (table, col))
             db.execute(text(sql).bindparams(bindparam("ids", expanding=True)), {"ids": ids})

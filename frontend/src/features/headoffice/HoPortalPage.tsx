@@ -20,7 +20,7 @@ const OPEN = [
 
 /** Every register head office keeps an eye on. */
 const REGISTERS = [
-  { to: '/subcontractors/vendors', label: 'Vendor Register', icon: UserPlus },
+  { to: '/subcontractors/vendors', label: 'Sub Contract Registration', icon: UserPlus },
   { to: '/subcontractors/work-orders', label: 'Sub contractor Work Orders', icon: HardHat },
   { to: '/clients/work-orders', label: 'Client Work Orders', icon: FilePlus2 },
   { to: '/projects/boq', label: 'BOQ', icon: Layers },
@@ -133,7 +133,7 @@ export default function HoPortalPage() {
       )}
 
       <StatGrid>
-        <Stat label="Vendors registered" value={d?.vendors.registered ?? 0} sub={d && d.vendors.pending ? `${d.vendors.pending} awaiting approval` : undefined} loading={q.isPending} />
+        <Stat label="Sub contractors registered" value={d?.vendors.registered ?? 0} sub={d && d.vendors.pending ? `${d.vendors.pending} awaiting approval` : undefined} loading={q.isPending} />
         <Stat label="Sub contractor work orders" value={d?.subcontract_orders.total ?? 0} sub={d ? `${d.subcontract_orders.draft} in draft · ${d.subcontract_orders.awaiting} awaiting` : undefined} loading={q.isPending} />
         <Stat label="Client work orders" value={d?.client_orders.total ?? 0} sub={d ? `${d.client_orders.draft} in draft · ${d.client_orders.awaiting} awaiting` : undefined} loading={q.isPending} />
         <Stat label="BOQs" value={d?.boqs.count ?? 0} sub={d && d.boqs.projects_without ? `${plural(d.boqs.projects_without, 'project')} without one` : undefined} tone={d && d.boqs.projects_without ? 'warning' : undefined} loading={q.isPending} />

@@ -53,7 +53,7 @@ function PapersTab() {
         <Stat label="Papers in order" value={rows.filter((r) => r.ok).length} loading={home.isPending} />
         <Stat label="Papers missing or lapsed" value={rows.filter((r) => !r.ok).length} tone={rows.some((r) => !r.ok) ? 'danger' : undefined} loading={home.isPending} />
       </StatGrid>
-      <DataTable label="Contractor compliance" rows={rows} columns={columns} rowKey={(r) => r.contractor_id} loading={home.isPending} onRowClick={setOpen} empty="No contractors yet. Register one in the Vendor Register." />
+      <DataTable label="Contractor compliance" rows={rows} columns={columns} rowKey={(r) => r.contractor_id} loading={home.isPending} onRowClick={setOpen} empty="No contractors yet. Register one in Sub Contract Registration." />
       {open && <ContractorModal contractor={open} kinds={home.data?.kinds ?? {}} onClose={() => setOpen(null)} />}
     </>
   )

@@ -92,7 +92,7 @@ export const NAV: NavEntry[] = [
     label: 'Subcontractors',
     icon: HardHat,
     items: [
-      { label: 'Vendor Register', path: '/subcontractors/vendors' },
+      { label: 'Sub Contract Registration', path: '/subcontractors/vendors' },
       { label: 'Work Orders', path: '/subcontractors/work-orders' },
       { label: 'Measurement Book', path: '/subcontractors/measurement-book' },
       { label: 'RA Bills', path: '/subcontractors/ra-bills' },
