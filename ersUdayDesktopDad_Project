@@ -1,0 +1,58 @@
+warning: in the working copy of 'backend/app/routers/procurement.py', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/backend/app/routers/procurement.py b/backend/app/routers/procurement.py[m
+[1mindex e9a79d0..9d83983 100644[m
+[1m--- a/backend/app/routers/procurement.py[m
+[1m+++ b/backend/app/routers/procurement.py[m
+[36m@@ -1,4 +1,5 @@[m
+ """The procurement endpoints."""[m
+[32m+[m[32mimport base64[m
+ import re[m
+ from datetime import datetime[m
+ [m
+[36m@@ -14,8 +15,10 @@[m [mfrom app.core.audit import log_audit[m
+ from app.core.auth import require_erp_read, require_items_access, session_employee, wo_actor[m
+ from app.core.currency import amount_in_words, inr, money, tax_percent_of, unit_rate[m
+ from app.core.dates import days_after[m
+[32m+[m[32mfrom app.core.notifications import default_from_email, send_email_background[m
+ from app.core.serials import allocate_grn_number, allocate_po_number, next_sequence_number[m
+ from app.core.sheets import sheet_response[m
+[32m+[m[32mfrom app.documents import form_pdf[m
+ from app.documents.forms import _pre, form_pdf_response, po_form_spec[m
+ from app.documents.letterhead import our_party[m
+ from app.routers.employee_portal import employee_create_purchase_order[m
+[36m@@ -951,6 +954,35 @@[m [mdef purchase_order_pdf(order_id: int, request: Request, db: Session = Depends(ge[m
+     return form_pdf_response(po_form_spec(db, client, order), order.number)[m
+ [m
+ [m
+[32m+[m[32m@router.post("/api/purchase-orders/{order_id}/send-email")[m
+[32m+[m[32mdef send_purchase_order_email(order_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):[m
+[32m+[m[32m    """Email the purchase order, with its PDF, to the supplier from the company's connected Gmail.[m
+[32m+[m[32m    `to`, `subject` and `body` may be given (the AI draft, edited); otherwise the plain draft is used."""[m
+[32m+[m[32m    client, _, actor = wo_actor(request, db, "purchase.manage")[m
+[32m+[m[32m    order = purchase_order_or_404(db, client.id, order_id)[m
+[32m+[m[32m    body = body or {}[m
+[32m+[m[32m    to = (body.get("to") or order.supplier_email or "").strip()[m
+[32m+[m[32m    if not re.match(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$", to):[m
+[32m+[m[32m        raise HTTPException(400, "Give a valid supplier email address to send %s to." % order.number)[m
+[32m+[m[32m    if not form_pdf.PDF_AVAILABLE:[m
+[32m+[m[32m        raise HTTPException(503, "The PDF library is not installed on this server, so the order cannot be attached.")[m
+[32m+[m[32m    from app.ai.po_supplier_email import plain_draft[m
+[32m+[m[32m    company = client.company_name or "Our company"[m
+[32m+[m[32m    draft = plain_draft(purchase_order_to_dict(db, order), company)[m
+[32m+[m[32m    subject = (body.get("subject") or draft["subject"]).strip()[:200][m
+[32m+[m[32m    text = (body.get("body") or draft["body"]).strip()[m
+[32m+[m[32m    pdf = form_pdf.build_form_pdf(po_form_spec(db, client, order))[m
+[32m+[m[32m    ok, message = send_email_background([m
+[32m+[m[32m        to, subject, text, "%s <%s>" % (company, default_from_email()), client_id=client.id,[m
+[32m+[m[32m        pdf_b64=base64.b64encode(pdf).decode(), pdf_filename="%s.pdf" % re.sub(r"[^A-Za-z0-9]+", "_", order.number).strip("_"))[m
+[32m+[m[32m    if not ok:[m
+[32m+[m[32m        raise HTTPException(502, "%s was not sent: %s" % (order.number, message))[m
+[32m+[m[32m    log_audit(db, client.id, "purchase_order_emailed", "purchase_order", order.id, order.number,[m
+[32m+[m[32m              "Sent to %s by %s" % (to, actor), request)[m
+[32m+[m[32m    db.commit()[m
+[32m+[m[32m    return {"ok": True, "to": to, "message": "%s sent to %s." % (order.number, to)}[m
+[32m+[m
+[32m+[m
+ @router.get("/api/rfqs/{rfq_id}/comparison.xlsx")[m
+ def rfq_comparison_export(rfq_id: int, request: Request, db: Session = Depends(get_db)):[m
+     """The comparative statement: each line against each supplier, then each[m
