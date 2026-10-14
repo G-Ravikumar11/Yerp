@@ -34,6 +34,7 @@ export function apiUrl(path: string): string {
  * show the server's own plain-language reason.
  */
 export async function api<T = unknown>(path: string, { body, headers, quiet, ...init }: Options = {}): Promise<T> {
+  const method = (init.method || 'GET').toUpperCase()
   const isForm = typeof FormData !== 'undefined' && body instanceof FormData
   const targetUrl = apiUrl(path)
   const res = await fetch(targetUrl, {
@@ -62,6 +63,8 @@ export async function api<T = unknown>(path: string, { body, headers, quiet, ...
     }
     throw new ApiError(res.status, message)
   }
+  // A record is gone: every screen that kept a copy of a list must stop showing it (App.tsx).
+  if (method === 'DELETE' || /\/bulk-delete$/.test(path)) window.dispatchEvent(new Event('yerp:deleted'))
   return data as T
 }
 

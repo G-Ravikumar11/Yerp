@@ -52,6 +52,18 @@ export default function App() {
 
   useEffect(() => watchConnection(), [])
 
+  // Something was deleted. Every screen not on show had kept its own copy of its lists, and drew that copy first when
+  // opened - so the deleted record still showed elsewhere until a fresh answer came, for as long as the connection
+  // took. Those copies are dropped; the screens on show are read again at once.
+  useEffect(() => {
+    const on = () => {
+      queryClient.removeQueries({ type: 'inactive' })
+      void queryClient.invalidateQueries({ type: 'active' })
+    }
+    window.addEventListener('yerp:deleted', on)
+    return () => window.removeEventListener('yerp:deleted', on)
+  }, [])
+
   // Any request answered "not signed in" means the session ended: ask who is signed in
   // again, and the app goes to the sign-in page rather than draw failures.
   useEffect(() => {
