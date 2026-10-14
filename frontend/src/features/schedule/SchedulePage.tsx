@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Plus, Printer, Sparkles } from 'lucide-react'
+import { FileUp, Plus, Printer, Sparkles } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { ProjectPicker } from '@/components/data/ProjectPicker'
 import { Button, Input, Skeleton, Stat, StatGrid, Tabs } from '@/components/ui'
@@ -10,7 +10,8 @@ import { useSession } from '@/lib/session'
 import { ActivityModal } from './ActivityModal'
 import { Bars, Curve } from './Bars'
 import { DayPlan } from './DayPlan'
-import { DrawModal } from './DrawModal'
+import { DrawFromBoqModal } from './DrawFromBoqModal'
+import { ImportScheduleModal } from './ImportScheduleModal'
 import { AiDayTasks, AiDraftModal, AiPlanPanel } from './AiPlanning'
 
 /** The day's plan, the whole programme, and how far along the work is - and what slips if the thing before it slips. */
@@ -33,12 +34,13 @@ export default function SchedulePage() {
   const d = q.data
   const s = d?.summary
   const [editing, setEditing] = useState<Activity | 'new' | null>(null)
-  const [drawing, setDrawing] = useState(false)
-  const [drafting, setDrafting] = useState(false)
+  const [drawing, setDrawing] = useState(false)  // draw from the BOQ
+  const [importing, setImporting] = useState(false)  // import a programme sheet
+  const [drafting, setDrafting] = useState(false)  // draft a programme with AI
   const v = s?.variance ?? 0
   return (
     <>
-      <PageHeader eyebrow="Projects" title="Planning & Progress" description="What is to be done each day, how far along the work is, and what slips if the thing before it slips." actions={<>{can('workorders.manage') && <Button disabled={!job} onClick={() => setEditing('new')}><Plus /> Activity</Button>}<Button variant="outline" disabled={!job} onClick={() => setDrawing(true)}>Draw from a work order</Button>{can('workorders.manage') && <Button variant="outline" disabled={!job} onClick={() => setDrafting(true)}><Sparkles /> Draft with AI</Button>}<Button variant="outline" onClick={() => window.print()}><Printer /> Print</Button></>} />
+      <PageHeader eyebrow="Projects" title="Planning & Progress" description="What is to be done each day, how far along the work is, and what slips if the thing before it slips." actions={<>{can('workorders.manage') && <Button disabled={!job} onClick={() => setEditing('new')}><Plus /> Activity</Button>}<Button variant="outline" disabled={!job} onClick={() => setDrawing(true)}>Draw from BOQ</Button><Button variant="outline" disabled={!job} onClick={() => setImporting(true)}><FileUp /> Import a programme</Button>{can('workorders.manage') && <Button variant="outline" disabled={!job} onClick={() => setDrafting(true)}><Sparkles /> Draft with AI</Button>}<Button variant="outline" onClick={() => window.print()}><Printer /> Print</Button></>} />
       <div className="mb-4 flex flex-wrap items-end gap-4"><ProjectPicker value={job} onChange={setJob} id="sch-job" /></div>
       {job > 0 && (
         <div className="mb-5 flex flex-wrap items-center gap-3">
@@ -69,7 +71,8 @@ export default function SchedulePage() {
         </>
       ) : job > 0 ? <p className="rounded-lg border border-border bg-muted/40 p-4 text-sm">No programme yet. Add activities, or draw one from a work order: each line becomes an activity whose progress comes from the measurement book.</p> : null)}
       <ActivityModal job={job} activity={editing && editing !== 'new' ? editing : null} others={d?.activities ?? []} employees={d?.employees ?? []} teamScope={d?.team_scope} open={!!editing} onClose={() => setEditing(null)} />
-      <DrawModal job={job} open={drawing} onClose={() => setDrawing(false)} />
+      <DrawFromBoqModal job={job} open={drawing} onClose={() => setDrawing(false)} />
+      <ImportScheduleModal job={job} open={importing} onClose={() => setImporting(false)} />
       <AiDraftModal job={job} open={drafting} onClose={() => setDrafting(false)} />
     </>
   )
