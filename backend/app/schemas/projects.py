@@ -85,6 +85,13 @@ class TaskIn(BaseModel):
     percent: Optional[float] = None
 
 
+class FromBoqIn(BaseModel):
+    start: str
+    finish: str
+    # section: one activity per BOQ section with its items as tasks. item: one activity per priced line.
+    by: Optional[str] = "section"
+
+
 class FromWorkOrderIn(BaseModel):
     start: str
     finish: str

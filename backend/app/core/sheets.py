@@ -328,6 +328,27 @@ def pick_sheet(book, wanted):
              % (wanted, ", ".join("'%s'" % n for n in names)))
 
 
+def read_xlsx_outline(raw: bytes, sheet: str = ""):
+    """Rows as strings, each cell in the first non-empty column also carrying its indent level and whether it is bold.
+
+    A programme sent as a sheet is usually an outline: a block heading, its activities, each activity's own stages,
+    indented one under the other. `iter_rows(values_only=True)` is what every other import uses, and it throws that
+    indentation away with the formatting. A schedule's levels are read from it, so this keeps it.
+    """
+    book = open_workbook(raw)
+    try:
+        worksheet, _ = pick_sheet(book, sheet)
+        out = []
+        for row in worksheet.iter_rows():
+            values = [cell_text(c.value) for c in row]
+            indents = [float((c.alignment.indent if c.alignment else 0) or 0) for c in row]
+            bolds = [bool(c.font.bold) if c.font else False for c in row]
+            out.append({"values": values, "indents": indents, "bolds": bolds})
+        return out
+    finally:
+        book.close()
+
+
 def read_xlsx_table(raw: bytes, sheet: str = ""):
     """Rows from one worksheet, as strings."""
     book = open_workbook(raw)

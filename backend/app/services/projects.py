@@ -1118,6 +1118,240 @@ def schedule_view(db, client_id, job):
             "slip_days": (project_finish - planned_end).days if project_finish and planned_end else 0}}
 
 
+_MONTHS = {m.lower(): i for i, m in enumerate(
+    ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])}
+
+
+def parse_sheet_date(text):
+    """A date off a programme sheet, in whatever form somebody typed it: "14-Oct-26", "10/14/2026", or already ISO
+    (an Excel date cell reads as ISO already, via cell_text)."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text[:10], "%Y-%m-%d").date()
+    except ValueError:
+        pass
+    m = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$", text)
+    if m:
+        a, b, y = (int(x) for x in m.groups())
+        y = y + 2000 if y < 100 else y
+        for day, month in ((a, b), (b, a)):      # a sheet mixes 14-Oct-26 (day-month) and 10/14/2026 (month-day)
+            if 1 <= month <= 12 and 1 <= day <= 31:
+                try:
+                    return date(y, month, day)
+                except ValueError:
+                    continue
+        return None
+    m = re.match(r"^(\d{1,2})[-\s]([A-Za-z]{3,})[-\s](\d{2,4})$", text)
+    if m and _MONTHS.get(m.group(2)[:3].lower()):
+        y = int(m.group(3))
+        y = y + 2000 if y < 100 else y
+        try:
+            return date(y, _MONTHS[m.group(2)[:3].lower()], int(m.group(1)))
+        except ValueError:
+            return None
+    return None
+
+
+_BLOCK_SNO = re.compile(r"^[A-Za-z]$|^\d+\.00$")
+
+
+def classify_schedule_rows(rows):
+    """A programme sheet's rows, told apart by their own indentation: a block heading (bold, or a bare letter, or an
+    SL.No ending .00) is a label and nothing is created from it; the row that follows it at that same, shallower
+    indent is an Activity; anything indented one step deeper under it is a Task; deeper still is folded into the
+    nearest Task's own text as a dated note, since Planning & Progress goes no further than Activity and Task.
+
+    Returns (parsed, warnings): parsed is every row read as a line with no date on it, or unreadable, left out and
+    counted in warnings rather than silently making a wrong Activity.
+    """
+    out, warnings = [], []
+    activity_indent = task_indent = None
+    cur_activity = cur_task = None
+    for n, r in enumerate(rows):
+        sno, text, s, f = r.get("sno", ""), r.get("text", ""), r.get("start"), r.get("finish")
+        if not text:
+            continue
+        if r.get("bold") or _BLOCK_SNO.match(sno.strip().rstrip(".")):
+            cur_activity = cur_task = activity_indent = task_indent = None
+            continue
+        if s is None or f is None:
+            warnings.append("Row %d (%s): no readable start and end date, so it was left out." % (n + 1, text[:50]))
+            continue
+        if f < s:
+            warnings.append("Row %d (%s): finishes before it starts, so it was left out." % (n + 1, text[:50]))
+            continue
+        indent = r.get("indent", 0)
+        if activity_indent is None or indent <= activity_indent:
+            out.append({"kind": "activity", "sno": sno, "text": text, "start": s.isoformat(), "finish": f.isoformat(), "tasks": []})
+            cur_activity, activity_indent = len(out) - 1, indent
+            cur_task = task_indent = None
+        elif cur_task is None or indent <= task_indent:
+            out.append({"kind": "task", "sno": sno, "text": text, "start": s.isoformat(), "finish": f.isoformat(), "under": cur_activity})
+            cur_task, task_indent = len(out) - 1, indent
+        else:
+            out[cur_task]["text"] += "; %s (%s to %s)" % (text, s.isoformat(), f.isoformat())
+    return out, warnings
+
+
+def schedule_import_preview(db, client_id, job, raw, sheet_name=""):
+    from app.core.sheets import cell_text, read_xlsx_outline, sheet_note
+    rows = read_xlsx_outline(raw, sheet_name)
+    if not rows:
+        raise HTTPException(400, "Nothing could be read from that sheet." + sheet_note())
+    header_at, header, cols = None, [], {}
+    for i, r in enumerate(rows[:30]):
+        vals = [v.lower().replace(" ", "").replace(".", "") for v in r["values"]]
+        sno_at = next((j for j, v in enumerate(vals) if v in ("slno", "sno")), None)
+        text_at = next((j for j, v in enumerate(vals) if "item" in v or "activ" in v or "descri" in v), None)
+        start_at = next((j for j, v in enumerate(vals) if v == "start" or "startdate" in v), None)
+        end_at = next((j for j, v in enumerate(vals) if v in ("end", "finish") or "enddate" in v or "finishdate" in v), None)
+        if text_at is not None and start_at is not None and end_at is not None:
+            header_at, cols = i, {"sno": sno_at, "text": text_at, "start": start_at, "finish": end_at}
+            break
+    if header_at is None:
+        raise HTTPException(400, "No Start and End date columns were found, next to a description column." + sheet_note())
+    body = []
+    text_col = cols["text"]
+    for r in rows[header_at + 1:]:
+        v = r["values"]
+        get = lambda k: (v[cols[k]].strip() if cols.get(k) is not None and cols[k] < len(v) else "")
+        indent = r["indents"][text_col] if text_col < len(r["indents"]) else 0.0
+        bold = r["bolds"][text_col] if text_col < len(r["bolds"]) else False
+        body.append({"sno": get("sno"), "text": get("text"), "start": parse_sheet_date(get("start")),
+                     "finish": parse_sheet_date(get("finish")), "indent": indent, "bold": bold})
+    parsed, warnings = classify_schedule_rows(body)
+    if not parsed:
+        raise HTTPException(400, "Nothing on that sheet read as an activity or a task with real dates." + sheet_note())
+    return {"rows": parsed, "warnings": warnings,
+            "message": "%d activit%s, %d task%s read. Check them, then import." % (
+                len([p for p in parsed if p["kind"] == "activity"]), "y" if len([p for p in parsed if p["kind"] == "activity"]) == 1 else "ies",
+                len([p for p in parsed if p["kind"] == "task"]), "" if len([p for p in parsed if p["kind"] == "task"]) == 1 else "s")}
+
+
+def schedule_import_confirm(db, client_id, job, rows, actor_name=""):
+    """What the preview found (as the person has checked and possibly fixed it) made real: an Activity per
+    activity row, chained finish-to-start in the order given, and a Task under each of its own rows."""
+    if not rows:
+        raise HTTPException(400, "Nothing to import.")
+    n = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.job_id == job.id).count()
+    made_activity, prev, tasks = {}, None, 0
+    for i, r in enumerate(rows):
+        text = (r.get("text") or "").strip()[:200]
+        s, f = _d(r.get("start")), _d(r.get("finish"))
+        if not text or not s or not f or f < s:
+            continue
+        if r.get("kind") == "activity":
+            a = models.DBScheduleActivity(client_id=client_id, job_id=job.id, code="A%d" % ((n + len(made_activity) + 1) * 10),
+                                          name=text, planned_start=s.isoformat(), planned_finish=f.isoformat(),
+                                          depends_on_id=prev, display_order=n + len(made_activity))
+            db.add(a)
+            db.flush()
+            made_activity[i] = a.id
+            prev = a.id
+        elif r.get("kind") == "task":
+            under = made_activity.get(r.get("under"))
+            if under is None:
+                continue
+            db.add(models.DBScheduleTask(client_id=client_id, job_id=job.id, activity_id=under, task_date=s.isoformat(),
+                                         text=text, created_by_name=actor_name))
+            tasks += 1
+    if not made_activity:
+        raise HTTPException(400, "Nothing valid to import.")
+    return "%d activit%s with %d task%s imported." % (len(made_activity), "y" if len(made_activity) == 1 else "ies",
+                                                       tasks, "" if tasks == 1 else "s")
+
+
+def schedule_from_boq(db, client_id, job, start, finish, by="section", actor_name=""):
+    """Draw the programme from the project's BOQ: the work the client's sheet lists, put on the plan.
+
+    By section (the default): one activity per section of the BOQ, its priced lines as the activity's tasks, so the
+    activity moves as each line is done - partly or wholly - here or in the site diary. By item: one activity per priced
+    line, and where a client work order was made from the BOQ, tied to that order's line so its progress comes from the
+    measurement book. Either way each is weighted by what it is worth and spread end to end across the span given; a
+    first draft to be moved about. What was drawn before is not drawn again."""
+    boq = db.query(models.DBBoq).filter(models.DBBoq.client_id == client_id, models.DBBoq.job_id == job.id).first()
+    if boq is None:
+        raise HTTPException(409, "This project has no BOQ yet. Make one under Projects, BOQ, then draw the programme from it.")
+    s, f = _d(start), _d(finish)
+    if not s or not f or f <= s:
+        raise HTTPException(400, "Give the span the work runs across.")
+    if by not in ("section", "item"):
+        raise HTTPException(400, "Draw by section or by item.")
+    rev = db.query(models.DBBoqRevision).filter(models.DBBoqRevision.boq_id == boq.id,
+                                                models.DBBoqRevision.rev_no == boq.current_rev).first()
+    lines = db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id).order_by(
+        models.DBBoqLine.display_order, models.DBBoqLine.id).all() if rev else []
+    priced = lambda l: l.kind in ("item", "sub")
+    first_line = lambda text: re.sub(r"\s+", " ", (text or "").split("\n")[0]).strip()[:200]
+
+    # What goes on the plan: (key, name, weight, the lines under it).
+    groups = []
+    if by == "section":
+        current = None
+        for l in lines:
+            if l.kind == "section":
+                current = [l.key, first_line(l.description) or "Section", 0.0, []]
+                groups.append(current)
+            elif priced(l):
+                if current is None:
+                    current = ["", "General works", 0.0, []]
+                    groups.append(current)
+                current[2] += 0.0 if l.rate_only else (l.amount or 0)
+                current[3].append(l)
+        groups = [g for g in groups if g[3]]
+    else:
+        groups = [[l.key, first_line(l.description), 0.0 if l.rate_only else (l.amount or 0), [l]] for l in lines if priced(l)]
+    have = {a.boq_key for a in db.query(models.DBScheduleActivity.boq_key).filter(
+        models.DBScheduleActivity.client_id == client_id, models.DBScheduleActivity.job_id == job.id).all() if a.boq_key}
+    groups = [g for g in groups if not (g[0] and g[0] in have)]
+    if not groups:
+        raise HTTPException(409, "Everything in %s is already on the programme." % (boq.number or "the BOQ"))
+
+    # A client order made from this BOQ measures the work: an item drawn on its own takes its progress from that book.
+    wo_line = {}
+    if by == "item":
+        for wo in db.query(models.DBWorkOrder).filter(models.DBWorkOrder.client_id == client_id, models.DBWorkOrder.boq_id == boq.id).all():
+            for wl in db.query(models.DBWorkOrderLine).filter(models.DBWorkOrderLine.work_order_id == wo.id).all():
+                if wl.fg_code:
+                    wo_line.setdefault(wl.fg_code.upper(), wl.id)
+    used_lines = {a.work_order_line_id for a in db.query(models.DBScheduleActivity.work_order_line_id).filter(
+        models.DBScheduleActivity.job_id == job.id).all() if a.work_order_line_id}
+
+    total = sum(g[2] for g in groups) or float(len(groups))
+    span = (f - s).days
+    cur, prev = s, None
+    n = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.job_id == job.id).count()
+    tasks = 0
+    for i, (key, name, weight, under) in enumerate(groups):
+        share = max(1, round(span * ((weight if total and any(g[2] for g in groups) else 1.0) / total)))
+        fin = min(f, cur + timedelta(days=share - 1)) if i < len(groups) - 1 else f
+        line_id = None
+        if by == "item":
+            code = (under[0].item_code or "").upper()
+            line_id = wo_line.get(code) if code and wo_line.get(code) not in used_lines else None
+        a = models.DBScheduleActivity(
+            client_id=client_id, job_id=job.id, code="A%d" % ((n + i + 1) * 10), name=name or "Work",
+            planned_start=cur.isoformat(), planned_finish=fin.isoformat(), weight=money(weight),
+            work_order_line_id=line_id, depends_on_id=prev, display_order=n + i, boq_key=key or "")
+        db.add(a)
+        db.flush()
+        if by == "section":
+            for l in under:
+                db.add(models.DBScheduleTask(client_id=client_id, job_id=job.id, activity_id=a.id, task_date=cur.isoformat(),
+                                             text=(("%s - " % l.item_code) if l.item_code else "") + first_line(l.description),
+                                             created_by_name=actor_name))
+                tasks += 1
+        prev = a.id
+        cur = min(f, fin + timedelta(days=1))
+    db.flush()
+    what = "%d activit%s" % (len(groups), "y" if len(groups) == 1 else "ies")
+    if tasks:
+        what += " with %d task%s" % (tasks, "" if tasks == 1 else "s")
+    return "%s drawn from %s." % (what, boq.number or "the BOQ")
+
+
 def activity_detail(db, client_id, a):
     """One activity in full, for its own page: where it stands, every task under it (all days), and the history of
     the progress reported on it."""

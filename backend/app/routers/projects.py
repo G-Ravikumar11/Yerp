@@ -2,7 +2,7 @@
 import re
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy import func as sqlfunc, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -27,6 +27,7 @@ from app.routers.files import list_files
 from app.schemas.projects import (
     ActivityIn,
     DiaryIn,
+    FromBoqIn,
     DrawingIn,
     FromWorkOrderIn,
     JobIn,
@@ -66,6 +67,9 @@ from app.services.projects import (
     project_pnl,
     activity_detail,
     apply_work_updates,
+    schedule_from_boq,
+    schedule_import_confirm,
+    schedule_import_preview,
     check_task,
     planning_note,
     schedule_day,
@@ -1054,6 +1058,37 @@ def report_progress(activity_id: int, body: ProgressIn, request: Request, db: Se
         a.actual_finish = on
     db.commit()
     return {"ok": True, "schedule": schedule_view(db, client.id, job_or_404(db, client.id, a.job_id))}
+
+
+@router.post("/api/jobs/{job_id}/schedule/import")
+async def schedule_import(job_id: int, request: Request, file: UploadFile = File(...), sheet: str = Form(""),
+                          db: Session = Depends(get_db)):
+    """Read a programme sheet - a block heading, its activities, each one's own stages - as activities and tasks,
+    without saving: they come back for a look, the save is the separate confirm call."""
+    client, _, _ = wo_actor(request, db)
+    job = job_or_404(db, client.id, job_id)
+    raw = await file.read()
+    return schedule_import_preview(db, client.id, job, raw, sheet)
+
+
+@router.post("/api/jobs/{job_id}/schedule/import/confirm")
+def schedule_import_confirm_route(job_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
+    """What the preview found, as the person has checked it, made real."""
+    client, _, actor_name = wo_actor(request, db)
+    job = job_or_404(db, client.id, job_id)
+    message = schedule_import_confirm(db, client.id, job, body.get("rows") or [], actor_name)
+    db.commit()
+    return {"ok": True, "schedule": schedule_view(db, client.id, job), "message": message}
+
+
+@router.post("/api/jobs/{job_id}/schedule/from-boq")
+def schedule_from_the_boq(job_id: int, body: FromBoqIn, request: Request, db: Session = Depends(get_db)):
+    """The programme drawn from the project's BOQ: by section, with its lines as tasks, or one activity per line."""
+    client, _, actor_name = wo_actor(request, db)
+    job = job_or_404(db, client.id, job_id)
+    message = schedule_from_boq(db, client.id, job, body.start, body.finish, (body.by or "section"), actor_name)
+    db.commit()
+    return {"ok": True, "schedule": schedule_view(db, client.id, job), "message": message}
 
 
 @router.post("/api/jobs/{job_id}/schedule/from-work-order/{wo_id}")
