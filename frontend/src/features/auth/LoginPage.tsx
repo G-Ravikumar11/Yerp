@@ -59,13 +59,14 @@ export default function LoginPage() {
       for (const u of ['/api/client/logout', '/api/employee/auth/logout', '/api/portal/logout']) void api(u, { method: 'POST', quiet: true }).catch(() => undefined)
       return
     }
-    // Already signed in: go straight on.
+    // Already signed in: go straight on. All three kinds of account are asked at once, so a signed-in person leaves
+    // after one round trip; the first that answers yes, in this order, says where to.
     void (async () => {
-      for (const [url, to] of [['/api/client/me', nextTarget(appUrl())], ['/api/employee/auth/me', nextTarget(appUrl())], ['/api/superadmin/me', appUrl('superadmin')]]) {
-        // Through api(): in the native app a bare '/api/...' is answered by the app's own files, not the server.
-        const signedIn = await api(url, { quiet: true }).then(() => true, () => false)
-        if (signedIn) return go(to)
-      }
+      const doors: [string, string][] = [['/api/client/me', nextTarget(appUrl())], ['/api/employee/auth/me', nextTarget(appUrl())], ['/api/superadmin/me', appUrl('superadmin')]]
+      // Through api(): in the native app a bare '/api/...' is answered by the app's own files, not the server.
+      const answers = await Promise.all(doors.map(([url]) => api(url, { quiet: true }).then(() => true, () => false)))
+      const door = answers.indexOf(true)
+      if (door >= 0) go(doors[door][1])
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

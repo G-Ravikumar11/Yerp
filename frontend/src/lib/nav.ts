@@ -150,8 +150,6 @@ export type Trail = { label: string; path?: string }[]
 export function trailFor(pathname: string, staff = false): Trail {
   const home: Trail = [{ label: 'Home', path: '/' }]
   if (pathname === '/') return [{ label: staff ? 'Overview' : 'Command Center' }]
-  if (pathname === '/design') return [...home, { label: 'Design system' }]
-  if (pathname === '/design/grid') return [...home, { label: 'Design system', path: '/design' }, { label: 'Data grid' }]
   for (const e of NAV) {
     if (e.kind === 'link' && e.path === pathname) return [...home, { label: e.label }]
     if (e.kind === 'group') {

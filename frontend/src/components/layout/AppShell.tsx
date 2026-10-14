@@ -21,9 +21,6 @@ export function AppShell() {
   const { pathname } = useLocation()
   const collapsed = useUI((s) => s.sidebarCollapsed)
   const { isLoading, isAnonymous, error, user } = useSession()
-  // The design pages are open to anyone; everything else needs a signed-in person.
-  const gated = !pathname.startsWith('/design')
-
   // The tab and the history say where you are, and a screen reader hears the change.
   useEffect(() => {
     const trail = trailFor(pathname, user?.type === 'employee')
@@ -32,15 +29,15 @@ export function AppShell() {
 
   // Signed out: go to the sign-in page rather than draw a page full of failures.
   useEffect(() => {
-    if (gated && isAnonymous && (import.meta.env.PROD || import.meta.env.VITE_API_BASE_URL)) {
+    if (isAnonymous && (import.meta.env.PROD || import.meta.env.VITE_API_BASE_URL)) {
       window.location.assign(appUrl('login'))
     }
-  }, [gated, isAnonymous])
+  }, [isAnonymous])
 
   // In the native app, a signed-in phone is offered notifications.
   useEffect(() => {
-    if (gated && !isLoading && !isAnonymous) void registerPush()
-  }, [gated, isLoading, isAnonymous])
+    if (!isLoading && !isAnonymous) void registerPush()
+  }, [isLoading, isAnonymous])
 
   // A new page starts at its top, as a page does.
   useEffect(() => {
@@ -67,14 +64,14 @@ export function AppShell() {
         <Topbar />
         <main id="main" className="mx-auto w-full min-w-0 max-w-[1600px] overflow-x-clip px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
           <div key={pathname}>
-            {gated && !isLoading && !isAnonymous && !pathname.startsWith('/settings') && <CompanyNotice />}
-            {gated && isLoading ? (
+            {!isLoading && !isAnonymous && !pathname.startsWith('/settings') && <CompanyNotice />}
+            {isLoading ? (
               <div className="space-y-4" role="status" aria-label="Loading">
                 <Skeleton className="h-9 w-64" />
                 <Skeleton className="h-4 w-96 max-w-full" />
                 <Skeleton className="mt-6 h-64 w-full" />
               </div>
-            ) : gated && (isAnonymous || error) ? (
+            ) : isAnonymous || error ? (
               <div className="mx-auto max-w-md py-24 text-center">
                 <h1 className="text-2xl font-semibold">{error ? 'Could not reach the server' : 'Please sign in'}</h1>
                 <p className="mt-2 text-[15px] text-muted-foreground">

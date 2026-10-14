@@ -26,7 +26,9 @@ export default defineConfig(({ mode, command }) => {
       react(),
       tailwindcss(),
       VitePWA({
-        registerType: 'prompt',
+        // A new build takes over as soon as it is installed. The page in front of the person is not reloaded under
+        // them (boot-app.tsx); the next page they open is simply the new one.
+        registerType: 'autoUpdate',
         injectRegister: false,
         includeAssets: ['favicon.svg', 'icons/apple-touch-icon.png'],
         manifest: {
@@ -56,8 +58,17 @@ export default defineConfig(({ mode, command }) => {
         // on sign-out) by the app's own query cache.
         workbox: {
           globPatterns: ['**/*.{js,css,html,svg,png,woff2,webmanifest}'],
-          navigateFallback: '/next/index.html',
-          navigateFallbackDenylist: [/^\/api\//],
+          // Opening a page asks the server first, always: answering it from the saved copy showed the build before the
+          // last deploy until the page reloaded itself. The saved app shell is the answer only when the server cannot be
+          // reached. The page itself is a couple of kilobytes; the scripts it names still come from the saved copy.
+          navigateFallback: null,
+          runtimeCaching: [
+            {
+              urlPattern: ({ request, url }) => request.mode === 'navigate' && url.pathname.startsWith('/next'),
+              handler: 'NetworkOnly',
+              options: { precacheFallback: { fallbackURL: '/next/index.html' } },
+            },
+          ],
           maximumFileSizeToCacheInBytes: 3_000_000,
           cleanupOutdatedCaches: true,
         },

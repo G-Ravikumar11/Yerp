@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect } from 'react'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import { MotionConfig } from 'framer-motion'
+import { Loader2 } from 'lucide-react'
 import { AppShell } from '@/components/layout/AppShell'
 import { Toaster, TooltipProvider } from '@/components/ui'
 import { LegacyLinks } from '@/lib/legacyLinks'
@@ -22,8 +23,16 @@ const ApplyPage = lazy(() => import('@/features/careers/ApplyPage'))
 const MeetingPage = lazy(() => import('@/features/meeting/MeetingPage'))
 const SuperadminPage = lazy(() => import('@/features/superadmin/SuperadminPage'))
 const SuperadminLoginPage = lazy(() => import('@/features/auth/SuperadminLoginPage'))
-const DesignSystem = lazy(() => import('@/pages/DesignSystem'))
-const GridPlayground = lazy(() => import('@/pages/GridPlayground'))
+
+/** While a page's code is still downloading. It appears only after a moment, so a quick load shows nothing at all
+ * rather than a flash; a slow one (a site on a weak signal) shows that something is happening instead of a blank page. */
+function PageLoading() {
+  return (
+    <div role="status" aria-label="Loading" className="grid min-h-dvh place-items-center bg-background">
+      <span className="animate-fade-in [animation-delay:400ms]"><Loader2 className="size-6 animate-spin text-muted-foreground" aria-hidden /></span>
+    </div>
+  )
+}
 
 export default function App() {
   const theme = useUI((s) => s.theme)
@@ -58,7 +67,7 @@ export default function App() {
       <TooltipProvider>
         <BrowserRouter basename={basename}>
           <LegacyLinks />
-          <Suspense fallback={null}>
+          <Suspense fallback={<PageLoading />}>
           <Routes>
             <Route path="login" element={<LoginPage />} />
             <Route path="jobs" element={<JobsPage />} />
@@ -72,22 +81,6 @@ export default function App() {
             <Route path="superadmin/login" element={<SuperadminLoginPage />} />
             <Route element={<AppShell />}>
               <Route index element={<HomePage />} />
-              <Route
-                path="design"
-                element={
-                  <Suspense fallback={null}>
-                    <DesignSystem />
-                  </Suspense>
-                }
-              />
-              <Route
-                path="design/grid"
-                element={
-                  <Suspense fallback={null}>
-                    <GridPlayground />
-                  </Suspense>
-                }
-              />
               {SCREENS.map(({ path, Component }) => (
                 <Route key={path} path={path.slice(1)} element={<Component />} />
               ))}
