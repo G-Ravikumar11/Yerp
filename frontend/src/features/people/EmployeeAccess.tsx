@@ -75,6 +75,9 @@ export function EmployeeAccess({ e }: { e: EmployeeDetail }) {
   const roleLabel = cat.data.permission_roles.find((r) => r.code === e.permission_role)?.label ?? e.permission_role
   const siteLabel = e.all_sites || e.site_names.length === 0 ? 'Every site' : e.site_names.join(', ')
   const held = perms.filter((p) => isOn(p.key) && !reserved(p))
+  const wasAssigned = (p: (typeof perms)[number]) => e.permissions.includes(p.key) && !reserved(p)
+  const assigned = perms.filter(wasAssigned)
+  const unassigned = perms.filter((p) => !wasAssigned(p))
   const groupsOf = (list: typeof perms) => {
     const m = new Map<string, typeof perms>()
     for (const p of list) m.set(p.group || 'Other', [...(m.get(p.group || 'Other') ?? []), p])
@@ -129,21 +132,27 @@ export function EmployeeAccess({ e }: { e: EmployeeDetail }) {
           <h3 className="text-base font-semibold">Permissions</h3>
           <span className="text-[13px] text-muted-foreground">{changed === 0 ? 'Same as the role' : `${changed} different from the role`}</span>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {perms.map((p) => {
-            const locked = reserved(p)
-            const diff = !locked && isOn(p.key) !== fromRole.has(p.key)
-            return (
-              <div key={p.key} className={card + ' flex items-center justify-between gap-3 !py-3' + (diff ? ' border-[var(--primary)]' : '')}>
-                <div className="min-w-0">
-                  <p className="text-[13px] leading-snug">{p.label}</p>
-                  <p className="text-[11px] text-muted-foreground">{locked ? `${cat.data!.permission_roles.find((r) => r.code === p.only_role)?.label ?? p.only_role} only` : diff ? (isOn(p.key) ? 'Added for them' : 'Removed for them') : p.group}</p>
-                </div>
-                <Toggle on={!locked && isOn(p.key)} disabled={locked} label={p.label} onChange={(v) => setGranted((g) => v ? [...g, p.key] : g.filter((k) => k !== p.key))} />
-              </div>
-            )
-          })}
-        </div>
+        {/* Ordered by what is saved for them, not by the switches as they are flipped, so a card does not jump away from under the cursor. */}
+        {[{ title: 'Assigned to them', list: assigned }, { title: 'Not assigned', list: unassigned }].map(({ title, list }) => list.length > 0 && (
+          <div key={title} className="mb-4 last:mb-0">
+            <p className="mb-2 text-[13px] font-medium text-muted-foreground">{title} ({list.length})</p>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {list.map((p) => {
+                const locked = reserved(p)
+                const diff = !locked && isOn(p.key) !== fromRole.has(p.key)
+                return (
+                  <div key={p.key} className={card + ' flex items-center justify-between gap-3 !py-3' + (diff ? ' border-[var(--primary)]' : '')}>
+                    <div className="min-w-0">
+                      <p className="text-[13px] leading-snug">{p.label}</p>
+                      <p className="text-[11px] text-muted-foreground">{locked ? `${cat.data!.permission_roles.find((r) => r.code === p.only_role)?.label ?? p.only_role} only` : diff ? (isOn(p.key) ? 'Added for them' : 'Removed for them') : p.group}</p>
+                    </div>
+                    <Toggle on={!locked && isOn(p.key)} disabled={locked} label={p.label} onChange={(v) => setGranted((g) => v ? [...g, p.key] : g.filter((k) => k !== p.key))} />
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        ))}
       </section>
 
       <div className="flex items-center justify-end gap-2 border-t border-border pt-4">
