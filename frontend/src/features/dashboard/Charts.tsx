@@ -82,12 +82,13 @@ const frame = (aria: string, h: number, chart: React.ReactElement) => (
 )
 
 /** A project's number with its name under it, so a bar can be read without hovering. */
-function ProjectTick({ x = 0, y = 0, payload, names }: { x?: number; y?: number; payload?: { value: string }; names: Record<string, string> }) {
+function ProjectTick({ x = 0, y = 0, payload, names, narrow = false }: { x?: number; y?: number; payload?: { value: string }; names: Record<string, string>; narrow?: boolean }) {
   const key = payload?.value ?? ''
+  // A phone has room for the number only; the name is in the tooltip a tap away.
   return (
     <g transform={`translate(${x},${y})`}>
-      <text y={14} textAnchor="middle" fill="var(--foreground)" fontSize={12} fontWeight={500}>{short(key, 10)}</text>
-      {names[key] && <text y={29} textAnchor="middle" fill="var(--muted-foreground)" fontSize={11}>{short(names[key], 12)}</text>}
+      <text y={14} textAnchor="middle" fill="var(--foreground)" fontSize={narrow ? 11 : 12} fontWeight={500}>{short(key, narrow ? 9 : 10)}</text>
+      {!narrow && names[key] && <text y={29} textAnchor="middle" fill="var(--muted-foreground)" fontSize={11}>{short(names[key], 12)}</text>}
     </g>
   )
 }
@@ -101,7 +102,7 @@ export function ProfitChart({ projects }: { projects: ProjectPnl[] }) {
   const data: ProjectRow[] = (live.length ? live : projects)
     .slice()
     .sort((a, b) => activity(b) - activity(a) || b.order_value - a.order_value)
-    .slice(0, 8)
+    .slice(0, wide ? 8 : 4)
     .map((p) => ({ ...p, label: p.number || p.name }))
   const names = Object.fromEntries(data.map((p) => [p.label, p.number ? p.name : '']))
   return frame(
@@ -110,8 +111,8 @@ export function ProfitChart({ projects }: { projects: ProjectPnl[] }) {
     <BarChart data={data} margin={{ top: 22, right: 12, left: 0, bottom: 4 }} barGap={6} barCategoryGap="22%">
       <Fills />
       <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="2 6" strokeOpacity={0.7} />
-      <XAxis dataKey="label" interval={0} height={40} tick={<ProjectTick names={names} />} axisLine={false} tickLine={false} />
-      <YAxis tickFormatter={compactINR} tick={TICK} axisLine={false} tickLine={false} width={64} tickCount={5} />
+      <XAxis dataKey="label" interval={0} height={wide ? 40 : 24} tick={<ProjectTick names={names} narrow={!wide} />} axisLine={false} tickLine={false} />
+      <YAxis tickFormatter={compactINR} tick={TICK} axisLine={false} tickLine={false} width={wide ? 64 : 78} tickCount={5} />
       <Tooltip
         cursor={{ fill: 'var(--accent)', fillOpacity: 0.5, radius: 8 }}
         content={({ active, payload }) => {
@@ -130,7 +131,7 @@ export function ProfitChart({ projects }: { projects: ProjectPnl[] }) {
           )
         }}
       />
-      <Legend verticalAlign="top" align={wide ? 'right' : 'left'} iconType="circle" iconSize={8} formatter={legend} />
+      <Legend verticalAlign={wide ? 'top' : 'bottom'} align={wide ? 'right' : 'left'} iconType="circle" iconSize={8} formatter={legend} wrapperStyle={wide ? undefined : { paddingTop: 8 }} />
       <Bar name="Money earned" dataKey="revenue" fill="url(#gRev)" radius={[8, 8, 2, 2]} maxBarSize={36} isAnimationActive={!calm}>
         {wide && <LabelList dataKey="revenue" position="top" formatter={label} style={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />}
       </Bar>
