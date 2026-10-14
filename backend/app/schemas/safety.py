@@ -50,3 +50,12 @@ class PermitIn(BaseModel):
 class PermitCloseIn(BaseModel):
     note: Optional[str] = ""
     cancel: Optional[bool] = False
+
+
+class WorkerIn(BaseModel):
+    job_id: int
+    name: str
+    age: int
+    address: Optional[str] = ""
+    trade: str
+    screened_on: Optional[str] = ""

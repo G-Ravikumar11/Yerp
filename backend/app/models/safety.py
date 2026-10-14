@@ -1,4 +1,4 @@
-"""Incidents, toolbox talks and work permits."""
+"""Incidents, toolbox talks, work permits, and the screening of workers before they start."""
 from datetime import datetime
 
 from sqlalchemy import Column, Float, ForeignKey, Integer, String, Text
@@ -71,4 +71,22 @@ class DBWorkPermit(Base):
     closed_at = Column(String, default="")
     closed_by = Column(String, default="")
     closure_note = Column(Text, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBWorkerScreening(Base):
+    """A worker screened before starting on site: who they are, their trade, and the proof - a photo and a medical
+    certificate, kept as files attached to this record (attached_type "worker")."""
+    __tablename__ = "worker_screenings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    number = Column(String, default="", index=True)             # WKR-0001
+    name = Column(String, default="")
+    age = Column(Integer, default=0)
+    address = Column(Text, default="")
+    trade = Column(String, default="", index=True)              # one of WORKER_TRADES
+    screened_on = Column(String, default="", index=True)
+    screened_by = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))

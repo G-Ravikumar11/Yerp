@@ -143,6 +143,12 @@ def attachment_target(db, client_id, attached_type, attached_id):
         if not x:
             raise HTTPException(404, "Incident not found")
         return x.job_id, False
+    if t == "worker":
+        w = db.query(models.DBWorkerScreening).filter(models.DBWorkerScreening.id == attached_id,
+                                                      models.DBWorkerScreening.client_id == client_id).first()
+        if not w:
+            raise HTTPException(404, "Worker not found")
+        return w.job_id, False
     if t == "ncr":
         n = db.query(models.DBNcr).filter(models.DBNcr.id == attached_id,
                                           models.DBNcr.client_id == client_id).first()
