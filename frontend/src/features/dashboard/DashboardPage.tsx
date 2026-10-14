@@ -183,7 +183,7 @@ export default function DashboardPage() {
             )}
             {reports && (
               <>
-                <Stat label="Total contract value" to="/clients/work-orders" value={fig(pnl.data?.summary.order_value, pnl.isPending)} loading={pnl.isPending} sub={pnl.data ? `${compactINR(pnl.data.summary.revenue)} earned so far` : undefined} />
+                <Stat label="Total contract value" to="/projects/boq" value={fig(pnl.data?.summary.order_value, pnl.isPending)} loading={pnl.isPending} sub={pnl.data ? `${compactINR(pnl.data.summary.revenue)} earned so far` : undefined} />
                 <Stat
                   label="Profit so far"
                   to="/projects/profit"

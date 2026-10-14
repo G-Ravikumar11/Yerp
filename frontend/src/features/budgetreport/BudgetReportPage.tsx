@@ -24,7 +24,7 @@ export default function BudgetReportPage() {
           description="The allocation, read back under the lines it was allocated against."
           actions={
             <>
-              <Button variant="outline" asChild><Link to="/clients/work-orders">Back</Link></Button>
+              <Button variant="outline" asChild><Link to="/projects/boq">Back</Link></Button>
               <Button variant="outline" asChild><a href={`/api/erp/work-orders/${id}/budget-report.xlsx`} title="As a workbook"><Download /> Download</a></Button>
               <Button onClick={() => window.print()}><Printer /> Print</Button>
             </>
