@@ -66,7 +66,7 @@ export default function DiaryPage() {
         </section>
       )}
       {labour.isPending && job > 0 && <Skeleton className="mt-6 h-24 w-full" />}
-      <DiaryFormModal job={job} id={open} onClose={() => setOpen(null)} />
+      <DiaryFormModal job={job} id={open} onClose={() => setOpen(null)} onOpen={setOpen} />
       {photos && <FilesModal type="diary" id={photos.id} title={`diary ${formatDate(photos.diary_date)}`} onClose={() => setPhotos(null)} />}
     </>
   )

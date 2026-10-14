@@ -24,7 +24,6 @@ WO_TRANSITIONS = {
 # Only a draft may be edited. Once submitted, the figures are what somebody is
 # being asked to sign off, and they must not move underneath them.
 WO_EDITABLE = ("DRAFT",)
-WO_DEPARTMENTS = ("Civil", "STP", "Electrical", "Mechanical", "Plumbing", "Finishing")
 
 # The only markup a scope of work may carry. Bold, italic, breaks and bullets
 # are what somebody writing a scope actually reaches for; everything else is

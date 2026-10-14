@@ -359,6 +359,7 @@ def test_a_diary_without_work_updates_still_saves_as_before(tenant):
     assert res.json()["message"] == "Diary opened for %s." % d(0)
 
 
+<<<<<<< .merge_file_BBdyCG
 # ---- the project chart: who is responsible, what is late, how long it runs ----
 
 def employee(tenant, first="Suresh", last="Babu"):
@@ -533,3 +534,122 @@ def test_reporting_progress_moves_the_status_with_it(tenant):
     b = act(tenant, j, "Walls", d(0), d(9))["activities"][1]
     tenant.post("/api/schedule/activities/%d/progress" % b["id"], json={"percent": 25})
     assert put_act(tenant, b, status="Not Started").status_code == 409
+=======
+# --- one activity on a page of its own ------------------------------------------------------------------------------------
+
+def test_an_activity_comes_with_its_tasks_on_every_day_and_its_history(tenant):
+    j = job(tenant)
+    aid = act(tenant, j, "Excavation", d(-4), d(5))["activities"][0]["id"]
+    for n, day in enumerate((d(-1), d(0), d(2))):
+        tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json={"text": "Task %d" % n, "date": day, "activity_id": aid})
+    first = tenant.get("/api/jobs/%d/schedule/day" % j["id"]).json()["today"][0]["tasks"][0]["id"]
+    tenant.put("/api/schedule/tasks/%d" % first, json={"done": True})
+    out = tenant.get("/api/schedule/activities/%d" % aid).json()
+    a = out["activity"]
+    assert out["job"]["id"] == j["id"] and a["name"] == "Excavation" and a["code"]
+    assert [t["date"] for t in a["tasks"]] == [d(-1), d(0), d(2)], "every day, in date order"
+    assert a["tasks_total"] == 3 and a["tasks_done"] == 1 and round(a["actual_percent"]) == 33
+    assert a["editable"] is True and a["planned_start"] == d(-4) and a["state"]
+    assert out["history"][0]["percent"] == 33.3 and out["history"][0]["note"] == "From its tasks"
+
+
+def test_an_activity_that_is_not_yours_or_not_there_is_not_found(tenant, second_tenant):
+    j = job(second_tenant)
+    aid = act(second_tenant, j, "Elsewhere", d(-4), d(5))["activities"][0]["id"]
+    assert tenant.get("/api/schedule/activities/%d" % aid).status_code == 404
+    assert tenant.get("/api/schedule/activities/999999").status_code == 404
+    assert second_tenant.get("/api/schedule/activities/%d" % aid).status_code == 200
+
+
+# --- a task that is only part done ------------------------------------------------------------------------------------
+
+def two_tasks(tenant):
+    j = job(tenant)
+    aid = act(tenant, j, "Excavation", d(-4), d(5))["activities"][0]["id"]
+    ids = [tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json={"text": t, "date": d(0), "activity_id": aid}).json()["task"]["id"] for t in ("Dig", "Haul")]
+    return j, aid, ids
+
+
+def test_a_task_part_done_moves_the_activity_by_that_share(tenant):
+    j, aid, (dig, haul) = two_tasks(tenant)
+    part = tenant.put("/api/schedule/tasks/%d" % dig, json={"percent": 40}).json()["task"]
+    assert part["percent"] == 40 and part["done"] is False
+    row = activity_row(tenant, j, aid)
+    assert row["actual_percent"] == 20 and row["tasks_done"] == 0, "40% of one of two tasks is a fifth of the activity"
+    tenant.put("/api/schedule/tasks/%d" % haul, json={"done": True})
+    assert activity_row(tenant, j, aid)["actual_percent"] == 70      # (40 + 100) / 2
+
+
+def test_part_done_then_done_finishes_the_task_and_going_back_clears_it(tenant):
+    j, aid, (dig, haul) = two_tasks(tenant)
+    tenant.put("/api/schedule/tasks/%d" % dig, json={"percent": 40})
+    done = tenant.put("/api/schedule/tasks/%d" % dig, json={"done": True}).json()["task"]
+    assert done["done"] is True and done["percent"] == 100
+    assert activity_row(tenant, j, aid)["actual_percent"] == 50
+    reset = tenant.put("/api/schedule/tasks/%d" % dig, json={"done": False}).json()["task"]
+    assert reset["done"] is False and reset["percent"] == 0
+    assert activity_row(tenant, j, aid)["actual_percent"] == 0
+
+
+def test_a_task_reported_at_a_hundred_per_cent_is_done_and_can_be_lowered(tenant):
+    j, aid, (dig, haul) = two_tasks(tenant)
+    full = tenant.put("/api/schedule/tasks/%d" % dig, json={"percent": 100}).json()["task"]
+    assert full["done"] is True and full["done_by_name"]
+    lower = tenant.put("/api/schedule/tasks/%d" % dig, json={"percent": 30}).json()["task"]
+    assert lower["done"] is False and lower["percent"] == 30
+    assert activity_row(tenant, j, aid)["actual_percent"] == 15
+
+
+def test_part_done_must_be_a_real_percentage(tenant):
+    j, aid, (dig, haul) = two_tasks(tenant)
+    assert tenant.put("/api/schedule/tasks/%d" % dig, json={"percent": 120}).status_code == 400
+    assert tenant.put("/api/schedule/tasks/%d" % dig, json={"percent": -5}).status_code == 400
+    assert activity_row(tenant, j, aid)["actual_percent"] == 0
+
+
+def test_putting_a_part_done_task_back_clears_the_part(tenant):
+    j, aid, (dig, haul) = two_tasks(tenant)
+    tenant.put("/api/schedule/tasks/%d" % dig, json={"percent": 40})
+    back = tenant.put("/api/schedule/tasks/%d" % dig, json={"done": False}).json()["task"]
+    assert back["percent"] == 0 and back["done"] is False and back["done_by_name"] == ""
+    assert activity_row(tenant, j, aid)["actual_percent"] == 0
+
+
+def test_a_diary_can_report_a_task_part_done(tenant):
+    j = job(tenant)
+    aid = act(tenant, j, "Excavation", d(-4), d(5))["activities"][0]["id"]
+    ids = [tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json={"text": t, "date": d(0), "activity_id": aid}).json()["task"]["id"] for t in ("Dig", "Haul")]
+    res = start_diary(tenant, j, [{"task_id": ids[0], "percent": 40}, {"task_id": ids[1], "done": True}])
+    assert res.status_code == 200, res.text
+    assert res.json()["planning"]["tasks"] == 2
+    row = day_of(tenant, j)["today"][0]
+    assert row["actual_percent"] == 70 and row["tasks_done"] == 1
+    assert [t["percent"] for t in row["tasks"]] == [40, 100]
+    again = tenant.put("/api/diary/%d" % res.json()["diary"]["id"], json={"work_updates": [{"task_id": ids[0], "percent": 40}]})
+    assert again.json()["planning"]["tasks"] == 0, "the same state again moves nothing"
+    assert start_diary(tenant, j, [{"task_id": ids[0], "percent": 130}], on=d(-1)).status_code == 400
+
+
+def test_a_diary_dated_in_the_future_still_moves_the_plan_from_today(tenant):
+    j = job(tenant)
+    aid = act(tenant, j, "Excavation", d(-4), d(9))["activities"][0]["id"]
+    tid = tenant.post("/api/jobs/%d/schedule/tasks" % j["id"], json={"text": "Dig", "date": d(0), "activity_id": aid}).json()["task"]["id"]
+    assert start_diary(tenant, j, [{"task_id": tid, "done": True}], on=d(1)).status_code == 200
+    now = tenant.get("/api/jobs/%d/schedule" % j["id"]).json()["activities"][0]
+    assert now["actual_percent"] == 100 and now["state"] == "done"
+
+
+def test_the_day_plan_also_lists_every_other_activity_on_the_site(tenant):
+    j = job(tenant)
+    act(tenant, j, "Excavation", d(-4), d(5))        # running
+    s = act(tenant, j, "Finished work", d(-20), d(-10))
+    act(tenant, j, "Handover", d(40), d(45))         # too far off for "coming up"
+    tenant.post("/api/schedule/activities/%d/progress" % [a for a in s["activities"] if a["name"] == "Finished work"][0]["id"], json={"percent": 100})
+    day = day_of(tenant, j)
+    assert [a["name"] for a in day["today"]] == ["Excavation"]
+    names = {a["name"]: a["bucket"] for a in day["others"]}
+    assert names == {"Finished work": "done", "Handover": "later"}, "nothing on the site goes missing"
+    everything = [a["name"] for k in ("today", "overdue", "soon", "others") for a in day[k]]
+    assert sorted(everything) == ["Excavation", "Finished work", "Handover"]
+    assert all("tasks" in a and "editable" in a for a in day["others"])
+>>>>>>> .merge_file_fkQJ82

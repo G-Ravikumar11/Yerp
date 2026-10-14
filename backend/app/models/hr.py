@@ -325,6 +325,24 @@ class DBEmployeeSite(Base):
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
+class DBDepartmentSite(Base):
+    """Which sites a department operates on.
+
+    Same shape and the same rule as DBEmployeeSite: a department with no rows
+    here runs on every site, so nothing changes until the owner narrows one.
+    """
+    __tablename__ = "department_sites"
+    __table_args__ = (
+        UniqueConstraint('department_id', 'job_id', name='uq_department_site'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
 class DBSiteGeofence(Base):
     """Where a project's site is, for attendance: a point and how far from it
     still counts as on site. A clock-in inside it is tagged to the project -

@@ -49,7 +49,7 @@ export interface DayRow {
   id: number
   code: string
   name: string
-  bucket: 'today' | 'overdue' | 'soon'
+  bucket: 'today' | 'overdue' | 'soon' | 'later' | 'done'
   planned_start: string
   planned_finish: string
   is_milestone: boolean
@@ -84,6 +84,8 @@ export interface DayTask {
   date: string
   text: string
   done: boolean
+  /** How much of the task is done: 100 when it is done, the part reported when it is only part done. */
+  percent: number
   done_by_name: string
   done_at: string
   created_by_name: string
@@ -94,12 +96,24 @@ export interface DayPlan {
   today: DayRow[]
   overdue: DayRow[]
   soon: DayRow[]
+  /** Every other activity on the site: finished, or starting further off. */
+  others: DayRow[]
   tasks: DayTask[]
   summary: { working: number; overdue: number; starting_soon: number; done_percent: number; planned_percent: number; variance: number }
 }
 
 export const useDayPlan = (job: number, on: string) => useQuery({ queryKey: ['schedule', 'day', job, on], enabled: job > 0, queryFn: () => get<DayPlan>(`/api/jobs/${job}/schedule/day?on=${on}`) })
+<<<<<<< .merge_file_BObgod
 export const useSchedule = (job: number) => useQuery({ queryKey: ['schedule', job], enabled: job > 0, staleTime: 0, refetchOnMount: 'always', queryFn: () => get<Schedule>(`/api/jobs/${job}/schedule`) })
+=======
+export interface ActivityDetail {
+  job: { id: number; number: string; name: string }
+  activity: Activity & Pick<DayRow, 'editable' | 'tasks_total' | 'tasks_done' | 'tasks' | 'updated_on' | 'updated_by'> & { planned_start: string; planned_finish: string }
+  history: { on: string; percent: number; note: string; by: string }[]
+}
+export const useActivity = (id: number) => useQuery({ queryKey: ['schedule', 'activity', id], enabled: id > 0, queryFn: () => get<ActivityDetail>(`/api/schedule/activities/${id}`) })
+export const useSchedule = (job: number) => useQuery({ queryKey: ['schedule', job], enabled: job > 0, queryFn: () => get<Schedule>(`/api/jobs/${job}/schedule`) })
+>>>>>>> .merge_file_ytRI5Z
 
 /** The placed work orders of a project - each of their lines can carry an activity's progress. */
 export const useWorkOrdersOf = (job: number) =>
@@ -124,6 +138,6 @@ export const saveActivity = (job: number, id: number | null, b: ActivityInput) =
 export const deleteActivity = (id: number) => del<Reply>(`/api/schedule/activities/${id}`)
 export const setProgress = (id: number, percent: number) => post<Reply>(`/api/schedule/activities/${id}/progress`, { percent })
 export const addTask = (job: number, b: { text: string; date: string; activity_id: number | null }) => post<{ task: DayTask }>(`/api/jobs/${job}/schedule/tasks`, b)
-export const editTask = (id: number, b: { text?: string; date?: string; activity_id?: number | null; done?: boolean }) => put<{ task: DayTask }>(`/api/schedule/tasks/${id}`, b)
+export const editTask = (id: number, b: { text?: string; date?: string; activity_id?: number | null; done?: boolean; percent?: number }) => put<{ task: DayTask }>(`/api/schedule/tasks/${id}`, b)
 export const deleteTask = (id: number) => del<{ ok: boolean }>(`/api/schedule/tasks/${id}`)
 export const drawFromOrder = (job: number, wo: number, start: string, finish: string) => post<Reply>(`/api/jobs/${job}/schedule/from-work-order/${wo}`, { start, finish })

@@ -310,3 +310,64 @@ def test_the_portfolio_survives_a_job_carrying_an_invoice(tenant):
     res = tenant.get("/api/jobs-pnl")
     assert res.status_code == 200, res.text
     assert res.json()["summary"]["revenue"] == 100000
+
+
+# --- Editing a signed-off day: reopened with a reason, and it says so ------------------------------------------------
+
+def signed_off(tenant, **extra):
+    d = diary(tenant, project(tenant), **extra)
+    assert tenant.post("/api/diary/%d/submit" % d["id"]).status_code == 200
+    return d
+
+
+def test_a_signed_off_day_can_be_reopened_with_a_reason_and_edited_then_signed_again(tenant):
+    d = signed_off(tenant)
+    res = tenant.post("/api/diary/%d/reopen" % d["id"], json={"reason": "Wrong headcount entered"})
+    assert res.status_code == 200, res.text
+    out = res.json()["diary"]
+    assert out["status"] == "DRAFT" and out["submitted_at"] == "" and out["editable"] is True
+    assert len(out["amendments"]) == 1 and "Wrong headcount entered" in out["amendments"][0]
+    fixed = tenant.put("/api/diary/%d" % d["id"], json={"labour": [{"trade": "Mason", "headcount": 6, "rate": 900}]})
+    assert fixed.status_code == 200 and fixed.json()["diary"]["total_mandays"] == 6
+    assert tenant.post("/api/diary/%d/submit" % d["id"]).status_code == 200
+    again = tenant.get("/api/diary/%d" % d["id"]).json()
+    assert again["status"] == "SUBMITTED" and again["amendments"] == out["amendments"], "the trail is kept after it is signed again"
+
+
+def test_every_reopening_is_kept(tenant):
+    d = signed_off(tenant)
+    tenant.post("/api/diary/%d/reopen" % d["id"], json={"reason": "First correction"})
+    tenant.post("/api/diary/%d/submit" % d["id"])
+    tenant.post("/api/diary/%d/reopen" % d["id"], json={"reason": "Second correction"})
+    notes = tenant.get("/api/diary/%d" % d["id"]).json()["amendments"]
+    assert len(notes) == 2 and "First correction" in notes[0] and "Second correction" in notes[1]
+
+
+def test_reopening_needs_a_reason_and_a_signed_off_day(tenant):
+    d = signed_off(tenant)
+    assert tenant.post("/api/diary/%d/reopen" % d["id"], json={"reason": ""}).status_code == 400
+    assert tenant.post("/api/diary/%d/reopen" % d["id"], json={"reason": "  "}).status_code == 400
+    assert tenant.get("/api/diary/%d" % d["id"]).json()["status"] == "SUBMITTED"
+    draft = diary(tenant, project(tenant, "Second site"))
+    res = tenant.post("/api/diary/%d/reopen" % draft["id"], json={"reason": "No need"})
+    assert res.status_code == 409 and "not signed off" in res.json()["detail"]
+
+
+def test_a_signed_off_day_still_cannot_be_rewritten_without_reopening_it(tenant):
+    d = signed_off(tenant)
+    assert tenant.put("/api/diary/%d" % d["id"], json={"work_done": "changed quietly"}).status_code == 409
+
+
+def test_only_those_who_can_sign_a_day_off_can_reopen_it(tenant, portal):
+    from test_jobs_and_orders import sign_in, staff
+    d = signed_off(tenant)
+    hand = staff(tenant)                                   # plain staff: may record, may not sign off
+    sign_in(portal, hand)
+    assert portal.post("/api/diary/%d/reopen" % d["id"], json={"reason": "Trying"}).status_code == 403
+    assert tenant.get("/api/diary/%d" % d["id"]).json()["status"] == "SUBMITTED"
+
+
+def test_one_company_cannot_reopen_anothers_diary(tenant, second_tenant):
+    d = signed_off(tenant)
+    assert second_tenant.post("/api/diary/%d/reopen" % d["id"], json={"reason": "Not mine"}).status_code == 404
+    assert tenant.get("/api/diary/%d" % d["id"]).json()["status"] == "SUBMITTED"

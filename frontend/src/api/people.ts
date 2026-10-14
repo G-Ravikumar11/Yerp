@@ -59,6 +59,8 @@ export interface Department {
   icon: string
   employee_count: number
   employees: { id: number; name: string; job_title: string; email: string; status?: string }[]
+  /** The sites it was added to. One on no site is shown nowhere. */
+  site_ids: number[]
 }
 
 export interface Permission {
@@ -92,6 +94,8 @@ const k = (...p: unknown[]) => ['people', ...p] as const
 
 export const useEmployees = (status: string) => useQuery({ queryKey: k('employees', status), queryFn: () => get<Employee[]>(`/api/employees${status ? `?status=${encodeURIComponent(status)}` : ''}`) })
 export const useEmployee = (id: number) => useQuery({ queryKey: k('employee', id), queryFn: () => get<EmployeeDetail>(`/api/employees/${id}`), enabled: id > 0 })
+/** Every site in the application, finished ones too: a department can be assigned to any of them. */
+export const useAllSites = () => useQuery({ queryKey: ['jobs', 'all-sites'], queryFn: async () => (await get<{ jobs: { id: number; number: string; name: string }[] }>('/api/jobs?costing=false')).jobs ?? [], staleTime: 5 * 60_000 })
 export const useDepartments = () => useQuery({ queryKey: k('departments'), queryFn: () => get<Department[]>('/api/departments') })
 export const useHrCatalogue = () => useQuery({ queryKey: k('catalogue', 'v2'), queryFn: () => get<HrCatalogue>('/api/hr/levels'), staleTime: 60_000 })
 export const useHrStats = () => useQuery({ queryKey: k('stats'), queryFn: () => get<{ total_employees: number; active: number; onboarding: number; offboarding: number; terminated: number; departments: number }>('/api/hr/stats') })
@@ -129,7 +133,7 @@ export const setAccess = (id: number, b: { permission_role: string; permissions:
 export const deleteEmployee = (id: number) => del<{ message: string }>(`/api/employees/${id}`)
 export const setEmployeeStatus = (id: number, to: 'onboard' | 'offboard' | 'terminate') => post<{ message: string; status: string; end_date?: string }>(`/api/employees/${id}/${to}`)
 
-export type DepartmentInput = { name: string; description: string; color: string; icon: string }
+export type DepartmentInput = { name: string; description: string; color: string; icon: string; site_ids?: number[] }
 export const saveDepartment = (id: number | null, b: DepartmentInput) => (id ? put<Department>(`/api/departments/${id}`, b) : post<Department>('/api/departments', b))
 export const deleteDepartment = (id: number) => del<{ message: string }>(`/api/departments/${id}`)
 /**

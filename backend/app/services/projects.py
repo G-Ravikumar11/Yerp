@@ -417,6 +417,7 @@ def diary_dict(db, d, detail=False):
         "total_mandays": money(d.total_mandays),
         "status": d.status or "DRAFT", "prepared_by_name": d.prepared_by_name or "",
         "submitted_at": d.submitted_at or "",
+        "amendments": [line for line in (d.amendments or "").splitlines() if line.strip()],
         "editable": (d.status or "DRAFT") == "DRAFT",
         # A day the site was rained off is worth seeing at a glance.
         "lost_to_weather": bool((d.rain_hours or 0) >= (d.working_hours or 8) / 2),
@@ -1176,9 +1177,33 @@ def schedule_view(db, client_id, job):
             "slip_days": (project_finish - planned_end).days if project_finish and planned_end else 0}}
 
 
+def activity_detail(db, client_id, a):
+    """One activity in full, for its own page: where it stands, every task under it (all days), and the history of
+    the progress reported on it."""
+    job = job_or_404(db, client_id, a.job_id)
+    row = next((r for r in schedule_view(db, client_id, job)["activities"] if r["id"] == a.id), None) or {}
+    ctx = ScheduleContext(db, client_id, job.id)
+    tasks = db.query(models.DBScheduleTask).filter(models.DBScheduleTask.client_id == client_id,
+                                                   models.DBScheduleTask.activity_id == a.id).order_by(
+        models.DBScheduleTask.task_date, models.DBScheduleTask.id).all()
+    history = db.query(models.DBScheduleProgress).filter(models.DBScheduleProgress.activity_id == a.id).order_by(
+        models.DBScheduleProgress.reported_on.desc(), models.DBScheduleProgress.id.desc()).all()
+    last = ctx.last.get(a.id, ("", ""))
+    names = {a.id: ((a.code or "") + " " + (a.name or "")).strip()}
+    return {"job": {"id": job.id, "number": job.number, "name": job.name},
+            "activity": dict(row, editable=not a.work_order_line_id, tasks_total=len(tasks), tasks_done=sum(1 for t in tasks if t.done),
+                             tasks=[task_dict(t, names) for t in tasks], updated_on=last[0], updated_by=last[1]),
+            "history": [{"on": h.reported_on or "", "percent": h.percent or 0, "note": h.note or "", "by": h.by_name or ""} for h in history]}
+
+
+def task_share(t):
+    """How much of a task is done: all of it if it is done, else the part that has been reported."""
+    return 100.0 if t.done else max(0.0, min(100.0, float(t.percent or 0.0)))
+
+
 def task_dict(t, names=None):
     return {"id": t.id, "activity_id": t.activity_id, "activity": (names or {}).get(t.activity_id, ""), "date": t.task_date or "",
-            "text": t.text or "", "done": bool(t.done), "done_by_name": t.done_by_name or "", "done_at": t.done_at or "",
+            "text": t.text or "", "done": bool(t.done), "percent": round(task_share(t), 1), "done_by_name": t.done_by_name or "", "done_at": t.done_at or "",
             "created_by_name": t.created_by_name or ""}
 
 
@@ -1197,7 +1222,8 @@ def sync_progress_from_tasks(db, client_id, activity_id, actor_name, on=None):
     tasks = db.query(models.DBScheduleTask).filter(models.DBScheduleTask.activity_id == a.id).all()
     if not tasks:
         return None
-    pct = round(sum(1 for t in tasks if t.done) / len(tasks) * 100.0, 1)
+    # Each task counts for its share: done is all of it, part done is the part, so the activity moves as the work does.
+    pct = round(sum(task_share(t) for t in tasks) / len(tasks), 1)
     on = on or date.today().isoformat()
     last = db.query(models.DBScheduleProgress).filter(models.DBScheduleProgress.activity_id == a.id).order_by(
         models.DBScheduleProgress.reported_on.desc(), models.DBScheduleProgress.id.desc()).first()
@@ -1219,6 +1245,8 @@ def apply_work_updates(db, client_id, job, updates, on, actor_name):
     Returns how many tasks and activities it moved. Anything that is not this site's, or whose progress is not the
     diary's to set (it comes from the measurement book, or from the activity's own tasks), is refused with the reason."""
     moved_tasks, moved_activities, touched = 0, 0, set()
+    # Work cannot be reported for a day that has not come: progress counts from today at the latest.
+    on = min(on, date.today().isoformat())
     for u in updates or []:
         if u.task_id:
             t = db.query(models.DBScheduleTask).filter(models.DBScheduleTask.id == u.task_id,
@@ -1226,10 +1254,19 @@ def apply_work_updates(db, client_id, job, updates, on, actor_name):
                                                        models.DBScheduleTask.job_id == job.id).first()
             if t is None:
                 raise HTTPException(400, "A task in the work done is not on this site.")
-            if u.done is not None and bool(u.done) != bool(t.done):
-                t.done = bool(u.done)
-                t.done_by_name = actor_name if t.done else ""
-                t.done_at = ("%s %s" % (on, datetime.now().strftime("%H:%M"))) if t.done else ""
+            # What the diary says the task now is: all done, part done (a percentage), or not started.
+            if u.percent is not None:
+                if u.percent < 0 or u.percent > 100:
+                    raise HTTPException(400, "How much of a task is done is a percentage between 0 and 100.")
+                want_done, want_part = u.percent >= 100, (0.0 if u.percent >= 100 else float(u.percent))
+            elif u.done is not None:
+                want_done, want_part = bool(u.done), 0.0
+            else:
+                continue
+            if want_done != bool(t.done) or abs(want_part - float(t.percent or 0.0)) > 0.001:
+                t.done, t.percent = want_done, want_part
+                t.done_by_name = actor_name if (want_done or want_part) else ""
+                t.done_at = ("%s %s" % (on, datetime.now().strftime("%H:%M"))) if want_done else ""
                 moved_tasks += 1
                 touched.add(t.activity_id)
         elif u.activity_id and u.percent is not None:
@@ -1334,18 +1371,21 @@ def schedule_day(db, client_id, job, on=None, ahead_days=7):
                 "tasks_total": len(mine), "tasks_done": sum(1 for t in mine if t.done),
                 "tasks": [task_dict(t, names) for t in mine]}
 
-    today_rows, overdue, soon = [], [], []
+    today_rows, overdue, soon, others = [], [], [], []
     for a in ctx.acts:
         s, f = _d(a.planned_start), _d(a.planned_finish)
-        if not s or not f:
-            continue
         done = ctx.actual(a, on)
-        if s <= on <= f and done < 100:
+        if not s or not f:
+            others.append(row(a, "done" if done >= 100 else "later"))
+        elif s <= on <= f and done < 100:
             today_rows.append(row(a, "today"))
         elif f < on and done < 100:
             overdue.append(row(a, "overdue"))
         elif on < s <= on + timedelta(days=ahead_days):
             soon.append(row(a, "soon"))
+        else:
+            # Everything else on the site: finished work, and what starts further off. Listed so no activity goes missing.
+            others.append(row(a, "done" if done >= 100 else "later"))
     soon.sort(key=lambda r: r["starts_in"])
     overdue.sort(key=lambda r: -(r["days_late"] or 0))
     today_rows.sort(key=lambda r: (-r["to_catch_up"], r["planned_finish"]))
@@ -1358,7 +1398,7 @@ def schedule_day(db, client_id, job, on=None, ahead_days=7):
         models.DBScheduleTask.client_id == client_id, models.DBScheduleTask.job_id == job.id,
         models.DBScheduleTask.task_date == on.isoformat()).order_by(models.DBScheduleTask.id).all()]
     return {"job": {"id": job.id, "number": job.number, "name": job.name}, "date": on.isoformat(),
-            "today": today_rows, "overdue": overdue, "soon": soon, "tasks": tasks,
+            "today": today_rows, "overdue": overdue, "soon": soon, "others": others, "tasks": tasks,
             "summary": {"working": len(today_rows), "overdue": len(overdue), "starting_soon": len(soon),
                         "done_percent": overall, "planned_percent": planned, "variance": round(overall - planned, 1)}}
 

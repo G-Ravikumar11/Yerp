@@ -6,8 +6,8 @@ import { useAction } from '@/lib/mutate'
 import { Members } from './DepartmentMembersModal'
 import { DEPARTMENT_COLORS, DEPARTMENT_ICONS } from './icons'
 
-export function DepartmentModal({ dept, open, onClose }: { dept: Department | null; open: boolean; onClose: () => void }) {
-  const [tab, setTab] = useState<'details' | 'people'>('details')
+export function DepartmentModal({ dept, open, onClose, initialTab = 'details' }: { dept: Department | null; open: boolean; onClose: () => void; initialTab?: 'details' | 'people' }) {
+  const [tab, setTab] = useState<'details' | 'people'>(initialTab)
   // Read live so the people list follows each add and removal.
   const live = useDepartments().data?.find((d) => d.id === dept?.id) ?? dept
   return (

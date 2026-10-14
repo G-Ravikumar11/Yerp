@@ -20,6 +20,8 @@ export interface DiaryRow {
   total_mandays: number
   status: string
   submitted_at: string
+  /** Each time the day was reopened after sign-off: when, by whom and why. */
+  amendments?: string[]
   editable: boolean
   lost_to_weather: boolean
 }
@@ -43,13 +45,19 @@ export interface DiaryInput {
   /** Planned work the day reports done: tasks ticked, activities now so far along. Applied to Planning & Progress on save. */
   work_updates?: WorkUpdate[]
 }
+<<<<<<< .merge_file_yy1aWg
 export type WorkUpdate = { task_id: number; done: boolean } | { activity_id: number; percent: number }
 export interface LabourHistory { summary: { mandays: number; days_worked: number; average_crew: number; labour_cost: number; rain_hours: number }; by_trade: { trade: string; mandays: number; cost: number }[] }
+=======
+export type WorkUpdate = { task_id: number; done: boolean } | { task_id: number; percent: number } | { activity_id: number; percent: number }
+export interface LabourHistory { summary: { mandays: number; days_worked: number; average_gang: number; labour_cost: number; rain_hours: number }; by_trade: { trade: string; mandays: number; cost: number }[] }
+>>>>>>> .merge_file_TAhSlJ
 
 export const useDiaries = (job: number) => useQuery({ queryKey: ['diary', 'list', job], enabled: job > 0, queryFn: () => get<{ diaries: DiaryRow[]; summary: DiarySummary }>(`/api/diary?job_id=${job}`) })
 export const useDiary = (id: number | null) => useQuery({ queryKey: ['diary', 'one', id], enabled: !!id, queryFn: () => get<DiaryDetail>(`/api/diary/${id}`) })
 export const useLabourHistory = (job: number) => useQuery({ queryKey: ['diary', 'labour', job], enabled: job > 0, queryFn: () => get<LabourHistory>(`/api/diary-labour/${job}`) })
 export const signOffDiary = (id: number) => post<{ message: string }>(`/api/diary/${id}/submit`)
+export const reopenDiary = (id: number, reason: string) => post<{ message: string }>(`/api/diary/${id}/reopen`, { reason })
 
 export const TRADES = ['Mason', 'Helper', 'Carpenter', 'Bar bender', 'Fitter', 'Electrician', 'Plumber', 'Painter', 'Operator', 'Driver', 'Surveyor', 'Supervisor']
 export const WEATHER = ['Clear', 'Cloudy', 'Rain', 'Heavy rain']

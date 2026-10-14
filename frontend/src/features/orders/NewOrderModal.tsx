@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button, Field, Input, Modal, Select } from '@/components/ui'
-import { createOrder, orderKeys, useBusinessUnits, useContractors, useOrderVocabulary } from '@/api/orders'
+import { createOrder, departmentsForSite, orderKeys, useBusinessUnits, useContractors, useOrderVocabulary } from '@/api/orders'
 import { useBoqs } from '@/api/boq'
 import { useAction } from '@/lib/mutate'
 
@@ -73,7 +73,7 @@ export function NewOrderModal({ open, onOpenChange }: { open: boolean; onOpenCha
         </Field>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Trade" htmlFor="no-dept" hint="Sets the series the number comes from.">
-            <Select id="no-dept" value={f.department} onChange={set('department')} placeholder="Choose later" options={(vocab.data?.departments ?? []).map((d) => ({ value: d, label: d }))} />
+            <Select id="no-dept" value={f.department} onChange={set('department')} placeholder="Choose later" options={departmentsForSite(vocab.data, f.job_id ? Number(f.job_id) : null, f.department).map((d) => ({ value: d, label: d }))} />
           </Field>
           <Field label="What is the work?" htmlFor="no-subject">
             <Input id="no-subject" value={f.subject} onChange={set('subject')} placeholder="Shuttering, tower C" />

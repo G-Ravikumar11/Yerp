@@ -27,6 +27,10 @@ class JobStateIn(BaseModel):
     state_code: str
 
 
+class ReopenIn(BaseModel):
+    reason: Optional[str] = ""
+
+
 class WorkUpdateIn(BaseModel):
     """What a diary says about the planned work: a task done (or not), or an activity now so far along."""
     task_id: Optional[int] = None
@@ -80,6 +84,8 @@ class TaskIn(BaseModel):
     date: Optional[str] = None
     activity_id: Optional[int] = None
     done: Optional[bool] = None
+    # Part done: how much of the task, 0-100. 100 is the same as done.
+    percent: Optional[float] = None
 
 
 class FromWorkOrderIn(BaseModel):

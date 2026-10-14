@@ -1,4 +1,5 @@
 """The projects endpoints."""
+import re
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -31,6 +32,7 @@ from app.schemas.projects import (
     JobIn,
     JobStateIn,
     ProgressIn,
+    ReopenIn,
     TaskIn,
     SiteLocationIn,
 )
@@ -64,6 +66,7 @@ from app.services.projects import (
     project_money_moved,
     preload_pnl,
     project_pnl,
+    activity_detail,
     apply_work_updates,
     check_task,
     planning_note,
@@ -626,6 +629,28 @@ def submit_diary(diary_id: int, request: Request, db: Session = Depends(get_db))
             "message": "%s signed off." % diary.diary_date}
 
 
+@router.post("/api/diary/{diary_id}/reopen")
+def reopen_diary(diary_id: int, body: ReopenIn, request: Request, db: Session = Depends(get_db)):
+    """Open a signed-off day to be changed. Allowed to those who can sign a day off, with a reason; the reopening is kept on
+    the diary for good (when, by whom, why) and in the audit log, and the day has to be signed off again."""
+    client, _, actor_name = wo_actor(request, db, "site.signoff")
+    diary = diary_or_404(db, client.id, diary_id)
+    if (diary.status or "DRAFT") == "DRAFT":
+        raise HTTPException(409, "This day is not signed off, so it can be edited as it is.")
+    reason = re.sub(r"\s+", " ", (body.reason or "")).strip()
+    if len(reason) < 3:
+        raise HTTPException(400, "Say why the signed-off day is being changed. It is kept with the diary.")
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    diary.amendments = ((diary.amendments or "").rstrip("\n") + "\n" if diary.amendments else "") + "%s - %s: %s" % (stamp, actor_name, reason[:300])
+    diary.status = "DRAFT"
+    diary.submitted_at = ""
+    log_audit(db, client.id, "diary_reopened", "site_diary", diary.id, diary.diary_date or "", "%s: %s" % (actor_name, reason[:300]), request)
+    db.commit()
+    db.refresh(diary)
+    return {"ok": True, "diary": diary_dict(db, diary, detail=True),
+            "message": "%s reopened for changes. Sign it off again when done." % diary.diary_date}
+
+
 @router.delete("/api/diary/{diary_id}")
 def delete_diary(diary_id: int, request: Request, db: Session = Depends(get_db)):
     client, _, _ = wo_actor(request, db, "site.record")
@@ -884,6 +909,17 @@ def job_schedule_day(job_id: int, request: Request, on: str = "", db: Session = 
     return schedule_day(db, client.id, job_or_404(db, client.id, job_id), day)
 
 
+@router.get("/api/schedule/activities/{activity_id}")
+def get_activity(activity_id: int, request: Request, db: Session = Depends(get_db)):
+    """One activity in full: its tasks on every day and the history of its progress."""
+    client = require_erp_read(request, db)
+    a = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.id == activity_id,
+                                                   models.DBScheduleActivity.client_id == client.id).first()
+    if not a:
+        raise HTTPException(404, "Activity not found")
+    return activity_detail(db, client.id, a)
+
+
 @router.post("/api/jobs/{job_id}/schedule/tasks")
 def add_task(job_id: int, body: TaskIn, request: Request, db: Session = Depends(get_db)):
     """Something to be done on a day, optionally under one of the project's activities."""
@@ -912,10 +948,20 @@ def edit_task(task_id: int, body: TaskIn, request: Request, db: Session = Depend
                                          body.activity_id if body.activity_id is not None else t.activity_id)
         if body.activity_id is not None:
             t.activity_id = body.activity_id or None
+    if body.percent is not None:
+        if body.percent < 0 or body.percent > 100:
+            raise HTTPException(400, "How much is done is a percentage between 0 and 100.")
+        # Part done: the share is kept and the task stays open; all of it is the same as done.
+        body.done = body.percent >= 100
+        t.percent = 0.0 if body.done else float(body.percent)
     if body.done is not None and bool(body.done) != bool(t.done):
         t.done = bool(body.done)
         t.done_by_name = actor_name if t.done else ""
         t.done_at = datetime.now().strftime("%Y-%m-%d %H:%M") if t.done else ""
+    elif body.percent is not None and not t.done:
+        t.done_by_name = actor_name       # who last reported it part done
+    if body.done is False and body.percent is None:
+        t.percent, t.done_by_name = 0.0, ""      # put back to not started, part done or not
     db.flush()
     for under in {was_under, t.activity_id}:
         sync_progress_from_tasks(db, client.id, under, actor_name)
