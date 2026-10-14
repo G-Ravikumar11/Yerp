@@ -138,7 +138,7 @@ def test_removing_an_entry_removes_its_dimensions(tenant):
         db.close()
 
 
-# --- The gang's book, the same way ---------------------------------------------
+# --- The contractor's book, the same way ---------------------------------------------
 
 def test_the_subcontractors_book_takes_dimensions_too(tenant):
     order = live_order(tenant)

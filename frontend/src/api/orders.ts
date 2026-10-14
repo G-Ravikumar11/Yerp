@@ -204,6 +204,8 @@ export interface WorkType {
 
 export interface Vocabulary {
   departments: string[]
+  /** The sites each department was added to, by name; one missing here is on no site. */
+  department_sites?: Record<string, number[]>
   uoms: string[]
   clause_categories: string[]
   jobs: { id: number; number: string; name: string }[]
@@ -285,4 +287,11 @@ export function importSchedule(id: number, file: File) {
   const form = new FormData()
   form.append('file', file)
   return api<ScheduleImport>(`/api/wo/orders/${id}/boq/import`, { method: 'POST', body: form })
+}
+
+/** The departments added to this site. With no site chosen, every one that is on any site; a department already on the order stays listed. */
+export function departmentsForSite(v: Vocabulary | undefined, jobId: number | null | undefined, keep = ''): string[] {
+  const all = v?.departments ?? []
+  if (!jobId) return all
+  return all.filter((d) => d === keep || v?.department_sites?.[d]?.includes(jobId))
 }

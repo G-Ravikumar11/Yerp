@@ -40,84 +40,84 @@ ROLE_CODES = {r["code"] for r in EMPLOYEE_ROLES}
 # is most senior are frequently three different people.
 PORTAL_PERMISSIONS = [
     {"key": "self.service", "group": "Everyone",
-     "label": "Own timesheet, payslips, leave and documents"},
+     "label": "My timesheet, payslips and leave"},
     {"key": "bills.submit", "group": "Costs",
-     "label": "Raise a bill or expense for approval"},
+     "label": "Raise bills & expenses"},
     {"key": "bills.approve", "group": "Costs",
-     "label": "Approve bills from people who report to them"},
+     "label": "Approve team bills"},
     {"key": "bills.view_all", "group": "Costs",
-     "label": "See every bill in the business"},
+     "label": "View all bills"},
     {"key": "bills.pay", "group": "Costs",
-     "label": "Release payment on an approved bill"},
+     "label": "Pay approved bills"},
     {"key": "invoices.manage", "group": "Sales",
-     "label": "Raise and send invoices and quotes"},
+     "label": "Invoices & quotes"},
     {"key": "reports.view", "group": "Sales",
-     "label": "View financial reports"},
+     "label": "View reports"},
     {"key": "attendance.view_team", "group": "People",
-     "label": "See the team's attendance"},
+     "label": "Team attendance"},
     {"key": "leave.approve", "group": "People",
-     "label": "Approve leave requests"},
+     "label": "Approve leave"},
     {"key": "people.manage", "group": "People",
-     "label": "Add and edit employees, and set what they can do"},
+     "label": "Manage employees & access"},
     {"key": "payroll.manage", "group": "People",
-     "label": "Run payroll and issue payslips"},
+     "label": "Payroll & payslips"},
     {"key": "recruitment.manage", "group": "People",
-     "label": "Manage jobs, candidates and offers"},
+     "label": "Recruitment"},
     {"key": "items.manage", "group": "Contracts",
-     "label": "Maintain the item master of material and finished goods codes"},
+     "label": "Item master"},
     {"key": "workorders.manage", "group": "Contracts",
-     "label": "Raise work orders and allocate their budgets"},
+     "label": "Work orders & budgets"},
     {"key": "customers.manage", "group": "Contracts",
-     "label": "Add and edit customers"},
+     "label": "Customers"},
     {"key": "subcontracts.approve", "group": "Contracts",
-     "label": "Approve subcontract work orders for execution"},
+     "label": "Approve subcontract orders"},
     # Deliberately not part of any preset below except the owner's. Whoever
     # holds it signs off work that somebody else priced, and a right that
     # arrives with a job title is one nobody remembers deciding to give.
     {"key": "workorders.approve", "group": "Contracts",
-     "label": "Give final approval on a work order (MD sign-off)"},
+     "label": "Final work order approval (MD)"},
     # Receiving is its own job, done by whoever is at the gate when the lorry
     # arrives - usually not the person who raised the order and never the one
     # who pays the bill. Kept separate so those three signatures stay apart.
     {"key": "stores.receive", "group": "Contracts",
-     "label": "Record goods received against a purchase order"},
+     "label": "Receive goods"},
     # The departments' own work, split out of "workorders.manage", which had
     # grown to cover tenders, stock, purchasing and GST alike - so that giving
     # a storekeeper the store also gave them the tender book.
     {"key": "billing.manage", "group": "Planning & Billing",
-     "label": "Tenders, estimates, RA bills to the client, variations and subcontractor bills"},
+     "label": "Tenders, RA bills & variations"},
     {"key": "purchase.manage", "group": "Purchase",
-     "label": "Enquiries, quote comparison, purchase orders and the supplier list"},
+     "label": "Purchase & suppliers"},
     {"key": "stores.manage", "group": "Stores",
-     "label": "Issue, transfer and adjust stock, and keep the plant and machinery register"},
+     "label": "Stock & plant register"},
     {"key": "accounts.manage", "group": "Accounts",
-     "label": "GST, e-invoices, e-way bills, fixed assets and retention release"},
+     "label": "GST, e-invoices & assets"},
     # The site's own record. Held by the people who are on the site, not only
     # by whoever manages the contract - a diary is written by the engineer
     # standing in the rain, and it could not be while writing it needed the
     # right to manage work orders.
     {"key": "site.record", "group": "Site",
-     "label": "Record site work - diary, measurements, photos, quality, safety, plant and material"},
+     "label": "Record site work"},
     {"key": "site.signoff", "group": "Site",
-     "label": "Sign off site work - diary days, permits to work, incidents, inspections and NCRs"},
+     "label": "Sign off site work"},
     # HEAD OFFICE
     #
     # A vendor code, a work order and a BOQ are opened at head office, by its
     # quantity surveyor, and by nobody else in the business. Three sites each
-    # registering gangs and raising orders is how one gang ends up with two
+    # registering contractors and raising orders is how one contractor ends up with two
     # vendor codes and one project with two BOQs. The Master holds these as
     # well. They are never handed out one by one (see HO_QS_ONLY): the way to
     # give somebody them is to make that person HO QS.
     {"key": "vendors.create", "group": "Head office", "only_role": "ho_qs",
-     "label": "Open vendor codes - register a sub contractor"},
+     "label": "Open vendor codes"},
     {"key": "workorders.create", "group": "Head office", "only_role": "ho_qs",
-     "label": "Open work orders - the client's and the sub contractors'"},
+     "label": "Open work orders"},
     {"key": "boq.create", "group": "Head office", "only_role": "ho_qs",
-     "label": "Open a project's BOQ"},
+     "label": "Open project BOQ"},
     # Head office looks after every site, so it sees every order and every
     # bill - not only those it has a hand in, which is all a site sees.
     {"key": "ho.view_all", "group": "Head office",
-     "label": "The HO portal: every vendor, work order, BOQ and bill on every site"},
+     "label": "HO portal (all sites)"},
 ]
 PERMISSION_KEYS = {p["key"] for p in PORTAL_PERMISSIONS}
 

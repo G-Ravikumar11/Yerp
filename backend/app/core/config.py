@@ -64,6 +64,9 @@ ADMIN_PANEL_MIN_LENGTH = 10
 # Secure cookies are required in production but silently break local http
 # development (the browser refuses to store the session at all). Default to
 # secure, and let a local run opt out with COOKIE_SECURE=false.
+# Without Remember me a sign-in lasts SESSION_MAX_AGE and the cookie dies with the browser; with it, REMEMBER_MAX_AGE.
+SESSION_MAX_AGE = int(os.getenv("SESSION_MAX_AGE", "86400"))
+REMEMBER_MAX_AGE = int(os.getenv("REMEMBER_MAX_AGE", str(30 * 86400)))
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").strip().lower() not in ("false", "0", "no")
 # The native iOS/Android app is served from capacitor://localhost (iOS) or https://localhost (Android) and calls this
 # API cross-site, so its session cookie must be SameSite=None (which needs Secure). Set SESSION_SAMESITE=none and

@@ -103,12 +103,14 @@ def test_a_registered_bill_is_not_cancelled_until_its_irn_is(tenant):
     p = status(tenant, bill)["payload"]
     irn = tenant.post("/api/einvoice/ra_bill/%d/irn" % bill["id"],
                       json={"response": portal_response(p)}).json()["irn"]
+    # A certified bill is never cancelled now - its GST and TDS are in the returns; a credit note takes it back.
     res = tenant.post("/api/ra-bills/%d/cancel" % bill["id"], json={"comments": "wrong rate"})
-    assert res.status_code == 409 and "IRN" in res.json()["detail"]
+    assert res.status_code == 409 and "credit note" in res.json()["detail"]
     assert tenant.post("/api/einvoice/irns/%d/cancel" % irn["id"], json={}).status_code == 400
     done = tenant.post("/api/einvoice/irns/%d/cancel" % irn["id"], json={"reason": "Data entry mistake"})
     assert done.status_code == 200 and done.json()["irn"]["status"] == "CANCELLED"
-    assert tenant.post("/api/ra-bills/%d/cancel" % bill["id"], json={"comments": "wrong rate"}).status_code == 200
+    res = tenant.post("/api/ra-bills/%d/cancel" % bill["id"], json={"comments": "wrong rate"})
+    assert res.status_code == 409 and "credit note" in res.json()["detail"]
 
 
 def test_after_a_day_the_portal_will_not_cancel_and_neither_will_we(tenant):
@@ -127,7 +129,7 @@ def test_after_a_day_the_portal_will_not_cancel_and_neither_will_we(tenant):
     assert res.status_code == 409 and "credit note" in res.json()["detail"]
 
 
-def test_a_retention_release_is_e_invoiced_too(tenant):
+def test_a_retention_release_is_not_e_invoiced(tenant):
     bill = ready_bill(tenant)
     # Retention on the bill; release half of it.
     pos = [p for p in tenant.get("/api/retention").json()["positions"] if p["side"] == "client"][0]
@@ -135,15 +137,8 @@ def test_a_retention_release_is_e_invoiced_too(tenant):
                                                        "amount": pos["balance"] / 2,
                                                        "stage": "Practical completion"}).json()["release"]
     s = tenant.get("/api/einvoice/retention_release/%d" % rel["id"]).json()
-    assert s["ready"], s["missing"]
-    item = s["payload"]["ItemList"][0]
-    assert item["AssAmt"] == rel["amount"] and s["payload"]["ValDtls"]["TotInvVal"] == rel["net_amount"]
-    assert tenant.get("/api/einvoice/retention_release/%d/json" % rel["id"]).status_code == 200
-    got = tenant.post("/api/einvoice/retention_release/%d/irn" % rel["id"],
-                      json={"response": portal_response(s["payload"], Irn="b" * 64) | {"Irn": "b" * 64}})
-    assert got.status_code == 200, got.text
-    res = tenant.post("/api/retention/releases/%d/cancel" % rel["id"], json={"reason": "early"})
-    assert res.status_code == 409
+    # The bills already carried the GST, so the release has no invoice of its own.
+    assert not s["ready"] and "no invoice of its own" in str(s)
 
 
 def test_another_company_sees_no_registration(tenant, second_tenant):

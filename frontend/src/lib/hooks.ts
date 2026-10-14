@@ -27,7 +27,7 @@ export function useMinWidth(px: number): boolean {
 
 /**
  * Open a register's "new" form when the page is arrived at with ?new=1 - the HO portal's
- * "Open a vendor code" lands on the Vendor Register with the form already up. Only when
+ * "Open a vendor code" lands on Sub Contract Registration with the form already up. Only when
  * `allowed`: a person without the right sees the register, not a form they would be refused at.
  */
 export function useOpenOnArrival(open: () => void, allowed: boolean) {

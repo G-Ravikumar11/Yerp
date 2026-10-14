@@ -31,6 +31,15 @@ from app.models.assets import (
     DBAssetService,
     DBAssetBook,
 )
+from app.models.plant import (
+    DBPlantAllocation,
+    DBPlantExpense,
+    DBPlantFuel,
+    DBPlantRental,
+    DBPlantRentalExtension,
+    DBPlantRentalInvoice,
+    DBPlantRentalProvider,
+)
 from app.models.boq import (
     DBBoq,
     DBBoqRevision,
@@ -81,6 +90,7 @@ from app.models.hr import (
     DBDepartmentGoal,
     DBLeaveRequest,
     DBEmployeeSite,
+    DBDepartmentSite,
     DBSiteGeofence,
 )
 from app.models.invoicing import (
@@ -103,6 +113,8 @@ from app.models.money import (
     DBBankAccount,
     DBMoneyEntry,
     DBRetentionRelease,
+    DBCreditNote,
+    DBCreditNoteLine,
 )
 from app.models.procurement import (
     DBPurchaseOrder,
@@ -126,12 +138,17 @@ from app.models.projects import (
     DBProjectThread,
     DBProjectMessage,
     DBThreadRead,
+    DBChatReaction,
+    DBChatTask,
+    DBChatNotice,
 )
 from app.models.quality import (
     DBInspection,
     DBCubeSet,
     DBCubeResult,
     DBNcr,
+    DBQcChecklist,
+    DBQcCriteria,
 )
 from app.models.recruitment import (
     DBInterviewReminder,

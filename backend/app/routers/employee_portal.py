@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy import func, func as sqlfunc, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app import models
 from app.core import passwords
@@ -13,7 +13,7 @@ from app.db import get_db
 from app.constants.approvals import GONE_STATUSES
 from app.constants.projects import JOB_CLOSED_STATUSES
 from app.core.audit import log_audit
-from app.core.auth import end_every_session, get_client_user, get_employee_user, require_employee_permission
+from app.core.auth import end_every_session, get_client_user, set_session_lifetime, get_employee_user, require_employee_permission
 from app.core.config import logger
 from app.core.dates import _parse_date
 from app.core.files import ALLOWED_DOCUMENT_EXTENSIONS, MAX_DOCUMENT_BYTES
@@ -144,6 +144,7 @@ def employee_login(request: Request, body: dict = None, db: Session = Depends(ge
     request.session.pop('portal_user_id', None)
     request.session['employee_id'] = emp.id
     request.session['employee_client_id'] = emp.client_id
+    set_session_lifetime(request, body.get('rememberMe') is True)
     # Signing in is not clocking in. A shift starts when the person presses
     # Clock in, each one for themselves; opening the portal to read a payslip,
     # or from a phone left at home, must never count as being at work.
@@ -890,7 +891,7 @@ def employee_document_requests(request: Request, db: Session = Depends(get_db)):
     emp_id = request.session.get('employee_id')
     if not emp_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    rows = db.query(models.DBDocumentRequest).filter(
+    rows = db.query(models.DBDocumentRequest).options(selectinload(models.DBDocumentRequest.requirement)).filter(
         models.DBDocumentRequest.employee_id == emp_id
     ).order_by(models.DBDocumentRequest.id.asc()).all()
     outstanding = sum(1 for r in rows if r.status in ("pending", "rejected"))

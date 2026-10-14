@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Copy, Download, FileText, Save, Share2, Trash2 } from 'lucide-react'
 import { ShareOrderDialog } from './ShareOrderDialog'
 import { Badge, Button, ConfirmDialog, Skeleton, Stat, StatGrid, StatusBadge, Tabs } from '@/components/ui'
@@ -69,7 +69,10 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
   const [sharing, setSharing] = useState(false)
   const vocab = useOrderVocabulary()
 
-  const [tab, setTab] = useState<Tab>('details')
+  // A new order on a project with a BOQ opens straight on its schedule, with the BOQ to pick its lines from.
+  const [params, setParams] = useSearchParams()
+  const fromBoq = params.get('boq') === '1'
+  const [tab, setTab] = useState<Tab>(fromBoq ? 'schedule' : 'details')
   const [head, setHead] = useState(() => headFrom(order))
   const [lines, setLines] = useState(() => linesFrom(order))
   const [terms, setTerms] = useState<OrderTerm[]>(() => (order.terms ?? []).map((t) => ({ clause_category: t.clause_category, clause_text: t.clause_text })))
@@ -261,7 +264,7 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
 
       {tab === 'details' && <HeadForm head={head} onChange={(p) => setHead((h) => ({ ...h, ...p }))} disabled={!editable} order={order} />}
       {tab === 'schedule' && (
-        <ScheduleTab order={order} rows={lines} onRows={setLines} disabled={!editable} vocab={vocab.data} onCostCentre={() => setCostCentre(true)} dirty={parts.lines} onCharged={reseed} />
+        <ScheduleTab order={order} rows={lines} onRows={setLines} disabled={!editable} vocab={vocab.data} onCostCentre={() => setCostCentre(true)} dirty={parts.lines} onCharged={reseed} startPicking={fromBoq && !!editable} onPicked={() => fromBoq && setParams({}, { replace: true })} />
       )}
       {tab === 'terms' && <TermsTab terms={terms} onTerms={setTerms} disabled={!editable} vocab={vocab.data} />}
       {tab === 'approval' && <ApprovalTab order={order} />}

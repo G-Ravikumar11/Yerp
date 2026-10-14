@@ -1,5 +1,5 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, Field, Input, NumField, Select, Textarea } from '@/components/ui'
-import { useBusinessUnits, useContractors, useOrderVocabulary, type Order, type OrderHead } from '@/api/orders'
+import { departmentsForSite, useBusinessUnits, useContractors, useOrderVocabulary, type Order, type OrderHead } from '@/api/orders'
 
 export const BILLING_CYCLES = ['Monthly', 'Fortnightly', 'On milestone', 'On completion']
 
@@ -39,7 +39,7 @@ export function HeadForm({ head, onChange, disabled, order }: { head: OrderHead;
   const contractors = useContractors()
   const v = vocab.data
 
-  const gang = (contractors.data?.contractors ?? []).filter((c) => c.registration_status === 'APPROVED' || c.id === head.contractor_id)
+  const contractor = (contractors.data?.contractors ?? []).filter((c) => c.registration_status === 'APPROVED' || c.id === head.contractor_id)
   const workTypes = (v?.work_types ?? []).filter((w) => !head.department || w.department === head.department)
 
   return (
@@ -54,13 +54,13 @@ export function HeadForm({ head, onChange, disabled, order }: { head: OrderHead;
             <Select id="h-unit" disabled={disabled} value={head.business_unit_id ?? ''} onChange={(e) => onChange({ business_unit_id: id(e.target.value) })} placeholder="Choose" options={(units.data ?? []).map((u) => ({ value: u.id, label: u.name }))} />
           </Field>
           <Field label="Sub contractor" htmlFor="h-con" hint="Only registered contractors can be issued an order.">
-            <Select id="h-con" disabled={disabled} value={head.contractor_id ?? ''} onChange={(e) => onChange({ contractor_id: id(e.target.value) })} placeholder="Choose" options={gang.map((c) => ({ value: c.id, label: c.company_name + (c.vendor_code ? ` (${c.vendor_code})` : '') }))} />
+            <Select id="h-con" disabled={disabled} value={head.contractor_id ?? ''} onChange={(e) => onChange({ contractor_id: id(e.target.value) })} placeholder="Choose" options={contractor.map((c) => ({ value: c.id, label: c.company_name + (c.vendor_code ? ` (${c.vendor_code})` : '') }))} />
           </Field>
           <Field label="Project" htmlFor="h-job" hint="Its budget is what this order is held against.">
             <Select id="h-job" disabled={disabled} value={head.job_id ?? ''} onChange={(e) => onChange({ job_id: id(e.target.value) })} placeholder="Choose" options={(v?.jobs ?? []).map((j) => ({ value: j.id, label: `${j.number} ${j.name}` }))} />
           </Field>
           <Field label="Trade" htmlFor="h-dept" hint={disabled ? undefined : 'Changing it on a draft issues a new number.'}>
-            <Select id="h-dept" disabled={disabled} value={head.department} onChange={(e) => onChange({ department: e.target.value })} placeholder="Choose" options={(v?.departments ?? []).map((d) => ({ value: d, label: d }))} />
+            <Select id="h-dept" disabled={disabled} value={head.department} onChange={(e) => onChange({ department: e.target.value })} placeholder="Choose" options={departmentsForSite(v, head.job_id, head.department).map((d) => ({ value: d, label: d }))} />
           </Field>
           <Field label="Kind of work" htmlFor="h-type">
             <Select id="h-type" disabled={disabled} value={head.work_type} onChange={(e) => onChange({ work_type: e.target.value })} placeholder="Choose" options={workTypes.map((w) => ({ value: w.name, label: w.name }))} />

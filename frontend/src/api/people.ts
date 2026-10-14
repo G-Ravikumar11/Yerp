@@ -8,6 +8,7 @@ export interface Employee {
   last_name: string
   full_name: string
   email: string
+  org_email?: string
   phone: string
   department_id: number | null
   department_name: string
@@ -58,6 +59,8 @@ export interface Department {
   icon: string
   employee_count: number
   employees: { id: number; name: string; job_title: string; email: string; status?: string }[]
+  /** The sites it was added to. One on no site is shown nowhere. */
+  site_ids: number[]
 }
 
 export interface Permission {
@@ -91,8 +94,10 @@ const k = (...p: unknown[]) => ['people', ...p] as const
 
 export const useEmployees = (status: string) => useQuery({ queryKey: k('employees', status), queryFn: () => get<Employee[]>(`/api/employees${status ? `?status=${encodeURIComponent(status)}` : ''}`) })
 export const useEmployee = (id: number) => useQuery({ queryKey: k('employee', id), queryFn: () => get<EmployeeDetail>(`/api/employees/${id}`), enabled: id > 0 })
+/** Every site in the application, finished ones too: a department can be assigned to any of them. */
+export const useAllSites = () => useQuery({ queryKey: ['jobs', 'all-sites'], queryFn: async () => (await get<{ jobs: { id: number; number: string; name: string }[] }>('/api/jobs?costing=false')).jobs ?? [], staleTime: 5 * 60_000 })
 export const useDepartments = () => useQuery({ queryKey: k('departments'), queryFn: () => get<Department[]>('/api/departments') })
-export const useHrCatalogue = () => useQuery({ queryKey: k('catalogue'), queryFn: () => get<HrCatalogue>('/api/hr/levels'), staleTime: 10 * 60_000 })
+export const useHrCatalogue = () => useQuery({ queryKey: k('catalogue', 'v2'), queryFn: () => get<HrCatalogue>('/api/hr/levels'), staleTime: 60_000 })
 export const useHrStats = () => useQuery({ queryKey: k('stats'), queryFn: () => get<{ total_employees: number; active: number; onboarding: number; offboarding: number; terminated: number; departments: number }>('/api/hr/stats') })
 export const useSuggestedEmail = (first: string, last: string) =>
   useQuery({ queryKey: k('suggest', first, last), queryFn: async () => (await get<{ email?: string }>(`/api/hr/suggest-email?first_name=${encodeURIComponent(first)}&last_name=${encodeURIComponent(last)}`)).email ?? '', enabled: !!(first.trim() && last.trim()), staleTime: 60_000 })
@@ -101,6 +106,7 @@ export interface EmployeeInput {
   first_name: string
   last_name: string
   email: string
+  org_email?: string
   password?: string
   phone: string
   job_title: string
@@ -122,12 +128,12 @@ export interface EmployeeInput {
 
 export const createEmployee = (b: EmployeeInput) => post<{ id: number; employee_id: string; first_name: string; site_names?: string[]; message: string }>('/api/employees', b)
 export const updateEmployee = (id: number, b: Partial<EmployeeInput> & Record<string, unknown>) => put<{ message?: string }>(`/api/employees/${id}`, b)
-export const setAccess = (id: number, b: { permission_role: string; permissions: string[] }) => put<{ message: string }>(`/api/employees/${id}/permissions`, b)
+export const setAccess = (id: number, b: { permission_role: string; permissions: string[]; site_ids?: number[] }) => put<{ message: string }>(`/api/employees/${id}/permissions`, b)
 /** Removes the person for good, with their payslips, attendance, leave and documents. The Master only. */
 export const deleteEmployee = (id: number) => del<{ message: string }>(`/api/employees/${id}`)
-export const setEmployeeStatus = (id: number, to: 'onboard' | 'offboard' | 'terminate') => post<{ message: string; status: string }>(`/api/employees/${id}/${to}`)
+export const setEmployeeStatus = (id: number, to: 'onboard' | 'offboard' | 'terminate') => post<{ message: string; status: string; end_date?: string }>(`/api/employees/${id}/${to}`)
 
-export type DepartmentInput = { name: string; description: string; color: string; icon: string }
+export type DepartmentInput = { name: string; description: string; color: string; icon: string; site_ids?: number[] }
 export const saveDepartment = (id: number | null, b: DepartmentInput) => (id ? put<Department>(`/api/departments/${id}`, b) : post<Department>('/api/departments', b))
 export const deleteDepartment = (id: number) => del<{ message: string }>(`/api/departments/${id}`)
 /**

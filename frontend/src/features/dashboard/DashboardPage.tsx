@@ -8,6 +8,7 @@ import { useInbox } from '@/api/approvals'
 import { attentionHref, useAttention, useCashFlow, usePayables, useProjectPnl, useReceivables, useRetention, type AttentionItem } from '@/api/dashboard'
 import { Figure } from './Figure'
 import { useCosts } from '@/api/costs'
+import { useSafety } from '@/api/safety'
 import { useSession } from '@/lib/session'
 import { compactINR, formatINR } from '@/lib/utils'
 
@@ -18,16 +19,18 @@ const AgeingChart = lazy(() => import('./Charts').then((m) => ({ default: m.Agei
 const MarginChart = lazy(() => import('./Charts').then((m) => ({ default: m.MarginChart })))
 const BudgetChart = lazy(() => import('./Charts').then((m) => ({ default: m.BudgetChart })))
 const CostMixChart = lazy(() => import('./Charts').then((m) => ({ default: m.CostMixChart })))
+const IncidentsChart = lazy(() => import('./Charts').then((m) => ({ default: m.IncidentsChart })))
 
 
-type View = 'profit' | 'budget' | 'cost' | 'margin' | 'cash' | 'ageing'
-const VIEWS: { value: View; label: string; hint: string; needs: 'reports' | 'money' }[] = [
+type View = 'profit' | 'budget' | 'cost' | 'margin' | 'cash' | 'ageing' | 'safety'
+const VIEWS: { value: View; label: string; hint: string; needs: 'reports' | 'money' | 'any' }[] = [
   { value: 'profit', label: 'Money earned vs spent', hint: 'For each project: how much money it has brought in, and how much it has cost. Biggest projects first.', needs: 'reports' },
   { value: 'budget', label: 'Planned vs actual cost', hint: 'For each project: the contract amount, what we expect it to cost, and what we have spent so far.', needs: 'reports' },
   { value: 'cost', label: 'Where our money goes', hint: 'How the money we spend is split between materials, labour, contractors and the rest.', needs: 'reports' },
   { value: 'margin', label: 'Profit or loss per project', hint: 'Green bars are projects making money. Red bars are projects losing money.', needs: 'reports' },
   { value: 'cash', label: 'Money in and out', hint: 'Money received and money paid out each month, and the balance left.', needs: 'money' },
   { value: 'ageing', label: 'Unpaid money, by how old', hint: 'Money we are waiting to receive and money we still have to pay, grouped by how long it has been pending.', needs: 'money' },
+  { value: 'safety', label: 'Safety incidents', hint: 'How many incidents and near misses have been reported, and of what kind.', needs: 'any' },
 ]
 const VIEW_KEY = 'yerp-dashboard-chart'
 const savedView = (): View => {
@@ -73,7 +76,7 @@ function Panel({ title, description, action, className, children }: { title: str
 }
 
 const ChartSkeleton = ({ h = 260 }: { h?: number }) => <Skeleton className="w-full" style={{ height: h }} />
-const Empty = ({ children }: { children: React.ReactNode }) => <p className="grid h-56 place-items-center text-center text-sm text-muted-foreground">{children}</p>
+const Empty = ({ children }: { children: React.ReactNode }) => <p className="grid h-40 place-items-center text-center text-sm text-muted-foreground">{children}</p>
 
 function AttentionRow({ item }: { item: AttentionItem }) {
   const link = attentionHref(item.view)
@@ -108,6 +111,7 @@ export default function DashboardPage() {
   const cash = useCashFlow(money)
 
   const costs = useCosts(reports)
+  const safety = useSafety(0)
 
   const first = user?.name?.split(' ')[0]
   const waiting = inbox.data?.mine ?? 0
@@ -116,7 +120,7 @@ export default function DashboardPage() {
   const cashHasData = (cash.data ?? []).some((m) => m.received || m.paid)
 
   const [pickedView, setView] = useState<View>(savedView)
-  const available = VIEWS.filter((v) => (v.needs === 'reports' ? reports : money))
+  const available = VIEWS.filter((v) => (v.needs === 'reports' ? reports : v.needs === 'money' ? money : true))
   const view = available.some((v) => v.value === pickedView) ? pickedView : (available[0]?.value ?? 'profit')
   const pickView = (v: View) => {
     setView(v)
@@ -127,7 +131,7 @@ export default function DashboardPage() {
     }
   }
 
-  const fallback = <ChartSkeleton h={300} />
+  const fallback = <ChartSkeleton h={210} />
   let chart: React.ReactNode = null
   if (view === 'profit') {
     chart = pnl.isPending ? fallback : pnl.isError ? <Empty>Could not load the projects.</Empty> : pnl.data.projects.length === 0 ? <Empty>No projects yet.</Empty> : <Suspense fallback={fallback}><ProfitChart projects={pnl.data.projects} /></Suspense>
@@ -137,6 +141,11 @@ export default function DashboardPage() {
     chart = costs.isPending ? fallback : costs.isError ? <Empty>Could not load the costs.</Empty> : costs.data.projects.length === 0 ? <Empty>No projects yet.</Empty> : <Suspense fallback={fallback}><BudgetChart projects={costs.data.projects} /></Suspense>
   } else if (view === 'cost') {
     chart = costs.isPending ? fallback : costs.isError ? <Empty>Could not load this.</Empty> : !costs.data.summary.categories.some((c) => c.amount > 0) ? <Empty>No cost has been booked yet.</Empty> : <Suspense fallback={fallback}><CostMixChart categories={costs.data.summary.categories} /></Suspense>
+  } else if (view === 'safety') {
+    const counts = new Map<string, number>()
+    for (const i of safety.data?.incidents ?? []) counts.set(i.kind, (counts.get(i.kind) ?? 0) + 1)
+    const kinds = [...counts].map(([kind, count]) => ({ kind, count }))
+    chart = safety.isPending ? fallback : safety.isError ? <Empty>Could not load the incidents.</Empty> : kinds.length === 0 ? <Empty>No incident has been reported. Every day so far has been a safe one.</Empty> : <Suspense fallback={fallback}><IncidentsChart kinds={kinds} /></Suspense>
   } else if (view === 'cash') {
     chart = cash.isPending ? fallback : cash.isError ? <Empty>Could not load the ledger.</Empty> : !cashHasData ? <Empty>Nothing received or paid in the last twelve months.</Empty> : <Suspense fallback={fallback}><CashFlowChart months={cash.data} /></Suspense>
   } else {
@@ -164,8 +173,7 @@ export default function DashboardPage() {
       />
 
       <motion.div variants={stagger} initial="hidden" animate="show" className="grid gap-5 lg:grid-cols-3">
-        {(money || reports) && (
-          <motion.div variants={rise} className="grid grid-cols-2 gap-3 lg:col-span-3 lg:grid-cols-5">
+        <motion.div variants={rise} className="grid grid-cols-2 gap-3 lg:col-span-3 lg:grid-cols-3 xl:grid-cols-6">
             {money && (
               <>
                 <Stat label="Money to receive" to="/money/owed?tab=owed" value={fig(receivables.data?.summary.owed, receivables.isPending)} loading={receivables.isPending} tone={receivables.data?.summary.overdue ? 'warning' : undefined} sub={receivables.data ? `${compactINR(receivables.data.summary.overdue)} overdue from clients` : undefined} />
@@ -186,24 +194,29 @@ export default function DashboardPage() {
                 />
               </>
             )}
+            <Stat
+              label="Safety incidents"
+              to="/projects/safety"
+              value={safety.data ? safety.data.incidents.length : 0}
+              loading={safety.isPending}
+              tone={safety.data?.summary.open ? 'warning' : undefined}
+              sub={safety.data ? `${safety.data.summary.open} open, ${safety.data.summary.incidents_this_month} this month` : undefined}
+            />
           </motion.div>
-        )}
 
-        {(reports || money) && (
-          <Panel
-            title="How the business is doing"
-            description={VIEWS.find((v) => v.value === view)?.hint}
-            className="lg:col-span-2"
-            action={<Select aria-label="Chart" className="h-9 w-56" value={view} onChange={(e) => pickView(e.target.value as View)} options={available} />}
-          >
-            {chart}
-          </Panel>
-        )}
+        <Panel
+          title="How the business is doing"
+          description={VIEWS.find((v) => v.value === view)?.hint}
+          className="lg:col-span-2"
+          action={<Select aria-label="Chart" className="h-9 w-56" value={view} onChange={(e) => pickView(e.target.value as View)} options={available} />}
+        >
+          {chart}
+        </Panel>
 
         <Panel
           title="What needs you"
           description={attention.data ? `${formatINR(attention.data.summary.money_at_stake)} at stake` : undefined}
-          className={reports || money ? '' : 'lg:col-span-3'}
+          className=""
           action={
             attention.data && attention.data.summary.looks_wrong > 0 ? (
               <Badge tone="danger">
@@ -233,6 +246,7 @@ export default function DashboardPage() {
             </ul>
           )}
         </Panel>
+
 
       </motion.div>
     </>

@@ -70,8 +70,12 @@ export async function signIn(page, email = OWNER_EMAIL, password = OWNER_PASSWOR
 }
 
 export async function open(page, path) {
-  await page.goto(BASE + '/next' + path, { waitUntil: 'networkidle0' })
-  await page.waitForSelector('main h1', { timeout: 15000 })
+  // A fresh browser fetches the whole bundle on its first load, which can outlast one wait; try again before giving up.
+  for (let n = 0; ; n++) {
+    await page.goto(BASE + '/next' + path, { waitUntil: 'networkidle0', timeout: 90000 })
+    if (await page.waitForSelector('main h1', { timeout: 20000 }).then(() => true, () => false)) return
+    if (n >= 3) throw new Error('page did not render: ' + path)
+  }
 }
 
 /** Call the backend as the signed-in browser does. */
@@ -205,7 +209,7 @@ export async function waitForToast(page, contains, timeout = 8000) {
  */
 export async function approvedOrder(page, { subject = 'E2E order', lines } = {}) {
   const vocab = (await api(page, 'GET', '/api/wo/vocabulary')).data
-  const gang = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
+  const contractor = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
   const unit = (await api(page, 'GET', '/api/wo/business-units')).data.business_units[0]
   const job = vocab.jobs[0]
   let budgets = (await api(page, 'GET', `/api/wo/projects/${job.id}/budgets`)).data.budgets
@@ -213,7 +217,7 @@ export async function approvedOrder(page, { subject = 'E2E order', lines } = {})
     await api(page, 'POST', `/api/wo/projects/${job.id}/budgets`, { name: 'E2E civil', code: 'E2E', allocated_amount: 900000000 })
     budgets = (await api(page, 'GET', `/api/wo/projects/${job.id}/budgets`)).data.budgets
   }
-  const order = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: gang.id, job_id: job.id, department: 'Civil', subject, commencement_date: '2026-11-01', completion_date: '2027-03-31', retention_percent: 5, gst_rate: 18, tds_rate: 1 })).data.order
+  const order = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: contractor.id, job_id: job.id, department: 'Civil', subject, commencement_date: '2026-11-01', completion_date: '2027-03-31', retention_percent: 5, gst_rate: 18, tds_rate: 1 })).data.order
   const boq = lines ?? [
     { activity_no: '1.0', item_description: 'Shuttering for slabs and beams', uom: 'sqm', quantity: 1000, unit_rate: 410, tolerance_percent: 10 },
     { activity_no: '2.0', item_description: 'Reinforcement steel', uom: 'MT', quantity: 20, unit_rate: 68000 },
@@ -222,7 +226,7 @@ export async function approvedOrder(page, { subject = 'E2E order', lines } = {})
   const ok = await api(page, 'POST', `/api/wo/orders/${order.id}/self-approve`, { comments: 'e2e' })
   if (ok.status !== 200) throw new Error('could not approve the test order: ' + JSON.stringify(ok.data))
   const book = (await api(page, 'GET', `/api/sub-mb/${order.id}`)).data
-  return { id: order.id, number: order.wo_number, gang, job, items: book.lines }
+  return { id: order.id, number: order.wo_number, contractor, job, items: book.lines }
 }
 
 /** Record a measurement through the API. */

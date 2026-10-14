@@ -17,7 +17,7 @@
   "shortcuts": [
     { "name": "Site Diary", "short_name": "Diary", "url": "/next/projects/diary",
       "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
-    { "name": "Project Chat", "short_name": "Chat", "url": "/next/projects/chat",
+    { "name": "Project Chart", "short_name": "Chart", "url": "/next/projects/chart",
       "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
     { "name": "Drawings & Photos", "short_name": "Photos", "url": "/next/projects/drawings",
       "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }

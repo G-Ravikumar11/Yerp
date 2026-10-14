@@ -73,7 +73,7 @@ def job_money(db, client_id, job, pre=None):
 
     # What the site has actually cost, taken from the project's profit
     # account so the two screens say the same thing: this one read only
-    # supplier bills and clock-in hours, and a job with a gang bill, a signed
+    # supplier bills and clock-in hours, and a job with a contractor bill, a signed
     # diary and cement issued from the store showed nothing incurred at all.
     pnl = project_pnl(db, client_id, job, pre=pre)
     c = pnl["cost"]
@@ -93,13 +93,18 @@ def job_money(db, client_id, job, pre=None):
 
     subs = pre["subs"].get(job.id, [])
     live_subs = [x for x in subs if (x.status or "") not in ("CANCELLED", "AMENDED")]
-    # What the gangs have still to bill. Their bills are incurred already;
+    # What the contractors have still to bill. Their bills are incurred already;
     # counting the whole order on top counted every rupee billed twice.
-    gang_billed = {}
+    contractor_billed = {}
     for b in pre["sub"].get(job.id, []):
-        gang_billed[b.order_id] = money(gang_billed.get(b.order_id, 0.0) + (b.this_bill or 0))
+        contractor_billed[b.order_id] = money(contractor_billed.get(b.order_id, 0.0) + (b.this_bill or 0))
+    # Work a credit note took back is not billed any more, so the order has that much left to bill.
+    credits = pre.get("credits") or {}
+    for order_id, taxable in (credits.get("sub_order") or {}).items():
+        if order_id in contractor_billed:
+            contractor_billed[order_id] = money(contractor_billed[order_id] - taxable)
     subcontracted = money(sum(max(0.0, (x.gross_amount or x.net_order_value or 0)
-                                  - gang_billed.get(x.id, 0.0)) for x in live_subs))
+                                  - contractor_billed.get(x.id, 0.0)) for x in live_subs))
 
     commitment = money(committed + subcontracted)
 
@@ -130,13 +135,17 @@ def job_money(db, client_id, job, pre=None):
     ra_received = money(sum(
         (b.net_payable or 0) if (b.status == "PAID" and not settled.get(("ra_bill", b.id)))
         else settled.get(("ra_bill", b.id), 0.0) for b in ra))
-    invoiced = money(sum(invoice_total(i) for i in invoices) + sum(b.this_bill or 0 for b in ra))
+    taken_ra = (credits.get("client_job") or {}).get(job.id, {})
+    taken_net = credits.get("client_bill") or {}
+    invoiced = money(sum(invoice_total(i) for i in invoices) + sum(b.this_bill or 0 for b in ra)
+                     - taken_ra.get("taxable", 0.0))
     received = money(sum(i.paid or 0 for i in invoices) + ra_received)
     # What the client still owes is what each bill asks for less what came in
     # against it - the bill's net payable carries its GST, retention and TDS,
     # so "billed less received" mixed a figure before tax with cash after it.
     owed = money(sum(max(0.0, invoice_total(i) - (i.paid or 0)) for i in invoices)
-                 + sum(max(0.0, (b.net_payable or 0) - settled.get(("ra_bill", b.id), 0.0))
+                 + sum(max(0.0, (b.net_payable or 0) - taken_net.get(b.id, {}).get("net", 0.0)
+                           - settled.get(("ra_bill", b.id), 0.0))
                        for b in ra if b.status == "CERTIFIED"))
 
     contract_value = sold or money(job.quoted_value or 0)
@@ -148,7 +157,7 @@ def job_money(db, client_id, job, pre=None):
     # until it is received.
     rels = pre["released"].get(job.id, [])
     retention_held = money(sum(invoice_total(i) for i in invoices) * retention_percent / 100
-                           + sum(b.retention_amount or 0 for b in ra)
+                           + sum(b.retention_amount or 0 for b in ra) - taken_ra.get("retention", 0.0)
                            - sum(r.amount or 0 for r in rels))
     received = money(received + sum(settled.get(("retention_release", r.id), 0.0) for r in rels))
     owed = money(owed + sum(max(0.0, (r.net_amount or 0) - settled.get(("retention_release", r.id), 0.0))
@@ -163,7 +172,7 @@ def job_money(db, client_id, job, pre=None):
         by_category[key] = money(by_category[key]
                                  + (b.total or b.amount or 0) * (1.0 - stocked.get(b.id, 0.0)))
     by_category["materials"] = money(by_category["materials"] + c["material_from_store"]
-                                     - c["material_recovered_from_gangs"])
+                                     - c["material_recovered_from_contractors"])
     by_category["subcontract"] = money(by_category["subcontract"] + c["subcontractors"] + subcontracted)
     by_category["plant"] = money(by_category["plant"] + c["plant"] + c["equipment"])
     for p in open_pos:
@@ -238,7 +247,7 @@ def account_balance(db, client_id, account):
 
 class AdvanceDoc:
     """A subcontract order, seen as the mobilisation advance it promises the
-    gang - what a payment of the advance is recorded against."""
+    contractor - what a payment of the advance is recorded against."""
 
     def __init__(self, order):
         self.id = order.id
@@ -266,7 +275,8 @@ def _doc_for(db, client_id, doc_type, doc_id):
             raise HTTPException(409, "%s is %s. Money is received against a certified bill."
                                      % (b.number, (b.status or "").lower()))
         job = db.query(models.DBJob).filter(models.DBJob.id == b.job_id).first()
-        return b, money(b.net_payable), "IN", "client", (job.customer_name if job else ""), None, b.job_id
+        return (b, money((b.net_payable or 0) - bill_credited_net(db, "client", b.id)), "IN", "client",
+                (job.customer_name if job else ""), None, b.job_id)
     if doc_type == "sub_bill":
         b = sub_bill_or_404(db, client_id, doc_id)
         if b.status not in ("CERTIFIED", "PAID"):
@@ -274,7 +284,7 @@ def _doc_for(db, client_id, doc_type, doc_id):
                                      % (b.number, (b.status or "").lower()))
         con = db.query(models.DBContractor).filter(
             models.DBContractor.id == b.contractor_id).first() if b.contractor_id else None
-        return (b, money(b.net_payable), "OUT", "contractor",
+        return (b, money((b.net_payable or 0) - bill_credited_net(db, "contractor", b.id)), "OUT", "contractor",
                 (con.company_name if con else ""), b.contractor_id, b.job_id)
     if doc_type == "supplier_bill":
         b = db.query(models.DBBill).filter(
@@ -349,10 +359,10 @@ def _doc_for_any(db, client_id, doc_type, doc_id):
         return AdvanceDoc(o), money(o.mobilization_advance_amount)
     if doc_type == "ra_bill":
         b = ra_bill_or_404(db, client_id, doc_id)
-        return b, money(b.net_payable)
+        return b, money((b.net_payable or 0) - bill_credited_net(db, "client", b.id))
     if doc_type == "sub_bill":
         b = sub_bill_or_404(db, client_id, doc_id)
-        return b, money(b.net_payable)
+        return b, money((b.net_payable or 0) - bill_credited_net(db, "contractor", b.id))
     if doc_type == "retention_release":
         r = release_or_404(db, client_id, doc_id)
         return r, money(r.net_amount)
@@ -362,8 +372,8 @@ def _doc_for_any(db, client_id, doc_type, doc_id):
 
 
 def material_recovered_by_job(db, client_id, job_id=None):
-    """Recovered on a certified or paid gang bill - credited back to the
-    project, because that material's cost is already in the gang's bill."""
+    """Recovered on a certified or paid contractor bill - credited back to the
+    project, because that material's cost is already in the contractor's bill."""
     q = db.query(models.DBMaterialRecovery.job_id, models.DBMaterialRecovery.amount).join(
         models.DBSubBill, models.DBSubBill.id == models.DBMaterialRecovery.sub_bill_id).filter(
         models.DBMaterialRecovery.client_id == client_id,
@@ -383,3 +393,4 @@ from app.services.client_billing import ra_bill_or_404
 from app.services.crm import norm_name, settled_on
 from app.services.projects import hourly_rates, invoice_total, preload_pnl_for_job, project_pnl
 from app.services.subcontract_billing import release_or_404, release_party, sub_bill_or_404, sub_order_or_404
+from app.services.credit_notes import bill_credited_net

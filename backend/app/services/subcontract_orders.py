@@ -1,4 +1,5 @@
 """The rules and workings behind the subcontract orders endpoints."""
+import threading
 import json
 import re
 from datetime import datetime
@@ -22,7 +23,6 @@ from app.constants.subcontract_orders import (
     WO_BILLING_CYCLES,
     WO_COMMITTED_STATUSES,
     WO_DEFAULT_WORK_TYPES,
-    WO_DEPARTMENTS,
     WO_EDITABLE,
     WO_TRACKED,
     WO_TRANSITIONS,
@@ -127,20 +127,32 @@ def erp_wo_delete_report(db, client, wo):
 
 
 def wo_department_choices(db, client_id):
-    """The departments an order can be raised for: the ones the owner has created.
+    """The departments an order can be raised for: the ones the owner has added to a site.
 
-    A business that has not created any yet gets the six trades it would have had, so the
-    picker is never empty. Any department already on an order stays in the list, so an
-    old order can still be opened and saved after a department has been renamed or removed."""
-    made = [d.name for d in db.query(models.DBDepartment).filter(
-        models.DBDepartment.client_id == client_id).order_by(models.DBDepartment.name).all() if (d.name or "").strip()]
-    names = made or list(WO_DEPARTMENTS)
+    There is no built-in list: a business with none added has none to choose from. Any
+    department already on an order stays in the list, so an old order can still be opened
+    and saved after a department has been renamed or removed."""
+    from app.services.hr import department_site_map
+    placed = department_site_map(db, client_id)
+    names = [d.name for d in db.query(models.DBDepartment).filter(
+        models.DBDepartment.client_id == client_id).order_by(models.DBDepartment.name).all()
+        if (d.name or "").strip() and placed.get(d.id)]
     used = db.query(models.DBSubcontractOrder.department).filter(
         models.DBSubcontractOrder.client_id == client_id).distinct().all()
     for (dept,) in used:
         if dept and dept not in names:
             names.append(dept)
     return names
+
+
+def wo_department_sites(db, client_id):
+    """{department name: [site ids]} for the departments added to a site."""
+    from app.services.hr import department_site_map
+    narrowed = department_site_map(db, client_id)
+    if not narrowed:
+        return {}
+    return {d.name: sorted(narrowed[d.id]) for d in db.query(models.DBDepartment).filter(
+        models.DBDepartment.client_id == client_id, models.DBDepartment.id.in_(list(narrowed))).all()}
 
 
 def recost_order(db, order):
@@ -269,7 +281,7 @@ def item_ceiling(item):
 
 
 def contractor_state(db, contractor_id):
-    """The state the gang is registered in, read off their GSTIN. It is their
+    """The state the contractor is registered in, read off their GSTIN. It is their
     supply, so it is their state against the site's that decides the split."""
     con = db.query(models.DBContractor).filter(
         models.DBContractor.id == contractor_id).first() if contractor_id else None
@@ -816,6 +828,13 @@ def wo_ready_to_submit(db, order):
     if not (order.completion_date or "").strip():
         missing.append("a completion date")
     missing += wo_budget_missing(db, order)
+    # On a project with a BOQ, every line given to a sub contractor must be a line of that BOQ, so what is given out adds up against it.
+    items = db.query(models.DBSubcontractItem).filter(models.DBSubcontractItem.order_id == order.id).all()
+    loose = boq_tie_subcontract_lines(db, order.client_id, order.job_id, items)
+    if loose:
+        missing.append("every schedule line on the project BOQ (%d %s not, first: %s - pick %s from the BOQ, or add %s to the BOQ)"
+                       % (len(loose), "is" if len(loose) == 1 else "are", loose[0].item_description[:40],
+                          "it" if len(loose) == 1 else "them", "it" if len(loose) == 1 else "them"))
     return missing
 
 
@@ -1091,7 +1110,7 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
                      "It is waiting with: " + ", ".join(
                          wo_pending_with(db, client.id, actor_id)) + ".")
         # An order is issued only to a sub contractor whose registration form
-        # has been signed off - otherwise the gang is taken on by whoever
+        # has been signed off - otherwise the contractor is taken on by whoever
         # typed their name, PAN and bank account.
         too_big = unregistered_vendor_breach(db, order)
         if too_big:
@@ -1130,7 +1149,7 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
         order.executed_at = now
     elif action == "CANCEL":
         # Work measured, billed or advanced against an order is a running
-        # account with the gang; cancelling the order left it pointing at
+        # account with the contractor; cancelling the order left it pointing at
         # nothing, with bills still certifiable against it.
         billed = [b.number for b in db.query(models.DBSubBill).filter(
             models.DBSubBill.order_id == order.id, models.DBSubBill.status != "CANCELLED").all()]
@@ -1168,6 +1187,9 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
     return order
 
 
+_FK_LOCK = threading.Lock()
+
+
 def _fk_map(db):
     """Every foreign key in the live database, by the table it points at. Reading the schema is slow, so it is
     kept until the set of tables changes - which is when it could have."""
@@ -1176,18 +1198,41 @@ def _fk_map(db):
     insp = sa_inspect(bind)
     names = tuple(sorted(insp.get_table_names()))
     key = (str(bind.url), names)
-    if key not in _FK_CACHE:
-        _FK_CACHE.clear()
-        graph = {}
-        for table in names:
-            nullable = {c["name"]: c.get("nullable", True) for c in insp.get_columns(table)}
-            pk = insp.get_pk_constraint(table).get("constrained_columns") or []
-            for fk in insp.get_foreign_keys(table):
-                cols = fk.get("constrained_columns", [])
-                if len(cols) == 1 and fk.get("referred_table"):
-                    graph.setdefault(fk["referred_table"], []).append((table, cols[0], nullable.get(cols[0], True), pk))
-        _FK_CACHE[key] = graph
+    with _FK_LOCK:
+        if key not in _FK_CACHE:
+            _FK_CACHE.clear()
+            graph = {}
+            # One query per kind for the whole schema; reading it a table at a time was hundreds of round trips.
+            columns = insp.get_multi_columns()
+            pks = insp.get_multi_pk_constraint()
+            fks = insp.get_multi_foreign_keys()
+            for (schema, table), table_fks in fks.items():
+                nullable = {c["name"]: c.get("nullable", True) for c in columns.get((schema, table), [])}
+                pk = (pks.get((schema, table)) or {}).get("constrained_columns") or []
+                for fk in table_fks:
+                    cols = fk.get("constrained_columns", [])
+                    if len(cols) == 1 and fk.get("referred_table"):
+                        graph.setdefault(fk["referred_table"], []).append((table, cols[0], nullable.get(cols[0], True), pk))
+            _FK_CACHE[key] = graph
     return _FK_CACHE[key]
+
+
+def referrers_present(db, edges, ids):
+    """Of these (table, column, ...) foreign keys, the ones that have a row pointing at `ids`. One round trip per
+    hundred keys instead of one blanket UPDATE or DELETE per key - against a remote database that is the difference
+    between a delete that takes seconds and one that is instant."""
+    from sqlalchemy import text, bindparam
+    ids = list(ids)
+    if not ids or not edges:
+        return []
+    hit = set()
+    for start in range(0, len(edges), 100):
+        chunk = edges[start:start + 100]
+        sql = " UNION ALL ".join(
+            "SELECT %d AS i WHERE EXISTS (SELECT 1 FROM %s WHERE %s IN :ids)" % (start + n, e[0], e[1])
+            for n, e in enumerate(chunk))
+        hit.update(r[0] for r in db.execute(text(sql).bindparams(bindparam("ids", expanding=True)), {"ids": ids}))
+    return [e for n, e in enumerate(edges) if n in hit]
 
 
 def cascade_delete_referrers(db, parent, ids, _depth=0):
@@ -1200,7 +1245,7 @@ def cascade_delete_referrers(db, parent, ids, _depth=0):
     ids = list(ids)
     if not ids or _depth > 8:
         return
-    for table, col, nullable, pk in _fk_map(db).get(parent, []):
+    for table, col, nullable, pk in referrers_present(db, _fk_map(db).get(parent, []), ids):
         where = "%s IN :ids" % col
         bind = lambda sql: db.execute(text(sql).bindparams(bindparam("ids", expanding=True)), {"ids": ids})
         if table == parent or (nullable and table not in OWNED_BY_AN_ORDER):
@@ -1222,9 +1267,8 @@ def sweep_referrers(db, parents):
         ids = list(ids or [])
         if not ids:
             continue
-        for table, col, nullable, pk in graph.get(parent, []):
-            if table == parent:
-                continue
+        edges = [e for e in graph.get(parent, []) if e[0] != parent]
+        for table, col, nullable, pk in referrers_present(db, edges, ids):
             sql = ("UPDATE %s SET %s = NULL WHERE %s IN :ids" if nullable else "DELETE FROM %s WHERE %s IN :ids") % (
                 (table, col, col) if nullable else (table, col))
             db.execute(text(sql).bindparams(bindparam("ids", expanding=True)), {"ids": ids})
@@ -1492,6 +1536,8 @@ def work_order_from_estimate(db, client, est, request):
         reference=est.tender_reference or est.number or "",
         notes="From %s - %s" % (est.number, est.title or ""),
         status="Draft", total_value=0.0)
+    boq = boq_of_job(db, client.id, est.job_id)
+    wo.boq_id = boq.id if boq else None
     db.add(wo)
     db.flush()
     total = 0.0
@@ -1570,9 +1616,10 @@ def contractor_released(db, client_id, order_id=0):
 def wo_variations(db, wo, cutoff):
     """The variations agreed on a client order drawn from a BOQ, up to a date: the order's value as first placed, each
     variation, and the value as varied. None for an order with no BOQ or no approved variation by then."""
-    if not wo or not wo.boq_id:
+    boq_id = (wo.boq_id or getattr(boq_of_job(db, wo.client_id, wo.job_id), "id", None)) if wo else None
+    if not boq_id:
         return None
-    every = db.query(models.DBBoqVariation).filter(models.DBBoqVariation.boq_id == wo.boq_id,
+    every = db.query(models.DBBoqVariation).filter(models.DBBoqVariation.boq_id == boq_id,
                                                    models.DBBoqVariation.status == "APPROVED").order_by(models.DBBoqVariation.id).all()
     if not every:
         return None
@@ -1771,3 +1818,4 @@ from app.services.client_billing import billed_qty_to_date, measured_to_date
 from app.services.crm import advance_paid, next_item_code, norm_name, settled_on, standard_unit
 from app.services.invoicing import active_irn
 from app.services.subcontract_billing import _live_releases, released_retention, sub_gross_measured
+from app.services.boq import boq_of_job, boq_tie_subcontract_lines

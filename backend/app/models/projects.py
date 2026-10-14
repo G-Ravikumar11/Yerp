@@ -171,6 +171,9 @@ class DBScheduleActivity(Base):
     actual_start = Column(String, default="")
     actual_finish = Column(String, default="")
     display_order = Column(Integer, default=0)
+    assigned_to_id = Column(Integer, nullable=True, index=True)   # the employee responsible for it
+    status = Column(String, default="")                          # Not Started | In Progress | Completed | Delayed, as set by hand
+    notes = Column(Text, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
@@ -225,6 +228,13 @@ class DBProjectThread(Base):
     started_by_name = Column(String, default="")
     closed = Column(Boolean, default=False, index=True)
     last_message_at = Column(String, default="", index=True)
+    description = Column(Text, default="")
+    category = Column(String, default="General", index=True)    # General | Site Progress | Materials | Quality | Safety | Design | Approvals
+    priority = Column(String, default="Normal", index=True)     # Low | Normal | High | Urgent
+    members = Column(String, default="")                         # "member:3,employee:7" - who the thread is for
+    link_type = Column(String, default="")                       # progress | delivery | quality | safety | design | approval
+    link_ref = Column(String, default="")                        # NCR-0005, GRN-0012, drawing STR-101...
+    link_id = Column(Integer, nullable=True)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
@@ -240,6 +250,8 @@ class DBProjectMessage(Base):
     file_ids = Column(String, default="")            # "12,13"
     mentions = Column(String, default="")            # "member:3,employee:7"
     deleted = Column(Boolean, default=False)
+    parent_id = Column(Integer, nullable=True, index=True)       # the message this replies to
+    edited_at = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
@@ -251,3 +263,53 @@ class DBThreadRead(Base):
     thread_id = Column(Integer, ForeignKey("project_threads.id"), nullable=False, index=True)
     reader = Column(String, default="", index=True)
     last_read_id = Column(Integer, default=0)
+
+
+class DBChatReaction(Base):
+    """One person's emoji on one message."""
+    __tablename__ = "chat_reactions"
+    __table_args__ = (UniqueConstraint("message_id", "reader", "emoji", name="uq_chat_reaction"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(Integer, ForeignKey("project_messages.id"), nullable=False, index=True)
+    reader = Column(String, default="", index=True)
+    emoji = Column(String, default="")
+
+
+class DBChatTask(Base):
+    """An action item made from a conversation: who, by when, and where it stands."""
+    __tablename__ = "chat_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    thread_id = Column(Integer, ForeignKey("project_threads.id"), nullable=False, index=True)
+    message_id = Column(Integer, ForeignKey("project_messages.id"), nullable=True, index=True)
+    title = Column(String, default="")
+    description = Column(Text, default="")
+    assignee = Column(String, default="", index=True)            # "employee:7"
+    assignee_name = Column(String, default="")
+    due_date = Column(String, default="")
+    priority = Column(String, default="Normal")
+    status = Column(String, default="Open", index=True)          # Open | In Progress | Blocked | Resolved | Closed
+    created_by = Column(String, default="")
+    created_by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    updated_at = Column(String, default="")
+
+
+class DBChatNotice(Base):
+    """Something for one person: a message to them, a reply, a mention, a task, a date coming up."""
+    __tablename__ = "chat_notices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    recipient = Column(String, default="", index=True)           # "employee:7"
+    kind = Column(String, default="")                            # message | reply | mention | assigned | due | update
+    title = Column(String, default="")
+    body = Column(Text, default="")
+    thread_id = Column(Integer, nullable=True, index=True)
+    task_id = Column(Integer, nullable=True)
+    dedupe = Column(String, default="", index=True)              # one reminder per task per day
+    is_read = Column(Boolean, default=False, index=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"), index=True)

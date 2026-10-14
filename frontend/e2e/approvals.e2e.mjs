@@ -6,7 +6,7 @@ await signIn(page)
 // --- Two things waiting on the owner: an order sent for approval and a bill -----------------
 const tag = 'E2E approve ' + Date.now().toString(36)
 const vocab = (await api(page, 'GET', '/api/wo/vocabulary')).data
-const gang = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
+const contractor = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
 const unit = (await api(page, 'GET', '/api/wo/business-units')).data.business_units[0]
 const job = vocab.jobs[0]
 let budgets = (await api(page, 'GET', `/api/wo/projects/${job.id}/budgets`)).data.budgets
@@ -14,7 +14,7 @@ if (!budgets.length) {
   await api(page, 'POST', `/api/wo/projects/${job.id}/budgets`, { name: 'E2E civil', code: 'E2E', allocated_amount: 900000000 })
   budgets = (await api(page, 'GET', `/api/wo/projects/${job.id}/budgets`)).data.budgets
 }
-const draft = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: gang.id, job_id: job.id, department: 'Civil', subject: tag, commencement_date: '2026-11-01', completion_date: '2027-02-28' })).data.order
+const draft = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: contractor.id, job_id: job.id, department: 'Civil', subject: tag, commencement_date: '2026-11-01', completion_date: '2027-02-28' })).data.order
 await api(page, 'PUT', `/api/wo/orders/${draft.id}/boq`, { lines: [{ activity_no: '1.0', item_description: 'Approvals test line', uom: 'cum', quantity: 10, unit_rate: 5000, budget_id: budgets[0].id }] })
 const sent = await api(page, 'POST', `/api/wo/orders/${draft.id}/submit`, {})
 if (sent.status !== 200) throw new Error('could not submit: ' + JSON.stringify(sent.data))

@@ -1,13 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, ChevronDown } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Button, ConfirmDialog, Field, Input, NumField, Select, Skeleton, Tabs } from '@/components/ui'
-import { deleteEmployee, peopleKeys, setAccess, setEmployeeStatus, updateEmployee, useDepartments, useEmployee, useEmployees, useHrCatalogue, type EmployeeDetail } from '@/api/people'
+import { deleteEmployee, peopleKeys, setEmployeeStatus, updateEmployee, useDepartments, useEmployee, useEmployees, useHrCatalogue, type EmployeeDetail } from '@/api/people'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
-import { AccessPicker } from './AccessPicker'
+import { EmployeeAccess } from './EmployeeAccess'
 import { EMPLOYEE_TONE } from './EmployeesPage'
 
 type Tab = 'profile' | 'access'
@@ -44,7 +44,7 @@ function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
   const depts = useDepartments()
   const people = useEmployees('')
   const cat = useHrCatalogue()
-  const [f, setF] = useState({ first_name: e.first_name, last_name: e.last_name, email: e.email, phone: e.phone, job_title: e.job_title, department_id: e.department_id, reports_to: e.reports_to, level: e.level, role: e.role, employment_type: e.employment_type, pay_frequency: e.pay_frequency, salary: e.salary, tax_rate: e.tax_rate, start_date: e.start_date, emergency_contact: e.emergency_contact, emergency_phone: e.emergency_phone })
+  const [f, setF] = useState({ first_name: e.first_name, last_name: e.last_name, email: e.email, org_email: e.org_email ?? '', phone: e.phone, job_title: e.job_title, department_id: e.department_id, reports_to: e.reports_to, level: e.level, role: e.role, employment_type: e.employment_type, pay_frequency: e.pay_frequency, salary: e.salary, tax_rate: e.tax_rate, start_date: e.start_date, emergency_contact: e.emergency_contact, emergency_phone: e.emergency_phone })
   const { isOwner } = useSession()
   const set = (k: keyof typeof f) => (ev: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((s) => ({ ...s, [k]: ev.target.value }))
   const save = useAction(() => updateEmployee(e.id, f), { invalidate: [peopleKeys.all], success: 'Saved', onSuccess: onDone })
@@ -53,10 +53,11 @@ function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Field label="First name" htmlFor="ep-first"><Input id="ep-first" value={f.first_name} onChange={set('first_name')} /></Field>
         <Field label="Last name" htmlFor="ep-last"><Input id="ep-last" value={f.last_name} onChange={set('last_name')} /></Field>
-        <Field label="Email (their login)" htmlFor="ep-email"><Input id="ep-email" type="email" value={f.email} onChange={set('email')} /></Field>
+        <Field label="Personal email" htmlFor="ep-email"><Input id="ep-email" type="email" value={f.email} onChange={set('email')} /></Field>
+        <Field label="Organization email (Yahoo sign-in)" htmlFor="ep-org-email"><Input id="ep-org-email" type="email" value={f.org_email} onChange={set('org_email')} /></Field>
         <Field label="Phone" htmlFor="ep-phone"><Input id="ep-phone" value={f.phone} onChange={set('phone')} /></Field>
         <Field label="Job title" htmlFor="ep-title"><Input id="ep-title" value={f.job_title} onChange={set('job_title')} /></Field>
-        <Field label="Department" htmlFor="ep-dept" hint={isOwner ? undefined : 'Only the Master moves people between departments.'}><Select id="ep-dept" disabled={!isOwner} value={f.department_id ?? ''} onChange={(ev) => setF((s) => ({ ...s, department_id: ev.target.value ? Number(ev.target.value) : null }))} placeholder="None" options={(depts.data ?? []).map((d) => ({ value: d.id, label: d.name }))} /></Field>
+        <Field label="Department" htmlFor="ep-dept" hint={isOwner ? undefined : 'Only the Master moves people between departments.'}><Select id="ep-dept" disabled={!isOwner} value={f.department_id ?? ''} onChange={(ev) => setF((s) => ({ ...s, department_id: ev.target.value ? Number(ev.target.value) : null }))} placeholder="None" options={(depts.data ?? []).filter((d) => d.site_ids.length > 0 || d.id === f.department_id).map((d) => ({ value: d.id, label: d.name }))} /></Field>
         <Field label="Reports to" htmlFor="ep-mgr"><Select id="ep-mgr" value={f.reports_to ?? ''} onChange={(ev) => setF((s) => ({ ...s, reports_to: ev.target.value ? Number(ev.target.value) : null }))} placeholder="None" options={(people.data ?? []).filter((p) => p.id !== e.id).map((p) => ({ value: p.id, label: p.full_name }))} /></Field>
         <Field label="Level" htmlFor="ep-level"><Select id="ep-level" value={f.level} onChange={set('level')} placeholder="Not set" options={(cat.data?.levels ?? []).map((l) => ({ value: l.code, label: l.label }))} /></Field>
         <Field label="Reporting role" htmlFor="ep-role"><Select id="ep-role" value={f.role} onChange={set('role')} options={(cat.data?.roles ?? []).map((r) => ({ value: r.code, label: r.label }))} /></Field>
@@ -75,27 +76,6 @@ function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
   )
 }
 
-function Access({ e }: { e: EmployeeDetail }) {
-  const { isOwner } = useSession()
-  const cat = useHrCatalogue()
-  const [role, setRole] = useState(e.permission_role)
-  const [granted, setGranted] = useState(e.permissions)
-  useEffect(() => { setRole(e.permission_role); setGranted(e.permissions) }, [e.permission_role, e.permissions])
-  const save = useAction(() => setAccess(e.id, { permission_role: role, permissions: granted }), { invalidate: [peopleKeys.all], success: 'Access updated' })
-  if (!isOwner) return <p className="text-[13px] text-muted-foreground">Only the Master can change what somebody is allowed to do. They currently hold {e.permissions.length} permission{e.permissions.length === 1 ? '' : 's'}.</p>
-  if (!cat.data) return <Skeleton className="h-40 w-full" />
-  return (
-    <div>
-      <AccessPicker catalogue={cat.data} role={role} granted={granted} onRole={(code, rights) => { setRole(code); setGranted(rights) }} onGranted={setGranted} />
-      <p className="mt-3 text-[13px] text-muted-foreground">Sites: {e.all_sites || e.site_names.length === 0 ? 'every site' : e.site_names.join(', ')}</p>
-      <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
-        {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
-        <Button loading={save.isPending} onClick={() => save.mutate()}>Save access</Button>
-      </div>
-    </div>
-  )
-}
-
 /** Moves the employee between stages; the Master only. The status shown in the header follows. */
 function StatusMenu({ e }: { e: EmployeeDetail }) {
   const navigate = useNavigate()
@@ -103,7 +83,17 @@ function StatusMenu({ e }: { e: EmployeeDetail }) {
   const [open, setOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [asking, setAsking] = useState<null | 'offboard' | 'terminate'>(null)
-  const change = useAction((to: 'onboard' | 'offboard' | 'terminate') => setEmployeeStatus(e.id, to), { invalidate: [peopleKeys.all], success: (r) => r.message, onSuccess: () => setAsking(null) })
+  // The screen follows the server's reply at once; the lists are read again behind it rather than ahead of it.
+  const change = useAction((to: 'onboard' | 'offboard' | 'terminate') => setEmployeeStatus(e.id, to), {
+    success: (r) => r.message,
+    onSuccess: (r) => {
+      setAsking(null)
+      qc.setQueryData<EmployeeDetail>(['people', 'employee', e.id], (old) => old && { ...old, status: r.status, ...(r.end_date !== undefined && { end_date: r.end_date }) })
+      qc.setQueriesData<{ id: number; status: string }[]>({ queryKey: ['people', 'employees'] }, (old) => Array.isArray(old) ? old.map((p) => (p.id === e.id ? { ...p, status: r.status } : p)) : old)
+      void qc.invalidateQueries({ queryKey: ['people', 'employees'] })
+      void qc.invalidateQueries({ queryKey: ['people', 'departments'] })
+    },
+  })
   // Gone from every list, department and count, so those are read again; this page's own record is dropped first so it is not asked for.
   const del = useAction(() => deleteEmployee(e.id), {
     success: `${e.full_name} was deleted`,
@@ -140,9 +130,10 @@ function StatusMenu({ e }: { e: EmployeeDetail }) {
 export default function EmployeePage() {
   const id = Number(useParams().id)
   const q = useEmployee(id)
-  const [tab, setTab] = useState<Tab>('profile')
+  const [tab, setTab] = useState<Tab | null>(null)
   const e = q.data
   const { isOwner } = useSession()
+  const shown: Tab = isOwner ? (tab ?? 'profile') : 'profile'
   if (q.isPending) return <Skeleton className="h-64 w-full" />
   if (!e) return <p role="alert" className="py-10 text-center text-sm text-danger">Could not open that employee.</p>
   return (
@@ -150,11 +141,11 @@ export default function EmployeePage() {
       <Link to="/people/employees" className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Employees</Link>
       <PageHeader eyebrow={e.employee_id} title={e.full_name} description={[e.job_title, e.department_name, e.manager_name && `reports to ${e.manager_name}`].filter(Boolean).join(' · ') || undefined} actions={<Badge tone={EMPLOYEE_TONE[e.status] ?? 'neutral'}>{e.status}</Badge>} />
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <Tabs label="Section" value={tab} onChange={setTab} items={isOwner ? [{ value: 'profile', label: 'Profile' }, { value: 'access', label: 'Access' }] : [{ value: 'profile', label: 'Profile' }]} />
+        <Tabs label="Section" value={shown} onChange={setTab} items={isOwner ? [{ value: 'profile', label: 'Profile' }, { value: 'access', label: 'Access' }] : [{ value: 'profile', label: 'Profile' }]} />
         {isOwner && <StatusMenu e={e} />}
       </div>
-      {tab === 'profile' && <Profile key={e.id} e={e} />}
-      {tab === 'access' && isOwner && <Access e={e} />}
+      {shown === 'profile' && <Profile key={e.id} e={e} />}
+      {shown === 'access' && <EmployeeAccess key={e.id} e={e} />}
     </>
   )
 }

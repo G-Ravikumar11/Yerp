@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { api, clickText, fill, launch, open, signIn, sleep, waitForToast } from './lib.mjs'
 
 // The project BOQ: started for a project, the client's sheet read into the grid, saved with item codes, lines taken
-// into a gang order, and tracked.
+// into a contractor order, and tracked.
 const { page, check, done } = await launch({ allow: [/^(403|404|409) /] })
 await signIn(page)
 const stamp = Date.now().toString().slice(-6)
@@ -38,17 +38,17 @@ const saved = (await api(page, 'GET', `/api/boqs/${boq}`)).data
 const priced = saved.lines.filter((l) => l.kind === 'item' || l.kind === 'sub')
 check('saved with its total and an item code on every priced line', saved.total === 1472800 && priced.length === 4 && priced.every((l) => l.item_code), String(saved.total))
 
-// --- lines are taken into a gang order ------------------------------------------------------------------------------------
+// --- lines are taken into a contractor order ------------------------------------------------------------------------------------
 const vocab = (await api(page, 'GET', '/api/wo/vocabulary')).data
-const gang = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
+const contractor = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
 const unit = (await api(page, 'GET', '/api/wo/business-units')).data.business_units[0]
-const order = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: gang.id, job_id: jid, department: vocab.departments[0], subject: `BOQ gang ${stamp}`, commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
+const order = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: contractor.id, job_id: jid, department: vocab.departments[0], subject: `BOQ contractor ${stamp}`, commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
 await open(page, `/subcontractors/work-orders/${order.id}`)
 await clickText(page, 'button[role=tab]', 'Schedule')
 await clickText(page, 'main button', 'From the project BOQ')
 await page.waitForSelector('table[aria-label="Lines of the project BOQ"] input[type=checkbox]')
 await page.click('input[aria-label="Take 1.1"]')
-await fill(page, 'input[aria-label="Gang rate of 1.1"]', '150')
+await fill(page, 'input[aria-label="Contractor rate of 1.1"]', '150')
 await fill(page, 'input[aria-label="Quantity of 1.1"]', '300')
 await clickText(page, '[role=dialog] button', 'Add 1 line')
 await page.waitForFunction(() => !document.querySelector('[role=dialog]'))
@@ -62,7 +62,7 @@ await open(page, `/projects/boq/${boq}`)
 await clickText(page, 'button[role=tab]', 'Tracker')
 await page.waitForSelector('table[aria-label="BOQ tracker"] tbody tr')
 const text = await page.$eval('table[aria-label="BOQ tracker"]', (t) => t.textContent)
-check('the tracker shows what the gang has and what is still without one', text.includes('300') && text.includes('No gang yet') && /16\.7%/.test(text), text.slice(0, 160))
+check('the tracker shows what the contractor has and what is still without one', text.includes('300') && text.includes('No contractor yet') && /16\.7%/.test(text), text.slice(0, 160))
 
 // --- a revision: issue and open the next ---------------------------------------------------------------------------------------
 await clickText(page, 'main button', 'New revision')

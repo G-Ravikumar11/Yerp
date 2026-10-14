@@ -4,9 +4,9 @@ import { api, approvedOrder, clickText, launch, open, signIn, sleep } from './li
 const { page, check, done } = await launch({ allow: [] })
 await signIn(page)
 const vocab = (await api(page, 'GET', '/api/wo/vocabulary')).data
-const gang = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
+const contractor = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
 const unit = (await api(page, 'GET', '/api/wo/business-units')).data.business_units[0]
-const draft = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: gang.id, job_id: vocab.jobs[0].id, department: 'Civil', subject: 'Steps', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
+const draft = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: contractor.id, job_id: vocab.jobs[0].id, department: 'Civil', subject: 'Steps', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
 
 const tabs = () => page.$$eval('[role=tab][aria-selected=true]', (t) => t.map((e) => e.textContent)).then((t) => t.join('|'))
 await open(page, `/subcontractors/work-orders/${draft.id}`)

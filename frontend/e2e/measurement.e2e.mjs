@@ -9,7 +9,7 @@ await signIn(page)
 
 // --- An approved order to measure, made through the API ----------------------------------
 const vocab = (await api(page, 'GET', '/api/wo/vocabulary')).data
-const gang = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
+const contractor = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
 const unit = (await api(page, 'GET', '/api/wo/business-units')).data.business_units[0]
 const job = vocab.jobs[0]
 let budgets = (await api(page, 'GET', `/api/wo/projects/${job.id}/budgets`)).data.budgets
@@ -17,7 +17,7 @@ if (!budgets.length) {
   await api(page, 'POST', `/api/wo/projects/${job.id}/budgets`, { name: 'E2E civil', code: 'E2E', allocated_amount: 90000000 })
   budgets = (await api(page, 'GET', `/api/wo/projects/${job.id}/budgets`)).data.budgets
 }
-const created = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: gang.id, job_id: job.id, department: 'Civil', subject: 'E2E measurement book', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
+const created = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: contractor.id, job_id: job.id, department: 'Civil', subject: 'E2E measurement book', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
 await api(page, 'PUT', `/api/wo/orders/${created.id}/boq`, {
   lines: [
     { activity_no: '1.0', item_description: 'Shuttering for slabs and beams', uom: 'sqm', quantity: 200, unit_rate: 410, tolerance_percent: 10, budget_id: budgets[0].id },
@@ -37,7 +37,7 @@ const wo = (await api(page, 'GET', `/api/wo/orders/${created.id}`)).data.order
 const jobNo = vocab.jobs[0].number
 const picker = 'button[aria-label="Work order"]'
 const pickerText = () => page.$eval(picker, (e) => e.textContent)
-check('the picker names the work order, its job code and the gang', (await pickerText()).includes(wo.wo_number) && (await pickerText()).includes(jobNo) && (await pickerText()).includes(gang.company_name || gang.name || ''), await pickerText())
+check('the picker names the work order, its job code and the contractor', (await pickerText()).includes(wo.wo_number) && (await pickerText()).includes(jobNo) && (await pickerText()).includes(contractor.company_name || contractor.name || ''), await pickerText())
 await page.click(picker)
 await page.waitForSelector('[role=listbox] [role=option]')
 const allOrders = await page.$$eval('[role=listbox] [role=option]', (o) => o.length)
@@ -242,7 +242,7 @@ if (!otherBudgets.length) {
   await api(page, 'POST', `/api/wo/projects/${other.id}/budgets`, { name: 'E2E other', code: 'E2E-2', allocated_amount: 90000000 })
   otherBudgets = (await api(page, 'GET', `/api/wo/projects/${other.id}/budgets`)).data.budgets
 }
-const elsewhere = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: gang.id, job_id: other.id, department: 'Civil', subject: 'E2E other site', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
+const elsewhere = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: contractor.id, job_id: other.id, department: 'Civil', subject: 'E2E other site', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
 await api(page, 'PUT', `/api/wo/orders/${elsewhere.id}/boq`, { lines: [{ activity_no: '1.0', item_description: 'Plastering', uom: 'sqm', quantity: 100, unit_rate: 200, budget_id: otherBudgets[0].id }] })
 await api(page, 'POST', `/api/wo/orders/${elsewhere.id}/self-approve`, { comments: 'e2e' })
 await open(page, `/subcontractors/measurement-book?order=${created.id}`)
@@ -264,7 +264,7 @@ check('All sites brings the rest back', everywhere.some((t) => t.includes(other.
 await page.keyboard.press('Escape')
 
 // --- An amended order is still in the book, read-only, and points to its revision ----------------------
-const old = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: gang.id, job_id: job.id, department: 'Civil', subject: 'E2E to be amended', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
+const old = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: contractor.id, job_id: job.id, department: 'Civil', subject: 'E2E to be amended', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
 await api(page, 'PUT', `/api/wo/orders/${old.id}/boq`, { lines: [{ activity_no: '1.0', item_description: 'Brickwork', uom: 'cum', quantity: 50, unit_rate: 5200, budget_id: budgets[0].id }] })
 await api(page, 'POST', `/api/wo/orders/${old.id}/self-approve`, { comments: 'e2e' })
 const rev = (await api(page, 'POST', `/api/wo/orders/${old.id}/amend`, {})).data.order
@@ -302,7 +302,7 @@ check('and each amended order is listed directly under the one that replaced it'
 await page.keyboard.press('Escape')
 
 // --- A draft has nothing to measure, so the picker leaves it out -----------------------------------------------
-const draft = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: gang.id, job_id: job.id, department: 'Civil', subject: 'E2E still a draft', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
+const draft = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: contractor.id, job_id: job.id, department: 'Civil', subject: 'E2E still a draft', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
 await open(page, `/subcontractors/measurement-book?order=${created.id}`)
 await page.click('button[aria-label="Work order"]')
 await page.waitForSelector('[role=listbox] [role=option]')

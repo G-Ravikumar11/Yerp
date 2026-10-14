@@ -29,9 +29,10 @@ export function DeleteOrderDialog({ open, onOpenChange, kind, id, number, onDele
     invalidate: [],
     onSuccess: async () => {
       qc.removeQueries({ queryKey: ['delete-preview'] })
-      await qc.invalidateQueries()
       onOpenChange(false)
       onDeleted()
+      // Not awaited: the dialog closes now, and the lists catch up behind it.
+      void qc.invalidateQueries()
     },
   })
   const goes = p ? Object.entries(p.counts).filter(([k, n]) => n > 0 && LABEL[k] && !(k === 'versions' && n === 1)).map(([k, n]) => plural(n, ...(kind === 'bill' && k === 'lines' ? (['bill line', 'bill lines'] as [string, string]) : LABEL[k]))) : []

@@ -13,7 +13,7 @@ const list = (counts: Record<string, number>) => Object.entries(counts).filter((
  * The Master's delete for any record: it says first what goes with it, then takes it away from every screen.
  * `onDeleted` is where to go next when the record was the page being looked at.
  */
-export function MasterDeleteDialog({ open, onOpenChange, kind, id, label, noun, onDeleted, optimistic }: { open: boolean; onOpenChange: (o: boolean) => void; kind: MasterKind; id: number; label: string; noun?: string; onDeleted?: () => void; optimistic?: () => void }) {
+export function MasterDeleteDialog({ open, onOpenChange, kind, id, label, noun, onDeleted, optimistic, simple }: { open: boolean; onOpenChange: (o: boolean) => void; kind: MasterKind; id: number; label: string; noun?: string; onDeleted?: () => void; optimistic?: () => void; simple?: boolean }) {
   const qc = useQueryClient()
   const preview = useMasterPreview(kind, id, open)
   const p = preview.data
@@ -35,19 +35,22 @@ export function MasterDeleteDialog({ open, onOpenChange, kind, id, label, noun, 
       open={open}
       onOpenChange={onOpenChange}
       title={`Delete ${noun ? noun + ' ' : ''}${label}?`}
-      description="This takes it away from every screen. It cannot be undone."
+      description={simple ? 'Do you want to delete this? It cannot be undone.' : 'This takes it away from every screen. It cannot be undone.'}
       footer={
         <>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>Keep it</Button>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>{simple ? 'Cancel' : 'Keep it'}</Button>
           <Button variant="danger" loading={remove.isPending} disabled={!p?.can_delete} onClick={() => {
             // A page that can hide the row at once does so; if the server refuses, everything is read again.
             optimistic?.()
             remove.mutate(undefined, { onError: () => void qc.invalidateQueries() })
-          }}>Delete everywhere</Button>
+          }}>{simple ? 'Yes' : 'Delete everywhere'}</Button>
         </>
       }
     >
-      {preview.isPending ? (
+      {simple ? (
+        // Just the question. The check of what it is tied to still runs - Yes waits for it - but is not shown unless it fails.
+        preview.isError || (p && !p.can_delete) ? <p role="alert" className="text-sm text-danger">{preview.isError ? 'Could not check this record. Try again.' : 'This cannot be deleted.'}</p> : null
+      ) : preview.isPending ? (
         <Skeleton className="h-16 w-full" />
       ) : preview.isError || !p ? (
         <p className="text-sm text-danger">Could not check what this is tied to. Try again.</p>
@@ -65,7 +68,7 @@ export function MasterDeleteDialog({ open, onOpenChange, kind, id, label, noun, 
 }
 
 /** The delete icon for a row, shown only to the Master, with its confirmation. */
-export function MasterDelete({ kind, id, label, noun, onDeleted, optimistic }: { kind: MasterKind; id: number; label: string; noun?: string; onDeleted?: () => void; optimistic?: () => void }) {
+export function MasterDelete({ kind, id, label, noun, onDeleted, optimistic, simple }: { kind: MasterKind; id: number; label: string; noun?: string; onDeleted?: () => void; optimistic?: () => void; simple?: boolean }) {
   const { isOwner } = useSession()
   const [open, setOpen] = useState(false)
   if (!isOwner) return null
@@ -74,7 +77,7 @@ export function MasterDelete({ kind, id, label, noun, onDeleted, optimistic }: {
     // that opens on a click would then open the very record being deleted - so no click leaves this one.
     <span onClick={(e) => e.stopPropagation()}>
       <DeleteButton label={label} onClick={() => setOpen(true)} />
-      <MasterDeleteDialog open={open} onOpenChange={setOpen} kind={kind} id={id} label={label} noun={noun} onDeleted={onDeleted} optimistic={optimistic} />
+      <MasterDeleteDialog open={open} onOpenChange={setOpen} kind={kind} id={id} label={label} noun={noun} onDeleted={onDeleted} optimistic={optimistic} simple={simple} />
     </span>
   )
 }

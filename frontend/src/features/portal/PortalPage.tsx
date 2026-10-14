@@ -125,7 +125,7 @@ function PortalApp() {
         <div className="mt-5">
           {tab === 'overview' && <Overview />}
           {tab === 'orders' && <Orders />}
-          {tab === 'bills' && <Bills gang={me.party_type === 'contractor'} />}
+          {tab === 'bills' && <Bills contractor={me.party_type === 'contractor'} />}
           {tab === 'payments' && <Payments />}
           {tab === 'statement' && <Statement />}
           {tab === 'send' && <SendInvoice />}

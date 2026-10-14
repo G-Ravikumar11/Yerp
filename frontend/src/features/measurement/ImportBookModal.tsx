@@ -8,7 +8,7 @@ import { formatINR } from '@/lib/utils'
 import { ApiError } from '@/lib/api'
 
 /**
- * The measurement book as the site keeps it in Excel, read into the gang's
+ * The measurement book as the site keeps it in Excel, read into the contractor's
  * book: each numbered section is matched to an item on the order, the matches
  * can be corrected here, and nothing is recorded until you confirm.
  */

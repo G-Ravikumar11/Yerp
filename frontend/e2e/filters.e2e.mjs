@@ -1,6 +1,6 @@
 import { api, approvedOrder, fill, launch, open, setValue, signIn, sleep } from './lib.mjs'
 
-// The same search, status and date filters as Work Orders, on the Measurement Book, Vendor Register and the other lists;
+// The same search, status and date filters as Work Orders, on the Measurement Book, Sub Contract Registration and the other lists;
 // and the item code beside every item in the book.
 const { page, check, done } = await launch()
 await signIn(page)
@@ -26,14 +26,14 @@ const statuses = await page.$$eval('select[aria-label=Status] option', (o) => o.
 check('and the items filter by how far the work has got', statuses.some((x) => /Not started|In progress|Complete/.test(x)), statuses.join(', '))
 
 await open(page, '/subcontractors/vendors')
-await page.waitForSelector('table[aria-label=Vendors] tbody tr')
-check('the Vendor Register has the filter bar: search, status and dates', (await page.$('input[aria-label=Search]')) !== null && (await page.$('select[aria-label=Status]')) !== null && (await page.$('input[aria-label="From date"]')) !== null)
-const n = await page.$$eval('table[aria-label=Vendors] tbody tr', (r) => r.length)
-await fill(page, 'input[aria-label=Search]', 'zzzz-no-such-gang')
+await page.waitForSelector('table[aria-label="Sub contractors"] tbody tr')
+check('Sub Contract Registration has the filter bar: search, status and dates', (await page.$('input[aria-label=Search]')) !== null && (await page.$('select[aria-label=Status]')) !== null && (await page.$('input[aria-label="From date"]')) !== null)
+const n = await page.$$eval('table[aria-label="Sub contractors"] tbody tr', (r) => r.length)
+await fill(page, 'input[aria-label=Search]', 'zzzz-no-such-contractor')
 await sleep(300)
-check('and searching it narrows the list', (await text()).includes('Nobody matches') || (await page.$$eval('table[aria-label=Vendors] tbody tr', (r) => r.length)) < n)
+check('and searching it narrows the list', (await text()).includes('Nobody matches') || (await page.$$eval('table[aria-label="Sub contractors"] tbody tr', (r) => r.length)) < n)
 
-for (const [path, label] of [['/store/goods-receipt', 'Goods receipts'], ['/store/enquiries', 'Enquiries'], ['/store/eway', 'E-way bills'], ['/projects/equipment', 'Machines']]) {
+for (const [path, label] of [['/store/goods-receipt', 'Goods receipts'], ['/store/enquiries', 'Enquiries'], ['/store/eway', 'E-way bills'], ['/projects/equipment?tab=register', 'Machines']]) {
   await open(page, path)
   await sleep(800)
   check(`${label}: the filter bar is there`, (await page.$('input[aria-label=Search]')) !== null, path)

@@ -3,11 +3,11 @@ import { api, cellText, clickCell, clickText, fill, launch, open, setValue, sign
 const { page, check, done } = await launch({ allow: [/still needs/] })
 await signIn(page)
 
-// What the demo has: an approved gang, a project, a trade.
+// What the demo has: an approved contractor, a project, a trade.
 const vocab = (await api(page, 'GET', '/api/wo/vocabulary')).data
-const gangs = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.filter((c) => c.registration_status === 'APPROVED')
+const contractors = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.filter((c) => c.registration_status === 'APPROVED')
 const job = vocab.jobs[0]
-const gang = gangs[0]
+const contractor = contractors[0]
 
 await open(page, '/subcontractors/work-orders')
 await page.waitForSelector('table[aria-label="Work orders"]')
@@ -18,7 +18,7 @@ check('the work orders list loads with its summary tiles', before >= 0 && (await
 // --- A new draft ----------------------------------------------------------------
 await clickText(page, 'button', 'New work order')
 await page.waitForSelector('#no-con')
-await setValue(page, '#no-con', String(gang.id))
+await setValue(page, '#no-con', String(contractor.id))
 await setValue(page, '#no-job', String(job.id))
 await setValue(page, '#no-dept', 'Civil')
 await fill(page, '#no-subject', 'E2E shuttering, tower C')
@@ -28,7 +28,7 @@ await page.waitForFunction(() => /\/work-orders\/\d+/.test(location.pathname))
 const orderId = Number(page.url().match(/work-orders\/(\d+)/)[1])
 await page.waitForSelector('main h1')
 const number = await page.$eval('main h1', (e) => e.textContent.trim())
-check('a draft opens with its number issued and the gang shown', /^WO\//.test(number) && (await page.$eval('main', (e) => e.textContent)).includes(gang.company_name), number)
+check('a draft opens with its number issued and the contractor shown', /^WO\//.test(number) && (await page.$eval('main', (e) => e.textContent)).includes(contractor.company_name), number)
 check('the draft shows its state', (await page.$eval('main', (e) => e.textContent)).includes('Draft'))
 
 // --- Submitting an incomplete order says what is missing -----------------------------

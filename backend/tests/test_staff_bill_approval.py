@@ -286,8 +286,10 @@ def test_staff_cannot_approve_or_see_everyone_elses_costs(tenant):
     sign_out(tenant)
 
     sign_in(tenant, mate)
-    # No approval rights at all.
-    assert tenant.get("/api/employee/approvals").status_code == 403
+    # No approval rights: their own queue is empty, and it holds nobody else's bill.
+    queue = tenant.get("/api/employee/approvals")
+    assert queue.status_code == 200
+    assert queue.json() == {"pending": [], "upcoming": []}
     # And somebody else's cost is not in their list.
     listing = tenant.get("/api/employee/bills").json()
     assert listing["can_view_all"] is False

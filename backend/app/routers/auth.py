@@ -13,7 +13,7 @@ from app.db import get_db
 
 from app.constants.common import ALLOW_SELF_REGISTRATION, GOOGLE_SIGNIN_SCOPES
 from app.core.audit import log_audit, log_login
-from app.core.auth import current_role, end_every_session, get_client_user
+from app.core.auth import current_role, end_every_session, get_client_user, set_session_lifetime
 from app.core.config import logger
 from app.core.notifications import default_from_email, send_email_background
 from app.core.oauth import oauth
@@ -67,11 +67,14 @@ def client_register(body: ClientRegister, request: Request, db: Session = Depend
                    "not by registering.")
 
     validate_password_strength(body.password)
-    existing = db.query(models.DBClient).filter(models.DBClient.email == body.email).first()
+    email = (body.email or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+    existing = db.query(models.DBClient).filter(sqlfunc.lower(models.DBClient.email) == email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
     client = models.DBClient(
-        email=body.email,
+        email=email,
         password_hash=hash_password(body.password),
         company_name=body.company_name,
         contact_name=body.contact_name,
@@ -87,13 +90,15 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
     ip = request.client.host if request.client else "unknown"
     if rate_limiter.is_rate_limited(f"login:{ip}", max_requests=10, window=60):
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
-    client = db.query(models.DBClient).filter(models.DBClient.email == body.email).first()
+    # Emails are not case-sensitive and a stray space from a paste or autofill is not part of one.
+    email = (body.email or "").strip().lower()
+    client = db.query(models.DBClient).filter(sqlfunc.lower(models.DBClient.email) == email).first()
     if client and verify_password(body.password, client.password_hash):
         upgrade_password_hash(client, "password_hash", body.password)
     if not client or not verify_password(body.password, client.password_hash):
         # Not the account owner - it may be one of their colleagues.
         member = db.query(models.DBTeamMember).filter(
-            sqlfunc.lower(models.DBTeamMember.email) == (body.email or "").strip().lower()
+            sqlfunc.lower(models.DBTeamMember.email) == email
         ).first()
         if (member and member.is_active and member.password_hash
                 and verify_password(body.password, member.password_hash)):
@@ -107,6 +112,7 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
             request.session.pop("portal_user_id", None)
             request.session["client_id"] = owner.id
             request.session["member_id"] = member.id
+            set_session_lifetime(request, body.remember_me)
             member.last_login = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             log_login(db, owner.id, member.email, "member", "password", request, "success")
             db.commit()
@@ -122,6 +128,7 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
     request.session.pop("portal_user_id", None)
     request.session["client_id"] = client.id
     request.session.pop("member_id", None)
+    set_session_lifetime(request, body.remember_me)
     log_login(db, client.id, body.email, "client", "password", request, "success")
     return {"message": "Logged in", "is_onboarded": client.is_onboarded, "company_name": client.company_name}
 
@@ -371,8 +378,9 @@ def _sign_in_with_identity(request: Request, db: Session, info: dict, provider: 
         db.commit()
         return RedirectResponse(target)
 
-    emp = db.query(models.DBEmployee).filter(
-        sqlfunc.lower(models.DBEmployee.email) == email).first()
+    # Yahoo signs staff in by the address the organisation issued them, never by their personal one.
+    emp_col = models.DBEmployee.org_email if provider == "yahoo" else models.DBEmployee.email
+    emp = db.query(models.DBEmployee).filter(sqlfunc.lower(emp_col) == email).first()
     if emp and emp.status != "terminated":
         request.session.pop("client_id", None)
         request.session.pop("member_id", None)

@@ -1,5 +1,5 @@
 """Variations to the BOQ: extra items and quantities past it, priced, approved on a route, and applied as the next revision."""
-from test_boq import CLIENT_SHEET, import_lines, make_boq, saved, gang_order
+from test_boq import CLIENT_SHEET, import_lines, make_boq, saved, contractor_order, job_of_key
 from test_subcontract_orders import draft, fund_order
 from test_subcontract_orders import staff, sign_in
 
@@ -159,9 +159,9 @@ def test_staff_who_may_not_approve_cannot_and_the_master_can(tenant, portal):
 
 def test_the_lines_executed_past_the_boq_are_suggested(tenant):
     boq, lines, _ = ready(tenant)
-    order = draft(tenant)
+    order = draft(tenant, job_id=job_of_key(lines["EXC"]["key"]))
     pulled = tenant.post("/api/wo/orders/%d/boq-lines" % order["id"], json={"lines": [{"key": lines["EXC"]["key"], "quantity": 500, "rate": 150}]}).json()
-    sched = dict(pulled["lines"][0], tolerance_percent=50)                          # the gang may measure 50% over
+    sched = dict(pulled["lines"][0], tolerance_percent=50)                          # the contractor may measure 50% over
     order = tenant.put("/api/wo/orders/%d/boq" % order["id"], json={"lines": [sched]}).json()["order"]
     fund_order(tenant, order)
     assert tenant.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 200

@@ -29,7 +29,9 @@ from app.schemas.boq import BoqVariationIn, ProjectBoqIn, ProjectBoqLinesIn
 from app.schemas.client_orders import DocLineIn, WorkOrderIn
 from app.services.approvals import owner_label
 from app.services.boq import (
-    boq_given_to_gangs,
+    boq_client_orders,
+    boq_given_to_contractors,
+    boq_link_orders,
     boq_head,
     boq_kind_of,
     boq_lines_with_subtotals,
@@ -124,6 +126,7 @@ def boq_create(body: ProjectBoqIn, request: Request, db: Session = Depends(get_d
     db.flush()
     db.add(models.DBBoqRevision(boq_id=boq.id, rev_no=0, label="R0 - Tender", status="OPEN", created_by_name=actor_name))
     log_audit(db, client.id, "boq_created", "boq", boq.id, boq.number, job.name, request)
+    boq_link_orders(db, boq)
     db.commit()
     return {"boq": boq_head(db, boq), "message": "%s opened for %s." % (boq.number, job.name)}
 
@@ -308,6 +311,7 @@ def boq_from_estimate(estimate_id: int, request: Request, db: Session = Depends(
                                 description=i.description or "", uom=i.uom or "", quantity=qty, rate=rate,
                                 amount=money(qty * rate), item_code=(i.fg_code or "").upper(), display_order=n))
         n += 1
+    boq_link_orders(db, boq)
     log_audit(db, client.id, "boq_from_tender", "boq", boq.id, boq.number, est.number or "", request)
     db.commit()
     return {"boq": boq_head(db, boq, rev), "message": "%s opened from %s with %d lines." % (boq.number, est.number, n)}
@@ -319,9 +323,9 @@ def boq_make_client_order(boq_id: int, body: dict, request: Request, db: Session
     A new work order, so HO QS's to open."""
     client = require_items_access(request, db, "workorders.create")
     boq = boq_or_404(db, client.id, boq_id)
-    made = db.query(models.DBWorkOrder).filter(models.DBWorkOrder.boq_id == boq.id).first()
+    made = next((w for w in boq_client_orders(db, boq) if w.status != "Rejected"), None)
     if made:
-        raise HTTPException(409, "%s was already made from this BOQ." % made.number)
+        raise HTTPException(409, "%s is already the client's work order for this project, against this BOQ." % made.number)
     rev = boq_revision_of(db, boq)
     priced = [l for l in db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id,
                                                           models.DBBoqLine.kind.in_(BOQ_PRICED)).order_by(models.DBBoqLine.display_order).all()
@@ -344,11 +348,11 @@ def boq_make_client_order(boq_id: int, body: dict, request: Request, db: Session
 
 @router.get("/api/boqs/{boq_id}/available")
 def boq_available(boq_id: int, request: Request, db: Session = Depends(get_db)):
-    """The BOQ's priced lines with how much of each is still to be given to a gang - for adding lines to an order."""
+    """The BOQ's priced lines with how much of each is still to be given to a contractor - for adding lines to an order."""
     client = require_erp_read(request, db)
     boq = boq_or_404(db, client.id, boq_id)
     rev = boq_revision_of(db, boq)
-    given = boq_given_to_gangs(db, client.id)
+    given = boq_given_to_contractors(db, client.id)
     rows = []
     for l in db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id).order_by(models.DBBoqLine.display_order).all():
         if l.kind == "section":
@@ -363,7 +367,7 @@ def boq_available(boq_id: int, request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/boqs/{boq_id}/tracker")
 def boq_tracker(boq_id: int, request: Request, db: Session = Depends(get_db)):
-    """Per BOQ line: the client's quantity and rate, what the gangs have been given (and at what rate), what they have
+    """Per BOQ line: the client's quantity and rate, what the contractors have been given (and at what rate), what they have
     executed and billed, what the client has been billed, and the flags worth looking at."""
     client = require_items_access(request, db, ("reports.view",))
     return boq_tracker_data(db, client, boq_or_404(db, client.id, boq_id))

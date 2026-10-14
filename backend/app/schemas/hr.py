@@ -9,6 +9,9 @@ class DepartmentCreate(BaseModel):
     description: Optional[str] = ""
     color: Optional[str] = "#00f0ff"
     icon: Optional[str] = "building"
+    # The sites it is added to. None leaves them as they are; an empty list
+    # takes it off every site.
+    site_ids: Optional[List[int]] = None
 
 
 class DepartmentMembersIn(BaseModel):
@@ -22,6 +25,7 @@ class EmployeeCreate(BaseModel):
     first_name: str
     last_name: str
     email: Optional[str] = ""
+    org_email: Optional[str] = ""
     phone: Optional[str] = ""
     address: Optional[str] = ""
     department_id: Optional[int] = None

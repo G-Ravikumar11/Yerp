@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 
 from app import models
 
@@ -16,6 +16,29 @@ from app.core.queries import by_id, chain_rows, forget_chain
 from app.core.units import canonical_unit
 from app.schemas.items import ItemIn
 from app.services.items import CATEGORY_BY_KIND
+
+
+def boq_client_orders(db, boq):
+    """The client's work orders against a BOQ: those made from it, and any opened for its project straight from the
+    Client Work Orders page, which are the same project's order and so are against the same BOQ."""
+    return db.query(models.DBWorkOrder).filter(
+        models.DBWorkOrder.client_id == boq.client_id,
+        or_(models.DBWorkOrder.boq_id == boq.id,
+            and_(models.DBWorkOrder.boq_id.is_(None), models.DBWorkOrder.job_id == boq.job_id))).order_by(models.DBWorkOrder.id).all()
+
+
+def boq_of_job(db, client_id, job_id):
+    """The project's BOQ (a project has one), or None."""
+    if not job_id:
+        return None
+    return db.query(models.DBBoq).filter(models.DBBoq.client_id == client_id, models.DBBoq.job_id == job_id).first()
+
+
+def boq_link_orders(db, boq):
+    """Ties the project's client work orders that were opened before its BOQ, or without going through it, to the BOQ."""
+    for wo in boq_client_orders(db, boq):
+        if not wo.boq_id:
+            wo.boq_id = boq.id
 
 
 def boq_or_404(db, client_id, boq_id):
@@ -32,6 +55,56 @@ def boq_revision_of(db, boq, rev_no=None):
     if not rev:
         raise HTTPException(404, "That revision of the BOQ does not exist")
     return rev
+
+
+def _norm(text):
+    return re.sub(r"\s+", " ", (text or "").split("\n")[0]).strip().lower()
+
+
+def boq_lines_of_job(db, client_id, job_id):
+    """The priced lines of the project's BOQ as it stands (its current revision), or [] when the project has no BOQ."""
+    boq = boq_of_job(db, client_id, job_id)
+    if boq is None:
+        return []
+    rev = db.query(models.DBBoqRevision).filter(models.DBBoqRevision.boq_id == boq.id,
+                                                models.DBBoqRevision.rev_no == boq.current_rev).first()
+    if rev is None:
+        return []
+    return db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id,
+                                             models.DBBoqLine.kind.in_(BOQ_PRICED)).order_by(models.DBBoqLine.display_order).all()
+
+
+def boq_tie_subcontract_lines(db, client_id, job_id, lines):
+    """A sub contractor work order goes along with the project's BOQ: each of its lines is tied to the BOQ line it is part of. A line
+    already tied keeps its tie if that line is on this project's BOQ; one that is not is tied by its item code, or else by
+    a description that matches one BOQ line exactly. `lines` are objects with item_code, item_description, boq_key and
+    is_header; their boq_key (and a blank item_code) are filled in place. Returns the lines still not on the BOQ."""
+    boq_lines = boq_lines_of_job(db, client_id, job_id)
+    if not boq_lines:
+        return []
+    keys = {l.key for l in boq_lines}
+    by_code = {(l.item_code or "").upper(): l for l in boq_lines if l.item_code}
+    by_desc = {}
+    for l in boq_lines:
+        by_desc.setdefault(_norm(l.description), []).append(l)
+    loose = []
+    for line in lines:
+        if getattr(line, "is_header", False) or not (line.item_description or "").strip():
+            continue
+        if line.boq_key and line.boq_key in keys:
+            continue
+        hit = by_code.get((line.item_code or "").strip().upper())
+        if hit is None:
+            same = by_desc.get(_norm(line.item_description), [])
+            hit = same[0] if len(same) == 1 else None
+        if hit is None:
+            line.boq_key = ""
+            loose.append(line)
+            continue
+        line.boq_key = hit.key
+        if not (line.item_code or "").strip():
+            line.item_code = hit.item_code or ""
+    return loose
 
 
 def boq_amount(kind, qty, rate, rate_only=False):
@@ -179,7 +252,7 @@ BOQ_ITEM_CODE = re.compile(r"^[A-Z0-9][A-Z0-9._/\-]{0,29}$")
 
 def boq_check_typed_codes(db, client_id, lines):
     """An item code typed on a line is the code of that work everywhere: it must be one code for one line, and it becomes a
-    finished good in the item master under that code if it is not there already - so the client's work order, the gangs'
+    finished good in the item master under that code if it is not there already - so the client's work order, the contractors'
     orders, the measurement book and the bills all carry the very code that was typed. A code that is already one of
     this business's finished goods is taken as it is."""
     seen = {}
@@ -234,16 +307,23 @@ def boq_issue_codes(db, client_id, lines):
     return given
 
 
-def boq_given_to_gangs(db, client_id, keys=None):
-    """{boq key: what the gangs have been given against it}, from the orders that are still alive."""
+def boq_given_to_contractors(db, client_id, keys=None):
+    """{boq key: what the contractors have been given against it}, from the orders that are still alive."""
     q = db.query(models.DBSubcontractItem, models.DBSubcontractOrder).join(
         models.DBSubcontractOrder, models.DBSubcontractOrder.id == models.DBSubcontractItem.order_id).filter(
         models.DBSubcontractOrder.client_id == client_id, models.DBSubcontractItem.boq_key != "",
         models.DBSubcontractItem.boq_key.isnot(None), models.DBSubcontractOrder.status.notin_(BOQ_NOT_LIVE))
     if keys is not None:
         q = q.filter(models.DBSubcontractItem.boq_key.in_(list(keys) or [""]))
+    # An order being amended is still live until its revision is approved, and the revision carries the same
+    # lines, so counting both would give the same work to the contractor twice. The revision stands for it meanwhile.
+    amended = {r[0] for r in db.query(models.DBSubcontractOrder.supersedes_id).filter(
+        models.DBSubcontractOrder.client_id == client_id, models.DBSubcontractOrder.supersedes_id.isnot(None),
+        models.DBSubcontractOrder.status.notin_(BOQ_NOT_LIVE)).all()}
     out = {}
     for it, order in q.all():
+        if order.id in amended:
+            continue
         g = out.setdefault(it.boq_key, {"qty": 0.0, "cost": 0.0, "items": [], "orders": []})
         g["qty"] += it.quantity or 0
         g["cost"] += it.total_amount or 0
@@ -254,11 +334,11 @@ def boq_given_to_gangs(db, client_id, keys=None):
 
 
 def boq_over_allotments(db, client_id, keys):
-    """Words for each BOQ line the given keys name whose gang orders now add up to more than the BOQ quantity."""
+    """Words for each BOQ line the given keys name whose contractor orders now add up to more than the BOQ quantity."""
     keys = {k for k in keys if k}
     if not keys:
         return []
-    given = boq_given_to_gangs(db, client_id, keys)
+    given = boq_given_to_contractors(db, client_id, keys)
     current = {}
     for boq in db.query(models.DBBoq).filter(models.DBBoq.client_id == client_id).all():
         rev = db.query(models.DBBoqRevision.id).filter(
@@ -270,14 +350,14 @@ def boq_over_allotments(db, client_id, keys):
                                                models.DBBoqLine.revision_id.in_(list(current) or [0])).all():
         g = given.get(l.key)
         if g and g["qty"] > (l.quantity or 0) + 0.0001:
-            out.append("%s: %s given to gangs against %s in the BOQ" % (boq_line_label(l), money(g["qty"]), money(l.quantity)))
+            out.append("%s: %s given to contractors against %s in the BOQ" % (boq_line_label(l), money(g["qty"]), money(l.quantity)))
     return out
 
 
 def boq_tracker_data(db, client, boq):
     rev = boq_revision_of(db, boq)
     lines = db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id).order_by(models.DBBoqLine.display_order).all()
-    given = boq_given_to_gangs(db, client.id, {l.key for l in lines if l.kind in BOQ_PRICED})
+    given = boq_given_to_contractors(db, client.id, {l.key for l in lines if l.kind in BOQ_PRICED})
     item_ids = [i for g in given.values() for i in g["items"]]
     done = dict(db.query(models.DBSubMeasurement.item_id, func.coalesce(func.sum(models.DBSubMeasurement.quantity), 0.0)).filter(
         models.DBSubMeasurement.item_id.in_(item_ids or [0])).group_by(models.DBSubMeasurement.item_id).all())
@@ -286,14 +366,14 @@ def boq_tracker_data(db, client, boq):
         models.DBSubBillLine.item_id.in_(item_ids or [0]), models.DBSubBill.status != "CANCELLED").group_by(models.DBSubBillLine.item_id).all())
     # The client's side: orders drawn from this BOQ, by item code.
     client_done, client_billed = {}, {}
-    for wo in db.query(models.DBWorkOrder).filter(models.DBWorkOrder.boq_id == boq.id).all():
+    for wo in boq_client_orders(db, boq):
         m, b = measured_to_date(db, wo.id), billed_qty_to_date(db, wo.id)
         for wl in db.query(models.DBWorkOrderLine).filter(models.DBWorkOrderLine.work_order_id == wo.id).all():
             code = (wl.fg_code or "").upper()
             client_done[code] = client_done.get(code, 0.0) + m.get(wl.id, 0.0)
             client_billed[code] = client_billed.get(code, 0.0) + b.get(wl.id, 0.0)
-    rows, flags = [], {"no_gang": 0, "over_allotted": 0, "loss": 0, "over_executed": 0}
-    totals = {"value": 0.0, "given_cost": 0.0, "client_billed": 0.0, "gang_billed": 0.0}
+    rows, flags = [], {"no_contractor": 0, "over_allotted": 0, "loss": 0, "over_executed": 0}
+    totals = {"value": 0.0, "given_cost": 0.0, "client_billed": 0.0, "contractor_billed": 0.0}
     for l in lines:
         if l.kind == "section":
             rows.append({"kind": "section", "group_code": l.group_code or "", "description": l.description})
@@ -301,17 +381,17 @@ def boq_tracker_data(db, client, boq):
         if l.kind not in BOQ_PRICED:
             continue
         g = given.get(l.key, {"qty": 0.0, "cost": 0.0, "items": [], "orders": []})
-        gang_rate = unit_rate(g["cost"] / g["qty"]) if g["qty"] else 0.0
+        contractor_rate = unit_rate(g["cost"] / g["qty"]) if g["qty"] else 0.0
         executed = money(sum(done.get(i, 0.0) for i in g["items"]))
-        gang_billed = money(sum(billed.get(i, 0.0) for i in g["items"]))
+        contractor_billed = money(sum(billed.get(i, 0.0) for i in g["items"]))
         code = (l.item_code or "").upper()
         c_done, c_billed = money(client_done.get(code, 0.0)), money(client_billed.get(code, 0.0))
         row_flags = []
         if (l.quantity or 0) > 0 and not g["qty"]:
-            row_flags.append("no_gang")
+            row_flags.append("no_contractor")
         if g["qty"] > (l.quantity or 0) + 0.0001:
             row_flags.append("over_allotted")
-        if g["qty"] and gang_rate > (l.rate or 0) + 0.0001:
+        if g["qty"] and contractor_rate > (l.rate or 0) + 0.0001:
             row_flags.append("loss")
         if max(executed, c_done) > (l.quantity or 0) + 0.0001:
             row_flags.append("over_executed")
@@ -320,13 +400,13 @@ def boq_tracker_data(db, client, boq):
         totals["value"] += l.amount or 0
         totals["given_cost"] += g["cost"]
         totals["client_billed"] += c_billed * (l.rate or 0)
-        totals["gang_billed"] += gang_billed * gang_rate
+        totals["contractor_billed"] += contractor_billed * contractor_rate
         rows.append({"kind": l.kind, "key": l.key, "group_code": l.group_code or "", "description": l.description, "uom": l.uom or "",
                      "item_code": l.item_code or "", "quantity": money(l.quantity), "rate": unit_rate(l.rate), "amount": money(l.amount),
-                     "given": money(g["qty"]), "gang_rate": gang_rate, "gang_cost": money(g["cost"]), "orders": g["orders"],
+                     "given": money(g["qty"]), "contractor_rate": contractor_rate, "contractor_cost": money(g["cost"]), "orders": g["orders"],
                      "left_to_give": money(max(0.0, (l.quantity or 0) - g["qty"])),
-                     "executed": executed, "gang_billed": gang_billed, "client_executed": c_done, "client_billed": c_billed,
-                     "margin_percent": round(((l.rate or 0) - gang_rate) / l.rate * 100, 1) if g["qty"] and l.rate else None,
+                     "executed": executed, "contractor_billed": contractor_billed, "client_executed": c_done, "client_billed": c_billed,
+                     "margin_percent": round(((l.rate or 0) - contractor_rate) / l.rate * 100, 1) if g["qty"] and l.rate else None,
                      "percent_done": round(max(executed, c_done) / l.quantity * 100, 1) if l.quantity else 0.0,
                      "flags": row_flags})
     return {"boq": boq_head(db, boq, rev), "rows": rows, "flags": flags,
@@ -544,7 +624,8 @@ def bv_apply(db, client, boq, vo):
     boq_issue_codes(db, client.id, copies)                    # the extra items get their codes from the item master
     boq.current_rev = nxt.rev_no
     # The client's work order drawn from this BOQ follows it.
-    for wo in db.query(models.DBWorkOrder).filter(models.DBWorkOrder.boq_id == boq.id, models.DBWorkOrder.status != "Closed").all():
+    for wo in [w for w in boq_client_orders(db, boq) if w.status not in ("Closed", "Rejected")]:
+        wo.boq_id = boq.id
         lines = db.query(models.DBWorkOrderLine).filter(models.DBWorkOrderLine.work_order_id == wo.id).all()
         for vl in db.query(models.DBBoqVariationLine).filter(models.DBBoqVariationLine.variation_id == vo.id).all():
             if vl.kind == "quantity":

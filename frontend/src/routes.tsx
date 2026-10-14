@@ -11,6 +11,7 @@ export interface Screen {
 }
 
 export const SCREENS: Screen[] = [
+  { path: '/calendar', Component: lazy(() => import('@/features/calendar/CalendarPage')) },
   { path: '/ho', Component: lazy(() => import('@/features/headoffice/HoPortalPage')) },
   { path: '/projects/boq', Component: lazy(() => import('@/features/boq/BoqListPage')) },
   { path: '/projects/boq/:id', Component: lazy(() => import('@/features/boq/BoqPage')) },
@@ -46,7 +47,7 @@ export const SCREENS: Screen[] = [
   { path: '/projects/quality', Component: lazy(() => import('@/features/quality/QualityPage')) },
   { path: '/projects/programme/:job/activity/:id', Component: lazy(() => import('@/features/schedule/ActivityPage')) },
   { path: '/projects/programme', Component: lazy(() => import('@/features/schedule/SchedulePage')) },
-  { path: '/projects/chat', Component: lazy(() => import('@/features/chat/ChatPage')) },
+  { path: '/projects/chart', Component: lazy(() => import('@/features/chart/ChartPage')) },
   { path: '/projects/equipment', Component: lazy(() => import('@/features/equipment/EquipmentPage')) },
   { path: '/projects/drawings', Component: lazy(() => import('@/features/drawings/DrawingsPage')) },
   { path: '/projects', Component: lazy(() => import('@/features/projects/ProjectsPage')) },

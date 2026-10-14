@@ -1,4 +1,4 @@
-"""Alerts: a bill waiting on a signature, money in, a gang to pay - on the
+"""Alerts: a bill waiting on a signature, money in, a contractor to pay - on the
 bell for the office, and by email or WhatsApp to whoever is named for it."""
 from datetime import datetime
 

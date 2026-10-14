@@ -47,7 +47,9 @@ if not DATABASE_URL:
 # that have been sitting; a busy one is trusted, and a dead one is still
 # replaced rather than failing the request. SQLite is a local file and needs
 # neither.
-PING_AFTER_IDLE_SECONDS = float(os.getenv("DB_PING_AFTER_IDLE", "20"))
+# 5 seconds, not 20: Neon's proxy drops a connection that has been quiet for a few seconds, and a "busy" one that was
+# trusted after 20 failed about one request in three with "SSL connection has been closed unexpectedly".
+PING_AFTER_IDLE_SECONDS = float(os.getenv("DB_PING_AFTER_IDLE", "5"))
 ENGINE_OPTIONS = {}
 
 if DATABASE_URL.startswith("sqlite"):
@@ -63,6 +65,8 @@ else:
         "pool_size": int(os.getenv("DB_POOL_SIZE", "5")),
         "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "10")),
         "pool_timeout": 30,
+        # TCP keepalives, so a network device on the way does not decide a quiet connection is finished and cut it.
+        "connect_args": {"keepalives": 1, "keepalives_idle": 10, "keepalives_interval": 5, "keepalives_count": 3},
     })
     # Neon requires TLS. Its dashboard copies a URL with sslmode already on it,
     # but a hand-typed one usually has not, and the failure then reads as a

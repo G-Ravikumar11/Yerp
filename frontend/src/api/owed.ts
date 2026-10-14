@@ -87,5 +87,5 @@ export interface Retention {
 
 export const useRetentionPage = () => useQuery({ queryKey: owedKeys.retention, queryFn: () => get<Retention>('/api/retention') })
 
-export const raiseRelease = (b: { side: string; order_id: number; stage: string; amount: number; gst_percent: number; release_on: string; notes: string }) => post<{ message: string }>('/api/retention/releases', b)
+export const raiseRelease = (b: { side: string; order_id: number; stage: string; amount: number; release_on: string; notes: string }) => post<{ message: string }>('/api/retention/releases', b)
 export const cancelRelease = (id: number, reason: string) => post<{ message: string }>(`/api/retention/releases/${id}/cancel`, { reason })

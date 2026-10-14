@@ -6,6 +6,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 from sqlalchemy import or_
 from sqlalchemy.orm import defer, Session
 
@@ -14,7 +15,9 @@ from app.db import get_db
 
 from app.core.audit import log_audit
 from app.core.auth import get_client_user, require_erp_read, require_items_access, session_employee, wo_actor
+from app.core.config import SECRET_KEY
 from app.core.currency import money, sheet_number
+from app.services.credit_notes import credit_tds_rows
 from app.core.files import (
     _file_or_404,
     attachment_target,
@@ -65,7 +68,7 @@ def tds_register(request: Request, year: str = "", quarter: str = "",
                  db: Session = Depends(get_db)):
     """TDS both ways, by quarter.
 
-    Deducted: what we withheld from the gangs' bills under 194C, which has to
+    Deducted: what we withheld from the contractors' bills under 194C, which has to
     be deposited by the 7th and filed in the 26Q. Suffered: what our clients
     withheld from our bills, which has to be matched against the 26AS before
     it can be claimed. Two directions, one screen, because both are checked
@@ -114,6 +117,10 @@ def tds_register(request: Request, year: str = "", quarter: str = "",
             "amount_credited": money(b.this_bill), "tds": money(b.tds_amount),
             "status": b.status,
         })
+
+    # A credit note takes its TDS back in the quarter it is issued, as a negative line.
+    deducted.extend(r for r in credit_tds_rows(db, client.id, "contractor", fy_quarter) if wanted(r["year"], r["quarter"]))
+    suffered.extend(r for r in credit_tds_rows(db, client.id, "client", fy_quarter) if wanted(r["year"], r["quarter"]))
 
     def by_quarter(rows):
         out = {}
@@ -187,7 +194,7 @@ def guarantee_register(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/registers/advances")
 def advance_register(request: Request, db: Session = Depends(get_db)):
-    """Mobilisation advances given to the gangs, and how much has come back.
+    """Mobilisation advances given to the contractors, and how much has come back.
 
     Summed from the bills, not stored: a cancelled bill gives its recovery
     back without anybody having to remember to.
@@ -314,17 +321,46 @@ def list_files(request: Request, attached_type: str = "", attached_id: int = 0, 
                         "uploaders": sorted({f["uploaded_by_name"] for f in out if f["uploaded_by_name"]})}}
 
 
-@router.get("/api/files/{fid}")
-def get_file(fid: int, request: Request, download: int = 0, db: Session = Depends(get_db)):
-    client = require_erp_read(request, db)
-    f = _file_or_404(db, client.id, fid, bytes_too=True)
+def _file_response(db, f, download=0, cache="private, max-age=86400"):
     media = served_type(f.content_type)
     inline = not download and media != "application/octet-stream"
     disp = '%s; filename="%s"' % ("inline" if inline else "attachment",
                                   re.sub(r'[^A-Za-z0-9._ -]', "_", f.name or "file"))
     return StreamingResponse(io.BytesIO(file_bytes(db, f) or b""), media_type=media,
                              headers=dict(file_headers(media), **{"Content-Disposition": disp,
-                                                                  "Cache-Control": "private, max-age=86400"}))
+                                                                  "Cache-Control": cache}))
+
+
+@router.get("/api/files/{fid}")
+def get_file(fid: int, request: Request, download: int = 0, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return _file_response(db, _file_or_404(db, client.id, fid, bytes_too=True), download)
+
+
+# A file opened outside the app. In the phone app a PDF or a drawing cannot be shown inside it, so it is handed to the
+# phone's own browser - which has none of the app's sign-in. The app asks here for a link good for that one file for
+# a few minutes, signed so it cannot be altered, and opens it there.
+FILE_LINK_SECONDS = 300
+_file_links = URLSafeTimedSerializer(SECRET_KEY, salt="file-link")
+
+
+@router.post("/api/files/{fid}/link")
+def file_link(fid: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    f = _file_or_404(db, client.id, fid)
+    token = _file_links.dumps([f.id, client.id])
+    return {"url": "/api/files/%d/shared?t=%s" % (f.id, token), "expires_in": FILE_LINK_SECONDS}
+
+
+@router.get("/api/files/{fid}/shared")
+def get_shared_file(fid: int, t: str = "", db: Session = Depends(get_db)):
+    try:
+        file_id, client_id = _file_links.loads(t, max_age=FILE_LINK_SECONDS)
+    except BadSignature:
+        raise HTTPException(403, "This link has expired. Open the file again from the app.")
+    if file_id != fid:
+        raise HTTPException(403, "This link is for a different file.")
+    return _file_response(db, _file_or_404(db, client_id, fid, bytes_too=True), cache="private, no-store")
 
 
 @router.get("/api/files/{fid}/thumb")
@@ -503,10 +539,10 @@ def import_bills(body: dict, request: Request, db: Session = Depends(get_db)):
 
 @router.post("/api/sheets/subcontract_orders/import")
 def import_subcontract_orders(body: dict, request: Request, db: Session = Depends(get_db)):
-    """A register of gangs and dates, brought in as one draft order each - the
+    """A register of contractors and dates, brought in as one draft order each - the
     contractor and project matched by name where they are already on file,
     left blank to be picked when they are not, so a mistyped name never
-    silently attaches an order to the wrong gang. Each is a new order, so HO QS's to bring in."""
+    silently attaches an order to the wrong contractor. Each is a new order, so HO QS's to bring in."""
     client, actor_id, actor_name = wo_actor(request, db, "workorders.create")
     contractors = {norm_name(c.company_name): c for c in db.query(models.DBContractor).filter(
         models.DBContractor.client_id == client.id).all()}

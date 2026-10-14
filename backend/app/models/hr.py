@@ -35,6 +35,8 @@ class DBEmployee(Base):
     first_name = Column(String, nullable=False)
     last_name = Column(String, nullable=False)
     email = Column(String, nullable=False)
+    # The address the organisation issued, used only to sign in with Yahoo; `email` is their personal one.
+    org_email = Column(String, default="", index=True)
     phone = Column(String, default="")
     address = Column(String, default="")
 
@@ -319,6 +321,24 @@ class DBEmployeeSite(Base):
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBDepartmentSite(Base):
+    """Which sites a department operates on.
+
+    Same shape and the same rule as DBEmployeeSite: a department with no rows
+    here runs on every site, so nothing changes until the owner narrows one.
+    """
+    __tablename__ = "department_sites"
+    __table_args__ = (
+        UniqueConstraint('department_id', 'job_id', name='uq_department_site'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=False, index=True)
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 

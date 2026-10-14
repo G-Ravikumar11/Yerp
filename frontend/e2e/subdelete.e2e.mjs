@@ -51,14 +51,14 @@ await waitForToast(page, 'deleted')
 check('a work order goes from the list', (await api(page, 'GET', `/api/wo/orders/${o.id}`)).status === 404)
 
 // --- A vendor, with an order of theirs -----------------------------------------------------------------------------
-const con = (await api(page, 'POST', '/api/wo/contractors', { company_name: `Gang ${stamp}`, contact_person: 'Raju', email: `gang${stamp}@example.in`, phone_number: '9000000000', pan: '', gst_number: '' })).data
+const con = (await api(page, 'POST', '/api/wo/contractors', { company_name: `Contractor ${stamp}`, contact_person: 'Raju', email: `contractor${stamp}@example.in`, phone_number: '9000000000', pan: '', gst_number: '' })).data
 const vid = (con.contractor ?? con).id
 await open(page, '/subcontractors/vendors')
-await page.waitForSelector(`button[aria-label="Delete Gang ${stamp}"]`)
-await page.click(`button[aria-label="Delete Gang ${stamp}"]`)
+await page.waitForSelector(`button[aria-label="Delete Contractor ${stamp}"]`)
+await page.click(`button[aria-label="Delete Contractor ${stamp}"]`)
 await page.waitForSelector('[role=dialog]')
 await settle()
-check('the vendor dialog names the vendor', (await dialogText()).includes(`Gang ${stamp}`))
+check('the vendor dialog names the vendor', (await dialogText()).includes(`Contractor ${stamp}`))
 await clickText(page, '[role=dialog] button', 'Delete everywhere')
 await waitForToast(page, 'deleted')
 await sleep(400)

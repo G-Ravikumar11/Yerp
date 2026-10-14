@@ -15,6 +15,102 @@ def migration_report():
     return list(MIGRATION_ERRORS)
 
 
+QUALITY_COLUMNS = (
+    # (table, column, Postgres type, SQLite type) - what the quality module grew after it was first created.
+    ("qc_inspections", "building", "VARCHAR DEFAULT ''"), ("qc_inspections", "floor_area", "VARCHAR DEFAULT ''"),
+    ("qc_inspections", "work_activity", "VARCHAR DEFAULT ''"), ("qc_inspections", "assigned_to", "VARCHAR DEFAULT ''"),
+    ("qc_inspections", "measurements", "TEXT DEFAULT ''"), ("qc_inspections", "approval_status", "VARCHAR DEFAULT ''"),
+    ("qc_inspections", "submitted_by", "VARCHAR DEFAULT ''"), ("qc_inspections", "submitted_on", "VARCHAR DEFAULT ''"),
+    ("qc_inspections", "approved_by", "VARCHAR DEFAULT ''"), ("qc_inspections", "approved_on", "VARCHAR DEFAULT ''"),
+    ("qc_inspections", "return_note", "TEXT DEFAULT ''"), ("qc_inspections", "reinspection_of", "INTEGER"),
+    ("qc_cube_sets", "pour_ref", "VARCHAR DEFAULT ''"), ("qc_cube_sets", "cube_ids", "VARCHAR DEFAULT ''"),
+    ("qc_cube_sets", "test_ages", "VARCHAR DEFAULT ''"), ("qc_cube_sets", "acceptance", "VARCHAR DEFAULT ''"),
+    ("qc_cube_sets", "acceptance_note", "TEXT DEFAULT ''"), ("qc_cube_sets", "accepted_by", "VARCHAR DEFAULT ''"),
+    ("qc_cube_sets", "accepted_on", "VARCHAR DEFAULT ''"), ("qc_cube_sets", "reviewed_results", "INTEGER DEFAULT 0"),
+    ("qc_cube_results", "remarks", "TEXT DEFAULT ''"), ("qc_cube_results", "flagged", "BOOLEAN DEFAULT FALSE"),
+    ("qc_cube_results", "evaluation", "VARCHAR DEFAULT ''"), ("qc_cube_results", "criteria_min", "FLOAT DEFAULT 0"),
+    ("qc_cube_results", "criteria_single", "FLOAT DEFAULT 0"), ("qc_cube_results", "criteria_ref", "VARCHAR DEFAULT ''"),
+    ("qc_ncrs", "source_ref", "VARCHAR DEFAULT ''"), ("qc_ncrs", "root_cause", "TEXT DEFAULT ''"),
+    ("qc_ncrs", "assigned_by", "VARCHAR DEFAULT ''"), ("qc_ncrs", "assigned_on", "VARCHAR DEFAULT ''"),
+    ("qc_ncrs", "corrective_done", "TEXT DEFAULT ''"), ("qc_ncrs", "corrective_on", "VARCHAR DEFAULT ''"),
+    ("qc_ncrs", "verification_result", "VARCHAR DEFAULT ''"), ("qc_ncrs", "verification_note", "TEXT DEFAULT ''"),
+    ("qc_ncrs", "verified_by", "VARCHAR DEFAULT ''"), ("qc_ncrs", "verified_on", "VARCHAR DEFAULT ''"),
+    ("qc_ncrs", "reinspection_ref", "VARCHAR DEFAULT ''"),
+    # Project chat
+    ("project_threads", "description", "TEXT DEFAULT ''"), ("project_threads", "category", "VARCHAR DEFAULT 'General'"),
+    ("project_threads", "priority", "VARCHAR DEFAULT 'Normal'"), ("project_threads", "members", "VARCHAR DEFAULT ''"),
+    ("project_threads", "link_type", "VARCHAR DEFAULT ''"), ("project_threads", "link_ref", "VARCHAR DEFAULT ''"),
+    ("project_threads", "link_id", "INTEGER"),
+    ("schedule_activities", "assigned_to_id", "INTEGER"),
+    # Equipment & Plant
+    ("assets", "condition", "VARCHAR DEFAULT 'Good'"),
+    ("assets", "location_type", "VARCHAR DEFAULT ''"),
+    ("assets", "is_archived", "BOOLEAN DEFAULT FALSE"),
+    ("assets", "service_interval_type", "VARCHAR DEFAULT ''"),
+    ("assets", "reminder_meter", "FLOAT"),
+    ("assets", "reminder_days", "INTEGER"),
+    ("assets", "next_service_meter", "FLOAT"),
+    ("assets", "next_service_on", "VARCHAR DEFAULT ''"),
+    ("asset_logs", "employee_id", "INTEGER"),
+    ("asset_logs", "shift", "VARCHAR DEFAULT ''"),
+    ("asset_logs", "start_time", "VARCHAR DEFAULT ''"),
+    ("asset_logs", "end_time", "VARCHAR DEFAULT ''"),
+    ("asset_logs", "break_minutes", "INTEGER DEFAULT 0"),
+    ("asset_logs", "opening_meter", "FLOAT"),
+    ("asset_logs", "closing_meter", "FLOAT"),
+    ("asset_logs", "breakdown_hours", "FLOAT DEFAULT 0"),
+    ("asset_logs", "attendance_hours", "FLOAT DEFAULT 0"),
+    ("asset_logs", "regular_hours", "FLOAT DEFAULT 0"),
+    ("asset_logs", "overtime_hours", "FLOAT DEFAULT 0"),
+    ("asset_logs", "approval_status", "VARCHAR DEFAULT ''"),
+    ("asset_logs", "approved_by", "VARCHAR DEFAULT ''"),
+    ("asset_logs", "approved_on", "VARCHAR DEFAULT ''"),
+    ("asset_logs", "supervisor_remarks", "VARCHAR DEFAULT ''"),
+    ("asset_services", "number", "VARCHAR DEFAULT ''"),
+    ("asset_services", "priority", "VARCHAR DEFAULT 'Normal'"),
+    ("asset_services", "status", "VARCHAR DEFAULT 'Completed'"),
+    ("asset_services", "reported_on", "VARCHAR DEFAULT ''"),
+    ("asset_services", "scheduled_on", "VARCHAR DEFAULT ''"),
+    ("asset_services", "completed_on", "VARCHAR DEFAULT ''"),
+    ("asset_services", "mechanic", "VARCHAR DEFAULT ''"),
+    ("asset_services", "parts_used", "TEXT DEFAULT ''"),
+    ("asset_services", "downtime_start", "VARCHAR DEFAULT ''"),
+    ("asset_services", "downtime_end", "VARCHAR DEFAULT ''"),
+    ("asset_services", "work_performed", "TEXT DEFAULT ''"),
+    ("asset_services", "invoice_no", "VARCHAR DEFAULT ''"),
+    ("asset_services", "next_service_on", "VARCHAR DEFAULT ''"),
+    ("asset_services", "next_service_meter", "FLOAT"),
+    ("asset_services", "approval_status", "VARCHAR DEFAULT ''"),
+    ("asset_services", "approved_by", "VARCHAR DEFAULT ''"),
+    ("schedule_activities", "status", "VARCHAR DEFAULT ''"), ("schedule_activities", "notes", "TEXT DEFAULT ''"),
+    ("project_messages", "parent_id", "INTEGER"), ("project_messages", "edited_at", "VARCHAR DEFAULT ''"),
+)
+
+
+# A machine set up before the schedule had a type: its type is read from the intervals it already has,
+# so no schedule is lost. Only rows with no type yet are touched; running it again changes nothing.
+SCHEDULE_BACKFILL = (
+    "UPDATE assets SET service_interval_type = CASE "
+    "WHEN COALESCE(service_every, 0) > 0 AND COALESCE(service_every_days, 0) > 0 THEN 'Both' "
+    "WHEN COALESCE(service_every, 0) > 0 THEN 'Meter' "
+    "WHEN COALESCE(service_every_days, 0) > 0 THEN 'Days' ELSE 'None' END "
+    "WHERE service_interval_type IS NULL OR service_interval_type = ''")
+
+
+# A machine already on a site is on a site; one in the yard is not guessed at, it is left to be said.
+LOCATION_BACKFILL = (
+    "UPDATE assets SET location_type = 'Site' "
+    "WHERE current_job_id IS NOT NULL AND (location_type IS NULL OR location_type = '')")
+
+
+def rename_asset_make_to_brand(conn, columns):
+    """A machine's make is now its brand: the column is renamed, so every value stays.
+    Runs once - after it, there is no make column to rename. serial_no is left in place,
+    no longer read or written, so the numbers already entered are not lost."""
+    if "make" in columns and "brand" not in columns:
+        conn.execute(text("ALTER TABLE assets RENAME COLUMN make TO brand"))
+
+
 def ensure_columns():
     """Add missing columns to existing tables."""
     if DATABASE_URL.startswith("sqlite"):
@@ -344,6 +440,7 @@ def ensure_columns():
             # Add new columns to existing tables
             alter_statements = [
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS password_hash VARCHAR DEFAULT ''",
+                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS org_email VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS work_location VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS latitude FLOAT DEFAULT 0.0",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS longitude FLOAT DEFAULT 0.0",
@@ -1328,6 +1425,7 @@ def ensure_columns():
                     ("bills", "current_approval_step", "INTEGER DEFAULT 0"),
                     ("bills", "rejection_reason", "VARCHAR DEFAULT ''"),
                     ("employees", "permission_role", "VARCHAR DEFAULT 'staff'"),
+                    ("employees", "org_email", "VARCHAR DEFAULT ''"),
                     # Job costing. Nullable throughout: a business that does not
                     # work job-by-job is unaffected.
                     ("invoices", "job_id", "INTEGER"),
@@ -1527,6 +1625,39 @@ def ensure_columns():
                 except Exception:
                     pass
 
+            # Quality: the workflow columns. Additive, defaulted, safe on a live database.
+            try:
+                for table, column, typedef in QUALITY_COLUMNS:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step quality: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            try:
+                conn.execute(text(SCHEDULE_BACKFILL))
+                conn.execute(text(LOCATION_BACKFILL))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step service schedule: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            try:
+                cols = {r[0] for r in conn.execute(text(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = 'assets'")).fetchall()}
+                rename_asset_make_to_brand(conn, cols)
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step asset brand: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
     except Exception as e:
         print(f"Column check skipped: {e}")
 
@@ -1560,6 +1691,7 @@ def migrate_sqlite():
 
             # What a member of staff is allowed to do in the portal, set by HR.
             add_col("employees", "permission_role", "VARCHAR DEFAULT 'staff'")
+            add_col("employees", "org_email", "VARCHAR DEFAULT ''")
 
             # Job costing: what each document was for.
             add_col("invoices", "job_id", "INTEGER")
@@ -1592,6 +1724,17 @@ def migrate_sqlite():
                 add_col("subcontract_orders", column, "FLOAT DEFAULT 0")
             add_col("subcontract_items", "technical_spec", "TEXT DEFAULT ''")
             add_col("business_units", "logo_url", "TEXT DEFAULT ''")
+            for table, column, typedef in QUALITY_COLUMNS:
+                add_col(table, column, typedef.replace("BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"))
+            try:
+                conn.execute(text(SCHEDULE_BACKFILL))
+                conn.execute(text(LOCATION_BACKFILL))
+            except Exception:
+                MIGRATION_ERRORS.append(f"sqlite service schedule: {sys.exc_info()[1]}")
+            try:
+                rename_asset_make_to_brand(conn, {r[1] for r in conn.execute(text("PRAGMA table_info(assets)")).fetchall()})
+            except Exception:
+                MIGRATION_ERRORS.append(f"sqlite asset brand: {sys.exc_info()[1]}")
 
             # The goods receipt columns. Both migrations have to be fed, not
             # one: the Postgres list alone left every existing SQLite database

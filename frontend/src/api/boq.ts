@@ -94,7 +94,7 @@ export interface BoqImport {
   message: string
 }
 
-export type BoqFlag = 'no_gang' | 'over_allotted' | 'loss' | 'over_executed'
+export type BoqFlag = 'no_contractor' | 'over_allotted' | 'loss' | 'over_executed'
 
 export interface TrackerRow {
   kind: BoqKind
@@ -107,12 +107,12 @@ export interface TrackerRow {
   rate?: number
   amount?: number
   given?: number
-  gang_rate?: number
-  gang_cost?: number
+  contractor_rate?: number
+  contractor_cost?: number
   orders?: string[]
   left_to_give?: number
   executed?: number
-  gang_billed?: number
+  contractor_billed?: number
   client_executed?: number
   client_billed?: number
   margin_percent?: number | null
@@ -124,7 +124,7 @@ export interface Tracker {
   boq: BoqHead
   rows: TrackerRow[]
   flags: Record<BoqFlag, number>
-  totals: { value: number; given_cost: number; client_billed: number; gang_billed: number }
+  totals: { value: number; given_cost: number; client_billed: number; contractor_billed: number }
 }
 
 export interface AvailableLine {

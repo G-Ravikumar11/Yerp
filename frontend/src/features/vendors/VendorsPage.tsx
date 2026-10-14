@@ -145,7 +145,7 @@ export default function VendorsPage() {
     <>
       <PageHeader
         eyebrow="Subcontractors"
-        title="Vendor Register"
+        title="Sub Contract Registration"
         description={`Every contractor with its vendor code and its Sub Contractor Registration Form. No order is issued to a contractor whose form is not signed off.${opens ? '' : ' Vendor codes are opened by HO QS.'}`}
         actions={
           <>
@@ -173,7 +173,7 @@ export default function VendorsPage() {
 
       {isOwner && <BulkBar count={picked.size} noun="vendor" shown={filters.filtered.length} onClear={() => setPicked(new Set())} onDelete={() => setClearing(true)} />}
       <DataTable
-        label="Vendors"
+        label="Sub contractors"
         selection={isOwner ? { selected: picked, onChange: setPicked } : undefined}
         rows={filters.filtered}
         columns={columns}

@@ -68,6 +68,9 @@ class ActivityIn(BaseModel):
     is_milestone: Optional[bool] = False
     actual_start: Optional[str] = ""
     actual_finish: Optional[str] = ""
+    assigned_to_id: Optional[int] = None
+    status: Optional[str] = ""
+    notes: Optional[str] = ""
 
 
 class ProgressIn(BaseModel):

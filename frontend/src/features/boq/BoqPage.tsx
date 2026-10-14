@@ -67,7 +67,7 @@ const payload = (rows: Row[]) =>
     .filter((r) => r.description.trim())
     .map((r) => ({ ...r, kind: kindOf(r), quantity: r.rate_only ? 0 : (r.quantity ?? 0), rate: r.rate ?? 0 }))
 
-const FLAG_TEXT: Record<BoqFlag, string> = { no_gang: 'No gang yet', over_allotted: 'Given past the BOQ', loss: 'Gang rate above ours', over_executed: 'Executed past the BOQ' }
+const FLAG_TEXT: Record<BoqFlag, string> = { no_contractor: 'No contractor yet', over_allotted: 'Given past the BOQ', loss: 'Contractor rate above ours', over_executed: 'Executed past the BOQ' }
 
 type Tab = 'boq' | 'summary' | 'tracker' | 'variations' | 'revisions'
 
@@ -464,32 +464,32 @@ function SummaryView({ summary, loading, gst, onGst }: { summary?: BoqSummary; l
   )
 }
 
-function TrackerView({ rows, flags, totals, loading, denied }: { rows: TrackerRow[]; flags?: Record<BoqFlag, number>; totals?: { value: number; given_cost: number; client_billed: number; gang_billed: number }; loading: boolean; denied: boolean }) {
-  if (denied) return <p className="rounded-lg border border-border px-4 py-8 text-center text-sm text-muted-foreground">The tracker shows the gang rates against ours, so it is for those who see the reports.</p>
+function TrackerView({ rows, flags, totals, loading, denied }: { rows: TrackerRow[]; flags?: Record<BoqFlag, number>; totals?: { value: number; given_cost: number; client_billed: number; contractor_billed: number }; loading: boolean; denied: boolean }) {
+  if (denied) return <p className="rounded-lg border border-border px-4 py-8 text-center text-sm text-muted-foreground">The tracker shows the contractor rates against ours, so it is for those who see the reports.</p>
   const columns: TableColumn<TrackerRow>[] = [
     { id: 'group', header: 'Group', width: '6rem', cell: (r) => <span className={cn('font-mono text-xs', r.kind === 'section' && 'font-semibold')}>{r.group_code}</span> },
     { id: 'code', header: 'Item code', width: '7rem', cell: (r) => <span className="whitespace-nowrap font-mono text-xs">{r.item_code ?? ''}</span> },
     { id: 'd', header: 'Description', cell: (r) => (r.kind === 'section' ? <span className="font-semibold">{r.description}</span> : <div className="max-w-sm truncate" title={r.description}>{r.description}</div>) },
     { id: 'qty', header: 'BOQ qty', align: 'right', cell: (r) => (r.kind === 'section' ? '' : `${formatQty(r.quantity ?? 0)} ${r.uom ?? ''}`) },
     { id: 'rate', header: 'Our rate', align: 'right', hideBelow: 'md', cell: (r) => (r.kind === 'section' ? '' : formatINR(r.rate ?? 0)) },
-    { id: 'given', header: 'Given to gangs', align: 'right', cell: (r) => (r.kind === 'section' ? '' : <span title={(r.orders ?? []).join(', ')}>{formatQty(r.given ?? 0)}</span>) },
-    { id: 'grate', header: 'Gang rate', align: 'right', hideBelow: 'lg', cell: (r) => (r.kind === 'section' || !r.given ? '' : formatINR(r.gang_rate ?? 0)) },
+    { id: 'given', header: 'Given to contractors', align: 'right', cell: (r) => (r.kind === 'section' ? '' : <span title={(r.orders ?? []).join(', ')}>{formatQty(r.given ?? 0)}</span>) },
+    { id: 'grate', header: 'Contractor rate', align: 'right', hideBelow: 'lg', cell: (r) => (r.kind === 'section' || !r.given ? '' : formatINR(r.contractor_rate ?? 0)) },
     { id: 'margin', header: 'Margin', align: 'right', hideBelow: 'lg', cell: (r) => (r.margin_percent == null ? '' : <span className={r.margin_percent < 0 ? 'font-medium text-danger' : ''}>{r.margin_percent}%</span>) },
     { id: 'done', header: 'Executed', align: 'right', hideBelow: 'md', cell: (r) => (r.kind === 'section' ? '' : `${formatQty(Math.max(r.executed ?? 0, r.client_executed ?? 0))} (${r.percent_done ?? 0}%)`) },
-    { id: 'gb', header: 'Gangs billed', align: 'right', hideBelow: 'xl', cell: (r) => (r.kind === 'section' ? '' : formatQty(r.gang_billed ?? 0)) },
+    { id: 'gb', header: 'Contractors billed', align: 'right', hideBelow: 'xl', cell: (r) => (r.kind === 'section' ? '' : formatQty(r.contractor_billed ?? 0)) },
     { id: 'cb', header: 'Client billed', align: 'right', hideBelow: 'xl', cell: (r) => (r.kind === 'section' ? '' : formatQty(r.client_billed ?? 0)) },
-    { id: 'flags', header: 'Look at', cell: (r) => <div className="flex flex-wrap gap-1">{(r.flags ?? []).map((f) => <Badge key={f} tone={f === 'no_gang' ? 'neutral' : 'danger'}>{FLAG_TEXT[f]}</Badge>)}</div> },
+    { id: 'flags', header: 'Look at', cell: (r) => <div className="flex flex-wrap gap-1">{(r.flags ?? []).map((f) => <Badge key={f} tone={f === 'no_contractor' ? 'neutral' : 'danger'}>{FLAG_TEXT[f]}</Badge>)}</div> },
   ]
   return (
     <div className="grid gap-4">
       <StatGrid>
-        <Stat label="No gang yet" value={flags?.no_gang ?? 0} tone={flags?.no_gang ? 'warning' : undefined} loading={loading} />
+        <Stat label="No contractor yet" value={flags?.no_contractor ?? 0} tone={flags?.no_contractor ? 'warning' : undefined} loading={loading} />
         <Stat label="Given past the BOQ" value={flags?.over_allotted ?? 0} tone={flags?.over_allotted ? 'danger' : undefined} loading={loading} />
-        <Stat label="Gang rate above ours" value={flags?.loss ?? 0} tone={flags?.loss ? 'danger' : undefined} loading={loading} />
+        <Stat label="Contractor rate above ours" value={flags?.loss ?? 0} tone={flags?.loss ? 'danger' : undefined} loading={loading} />
         <Stat label="Executed past the BOQ" value={flags?.over_executed ?? 0} tone={flags?.over_executed ? 'danger' : undefined} loading={loading} />
-        <Stat label="Cost of what gangs have" value={compactINR(totals?.given_cost)} loading={loading} />
+        <Stat label="Cost of what contractors have" value={compactINR(totals?.given_cost)} loading={loading} />
       </StatGrid>
-      <DataTable label="BOQ tracker" rows={rows} columns={columns} rowKey={(r) => (r.key ?? r.kind) + r.group_code + r.description} loading={loading} empty="Nothing to track yet. Save the BOQ, then give its lines to gangs." rowClassName={(r) => (r.kind === 'section' ? 'bg-surface/60' : undefined)} />
+      <DataTable label="BOQ tracker" rows={rows} columns={columns} rowKey={(r) => (r.key ?? r.kind) + r.group_code + r.description} loading={loading} empty="Nothing to track yet. Save the BOQ, then give its lines to contractors." rowClassName={(r) => (r.kind === 'section' ? 'bg-surface/60' : undefined)} />
     </div>
   )
 }

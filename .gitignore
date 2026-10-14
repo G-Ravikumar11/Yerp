@@ -46,3 +46,5 @@ mobile/build/
 
 # The React app compiled by `npm run build`; the deploy builds it, so it is never committed.
 frontend/dist/
+
+*.bundle

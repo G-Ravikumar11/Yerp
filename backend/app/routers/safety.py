@@ -10,7 +10,7 @@ from app.documents import form_pdf
 from app import models
 from app.db import get_db
 
-from app.constants.common import INCIDENT_KINDS, PERMIT_PRECAUTIONS
+from app.constants.common import INCIDENT_KINDS, INJURY_KINDS, PERMIT_PRECAUTIONS
 from app.constants.quality import SERIOUS_KINDS
 from app.core.auth import require_erp_read, wo_actor
 from app.core.notifications import notify
@@ -67,7 +67,7 @@ def report_incident(body: IncidentIn, request: Request, db: Session = Depends(ge
         raise HTTPException(400, "What kind: " + ", ".join(INCIDENT_KINDS))
     if not (body.description or "").strip():
         raise HTTPException(400, "Say what happened.")
-    if body.kind in ("First aid", "Medical treatment", "Lost time injury", "Fatality") and not (body.injured_name or "").strip():
+    if body.kind in INJURY_KINDS and not (body.injured_name or "").strip():
         raise HTTPException(400, "Who was hurt?")
     i = models.DBSafetyIncident(
         client_id=client.id, job_id=job.id, number=next_number(db, models.DBSafetyIncident, client.id, "INC"),

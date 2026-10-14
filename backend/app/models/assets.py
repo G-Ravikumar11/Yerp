@@ -1,7 +1,7 @@
 """Plant and equipment, the fixed asset book."""
 from datetime import datetime
 
-from sqlalchemy import Column, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text
 
 from app.db.session import Base
 
@@ -21,10 +21,9 @@ class DBAsset(Base):
     name = Column(String, default="")                        # "JCB 3DX backhoe"
     category = Column(String, default="")                    # Earthmoving | Concrete | Lifting | ...
     ownership = Column(String, default="Owned")              # Owned | Hired
-    make = Column(String, default="")
+    brand = Column(String, default="")                       # "JCB" - was make
     model = Column(String, default="")
     reg_no = Column(String, default="")
-    serial_no = Column(String, default="")
     purchase_date = Column(String, default="")
     purchase_value = Column(Float, default=0.0)
     hired_from = Column(String, default="")
@@ -35,12 +34,21 @@ class DBAsset(Base):
     service_every = Column(Float, default=0.0)               # meter units between services
     service_every_days = Column(Integer, default=0)
     last_service_on = Column(String, default="")
-    last_service_meter = Column(Float, default=0.0)
+    last_service_meter = Column(Float, nullable=True)        # None: not known - never counted as nought
+    # The maintenance schedule: by the meter, the calendar, or whichever comes first.
+    service_interval_type = Column(String, default="")       # Both | Meter | Days | None ("" = older record, read from the intervals)
+    reminder_meter = Column(Float, nullable=True)            # warn this many meter units early; None = a tenth of the interval
+    reminder_days = Column(Integer, nullable=True)           # warn this many days early; None = a tenth, at least 3
+    next_service_meter = Column(Float, nullable=True)        # the reading the next service falls due at
+    next_service_on = Column(String, default="")             # the date it falls due on
     insurance_until = Column(String, default="")
     fitness_until = Column(String, default="")               # RTO fitness for vehicles
-    current_job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
-    status = Column(String, default="Available", index=True)  # Available | Deployed | Under repair | Disposed
+    current_job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)   # the site, when location_type is Site
+    location_type = Column(String, default="")               # Yard | Site | Transit; "" = never said, not assumed to be the yard
+    status = Column(String, default="Available", index=True)  # Available | Deployed | Under repair | Breakdown | Returned | Disposed
     notes = Column(Text, default="")
+    condition = Column(String, default="Good")                # Good | Fair | Poor
+    is_archived = Column(Boolean, default=False, index=True)  # off the working register, kept for its history
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
@@ -79,6 +87,22 @@ class DBAssetLog(Base):
     operator = Column(String, default="")
     work_done = Column(String, default="")
     recorded_by_name = Column(String, default="")
+    # The logbook: who ran it, in which shift, from when to when, and the meter at each end.
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    shift = Column(String, default="")
+    start_time = Column(String, default="")                  # 07:00
+    end_time = Column(String, default="")                    # 19:30 - before start means past midnight
+    break_minutes = Column(Integer, default=0)
+    opening_meter = Column(Float, nullable=True)
+    closing_meter = Column(Float, nullable=True)
+    breakdown_hours = Column(Float, default=0.0)
+    attendance_hours = Column(Float, default=0.0)            # the employee's time on duty - not the machine's
+    regular_hours = Column(Float, default=0.0)
+    overtime_hours = Column(Float, default=0.0)
+    approval_status = Column(String, default="")             # "" (older days) | Submitted | Approved | Rejected
+    approved_by = Column(String, default="")
+    approved_on = Column(String, default="")
+    supervisor_remarks = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
@@ -100,6 +124,23 @@ class DBAssetService(Base):
     downtime_hours = Column(Float, default=0.0)
     meter_at_service = Column(Float, nullable=True)
     recorded_by_name = Column(String, default="")
+    # As a maintenance request: raised, scheduled, worked, completed and approved.
+    number = Column(String, default="", index=True)          # MNT-0001
+    priority = Column(String, default="Normal")              # Low | Normal | High | Urgent
+    status = Column(String, default="Completed", index=True)  # Requested | Scheduled | In progress | Completed
+    reported_on = Column(String, default="")
+    scheduled_on = Column(String, default="")
+    completed_on = Column(String, default="")
+    mechanic = Column(String, default="")
+    parts_used = Column(Text, default="")
+    downtime_start = Column(String, default="")
+    downtime_end = Column(String, default="")
+    work_performed = Column(Text, default="")
+    invoice_no = Column(String, default="")
+    next_service_on = Column(String, default="")
+    next_service_meter = Column(Float, nullable=True)
+    approval_status = Column(String, default="")             # "" | Approved
+    approved_by = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 

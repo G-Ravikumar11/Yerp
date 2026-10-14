@@ -12,21 +12,35 @@ def choices(tenant):
     return res.json()["departments"]
 
 
-def test_a_business_with_no_departments_still_gets_the_usual_trades(tenant):
-    assert {"Civil", "STP", "Electrical"} <= set(choices(tenant))
+def site(tenant):
+    return tenant.post("/api/jobs", json={"name": "Fairview", "customer_name": "Someone", "status": "in_progress"}).json()
 
 
-def test_the_departments_the_owner_creates_are_the_ones_offered(tenant):
-    tenant.post("/api/departments", json={"name": "Roads", "description": "", "color": "#ff0000", "icon": "building"})
-    tenant.post("/api/departments", json={"name": "Accounts", "description": "", "color": "#00ff00", "icon": "building"})
+def make(tenant, name, site_ids=None):
+    body = {"name": name, "description": "", "color": "#ff0000", "icon": "building"}
+    if site_ids is not None:
+        body["site_ids"] = site_ids
+    return tenant.post("/api/departments", json=body).json()
+
+
+def test_there_are_no_built_in_departments(tenant):
+    """The six trades used to fill the picker for a business with none of its own."""
+    assert choices(tenant) == []
+
+
+def test_only_the_departments_added_to_a_site_are_offered(tenant):
+    fairview = site(tenant)
+    make(tenant, "Roads", [fairview["id"]])
+    make(tenant, "Accounts", [fairview["id"]])
+    make(tenant, "Unplaced")
     got = choices(tenant)
-    assert got[:2] == ["Accounts", "Roads"]
-    assert "Plumbing" not in got, "the fixed trades are only the fallback"
+    assert got == ["Accounts", "Roads"], "a department on no site is shown nowhere"
 
 
 def test_an_order_in_a_removed_department_can_still_be_opened(tenant):
     order = draft(tenant, department="Finishing")
-    made = tenant.post("/api/departments", json={"name": "Roads", "description": "", "color": "#ff0000", "icon": "building"}).json()
+    fairview = site(tenant)
+    made = make(tenant, "Roads", [fairview["id"]])
     assert "Finishing" in choices(tenant), "an order already raised in it keeps it listed"
     tenant.delete("/api/departments/%d" % made["id"])
     assert order["department"] == "Finishing"

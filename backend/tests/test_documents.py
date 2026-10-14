@@ -38,7 +38,7 @@ def test_each_line_carries_its_up_to_date_value(tenant):
     assert line["amount"] == round(line["this_bill_qty"] * line["rate"], 2)
 
 
-def test_the_gangs_bill_names_the_contractor_and_the_order(tenant):
+def test_the_contractors_bill_names_the_contractor_and_the_order(tenant):
     order = live_order(tenant, retention_percent=5)
     item = sub_book(tenant, order["id"])["lines"][0]["item_id"]
     sub_measure(tenant, order["id"], item, 100)

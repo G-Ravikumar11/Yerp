@@ -1,4 +1,4 @@
-"""The partner portal: a gang or a supplier signs in and sees their own
+"""The partner portal: a contractor or a supplier signs in and sees their own
 orders, bills, payments and statement - and nothing of anybody else's."""
 from urllib.parse import urlparse, parse_qs
 
@@ -25,7 +25,7 @@ def join(browser, url, password="Portal1234x"):
     return browser
 
 
-def gang_with_a_certified_bill(tenant):
+def contractor_with_a_certified_bill(tenant):
     order = live_order(tenant, retention_percent=5)
     item = book(tenant, order["id"])["lines"][0]["item_id"]
     measure(tenant, order["id"], item, 100)
@@ -35,8 +35,8 @@ def gang_with_a_certified_bill(tenant):
     return order, tenant.get("/api/sub-bills/%d" % bill["id"]).json()
 
 
-def test_a_gang_is_invited_sets_a_password_and_sees_its_own_work(tenant, portal):
-    order, bill = gang_with_a_certified_bill(tenant)
+def test_a_contractor_is_invited_sets_a_password_and_sees_its_own_work(tenant, portal):
+    order, bill = contractor_with_a_certified_bill(tenant)
     inv = invite(tenant, "contractor", order["contractor_id"], "Babu@SriBalaji.in")
     assert inv["user"]["email"] == "babu@sribalaji.in" and inv["user"]["invite_open"]
     greet = portal.get("/api/portal/invite", params={"token": token_of(inv["invite_url"])}).json()
@@ -53,7 +53,7 @@ def test_a_gang_is_invited_sets_a_password_and_sees_its_own_work(tenant, portal)
     assert bills[0]["left"] == bill["net_payable"]
     s = portal.get("/api/portal/summary").json()
     assert s["balance"] == bill["net_payable"] and s["retention_held"] == bill["retention_amount"]
-    # The office pays; the gang sees it land.
+    # The office pays; the contractor sees it land.
     tenant.post("/api/money/entries", json={"doc_type": "sub_bill", "doc_id": bill["id"],
                                             "amount": bill["net_payable"], "mode": "NEFT", "reference": "UTR77"})
     pays = portal.get("/api/portal/payments").json()["payments"]
@@ -64,8 +64,8 @@ def test_a_gang_is_invited_sets_a_password_and_sees_its_own_work(tenant, portal)
 
 
 def test_an_invite_link_works_once(tenant, portal):
-    order, bill = gang_with_a_certified_bill(tenant)
-    inv = invite(tenant, "contractor", order["contractor_id"], "once@gang.in")
+    order, bill = contractor_with_a_certified_bill(tenant)
+    inv = invite(tenant, "contractor", order["contractor_id"], "once@contractor.in")
     join(portal, inv["invite_url"])
     assert portal.post("/api/portal/accept-invite", json={"token": token_of(inv["invite_url"]),
                                                           "password": "Another123x"}).status_code == 410
@@ -73,19 +73,19 @@ def test_an_invite_link_works_once(tenant, portal):
 
 
 def test_signing_in_and_out(tenant, portal):
-    order, bill = gang_with_a_certified_bill(tenant)
-    inv = invite(tenant, "contractor", order["contractor_id"], "login@gang.in")
+    order, bill = contractor_with_a_certified_bill(tenant)
+    inv = invite(tenant, "contractor", order["contractor_id"], "login@contractor.in")
     join(portal, inv["invite_url"])
     portal.post("/api/portal/logout")
     assert portal.get("/api/portal/me").status_code == 401
-    assert portal.post("/api/portal/login", json={"email": "login@gang.in", "password": "wrong"}).status_code == 401
-    assert portal.post("/api/portal/login", json={"email": "LOGIN@gang.in", "password": "Portal1234x"}).status_code == 200
+    assert portal.post("/api/portal/login", json={"email": "login@contractor.in", "password": "wrong"}).status_code == 401
+    assert portal.post("/api/portal/login", json={"email": "LOGIN@contractor.in", "password": "Portal1234x"}).status_code == 200
     assert portal.get("/api/portal/me").status_code == 200
 
 
 def test_a_portal_session_reaches_no_office_screen(tenant, portal):
-    order, bill = gang_with_a_certified_bill(tenant)
-    inv = invite(tenant, "contractor", order["contractor_id"], "nosy@gang.in")
+    order, bill = contractor_with_a_certified_bill(tenant)
+    inv = invite(tenant, "contractor", order["contractor_id"], "nosy@contractor.in")
     join(portal, inv["invite_url"])
     for path in ("/api/jobs", "/api/sub-bills", "/api/money/payables", "/api/ledger/parties",
                  "/api/portal-access", "/api/client/me"):
@@ -94,18 +94,18 @@ def test_a_portal_session_reaches_no_office_screen(tenant, portal):
                                                    "email": "x@y.in"}).status_code in (401, 403)
 
 
-def test_one_gang_never_sees_another(tenant, portal):
-    mine, my_bill = gang_with_a_certified_bill(tenant)
-    theirs, their_bill = gang_with_a_certified_bill(tenant)
+def test_one_contractor_never_sees_another(tenant, portal):
+    mine, my_bill = contractor_with_a_certified_bill(tenant)
+    theirs, their_bill = contractor_with_a_certified_bill(tenant)
     assert mine["contractor_id"] != theirs["contractor_id"]
-    inv = invite(tenant, "contractor", mine["contractor_id"], "mine@gang.in")
+    inv = invite(tenant, "contractor", mine["contractor_id"], "mine@contractor.in")
     join(portal, inv["invite_url"])
     assert [b["number"] for b in portal.get("/api/portal/bills").json()["bills"]] == [my_bill["number"]]
     assert portal.get("/api/portal/orders/%d" % theirs["id"]).status_code == 404
 
 
 def test_another_company_cannot_invite_to_ours(tenant, second_tenant):
-    order, bill = gang_with_a_certified_bill(tenant)
+    order, bill = contractor_with_a_certified_bill(tenant)
     res = second_tenant.post("/api/portal-access", json={"party_type": "contractor",
                                                          "party_id": order["contractor_id"], "email": "a@b.in"})
     assert res.status_code == 404
@@ -113,29 +113,29 @@ def test_another_company_cannot_invite_to_ours(tenant, second_tenant):
 
 
 def test_switching_a_login_off_ends_it(tenant, portal):
-    order, bill = gang_with_a_certified_bill(tenant)
-    inv = invite(tenant, "contractor", order["contractor_id"], "off@gang.in")
+    order, bill = contractor_with_a_certified_bill(tenant)
+    inv = invite(tenant, "contractor", order["contractor_id"], "off@contractor.in")
     join(portal, inv["invite_url"])
     tenant.post("/api/portal-access/%d/disable" % inv["user"]["id"])
     assert portal.get("/api/portal/me").status_code == 401
-    assert portal.post("/api/portal/login", json={"email": "off@gang.in", "password": "Portal1234x"}).status_code == 403
+    assert portal.post("/api/portal/login", json={"email": "off@contractor.in", "password": "Portal1234x"}).status_code == 403
     tenant.post("/api/portal-access/%d/enable" % inv["user"]["id"])
-    assert portal.post("/api/portal/login", json={"email": "off@gang.in", "password": "Portal1234x"}).status_code == 200
+    assert portal.post("/api/portal/login", json={"email": "off@contractor.in", "password": "Portal1234x"}).status_code == 200
 
 
 def test_a_new_link_replaces_the_old(tenant, portal):
-    order, bill = gang_with_a_certified_bill(tenant)
-    inv = invite(tenant, "contractor", order["contractor_id"], "again@gang.in")
+    order, bill = contractor_with_a_certified_bill(tenant)
+    inv = invite(tenant, "contractor", order["contractor_id"], "again@contractor.in")
     again = tenant.post("/api/portal-access/%d/reinvite" % inv["user"]["id"]).json()
     assert portal.get("/api/portal/invite", params={"token": token_of(inv["invite_url"])}).status_code == 410
     join(portal, again["invite_url"])
 
 
 def test_one_email_one_login(tenant):
-    order, bill = gang_with_a_certified_bill(tenant)
-    invite(tenant, "contractor", order["contractor_id"], "dup@gang.in")
+    order, bill = contractor_with_a_certified_bill(tenant)
+    invite(tenant, "contractor", order["contractor_id"], "dup@contractor.in")
     assert tenant.post("/api/portal-access", json={"party_type": "contractor", "party_id": order["contractor_id"],
-                                                   "email": "DUP@gang.in"}).status_code == 409
+                                                   "email": "DUP@contractor.in"}).status_code == 409
     assert tenant.post("/api/portal-access", json={"party_type": "contractor", "party_id": order["contractor_id"],
                                                    "email": "not an email"}).status_code == 400
 
@@ -199,9 +199,9 @@ def test_a_supplier_invoice_must_be_a_pdf_or_photo_on_its_own_order(tenant, port
     assert theirs.status_code == 404
 
 
-def test_a_gang_cannot_send_invoices_in(tenant, portal):
-    order, bill = gang_with_a_certified_bill(tenant)
-    inv = invite(tenant, "contractor", order["contractor_id"], "claims@gang.in")
+def test_a_contractor_cannot_send_invoices_in(tenant, portal):
+    order, bill = contractor_with_a_certified_bill(tenant)
+    inv = invite(tenant, "contractor", order["contractor_id"], "claims@contractor.in")
     join(portal, inv["invite_url"])
     res = portal.post("/api/portal/invoices", data={"number": "G1", "amount": "100"},
                       files={"file": ("g.pdf", b"%PDF", "application/pdf")})
@@ -209,19 +209,19 @@ def test_a_gang_cannot_send_invoices_in(tenant, portal):
 
 
 def test_an_office_sign_in_ends_a_portal_session_in_the_same_browser(tenant, portal, account):
-    order, bill = gang_with_a_certified_bill(tenant)
-    inv = invite(tenant, "contractor", order["contractor_id"], "shared@gang.in")
+    order, bill = contractor_with_a_certified_bill(tenant)
+    inv = invite(tenant, "contractor", order["contractor_id"], "shared@contractor.in")
     join(portal, inv["invite_url"])
     portal.post("/api/client/login", json={"email": account["email"], "password": account["password"]})
     assert portal.get("/api/portal/me").status_code == 401
 
 
-def test_a_gang_sees_its_released_retention_as_passed_for_payment(tenant, portal):
-    order, bill = gang_with_a_certified_bill(tenant)
+def test_a_contractor_sees_its_released_retention_as_passed_for_payment(tenant, portal):
+    order, bill = contractor_with_a_certified_bill(tenant)
     rel = tenant.post("/api/retention/releases", json={"side": "contractor", "order_id": order["id"],
                                                        "amount": bill["retention_amount"],
                                                        "stage": "Practical completion"}).json()["release"]
-    inv = invite(tenant, "contractor", order["contractor_id"], "ret@gang.in")
+    inv = invite(tenant, "contractor", order["contractor_id"], "ret@contractor.in")
     join(portal, inv["invite_url"])
     rows = [b for b in portal.get("/api/portal/bills").json()["bills"] if b["number"] == rel["number"]]
     assert rows and rows[0]["left"] == rel["net_amount"]

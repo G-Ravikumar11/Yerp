@@ -46,7 +46,7 @@ export interface DiaryInput {
   work_updates?: WorkUpdate[]
 }
 export type WorkUpdate = { task_id: number; done: boolean } | { task_id: number; percent: number } | { activity_id: number; percent: number }
-export interface LabourHistory { summary: { mandays: number; days_worked: number; average_gang: number; labour_cost: number; rain_hours: number }; by_trade: { trade: string; mandays: number; cost: number }[] }
+export interface LabourHistory { summary: { mandays: number; days_worked: number; average_crew: number; labour_cost: number; rain_hours: number }; by_trade: { trade: string; mandays: number; cost: number }[] }
 
 export const useDiaries = (job: number) => useQuery({ queryKey: ['diary', 'list', job], enabled: job > 0, queryFn: () => get<{ diaries: DiaryRow[]; summary: DiarySummary }>(`/api/diary?job_id=${job}`) })
 export const useDiary = (id: number | null) => useQuery({ queryKey: ['diary', 'one', id], enabled: !!id, queryFn: () => get<DiaryDetail>(`/api/diary/${id}`) })

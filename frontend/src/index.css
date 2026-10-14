@@ -204,6 +204,26 @@
   --shadow-pop: 0 1px 0 0 oklch(1 0 0 / 0.06) inset, 0 32px 80px -16px oklch(0 0 0 / 0.75);
 }
 
+/* ---- App backdrop ---------------------------------------------------------
+   Soft pastel washes (peach, lilac, mint) behind every screen. Light in the light theme, a gentle glow in the dark one. */
+.app-backdrop {
+  /* fades out towards the bottom so it never ends in a visible edge */
+  -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+  background:
+    radial-gradient(55% 60% at 8% 0%, oklch(0.9 0.085 65 / 0.75), transparent 72%),
+    radial-gradient(48% 55% at 92% 4%, oklch(0.9 0.075 300 / 0.7), transparent 72%),
+    radial-gradient(55% 50% at 52% 46%, oklch(0.93 0.06 175 / 0.55), transparent 74%),
+    radial-gradient(50% 45% at 100% 100%, oklch(0.92 0.07 20 / 0.5), transparent 72%);
+}
+.dark .app-backdrop {
+  background:
+    radial-gradient(55% 60% at 8% 0%, oklch(0.58 0.12 60 / 0.34), transparent 72%),
+    radial-gradient(48% 55% at 92% 4%, oklch(0.5 0.12 295 / 0.3), transparent 72%),
+    radial-gradient(55% 50% at 52% 46%, oklch(0.5 0.08 180 / 0.2), transparent 74%),
+    radial-gradient(50% 45% at 100% 100%, oklch(0.5 0.1 20 / 0.2), transparent 72%);
+}
+
 /* ---- Base --------------------------------------------------------------- */
 @layer base {
   * {
@@ -312,3 +332,26 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* The level chart on the Departments page: one row for each level, most senior at the top. A row hangs from the one above
+   by a bar, and the lines take the colour of the row they leave (--up for the line above a row, --down for the one below). */
+.lv-row { display: flex; justify-content: center; }
+.lv-item { position: relative; padding: 0 10px; }
+.lv-up .lv-item { padding-top: 28px; }
+.lv-down .lv-item { padding-bottom: 28px; }
+.lv-up .lv-item::before, .lv-up .lv-item::after { content: ''; position: absolute; top: 0; height: 28px; width: 50%; border-top: 2px solid var(--up); }
+.lv-up .lv-item::before { right: 50%; }
+.lv-up .lv-item::after { left: 50%; border-left: 2px solid var(--up); }
+.lv-up .lv-item:first-child::before, .lv-up .lv-item:last-child::after { border: 0 none; }
+.lv-up .lv-item:last-child::before { border-right: 2px solid var(--up); }
+.lv-up .lv-item:only-child::before { display: none; }
+.lv-up .lv-item:only-child::after { border-top: 0; border-left: 2px solid var(--up); }
+.lv-drop { position: absolute; left: 0; bottom: 0; width: 100%; height: 28px; pointer-events: none; }
+.lv-drop::before, .lv-drop::after { content: ''; position: absolute; bottom: 0; height: 28px; width: 50%; border-bottom: 2px solid var(--down); }
+.lv-drop::before { right: 50%; }
+.lv-drop::after { left: 50%; border-left: 2px solid var(--down); }
+.lv-item:first-child > .lv-drop::before, .lv-item:last-child > .lv-drop::after { border: 0 none; }
+.lv-item:last-child > .lv-drop::before { border-right: 2px solid var(--down); }
+.lv-item:only-child > .lv-drop::before { display: none; }
+.lv-item:only-child > .lv-drop::after { border-bottom: 0; border-left: 2px solid var(--down); }
+.lv-stem { width: 2px; height: 24px; background: var(--stem); }

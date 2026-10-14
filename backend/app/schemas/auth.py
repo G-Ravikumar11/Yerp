@@ -1,7 +1,7 @@
 """What the auth endpoints are sent."""
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ClientRegister(BaseModel):
@@ -12,8 +12,10 @@ class ClientRegister(BaseModel):
 
 
 class ClientLogin(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     email: str
     password: str
+    remember_me: bool = Field(False, alias="rememberMe")
 
 
 class ClientOnboard(BaseModel):

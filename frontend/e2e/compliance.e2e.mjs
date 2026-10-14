@@ -4,14 +4,14 @@ import { api, approvedOrder, clickText, fill, launch, measure, open, setValue, s
 const { page, check, done } = await launch({ allow: [/409 POST \/api\/sub-bills/] })
 await signIn(page)
 const order = await approvedOrder(page, { subject: 'E2E compliance' })
-const conId = order.gang.id
+const conId = order.contractor.id
 const text = () => page.$eval('main', (m) => m.textContent.replace(/\s+/g, ' '))
 
 // --- papers ---------------------------------------------------------------------------------------------------------
 await open(page, '/subcontractors/compliance')
 await page.waitForSelector('table[aria-label="Contractor compliance"]')
 check('the page lists contractors and says who is safe to pay', /Safe to pay/.test(await text()))
-const row = await page.evaluateHandle((name) => [...document.querySelectorAll('table[aria-label="Contractor compliance"] tbody tr')].find((r) => r.textContent.includes(name)), order.gang.company_name)
+const row = await page.evaluateHandle((name) => [...document.querySelectorAll('table[aria-label="Contractor compliance"] tbody tr')].find((r) => r.textContent.includes(name)), order.contractor.company_name)
 await row.click()
 await page.waitForSelector('[role=dialog]')
 check('a contractor with no papers is told what is missing', /is not on record/.test(await page.$eval('[role=dialog]', (d) => d.textContent)))

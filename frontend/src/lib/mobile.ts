@@ -2,6 +2,7 @@ import { Capacitor } from '@capacitor/core'
 import { App } from '@capacitor/app'
 import { Browser } from '@capacitor/browser'
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
+import { CapacitorUpdater } from '@capgo/capacitor-updater'
 import { StatusBar, Style } from '@capacitor/status-bar'
 import { SplashScreen } from '@capacitor/splash-screen'
 import { PushNotifications } from '@capacitor/push-notifications'
@@ -14,6 +15,10 @@ import { toast } from '@/stores/toast'
  */
 export async function initMobile() {
   if (!Capacitor.isNativePlatform()) return
+
+  // Screens downloaded over the air are on trial until this runs: one that never gets this far is dropped, and the
+  // plugin goes back to the last screens that did.
+  void CapacitorUpdater.notifyAppReady().catch(() => undefined)
 
   try {
     // 1. Android physical & gesture back button handling
@@ -39,8 +44,61 @@ export async function initMobile() {
   }
 
   void checkForUpdate()
+  void checkForWebUpdate()
   // A phone left with the app open for days still hears about a new build when it is brought back.
-  void App.addListener('resume', () => void checkForUpdate())
+  void App.addListener('resume', () => {
+    void checkForUpdate()
+    void checkForWebUpdate()
+  })
+}
+
+/** The build number of the screens inside this APK; the workflow stamps it (VITE_WEB_VERSION). 0 for a laptop build. */
+const BAKED_WEB = Number(import.meta.env.VITE_WEB_VERSION) || 0
+let offeredWeb = 0
+
+/**
+ * Over the air: when screens newer than the ones this phone runs have been published, fetch them quietly. They are
+ * used the next time the app opens; "Restart now" switches straight away. Nothing to install and the person stays
+ * signed in. Only screens: anything that needs a newer APK (a new native plugin) says so in its min_native and is
+ * left for the "Update available" prompt above.
+ */
+async function checkForWebUpdate() {
+  try {
+    const [{ build }, latest, now, listed] = await Promise.all([
+      App.getInfo(),
+      api<{ version: number; zip_url?: string; checksum?: string; min_native?: number }>('/api/app/web/latest', { quiet: true }),
+      CapacitorUpdater.current(),
+      CapacitorUpdater.list(),
+    ])
+    const running = Math.max(BAKED_WEB, Number(now.bundle.version) || 0)
+    const { zip_url: url, checksum } = latest
+    // The updater will not take a download it cannot check against the fingerprint the release was published with.
+    if (!url || !checksum || latest.version <= running || latest.version === offeredWeb) return
+    if ((Number(build) || 0) < (latest.min_native ?? 0)) return
+    // Only ever our own releases, over https.
+    if (!url.startsWith('https://github.com/')) return
+
+    const version = String(latest.version)
+    const have = listed.bundles.find((b) => b.version === version)
+    // One that already failed on this phone is not tried again; the next build replaces it.
+    if (have?.status === 'error') return
+    const bundle = have ?? (await CapacitorUpdater.download({ url, version, checksum }))
+    await CapacitorUpdater.next({ id: bundle.id })
+    offeredWeb = latest.version
+    toast.withAction('New screens are ready for Y ERP.', 'Restart now', () => {
+      void CapacitorUpdater.set({ id: bundle.id })
+    })
+
+    // Older downloads are no longer needed.
+    for (const old of listed.bundles) {
+      if (old.id !== bundle.id && old.id !== now.bundle.id && (Number(old.version) || 0) < latest.version) {
+        void CapacitorUpdater.delete({ id: old.id }).catch(() => undefined)
+      }
+    }
+  } catch (err) {
+    // No signal, an APK from before this existed, or the server has nothing published: try again next time.
+    console.warn('Checking for new screens did not complete:', err)
+  }
 }
 
 let offered = 0

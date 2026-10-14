@@ -34,7 +34,7 @@ export default function RaBillsPage() {
     search: (b) => [b.number, b.contractor, b.vendor_code, b.project, b.status, b.net_payable, b.work_name].join(' '),
     status: (b) => b.status,
     date: (b) => b.bill_date,
-    facets: { project: { label: 'Projects', get: (b) => b.project }, gang: { label: 'Contractors', get: (b) => b.contractor } },
+    facets: { project: { label: 'Projects', get: (b) => b.project }, contractor: { label: 'Contractors', get: (b) => b.contractor } },
   })
 
   const s = bills.data?.summary

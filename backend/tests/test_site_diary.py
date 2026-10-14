@@ -4,7 +4,7 @@ On a civil contract the diary is the document that settles a delay claim two
 years later. It is also the only place the labour standing on site is written
 down, so until it existed a job's cost was material and nothing else - which
 is how a project looks profitable right up to the day somebody counts the
-store and pays the gangs.
+store and pays the contractors.
 """
 import uuid
 
@@ -154,11 +154,11 @@ def test_a_draft_can_still_be_corrected(tenant):
 
 # --- The history a manager actually asks for ----------------------------------
 
-def test_labour_history_adds_up_by_trade_and_by_gang(tenant):
+def test_labour_history_adds_up_by_trade_and_by_contractor(tenant):
     job = project(tenant)
     diary(tenant, job, on="2026-09-01", labour=[
         {"trade": "Mason", "headcount": 6, "rate": 900, "agency": "Own"},
-        {"trade": "Helper", "headcount": 8, "rate": 600, "agency": "Raju gang"}])
+        {"trade": "Helper", "headcount": 8, "rate": 600, "agency": "Raju contractor"}])
     diary(tenant, job, on="2026-09-02", labour=[
         {"trade": "Mason", "headcount": 4, "rate": 900, "agency": "Own"}])
 
@@ -168,11 +168,11 @@ def test_labour_history_adds_up_by_trade_and_by_gang(tenant):
     assert masons["cost"] == 9000
     assert h["summary"]["mandays"] == 18
     assert h["summary"]["days_recorded"] == 2
-    assert h["summary"]["average_gang"] == 9.0
-    assert {a["agency"] for a in h["by_agency"]} == {"Own", "Raju gang"}
+    assert h["summary"]["average_crew"] == 9.0
+    assert {a["agency"] for a in h["by_agency"]} == {"Own", "Raju contractor"}
 
 
-def test_a_rained_off_day_does_not_drag_the_average_gang_down(tenant):
+def test_a_rained_off_day_does_not_drag_the_average_crew_down(tenant):
     job = project(tenant)
     diary(tenant, job, on="2026-09-01", labour=[
         {"trade": "Mason", "headcount": 10, "rate": 900}])
@@ -180,7 +180,7 @@ def test_a_rained_off_day_does_not_drag_the_average_gang_down(tenant):
     h = tenant.get("/api/diary-labour/%d" % job["id"]).json()
     assert h["summary"]["days_recorded"] == 2
     assert h["summary"]["days_worked"] == 1
-    assert h["summary"]["average_gang"] == 10.0
+    assert h["summary"]["average_crew"] == 10.0
 
 
 def test_the_day_downloads_as_a_report(tenant):

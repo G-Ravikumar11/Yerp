@@ -4,9 +4,9 @@ import { api, clickCell, clickText, launch, open, signIn, sleep } from './lib.mj
 const { page, check, done } = await launch({ width: 1366, height: 1000 })
 await signIn(page)
 const vocab = (await api(page, 'GET', '/api/wo/vocabulary')).data
-const gang = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
+const contractor = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
 const unit = (await api(page, 'GET', '/api/wo/business-units')).data.business_units[0]
-const order = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: gang.id, job_id: vocab.jobs[0].id, department: 'Civil', subject: 'QA unit picker', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
+const order = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: contractor.id, job_id: vocab.jobs[0].id, department: 'Civil', subject: 'QA unit picker', commencement_date: '2026-11-01', completion_date: '2027-03-31' })).data.order
 await open(page, `/subcontractors/work-orders/${order.id}`)
 await clickText(page, 'button[role=tab]', 'Schedule')
 await page.waitForSelector('[role=grid]')

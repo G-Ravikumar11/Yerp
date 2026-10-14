@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 import main
 from app import models
-from test_partner_portal import gang_with_a_certified_bill, invite as portal_invite
+from test_partner_portal import contractor_with_a_certified_bill, invite as portal_invite
 from test_subcontract_orders import staff
 from test_team import invite as team_invite
 
@@ -97,7 +97,7 @@ def test_an_unverified_google_address_is_refused(account, google):
 
 
 def test_a_partner_signs_in_with_google_at_the_portal(tenant, google):
-    order, _ = gang_with_a_certified_bill(tenant)
+    order, _ = contractor_with_a_certified_bill(tenant)
     import uuid
     email = "babu-%s@sribalaji.in" % uuid.uuid4().hex[:6]
     portal_invite(tenant, "contractor", order["contractor_id"], email)

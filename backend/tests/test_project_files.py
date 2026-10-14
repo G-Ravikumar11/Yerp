@@ -102,3 +102,51 @@ def test_another_tenant_cannot_see_the_files(tenant, second_tenant):
     f = upload(tenant, "job", j["id"]).json()["file"]
     assert second_tenant.get(f["url"]).status_code == 404
     assert upload(second_tenant, "job", j["id"]).status_code == 404
+
+
+DWG = b"AC1032" + b"0" * 4096
+
+
+def test_a_pdf_and_a_drawing_open_outside_the_app_by_a_short_link(tenant):
+    """The phone app hands PDFs and DWGs to the phone's own browser, which has no sign-in: the link must work alone."""
+    from fastapi.testclient import TestClient
+    import main
+    j = job(tenant)
+    pdf = upload(tenant, "job", j["id"], data=PDF, name="plan.pdf", ctype="application/pdf").json()["file"]
+    dwg = upload(tenant, "job", j["id"], data=DWG, name="plan.dwg", ctype="application/acad").json()["file"]
+    with TestClient(main.app) as browser:        # no cookie at all
+        assert browser.get(pdf["url"]).status_code == 401
+        link = tenant.post("/api/files/%d/link" % pdf["id"]).json()["url"]
+        got = browser.get(link)
+        assert got.status_code == 200 and got.content == PDF and got.headers["content-type"] == "application/pdf"
+        assert got.headers["content-disposition"].startswith("inline")
+        assert got.headers["cache-control"] == "private, no-store"
+        link = tenant.post("/api/files/%d/link" % dwg["id"]).json()["url"]
+        got = browser.get(link)
+        assert got.status_code == 200 and got.content == DWG
+        assert got.headers["content-disposition"] == 'attachment; filename="plan.dwg"'
+
+
+def test_a_file_link_is_for_one_file_for_a_few_minutes_and_the_owner_alone(tenant, second_tenant):
+    from fastapi.testclient import TestClient
+    import main
+    from app.routers import files as files_router
+    j = job(tenant)
+    a = upload(tenant, "job", j["id"], data=PDF, name="a.pdf", ctype="application/pdf").json()["file"]
+    b = upload(tenant, "job", j["id"], data=PDF, name="b.pdf", ctype="application/pdf").json()["file"]
+    link = tenant.post("/api/files/%d/link" % a["id"]).json()["url"]
+    with TestClient(main.app) as browser:
+        # the same token on another file, an altered token, and no token are all refused
+        assert browser.get(link.replace("/api/files/%d/" % a["id"], "/api/files/%d/" % b["id"])).status_code == 403
+        assert browser.get(link[:-3] + "xyz").status_code == 403
+        assert browser.get("/api/files/%d/shared" % a["id"]).status_code == 403
+        # ... and it stops working once its few minutes are up
+        real = files_router.FILE_LINK_SECONDS
+        files_router.FILE_LINK_SECONDS = -1
+        try:
+            assert browser.get(link).status_code == 403
+        finally:
+            files_router.FILE_LINK_SECONDS = real
+        assert browser.get(link).status_code == 200
+    # somebody else's tenancy cannot make a link to this file
+    assert second_tenant.post("/api/files/%d/link" % a["id"]).status_code == 404

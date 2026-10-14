@@ -1,8 +1,9 @@
 """The rules and workings behind the assets endpoints."""
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import HTTPException
+from sqlalchemy import func as sqlfunc
 
 from app import models
 
@@ -19,31 +20,121 @@ from app.core.currency import money
 from app.core.dates import _days_until, _parse_date
 
 
-def asset_service_state(a):
-    """Whether a machine is due a service, by the meter or by the calendar -
-    whichever comes first, the way the manufacturer's schedule reads."""
-    due, soon, reasons = False, False, []
-    if a.service_every and a.service_every > 0:
-        run = (a.meter_reading or 0) - (a.last_service_meter or 0)
-        left = money(a.service_every - run)
-        if left <= 0:
-            due = True
-            reasons.append("%g %s past its service" % (abs(left), (a.meter_unit or "hours").lower()))
-        elif left <= a.service_every * 0.1:
-            soon = True
-            reasons.append("service in %g %s" % (left, (a.meter_unit or "hours").lower()))
-    if a.service_every_days and a.service_every_days > 0 and a.last_service_on:
-        try:
-            last = datetime.strptime(a.last_service_on[:10], "%Y-%m-%d").date()
-            left = a.service_every_days - (date.today() - last).days
-            if left <= 0:
-                due = True
-                reasons.append("%d days past its service" % abs(left))
-            elif left <= max(3, a.service_every_days * 0.1):
-                soon = True
-                reasons.append("service in %d days" % left)
-        except ValueError:
-            pass
+INTERVAL_TYPES = ("Both", "Meter", "Days", "None")
+# Worst first: the one a combined schedule reports is whichever threshold is reached first.
+SERVICE_STATUSES = ("Overdue", "Service due", "Due soon", "Upcoming", "Incomplete", "Not scheduled")
+UNIT_WORD = {"Hours": "hours", "Km": "km"}
+EARLIEST_YEAR = 1980        # a service date before this is a mistyped year, not a record
+
+
+def _day(value):
+    try:
+        return datetime.strptime((value or "")[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def interval_type(a):
+    """The schedule's type; a record from before the type was kept reads it from its intervals."""
+    t = a.service_interval_type or ""
+    if t in INTERVAL_TYPES:
+        return t
+    meter, days = (a.service_every or 0) > 0, (a.service_every_days or 0) > 0
+    return "Both" if meter and days else "Meter" if meter else "Days" if days else "None"
+
+
+def reminder_windows(a):
+    """How early the reminder comes: as set, or a tenth of the interval (at least three days)."""
+    m = a.reminder_meter if a.reminder_meter is not None else round((a.service_every or 0) * 0.1, 1)
+    d = a.reminder_days if a.reminder_days is not None else max(3, int(round((a.service_every_days or 0) * 0.1)))
+    return m, d
+
+
+def next_thresholds(a):
+    """The reading and the date the next service falls due at - as stored, or worked out from the
+    last service plus the interval. A missing reading or date gives no threshold, never a nought."""
+    t = interval_type(a)
+    meter = on = None
+    if t in ("Both", "Meter") and (a.service_every or 0) > 0:
+        if a.next_service_meter is not None:
+            meter = a.next_service_meter
+        elif a.last_service_meter is not None:
+            meter = round(a.last_service_meter + a.service_every, 1)
+    if t in ("Both", "Days") and (a.service_every_days or 0) > 0:
+        if _day(a.next_service_on):
+            on = a.next_service_on[:10]
+        elif _day(a.last_service_on):
+            on = (_day(a.last_service_on) + timedelta(days=a.service_every_days)).isoformat()
+    return meter, on
+
+
+def service_schedule(a, today=None):
+    """Where a machine stands on its schedule: the one reading of it the register, the machine,
+    the dashboard and the reports all share.
+
+    Meter: Due soon inside the reminder window, Service due once the reading reaches the
+    threshold, Overdue once it has run past it by more than a tenth of the interval.
+    Calendar: Due soon inside the reminder window, Service due on the date, Overdue after it.
+    Both: whichever is reached first."""
+    today = today or date.today()
+    t = interval_type(a)
+    unit = UNIT_WORD.get(a.meter_unit or "Hours", "hours")
+    rem_m, rem_d = reminder_windows(a)
+    nm, nd = next_thresholds(a)
+    out = {"type": t, "unit": unit, "every_meter": a.service_every or 0, "every_days": a.service_every_days or 0,
+           "reminder_meter": rem_m, "reminder_days": rem_d, "reminder_meter_set": a.reminder_meter is not None,
+           "reminder_days_set": a.reminder_days is not None,
+           "last_service_on": a.last_service_on or "", "last_service_meter": a.last_service_meter,
+           "next_meter": nm, "next_on": nd, "meter_left": None, "days_left": None,
+           "status": "Not scheduled", "reasons": [], "missing": []}
+    if t == "None":
+        return out
+    found = []
+    if t in ("Both", "Meter"):
+        if nm is None:
+            out["missing"].append("the meter reading at the last service")
+        else:
+            left = round(nm - (a.meter_reading or 0), 1)
+            out["meter_left"] = left
+            grace = (a.service_every or 0) * 0.1
+            if left < -grace:
+                found.append(("Overdue", "%g %s past its service" % (abs(left), unit)))
+            elif left <= 0:
+                found.append(("Service due", ("%g %s past its service" % (abs(left), unit)) if left < 0 else "service due now, at %g %s" % (nm, unit)))
+            elif left <= rem_m:
+                found.append(("Due soon", "service in %g %s" % (left, unit)))
+            else:
+                found.append(("Upcoming", "service in %g %s" % (left, unit)))
+    if t in ("Both", "Days"):
+        if nd is None:
+            out["missing"].append("the date of the last service")
+        else:
+            left = (_day(nd) - today).days
+            out["days_left"] = left
+            if left < 0:
+                found.append(("Overdue", "%d days past its service" % abs(left)))
+            elif left == 0:
+                found.append(("Service due", "service due today"))
+            elif left <= rem_d:
+                found.append(("Due soon", "service in %d days" % left))
+            else:
+                found.append(("Upcoming", "service in %d days" % left))
+    if not found:
+        out["status"] = "Incomplete"
+        out["reasons"] = ["no service due can be worked out without %s" % " and ".join(out["missing"])]
+        return out
+    out["status"] = min((s for s, _ in found), key=SERVICE_STATUSES.index)
+    # The upcoming count is noise in a warning list; it is shown in the summary instead.
+    out["reasons"] = [r for s, r in sorted(found, key=lambda x: SERVICE_STATUSES.index(x[0])) if s != "Upcoming"]
+    return out
+
+
+def asset_service_state(a, today=None):
+    """Whether a machine needs attention: its service schedule, and its insurance and fitness."""
+    sch = service_schedule(a, today)
+    due = sch["status"] in ("Overdue", "Service due")
+    soon = sch["status"] == "Due soon"
+    reasons = list(sch["reasons"]) if sch["status"] != "Incomplete" else []
     for label, value in (("insurance", a.insurance_until), ("fitness", a.fitness_until)):
         d = _days_until(value)
         if d is not None and d < 0:
@@ -52,7 +143,49 @@ def asset_service_state(a):
         elif d is not None and d <= 15:
             soon = True
             reasons.append("%s lapses in %d days" % (label, d))
-    return {"due": due, "soon": soon and not due, "reasons": reasons}
+    return {"due": due, "soon": soon and not due, "reasons": reasons, "status": sch["status"], "schedule": sch}
+
+
+LOCATION_TYPES = ("Yard", "Site", "Transit")
+LOCATION_LABEL = {"Yard": "Yard", "Transit": "In transit"}
+
+
+def location_type_of(a):
+    """Where the machine is kept, as said - a machine on a site is on a site whatever else was recorded."""
+    return "Site" if a.current_job_id else (a.location_type or "")
+
+
+def apply_location(db, client_id, a, body, by_name=""):
+    """The Yard / Site / In transit chosen on the form. Not sent: where it is stays as it is.
+    A change of site is written to the machine's move history, the same as a move."""
+    kind = body.location_type
+    if kind in (None, ""):
+        return
+    if kind not in LOCATION_TYPES:
+        raise HTTPException(400, "Where is it - the yard, a site, or in transit?")
+    if kind == "Site":
+        if not body.location_id:
+            raise HTTPException(400, "Which site is it on?")
+        job = db.query(models.DBJob).filter(models.DBJob.id == body.location_id, models.DBJob.client_id == client_id).first()
+        if not job:
+            raise HTTPException(404, "That site was not found.")
+        if a.current_job_id != job.id:
+            if a.status in ("Under repair", "Breakdown", "Returned", "Disposed"):
+                raise HTTPException(409, "%s is %s - it cannot be sent to a site." % (a.code or "The machine", (a.status or "").lower()))
+            if a.id:
+                db.add(models.DBAssetMove(client_id=client_id, asset_id=a.id, from_job_id=a.current_job_id, to_job_id=job.id,
+                                          moved_on=datetime.now().strftime("%Y-%m-%d"), note="Set on the register", by_name=by_name))
+            a.current_job_id = job.id
+            a.status = "Deployed"
+    else:
+        if a.current_job_id:
+            if a.id:
+                db.add(models.DBAssetMove(client_id=client_id, asset_id=a.id, from_job_id=a.current_job_id, to_job_id=None,
+                                          moved_on=datetime.now().strftime("%Y-%m-%d"), note="Set on the register", by_name=by_name))
+            a.current_job_id = None
+            if a.status == "Deployed":
+                a.status = "Available"
+    a.location_type = kind
 
 
 def asset_dict(db, a, jobs=None, costs=None):
@@ -61,18 +194,27 @@ def asset_dict(db, a, jobs=None, costs=None):
         if a.current_job_id else None)
     c = (costs or {}).get(a.id, {})
     return {"id": a.id, "code": a.code or "", "name": a.name or "", "category": a.category or "",
-            "ownership": a.ownership or "Owned", "make": a.make or "", "model": a.model or "",
-            "reg_no": a.reg_no or "", "serial_no": a.serial_no or "",
+            "ownership": a.ownership or "Owned", "brand": a.brand or "", "model": a.model or "",
+            "reg_no": a.reg_no or "",
             "purchase_date": a.purchase_date or "", "purchase_value": money(a.purchase_value),
             "hired_from": a.hired_from or "", "hire_rate": money(a.hire_rate),
             "hire_basis": a.hire_basis or "Day", "meter_unit": a.meter_unit or "Hours",
             "meter_reading": a.meter_reading or 0, "service_every": a.service_every or 0,
             "service_every_days": a.service_every_days or 0,
-            "last_service_on": a.last_service_on or "", "last_service_meter": a.last_service_meter or 0,
+            "last_service_on": a.last_service_on or "", "last_service_meter": a.last_service_meter,
+            "service_interval_type": interval_type(a), "reminder_meter": a.reminder_meter,
+            "reminder_days": a.reminder_days,
             "insurance_until": a.insurance_until or "", "fitness_until": a.fitness_until or "",
             "current_job_id": a.current_job_id,
+            "location_type": location_type_of(a), "location_id": a.current_job_id,
             "current_job": ("%s %s" % (job.number, job.name)).strip() if job else "",
+            "where": ("With its owner" if a.status == "Returned" else
+                      ("%s %s" % (job.number, job.name)).strip() if job else
+                      LOCATION_LABEL.get(a.location_type or "", "Not set")),
             "status": a.status or "Available", "notes": a.notes or "",
+            # "Hired" is how the register has always stored a machine hired in; it is shown as Rented.
+            "ownership_label": {"Hired": "Rented"}.get(a.ownership or "Owned", a.ownership or "Owned"),
+            "condition": a.condition or "Good", "is_archived": bool(a.is_archived),
             "service": asset_service_state(a),
             "cost_to_date": money(c.get("total", 0.0)),
             "hours_to_date": money(c.get("hours", 0.0)),
@@ -83,26 +225,152 @@ def _apply_asset(a, body):
     name = (body.name or "").strip()
     if not name:
         raise HTTPException(400, "What is the machine?")
-    ownership = body.ownership if body.ownership in ("Owned", "Hired") else "Owned"
+    own = "Hired" if body.ownership == "Rented" else body.ownership
+    ownership = own if own in ("Owned", "Hired", "Leased") else "Owned"
     if ownership == "Hired" and not (body.hire_rate or 0) > 0:
         raise HTTPException(400, "A hired machine needs its hire rate - it is what it costs the site.")
     a.name = name
     a.category = body.category if body.category in ASSET_CATEGORIES else "Other"
     a.ownership = ownership
-    a.make, a.model = (body.make or "").strip(), (body.model or "").strip()
+    a.brand, a.model = (body.brand or "").strip(), (body.model or "").strip()
     a.reg_no = (body.reg_no or "").strip().upper()
-    a.serial_no = (body.serial_no or "").strip()
     a.purchase_date = (body.purchase_date or "").strip()
     a.purchase_value = money(body.purchase_value or 0)
     a.hired_from = (body.hired_from or "").strip()
     a.hire_rate = money(body.hire_rate or 0)
     a.hire_basis = body.hire_basis if body.hire_basis in HIRE_BASES else "Day"
     a.meter_unit = body.meter_unit if body.meter_unit in ("Hours", "Km") else "Hours"
-    a.service_every = max(0.0, float(body.service_every or 0))
-    a.service_every_days = max(0, int(body.service_every_days or 0))
     a.insurance_until = (body.insurance_until or "").strip()
     a.fitness_until = (body.fitness_until or "").strip()
     a.notes = (body.notes or "").strip()
+    if getattr(body, "condition", None):
+        if body.condition not in ("Good", "Fair", "Poor"):
+            raise HTTPException(400, "Condition is Good, Fair or Poor.")
+        a.condition = body.condition
+
+
+def apply_schedule(a, body, before=None):
+    """The maintenance schedule from the form, checked, with its next thresholds worked out.
+    Called once the machine's meter and last service are on it; `before` is its schedule_snapshot
+    from before the edit touched it. Returns what changed, for the audit."""
+    before = before or schedule_snapshot(a)
+    t = body.service_interval_type
+    if t in (None, ""):
+        # Sent without a type (older screens, imports): read it from the intervals sent.
+        meter, days = (body.service_every or 0) > 0, (body.service_every_days or 0) > 0
+        t = "Both" if meter and days else "Meter" if meter else "Days" if days else "None"
+    if t not in INTERVAL_TYPES:
+        raise HTTPException(400, "The service interval is by the meter and the calendar, the meter only, or the calendar only.")
+    unit = UNIT_WORD.get(a.meter_unit or "Hours", "hours")
+    every = float(body.service_every or 0)
+    days = body.service_every_days or 0
+    if every < 0 or days < 0:
+        raise HTTPException(400, "A service interval cannot be negative.")
+    if days != int(days):
+        raise HTTPException(400, "The calendar interval is a whole number of days.")
+    days = int(days)
+    uses_meter, uses_days = t in ("Both", "Meter"), t in ("Both", "Days")
+    if uses_meter and every <= 0:
+        raise HTTPException(400, "How many %s between services?" % unit)
+    if uses_days and days <= 0:
+        raise HTTPException(400, "How many days between services?")
+    if uses_meter:
+        if a.last_service_meter is None:
+            raise HTTPException(400, "Enter the meter reading at the last service - the next one is counted from it.")
+        if a.last_service_meter < 0:
+            raise HTTPException(400, "A meter reading cannot be negative.")
+        if a.last_service_meter > (a.meter_reading or 0):
+            raise HTTPException(400, "The meter reads %g %s now; it cannot have been serviced at %g." % (a.meter_reading or 0, unit, a.last_service_meter))
+    if uses_days:
+        last = _day(a.last_service_on)
+        if not last:
+            raise HTTPException(400, "Enter the date of the last service (or the day it started work) - the next one is counted from it.")
+        if last > date.today():
+            raise HTTPException(400, "The last service cannot be in the future.")
+        if last.year < EARLIEST_YEAR:
+            raise HTTPException(400, "The last service on %s? Check the year." % last.isoformat())
+    rem_m, rem_d = body.reminder_meter, body.reminder_days
+    if rem_m is not None and uses_meter and not 0 <= rem_m < every:
+        raise HTTPException(400, "The early reminder is a number of %s below the interval (%g)." % (unit, every))
+    if rem_d is not None and uses_days and (rem_d != int(rem_d) or not 0 <= rem_d < days):
+        raise HTTPException(400, "The early reminder is a whole number of days below the interval (%d)." % days)
+    inputs = lambda: (interval_type(a), a.service_every or 0, a.service_every_days or 0, a.last_service_meter, (a.last_service_on or "")[:10])
+    was = (before["type"], before["every_meter"], before["every_days"], before["last_service_meter"], before["last_service_on"][:10])
+    a.service_interval_type = t
+    a.service_every = every if uses_meter else 0.0
+    a.service_every_days = days if uses_days else 0
+    a.reminder_meter = float(rem_m) if (uses_meter and rem_m is not None) else None
+    a.reminder_days = int(rem_d) if (uses_days and rem_d is not None) else None
+    # A threshold set by hand when a service was completed stands until the schedule itself is changed.
+    same = was == inputs()
+    if not (same and uses_meter and a.next_service_meter is not None):
+        a.next_service_meter = round(a.last_service_meter + every, 1) if uses_meter else None
+    if not (same and uses_days and _day(a.next_service_on)):
+        a.next_service_on = (_day(a.last_service_on) + timedelta(days=days)).isoformat() if uses_days else ""
+    after = schedule_snapshot(a)
+    return {k: (before[k], after[k]) for k in after if before[k] != after[k]}
+
+
+def schedule_snapshot(a):
+    return {"type": interval_type(a), "every_meter": a.service_every or 0, "every_days": a.service_every_days or 0,
+            "reminder_meter": a.reminder_meter, "reminder_days": a.reminder_days,
+            "last_service_on": a.last_service_on or "", "last_service_meter": a.last_service_meter,
+            "next_meter": a.next_service_meter, "next_on": a.next_service_on or "", "unit": a.meter_unit or "Hours"}
+
+
+def describe_changes(changes):
+    return "; ".join("%s %s -> %s" % (k.replace("_", " "), "-" if v[0] in (None, "") else v[0], "-" if v[1] in (None, "") else v[1])
+                     for k, v in changes.items())
+
+
+def record_service_done(a, done_on, meter, next_meter=None, next_on=None):
+    """A service done: the clock starts again from it. The next thresholds are the interval on from
+    this service, unless given; either way they are after it. Returns the thresholds set."""
+    t = interval_type(a)
+    unit = UNIT_WORD.get(a.meter_unit or "Hours", "hours")
+    done = _day(done_on)
+    if not done:
+        raise HTTPException(400, "When was it serviced? (YYYY-MM-DD)")
+    if done > date.today():
+        raise HTTPException(400, "A service cannot be recorded before it is done.")
+    if done.year < EARLIEST_YEAR:
+        raise HTTPException(400, "Serviced on %s? Check the year." % done.isoformat())
+    last = _day(a.last_service_on)
+    if last and done < last:
+        raise HTTPException(400, "It was last serviced on %s; this service cannot be before that." % a.last_service_on[:10])
+    if meter is None and t in ("Both", "Meter"):
+        raise HTTPException(400, "The meter reading at this service - the next one is counted from it.")
+    if meter is not None:
+        if meter < 0:
+            raise HTTPException(400, "A meter reading cannot be negative.")
+        if a.last_service_meter is not None and meter < a.last_service_meter:
+            raise HTTPException(400, "It was last serviced at %g %s; the meter cannot read less now." % (a.last_service_meter, unit))
+        if meter > (a.meter_reading or 0):
+            a.meter_reading = float(meter)
+    if next_meter is not None and (meter is None or next_meter <= meter):
+        raise HTTPException(400, "The next service reading is above this one (%s)." % ("%g" % meter if meter is not None else "not given"))
+    if next_on and (not _day(next_on) or _day(next_on) <= done or _day(next_on).year > done.year + 20):
+        raise HTTPException(400, "The next service is after this one.")
+    a.last_service_on = done.isoformat()
+    if meter is not None:
+        a.last_service_meter = float(meter)
+    a.next_service_meter = (float(next_meter) if next_meter is not None else
+                            round(meter + a.service_every, 1) if (t in ("Both", "Meter") and meter is not None and (a.service_every or 0) > 0) else None)
+    a.next_service_on = (next_on[:10] if next_on else
+                         (done + timedelta(days=a.service_every_days)).isoformat() if (t in ("Both", "Days") and (a.service_every_days or 0) > 0) else "")
+    return a.next_service_meter, a.next_service_on
+
+
+def check_unique_asset(db, client_id, a, code=None):
+    """No two machines with the same equipment ID or registration number."""
+    q = db.query(models.DBAsset).filter(models.DBAsset.client_id == client_id)
+    if a.id:
+        q = q.filter(models.DBAsset.id != a.id)
+    for what, col, value in (("equipment ID", models.DBAsset.code, code if code is not None else a.code),
+                             ("registration number", models.DBAsset.reg_no, a.reg_no)):
+        v = (value or "").strip()
+        if v and q.filter(sqlfunc.lower(col) == v.lower()).first():
+            raise HTTPException(409, "Another machine already has the %s %s." % (what, v))
 
 
 def asset_or_404(db, client_id, asset_id):
@@ -152,13 +420,18 @@ def equipment_cost_by_job(db, client_id):
 
 
 def next_asset_code(db, client_id):
-    n = db.query(models.DBAsset).filter(models.DBAsset.client_id == client_id).count()
-    return "EQP-%04d" % (n + 1)
+    """One past the highest EQP number in use - a count would hand out a code twice once one was deleted."""
+    best = 0
+    for (c,) in db.query(models.DBAsset.code).filter(models.DBAsset.client_id == client_id).all():
+        m = re.match(r"^EQP-(\d+)$", c or "")
+        if m:
+            best = max(best, int(m.group(1)))
+    return "EQP-%04d" % (best + 1)
 
 
 def hire_cost_for(a, hours_worked):
     """What a hired machine costs for one logged day on its hire terms."""
-    if (a.ownership or "") != "Hired" or not a.hire_rate:
+    if (a.ownership or "") not in ("Hired", "Leased") or not a.hire_rate:
         return 0.0
     if a.hire_basis == "Hour":
         return money(a.hire_rate * (hours_worked or 0))

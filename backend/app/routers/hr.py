@@ -1,10 +1,11 @@
 """The hr endpoints."""
 import json
 from datetime import datetime, timedelta
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import func, func as sqlfunc, or_
-from sqlalchemy.orm import Session
+from sqlalchemy import case, func, func as sqlfunc, or_
+from sqlalchemy.orm import Session, selectinload
 
 from app import models
 from app.core import passwords
@@ -36,6 +37,8 @@ from app.services.hr import (
     assign_document_requests,
     department_or_404,
     department_to_dict,
+    department_site_map,
+    departments_on_site,
     departments_to_dicts,
     employee_sites_payload,
     maybe_complete_onboarding,
@@ -49,6 +52,7 @@ from app.services.hr import (
     resolve_basic_pay,
     seed_default_requirements,
     serialise,
+    set_department_sites,
     set_employee_sites,
     start_onboarding,
     suggest_org_email,
@@ -59,6 +63,7 @@ from app.validators.common import validate_candidate_document
 from app.validators.hr import (
     clean_department_name,
     clean_employee_email,
+    clean_org_email,
     clean_org_domain,
     clean_person_name,
     validate_employee_money,
@@ -198,10 +203,13 @@ def get_hr_levels(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/departments")
-def get_departments(request: Request, db: Session = Depends(get_db)):
+def get_departments(request: Request, site_id: Optional[int] = None, db: Session = Depends(get_db)):
+    """Every department, or with ?site_id= only those added to that site."""
     client = get_client_user(request, db)
     depts = db.query(models.DBDepartment).filter(
         models.DBDepartment.client_id == client.id).order_by(models.DBDepartment.name).all()
+    if site_id is not None:
+        depts = departments_on_site(db, client.id, depts, site_id)
     return departments_to_dicts(db, client.id, depts)
 
 
@@ -223,12 +231,16 @@ def create_department(request: Request, body: DepartmentCreate, db: Session = De
     dept = models.DBDepartment(name=name, description=body.description, color=body.color, icon=body.icon, client_id=client.id)
     db.add(dept)
     db.flush()
+    set_department_sites(db, client.id, dept, body.site_ids)
+    db.flush()
+    saved_sites = sorted(department_site_map(db, client.id, [dept.id]).get(dept.id, []))
     log_audit(db, client.id, "department_created", "department", dept.id, dept.name, "", request)
     # Read back before the commit: afterwards every attribute is expired and
     # reading one is another trip to the database.
     out = {"id": dept.id, "name": dept.name, "description": dept.description,
            "color": dept.color or "#00f0ff", "icon": dept.icon or "building",
-           "employee_count": 0, "created_at": dept.created_at, "employees": []}
+           "employee_count": 0, "created_at": dept.created_at, "employees": [],
+           "site_ids": saved_sites}
     db.commit()
     return out
 
@@ -246,6 +258,7 @@ def update_department(dept_id: int, request: Request, body: DepartmentCreate, db
     dept.description = body.description
     dept.color = body.color
     dept.icon = body.icon
+    set_department_sites(db, client.id, dept, body.site_ids)
     log_audit(db, client.id, "department_updated", "department", dept.id, dept.name, "", request)
     db.flush()  # what the commit would send anyway, so the answer sees it
     out = department_to_dict(db, dept)
@@ -263,6 +276,9 @@ def delete_department(dept_id: int, request: Request, db: Session = Depends(get_
     )
     # Goals hang off departments too and would block the delete on Postgres.
     db.query(models.DBDepartmentGoal).filter(models.DBDepartmentGoal.department_id == dept_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.DBDepartmentSite).filter(models.DBDepartmentSite.department_id == dept_id).delete(
         synchronize_session=False
     )
     db.query(models.DBEmployeeGoal).filter(models.DBEmployeeGoal.department_id == dept_id).update(
@@ -370,7 +386,7 @@ def get_employees(request: Request, q: str = "", status: str = "", db: Session =
             "id": e.id, "employee_id": e.employee_id,
             "first_name": e.first_name, "last_name": e.last_name,
             "full_name": f"{e.first_name} {e.last_name}",
-            "email": e.email, "phone": e.phone,
+            "email": e.email, "org_email": e.org_email or "", "phone": e.phone,
             "department_id": e.department_id, "department_name": dept_name,
             "reports_to": e.reports_to, "manager_name": manager_name,
             "job_title": e.job_title, "role": e.role, "level": e.level or "",
@@ -397,6 +413,7 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     first_name = clean_person_name(body.first_name, "First name")
     last_name = clean_person_name(body.last_name, "Last name")
     email = clean_employee_email(db, client.id, body.email, required=bool(body.password))
+    org_email = clean_org_email(db, client.id, body.org_email)
     validate_employee_money(body.model_dump())
     employee_code = assert_employee_code_free(db, client.id, body.employee_id)
 
@@ -416,7 +433,7 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     emp = models.DBEmployee(
         client_id=client.id, employee_id=emp_number,
         first_name=first_name, last_name=last_name,
-        email=email, phone=body.phone, address=body.address,
+        email=email, org_email=org_email, phone=body.phone, address=body.address,
         reports_to=reports_to,
         job_title=body.job_title, role=role, level=level,
         permission_role=permission_role,
@@ -447,7 +464,7 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
         **employee_sites_payload(db, emp),
         "id": emp.id, "employee_id": emp.employee_id,
         "first_name": emp.first_name, "last_name": emp.last_name,
-        "email": emp.email, "status": emp.status, "level": emp.level or "", "role": emp.role,
+        "email": emp.email, "org_email": emp.org_email or "", "status": emp.status, "level": emp.level or "", "role": emp.role,
         "permission_role": emp.permission_role or DEFAULT_PERMISSION_ROLE,
         "department_id": emp.department_id, "reports_to": emp.reports_to,
         "message": "Employee created. Onboarding checklist generated.",
@@ -501,7 +518,7 @@ def get_employee(emp_id: int, request: Request, db: Session = Depends(get_db)):
     documents = db.query(models.DBDocument).filter(
         models.DBDocument.employee_id == emp.id
     ).order_by(models.DBDocument.id.desc()).all()
-    doc_requests = db.query(models.DBDocumentRequest).filter(
+    doc_requests = db.query(models.DBDocumentRequest).options(selectinload(models.DBDocumentRequest.requirement)).filter(
         models.DBDocumentRequest.employee_id == emp.id
     ).order_by(models.DBDocumentRequest.id.asc()).all()
 
@@ -605,6 +622,8 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
     if "email" in body:
         body["email"] = clean_employee_email(db, client.id, body["email"], exclude_id=emp.id,
                                              required=bool(emp.password_hash or body.get("password")))
+    if "org_email" in body:
+        body["org_email"] = clean_org_email(db, client.id, body["org_email"], exclude_id=emp.id)
     validate_employee_money(body)
     # Hierarchy fields go through the same checks as on create; a blind
     # setattr let callers set an unknown level or build a reporting loop.
@@ -778,6 +797,13 @@ def set_employee_permissions(emp_id: int, request: Request, body: dict = None,
         emp.extra_permissions = ",".join(sorted(wanted - from_role))
         emp.denied_permissions = ",".join(sorted(from_role - wanted))
 
+    # Sites are part of access too, so they save together with the rights;
+    # an empty list means every site, and leaving the key out changes nothing.
+    if "site_ids" in body:
+        if not isinstance(body["site_ids"], list):
+            raise HTTPException(status_code=400, detail="site_ids must be a list")
+        set_employee_sites(db, client.id, emp, body["site_ids"])
+
     after = sorted(permissions_for(emp))
     detail = "Access changed from %s to %s" % (old_role, new_role)
     if before != after:
@@ -811,7 +837,7 @@ def _set_status(emp_id: int, request: Request, db: Session, status: str, message
         setattr(emp, k, v)
     log_audit(db, client.id, "employee_status_changed", "employee", emp.id, "%s: %s -> %s" % (emp.full_name if hasattr(emp, "full_name") else emp.id, before, status), "", request)
     db.commit()
-    return {"message": message, "status": emp.status}
+    return {"message": message, "status": emp.status, "end_date": emp.end_date or ""}
 
 
 @router.post("/api/employees/{emp_id}/onboard")
@@ -1180,8 +1206,10 @@ def get_hr_stats(request: Request, db: Session = Depends(get_db)):
     offboarding = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id, models.DBEmployee.status == "offboarding").count()
     terminated = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id, models.DBEmployee.status == "terminated").count()
     depts = db.query(models.DBDepartment).filter(models.DBDepartment.client_id == client.id).count()
-    total_payroll = db.query(sqlfunc.coalesce(sqlfunc.sum(models.DBPayslip.net_pay), 0)).filter(models.DBPayslip.client_id == client.id, models.DBPayslip.status == "Paid").scalar()
-    pending_payroll = db.query(sqlfunc.coalesce(sqlfunc.sum(models.DBPayslip.net_pay), 0)).filter(models.DBPayslip.client_id == client.id, models.DBPayslip.status != "Paid").scalar()
+    total_payroll, pending_payroll = db.query(
+        sqlfunc.coalesce(sqlfunc.sum(case((models.DBPayslip.status == "Paid", models.DBPayslip.net_pay), else_=0)), 0),
+        sqlfunc.coalesce(sqlfunc.sum(case((models.DBPayslip.status != "Paid", models.DBPayslip.net_pay), else_=0)), 0),
+    ).filter(models.DBPayslip.client_id == client.id).one()
     return {
         "total_employees": total, "active": active, "onboarding": onboarding,
         "offboarding": offboarding, "terminated": terminated,
@@ -1336,7 +1364,7 @@ def list_employee_document_requests(emp_id: int, request: Request, db: Session =
     ).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
-    rows = db.query(models.DBDocumentRequest).filter(
+    rows = db.query(models.DBDocumentRequest).options(selectinload(models.DBDocumentRequest.requirement)).filter(
         models.DBDocumentRequest.employee_id == emp_id
     ).order_by(models.DBDocumentRequest.id.asc()).all()
     return [request_to_dict(r) for r in rows]

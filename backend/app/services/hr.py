@@ -137,12 +137,15 @@ def _member_dict(e):
             "status": e.status or ""}
 
 
-def _dept_dict(dept, members):
+def _dept_dict(dept, members, site_ids=()):
+    site_ids = sorted(site_ids)
     return {
         "id": dept.id, "name": dept.name, "description": dept.description,
         "color": dept.color or "#00f0ff", "icon": dept.icon or "building",
         "employee_count": len(members), "created_at": dept.created_at,
         "employees": [_member_dict(e) for e in members],
+        # The sites it was added to. A department on no site is shown nowhere.
+        "site_ids": site_ids,
     }
 
 
@@ -160,7 +163,50 @@ def departments_to_dicts(db, client_id, depts):
                 models.DBEmployee.department_id.in_(ids),
         ).order_by(models.DBEmployee.first_name, models.DBEmployee.last_name).all():
             by_dept[e.department_id].append(e)
-    return [_dept_dict(d, by_dept[d.id]) for d in depts]
+    sites = department_site_map(db, client_id, ids)
+    return [_dept_dict(d, by_dept[d.id], sites.get(d.id, ())) for d in depts]
+
+
+def department_site_map(db, client_id, dept_ids=None):
+    """{department id: [site ids]} for every department that has been added to a
+    site. A department missing from it is on no site, and is shown nowhere."""
+    q = db.query(models.DBDepartmentSite.department_id, models.DBDepartmentSite.job_id).filter(
+        models.DBDepartmentSite.client_id == client_id)
+    if dept_ids is not None:
+        if not dept_ids:
+            return {}
+        q = q.filter(models.DBDepartmentSite.department_id.in_(dept_ids))
+    out = {}
+    for dept_id, job_id in q.all():
+        out.setdefault(dept_id, []).append(job_id)
+    return out
+
+
+def set_department_sites(db, client_id, dept, job_ids):
+    """Replace the sites this department is on. None leaves them alone; an
+    empty list takes it off every site."""
+    if job_ids is None:
+        return
+    wanted = set()
+    for raw in job_ids:
+        try:
+            wanted.add(int(raw))
+        except (TypeError, ValueError):
+            continue
+    if wanted:
+        real = {j.id for j in db.query(models.DBJob.id).filter(
+            models.DBJob.client_id == client_id, models.DBJob.id.in_(wanted)).all()}
+        wanted &= real
+    db.query(models.DBDepartmentSite).filter(
+        models.DBDepartmentSite.department_id == dept.id).delete(synchronize_session=False)
+    for job_id in sorted(wanted):
+        db.add(models.DBDepartmentSite(client_id=client_id, department_id=dept.id, job_id=job_id))
+
+
+def departments_on_site(db, client_id, depts, site_id):
+    """The departments that were added to this site, and only those."""
+    sites = department_site_map(db, client_id, [d.id for d in depts])
+    return [d for d in depts if site_id in sites.get(d.id, ())]
 
 
 def department_to_dict(db, dept):

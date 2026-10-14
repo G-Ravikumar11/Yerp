@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Button, Field, Input } from '@/components/ui'
 import { Capacitor } from '@capacitor/core'
+import { Eye, EyeOff } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { AuthLayout, Notice, nextTarget } from './AuthLayout'
 import { appUrl } from '@/lib/paths'
@@ -39,14 +40,18 @@ export default function LoginPage() {
   const code = params.get('error')
   const [error, setError] = useState(code ? (ERRORS[code] ?? 'Something went wrong. Please try again.') : '')
   const [company, setCompany] = useState('')
+  // The company's own logo, which the server shows to anyone before they sign in; the blue Y until it has loaded or if there is none.
+  const [logo, setLogo] = useState(`${import.meta.env.BASE_URL}favicon.svg`)
   const [google, setGoogle] = useState(false)
   const [yahoo, setYahoo] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [rememberMe, setRememberMe] = useState(false)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    api<{ company_name?: string }>('/api/public/brand', { quiet: true }).then((b) => b?.company_name && setCompany(b.company_name)).catch(() => undefined)
+    api<{ company_name?: string; logo_url?: string }>('/api/public/brand', { quiet: true }).then((b) => { if (b?.company_name) setCompany(b.company_name); if (b?.logo_url) setLogo(b.logo_url) }).catch(() => undefined)
     api<{ configured?: boolean }>('/api/auth/google/status', { quiet: true }).then((d) => setGoogle(!!d?.configured)).catch(() => undefined)
     api<{ configured?: boolean }>('/api/auth/yahoo/status', { quiet: true }).then((d) => setYahoo(!!d?.configured)).catch(() => undefined)
     if (params.get('signedout')) {
@@ -67,21 +72,30 @@ export default function LoginPage() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (busy) return
     if (!email.trim() || !password) return setError('Enter your email and password.')
     setBusy(true)
     setError('')
     try {
-      // A refused password is an answer; no answer at all (no signal, server down) is a different problem.
+      // A refused password is an answer; no answer at all (no signal, server down) is a different problem,
+      // and so is a server that answers with something other than "no such account".
       let unreachable = false
+      let other: ApiError | null = null
       const none = (e: unknown) => {
         if (!(e instanceof ApiError)) unreachable = true
+        else if (e.status !== 401 && !other) other = e
         return null
       }
-      const owner = await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password }, quiet: true }).catch(none)
+      const owner = await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password, rememberMe }, quiet: true }).catch(none)
       if (owner) return go(owner.is_onboarded === false ? nextTarget(appUrl('onboard')) : nextTarget(appUrl()))
-      const staff = await api('/api/employee/auth/login', { method: 'POST', body: { email: email.trim(), password, device_info: navigator.userAgent.slice(0, 200) }, quiet: true }).catch(none)
+      const staff = await api('/api/employee/auth/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, device_info: navigator.userAgent.slice(0, 200) }, quiet: true }).catch(none)
       if (staff) return go(nextTarget(appUrl()))
-      setError(unreachable ? 'Could not reach the server. Check the connection and try again.' : 'That email and password did not match an account.')
+      const refusal = other as ApiError | null
+      setError(
+        unreachable ? 'Could not reach the server. Check the connection and try again.'
+          : refusal && refusal.status >= 500 ? 'The server had a problem. Please try again in a moment.'
+          : refusal ? refusal.message
+          : 'That email and password did not match an account.')
     } finally {
       setBusy(false)
     }
@@ -108,11 +122,20 @@ export default function LoginPage() {
   )
 
   return (
-    <AuthLayout title="Y ERP" subtitle="Sign in to your account" aside={pitch}>
+    <AuthLayout title="Y ERP" subtitle="Sign in to your account" logo={logo} aside={pitch}>
+      {params.get('reset') && !error && <Notice tone="success">Your password has been updated. Sign in with the new one.</Notice>}
       {error && <Notice tone="error">{error}</Notice>}
       <form onSubmit={submit} className="grid gap-4">
         <Field label="Email address" htmlFor="email"><Input id="email" type="email" autoComplete="username" autoFocus required placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
-        <Field label="Password" htmlFor="password"><Input id="password" type="password" autoComplete="current-password" required placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+        <Field label="Password" htmlFor="password"><Input id="password" type={showPassword ? 'text' : 'password'} autoComplete="current-password" required placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)}
+          trailing={<button type="button" onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} className="grid size-6 place-items-center rounded text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">{showPassword ? <Eye className="size-4" /> : <EyeOff className="size-4" />}</button>} /></Field>
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
+          <label htmlFor="rememberMe" className="flex w-fit cursor-pointer items-center gap-2 text-muted-foreground">
+            <input id="rememberMe" type="checkbox" className="size-4 cursor-pointer rounded border-border accent-primary" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
+            Remember me
+          </label>
+          <a href={appUrl('forgot-password')} className="text-muted-foreground hover:text-primary">Forgot password?</a>
+        </div>
         <Button type="submit" loading={busy} className="w-full">Sign in</Button>
       </form>
       {(google || yahoo) && !native && (

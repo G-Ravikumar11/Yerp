@@ -29,7 +29,7 @@ const order = async (id) => (await api(page, 'GET', `/api/wo/orders/${id}`)).dat
 const inbox = async () => (await api(page, 'GET', '/api/approvals/inbox')).data.items
 const mine = async (kind, id) => (await inbox()).find((i) => i.kind === kind && i.id === id)
 const vocab = (await api(page, 'GET', '/api/wo/vocabulary')).data
-const gang = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
+const contractor = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
 const unit = (await api(page, 'GET', '/api/wo/business-units')).data.business_units[0]
 const job = vocab.jobs[0]
 let budgets = (await api(page, 'GET', `/api/wo/projects/${job.id}/budgets`)).data.budgets
@@ -37,7 +37,7 @@ if (!budgets.length) { await api(page, 'POST', `/api/wo/projects/${job.id}/budge
 
 // 1. The planner drafts and sends it up
 await who(planner)
-const head = await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: gang.id, job_id: job.id, department: 'Civil', subject: `Full flow ${stamp}`, commencement_date: '2026-11-01', completion_date: '2027-03-31', retention_percent: 5, gst_rate: 18, tds_rate: 1 })
+const head = await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: contractor.id, job_id: job.id, department: 'Civil', subject: `Full flow ${stamp}`, commencement_date: '2026-11-01', completion_date: '2027-03-31', retention_percent: 5, gst_rate: 18, tds_rate: 1 })
 check('the planner can draft a work order', head.status === 200, JSON.stringify(head.data).slice(0, 120))
 const oid = head.data.order.id
 const boq = await api(page, 'PUT', `/api/wo/orders/${oid}/boq`, { lines: [{ activity_no: '1.0', item_description: 'Shuttering', uom: 'sqm', quantity: 1000, unit_rate: 410, tolerance_percent: 10, budget_id: budgets[0].id }, { activity_no: '2.0', item_description: 'Steel', uom: 'MT', quantity: 20, unit_rate: 68000, budget_id: budgets[0].id }] })

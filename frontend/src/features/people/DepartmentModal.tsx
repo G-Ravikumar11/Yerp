@@ -3,12 +3,25 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Button, Field, Input, Modal, Textarea } from '@/components/ui'
 import { peopleKeys, saveDepartment, showDepartmentChange, useDepartments, type Department } from '@/api/people'
 import { useAction } from '@/lib/mutate'
+import { Members } from './DepartmentMembersModal'
 import { DEPARTMENT_COLORS, DEPARTMENT_ICONS } from './icons'
 
-export function DepartmentModal({ dept, open, onClose }: { dept: Department | null; open: boolean; onClose: () => void }) {
+export function DepartmentModal({ dept, open, onClose, initialTab = 'details' }: { dept: Department | null; open: boolean; onClose: () => void; initialTab?: 'details' | 'people' }) {
+  const [tab, setTab] = useState<'details' | 'people'>(initialTab)
+  // Read live so the people list follows each add and removal.
+  const live = useDepartments().data?.find((d) => d.id === dept?.id) ?? dept
   return (
-    <Modal open={open} onOpenChange={(o) => !o && onClose()} title={dept ? `Edit ${dept.name}` : 'New department'} description="Departments you create here are the ones employees belong to, and the ones offered on work orders. Staff see their own department when they sign in.">
-      {open && <Form key={dept?.id ?? 'new'} dept={dept} onClose={onClose} />}
+    <Modal open={open} onOpenChange={(o) => { if (!o) { setTab('details'); onClose() } }} size={dept ? 'lg' : undefined} title={dept ? `Edit ${dept.name}` : 'New department'} description={dept ? undefined : 'Departments you create here are the ones employees belong to, and the ones offered on work orders. Staff see their own department when they sign in.'}>
+      {open && dept && (
+        <div role="tablist" aria-label="Section" className="mb-4 flex gap-2">
+          {(['details', 'people'] as const).map((t) => (
+            <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)} className={'rounded-lg border px-3 py-1.5 text-sm font-medium ' + (tab === t ? 'border-[var(--primary)] bg-[var(--primary)]/15' : 'border-border text-muted-foreground hover:text-foreground')}>
+              {t === 'details' ? 'Details' : `People (${live?.employee_count ?? 0})`}
+            </button>
+          ))}
+        </div>
+      )}
+      {open && (dept && tab === 'people' && live ? <Members key={dept.id} dept={live} onClose={onClose} /> : <Form key={dept?.id ?? 'new'} dept={dept} onClose={onClose} />)}
     </Modal>
   )
 }

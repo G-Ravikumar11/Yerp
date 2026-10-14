@@ -35,8 +35,32 @@ QC_CHECKLISTS = {
     "Waterproofing": [
         "Surface clean and dry", "Primer applied", "Membrane or coating as specified",
         "Laps and upstands", "Flood test held (24/48 h)", "Protection screed laid"],
+    "Flooring": [
+        "Sub-base or slab clean, level and free of laitance", "Levels and slope to drains as per the drawing",
+        "Bedding or adhesive as specified", "Tiles or finish as approved - batch, shade, size",
+        "Joints straight and to the specified width", "No hollow sounds on tapping",
+        "Skirting, thresholds and expansion joints", "Cured and protected before use"],
 }
-CUBE_AGES = (7, 28)
-EARLY_SHARE = 0.65            # a 7-day set is expected near two-thirds of the grade
+# Which kind of work each standard checklist belongs to, for the list.
+QC_WORK_TYPES = {
+    "Pre-pour (concrete)": "Concrete", "Reinforcement": "Reinforcement", "Shuttering": "Formwork",
+    "Brickwork / blockwork": "Brickwork", "Plastering": "Plastering", "Waterproofing": "Waterproofing",
+    "Flooring": "Flooring",
+}
+CUBE_AGES = (7, 28)           # what a set is scheduled for when the project has set no criteria of its own
 
-SERIOUS_KINDS = ("Lost time injury", "Dangerous occurrence", "Fatality")
+INSPECTION_RESULTS = ("OPEN", "PASSED", "FAILED")          # shown as Pending, Passed, Failed
+
+NCR_STATUSES = ("OPEN", "ASSIGNED", "UNDER_CORRECTION", "REINSPECTION", "CLOSED")
+NCR_LABELS = {"OPEN": "Open", "ASSIGNED": "Assigned", "UNDER_CORRECTION": "Under correction",
+              "REINSPECTION": "Reinspection", "CLOSED": "Closed"}
+NCR_SEVERITIES = ("Minor", "Major", "Critical")
+# An NCR with a root cause required is one that is not a small matter.
+NCR_ROOT_CAUSE_FROM = ("Major", "Critical")
+
+# The engineer's decision on a set of cubes.
+CUBE_DECISIONS = {"accepted": "Accepted", "conditional": "Accepted with conditions", "rejected": "Rejected"}
+CUBE_SPREAD = 0.15            # IS 516: a cube more than 15% off the set's average makes the set doubtful
+
+SERIOUS_KINDS = ("Lost time injury", "Dangerous occurrence", "Fatality", "Fire or explosion",
+                 "Structural failure or collapse")

@@ -61,7 +61,7 @@ def test_another_company_cannot_print_ours(tenant, second_tenant):
     assert second_tenant.get("/api/wo/orders/%d/document.pdf" % order["id"]).status_code == 404
 
 
-def test_the_purchase_order_and_the_gangs_bill_print_in_the_same_form(tenant):
+def test_the_purchase_order_and_the_contractors_bill_print_in_the_same_form(tenant):
     tenant.post("/api/suppliers", json={"name": "ACC Ltd", "gstin": "36AAACA1234C1Z5"})
     po = tenant.post("/api/purchase-orders", json={"supplier_name": "ACC Ltd", "amount": 38500,
                                                    "line_items": [{"description": "OPC 53 cement", "uom": "Bags",
@@ -74,7 +74,7 @@ def test_the_purchase_order_and_the_gangs_bill_print_in_the_same_form(tenant):
     smeasure(tenant, order["id"], book(tenant, order["id"])["lines"][0]["item_id"], 10)
     sb = sraise(tenant, order["id"]).json()["bill"]
     _, text = pdf_text(tenant.get("/api/sub-bills/%d/document.pdf" % sb["id"]))
-    # The gang's bill prints as its Certificate of Payment, with the abstract and measurement sheets behind it.
+    # The contractor's bill prints as its Certificate of Payment, with the abstract and measurement sheets behind it.
     for words in ("CERTIFICATE OF PAYMENT", "Recovery of Retention @ 5 %", "Net Amount for Payment", "AMOUNT IN WORDS", "ABSTRACT SHEET"):
         assert words in text, words
 
@@ -86,12 +86,12 @@ def test_a_party_statement_prints(tenant):
     assert "STATEMENT OF ACCOUNT" in text and "CLOSING BALANCE" in text
 
 
-def test_a_gang_prints_its_own_order_and_nobody_elses(tenant, portal):
+def test_a_contractor_prints_its_own_order_and_nobody_elses(tenant, portal):
     from urllib.parse import urlparse, parse_qs
     mine = live_order(tenant)
     theirs = live_order(tenant)
     inv = tenant.post("/api/portal-access", json={"party_type": "contractor", "party_id": mine["contractor_id"],
-                                                  "email": "gang.pdf@example.com"}).json()
+                                                  "email": "contractor.pdf@example.com"}).json()
     token = parse_qs(urlparse(inv["invite_url"]).query)["invite"][0]
     assert portal.post("/api/portal/accept-invite", json={"token": token, "password": "Portal1234x"}).status_code == 200
     _, text = pdf_text(portal.get("/api/portal/orders/%d/document.pdf" % mine["id"]))

@@ -76,18 +76,20 @@ TRADES = ("Mason", "Helper", "Carpenter", "Bar bender", "Fitter", "Electrician",
 SUB_TRANSITIONS = {
     "DRAFT":     {"SUBMIT": "SUBMITTED", "CANCEL": "CANCELLED"},
     "SUBMITTED": {"CERTIFY": "CERTIFIED", "REJECT": "DRAFT", "CANCEL": "CANCELLED"},
-    "CERTIFIED": {"PAY": "PAID", "CANCEL": "CANCELLED"},
+    # A certified bill is not cancelled: its GST and TDS are in a return that may be filed. What was over-billed is
+    # taken back by a credit note (services/credit_notes.py). Only a bill nobody has certified can be cancelled.
+    "CERTIFIED": {"PAY": "PAID"},
     "PAID":      {},
     "CANCELLED": {},
 }
 
 HARDCOPY_TYPES = ("application/pdf", "image/jpeg", "image/png")
 
-# STORES: SITE TO SITE, AND MATERIAL CHARGED TO A GANG
+# STORES: SITE TO SITE, AND MATERIAL CHARGED TO A CONTRACTOR
 #
 # Cement left over at one site is sent to the next; that is a transfer, not
 # consumption, and it moves at what the stock cost rather than at a new price.
-# Material handed to a gang whose rate includes it is theirs to pay for: it is
+# Material handed to a contractor whose rate includes it is theirs to pay for: it is
 # recovered from their next bill on its own, up to what that bill can bear,
 # and the project is credited back so the same cement is not counted twice.
 TRANSFER_KINDS = ("TRANSFER_OUT", "TRANSFER_IN")
@@ -102,8 +104,14 @@ DRAWING_STATUSES = ("For information", "For approval", "Approved", "Good for con
 # stood through it, and dangerous work - hot work, heights, confined spaces -
 # only on a permit that says until when, on which precautions, and is closed
 # when the work stops.
-INCIDENT_KINDS = ("Near miss", "First aid", "Medical treatment", "Lost time injury",
+INCIDENT_KINDS = ("Near miss", "Unsafe act", "Unsafe condition", "First aid", "Medical treatment",
+                  "Restricted work case", "Lost time injury", "Occupational illness", "Fall from height",
+                  "Fire or explosion", "Electrical incident", "Vehicle or plant accident",
+                  "Structural failure or collapse", "Spill or environmental release",
                   "Property damage", "Dangerous occurrence", "Fatality")
+# Kinds where a person was hurt or made ill, so the report must say who.
+INJURY_KINDS = ("First aid", "Medical treatment", "Restricted work case", "Lost time injury",
+                "Occupational illness", "Fatality")
 
 PERMIT_PRECAUTIONS = {
     "Work at height": ["Full body harness, anchored", "Scaffold tagged and inspected", "Guard rails and toe boards",
@@ -124,7 +132,7 @@ PERMIT_PRECAUTIONS = {
 #
 # The register above says how much is being held. This is what brings it
 # back: a release on the client at practical completion or at the end of the
-# defects period, and the same thing the other way for the gangs whose
+# defects period, and the same thing the other way for the contractors whose
 # retention we hold. A release is a bill in its own right - it goes in the
 # party's ledger, is received or paid through the same box as any other, ages
 # in what is owed, and carries the GST the RA bills left off, because each of
@@ -135,7 +143,7 @@ RETENTION_STAGES = ("Practical completion", "End of defects period",
 # THE PARTNER PORTAL
 #
 # "Has my bill been passed? When is the money coming?" is most of the phone
-# calls a site office takes from gangs and suppliers. Each of them can now
+# calls a site office takes from contractors and suppliers. Each of them can now
 # sign in and see it for themselves: their orders, their bills and where each
 # one is, what has been paid and when, and a running statement. A supplier
 # can send an invoice in, which lands as a draft for the office to check.
@@ -214,7 +222,7 @@ IMPORT_SHEETS = {
         "columns": [("contractor", "Contractor"), ("project", "Project"), ("department", "Department"),
                     ("subject", "Subject"), ("commencement_date", "Start Date"), ("completion_date", "End Date")],
         "aliases": {
-            "contractor": ["contractor", "subcontractor", "vendor", "vendorname", "gang", "party",
+            "contractor": ["contractor", "subcontractor", "vendor", "vendorname", "party",
                           "company", "contractorname", "agency"],
             "project": ["project", "job", "site", "projectname", "jobname", "sitename"],
             "department": ["department", "dept", "trade", "discipline"],

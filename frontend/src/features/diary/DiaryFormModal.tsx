@@ -5,7 +5,8 @@ import { Button, Field, Input, Modal, NumField, Select, Skeleton, Textarea } fro
 import { PromptModal } from '@/components/data/PromptModal'
 import { TRADES, WEATHER, diaryKeys, reopenDiary, signOffDiary, useDiaries, useDiary, type DiaryDetail, type DiaryInput, type LabourLine, type PlantLine, type WorkUpdate } from '@/api/diary'
 import { schKeys, type DayRow, type DayTask } from '@/api/schedule'
-import { fileKeys, uploadFiles } from '@/api/files'
+import { fileKeys, noFilter, uploadFiles, useFiles } from '@/api/files'
+import { Tile } from '@/components/data/FilesModal'
 import { sendOrQueue } from '@/stores/offline'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
@@ -62,6 +63,7 @@ function Form({ job, day, onClose, onOpen }: { job: number; day: DiaryDetail | n
     setPlanned((p) => ({ ...p, rows: { ...p.rows, [r.id]: r } }))
   }
   const camera = useRef<HTMLInputElement>(null)
+  const saved = useFiles('diary', day?.id ?? 0, noFilter)
   const edit = <T,>(list: T[], set: (l: T[]) => void, i: number, patch: Partial<T>) => set(list.map((r, j) => (j === i ? { ...r, ...patch } : r)))
   const totals = useMemo(() => {
     const d = hours || 8
@@ -170,9 +172,12 @@ function Form({ job, day, onClose, onOpen }: { job: number; day: DiaryDetail | n
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <input ref={camera} type="file" accept="image/*" capture="environment" multiple className="sr-only" aria-label="Photos of the day" onChange={(e) => { pickPhotos(e.target.files); e.target.value = '' }} />
           <Button variant="outline" size="sm" onClick={() => void takePhoto(camera.current, pickPhotos)}><Camera /> Photos of the day</Button>
-          {photos.map((f, i) => <span key={i} className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-xs">{f.name.slice(0, 18)}<button type="button" aria-label={`Remove ${f.name}`} onClick={() => setPhotos(photos.filter((_, j) => j !== i))}><X className="size-3" /></button></span>)}
+          {photos.map((f, i) => <PickedPhoto key={i} f={f} onRemove={() => setPhotos(photos.filter((_, j) => j !== i))} />)}
         </div>
       )}
+      {saved.data?.files.length ? (
+        <div className="mt-4"><p className="mb-2 text-sm font-medium">Photos kept on this day</p><div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{saved.data.files.map((f) => <Tile key={f.id} f={f} />)}</div></div>
+      ) : null}
       <div className="mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
         {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
         <Button variant="ghost" onClick={onClose}>{locked ? 'Close' : 'Cancel'}</Button>
@@ -180,5 +185,21 @@ function Form({ job, day, onClose, onOpen }: { job: number; day: DiaryDetail | n
         {!locked && can('site.signoff') && <Button loading={save.isPending} disabled={!!clash} onClick={() => save.mutate(true)}>Save and sign off</Button>}
       </div>
     </div>
+  )
+}
+
+/** A photo just taken, shown at once from the phone itself, before it has gone up. */
+function PickedPhoto({ f, onRemove }: { f: File; onRemove: () => void }) {
+  const [src, setSrc] = useState('')
+  useEffect(() => {
+    const u = URL.createObjectURL(f)
+    setSrc(u)
+    return () => URL.revokeObjectURL(u)
+  }, [f])
+  return (
+    <span className="relative inline-block">
+      {src && <img src={src} alt={f.name} className="size-20 rounded-md border border-border object-cover" />}
+      <button type="button" aria-label={`Remove ${f.name}`} onClick={onRemove} className="absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full bg-foreground text-background"><X className="size-3" /></button>
+    </span>
   )
 }

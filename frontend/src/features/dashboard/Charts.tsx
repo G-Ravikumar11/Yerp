@@ -81,23 +81,37 @@ const frame = (aria: string, h: number, chart: React.ReactElement) => (
   </figure>
 )
 
-/** Money earned against cost incurred for each project, the biggest first. */
+/** A project's number with its name under it, so a bar can be read without hovering. */
+function ProjectTick({ x = 0, y = 0, payload, names }: { x?: number; y?: number; payload?: { value: string }; names: Record<string, string> }) {
+  const key = payload?.value ?? ''
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text y={14} textAnchor="middle" fill="var(--foreground)" fontSize={12} fontWeight={500}>{short(key, 10)}</text>
+      {names[key] && <text y={29} textAnchor="middle" fill="var(--muted-foreground)" fontSize={11}>{short(names[key], 12)}</text>}
+    </g>
+  )
+}
+
+/** Money earned against cost incurred for each project: the busiest first, and only projects with money moving. */
 export function ProfitChart({ projects }: { projects: ProjectPnl[] }) {
   const calm = useReducedMotion()
   const wide = useMinWidth(640)
-  const data: ProjectRow[] = projects
+  const activity = (p: ProjectPnl) => p.revenue + p.incurred
+  const live = projects.filter((p) => activity(p) > 0)
+  const data: ProjectRow[] = (live.length ? live : projects)
     .slice()
-    .sort((a, b) => b.order_value - a.order_value)
+    .sort((a, b) => activity(b) - activity(a) || b.order_value - a.order_value)
     .slice(0, 8)
     .map((p) => ({ ...p, label: p.number || p.name }))
+  const names = Object.fromEntries(data.map((p) => [p.label, p.number ? p.name : '']))
   return frame(
     'Money earned and spent by project',
-    300,
-    <BarChart data={data} margin={{ top: 12, right: 16, left: 0, bottom: 0 }} barGap={4} barCategoryGap="30%">
+    240,
+    <BarChart data={data} margin={{ top: 22, right: 12, left: 0, bottom: 4 }} barGap={6} barCategoryGap="22%">
       <Fills />
       <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="2 6" strokeOpacity={0.7} />
-      <XAxis dataKey="label" tick={TICK} axisLine={false} tickLine={false} tickFormatter={(v: string) => short(v, 10)} />
-      <YAxis tickFormatter={compactINR} tick={TICK} axisLine={false} tickLine={false} width={78} />
+      <XAxis dataKey="label" interval={0} height={40} tick={<ProjectTick names={names} />} axisLine={false} tickLine={false} />
+      <YAxis tickFormatter={compactINR} tick={TICK} axisLine={false} tickLine={false} width={64} tickCount={5} />
       <Tooltip
         cursor={{ fill: 'var(--accent)', fillOpacity: 0.5, radius: 8 }}
         content={({ active, payload }) => {
@@ -117,8 +131,44 @@ export function ProfitChart({ projects }: { projects: ProjectPnl[] }) {
         }}
       />
       <Legend verticalAlign="top" align={wide ? 'right' : 'left'} iconType="circle" iconSize={8} formatter={legend} />
-      <Bar name="Money earned" dataKey="revenue" fill="url(#gRev)" radius={[8, 8, 2, 2]} maxBarSize={20} isAnimationActive={!calm} />
-      <Bar name="Money spent" dataKey="incurred" fill="url(#gCost)" radius={[8, 8, 2, 2]} maxBarSize={20} isAnimationActive={!calm} />
+      <Bar name="Money earned" dataKey="revenue" fill="url(#gRev)" radius={[8, 8, 2, 2]} maxBarSize={36} isAnimationActive={!calm}>
+        {wide && <LabelList dataKey="revenue" position="top" formatter={label} style={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />}
+      </Bar>
+      <Bar name="Money spent" dataKey="incurred" fill="url(#gCost)" radius={[8, 8, 2, 2]} maxBarSize={36} isAnimationActive={!calm}>
+        {wide && <LabelList dataKey="incurred" position="top" formatter={label} style={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />}
+      </Bar>
+    </BarChart>,
+  )
+}
+
+/** How many incidents were reported, by kind, the most frequent first. */
+export function IncidentsChart({ kinds }: { kinds: { kind: string; count: number }[] }) {
+  const calm = useReducedMotion()
+  const data = kinds.slice().sort((a, b) => b.count - a.count).slice(0, 10)
+  return frame(
+    'Safety incidents by kind',
+    210,
+    <BarChart data={data} layout="vertical" margin={{ top: 4, right: 40, left: 0, bottom: 4 }} barCategoryGap="28%">
+      <Fills />
+      <CartesianGrid horizontal={false} stroke={GRID} strokeDasharray="2 6" strokeOpacity={0.7} />
+      <XAxis type="number" allowDecimals={false} tick={TICK} axisLine={false} tickLine={false} />
+      <YAxis type="category" dataKey="kind" width={150} tick={TICK} axisLine={false} tickLine={false} tickFormatter={(v: string) => short(v, 24)} />
+      <Tooltip
+        cursor={{ fill: 'var(--accent)', fillOpacity: 0.5, radius: 8 }}
+        content={({ active, payload }) => {
+          const d = payload?.[0]?.payload as { kind: string; count: number } | undefined
+          if (!active || !d) return null
+          return (
+            <div className="rounded-lg border border-border bg-popover px-3 py-2.5 text-[13px] shadow-lift">
+              <p className="font-medium">{d.kind}</p>
+              <p className="tabular text-muted-foreground">{d.count} reported</p>
+            </div>
+          )
+        }}
+      />
+      <Bar dataKey="count" fill="url(#gOut)" radius={[2, 8, 8, 2]} maxBarSize={26} isAnimationActive={!calm}>
+        <LabelList dataKey="count" position="right" style={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />
+      </Bar>
     </BarChart>,
   )
 }
@@ -133,7 +183,7 @@ export function MarginChart({ projects }: { projects: ProjectPnl[] }) {
     .map((p) => ({ ...p, label: p.number || p.name }))
   return frame(
     'Profit or loss by project',
-    300,
+    210,
     <BarChart data={data} layout="vertical" margin={{ top: 4, right: 56, left: 0, bottom: 4 }} barCategoryGap="28%">
       <Fills />
       <CartesianGrid horizontal={false} stroke={GRID} strokeDasharray="2 6" strokeOpacity={0.7} />
@@ -169,7 +219,7 @@ export function BudgetChart({ projects }: { projects: CostRow[] }) {
     .map((p) => ({ ...p, label: p.number || p.name }))
   return frame(
     'Budget against spend by project',
-    300,
+    210,
     <BarChart data={data} margin={{ top: 12, right: 16, left: 0, bottom: 0 }} barGap={4} barCategoryGap="30%">
       <Fills />
       <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="2 6" strokeOpacity={0.7} />
@@ -209,7 +259,7 @@ export function CostMixChart({ categories }: { categories: CostMix[] }) {
   const total = data.reduce((n, c) => n + c.amount, 0)
   return frame(
     'Cost by category',
-    300,
+    210,
     <PieChart>
       <Tooltip
         content={({ active, payload }) => {
@@ -233,7 +283,7 @@ export function CashFlowChart({ months }: { months: MonthFlow[] }) {
   const calm = useReducedMotion()
   const wide = useMinWidth(640)
   return (
-    <figure aria-label="Cash flow by month" className="m-0 h-full min-h-[300px]">
+    <figure aria-label="Cash flow by month" className="m-0 h-full min-h-[210px]">
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={months} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={4} barCategoryGap="30%">
           <Fills />
@@ -283,7 +333,7 @@ export function AgeingChart({ receivable, payable }: { receivable: Record<string
   const wide = useMinWidth(640)
   const rows = ageing(receivable, payable)
   return (
-    <figure aria-label="Money to receive and money to pay, by age" className="m-0 h-full min-h-[260px]">
+    <figure aria-label="Money to receive and money to pay, by age" className="m-0 h-full min-h-[210px]">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={rows} margin={{ top: 20, right: 8, left: 0, bottom: 0 }} barGap={3}>
       <Fills />

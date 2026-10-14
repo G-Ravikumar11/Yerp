@@ -156,7 +156,7 @@ class DBStockIssue(Base):
     # DRAFT | POSTED | CANCELLED
     status = Column(String, default="DRAFT", index=True)
 
-    issued_to = Column(String, default="")            # the ganger who took it
+    issued_to = Column(String, default="")            # the foreman who took it
     purpose = Column(String, default="")
     total_value = Column(Float, default=0.0)
 

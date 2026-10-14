@@ -5,6 +5,7 @@ import { DeleteOrderDialog } from '@/features/deleteorder/DeleteOrderDialog'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, ConfirmDialog, Field, Input, Modal, NumField, Skeleton, Stat, StatGrid, StatusBadge, Textarea } from '@/components/ui'
 import { billKeys, editBill, moveBill, useSubBill, type BillEdit, type BillLine, type BillMove, type SubBill } from '@/api/subbills'
+import { CreditNoteModal } from '@/features/credit/CreditNoteModal'
 import { PayModal } from '@/features/money/PayModal'
 import { AiCheck } from './AiCheck'
 import { BackCharges } from './BackCharges'
@@ -76,7 +77,8 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
   const dirty = JSON.stringify(f) !== initial
   const [dialog, setDialog] = useState<'certify' | 'reject' | 'cancel' | 'accept' | null>(null)
   const [paying, setPaying] = useState(false)
-  const [gangName, setGangName] = useState('')
+  const [crediting, setCrediting] = useState(false)
+  const [signerName, setSignerName] = useState('')
 
   const editable = bill.editable && can('billing.manage')
   const set = <K extends keyof BillEdit>(k: K, v: BillEdit[K]) => setF((s) => ({ ...s, [k]: v }))
@@ -163,6 +165,11 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
               </Button>
             )}
             {has('PAY') && can('bills.pay') && <Button onClick={() => setPaying(true)}>Pay</Button>}
+            {bill.can_credit && can('subcontracts.approve') && (
+              <Button variant="outline" onClick={() => setCrediting(true)} title="Take back what was over-billed. A certified bill is not cancelled.">
+                Credit note
+              </Button>
+            )}
             {bill.status !== 'DRAFT' && bill.status !== 'CANCELLED' && !bill.accepted_by_name && can('billing.manage') && (
               <Button variant="outline" size="sm" onClick={() => setDialog('accept')}>
                 Contractor accepted
@@ -379,6 +386,7 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
         loading={move.isPending}
         onConfirm={(comments) => move.mutate({ action: 'reject', comments })}
       />
+      <CreditNoteModal side="contractor" billId={crediting ? bill.id : null} onClose={() => setCrediting(false)} invalidate={[billKeys.all, ['costs'], ['money']]} />
       <ConfirmDialog
         open={dialog === 'cancel'}
         onOpenChange={(o) => !o && setDialog(null)}
@@ -401,14 +409,14 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
             <Button variant="ghost" onClick={() => setDialog(null)}>
               Not now
             </Button>
-            <Button loading={move.isPending} onClick={() => move.mutate({ action: 'accept', name: gangName })}>
+            <Button loading={move.isPending} onClick={() => move.mutate({ action: 'accept', name: signerName })}>
               Record it
             </Button>
           </>
         }
       >
         <Field label="Who signed for them?" htmlFor="b-signer" hint="Blank: the contractor's contact person.">
-          <Input id="b-signer" value={gangName} onChange={(e) => setGangName(e.target.value)} autoFocus />
+          <Input id="b-signer" value={signerName} onChange={(e) => setSignerName(e.target.value)} autoFocus />
         </Field>
       </Modal>
       <DeleteOrderDialog open={deleting} onOpenChange={setDeleting} kind="bill" id={bill.id} number={bill.number} onDeleted={() => nav(`/subcontractors/ra-bills?order=${bill.order_id}`)} />

@@ -35,7 +35,7 @@ function InviteModal({ onClose, onDone }: { onClose: () => void; onDone: (r: Inv
   )
 }
 
-/** Logins for the gangs and suppliers: invite, send a fresh link, switch off. */
+/** Logins for the contractors and suppliers: invite, send a fresh link, switch off. */
 export function Partners() {
   const q = usePortalAccess()
   const [inviting, setInviting] = useState(false)

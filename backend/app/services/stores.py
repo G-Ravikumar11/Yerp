@@ -433,8 +433,8 @@ def next_transfer_number(db, client_id):
     return "TRF-%04d" % (len(refs) + 1)
 
 
-def charge_issue_to_gang(db, client_id, issue, order, markup_percent=0.0):
-    """Every line on a posted issue, as material to be recovered from the gang."""
+def charge_issue_to_contractor(db, client_id, issue, order, markup_percent=0.0):
+    """Every line on a posted issue, as material to be recovered from the contractor."""
     lines = db.query(models.DBStockIssueLine).filter(
         models.DBStockIssueLine.stock_issue_id == issue.id).all()
     factor = 1.0 + (markup_percent or 0.0) / 100.0

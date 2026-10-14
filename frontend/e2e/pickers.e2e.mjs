@@ -6,12 +6,12 @@ const { page, check, done } = await launch()
 await signIn(page)
 const stamp = Date.now().toString().slice(-6)
 const vocab = (await api(page, 'GET', '/api/wo/vocabulary')).data
-const gang = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
+const contractor = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
 const unit = (await api(page, 'GET', '/api/wo/business-units')).data.business_units[0]
 const job = vocab.jobs[0]
 let budgets = (await api(page, 'GET', `/api/wo/projects/${job.id}/budgets`)).data.budgets
 if (!budgets.length) { await api(page, 'POST', `/api/wo/projects/${job.id}/budgets`, { name: 'PK civil', code: 'PK', allocated_amount: 900000000 }); budgets = (await api(page, 'GET', `/api/wo/projects/${job.id}/budgets`)).data.budgets }
-const head = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: gang.id, job_id: job.id, department: 'Civil', subject: `Pickers ${stamp}`, commencement_date: '2026-11-01', completion_date: '2027-03-31', retention_percent: 5, gst_rate: 18, tds_rate: 1 })).data.order
+const head = (await api(page, 'POST', '/api/wo/orders', { business_unit_id: unit.id, contractor_id: contractor.id, job_id: job.id, department: 'Civil', subject: `Pickers ${stamp}`, commencement_date: '2026-11-01', completion_date: '2027-03-31', retention_percent: 5, gst_rate: 18, tds_rate: 1 })).data.order
 const options = () => page.$$eval('[role=listbox] [role=option]', (o) => o.map((x) => x.textContent.trim()))
 
 await open(page, `/subcontractors/work-orders/${head.id}`)
