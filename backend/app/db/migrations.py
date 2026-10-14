@@ -42,9 +42,58 @@ QUALITY_COLUMNS = (
     ("project_threads", "link_type", "VARCHAR DEFAULT ''"), ("project_threads", "link_ref", "VARCHAR DEFAULT ''"),
     ("project_threads", "link_id", "INTEGER"),
     ("schedule_activities", "assigned_to_id", "INTEGER"),
+    # Equipment & Plant
+    ("assets", "condition", "VARCHAR DEFAULT 'Good'"),
+    ("assets", "is_archived", "BOOLEAN DEFAULT FALSE"),
+    ("assets", "service_interval_type", "VARCHAR DEFAULT ''"),
+    ("assets", "reminder_meter", "FLOAT"),
+    ("assets", "reminder_days", "INTEGER"),
+    ("assets", "next_service_meter", "FLOAT"),
+    ("assets", "next_service_on", "VARCHAR DEFAULT ''"),
+    ("asset_logs", "employee_id", "INTEGER"),
+    ("asset_logs", "shift", "VARCHAR DEFAULT ''"),
+    ("asset_logs", "start_time", "VARCHAR DEFAULT ''"),
+    ("asset_logs", "end_time", "VARCHAR DEFAULT ''"),
+    ("asset_logs", "break_minutes", "INTEGER DEFAULT 0"),
+    ("asset_logs", "opening_meter", "FLOAT"),
+    ("asset_logs", "closing_meter", "FLOAT"),
+    ("asset_logs", "breakdown_hours", "FLOAT DEFAULT 0"),
+    ("asset_logs", "attendance_hours", "FLOAT DEFAULT 0"),
+    ("asset_logs", "regular_hours", "FLOAT DEFAULT 0"),
+    ("asset_logs", "overtime_hours", "FLOAT DEFAULT 0"),
+    ("asset_logs", "approval_status", "VARCHAR DEFAULT ''"),
+    ("asset_logs", "approved_by", "VARCHAR DEFAULT ''"),
+    ("asset_logs", "approved_on", "VARCHAR DEFAULT ''"),
+    ("asset_logs", "supervisor_remarks", "VARCHAR DEFAULT ''"),
+    ("asset_services", "number", "VARCHAR DEFAULT ''"),
+    ("asset_services", "priority", "VARCHAR DEFAULT 'Normal'"),
+    ("asset_services", "status", "VARCHAR DEFAULT 'Completed'"),
+    ("asset_services", "reported_on", "VARCHAR DEFAULT ''"),
+    ("asset_services", "scheduled_on", "VARCHAR DEFAULT ''"),
+    ("asset_services", "completed_on", "VARCHAR DEFAULT ''"),
+    ("asset_services", "mechanic", "VARCHAR DEFAULT ''"),
+    ("asset_services", "parts_used", "TEXT DEFAULT ''"),
+    ("asset_services", "downtime_start", "VARCHAR DEFAULT ''"),
+    ("asset_services", "downtime_end", "VARCHAR DEFAULT ''"),
+    ("asset_services", "work_performed", "TEXT DEFAULT ''"),
+    ("asset_services", "invoice_no", "VARCHAR DEFAULT ''"),
+    ("asset_services", "next_service_on", "VARCHAR DEFAULT ''"),
+    ("asset_services", "next_service_meter", "FLOAT"),
+    ("asset_services", "approval_status", "VARCHAR DEFAULT ''"),
+    ("asset_services", "approved_by", "VARCHAR DEFAULT ''"),
     ("schedule_activities", "status", "VARCHAR DEFAULT ''"), ("schedule_activities", "notes", "TEXT DEFAULT ''"),
     ("project_messages", "parent_id", "INTEGER"), ("project_messages", "edited_at", "VARCHAR DEFAULT ''"),
 )
+
+
+# A machine set up before the schedule had a type: its type is read from the intervals it already has,
+# so no schedule is lost. Only rows with no type yet are touched; running it again changes nothing.
+SCHEDULE_BACKFILL = (
+    "UPDATE assets SET service_interval_type = CASE "
+    "WHEN COALESCE(service_every, 0) > 0 AND COALESCE(service_every_days, 0) > 0 THEN 'Both' "
+    "WHEN COALESCE(service_every, 0) > 0 THEN 'Meter' "
+    "WHEN COALESCE(service_every_days, 0) > 0 THEN 'Days' ELSE 'None' END "
+    "WHERE service_interval_type IS NULL OR service_interval_type = ''")
 
 
 def ensure_columns():
@@ -1569,6 +1618,15 @@ def ensure_columns():
                     conn.rollback()
                 except Exception:
                     pass
+            try:
+                conn.execute(text(SCHEDULE_BACKFILL))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step service schedule: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
     except Exception as e:
         print(f"Column check skipped: {e}")
@@ -1638,6 +1696,10 @@ def migrate_sqlite():
             add_col("business_units", "logo_url", "TEXT DEFAULT ''")
             for table, column, typedef in QUALITY_COLUMNS:
                 add_col(table, column, typedef.replace("BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"))
+            try:
+                conn.execute(text(SCHEDULE_BACKFILL))
+            except Exception:
+                MIGRATION_ERRORS.append(f"sqlite service schedule: {sys.exc_info()[1]}")
 
             # The goods receipt columns. Both migrations have to be fed, not
             # one: the Postgres list alone left every existing SQLite database

@@ -20,16 +20,25 @@ from app.schemas.assets import (
     AssetLogIn,
     AssetMoveIn,
     AssetServiceIn,
+    ServiceDoneIn,
     TaxBlockIn,
 )
+from app.services.plant import check_invoice_unique, number_for
 from app.services.assets import (
+    UNIT_WORD,
     _apply_asset,
     _apply_book,
+    apply_schedule,
+    describe_changes,
+    interval_type,
+    record_service_done,
+    schedule_snapshot,
     asset_book_or_none,
     asset_costs,
     asset_dict,
     asset_or_404,
     asset_service_state,
+    check_unique_asset,
     book_dict,
     book_schedule,
     default_book,
@@ -47,9 +56,10 @@ router = APIRouter()
 
 
 @router.get("/api/assets")
-def list_assets(request: Request, status: str = "", job_id: int = 0, db: Session = Depends(get_db)):
+def list_assets(request: Request, status: str = "", job_id: int = 0, archived: bool = False, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
-    q = db.query(models.DBAsset).filter(models.DBAsset.client_id == client.id)
+    q = db.query(models.DBAsset).filter(models.DBAsset.client_id == client.id,
+                                        models.DBAsset.is_archived.is_(True) if archived else models.DBAsset.is_archived.isnot(True))
     if status:
         q = q.filter(models.DBAsset.status == status)
     if job_id:
@@ -66,6 +76,8 @@ def list_assets(request: Request, status: str = "", job_id: int = 0, db: Session
                 "under_repair": len([r for r in live if r["status"] == "Under repair"]),
                 "service_due": len([r for r in live if r["service"]["due"]]),
                 "service_soon": len([r for r in live if r["service"]["soon"]]),
+                "service_status": {k: len([r for r in live if r["service"]["status"] == k])
+                                   for k in ("Upcoming", "Due soon", "Service due", "Overdue", "Incomplete", "Not scheduled")},
                 "hired": len([r for r in live if r["ownership"] == "Hired"]),
                 "cost_to_date": money(sum(r["cost_to_date"] for r in rows))}}
 
@@ -73,13 +85,25 @@ def list_assets(request: Request, status: str = "", job_id: int = 0, db: Session
 @router.post("/api/assets")
 def create_asset(body: AssetIn, request: Request, db: Session = Depends(get_db)):
     client, actor_id, actor_name = wo_actor(request, db, ("stores.manage", "workorders.manage"))
-    a = models.DBAsset(client_id=client.id, code=next_asset_code(db, client.id), status="Available")
+    code = (body.code or "").strip().upper()
+    a = models.DBAsset(client_id=client.id, code=code or next_asset_code(db, client.id), status="Available")
+    before = schedule_snapshot(a)
     _apply_asset(a, body)
-    a.meter_reading = max(0.0, float(body.meter_reading or 0))
-    a.last_service_on = (body.last_service_on or "").strip()
+    check_unique_asset(db, client.id, a)
+    if (body.meter_reading or 0) < 0:
+        raise HTTPException(400, "A meter reading cannot be negative.")
+    a.meter_reading = float(body.meter_reading or 0)
+    a.last_service_on = (body.last_service_on or "").strip()[:10]
+    # Left blank on a new machine, the schedule counts from the reading it comes in at - said so on the form.
     a.last_service_meter = (float(body.last_service_meter) if body.last_service_meter is not None
                             else a.meter_reading)
+    changes = apply_schedule(a, body, before)
     db.add(a)
+    db.flush()
+    log_audit(db, client.id, "plant.machine.created", "equipment", a.id, a.code, a.name, request=request, user_name=actor_name)
+    if a.service_interval_type != "None":
+        log_audit(db, client.id, "plant.schedule.set", "equipment", a.id, a.code, describe_changes(changes),
+                  request=request, user_name=actor_name)
     db.commit()
     db.refresh(a)
     return asset_dict(db, a)
@@ -87,18 +111,49 @@ def create_asset(body: AssetIn, request: Request, db: Session = Depends(get_db))
 
 @router.put("/api/assets/{asset_id}")
 def update_asset(asset_id: int, body: AssetIn, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db, ("stores.manage", "workorders.manage"))
+    client, _, actor_name = wo_actor(request, db, ("stores.manage", "workorders.manage"))
     a = asset_or_404(db, client.id, asset_id)
+    before = schedule_snapshot(a)
     _apply_asset(a, body)
+    code = (body.code or "").strip().upper()
+    if code:
+        a.code = code
+    check_unique_asset(db, client.id, a)
+    log_audit(db, client.id, "plant.machine.updated", "equipment", a.id, a.code, a.name, request=request, user_name=actor_name)
     # The form shows when it was last serviced; an edit that corrects it used
     # to be dropped without a word, and the service warning kept counting
     # from the wrong date. The meter itself moves with the daily log.
     if body.last_service_on is not None:
-        a.last_service_on = (body.last_service_on or "").strip()
+        a.last_service_on = (body.last_service_on or "").strip()[:10]
     if body.last_service_meter is not None:
-        a.last_service_meter = max(0.0, float(body.last_service_meter))
+        if body.last_service_meter < 0:
+            raise HTTPException(400, "A meter reading cannot be negative.")
+        a.last_service_meter = float(body.last_service_meter)
+    changes = apply_schedule(a, body, before)
+    if changes:
+        log_audit(db, client.id, "plant.schedule.changed", "equipment", a.id, a.code, describe_changes(changes),
+                  request=request, user_name=actor_name)
     db.commit()
     return asset_dict(db, a)
+
+
+@router.post("/api/assets/{asset_id}/archive")
+def archive_asset(asset_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """Off the working register - its logs, costs and history stay. Not while it is on a site or someone is on it."""
+    client, _, actor_name = wo_actor(request, db, ("stores.manage", "workorders.manage"))
+    a = asset_or_404(db, client.id, asset_id)
+    back = bool((body or {}).get("restore"))
+    if not back:
+        if a.current_job_id:
+            raise HTTPException(409, "%s is on a site. Bring it back to the yard before archiving it." % a.code)
+        if db.query(models.DBPlantAllocation).filter(models.DBPlantAllocation.asset_id == a.id,
+                                                     models.DBPlantAllocation.status == "Active").first():
+            raise HTTPException(409, "%s still has people allocated to it. End those first." % a.code)
+    a.is_archived = not back
+    log_audit(db, client.id, "plant.machine.restored" if back else "plant.machine.archived", "equipment", a.id, a.code, a.name,
+              request=request, user_name=actor_name)
+    db.commit()
+    return {"ok": True, "asset": asset_dict(db, a), "message": "%s %s." % (a.code, "back on the register" if back else "archived")}
 
 
 @router.get("/api/assets/{asset_id}")
@@ -121,14 +176,25 @@ def get_asset(asset_id: int, request: Request, db: Session = Depends(get_db)):
                  for l in db.query(models.DBAssetLog).filter(
                      models.DBAssetLog.asset_id == a.id).order_by(
                          models.DBAssetLog.log_date.desc()).limit(120).all()]
-    d["services"] = [{"id": s.id, "service_on": s.service_on, "kind": s.kind,
-                      "description": s.description or "", "vendor": s.vendor or "",
+    S = models.DBAssetService
+    d["services"] = [{"id": s.id, "number": s.number or "", "service_on": s.completed_on or s.service_on, "kind": s.kind,
+                      "status": s.status or "Completed",
+                      "description": s.description or "", "vendor": s.vendor or s.mechanic or "",
+                      "work_performed": s.work_performed or "", "parts_used": s.parts_used or "",
+                      "parts_cost": money(s.parts_cost), "labour_cost": money(s.labour_cost),
                       "total_cost": money(s.total_cost), "downtime_hours": s.downtime_hours or 0,
                       "meter_at_service": s.meter_at_service,
+                      "next_service_meter": s.next_service_meter, "next_service_on": s.next_service_on or "",
+                      "by": s.recorded_by_name or "",
                       "job": label(s.job_id) if s.job_id else ""}
-                     for s in db.query(models.DBAssetService).filter(
-                         models.DBAssetService.asset_id == a.id).order_by(
-                             models.DBAssetService.service_on.desc()).all()]
+                     for s in db.query(S).filter(S.asset_id == a.id, (S.status == "Completed") | (S.status.is_(None))).order_by(
+                         S.service_on.desc(), S.id.desc()).all()]
+    # Every change to the schedule and every service that reset it, as the audit trail has them.
+    L = models.DBAuditLog
+    d["schedule_history"] = [{"at": str(x.created_at or "")[:16], "action": x.action, "details": x.details or "", "by": x.user_name or ""}
+                             for x in db.query(L).filter(L.client_id == client.id, L.entity_type == "equipment", L.entity_id == a.id,
+                                                         L.action.in_(("plant.schedule.set", "plant.schedule.changed", "plant.service.completed"))
+                                                         ).order_by(L.id.desc()).limit(50).all()]
     # How hard it worked: hours against the hours it stood on a site.
     worked = sum(l["hours_worked"] for l in d["logs"])
     idle = sum(l["idle_hours"] for l in d["logs"])
@@ -144,8 +210,10 @@ def move_asset(asset_id: int, body: AssetMoveIn, request: Request, db: Session =
     a = asset_or_404(db, client.id, asset_id)
     if a.status == "Disposed":
         raise HTTPException(409, "%s has been disposed of." % a.code)
-    if a.status == "Under repair":
-        raise HTTPException(409, "%s is under repair. Put it back in service first." % a.code)
+    if a.status in ("Under repair", "Breakdown"):
+        raise HTTPException(409, "%s is %s. Put it back in service first." % (a.code, a.status.lower()))
+    if a.status == "Returned" or a.is_archived:
+        raise HTTPException(409, "%s is %s - it cannot be deployed." % (a.code, "returned to its owner" if a.status == "Returned" else "archived"))
     if body.to_job_id:
         job = job_or_404(db, client.id, body.to_job_id)
         if a.current_job_id == job.id:
@@ -210,19 +278,21 @@ def service_asset(asset_id: int, body: AssetServiceIn, request: Request, db: Ses
     kind = body.kind if body.kind in ("Preventive", "Breakdown", "Repair") else "Repair"
     on = (body.service_on or datetime.now().strftime("%Y-%m-%d"))[:10]
     meter = body.meter_at_service if body.meter_at_service is not None else a.meter_reading
-    if meter is not None and meter > (a.meter_reading or 0):
-        a.meter_reading = float(meter)
-    total = money((body.parts_cost or 0) + (body.labour_cost or 0))
-    if total < 0:
+    if (body.parts_cost or 0) < 0 or (body.labour_cost or 0) < 0:
         raise HTTPException(400, "A cost cannot be negative.")
-    db.add(models.DBAssetService(
+    total = money((body.parts_cost or 0) + (body.labour_cost or 0))
+    s = models.DBAssetService(
         client_id=client.id, asset_id=a.id, job_id=a.current_job_id, service_on=on, kind=kind,
         description=(body.description or "").strip(), vendor=(body.vendor or "").strip(),
         parts_cost=money(body.parts_cost or 0), labour_cost=money(body.labour_cost or 0),
         total_cost=total, downtime_hours=max(0.0, float(body.downtime_hours or 0)),
-        meter_at_service=meter, recorded_by_name=actor_name))
+        meter_at_service=meter, recorded_by_name=actor_name, completed_on=on)
     if kind == "Preventive":
-        a.last_service_on, a.last_service_meter = on, float(meter or 0)
+        # The same reset the scheduled-service step makes, with the same checks.
+        s.next_service_meter, s.next_service_on = record_service_done(a, on, meter)
+    elif meter is not None and meter > (a.meter_reading or 0):
+        a.meter_reading = float(meter)
+    db.add(s)
     if kind == "Breakdown" and body.out_of_service:
         a.status = "Under repair"
     db.commit()
@@ -231,12 +301,61 @@ def service_asset(asset_id: int, body: AssetServiceIn, request: Request, db: Ses
                                               ", off work until it is repaired" if a.status == "Under repair" else "")}
 
 
+@router.post("/api/assets/{asset_id}/service-complete")
+def complete_scheduled_service(asset_id: int, body: ServiceDoneIn, request: Request, db: Session = Depends(get_db)):
+    """The scheduled service, done: it goes into the history, and the clock starts again from it.
+    A preventive job already open for the machine is the one completed - not a second record beside it."""
+    client, _, actor_name = wo_actor(request, db, "site.record")
+    a = asset_or_404(db, client.id, asset_id)
+    if a.is_archived or a.status in ("Disposed", "Returned"):
+        raise HTTPException(409, "%s is %s." % (a.code, "archived" if a.is_archived else a.status.lower()))
+    if interval_type(a) == "None":
+        raise HTTPException(409, "%s has no service schedule. Set one on the machine first." % a.code)
+    if not (body.work_performed or "").strip():
+        raise HTTPException(400, "Say what was done.")
+    if (body.parts_cost or 0) < 0 or (body.labour_cost or 0) < 0:
+        raise HTTPException(400, "A cost cannot be negative.")
+    before = schedule_snapshot(a)
+    on = (body.completed_on or date.today().isoformat())[:10]
+    nm, nd = record_service_done(a, on, body.meter_at_service, body.next_service_meter, (body.next_service_on or "").strip())
+    S = models.DBAssetService
+    s = db.query(S).filter(S.asset_id == a.id, S.kind == "Preventive",
+                           S.status.in_(("Requested", "Scheduled", "In progress"))).order_by(S.id).first()
+    if s is None:
+        s = S(client_id=client.id, asset_id=a.id, job_id=a.current_job_id, kind="Preventive", number=number_for(db, S, client.id, "MNT"),
+              reported_on=on, description="Scheduled service", recorded_by_name=actor_name)
+        db.add(s)
+    s.invoice_no = check_invoice_unique(db, client.id, body.invoice_no, ("maintenance", s.id) if s.id else None)
+    s.status, s.service_on, s.completed_on = "Completed", on, on
+    s.meter_at_service = body.meter_at_service
+    s.work_performed = body.work_performed.strip()
+    s.parts_used = (body.parts_used or "").strip()
+    s.vendor = s.mechanic = (body.vendor or s.mechanic or "").strip()[:120]
+    s.parts_cost, s.labour_cost = money(body.parts_cost or 0), money(body.labour_cost or 0)
+    s.total_cost = money(s.parts_cost + s.labour_cost)
+    s.next_service_meter, s.next_service_on = nm, nd
+    db.flush()
+    unit = UNIT_WORD.get(a.meter_unit or "Hours", "hours")
+    nxt = " or ".join(x for x in (("%g %s" % (nm, unit)) if nm is not None else "", nd or "") if x)
+    after = schedule_snapshot(a)
+    changed = {k: (before[k], after[k]) for k in after if before[k] != after[k]}
+    at = (" at %g %s" % (body.meter_at_service, unit)) if body.meter_at_service is not None else ""
+    log_audit(db, client.id, "plant.service.completed", "equipment", a.id, a.code,
+              "%s on %s%s, cost %s; %s" % (s.number, on, at, inr(s.total_cost), describe_changes(changed)),
+              request=request, user_name=actor_name)
+    db.commit()
+    return {"ok": True, "asset": asset_dict(db, a), "id": s.id,
+            "message": "%s service recorded. Next due %s." % (a.code, nxt or "when the schedule is set")}
+
+
 @router.post("/api/assets/{asset_id}/back-in-service")
 def asset_back(asset_id: int, request: Request, db: Session = Depends(get_db)):
     client, _, _ = wo_actor(request, db, "site.record")
     a = asset_or_404(db, client.id, asset_id)
-    if a.status != "Under repair":
+    if a.status not in ("Under repair", "Breakdown"):
         raise HTTPException(409, "%s is not under repair." % a.code)
+    if db.query(models.DBAssetService).filter(models.DBAssetService.asset_id == a.id, models.DBAssetService.status == "In progress").first():
+        raise HTTPException(409, "%s has maintenance in progress - complete that job to put it back." % a.code)
     a.status = "Deployed" if a.current_job_id else "Available"
     db.commit()
     return {"ok": True, "asset": asset_dict(db, a), "message": "%s back at work." % a.code}
