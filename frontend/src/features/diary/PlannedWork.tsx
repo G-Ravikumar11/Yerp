@@ -7,7 +7,6 @@ import { ProgressBar } from '@/features/schedule/ProgressBar'
 /** What a task is as the diary has it so far: all done, part done, or not started. */
 export interface TaskState { done: boolean; percent: number }
 
-const stateOf = (t: DayTask, over: Record<number, TaskState>): TaskState => over[t.id] ?? { done: t.done, percent: t.percent }
 const share = (s: TaskState) => (s.done ? 100 : s.percent)
 
 /**
@@ -38,10 +37,11 @@ export function PlannedWork({ job, date, taskState, onTask, percent, onPercent, 
   const shown = new Set(rows.map((r) => r.id))
   // Tasks written for this day that sit under an activity not running today, or under none.
   const loose = d.tasks.filter((t) => !t.activity_id || !shown.has(t.activity_id))
+  const stateOf = (t: DayTask): TaskState => taskState[t.id] ?? { done: t.done, percent: t.percent }
   if (rows.length === 0 && loose.length === 0) return <p className="mt-5 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">Nothing is planned on this site yet. Activities added in Planning &amp; Progress appear here.</p>
 
   const taskLine = (t: DayTask) => {
-    const s = stateOf(t, taskState)
+    const s = stateOf(t)
     const editing = partly?.id === t.id
     return (
       <li key={t.id} className="rounded-md border border-border bg-card px-2.5 py-1.5">
@@ -78,7 +78,7 @@ export function PlannedWork({ job, date, taskState, onTask, percent, onPercent, 
 
   const card = (r: DayRow) => {
           const hasTasks = r.tasks.length > 0
-          const typing = (t: DayTask) => (partly?.id === t.id ? partly.value : share(stateOf(t, taskState)))
+          const typing = (t: DayTask) => (partly?.id === t.id ? partly.value : share(stateOf(t)))
           const now = hasTasks ? r.tasks.reduce((sum, t) => sum + typing(t), 0) / r.tasks.length : (percent[r.id] ?? r.actual_percent)
           const value = percent[r.id] ?? r.actual_percent
           return (

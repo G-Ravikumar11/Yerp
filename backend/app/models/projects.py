@@ -107,6 +107,9 @@ class DBSiteDiary(Base):
     prepared_by = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
     prepared_by_name = Column(String, default="")
     submitted_at = Column(String, default="")
+    # Each time a signed-off day was reopened to be changed: when, by whom and why, one line each. Kept for good, so a
+    # diary that was amended after sign-off says so.
+    amendments = Column(Text, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     updated_at = Column(String, default="")
 

@@ -1435,6 +1435,7 @@ def ensure_columns():
                     ("boq_lines", "material", "TEXT DEFAULT ''"),
                     ("boq_lines", "group_code", "TEXT DEFAULT ''"),
                     ("schedule_tasks", "percent", "DOUBLE PRECISION DEFAULT 0"),
+                    ("site_diaries", "amendments", "TEXT DEFAULT ''"),
                     ("boq_lines", "rate_only", "BOOLEAN DEFAULT FALSE"),
                     ("sub_bills", "entry_mode", "TEXT DEFAULT ''"),
                     ("sub_bills", "scan_file_id", "INTEGER"),
@@ -1655,6 +1656,7 @@ def migrate_sqlite():
             add_col("boq_lines", "material", "TEXT DEFAULT ''")
             add_col("boq_lines", "group_code", "TEXT DEFAULT ''")
             add_col("schedule_tasks", "percent", "FLOAT DEFAULT 0")
+            add_col("site_diaries", "amendments", "TEXT DEFAULT ''")
             add_col("boq_lines", "rate_only", "BOOLEAN DEFAULT 0")
             add_col("sub_bills", "entry_mode", "TEXT DEFAULT ''")
             add_col("sub_bills", "scan_file_id", "INTEGER")

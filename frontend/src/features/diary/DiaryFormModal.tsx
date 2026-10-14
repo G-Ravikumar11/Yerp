@@ -2,7 +2,8 @@ import { takePhoto } from '@/lib/mobile'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Camera, X } from 'lucide-react'
 import { Button, Field, Input, Modal, NumField, Select, Skeleton, Textarea } from '@/components/ui'
-import { TRADES, WEATHER, diaryKeys, signOffDiary, useDiary, type DiaryDetail, type DiaryInput, type LabourLine, type PlantLine, type WorkUpdate } from '@/api/diary'
+import { PromptModal } from '@/components/data/PromptModal'
+import { TRADES, WEATHER, diaryKeys, reopenDiary, signOffDiary, useDiaries, useDiary, type DiaryDetail, type DiaryInput, type LabourLine, type PlantLine, type WorkUpdate } from '@/api/diary'
 import { schKeys, type DayRow, type DayTask } from '@/api/schedule'
 import { fileKeys, uploadFiles } from '@/api/files'
 import { sendOrQueue } from '@/stores/offline'
@@ -16,20 +17,26 @@ import { PlannedWork, type TaskState } from './PlannedWork'
 const blankLabour = (): LabourLine => ({ trade: TRADES[0], agency: 'Own', headcount: 0, hours: 0, rate: 0 })
 const blankPlant = (): PlantLine => ({ plant: '', worked_hours: 0, idle_hours: 0, rate: 0 })
 
-export function DiaryFormModal({ job, id, onClose }: { job: number; id: number | 'new' | null; onClose: () => void }) {
+export function DiaryFormModal({ job, id, onClose, onOpen }: { job: number; id: number | 'new' | null; onClose: () => void; onOpen: (id: number) => void }) {
   const q = useDiary(typeof id === 'number' ? id : null)
   return (
     <Modal open={id !== null} onOpenChange={(o) => !o && onClose()} title={id === 'new' ? 'Record a day' : q.data ? `Day of ${q.data.diary_date}` : 'Site diary'} description="Who turned up, what the weather did, what got built and what stopped it." size="xl">
-      {id === 'new' ? <Form key="new" job={job} day={null} onClose={onClose} /> : id && (q.data ? <Form key={id} job={job} day={q.data} onClose={onClose} /> : <Skeleton className="h-64 w-full" />)}
+      {id === 'new' ? <Form key="new" job={job} day={null} onClose={onClose} onOpen={onOpen} /> : id && (q.data ? <Form key={id} job={job} day={q.data} onClose={onClose} onOpen={onOpen} /> : <Skeleton className="h-64 w-full" />)}
     </Modal>
   )
 }
 
-function Form({ job, day, onClose }: { job: number; day: DiaryDetail | null; onClose: () => void }) {
+function Form({ job, day, onClose, onOpen }: { job: number; day: DiaryDetail | null; onClose: () => void; onOpen: (id: number) => void }) {
   const { can } = useSession()
   const locked = !!day && day.status !== 'DRAFT'
   const [date, setDate] = useState(day?.diary_date ?? today())
   const [weather, setWeather] = useState(day?.weather ?? 'Clear')
+  // A signed-off day is opened for changes on purpose, with a reason that stays on the diary, and signed again after.
+  const [reopening, setReopening] = useState(false)
+  const reopen = useAction((reason: string) => reopenDiary(day!.id, reason), { invalidate: [diaryKeys.all], success: (r) => r.message, onSuccess: () => setReopening(false) })
+  // A site has one diary a day. Say so as soon as the date names a day that has one, rather than when saving.
+  const days = useDiaries(job)
+  const clash = !day ? days.data?.diaries.find((d) => d.diary_date === date) : undefined
   const [rain, setRain] = useState(day?.rain_hours ?? 0)
   const [hours, setHours] = useState(day?.working_hours || 8)
   const [work, setWork] = useState(day?.work_done ?? '')
@@ -49,8 +56,6 @@ function Form({ job, day, onClose }: { job: number; day: DiaryDetail | null; onC
   const tickTask = (t: DayTask, state: TaskState) => {
     setTaskState((m) => ({ ...m, [t.id]: state }))
     setPlanned((p) => ({ ...p, tasks: { ...p.tasks, [t.id]: t } }))
-    // A task done is work that was done: it goes into the day's account of it, once.
-    if (state.done && !work.includes(t.text)) setWork((w) => (w.trim() ? `${w.trim()}\n` : '') + t.text)
   }
   const setProgressOf = (r: DayRow, pct: number) => {
     setPercent((m) => ({ ...m, [r.id]: pct }))
@@ -70,6 +75,7 @@ function Form({ job, day, onClose }: { job: number; day: DiaryDetail | null; onC
     labour: labour.filter((l) => l.headcount > 0).map((l) => ({ ...l, hours: l.hours || hours })),
     plant: plant.filter((p) => p.plant.trim()),
     work_updates: [
+      // Only what the buttons say: the words written under "Work done" never move the plan.
       ...Object.entries(taskState)
         .filter(([id, s]) => planned.tasks[Number(id)] && (planned.tasks[Number(id)].done !== s.done || (!s.done && Math.round(planned.tasks[Number(id)].percent) !== Math.round(s.percent))))
         .map(([id, s]): WorkUpdate => (s.done ? { task_id: Number(id), done: true } : s.percent > 0 ? { task_id: Number(id), percent: s.percent } : { task_id: Number(id), done: false })),
@@ -97,7 +103,29 @@ function Form({ job, day, onClose }: { job: number; day: DiaryDetail | null; onC
   const num = 'text-right'
   return (
     <div>
-      {locked && <p className="mb-3 rounded-lg bg-muted/50 p-2.5 text-[13px]">Signed off on {day?.submitted_at}. A diary that can be rewritten afterwards is worth nothing in a claim.</p>}
+      {locked && (
+        <p className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-muted/50 p-2.5 text-[13px]">
+          <span className="flex-1">Signed off on {day?.submitted_at}. A diary that can be rewritten quietly afterwards is worth nothing in a claim, so changing it needs a reason, which stays on the diary.</span>
+          {can('site.signoff') && <Button size="sm" variant="outline" onClick={() => setReopening(true)}>Edit</Button>}
+        </p>
+      )}
+      {!!day?.amendments?.length && (
+        <div aria-label="Amended after sign-off" className="mb-3 rounded-lg border border-warning/40 bg-warning-soft p-2.5 text-[13px]">
+          <div className="mb-0.5 font-semibold">Changed after it was signed off</div>
+          <ul className="grid gap-0.5">{day.amendments.map((a, i) => <li key={i}>{a}</li>)}</ul>
+        </div>
+      )}
+      <PromptModal open={reopening} title="Edit a signed-off day" description="The day opens for changes and has to be signed off again. Your reason is kept on the diary with your name and the time." fields={[{ key: 'reason', label: 'Why is it being changed?', required: true }]} confirm="Open for editing" busy={reopen.isPending} error={reopen.error?.message} onSubmit={(v) => reopen.mutate(v.reason.trim())} onClose={() => setReopening(false)} />
+      {clash && (
+        <p role="alert" className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 bg-warning-soft p-2.5 text-[13px]">
+          <span className="flex-1">
+            {clash.status === 'DRAFT'
+              ? `There is already a diary for ${date} on this site. A site has one diary a day, so add to that one.`
+              : `The diary for ${date} has been signed off, so it can no longer be changed. Choose another day.`}
+          </span>
+          <Button size="sm" variant="outline" onClick={() => onOpen(clash.id)}>{clash.status === 'DRAFT' ? 'Open that day' : 'View it'}</Button>
+        </p>
+      )}
       <fieldset disabled={locked} className="min-w-0 border-0 p-0">
         <div className="grid gap-4 sm:grid-cols-4">
           <Field label="Date" htmlFor="dy-date"><Input id="dy-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
@@ -148,8 +176,8 @@ function Form({ job, day, onClose }: { job: number; day: DiaryDetail | null; onC
       <div className="mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
         {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
         <Button variant="ghost" onClick={onClose}>{locked ? 'Close' : 'Cancel'}</Button>
-        {!locked && <Button variant="outline" loading={save.isPending} onClick={() => save.mutate(false)}>Save the day</Button>}
-        {!locked && can('site.signoff') && <Button loading={save.isPending} onClick={() => save.mutate(true)}>Save and sign off</Button>}
+        {!locked && <Button variant="outline" loading={save.isPending} disabled={!!clash} onClick={() => save.mutate(false)}>Save the day</Button>}
+        {!locked && can('site.signoff') && <Button loading={save.isPending} disabled={!!clash} onClick={() => save.mutate(true)}>Save and sign off</Button>}
       </div>
     </div>
   )

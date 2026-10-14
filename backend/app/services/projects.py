@@ -416,6 +416,7 @@ def diary_dict(db, d, detail=False):
         "total_mandays": money(d.total_mandays),
         "status": d.status or "DRAFT", "prepared_by_name": d.prepared_by_name or "",
         "submitted_at": d.submitted_at or "",
+        "amendments": [line for line in (d.amendments or "").splitlines() if line.strip()],
         "editable": (d.status or "DRAFT") == "DRAFT",
         # A day the site was rained off is worth seeing at a glance.
         "lost_to_weather": bool((d.rain_hours or 0) >= (d.working_hours or 8) / 2),

@@ -27,6 +27,10 @@ class JobStateIn(BaseModel):
     state_code: str
 
 
+class ReopenIn(BaseModel):
+    reason: Optional[str] = ""
+
+
 class WorkUpdateIn(BaseModel):
     """What a diary says about the planned work: a task done (or not), or an activity now so far along."""
     task_id: Optional[int] = None

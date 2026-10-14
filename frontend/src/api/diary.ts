@@ -20,6 +20,8 @@ export interface DiaryRow {
   total_mandays: number
   status: string
   submitted_at: string
+  /** Each time the day was reopened after sign-off: when, by whom and why. */
+  amendments?: string[]
   editable: boolean
   lost_to_weather: boolean
 }
@@ -50,6 +52,7 @@ export const useDiaries = (job: number) => useQuery({ queryKey: ['diary', 'list'
 export const useDiary = (id: number | null) => useQuery({ queryKey: ['diary', 'one', id], enabled: !!id, queryFn: () => get<DiaryDetail>(`/api/diary/${id}`) })
 export const useLabourHistory = (job: number) => useQuery({ queryKey: ['diary', 'labour', job], enabled: job > 0, queryFn: () => get<LabourHistory>(`/api/diary-labour/${job}`) })
 export const signOffDiary = (id: number) => post<{ message: string }>(`/api/diary/${id}/submit`)
+export const reopenDiary = (id: number, reason: string) => post<{ message: string }>(`/api/diary/${id}/reopen`, { reason })
 
 export const TRADES = ['Mason', 'Helper', 'Carpenter', 'Bar bender', 'Fitter', 'Electrician', 'Plumber', 'Painter', 'Operator', 'Driver', 'Surveyor', 'Supervisor']
 export const WEATHER = ['Clear', 'Cloudy', 'Rain', 'Heavy rain']

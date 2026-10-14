@@ -1,4 +1,5 @@
 """The projects endpoints."""
+import re
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -31,6 +32,7 @@ from app.schemas.projects import (
     JobIn,
     JobStateIn,
     ProgressIn,
+    ReopenIn,
     TaskIn,
     SiteLocationIn,
 )
@@ -623,6 +625,28 @@ def submit_diary(diary_id: int, request: Request, db: Session = Depends(get_db))
     db.refresh(diary)
     return {"ok": True, "diary": diary_dict(db, diary, detail=True),
             "message": "%s signed off." % diary.diary_date}
+
+
+@router.post("/api/diary/{diary_id}/reopen")
+def reopen_diary(diary_id: int, body: ReopenIn, request: Request, db: Session = Depends(get_db)):
+    """Open a signed-off day to be changed. Allowed to those who can sign a day off, with a reason; the reopening is kept on
+    the diary for good (when, by whom, why) and in the audit log, and the day has to be signed off again."""
+    client, _, actor_name = wo_actor(request, db, "site.signoff")
+    diary = diary_or_404(db, client.id, diary_id)
+    if (diary.status or "DRAFT") == "DRAFT":
+        raise HTTPException(409, "This day is not signed off, so it can be edited as it is.")
+    reason = re.sub(r"\s+", " ", (body.reason or "")).strip()
+    if len(reason) < 3:
+        raise HTTPException(400, "Say why the signed-off day is being changed. It is kept with the diary.")
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    diary.amendments = ((diary.amendments or "").rstrip("\n") + "\n" if diary.amendments else "") + "%s - %s: %s" % (stamp, actor_name, reason[:300])
+    diary.status = "DRAFT"
+    diary.submitted_at = ""
+    log_audit(db, client.id, "diary_reopened", "site_diary", diary.id, diary.diary_date or "", "%s: %s" % (actor_name, reason[:300]), request)
+    db.commit()
+    db.refresh(diary)
+    return {"ok": True, "diary": diary_dict(db, diary, detail=True),
+            "message": "%s reopened for changes. Sign it off again when done." % diary.diary_date}
 
 
 @router.delete("/api/diary/{diary_id}")
