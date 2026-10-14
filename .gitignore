@@ -48,3 +48,5 @@ mobile/build/
 frontend/dist/
 
 *.bundle
+
+backend/backups/
