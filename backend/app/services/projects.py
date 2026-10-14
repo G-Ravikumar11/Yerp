@@ -15,6 +15,7 @@ from app.constants.quality import SERIOUS_KINDS
 from app.core.config import logger
 from app.core.currency import inr, money, unit_rate
 from app.core.dates import _days_until, ageing_bucket
+from app.core.permissions import employee_can
 from app.core.queries import by_id, on_job
 from app.services.assets import asset_service_state, equipment_cost_by_job
 from app.services.stores import stock_balances, stocked_share_of_bills
@@ -24,6 +25,44 @@ def job_or_404(db, client_id, job_id):
     job = db.query(models.DBJob).filter(
         models.DBJob.id == job_id, models.DBJob.client_id == client_id).first()
     if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+# Rights that let a member of staff see every project. Anyone who only holds the
+# site or billing rights sees the projects they are connected to.
+PROJECT_WIDE_RIGHTS = ("reports.view", "bills.view_all", "workorders.manage")
+
+
+def sees_every_project(emp) -> bool:
+    """The account owner (no employee) and admin-level staff see every project."""
+    return emp is None or any(employee_can(emp, right) for right in PROJECT_WIDE_RIGHTS)
+
+
+def employee_job_ids(db, client_id, emp):
+    """The projects a member of staff is connected to: put on them through HR,
+    or named as the project's manager."""
+    assigned = {r[0] for r in db.query(models.DBEmployeeSite.job_id).filter(
+        models.DBEmployeeSite.employee_id == emp.id).all()}
+    managed = {r[0] for r in db.query(models.DBJob.id).filter(
+        models.DBJob.client_id == client_id, models.DBJob.manager_id == emp.id).all()}
+    return assigned | managed
+
+
+def filter_jobs_for_employee(query, db, client_id, emp):
+    """Narrow a jobs query to what this person may see. Unchanged for the
+    owner and for admin-level staff; everyone else gets only their own
+    projects, and nothing at all if they have none."""
+    if sees_every_project(emp):
+        return query
+    return query.filter(models.DBJob.id.in_(list(employee_job_ids(db, client_id, emp)) or [0]))
+
+
+def job_or_404_for_employee(db, client_id, emp, job_id):
+    """The job, or a 404 for staff with no connection to it. A 404 rather than
+    a 403, so the existence of a project they cannot see is not given away."""
+    job = job_or_404(db, client_id, job_id)
+    if not sees_every_project(emp) and job.id not in employee_job_ids(db, client_id, emp):
         raise HTTPException(status_code=404, detail="Job not found")
     return job
 
