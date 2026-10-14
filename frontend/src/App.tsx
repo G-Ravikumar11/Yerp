@@ -5,11 +5,13 @@ import { MotionConfig } from 'framer-motion'
 import { Loader2 } from 'lucide-react'
 import { AppShell } from '@/components/layout/AppShell'
 import { Toaster, TooltipProvider } from '@/components/ui'
+import { UpdatePrompt } from '@/components/UpdatePrompt'
 import { LegacyLinks } from '@/lib/legacyLinks'
 import { persistOptions, queryClient } from '@/lib/query'
 import { watchConnection } from '@/stores/offline'
 import { applyTheme, useUI } from '@/stores/ui'
 import { SCREENS } from '@/routes'
+import { appUi } from '@/app-mobile/gate'
 import HomePage from '@/features/dashboard/HomePage'
 import NotFound from '@/pages/NotFound'
 
@@ -23,6 +25,11 @@ const ApplyPage = lazy(() => import('@/features/careers/ApplyPage'))
 const MeetingPage = lazy(() => import('@/features/meeting/MeetingPage'))
 const SuperadminPage = lazy(() => import('@/features/superadmin/SuperadminPage'))
 const SuperadminLoginPage = lazy(() => import('@/features/auth/SuperadminLoginPage'))
+// The phone app's own layout. `__MOBILE_UI__` is false in the website's build, which drops these lines and the folder with them.
+const MobileShell = __MOBILE_UI__ ? lazy(() => import('@/app-mobile/MobileShell')) : null
+const TodayPage = __MOBILE_UI__ ? lazy(() => import('@/app-mobile/TodayPage')) : null
+const ProjectsCards = __MOBILE_UI__ ? lazy(() => import('@/app-mobile/ProjectsCards')) : null
+const MorePage = __MOBILE_UI__ ? lazy(() => import('@/app-mobile/MorePage')) : null
 
 /** While a page's code is still downloading. It appears only after a moment, so a quick load shows nothing at all
  * rather than a flash; a slow one (a site on a weak signal) shows that something is happening instead of a blank page. */
@@ -58,6 +65,7 @@ export default function App() {
     return () => window.removeEventListener('yerp:unauthorised', on)
   }, [])
 
+  const phone = appUi() && !!MobileShell
   const rawBase = import.meta.env.BASE_URL || ''
   const basename = rawBase === './' || rawBase === '/' ? '' : rawBase.replace(/\/$/, '')
 
@@ -79,9 +87,11 @@ export default function App() {
             <Route path="reset-password" element={<ResetPasswordPage />} />
             <Route path="superadmin" element={<SuperadminPage />} />
             <Route path="superadmin/login" element={<SuperadminLoginPage />} />
-            <Route element={<AppShell />}>
-              <Route index element={<HomePage />} />
-              {SCREENS.map(({ path, Component }) => (
+            <Route element={phone && MobileShell ? <MobileShell /> : <AppShell />}>
+              <Route index element={phone && TodayPage ? <TodayPage /> : <HomePage />} />
+              {phone && ProjectsCards && <Route path="projects" element={<ProjectsCards />} />}
+              {phone && MorePage && <Route path="more" element={<MorePage />} />}
+              {SCREENS.filter(({ path }) => !(phone && path === '/projects')).map(({ path, Component }) => (
                 <Route key={path} path={path.slice(1)} element={<Component />} />
               ))}
               <Route path="*" element={<NotFound />} />
@@ -90,6 +100,7 @@ export default function App() {
           </Suspense>
         </BrowserRouter>
         <Toaster />
+        <UpdatePrompt />
       </TooltipProvider>
       </MotionConfig>
     </PersistQueryClientProvider>

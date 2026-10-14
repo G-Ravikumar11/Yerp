@@ -7,7 +7,7 @@ import { StatusBar, Style } from '@capacitor/status-bar'
 import { SplashScreen } from '@capacitor/splash-screen'
 import { PushNotifications } from '@capacitor/push-notifications'
 import { api, get, post } from '@/lib/api'
-import { toast } from '@/stores/toast'
+import { useUpdatePrompt } from '@/stores/updatePrompt'
 
 /**
  * Initializes mobile-native behaviors when running inside a native
@@ -85,8 +85,11 @@ async function checkForWebUpdate() {
     const bundle = have ?? (await CapacitorUpdater.download({ url, version, checksum }))
     await CapacitorUpdater.next({ id: bundle.id })
     offeredWeb = latest.version
-    toast.withAction('New screens are ready for Y ERP.', 'Restart now', () => {
-      void CapacitorUpdater.set({ id: bundle.id })
+    useUpdatePrompt.getState().show({
+      title: 'Update ready',
+      message: 'The latest improvements to Y ERP have been downloaded. Tap Update to start using them.',
+      confirmLabel: 'Update',
+      onConfirm: () => CapacitorUpdater.set({ id: bundle.id }),
     })
 
     // Older downloads are no longer needed.
@@ -120,8 +123,11 @@ async function checkForUpdate() {
     if (!latest.apk_url || latest.version_code <= current || latest.version_code === offered) return
     offered = latest.version_code
     const url = latest.apk_url
-    toast.withAction(`A new version of Y ERP is available${latest.version_name ? ` (${latest.version_name})` : ''}.`, 'Update', () => {
-      void Browser.open({ url })
+    useUpdatePrompt.getState().show({
+      title: 'New version available',
+      message: `A new version of Y ERP${latest.version_name ? ` (${latest.version_name})` : ''} is ready. Tap Update to download it, then open the file to install.`,
+      confirmLabel: 'Update',
+      onConfirm: () => Browser.open({ url }),
     })
   } catch {
     // No signal, or the server is older than this check: try again next time the app opens.
