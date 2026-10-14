@@ -103,17 +103,13 @@ export interface DayPlan {
 }
 
 export const useDayPlan = (job: number, on: string) => useQuery({ queryKey: ['schedule', 'day', job, on], enabled: job > 0, queryFn: () => get<DayPlan>(`/api/jobs/${job}/schedule/day?on=${on}`) })
-<<<<<<< .merge_file_BObgod
-export const useSchedule = (job: number) => useQuery({ queryKey: ['schedule', job], enabled: job > 0, staleTime: 0, refetchOnMount: 'always', queryFn: () => get<Schedule>(`/api/jobs/${job}/schedule`) })
-=======
 export interface ActivityDetail {
   job: { id: number; number: string; name: string }
   activity: Activity & Pick<DayRow, 'editable' | 'tasks_total' | 'tasks_done' | 'tasks' | 'updated_on' | 'updated_by'> & { planned_start: string; planned_finish: string }
   history: { on: string; percent: number; note: string; by: string }[]
 }
 export const useActivity = (id: number) => useQuery({ queryKey: ['schedule', 'activity', id], enabled: id > 0, queryFn: () => get<ActivityDetail>(`/api/schedule/activities/${id}`) })
-export const useSchedule = (job: number) => useQuery({ queryKey: ['schedule', job], enabled: job > 0, queryFn: () => get<Schedule>(`/api/jobs/${job}/schedule`) })
->>>>>>> .merge_file_ytRI5Z
+export const useSchedule = (job: number) => useQuery({ queryKey: ['schedule', job], enabled: job > 0, staleTime: 0, refetchOnMount: 'always', queryFn: () => get<Schedule>(`/api/jobs/${job}/schedule`) })
 
 /** The placed work orders of a project - each of their lines can carry an activity's progress. */
 export const useWorkOrdersOf = (job: number) =>

@@ -359,7 +359,6 @@ def test_a_diary_without_work_updates_still_saves_as_before(tenant):
     assert res.json()["message"] == "Diary opened for %s." % d(0)
 
 
-<<<<<<< .merge_file_BBdyCG
 # ---- the project chart: who is responsible, what is late, how long it runs ----
 
 def employee(tenant, first="Suresh", last="Babu"):
@@ -534,7 +533,7 @@ def test_reporting_progress_moves_the_status_with_it(tenant):
     b = act(tenant, j, "Walls", d(0), d(9))["activities"][1]
     tenant.post("/api/schedule/activities/%d/progress" % b["id"], json={"percent": 25})
     assert put_act(tenant, b, status="Not Started").status_code == 409
-=======
+
 # --- one activity on a page of its own ------------------------------------------------------------------------------------
 
 def test_an_activity_comes_with_its_tasks_on_every_day_and_its_history(tenant):
@@ -652,4 +651,3 @@ def test_the_day_plan_also_lists_every_other_activity_on_the_site(tenant):
     everything = [a["name"] for k in ("today", "overdue", "soon", "others") for a in day[k]]
     assert sorted(everything) == ["Excavation", "Finished work", "Handover"]
     assert all("tasks" in a and "editable" in a for a in day["others"])
->>>>>>> .merge_file_fkQJ82
