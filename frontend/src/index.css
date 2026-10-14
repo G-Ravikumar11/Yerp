@@ -205,16 +205,17 @@
 }
 
 /* ---- App backdrop ---------------------------------------------------------
-   Soft pastel washes (peach, lilac, mint) behind every screen. Light in the light theme, a gentle glow in the dark one. */
+   Soft washes behind every screen: ice blues in the light theme, a gentle glow in the dark one. */
 .app-backdrop {
   /* fades out towards the bottom so it never ends in a visible edge */
   -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
   mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+  /* soft ice blues - the blues of the company's logo - light enough that cards and text stay crisp on top */
   background:
-    radial-gradient(55% 60% at 8% 0%, oklch(0.9 0.085 65 / 0.75), transparent 72%),
-    radial-gradient(48% 55% at 92% 4%, oklch(0.9 0.075 300 / 0.7), transparent 72%),
-    radial-gradient(55% 50% at 52% 46%, oklch(0.93 0.06 175 / 0.55), transparent 74%),
-    radial-gradient(50% 45% at 100% 100%, oklch(0.92 0.07 20 / 0.5), transparent 72%);
+    radial-gradient(60% 65% at 8% 0%, oklch(0.9 0.06 245 / 0.75), transparent 72%),
+    radial-gradient(50% 55% at 92% 4%, oklch(0.91 0.05 275 / 0.6), transparent 72%),
+    radial-gradient(60% 50% at 52% 46%, oklch(0.95 0.035 215 / 0.5), transparent 74%),
+    radial-gradient(50% 45% at 100% 100%, oklch(0.93 0.04 240 / 0.45), transparent 72%);
 }
 .dark .app-backdrop {
   background:
@@ -222,6 +223,41 @@
     radial-gradient(48% 55% at 92% 4%, oklch(0.5 0.12 295 / 0.3), transparent 72%),
     radial-gradient(55% 50% at 52% 46%, oklch(0.5 0.08 180 / 0.2), transparent 74%),
     radial-gradient(50% 45% at 100% 100%, oklch(0.5 0.1 20 / 0.2), transparent 72%);
+}
+
+/* The thin bar under the top of the screen while the app is working. */
+@keyframes activity-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+.activity-bar {
+  animation: activity-slide 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .activity-bar { animation: none; width: 100%; opacity: 0.6; }
+}
+
+/* The crane loader. One 8 s cycle: lower the hook, pick the crate up, slew round (a flip of the jib about the mast,
+   which reads as the crane turning), set the crate down on the other side, rise, slew back. */
+.crane-slew { transform-box: view-box; transform-origin: 80px 0; animation: crane-slew 8s ease-in-out infinite; }
+.crane-hook { animation: crane-hook 8s ease-in-out infinite; }
+.crane-crate-carried { opacity: 0; animation: crane-carried 8s linear infinite; }
+.crane-crate-left { animation: crane-left 8s linear infinite; }
+.crane-crate-right { opacity: 0; animation: crane-right 8s linear infinite; }
+.crane-pop { animation: crane-pop 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+.crane-dot { opacity: 0.2; animation: crane-dot 1.2s ease-in-out infinite; }
+.crane-dot:nth-of-type(2) { animation-delay: 0.2s; }
+.crane-dot:nth-of-type(3) { animation-delay: 0.4s; }
+@keyframes crane-slew { 0%, 26% { transform: scaleX(1); } 50%, 74% { transform: scaleX(-1); } 96%, 100% { transform: scaleX(1); } }
+@keyframes crane-hook { 0% { transform: translateY(0); } 12%, 14% { transform: translateY(52px); } 26%, 50% { transform: translateY(0); } 62%, 64% { transform: translateY(52px); } 74%, 100% { transform: translateY(0); } }
+@keyframes crane-carried { 0%, 13% { opacity: 0; } 13.01%, 63% { opacity: 1; } 63.01%, 100% { opacity: 0; } }
+@keyframes crane-left { 0%, 13% { opacity: 1; } 13.01%, 96% { opacity: 0; } 100% { opacity: 1; } }
+@keyframes crane-right { 0%, 63% { opacity: 0; } 63.01%, 92% { opacity: 1; } 97%, 100% { opacity: 0; } }
+@keyframes crane-pop { from { opacity: 0; transform: scale(0.85); } to { opacity: 1; transform: scale(1); } }
+@keyframes crane-dot { 0%, 20% { opacity: 0.2; } 40% { opacity: 1; } 100% { opacity: 0.2; } }
+@media (prefers-reduced-motion: reduce) {
+  .crane-slew, .crane-hook, .crane-crate-carried, .crane-crate-left, .crane-crate-right, .crane-pop, .crane-dot { animation: none; }
+  .crane-crate-left, .crane-dot { opacity: 1; }
 }
 
 /* ---- Base --------------------------------------------------------------- */

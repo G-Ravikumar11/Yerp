@@ -65,7 +65,7 @@ export function Nav() {
   return (
     <header className={`nav${solid ? ' solid' : ''}${hide && !open ? ' hide' : ''}${open ? ' open' : ''}`} id="nav" style={{ ['--p' as string]: progress.toFixed(4) }}>
       <a href="#top" className="brand" aria-label="Yalavarti Projects, home" onClick={(e) => click(e, '#top')}>
-        <img src={asset('site/img/mark.png')} alt="" width="36" height="30" />
+        <img src={asset('site/img/mark.png')} alt="" width="36" height="36" />
         <span translate="no">Yalavarti</span>
       </a>
       <nav className="nav__links" id="navlinks" aria-label="Primary">

@@ -53,12 +53,16 @@ export default function DrawingsPage() {
   const [history, setHistory] = useState<number | null>(null)
   const [view3d, setView3d] = useState<Drawing | null>(null)
   const words = search.toLowerCase()
-  const rows = (d?.drawings ?? []).filter((w) => (!words || `${w.number} ${w.title}`.toLowerCase().includes(words)) && (!disc || w.discipline === disc) && (!status || (status === 'none' ? !w.current_revision : w.status === status)))
+  // In the order the sheets were added, each with its serial number; a filter hides rows but never renumbers them.
+  const inOrder = (d?.drawings ?? []).slice().sort((a, b) => a.id - b.id)
+  const serial = new Map(inOrder.map((w, i) => [w.id, i + 1]))
+  const rows = inOrder.filter((w) => (!words || `${w.number} ${w.title}`.toLowerCase().includes(words)) && (!disc || w.discipline === disc) && (!status || (status === 'none' ? !w.current_revision : w.status === status)))
   const removeRow = (id: number) =>
     qc.setQueryData<DrawingRegister>(['drawings', 'register', job], (old) =>
       old ? { ...old, drawings: old.drawings.filter((w) => w.id !== id), summary: { ...old.summary, drawings: old.summary.drawings - 1 } } : old,
     )
   const columns: TableColumn<Drawing>[] = [
+    { id: 'sn', header: 'S.No.', width: '4rem', sort: (w) => serial.get(w.id) ?? 0, cell: (w) => <span className="tabular text-muted-foreground">{serial.get(w.id)}</span> },
     { id: 'no', header: 'Number', sort: (w) => w.number, cell: (w) => <span className="font-mono text-[13px] font-semibold">{w.number}</span> },
     { id: 'title', header: 'Title', cell: (w) => w.title },
     { id: 'disc', header: 'Discipline', hideBelow: 'md', cell: (w) => w.discipline },

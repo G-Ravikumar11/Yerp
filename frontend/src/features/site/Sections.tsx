@@ -241,7 +241,7 @@ export function Footer() {
   return (
     <footer className="footer">
       <div className="wrap footer__top">
-        <a href="#top" className="brand brand--lg" aria-label="Back to top" onClick={(e) => goTo('#top') && e.preventDefault()}><img src={asset('site/img/mark.png')} alt="" width="54" height="45" /><span translate="no">Yalavarti</span></a>
+        <a href="#top" className="brand brand--lg" aria-label="Back to top" onClick={(e) => goTo('#top') && e.preventDefault()}><img src={asset('site/img/mark.png')} alt="" width="54" height="54" /><span translate="no">Yalavarti</span></a>
         <nav className="footer__links" aria-label="Footer">
           <a href={appUrl('login')}>YERP Login</a>
           <a href="https://www.yalavarti.com/images/pages/YPPL_PROFILE_2023.pdf" target="_blank" rel="noopener noreferrer">Company Profile (PDF)</a>
