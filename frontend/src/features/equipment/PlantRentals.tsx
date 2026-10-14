@@ -12,6 +12,7 @@ import { useSession } from '@/lib/session'
 import { formatDate, today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { FormFoot, LoadError, MachineSelect, RangeBar, usePaged } from './plantParts'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 const rentTone = (s: string) => (s === 'Overdue' ? 'danger' : s === 'Returned' ? 'neutral' : s === 'Upcoming' ? 'info' : s === 'Extended' ? 'warning' : 'success') as 'danger' | 'neutral' | 'info' | 'warning' | 'success'
 
@@ -39,6 +40,7 @@ export function Rentals() {
     { id: 'h', header: 'Used / billed h', hideBelow: 'lg', align: 'right', cell: (r) => <div>{r.used_hours} / {r.billed_hours}{r.hours_gap !== 0 && <div className={`text-xs ${r.hours_gap > 0 ? 'text-warning' : 'text-muted-foreground'}`}>{r.hours_gap > 0 ? `billed ${r.hours_gap} h more` : `${-r.hours_gap} h not yet billed`}</div>}</div> },
     { id: 'o', header: 'Outstanding', align: 'right', sort: (r) => r.outstanding, cell: (r) => <span className={r.outstanding ? 'font-semibold' : ''}>{formatINR(r.outstanding)}</span> },
     { id: 's', header: 'Status', cell: (r) => <Badge tone={rentTone(r.status)} dot>{r.status}</Badge> },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="rental" id={r.id} label={r.number} noun="rental" /> },
   ]
   return (
     <div>
@@ -205,7 +207,7 @@ function ProvidersModal({ open, onClose }: { open: boolean; onClose: () => void 
       {open && (edit ? <ProviderForm p={edit === 'new' ? null : edit} suppliers={q.data?.suppliers ?? []} onDone={() => setEdit(null)} /> : (
         <div>
           <div className="mb-3 flex justify-end"><Button size="sm" onClick={() => setEdit('new')}><Plus /> Provider</Button></div>
-          {(q.data?.providers ?? []).length === 0 ? <p className="text-[13px] text-muted-foreground">None yet.</p> : <ul className="grid gap-2">{q.data!.providers.map((p) => <li key={p.id} className="flex items-center gap-3 rounded-lg border border-border p-3 text-[13px]"><div className="min-w-0 flex-1"><p className="font-medium">{p.name}</p><p className="text-xs text-muted-foreground">{[p.contact_person, p.mobile, p.email].filter(Boolean).join(' - ')}</p></div><Button size="sm" variant="outline" onClick={() => setEdit(p)}>Edit</Button></li>)}</ul>}
+          {(q.data?.providers ?? []).length === 0 ? <p className="text-[13px] text-muted-foreground">None yet.</p> : <ul className="grid gap-2">{q.data!.providers.map((p) => <li key={p.id} className="flex items-center gap-3 rounded-lg border border-border p-3 text-[13px]"><div className="min-w-0 flex-1"><p className="font-medium">{p.name}</p><p className="text-xs text-muted-foreground">{[p.contact_person, p.mobile, p.email].filter(Boolean).join(' - ')}</p></div><Button size="sm" variant="outline" onClick={() => setEdit(p)}>Edit</Button><MasterDelete kind="rental_provider" id={p.id} label={p.name} noun="rental provider" /></li>)}</ul>}
         </div>
       ))}
     </Modal>

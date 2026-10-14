@@ -29,8 +29,9 @@ def preview(kind: str, rec_id: int, request: Request, db: Session = Depends(get_
     client = get_client_user(request, db)
     require_owner(request, db)
     row, table, noun, label = purge.record(db, client.id, kind, rec_id)
-    counts = purge.human(purge.explain(db, table, [row.id]))
-    return {"numbers": [label], "noun": noun, "counts": counts, "blockers": [], "warnings": [], "can_delete": True}
+    raw = purge.explain(db, table, [row.id])
+    return {"numbers": [label], "noun": noun, "counts": purge.human(raw), "kept": purge.human(raw.get("_kept", {})),
+            "blockers": [], "warnings": [], "can_delete": True}
 
 
 def _delete(db, request, client, kind, rec_id):

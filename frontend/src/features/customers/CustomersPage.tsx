@@ -7,6 +7,7 @@ import { useCustomers, type Customer } from '@/api/customers'
 import { useDebounced } from '@/lib/hooks'
 import { useSession } from '@/lib/session'
 import { CustomerFormModal } from './CustomerFormModal'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 export default function CustomersPage() {
   const { can } = useSession()
@@ -65,6 +66,7 @@ export default function CustomersPage() {
           </Button>
         ) : null,
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (c) => <MasterDelete kind="customer" id={c.id} label={c.name} noun="customer" /> },
   ]
 
   return (

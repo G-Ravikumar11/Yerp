@@ -172,3 +172,87 @@ def test_a_supplier_and_an_item_can_be_deleted_by_the_master(tenant):
         supplier = _add(db, "suppliers", client_id=cid, name="ACC Ltd")
     assert tenant.delete("/api/master/supplier/%d" % supplier).status_code == 200
     assert _count("suppliers", id=supplier) == 0
+
+
+# --- records that had no delete anywhere in the app -----------------------------------------------------------------
+
+def _records_without_a_delete(client_id):
+    with _db() as db:
+        job = _add(db, "jobs", client_id=client_id, name="Plant site", number="JOB-PL")
+        customer = _add(db, "contacts", client_id=client_id, name="Gone Builders")
+        db.query(models.DBJob).filter(models.DBJob.id == job).update({"contact_id": customer})
+        db.commit()
+        emp = _add(db, "employees", client_id=client_id, first_name="Ravi", last_name="Kumar", email="ravi.del@example.com")
+        asset = _add(db, "assets", client_id=client_id, name="Roller", code="EQ-RL")
+        provider = _add(db, "plant_rental_providers", client_id=client_id, name="Hire Co")
+        rfq = _add(db, "rfqs", client_id=client_id, number="RFQ-DL")
+        rfq_line = _add(db, "rfq_lines", rfq_id=rfq, description="TMT bars")
+        quote = _add(db, "rfq_quotes", rfq_id=rfq, supplier_name="Cheap Steel")
+        _add(db, "rfq_quote_lines", quote_id=quote, rfq_line_id=rfq_line)
+        return {
+            "job": job, "customer": customer, "quote": quote, "provider": provider,
+            "leave": _add(db, "leave_requests", client_id=client_id, employee_id=emp, start_date="2026-10-20", end_date="2026-10-21"),
+            "rental": _add(db, "plant_rentals", client_id=client_id, number="RNT-DL", asset_id=asset, provider_id=provider),
+            "allocation": _add(db, "plant_allocations", client_id=client_id, asset_id=asset, employee_id=emp, job_id=job, start_date="2026-10-01"),
+            "service": _add(db, "asset_services", client_id=client_id, asset_id=asset, number="SRV-DL"),
+            "machine_log": _add(db, "asset_logs", client_id=client_id, asset_id=asset, log_date="2026-10-02"),
+            "credit_note": _add(db, "credit_notes", client_id=client_id, number="CN-DL"),
+        }
+
+
+def test_records_that_had_no_delete_can_now_be_deleted_by_the_master(tenant):
+    ids = _records_without_a_delete(_client_id())
+    for kind, table in [("leave", "leave_requests"), ("rental", "plant_rentals"), ("allocation", "plant_allocations"),
+                        ("service", "asset_services"), ("machine_log", "asset_logs"), ("credit_note", "credit_notes")]:
+        pre = tenant.get("/api/master/%s/%d/delete-preview" % (kind, ids[kind]))
+        assert pre.status_code == 200 and pre.json()["can_delete"], (kind, pre.text)
+        assert tenant.delete("/api/master/%s/%d" % (kind, ids[kind])).status_code == 200, kind
+        assert _count(table, id=ids[kind]) == 0, kind
+    # a supplier's quote goes with the rates it quoted
+    assert tenant.delete("/api/master/rfq_quote/%d" % ids["quote"]).status_code == 200
+    assert _count("rfq_quotes", id=ids["quote"]) == 0 and _count("rfq_quote_lines", quote_id=ids["quote"]) == 0
+    # a rental provider with no rentals left goes too
+    assert tenant.delete("/api/master/rental_provider/%d" % ids["provider"]).status_code == 200
+
+
+def test_a_customer_still_named_on_a_project_is_unlinked_and_the_preview_says_so(tenant):
+    ids = _records_without_a_delete(_client_id())
+    pre = tenant.get("/api/master/customer/%d/delete-preview" % ids["customer"]).json()
+    assert pre["kept"] == {"projects": 1}, pre
+    assert tenant.delete("/api/master/customer/%d" % ids["customer"]).status_code == 200
+    assert _count("contacts", id=ids["customer"]) == 0
+    with _db() as db:
+        job = db.query(models.DBJob).get(ids["job"])
+        assert job is not None and job.contact_id is None, "the project stays, no longer naming the customer"
+
+
+def test_a_supplier_quote_belongs_to_the_company_of_its_enquiry(tenant, second_tenant):
+    email = tenant.get("/api/client/me").json()["email"]
+    with _db() as db:
+        mine = db.query(models.DBClient).filter(models.DBClient.email == email).first().id
+    ids = _records_without_a_delete(mine)
+    assert second_tenant.delete("/api/master/rfq_quote/%d" % ids["quote"]).status_code == 404
+    assert second_tenant.get("/api/master/rfq_quote/%d/delete-preview" % ids["quote"]).status_code == 404
+    assert _count("rfq_quotes", id=ids["quote"]) == 1
+
+
+def test_a_delete_does_not_read_the_database_schema_again(tenant):
+    """Each read of the schema is a slow catalogue query on Postgres. It is read once and kept."""
+    from sqlalchemy import event
+    ids = _project_with_records(_client_id())
+    tenant.get("/api/master/grn/%d/delete-preview" % ids["grn"])         # the schema is read here, if not already
+    seen = []
+
+    def count(conn, cursor, statement, *a):
+        s = statement.upper()
+        if "SQLITE_MASTER" in s or s.lstrip().startswith("PRAGMA") or "PG_CATALOG" in s or "INFORMATION_SCHEMA" in s:
+            seen.append(statement)
+
+    event.listen(main.engine, "before_cursor_execute", count)
+    try:
+        assert tenant.delete("/api/master/purchase_order/%d" % ids["po"]).status_code == 200
+        assert tenant.delete("/api/master/supplier_bill/%d" % ids["bill"]).status_code == 200    # and the payment on it
+        assert tenant.delete("/api/jobs/%d" % ids["job"]).status_code == 200
+    finally:
+        event.remove(main.engine, "before_cursor_execute", count)
+    assert seen == [], "schema read %d times during a delete: %s" % (len(seen), seen[:3])

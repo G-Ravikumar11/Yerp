@@ -8,6 +8,7 @@ import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { formatDate, today } from '@/lib/format'
 import { FormFoot, LoadError, MachineSelect, PersonSelect, RangeBar, StatusBadge, usePaged } from './plantParts'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 // ---- allocation ------------------------------------------------------------------------------------
 
@@ -34,6 +35,7 @@ export function Allocations() {
     { id: 'sup', header: 'Supervisor', hideBelow: 'lg', cell: (a) => a.supervisor?.name ?? '-' },
     { id: 'st', header: 'Status', cell: (a) => <Badge tone={a.status === 'Active' ? 'success' : 'neutral'} dot>{a.status}</Badge> },
     { id: 'act', header: '', align: 'right', cell: (a) => manage && a.status === 'Active' ? <div className="flex justify-end gap-1.5"><Button size="sm" variant="outline" onClick={() => setMoving(a)}>Reassign</Button><Button size="sm" variant="ghost" className="text-danger" onClick={() => setEnding(a)}>End</Button></div> : null },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (a) => <MasterDelete kind="allocation" id={a.id} label={`${a.code} ${a.machine}`} noun="allocation" /> },
   ]
   return (
     <div>
@@ -136,6 +138,7 @@ export function Logbook() {
         </div>
       ),
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (l) => <MasterDelete kind="machine_log" id={l.id} label={`${l.code} on ${formatDate(l.log_date)}`} noun="machine log" /> },
   ]
   return (
     <div>
