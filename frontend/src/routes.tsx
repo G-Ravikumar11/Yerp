@@ -44,6 +44,7 @@ export const SCREENS: Screen[] = [
   { path: '/people/employees/:id', Component: lazy(() => import('@/features/people/EmployeePage')) },
   { path: '/projects/safety', Component: lazy(() => import('@/features/safety/SafetyPage')) },
   { path: '/projects/quality', Component: lazy(() => import('@/features/quality/QualityPage')) },
+  { path: '/projects/programme/:job/activity/:id', Component: lazy(() => import('@/features/schedule/ActivityPage')) },
   { path: '/projects/programme', Component: lazy(() => import('@/features/schedule/SchedulePage')) },
   { path: '/projects/chat', Component: lazy(() => import('@/features/chat/ChatPage')) },
   { path: '/projects/equipment', Component: lazy(() => import('@/features/equipment/EquipmentPage')) },

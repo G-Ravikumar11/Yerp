@@ -181,6 +181,8 @@ class DBScheduleTask(Base):
     task_date = Column(String, default="", index=True)
     text = Column(String, default="")
     done = Column(Boolean, default=False)
+    # How much of it is done when it is only part done (0-100). A task that is done is 100 whatever this says.
+    percent = Column(Float, default=0.0)
     done_by_name = Column(String, default="")
     done_at = Column(String, default="")
     created_by_name = Column(String, default="")

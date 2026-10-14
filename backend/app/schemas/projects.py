@@ -77,6 +77,8 @@ class TaskIn(BaseModel):
     date: Optional[str] = None
     activity_id: Optional[int] = None
     done: Optional[bool] = None
+    # Part done: how much of the task, 0-100. 100 is the same as done.
+    percent: Optional[float] = None
 
 
 class FromWorkOrderIn(BaseModel):

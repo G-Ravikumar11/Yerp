@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Plus, Printer, Sparkles } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { ProjectPicker } from '@/components/data/ProjectPicker'
@@ -15,9 +16,19 @@ import { AiDayTasks, AiDraftModal, AiPlanPanel } from './AiPlanning'
 /** The day's plan, the whole programme, and how far along the work is - and what slips if the thing before it slips. */
 export default function SchedulePage() {
   const { can } = useSession()
-  const [job, setJob] = useState(0)
+  // The site and the day live in the address, so coming back from an activity's page lands on the same ones.
+  const [params, setParams] = useSearchParams()
+  const job = Number(params.get('job')) || 0
+  const on = params.get('on') || today()
+  const remember = (next: { job?: number; on?: string }) => setParams((p) => {
+    const q = new URLSearchParams(p)
+    if (next.job !== undefined) next.job ? q.set('job', String(next.job)) : q.delete('job')
+    if (next.on !== undefined) next.on === today() ? q.delete('on') : q.set('on', next.on)
+    return q
+  }, { replace: true })
+  const setJob = (id: number) => remember({ job: id })
+  const setOn = (day: string) => remember({ on: day })
   const [tab, setTab] = useState<'day' | 'programme'>('day')
-  const [on, setOn] = useState(today())
   const q = useSchedule(job)
   const d = q.data
   const s = d?.summary

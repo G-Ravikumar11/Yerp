@@ -11,7 +11,7 @@ import { useSession } from '@/lib/session'
 import { toast } from '@/stores/toast'
 import { today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
-import { PlannedWork } from './PlannedWork'
+import { PlannedWork, type TaskState } from './PlannedWork'
 
 const blankLabour = (): LabourLine => ({ trade: TRADES[0], agency: 'Own', headcount: 0, hours: 0, rate: 0 })
 const blankPlant = (): PlantLine => ({ plant: '', worked_hours: 0, idle_hours: 0, rate: 0 })
@@ -42,15 +42,15 @@ function Form({ job, day, onClose }: { job: number; day: DiaryDetail | null; onC
   const [plant, setPlant] = useState<PlantLine[]>([...(day?.plant ?? []), blankPlant()])
   const [photos, setPhotos] = useState<File[]>([])
   // What the day reports about the planned work, kept as differences from what the plan says now.
-  const [taskDone, setTaskDone] = useState<Record<number, boolean>>({})
+  const [taskState, setTaskState] = useState<Record<number, TaskState>>({})
   const [percent, setPercent] = useState<Record<number, number>>({})
   const [planned, setPlanned] = useState<{ tasks: Record<number, DayTask>; rows: Record<number, DayRow> }>({ tasks: {}, rows: {} })
-  useEffect(() => { setTaskDone({}); setPercent({}); setPlanned({ tasks: {}, rows: {} }) }, [date])
-  const tickTask = (t: DayTask, done: boolean) => {
-    setTaskDone((m) => ({ ...m, [t.id]: done }))
+  useEffect(() => { setTaskState({}); setPercent({}); setPlanned({ tasks: {}, rows: {} }) }, [date])
+  const tickTask = (t: DayTask, state: TaskState) => {
+    setTaskState((m) => ({ ...m, [t.id]: state }))
     setPlanned((p) => ({ ...p, tasks: { ...p.tasks, [t.id]: t } }))
-    // A task ticked is work that was done: it goes into the day's account of it, once.
-    if (done && !work.includes(t.text)) setWork((w) => (w.trim() ? `${w.trim()}\n` : '') + t.text)
+    // A task done is work that was done: it goes into the day's account of it, once.
+    if (state.done && !work.includes(t.text)) setWork((w) => (w.trim() ? `${w.trim()}\n` : '') + t.text)
   }
   const setProgressOf = (r: DayRow, pct: number) => {
     setPercent((m) => ({ ...m, [r.id]: pct }))
@@ -70,7 +70,9 @@ function Form({ job, day, onClose }: { job: number; day: DiaryDetail | null; onC
     labour: labour.filter((l) => l.headcount > 0).map((l) => ({ ...l, hours: l.hours || hours })),
     plant: plant.filter((p) => p.plant.trim()),
     work_updates: [
-      ...Object.entries(taskDone).filter(([id, done]) => planned.tasks[Number(id)] && planned.tasks[Number(id)].done !== done).map(([id, done]): WorkUpdate => ({ task_id: Number(id), done })),
+      ...Object.entries(taskState)
+        .filter(([id, s]) => planned.tasks[Number(id)] && (planned.tasks[Number(id)].done !== s.done || (!s.done && Math.round(planned.tasks[Number(id)].percent) !== Math.round(s.percent))))
+        .map(([id, s]): WorkUpdate => (s.done ? { task_id: Number(id), done: true } : s.percent > 0 ? { task_id: Number(id), percent: s.percent } : { task_id: Number(id), done: false })),
       ...Object.entries(percent).filter(([id, pct]) => planned.rows[Number(id)] && Math.round(planned.rows[Number(id)].actual_percent) !== Math.round(pct)).map(([id, pct]): WorkUpdate => ({ activity_id: Number(id), percent: pct })),
     ],
   })
@@ -108,7 +110,7 @@ function Form({ job, day, onClose }: { job: number; day: DiaryDetail | null; onC
           <Field label="Visitors" htmlFor="dy-vis"><Textarea id="dy-vis" rows={2} value={visitors} onChange={(e) => setVisitors(e.target.value)} /></Field>
           <Field label="Safety note" htmlFor="dy-safe"><Textarea id="dy-safe" rows={2} value={safety} onChange={(e) => setSafety(e.target.value)} /></Field>
         </div>
-        <PlannedWork job={job} date={date} taskDone={taskDone} onTask={tickTask} percent={percent} onPercent={setProgressOf} disabled={locked} />
+        <PlannedWork job={job} date={date} taskState={taskState} onTask={tickTask} percent={percent} onPercent={setProgressOf} disabled={locked} />
         <h3 className="mb-2 mt-5 text-sm font-semibold">Labour on site</h3>
         <div className="grid gap-2">
           {labour.map((l, i) => (

@@ -62,6 +62,7 @@ from app.services.projects import (
     project_money_moved,
     preload_pnl,
     project_pnl,
+    activity_detail,
     apply_work_updates,
     check_task,
     planning_note,
@@ -882,6 +883,17 @@ def job_schedule_day(job_id: int, request: Request, on: str = "", db: Session = 
     return schedule_day(db, client.id, job_or_404(db, client.id, job_id), day)
 
 
+@router.get("/api/schedule/activities/{activity_id}")
+def get_activity(activity_id: int, request: Request, db: Session = Depends(get_db)):
+    """One activity in full: its tasks on every day and the history of its progress."""
+    client = require_erp_read(request, db)
+    a = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.id == activity_id,
+                                                   models.DBScheduleActivity.client_id == client.id).first()
+    if not a:
+        raise HTTPException(404, "Activity not found")
+    return activity_detail(db, client.id, a)
+
+
 @router.post("/api/jobs/{job_id}/schedule/tasks")
 def add_task(job_id: int, body: TaskIn, request: Request, db: Session = Depends(get_db)):
     """Something to be done on a day, optionally under one of the project's activities."""
@@ -910,10 +922,20 @@ def edit_task(task_id: int, body: TaskIn, request: Request, db: Session = Depend
                                          body.activity_id if body.activity_id is not None else t.activity_id)
         if body.activity_id is not None:
             t.activity_id = body.activity_id or None
+    if body.percent is not None:
+        if body.percent < 0 or body.percent > 100:
+            raise HTTPException(400, "How much is done is a percentage between 0 and 100.")
+        # Part done: the share is kept and the task stays open; all of it is the same as done.
+        body.done = body.percent >= 100
+        t.percent = 0.0 if body.done else float(body.percent)
     if body.done is not None and bool(body.done) != bool(t.done):
         t.done = bool(body.done)
         t.done_by_name = actor_name if t.done else ""
         t.done_at = datetime.now().strftime("%Y-%m-%d %H:%M") if t.done else ""
+    elif body.percent is not None and not t.done:
+        t.done_by_name = actor_name       # who last reported it part done
+    if body.done is False and body.percent is None:
+        t.percent, t.done_by_name = 0.0, ""      # put back to not started, part done or not
     db.flush()
     for under in {was_under, t.activity_id}:
         sync_progress_from_tasks(db, client.id, under, actor_name)
