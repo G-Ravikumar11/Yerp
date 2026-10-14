@@ -77,7 +77,7 @@ export default function TodayPage() {
       <LargeTitle title="Today" sub={new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })} />
 
       {loadingSites ? <Skeleton className="h-9 w-2/3 rounded-full" /> : list.length > 0 && (
-        <div role="tablist" aria-label="Site" className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none]">
+        <div role="tablist" aria-label="Site" className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {list.map((p) => (
             <button key={p.id} role="tab" aria-selected={p.id === site?.id} type="button" onClick={() => set(p.id)}
               className={cn('h-9 shrink-0 rounded-full px-4 text-sm font-medium', p.id === site?.id ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground')}>

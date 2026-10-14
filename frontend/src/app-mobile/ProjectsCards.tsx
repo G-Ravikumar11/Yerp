@@ -37,7 +37,7 @@ export default function ProjectsCards() {
         <Search className="size-[18px]" aria-hidden />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${all.length || ''} projects`.replace('  ', ' ')} aria-label="Search projects" className="h-full min-w-0 flex-1 bg-transparent text-[15px] text-foreground outline-none placeholder:text-muted-foreground" />
       </label>
-      <div role="tablist" aria-label="Status" className="-mx-4 mt-3 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none]">
+      <div role="tablist" aria-label="Status" className="-mx-4 mt-3 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {FILTERS.map((f) => (
           <button key={f.value} role="tab" aria-selected={filter === f.value} type="button" onClick={() => setFilter(f.value)} className={cn('h-9 shrink-0 rounded-full px-4 text-sm font-medium', filter === f.value ? 'bg-primary text-primary-foreground' : 'bg-card')}>
             {f.label} <span className="opacity-70">{count(f.value)}</span>
