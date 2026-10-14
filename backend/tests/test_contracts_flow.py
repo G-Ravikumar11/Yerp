@@ -313,7 +313,7 @@ def test_building_a_work_order_does_not_carry_the_right_to_approve_it(tenant, po
     crew = staff_session(tenant, portal, "manager")
     res = crew.post("/api/erp/inquiry/%d/md-approval" % wo["id"], json={"approve": True})
     assert res.status_code == 403
-    assert "MD sign-off" in res.json()["detail"]
+    assert "Final work order approval (MD)" in res.json()["detail"]
 
 
 def test_the_right_can_be_granted_to_one_person(tenant, portal):
