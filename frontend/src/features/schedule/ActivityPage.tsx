@@ -48,6 +48,7 @@ export default function ActivityPage() {
               <li key={i} className="flex flex-wrap items-baseline gap-x-3 rounded-md border border-border bg-card px-3 py-1.5 text-sm">
                 <span className="tabular text-muted-foreground">{h.on}</span>
                 <span className="font-semibold tabular">{h.percent}%</span>
+                {h.qty_done != null && <span className="tabular text-muted-foreground">{Math.round(h.qty_done * 1000) / 1000} {h.uom} done so far</span>}
                 <span className="text-xs text-muted-foreground">{[h.note, h.by && `by ${h.by}`].filter(Boolean).join(' - ')}</span>
               </li>
             ))}
