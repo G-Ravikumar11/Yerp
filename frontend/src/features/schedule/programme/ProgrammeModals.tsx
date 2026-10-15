@@ -171,3 +171,24 @@ export function RowDetailModal({ row, editable, onClose, onSave }: { row: Progra
     </Modal>
   )
 }
+
+/** Save a baseline: the dates as they stand, kept to measure against. */
+export function BaselineModal({ hasOne, onClose, onSave }: { hasOne: boolean; onClose: () => void; onSave: (label: string) => Promise<unknown> }) {
+  const [label, setLabel] = useState(hasOne ? '' : 'Baseline 1')
+  const [busy, setBusy] = useState(false)
+  const save = async () => {
+    setBusy(true)
+    try {
+      if (await onSave(label.trim())) onClose()
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Modal open onOpenChange={(o) => !o && onClose()} title="Save baseline"
+      description={`Every row's Start, End and Days as they are now are kept. Planned % is then measured against them, and each row shows how far it has slipped.${hasOne ? ' The baseline saved before stays on record; this one is used from now on.' : ''}`}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button loading={busy} onClick={save}>Save baseline</Button></>}>
+      <Field label="Call it" htmlFor="bl-label"><Input id="bl-label" placeholder="As agreed with the client, 2 Nov" value={label} onChange={(e) => setLabel(e.target.value)} /></Field>
+    </Modal>
+  )
+}

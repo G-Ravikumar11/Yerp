@@ -301,7 +301,8 @@ def schedule(rows, links, cal=None):
                 need.append(cal.shift(cal.shift(q.end, ln.lag), -max(0, d - 1)))
             else:                                                       # SF
                 need.append(cal.shift(cal.shift(q.start, ln.lag), -max(0, d - 1)))
-        base = max(need) if need else r.start
+        # A Start typed on a linked row holds it back (not earlier than); the links can only push it later.
+        base = max(need + ([r.start] if r.start else [])) if need else r.start
         if r.not_before:
             base = max(base, r.not_before) if base else r.not_before
         if base is None:
@@ -411,6 +412,29 @@ def planned_percent(prog, cal, as_of, baseline=None):
     top = [prog.rows[i] for i in prog.order if prog.rows[i].level == 0]
     pct["project"] = _weighted(top, [pct[i] for i in prog.order if prog.rows[i].level == 0]) if top else 0.0
     return pct
+
+
+def leaf_weights(prog):
+    """Each leaf's share of the whole project, adding up to 1: the roll-up's weights multiplied down the tree. The
+    project's % is then the leaves' % times these, the same figure as rolling it up a level at a time - and it holds
+    for any day, planned or actual, because the weights do not depend on the progress."""
+    out = {}
+
+    def share(ids, part):
+        kids = [prog.rows[i] for i in ids]
+        if not kids:
+            return
+        w = _weights(kids)
+        total = sum(w)
+        for i, k, wi in zip(ids, kids, w):
+            s = part * wi / total if total else 0.0
+            if k.summary:
+                share(k.children, s)
+            else:
+                out[i] = s
+
+    share([i for i in prog.order if prog.rows[i].level == 0], 1.0)
+    return out
 
 
 def project_percent(prog):

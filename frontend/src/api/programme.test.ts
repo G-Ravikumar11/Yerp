@@ -52,6 +52,15 @@ describe('recompute: the grid answers before the server does', () => {
     expect(v.rows.find((r) => r.id === 3)?.start).toBeNull()
   })
 
+  it('a first predecessor takes over from a typed Start and keeps the length; a Start typed later holds it back', () => {
+    const base = view()
+    const loose = recompute({ ...base, links: [] }, { id: 3, start: '2026-11-09', end: '2026-11-11' })
+    let v = recompute(loose, { id: 3, predecessors: '1.1' })
+    expect(v.rows.find((r) => r.id === 3)).toMatchObject({ start: '2026-11-07', end: '2026-11-10', days: 3, typed: { start: '', end: '', days: 3 } })
+    v = recompute(v, { id: 3, start: '2026-11-12' })
+    expect(v.rows.find((r) => r.id === 3)).toMatchObject({ start: '2026-11-12', end: '2026-11-14' })
+  })
+
   it('the snapshot for undo carries what was typed, not what was worked out', () => {
     const snap = snapshotOf(view())
     expect(snap.rows.find((r) => r.id === 3)).toMatchObject({ typed_start: '', typed_days: 3 })

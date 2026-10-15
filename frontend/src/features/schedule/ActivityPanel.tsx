@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { Button, Input } from '@/components/ui'
-import { addTask, deleteTask, editTask, schKeys, type DayRow } from '@/api/schedule'
+import { addTask, deleteTask, editTask, schKeys, type DayRow, type Placing } from '@/api/schedule'
 import { useAction } from '@/lib/mutate'
 import { cn } from '@/lib/utils'
 import { ProgressBar } from './ProgressBar'
@@ -11,7 +11,7 @@ import { ProgressControl } from './ProgressControl'
  * One activity opened up: the tasks under it. Pressing Done on a task raises the activity's bar by that task's share
  * of it - the work is done a task at a time, and the bar is how many of them are.
  */
-export type PanelRow = Pick<DayRow, 'id' | 'code' | 'name' | 'planned_start' | 'planned_finish' | 'planned_percent' | 'actual_percent' | 'tasks' | 'tasks_done' | 'tasks_total' | 'editable' | 'updated_on' | 'updated_by'>
+export type PanelRow = Pick<DayRow, 'id' | 'code' | 'name' | 'planned_start' | 'planned_finish' | 'planned_percent' | 'actual_percent' | 'tasks' | 'tasks_done' | 'tasks_total' | 'editable' | 'updated_on' | 'updated_by'> & Placing
 
 export function ActivityPanel({ job, row, on, can, tone }: { job: number; row: PanelRow; on: string; can: boolean; tone: string }) {
   const [text, setText] = useState('')
@@ -28,7 +28,8 @@ export function ActivityPanel({ job, row, on, can, tone }: { job: number; row: P
     <div className="rounded-lg border border-primary/40 bg-card p-3 shadow-card" aria-label={`Tasks of ${row.name}`}>
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <div>
-          <span className="mr-2 font-mono text-xs text-muted-foreground">{row.code}</span>
+          {row.path && <span className="block text-[11px] text-muted-foreground">{row.path}</span>}
+          <span className="mr-2 font-mono text-xs text-muted-foreground">{row.wbs || row.code}</span>
           <span className="font-semibold">{row.name}</span>
           <span className="ml-2 text-[11px] text-muted-foreground">{row.planned_start} to {row.planned_finish}</span>
         </div>
@@ -93,7 +94,7 @@ export function ActivityPanel({ job, row, on, can, tone }: { job: number; row: P
           <Button type="submit" size="sm" disabled={!text.trim()} loading={add.isPending}><Plus /> Add task</Button>
         </form>
       )}
-      {can && row.editable && row.tasks_total === 0 && <ProgressControl id={row.id} percent={row.actual_percent} updatedOn={row.updated_on} updatedBy={row.updated_by} />}
+      {can && row.editable && row.tasks_total === 0 && <ProgressControl id={row.id} percent={row.actual_percent} updatedOn={row.updated_on} updatedBy={row.updated_by} quantity={row.quantity} uom={row.uom} qtyDone={row.qty_done} />}
       {!row.editable && <p className="mt-2 text-[11px] text-muted-foreground">Its progress comes from the measurement book, so ticking tasks does not move the bar.</p>}
     </div>
   )

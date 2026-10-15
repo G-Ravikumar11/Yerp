@@ -193,6 +193,16 @@
       "planned": [{"as_of": "2026-11-04", "expect": {"1": 60, "project": 60}},
                   {"as_of": "2026-11-01", "expect": {"1": 0}},
                   {"as_of": "2026-11-06", "expect": {"1": 100}}]
+    },
+    {
+      "name": "a Start typed on a linked row holds it back; the link can only push it later",
+      "rows": [{"id": 1, "name": "Tiling", "start": "2026-11-02", "days": 2},
+               {"id": 2, "name": "Grouting, not before Mon 9", "start": "2026-11-09", "days": 1, "order": 2},
+               {"id": 3, "name": "Skirting, typed Tue 3", "start": "2026-11-03", "days": 1, "order": 3}],
+      "links": [{"successor": 2, "predecessor": 1, "kind": "FS", "lag": 0},
+                {"successor": 3, "predecessor": 1, "kind": "FS", "lag": 0}],
+      "expect": {"2": {"start": "2026-11-09", "end": "2026-11-09", "days": 1},
+                 "3": {"start": "2026-11-04", "end": "2026-11-04", "days": 1}}
     }
   ],
   "parse": [

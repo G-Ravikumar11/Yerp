@@ -80,8 +80,9 @@ export type RowChange = { id: number } & Partial<Record<EditableField, unknown>>
 /** Under 'schedule', so anything that refreshes the schedule (an activity saved, a sheet imported) refreshes this too. */
 export const programmeKeys = { one: (job: number) => ['schedule', 'programme', job] as const }
 
+// Read afresh whenever it is opened, as the schedule is: someone else may have moved it since.
 export const useProgramme = (job: number) =>
-  useQuery({ queryKey: programmeKeys.one(job), enabled: job > 0, queryFn: () => get<ProgrammeView>(`/api/jobs/${job}/programme`) })
+  useQuery({ queryKey: programmeKeys.one(job), enabled: job > 0, staleTime: 0, refetchOnMount: 'always', queryFn: () => get<ProgrammeView>(`/api/jobs/${job}/programme`) })
 
 const base = (job: number) => `/api/jobs/${job}/programme`
 
@@ -98,6 +99,8 @@ export const setCalendar = (job: number, calendar_days: boolean, weekly_off: num
   put<ProgrammeView>(`${base(job)}/calendar`, { calendar_days, weekly_off })
 export const addHoliday = (job: number, date: string, name: string) => post<ProgrammeView>(`${base(job)}/holidays`, { date, name })
 export const addPublicHolidays = (job: number, year: number) => post<ProgrammeView>(`${base(job)}/holidays/public`, { year })
+/** The programme as it stands, kept to measure against: planned % follows it, and each row's slip is from it. */
+export const saveBaseline = (job: number, label: string) => post<ProgrammeView>(`${base(job)}/baseline`, { label })
 export const removeHoliday = (job: number, id: number) => api<ProgrammeView>(`${base(job)}/holidays/${id}`, { method: 'DELETE' })
 
 export interface Snapshot {
@@ -142,6 +145,11 @@ export function recompute(v: ProgrammeView, change?: RowChange): ProgrammeView {
       else if (k === 'predecessors') {
         const wbs = Object.fromEntries(v.rows.map((x) => [x.wbs, x.id]))
         const { links: found } = parsePredecessors(String(val ?? ''), wbs)
+        // its first predecessor: it follows it from now on and keeps its length (as the server does)
+        if (found.length && !v.links.some((l) => l.successor === r.id) && !('start' in change) && !('end' in change) && next.typed.start) {
+          if (next.typed.days === null && next.typed.end) next.typed.days = cal.span(cal.snap(toDay(next.typed.start)), toDay(next.typed.end))
+          next.typed = { ...next.typed, start: '', end: '' }
+        }
         links = [...links.filter((l) => l.successor !== r.id), ...found.map(([p, kind, lag]) => ({ successor: r.id, predecessor: p, kind, lag }))]
         next.predecessors = String(val ?? '')
       } else (next as Record<string, unknown>)[k] = val

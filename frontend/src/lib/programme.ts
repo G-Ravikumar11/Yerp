@@ -307,7 +307,9 @@ export function schedule(rows: ProgrammeRow[], links: ProgrammeLink[], cal: Cale
       else if (ln.kind === 'FF') need.push(cal.shift(cal.shift(q.end!, ln.lag), -Math.max(0, d - 1)))
       else need.push(cal.shift(cal.shift(q.start, ln.lag), -Math.max(0, d - 1)))
     }
-    let base: number | null = need.length ? Math.max(...need) : r.start ? toDay(r.start) : null
+    // A Start typed on a linked row holds it back (not earlier than); the links can only push it later.
+    const own = r.start ? toDay(r.start) : null
+    let base: number | null = need.length ? Math.max(...need, ...(own === null ? [] : [own])) : own
     if (r.not_before) base = base !== null ? Math.max(base, toDay(r.not_before)) : toDay(r.not_before)
     if (base === null) continue
     p.start = cal.snap(base)

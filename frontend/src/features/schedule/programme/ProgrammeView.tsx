@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { CalendarDays, ChevronsDownUp, ChevronsUpDown, Copy, CopyPlus, Columns3, IndentDecrease, IndentIncrease, ListPlus, ListTree, Plus, Redo2, Trash2, Undo2, Zap } from 'lucide-react'
+import { Bookmark, CalendarDays, ChevronsDownUp, ChevronsUpDown, Copy, CopyPlus, Columns3, IndentDecrease, IndentIncrease, ListPlus, ListTree, Plus, Redo2, Trash2, Undo2, Zap } from 'lucide-react'
 import { Button, ConfirmDialog, Skeleton, Tabs, Tooltip } from '@/components/ui'
 import {
-  addHoliday, addPublicHolidays, addRows, copyUnits, deleteRow, duplicateRow, editRows, moveRow, programmeKeys, recompute, removeHoliday,
+  addHoliday, addPublicHolidays, addRows, saveBaseline, copyUnits, deleteRow, duplicateRow, editRows, moveRow, programmeKeys, recompute, removeHoliday,
   restoreProgramme, setCalendar, snapshotOf, useProgramme, type EditableField, type ProgrammeRowView, type ProgrammeView as View, type RowChange, type Snapshot,
 } from '@/api/programme'
 import { ApiError } from '@/lib/api'
@@ -13,7 +13,7 @@ import { toast } from '@/stores/toast'
 import { COLUMNS, editableCell } from './columns'
 import { ProgrammeGrid } from './ProgrammeGrid'
 import { BoqPickerModal } from './BoqPickerModal'
-import { CalendarModal, CopyUnitsModal, RowDetailModal } from './ProgrammeModals'
+import { BaselineModal, CalendarModal, CopyUnitsModal, RowDetailModal } from './ProgrammeModals'
 import type { Zoom } from './gantt'
 
 const FIELD_OF: Record<string, EditableField> = { boq_ref: 'boq_ref', name: 'name', start: 'start', end: 'end', days: 'days', uom: 'uom', quantity: 'quantity', labour_required: 'labour_required', predecessors: 'predecessors' }
@@ -63,6 +63,7 @@ export function ProgrammeView({ job }: { job: number }) {
   const [copying, setCopying] = useState<ProgrammeRowView | null>(null)
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [picking, setPicking] = useState(false)
+  const [baselining, setBaselining] = useState(false)
   const [detail, setDetail] = useState<number | null>(null)
 
   useEffect(() => {
@@ -75,6 +76,9 @@ export function ProgrammeView({ job }: { job: number }) {
   const visible = useMemo(() => (v ? shownRows(v.rows, collapsed) : []), [v, collapsed])
   const current = visible[Math.min(active.r, Math.max(0, visible.length - 1))]
   const byId = useMemo(() => new Map((v?.rows ?? []).map((r) => [r.id, r])), [v])
+  // the baseline's finish against today's, in calendar days as the header counts them
+  const baseFinish = useMemo(() => (v?.baseline ? v.rows.filter((r) => r.level === 0 && r.baseline?.end).map((r) => r.baseline!.end!).sort().pop() ?? null : null), [v])
+  const slip = baseFinish && v?.finish ? Math.round((Date.parse(v.finish) - Date.parse(baseFinish)) / 86_400_000) : 0
 
   const put = (next: View) => qc.setQueryData(programmeKeys.one(job), next)
   /** The cards, the curve and the day plan read the same rows, so they are fetched again after a change. */
@@ -219,6 +223,11 @@ export function ProgrammeView({ job }: { job: number }) {
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground" title="Calendar days from the first Start to the last End, both counted, as on the sheet">Time duration in days</p>
           <p className="text-2xl font-semibold tabular-nums">{v.duration || '-'}</p>
           <p className="text-xs text-muted-foreground">{v.start ? `${formatDate(v.start)} to ${formatDate(v.finish!)}` : 'No dates yet'}{v.calendar.calendar_days ? ' · calendar days' : ''}</p>
+          {baseFinish && (
+            <p className={`text-xs ${slip > 0 ? 'text-danger' : 'text-muted-foreground'}`} title={`Baseline "${v.baseline!.label}" saved ${formatDate(v.baseline!.saved_at.slice(0, 10))}`}>
+              Baseline finish {formatDate(baseFinish)}{slip > 0 ? `, now ${slip} day${slip === 1 ? '' : 's'} later` : slip < 0 ? `, now ${-slip} day${slip === -1 ? '' : 's'} earlier` : ', on it'}
+            </p>
+          )}
         </div>
       </div>
 
@@ -236,6 +245,7 @@ export function ProgrammeView({ job }: { job: number }) {
           <Tooltip content="Redo (Ctrl+Y)"><Button size="icon-sm" variant="ghost" aria-label="Redo" onClick={doRedo} disabled={busy || !depth.redo}><Redo2 /></Button></Tooltip>
           <span className="mx-1 h-6 w-px bg-border" />
           <Tooltip content="The same activities for other units, from their own start dates"><Button size="sm" variant="outline" onClick={() => current && setCopying(current)} disabled={busy || !current}><CopyPlus /> Copy to other units</Button></Tooltip>
+          <Tooltip content="Keep the programme as it stands now: planned % is measured against it, and each row shows how far it has slipped from it"><Button size="sm" variant="outline" onClick={() => setBaselining(true)} disabled={busy || !v.rows.length}><Bookmark /> Save baseline</Button></Tooltip>
           <Tooltip content="Pick BOQ lines to put on the programme, after the selected row"><Button size="sm" variant="outline" onClick={() => setPicking(true)} disabled={busy}><ListTree /> Draw from BOQ</Button></Tooltip>
         </>}
         <Tooltip content="Show everything"><Button size="icon-sm" variant="ghost" aria-label="Expand all" onClick={() => setCollapsed(new Set())}><ChevronsUpDown /></Button></Tooltip>
@@ -295,6 +305,7 @@ export function ProgrammeView({ job }: { job: number }) {
         onRemoveHoliday={(h) => change(() => removeHoliday(job, h.id))}
         onPublic={(y) => change(() => addPublicHolidays(job, y))} />}
       {picking && <BoqPickerModal job={job} anchor={current?.id ?? null} onClose={() => setPicking(false)} />}
+      {baselining && <BaselineModal onClose={() => setBaselining(false)} hasOne={!!v.baseline} onSave={(label) => change(() => saveBaseline(job, label))} />}
       {detailRow && <RowDetailModal key={detailRow.id} row={detailRow} editable={editable} onClose={() => setDetail(null)} onSave={(ch) => change(() => editRows(job, [ch]), recompute(v, ch))} />}
     </section>
   )

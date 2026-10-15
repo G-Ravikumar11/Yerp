@@ -74,7 +74,9 @@ class ActivityIn(BaseModel):
 
 
 class ProgressIn(BaseModel):
-    percent: float
+    percent: float = 0
+    # For an activity with a quantity: how much is done so far (not today's share); the % follows from it.
+    qty_done: Optional[float] = None
     reported_on: Optional[str] = ""
     note: Optional[str] = ""
 

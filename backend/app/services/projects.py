@@ -1026,9 +1026,15 @@ def planned_percent(a, on):
 
 
 class ScheduleContext:
-    """Everything the progress of a job's activities is read from, loaded once."""
+    """Everything the progress of a job's activities is read from, loaded once.
+
+    Dates are the programme's: what the engine works out from each row's Start, Days, predecessors and the project's
+    calendar, not what was typed. Headings add up the rows under them, so the figures for the whole project come from
+    the leaves (`leaves`), each with its share of the whole (`weight`), the same as the programme's roll-up."""
 
     def __init__(self, db, client_id, job_id):
+        self.db, self.client_id, self.job_id = db, client_id, job_id
+        self._prog = None
         self.acts = db.query(models.DBScheduleActivity).filter(
             models.DBScheduleActivity.client_id == client_id,
             models.DBScheduleActivity.job_id == job_id).order_by(
@@ -1057,6 +1063,8 @@ class ScheduleContext:
         if a.work_order_line_id and self.ordered.get(a.work_order_line_id):
             done = sum(q for d, q in self.measures.get(a.work_order_line_id, []) if d <= iso)
             pct = min(100.0, max(0.0, done / self.ordered[a.work_order_line_id] * 100.0))
+        elif a.id not in self.reports and (a.quantity or 0) > 0 and (a.qty_done or 0) > 0:
+            pct = min(100.0, a.qty_done / a.quantity * 100.0)      # a quantity done typed on the programme, undated
         else:
             pct = 0.0
             for d, p in self.reports.get(a.id, []):
@@ -1065,6 +1073,92 @@ class ScheduleContext:
         if a.actual_finish and a.actual_finish <= iso:
             pct = 100.0
         return round(pct, 1)
+
+    # --- the programme, worked out once, the first time it is asked for ---------------------------------------------
+    def _work_out(self):
+        # imported here: the programme service imports this module
+        from types import SimpleNamespace
+        from app.services.programme import programme_baseline, programme_calendar, programme_links, programme_rows
+        from app.services.programme_engine import leaf_weights, schedule
+        job = SimpleNamespace(id=self.job_id)
+        self._cal, self._cal_shown = programme_calendar(self.db, self.client_id, job)
+        self._links = programme_links(self.db, self.client_id, self.job_id, self.acts)
+        today = date.today()
+        self._prog = schedule(programme_rows(self.acts, lambda a: self.actual(a, today)), self._links, self._cal)
+        self._baseline_head, self._base = programme_baseline(self.db, self.client_id, job)
+        self._weight = leaf_weights(self._prog)
+        names = {a.id: a.name or "" for a in self.acts}
+        parent = {a.id: a.parent_id for a in self.acts if a.parent_id in names}
+        self._path = {}
+        for a in self.acts:
+            up, p = [], parent.get(a.id)
+            while p is not None and len(up) < 20:
+                up.append(names[p])
+                p = parent.get(p)
+            self._path[a.id] = " > ".join(reversed(up))
+
+    @property
+    def prog(self):
+        if self._prog is None:
+            self._work_out()
+        return self._prog
+
+    @property
+    def cal(self):
+        return self.prog and self._cal
+
+    @property
+    def cal_shown(self):
+        return self.prog and self._cal_shown
+
+    @property
+    def links(self):
+        return self.prog and self._links
+
+    @property
+    def baseline_head(self):
+        return self.prog and self._baseline_head
+
+    @property
+    def base(self):
+        return self.prog and self._base
+
+    @property
+    def weight(self):
+        """Leaf id -> its share of the whole project (they add up to 1)."""
+        return self.prog and self._weight
+
+    @property
+    def leaves(self):
+        """The rows that are work: everything but the headings."""
+        return [a for a in self.acts if not self.prog.rows[a.id].summary]
+
+    def path(self, a):
+        """The headings above a row: "A-16 > Internal Painting"."""
+        return self.prog and self._path.get(a.id, "")
+
+    def dates(self, a):
+        """When the programme has a row starting and ending (dates, or None for a row not scheduled yet)."""
+        p = self.prog.rows[a.id]
+        return p.start, p.end
+
+    def planned(self, a, on):
+        """Where the plan has a row by the end of a day: across its baseline dates if one is saved, else its current
+        ones, a working day at a time; a milestone is all or nothing."""
+        p = self.prog.rows[a.id]
+        s, e, d = self.base.get(a.id, (p.start, p.end, p.days))
+        if s is None or on < s:
+            return 0.0
+        if on >= e:
+            return 100.0
+        if a.is_milestone:
+            return 0.0
+        return round(min(100.0, self.cal.span(s, on) / max(1, d or self.cal.span(s, e)) * 100.0), 1)
+
+    def overall(self, on, measure):
+        """The whole project on a day, by each leaf's share: measure is self.actual or self.planned."""
+        w = self.weight
+        return round(sum(w.get(a.id, 0.0) * measure(a, on) for a in self.leaves), 1) if w else 0.0
 
 
 def _effective_status(a, done, state, slip):
@@ -1104,22 +1198,28 @@ def schedule_view(db, client_id, job):
     ctx = ScheduleContext(db, client_id, job.id)
     today = date.today()
     by_id = {a.id: a for a in ctx.acts}
+    leaves = ctx.leaves
     rows, forecast_finish = [], {}
+    before = {}                                   # leaf -> the leaves it waits on (links that hold, not onto headings)
+    for ln in ctx.links:
+        if ln not in ctx.prog.broken_links and ln.predecessor in by_id and not ctx.prog.rows[ln.predecessor].summary:
+            before.setdefault(ln.successor, []).append(ln.predecessor)
 
-    def forecast(a):
+    def forecast(a, seen=()):
         """When it will finish: late predecessors push it; progress so far
         tells how fast it is going once it has started."""
         if a.id in forecast_finish:
             return forecast_finish[a.id]
-        s, f = _d(a.planned_start), _d(a.planned_finish)
+        s, f = ctx.dates(a)
         if not s or not f:
             forecast_finish[a.id] = None
             return None
         dur = (f - s).days
-        pred = by_id.get(a.depends_on_id)
         start = s
-        if pred and pred.id != a.id:
-            pf = forecast(pred)
+        for pid in before.get(a.id, []):
+            if pid == a.id or pid in seen:
+                continue
+            pf = forecast(by_id[pid], seen + (a.id,))
             if pf and pf >= start:
                 start = pf + timedelta(days=1)
         done = ctx.actual(a, today)
@@ -1135,7 +1235,6 @@ def schedule_view(db, client_id, job):
         forecast_finish[a.id] = fin
         return fin
 
-    total_weight = sum(a.weight or 0 for a in ctx.acts) or float(len(ctx.acts) or 1)
     staff = {e.id: employee_name(e) for e in db.query(models.DBEmployee).filter(
         models.DBEmployee.client_id == client_id, models.DBEmployee.status != "terminated").all()}
     team_ids = {r[0] for r in db.query(models.DBEmployeeSite.employee_id).filter(
@@ -1143,24 +1242,29 @@ def schedule_view(db, client_id, job):
     if job.manager_id:
         team_ids.add(job.manager_id)
     team_ids |= {a.assigned_to_id for a in ctx.acts if a.assigned_to_id}      # whoever already has work here stays listed
-    for a in ctx.acts:
-        w = (a.weight or 0) if any(x.weight for x in ctx.acts) else 1.0
-        plan = planned_percent(a, today)
+    for a in sorted(leaves, key=lambda x: ctx.dates(x)[0] or date.max):      # earliest first: their forecasts feed the later ones
+        forecast(a)
+    names = {a.id: a.code or a.name or "" for a in ctx.acts}
+    for a in leaves:
+        plan = ctx.planned(a, today)
         done = ctx.actual(a, today)
         fin = forecast(a)
-        pf = _d(a.planned_finish)
+        ps, pf = ctx.dates(a)
+        p = ctx.prog.rows[a.id]
         slip = (fin - pf).days if fin and pf else 0
         state = ("done" if done >= 100 else
                  "late" if pf and today > pf else
                  "behind" if plan - done > 10 else
                  "not started" if done == 0 and plan == 0 else "on track")
-        pred = by_id.get(a.depends_on_id)
+        pred = by_id.get(a.depends_on_id) or (by_id.get(before[a.id][0]) if before.get(a.id) else None)
         rows.append({
             "id": a.id, "code": a.code or "", "name": a.name or "",
-            "planned_start": a.planned_start or "", "planned_finish": a.planned_finish or "",
+            "wbs": p.wbs, "path": ctx.path(a), "boq_ref": a.boq_ref or "", "uom": a.uom or "", "quantity": a.quantity or 0.0,
+            "qty_done": round(done * (a.quantity or 0.0) / 100.0, 3),
+            "planned_start": ps.isoformat() if ps else "", "planned_finish": pf.isoformat() if pf else "",
             "actual_start": a.actual_start or "", "actual_finish": a.actual_finish or "",
-            "weight": money(a.weight), "share_percent": round(w / total_weight * 100, 1),
-            "depends_on_id": a.depends_on_id, "depends_on": pred.code or pred.name if pred else "",
+            "weight": money(a.weight), "share_percent": round(ctx.weight.get(a.id, 0.0) * 100, 1),
+            "depends_on_id": a.depends_on_id, "depends_on": ", ".join(names[i] for i in before.get(a.id, [])) or (pred.code or pred.name if pred else ""),
             "work_order_line_id": a.work_order_line_id, "is_milestone": bool(a.is_milestone),
             "progress_from": "measurement book" if a.work_order_line_id else "reported",
             "planned_percent": plan, "actual_percent": done,
@@ -1172,16 +1276,10 @@ def schedule_view(db, client_id, job):
             "predecessor_code": pred.code or pred.name if pred else ""})
 
     def overall(on):
-        if not ctx.acts:
-            return 0.0, 0.0
-        weights = [(a.weight or 0) if any(x.weight for x in ctx.acts) else 1.0 for a in ctx.acts]
-        tw = sum(weights) or 1.0
-        p = sum(w * planned_percent(a, on) for a, w in zip(ctx.acts, weights)) / tw
-        d_ = sum(w * ctx.actual(a, on) for a, w in zip(ctx.acts, weights)) / tw
-        return round(p, 1), round(d_, 1)
+        return ctx.overall(on, ctx.planned), ctx.overall(on, ctx.actual)
 
-    starts = [_d(a.planned_start) for a in ctx.acts if _d(a.planned_start)]
-    finishes = [_d(a.planned_finish) for a in ctx.acts if _d(a.planned_finish)]
+    starts = [ctx.dates(a)[0] for a in leaves if ctx.dates(a)[0]]
+    finishes = [ctx.dates(a)[1] for a in leaves if ctx.dates(a)[1]]
     curve = []
     if starts and finishes:
         cur, end = min(starts), max(max(finishes), today)
@@ -1472,7 +1570,8 @@ def activity_detail(db, client_id, a):
     return {"job": {"id": job.id, "number": job.number, "name": job.name},
             "activity": dict(row, editable=not a.work_order_line_id, tasks_total=len(tasks), tasks_done=sum(1 for t in tasks if t.done),
                              tasks=[task_dict(t, names) for t in tasks], updated_on=last[0], updated_by=last[1]),
-            "history": [{"on": h.reported_on or "", "percent": h.percent or 0, "note": h.note or "", "by": h.by_name or ""} for h in history]}
+            "history": [{"on": h.reported_on or "", "percent": h.percent or 0, "qty_done": h.qty_done, "uom": a.uom or "",
+                         "note": h.note or "", "by": h.by_name or ""} for h in history]}
 
 
 def task_share(t):
@@ -1621,7 +1720,6 @@ def schedule_day(db, client_id, job, on=None, ahead_days=7):
     between where the plan has it and where the work actually is."""
     on = on or date.today()
     ctx = ScheduleContext(db, client_id, job.id)
-    weighted = any(a.weight for a in ctx.acts)
 
     names = {a.id: ((a.code or "") + " " + (a.name or "")).strip() for a in ctx.acts}
     by_activity = {}
@@ -1631,13 +1729,15 @@ def schedule_day(db, client_id, job, on=None, ahead_days=7):
         by_activity.setdefault(t.activity_id, []).append(t)
 
     def row(a, bucket):
-        s, f = _d(a.planned_start), _d(a.planned_finish)
+        s, f = ctx.dates(a)
         mine = by_activity.get(a.id, [])
-        by_end = planned_percent(a, on)
-        before = planned_percent(a, on - timedelta(days=1))
+        by_end = ctx.planned(a, on)
+        before = ctx.planned(a, on - timedelta(days=1))
         done = ctx.actual(a, on)
         return {"id": a.id, "code": a.code or "", "name": a.name or "", "bucket": bucket,
-                "planned_start": a.planned_start or "", "planned_finish": a.planned_finish or "",
+                "wbs": ctx.prog.rows[a.id].wbs, "path": ctx.path(a), "boq_ref": a.boq_ref or "",
+                "uom": a.uom or "", "quantity": a.quantity or 0.0, "qty_done": round(done * (a.quantity or 0.0) / 100.0, 3),
+                "planned_start": s.isoformat() if s else "", "planned_finish": f.isoformat() if f else "",
                 "is_milestone": bool(a.is_milestone), "progress_from": "measurement book" if a.work_order_line_id else "reported",
                 "planned_percent": by_end, "actual_percent": done,
                 "target_today": round(max(0.0, by_end - before), 1),
@@ -1651,8 +1751,8 @@ def schedule_day(db, client_id, job, on=None, ahead_days=7):
                 "tasks": [task_dict(t, names) for t in mine]}
 
     today_rows, overdue, soon, others = [], [], [], []
-    for a in ctx.acts:
-        s, f = _d(a.planned_start), _d(a.planned_finish)
+    for a in ctx.leaves:
+        s, f = ctx.dates(a)
         done = ctx.actual(a, on)
         if not s or not f:
             others.append(row(a, "done" if done >= 100 else "later"))
@@ -1669,10 +1769,8 @@ def schedule_day(db, client_id, job, on=None, ahead_days=7):
     overdue.sort(key=lambda r: -(r["days_late"] or 0))
     today_rows.sort(key=lambda r: (-r["to_catch_up"], r["planned_finish"]))
 
-    weights = [(a.weight or 0) if weighted else 1.0 for a in ctx.acts]
-    total = sum(weights) or 1.0
-    overall = round(sum(w * ctx.actual(a, on) for a, w in zip(ctx.acts, weights)) / total, 1) if ctx.acts else 0.0
-    planned = round(sum(w * planned_percent(a, on) for a, w in zip(ctx.acts, weights)) / total, 1) if ctx.acts else 0.0
+    overall = ctx.overall(on, ctx.actual)
+    planned = ctx.overall(on, ctx.planned)
     tasks = [task_dict(t, names) for t in db.query(models.DBScheduleTask).filter(
         models.DBScheduleTask.client_id == client_id, models.DBScheduleTask.job_id == job.id,
         models.DBScheduleTask.task_date == on.isoformat()).order_by(models.DBScheduleTask.id).all()]
@@ -1748,6 +1846,7 @@ def _apply_activity(db, client_id, job, a, body, actor_name=""):
     a.assigned_to_id = body.assigned_to_id or None
     a.name, a.code = name, (body.code or "").strip()
     a.planned_start, a.planned_finish = s.isoformat(), f.isoformat()
+    a.duration_days = None                         # both dates typed: they are its length
     a.weight = max(0.0, float(body.weight or 0))
     a.depends_on_id = body.depends_on_id or None
     a.work_order_line_id = body.work_order_line_id or None

@@ -21,10 +21,10 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import require_erp_read, wo_actor
 from app.db import get_db
-from app.schemas.programme import (ProgrammeAddIn, ProgrammeCalendarIn, ProgrammeCopyIn, ProgrammeEditIn,
+from app.schemas.programme import (ProgrammeAddIn, ProgrammeBaselineIn, ProgrammeCalendarIn, ProgrammeCopyIn, ProgrammeEditIn,
                                    ProgrammeFromBoqIn, ProgrammeHolidayIn, ProgrammeMoveIn, ProgrammePublicHolidaysIn, ProgrammeRestoreIn)
 from app.services.programme import (add_holiday, add_public_holidays, add_rows, copy_to_units, delete_holiday,
-                                    delete_row, duplicate_row, edit_rows, move_row, programme_view, restore,
+                                    delete_row, duplicate_row, edit_rows, move_row, programme_view, restore, save_baseline,
                                     set_calendar)
 from app.services.programme_boq import draw_from_boq, programme_boq
 from app.services.projects import _d, job_or_404
@@ -70,6 +70,14 @@ def programme_from_boq(job_id: int, body: ProgrammeFromBoqIn, request: Request, 
     made, message, warnings = draw_from_boq(db, client, job, body.picks, body.anchor_id, body.position, body.start)
     db.commit()
     return {**programme_view(db, client, job), "made": made, "message": message, "warnings": warnings}
+
+
+@router.post("/api/jobs/{job_id}/programme/baseline")
+def programme_save_baseline(job_id: int, body: ProgrammeBaselineIn, request: Request, db: Session = Depends(get_db)):
+    client, _, actor_name = wo_actor(request, db)
+    job = job_or_404(db, client.id, job_id)
+    b = save_baseline(db, client, job, body.label, actor_name)
+    return {**programme_view(db, client, job), "message": "Baseline \"%s\" saved: planned %% is measured against it from now on." % b.label}
 
 
 @router.post("/api/jobs/{job_id}/programme/move")

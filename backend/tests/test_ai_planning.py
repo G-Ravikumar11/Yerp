@@ -152,7 +152,9 @@ def test_the_delay_findings_are_plain_code_and_work_with_no_key(tenant, unkeyed)
     out = tenant.get("/api/ai/planning/jobs/%d/review" % j["id"]).json()
     text = " | ".join(f["text"] for f in out["findings"])
     assert out["available"] is False and out["summary"] == ""
-    assert "Excavation should have finished" in text and "Walls starts in 3 days but" in text and "forecast to finish" in text
+    from test_schedule import snap
+    starts = (date.fromisoformat(snap(d(3))) - date.today()).days           # a Sunday start is the Monday
+    assert "Excavation should have finished" in text and "Walls starts in %d days but" % starts in text and "forecast to finish" in text
     assert out["findings"][0]["level"] == "stop"
 
 

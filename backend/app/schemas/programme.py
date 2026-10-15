@@ -23,6 +23,10 @@ class ProgrammeFromBoqIn(BaseModel):
     start: str = ""
 
 
+class ProgrammeBaselineIn(BaseModel):
+    label: str = ""
+
+
 class ProgrammeMoveIn(BaseModel):
     id: int
     parent_id: Optional[int] = None

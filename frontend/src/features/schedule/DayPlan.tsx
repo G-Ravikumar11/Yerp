@@ -33,7 +33,7 @@ function Group({ title, hint, rows, empty, job, on, note }: { title: string; hin
                 className="block w-full rounded-lg border border-border bg-card px-2.5 py-2 text-left shadow-card transition-colors hover:border-primary hover:bg-accent/40"
               >
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="truncate text-[13px] font-semibold" title={r.name}><span className="mr-1.5 font-mono text-[10px] font-normal text-muted-foreground">{r.code}</span>{r.name}</span>
+                  <span className="truncate text-[13px] font-semibold" title={[r.path, r.name].filter(Boolean).join(' > ')}><span className="mr-1.5 font-mono text-[10px] font-normal text-muted-foreground">{r.wbs || r.code}</span>{r.path && <span className="mr-1 font-normal text-muted-foreground">{r.path} &rsaquo;</span>}{r.name}</span>
                   {r.tasks_total > 0 && <span className="shrink-0 text-[10px] text-muted-foreground">{r.tasks_done}/{r.tasks_total}</span>}
                 </div>
                 <ProgressBar thin percent={r.actual_percent} planned={r.bucket === 'today' ? r.planned_percent : undefined} tone={tone(r)} label={`${r.name} done`} className="mt-1.5" />

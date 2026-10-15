@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from app import models
 from app.services.programme_engine import (Calendar, Link, Row, format_predecessors, parse_predecessors, planned_percent,
                                            project_percent, schedule)
-from app.services.projects import _d
+from app.services.projects import ScheduleContext, _d
 
 
 def programme_calendar(db, client_id, job):
@@ -31,30 +31,39 @@ def programme_calendar(db, client_id, job):
     return cal, shown
 
 
-def programme_inputs(db, client_id, job):
-    """The rows and links as the engine takes them. A link from before links were kept on their own (an activity's
-    single "depends on") counts as finish-to-start with no lag."""
-    acts = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.client_id == client_id,
-                                                      models.DBScheduleActivity.job_id == job.id).all()
-    latest = {}
-    for p in db.query(models.DBScheduleProgress).filter(
-            models.DBScheduleProgress.activity_id.in_([a.id for a in acts] or [0])).order_by(
-            models.DBScheduleProgress.reported_on, models.DBScheduleProgress.id).all():
-        latest[p.activity_id] = p.percent
-    rows = [Row(id=a.id, parent_id=a.parent_id, order=a.display_order or 0, name=a.name or "",
-                start=_d(a.planned_start), end=_d(a.planned_finish), days=a.duration_days, not_before=_d(a.not_before),
-                milestone=bool(a.is_milestone), quantity=a.quantity or 0.0, rate=a.rate or 0.0,
-                # rows drawn before amounts were kept carry their value as a weight
-                amount=(a.amount or 0.0) or (a.weight or 0.0), qty_done=a.qty_done or 0.0, percent=latest.get(a.id),
-                productivity=bool(a.productivity), output_per_day=a.output_per_day or 0.0, gangs=a.gangs or 0.0)
-            for a in acts]
+def programme_rows(acts, percent_of):
+    """The rows as the engine takes them; percent_of(a) is how far along a row is. A row with a quantity is given the
+    quantity that percentage stands for, so the engine's "quantity done / quantity" comes to the same figure."""
+    rows = []
+    for a in acts:
+        pct, q = percent_of(a), a.quantity or 0.0
+        rows.append(Row(id=a.id, parent_id=a.parent_id, order=a.display_order or 0, name=a.name or "",
+                        start=_d(a.planned_start), end=_d(a.planned_finish), days=a.duration_days,
+                        not_before=_d(a.not_before), milestone=bool(a.is_milestone), quantity=q, rate=a.rate or 0.0,
+                        # rows drawn before amounts were kept carry their value as a weight
+                        amount=(a.amount or 0.0) or (a.weight or 0.0),
+                        qty_done=(pct or 0.0) * q / 100.0 if q > 0 else 0.0, percent=pct,
+                        productivity=bool(a.productivity), output_per_day=a.output_per_day or 0.0, gangs=a.gangs or 0.0))
+    return rows
+
+
+def programme_links(db, client_id, job_id, acts):
+    """The links as the engine takes them. A link from before links were kept on their own (an activity's single
+    "depends on") counts as finish-to-start with no lag."""
     links = [Link(ln.activity_id, ln.predecessor_id, ln.kind or "FS", ln.lag or 0)
              for ln in db.query(models.DBScheduleLink).filter(models.DBScheduleLink.client_id == client_id,
-                                                              models.DBScheduleLink.job_id == job.id).all()]
+                                                              models.DBScheduleLink.job_id == job_id).all()]
     have = {(ln.predecessor, ln.successor) for ln in links}
     links += [Link(a.id, a.depends_on_id, "FS", 0) for a in acts
               if a.depends_on_id and (a.depends_on_id, a.id) not in have]
-    return acts, rows, links
+    return links
+
+
+def programme_inputs(db, client_id, job):
+    """The rows and links as they stand, for checking a change: progress plays no part in that."""
+    acts = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.client_id == client_id,
+                                                      models.DBScheduleActivity.job_id == job.id).all()
+    return acts, programme_rows(acts, lambda a: None), programme_links(db, client_id, job.id, acts)
 
 
 def programme_baseline(db, client_id, job):
@@ -71,10 +80,11 @@ def programme_baseline(db, client_id, job):
 def programme_view(db, client, job, as_of=None):
     """The programme for the screen: header, every row in order with its worked-out figures, and what went wrong."""
     as_of = as_of or date.today()
-    cal, shown = programme_calendar(db, client.id, job)
-    acts, rows, links = programme_inputs(db, client.id, job)
-    prog = schedule(rows, links, cal)
-    baseline, base_dates = programme_baseline(db, client.id, job)
+    # The same context the cards, the day plan and the activity page read, so every screen gives the same figures:
+    # progress from the measurement book, reports, ticked tasks or quantities done, rolled up by the engine.
+    ctx = ScheduleContext(db, client.id, job.id)
+    cal, shown, acts, links, prog = ctx.cal, ctx.cal_shown, ctx.acts, ctx.links, ctx.prog
+    baseline, base_dates = ctx.baseline_head, ctx.base
     planned = planned_percent(prog, cal, as_of, base_dates)
     by_id = {a.id: a for a in acts}
     wbs = {i: p.wbs for i, p in prog.rows.items()}
@@ -97,7 +107,8 @@ def programme_view(db, client, job, as_of=None):
             "typed": {"start": a.planned_start or "", "end": a.planned_finish or "", "days": a.duration_days},
             "not_before": a.not_before or "", "predecessors": format_predecessors(preds.get(rid, []), wbs),
             "milestone": bool(a.is_milestone), "productivity": bool(a.productivity),
-            "output_per_day": a.output_per_day or 0.0, "gangs": a.gangs or 0.0, "qty_done": a.qty_done or 0.0,
+            "output_per_day": a.output_per_day or 0.0, "gangs": a.gangs or 0.0,
+            "qty_done": round(p.percent * (a.quantity or 0.0) / 100.0, 3) if not p.summary else 0.0,
             "percent": round(p.percent, 2), "planned_percent": round(planned[rid], 2),
             "critical": p.critical, "float_days": p.float_days, "problem": p.problem,
             "baseline": {"start": iso(b[0]), "end": iso(b[1]),
@@ -110,7 +121,8 @@ def programme_view(db, client, job, as_of=None):
         "start": iso(prog.start), "finish": iso(prog.finish), "duration": prog.duration,
         "as_of": as_of.isoformat(),
         "percent": round(project_percent(prog), 2), "planned_percent": round(planned["project"], 2),
-        "baseline": {"id": baseline.id, "label": baseline.label, "saved_at": baseline.created_at} if baseline else None,
+        "baseline": {"id": baseline.id, "label": baseline.label, "saved_at": baseline.created_at,
+                     "by": baseline.saved_by_name or ""} if baseline else None,
         "errors": prog.errors,
         "broken_links": [{"successor": ln.successor, "predecessor": ln.predecessor, "kind": ln.kind, "lag": ln.lag}
                          for ln in prog.broken_links],
@@ -118,6 +130,26 @@ def programme_view(db, client, job, as_of=None):
                   for ln in links],
         "rows": out,
     }
+
+
+def save_baseline(db, client, job, label="", actor_name=""):
+    """Keep every row's dates as they are now. Planned % is measured against the latest baseline from then on, and
+    each row shows how far it has moved from it; earlier baselines stay on record."""
+    ctx = ScheduleContext(db, client.id, job.id)
+    rows = [(i, p) for i, p in ctx.prog.rows.items() if p.start and p.end]
+    if not rows:
+        raise HTTPException(409, "Nothing on the programme has dates yet, so there is nothing to keep.")
+    n = db.query(models.DBScheduleBaseline).filter(models.DBScheduleBaseline.client_id == client.id,
+                                                   models.DBScheduleBaseline.job_id == job.id).count()
+    b = models.DBScheduleBaseline(client_id=client.id, job_id=job.id, label=(label or "").strip()[:80] or "Baseline %d" % (n + 1),
+                                  saved_by_name=actor_name or "")
+    db.add(b)
+    db.flush()
+    for i, p in rows:
+        db.add(models.DBScheduleBaselineRow(baseline_id=b.id, activity_id=i, start=p.start.isoformat(),
+                                            finish=p.end.isoformat(), days=p.days or 0))
+    db.commit()
+    return b
 
 
 # --- changing the programme ------------------------------------------------------------------------------------------
@@ -291,9 +323,16 @@ def edit_rows(db, client, job, changes, check=True):
             found, problems = parse_predecessors(str(ch["predecessors"] or ""), wbs)
             if problems:
                 raise HTTPException(400, " ".join(problems))
+            had = bool(a.depends_on_id) or db.query(models.DBScheduleLink.id).filter(
+                models.DBScheduleLink.activity_id == a.id).first() is not None
             db.query(models.DBScheduleLink).filter(models.DBScheduleLink.activity_id == a.id).delete(
                 synchronize_session=False)
             a.depends_on_id = None
+            if found and not had and "start" not in ch and "end" not in ch and _d(a.planned_start):
+                # Its first predecessor: from now on it follows it, as the sheet's =D9+1 does, and keeps its length.
+                if a.duration_days is None and _d(a.planned_finish):
+                    a.duration_days = cal.span(cal.snap(_d(a.planned_start)), _d(a.planned_finish))
+                a.planned_start, a.planned_finish = "", ""
             for pred, kind, lag in found:
                 if pred == a.id:
                     raise HTTPException(400, "A row cannot wait on itself.")
@@ -320,9 +359,10 @@ def move_row(db, client, job, rid, parent_id, before_id):
     db.commit()
 
 
-def _copy_tree(db, client, job, acts, source, shift_days=0, name=None):
+def _copy_tree(db, client, job, acts, source, shift_days=0, name=None, when=None):
     """A copy of source and everything under it; the links among them come too. Returns (map old id -> new row,
-    links that pointed outside and were left behind)."""
+    links that pointed outside and were left behind). A row that loses a link that way keeps its place in time: it
+    starts no earlier than the original did (moved by the shift), from `when` (id -> the original's start and days)."""
     rows = subtree(acts, source.id)
     ids = {a.id for a in rows}
     made = {}
@@ -351,13 +391,27 @@ def _copy_tree(db, client, job, acts, source, shift_days=0, name=None):
                                          predecessor_id=made[pred].id, kind=kind, lag=lag))
         else:
             left_out.append((succ, pred))
+    for succ in {s_ for s_, _p in left_out}:
+        start, days = (when or {}).get(succ, (None, None))
+        b = made[succ]
+        if start is None:
+            continue
+        if b.duration_days is None and days:
+            b.duration_days = days
+        b.planned_start, b.planned_finish = (start + timedelta(days=shift_days)).isoformat(), ""
     return made, left_out
+
+
+def _when(view):
+    """Each row's start and days as the programme has them now."""
+    return {r["id"]: (_d(r["start"]), r["days"]) for r in view["rows"] if r["start"]}
 
 
 def duplicate_row(db, client, job, rid):
     acts = job_rows(db, client.id, job)
     source = _row_or_404(acts, rid)
-    made, _ = _copy_tree(db, client, job, acts, source, name="%s (copy)" % (source.name or "Row"))
+    made, _ = _copy_tree(db, client, job, acts, source, name="%s (copy)" % (source.name or "Row"),
+                         when=_when(programme_view(db, client, job)))
     top = made[source.id]
     acts = job_rows(db, client.id, job)
     sibs = _kids(acts).get(source.parent_id, [])
@@ -385,7 +439,7 @@ def copy_to_units(db, client, job, source_id, targets):
         if start and not src["start"]:
             raise HTTPException(400, "%s has no dates yet; give an offset in days instead." % (source.name or "The row"))
         offset = (start - _d(src["start"])).days if start else int(t.get("offset") or 0)
-        made, left_out = _copy_tree(db, client, job, acts, source, offset, t["name"].strip())
+        made, left_out = _copy_tree(db, client, job, acts, source, offset, t["name"].strip(), _when(view))
         made_ids.append(made[source.id].id)
         dropped += ["%s on %s" % (t["name"].strip(), names.get(p, p)) for _s, p in left_out]
     acts = job_rows(db, client.id, job)

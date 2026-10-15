@@ -1048,12 +1048,22 @@ def report_progress(activity_id: int, body: ProgressIn, request: Request, db: Se
     if a.work_order_line_id:
         raise HTTPException(409, "%s takes its progress from the measurement book. "
                                  "Measure the work instead." % (a.code or a.name))
-    pct = float(body.percent or 0)
+    qty = (a.quantity or 0) if (a.quantity or 0) > 0 else 0
+    if body.qty_done is not None and qty:
+        if body.qty_done < 0:
+            raise HTTPException(400, "The quantity done cannot be below nothing.")
+        done = float(body.qty_done)
+        pct = min(100.0, done / qty * 100.0)
+    else:
+        pct = float(body.percent or 0)
+        done = pct * qty / 100.0 if qty else None
     if pct < 0 or pct > 100:
         raise HTTPException(400, "Progress is a percentage between 0 and 100.")
     on = (body.reported_on or datetime.now().strftime("%Y-%m-%d"))[:10]
-    db.add(models.DBScheduleProgress(client_id=client.id, activity_id=a.id, reported_on=on,
-                                     percent=pct, note=(body.note or "").strip(), by_name=actor_name))
+    db.add(models.DBScheduleProgress(client_id=client.id, activity_id=a.id, reported_on=on, percent=pct, qty_done=done,
+                                     note=(body.note or "").strip(), by_name=actor_name))
+    if done is not None:
+        a.qty_done = done
     if pct > 0 and not a.actual_start:
         a.actual_start = on
     if pct >= 100 and not a.actual_finish:
