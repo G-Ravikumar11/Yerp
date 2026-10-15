@@ -45,10 +45,11 @@ export default function ProjectsCards() {
         ))}
       </div>
 
-      <div className="mt-3 space-y-3">
+      {/* One card wide on a phone, two on a tablet or an unfolded one, three on a large one. */}
+      <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {projects.isPending && [0, 1, 2].map((i) => <Skeleton key={i} className="h-32 w-full rounded-3xl" />)}
-        {projects.isError && <p className="rounded-2xl bg-card p-4 text-center text-sm text-muted-foreground">Could not load the projects. Check the connection and try again.</p>}
-        {projects.isSuccess && shown.length === 0 && <p className="rounded-2xl bg-card p-6 text-center text-sm text-muted-foreground">{all.length ? 'No project matches.' : 'No projects yet.'}</p>}
+        {projects.isError && <p className="col-span-full rounded-2xl bg-card p-4 text-center text-sm text-muted-foreground">Could not load the projects. Check the connection and try again.</p>}
+        {projects.isSuccess && shown.length === 0 && <p className="col-span-full rounded-2xl bg-card p-6 text-center text-sm text-muted-foreground">{all.length ? 'No project matches.' : 'No projects yet.'}</p>}
         {shown.map((p) => <Card key={p.id} p={p} costing={money.get(p.id)} />)}
       </div>
     </div>

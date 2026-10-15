@@ -101,7 +101,7 @@ export default function TodayPage() {
       {quick.length > 0 && (
         <>
           <Label>Quick actions</Label>
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-3 gap-2 min-[360px]:grid-cols-5">
             {quick.map(({ label, path, icon: Icon, tone }) => (
               <Link key={label} to={path} className="flex h-[84px] flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-card text-[11.5px] font-medium active:scale-95">
                 <span className={cn('grid size-9 place-items-center rounded-xl', tone)}><Icon className="size-[18px]" /></span>{label}
