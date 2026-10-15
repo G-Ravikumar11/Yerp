@@ -343,6 +343,24 @@ class DBDepartmentSite(Base):
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
+class DBCustomHoliday(Base):
+    """A day the business has marked as a holiday, on top of the public ones.
+
+    It is the whole business's: every employee has it off, so it takes no part in who works where.
+    The date is kept as YYYY-MM-DD, the way every other date in the app is."""
+    __tablename__ = "custom_holidays"
+    __table_args__ = (
+        UniqueConstraint('client_id', 'date', name='uq_custom_holiday_day'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    date = Column(String, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    created_by = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
 class DBSiteGeofence(Base):
     """Where a project's site is, for attendance: a point and how far from it
     still counts as on site. A clock-in inside it is tagged to the project -

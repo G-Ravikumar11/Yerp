@@ -17,7 +17,8 @@ import {
 /** notHeadOffice: left out for HO QS and HO Coordinator, whose front page is the HO portal. */
 export type NavItem = { label: string; path: string; perm?: string; notHeadOffice?: boolean }
 /** staffOnly: the screens of a member of staff's own work (timesheet, payslips), which the account holder has no use for. */
-export type NavGroup = { id: string; label: string; icon: LucideIcon; items: NavItem[]; staffOnly?: boolean; ownerOnly?: boolean }
+/** perm: the right that puts the whole group in somebody's menu (a portal). Its items may ask for more on top. */
+export type NavGroup = { id: string; label: string; icon: LucideIcon; items: NavItem[]; staffOnly?: boolean; ownerOnly?: boolean; perm?: string }
 export type NavEntry = { kind: 'link'; id: string; label: string; icon: LucideIcon; path: string; perm?: string; ownerOnly?: boolean; staffOnly?: boolean } | ({ kind: 'group' } & NavGroup)
 
 /**
@@ -56,6 +57,7 @@ export const NAV: NavEntry[] = [
   {
     kind: 'group',
     id: 'projects',
+    perm: 'projects.view',
     label: 'Projects',
     icon: Building2,
     items: [
@@ -74,6 +76,7 @@ export const NAV: NavEntry[] = [
   {
     kind: 'group',
     id: 'clients',
+    perm: 'clients.view',
     label: 'Clients',
     icon: BadgeIndianRupee,
     items: [
@@ -88,6 +91,7 @@ export const NAV: NavEntry[] = [
   {
     kind: 'group',
     id: 'subcontractors',
+    perm: 'subcontractors.view',
     label: 'Subcontractors',
     icon: HardHat,
     items: [
@@ -101,6 +105,7 @@ export const NAV: NavEntry[] = [
   {
     kind: 'group',
     id: 'store',
+    perm: 'store.view',
     label: 'Store',
     icon: Package,
     items: [
@@ -116,6 +121,7 @@ export const NAV: NavEntry[] = [
   {
     kind: 'group',
     id: 'money',
+    perm: 'money.view',
     label: 'Money',
     icon: Wallet,
     items: [
@@ -171,6 +177,7 @@ export function visibleNav(can: (perm: string) => boolean, staff = false, headOf
   return NAV.flatMap((e): NavEntry[] => {
     if (e.kind === 'group' && e.staffOnly && !staff) return []
     if (e.kind === 'group' && e.ownerOnly && staff) return []
+    if (e.kind === 'group' && e.perm && !can(e.perm)) return []
     if (e.kind === 'link' && e.ownerOnly && staff) return []
     if (e.kind === 'link' && e.staffOnly && !staff) return []
     if (e.kind === 'link') return !e.perm || can(e.perm) ? [e] : []

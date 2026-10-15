@@ -32,8 +32,8 @@ def attendance_settings_for(db: Session, client_id: int) -> Optional[models.DBAt
     ).first()
 
 
-def is_working_day(settings: Optional[models.DBAttendanceSettings], on_date: Any = None) -> bool:
-    """Check whether a given date is a working day under tenant settings."""
+def is_working_day(settings: Optional[models.DBAttendanceSettings], on_date: Any = None, holidays: Any = ()) -> bool:
+    """Check whether a given date is a working day under tenant settings, and not one of `holidays` (YYYY-MM-DD)."""
     if on_date is None:
         target = datetime.now().date()
     elif isinstance(on_date, str):
@@ -45,6 +45,8 @@ def is_working_day(settings: Optional[models.DBAttendanceSettings], on_date: Any
     else:
         target = datetime.now().date()
 
+    if target.isoformat() in holidays:
+        return False
     raw = getattr(settings, "working_days", None) if settings else None
     return target.isoweekday() in parse_working_days(raw or DEFAULT_WORKING_DAYS)
 
@@ -237,8 +239,11 @@ def working_days_between(
     start_date: Any,
     end_date: Any,
     settings: Optional[models.DBAttendanceSettings] = None,
+    holidays: Any = (),
 ) -> float:
-    """Calculate working days between two dates under tenant attendance rules."""
+    """Calculate working days between two dates under tenant attendance rules.
+
+    `holidays` are YYYY-MM-DD dates the business has marked off: they are not working days even on a weekday."""
     start = _parse_date(start_date) if isinstance(start_date, str) else start_date
     end = _parse_date(end_date) if isinstance(end_date, str) else end_date
 
@@ -256,7 +261,7 @@ def working_days_between(
     days = 0
     cursor = start
     while cursor <= end:
-        if cursor.isoweekday() in allowed_days:
+        if cursor.isoweekday() in allowed_days and cursor.isoformat() not in holidays:
             days += 1
         cursor += timedelta(days=1)
     return float(days)

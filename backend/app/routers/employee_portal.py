@@ -49,6 +49,7 @@ from app.services.employee_portal import (
     working_days_between,
 )
 from app.services.hr import employee_name, employee_site_ids, request_to_dict, resolve_employee_job_id
+from app.services.holidays import custom_holidays
 from app.services.procurement import (
     apply_order_fields,
     purchase_order_or_404,
@@ -401,10 +402,11 @@ def employee_today_attendance(request: Request, db: Session = Depends(get_db)):
     ).first()
     # The portal says why the Clock In button is waiting rather than filled in.
     settings = attendance_settings_for(db, client_id)
-    working_day = is_working_day(settings)
+    holiday = custom_holidays(db, client_id, today, today).get(today)
+    working_day = is_working_day(settings, holidays=(today,) if holiday else ())
     target = target_hours_for(settings)       # what the dial on the clock fills towards
     if not att:
-        return {"clocked_in": False, "is_working_day": working_day, "target_hours": target}
+        return {"clocked_in": False, "is_working_day": working_day, "holiday": holiday or "", "target_hours": target}
     now_str = datetime.now().strftime("%H:%M:%S")
     elapsed = 0
     worked_seconds = 0       # what the screen's counter starts from, to the second
@@ -1050,7 +1052,8 @@ def request_leave(request: Request, body: dict, db: Session = Depends(get_db)):
     if end < start:
         raise HTTPException(status_code=400, detail="End date cannot be before the start date")
 
-    days = working_days_between(start_date, end_date)
+    # A day the business has marked as a holiday is not a day of leave: it is off for everybody.
+    days = working_days_between(start_date, end_date, holidays=custom_holidays(db, emp.client_id, start, end))
     if days <= 0:
         raise HTTPException(status_code=400, detail="That range contains no working days")
 

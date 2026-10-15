@@ -9,6 +9,7 @@ from app.db import get_db
 
 from app.core.auth import get_client_user, require_erp_read
 from app.core.dates import DEFAULT_WORKING_DAYS
+from app.services.holidays import custom_holidays
 from app.validators.common import clean_working_days
 
 
@@ -130,7 +131,9 @@ def get_attendance_stats(request: Request, db: Session = Depends(get_db)):
         models.DBAttendance.date == today,
     ).all()
     present = sum(1 for r in today_records if r.status in ("present", "completed"))
-    absent = total_employees - present
+    # Nobody is absent on a day the business has marked as a holiday.
+    holiday = custom_holidays(db, client.id, today, today).get(today)
+    absent = 0 if holiday else total_employees - present
     avg_hours = 0.0
     if today_records:
         avg_hours = round(sum(r.total_hours for r in today_records) / len(today_records), 2)
@@ -138,6 +141,7 @@ def get_attendance_stats(request: Request, db: Session = Depends(get_db)):
         "total_employees": total_employees,
         "present": present,
         "absent": max(0, absent),
+        "holiday": holiday or "",
         "avg_hours": avg_hours,
         "date": today,
     }
