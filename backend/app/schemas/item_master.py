@@ -1,5 +1,5 @@
 """What the item master endpoints are sent."""
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -26,6 +26,33 @@ class MasterItemIn(BaseModel):
 
 class StatusIn(BaseModel):
     is_active: bool
+    confirm: bool = False          # deactivating something in use must be said to be meant
+
+
+class BulkStatusIn(BaseModel):
+    ids: List[int]
+    is_active: bool
+    confirm: bool = False
+
+
+class BulkCategoryIn(BaseModel):
+    ids: List[int]
+    item_category: str = ""
+    item_subcategory: str = ""
+
+
+class ImportRowIn(BaseModel):
+    line: int
+    values: dict
+    action: Optional[str] = None      # import | skip - what the person chose; blank leaves it to the row's status
+
+
+class ImportRowsIn(BaseModel):
+    rows: List[ImportRowIn]
+
+
+class MergeIn(BaseModel):
+    into_id: int
 
 
 class CategoryIn(BaseModel):

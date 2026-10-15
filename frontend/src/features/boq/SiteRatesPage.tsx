@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, History, Link2, Lock, LockOpen, Save, Search, Wand2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -31,7 +31,8 @@ const LABEL: Record<PriceStatus, string> = { Pending: 'Pending', Draft: 'Draft',
 export default function SiteRatesPage() {
   const sites = useSites()
   const [client, setClient] = useState('')
-  const [siteId, setSiteId] = useState<number | null>(null)
+  const [params] = useSearchParams()
+  const [siteId, setSiteId] = useState<number | null>(() => Number(params.get('site')) || null)
   const all = sites.data ?? []
   const clients = [...new Set(all.map((s) => s.customer).filter(Boolean))].sort()
   const shown = all.filter((s) => !client || s.customer === client)
