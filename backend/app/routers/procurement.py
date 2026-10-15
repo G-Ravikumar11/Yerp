@@ -36,6 +36,7 @@ from app.services.procurement import (
     grn_apply,
     grn_dict,
     grn_or_404,
+    OrderPrefetch,
     match_verdict,
     next_supplier_code,
     order_is_committed,
@@ -64,7 +65,8 @@ def list_purchase_orders(request: Request, job_id: int = 0, status: str = "",
     if status:
         query = query.filter(models.DBPurchaseOrder.status == status)
     orders = query.order_by(models.DBPurchaseOrder.id.desc()).limit(300).all()
-    return {"orders": [purchase_order_to_dict(db, o) for o in orders]}
+    pre = OrderPrefetch(db, orders)
+    return {"orders": [purchase_order_to_dict(db, o, pre=pre) for o in orders]}
 
 
 @router.get("/api/purchase-orders/{order_id}")
@@ -476,19 +478,18 @@ def three_way_match(request: Request, db: Session = Depends(get_db),
         q = q.filter(models.DBPurchaseOrder.job_id == job_id)
 
     rows = []
-    for po in q.order_by(models.DBPurchaseOrder.id.desc()).limit(500).all():
-        lines = db.query(models.DBPurchaseOrderLineItem).filter(
-            models.DBPurchaseOrderLineItem.order_id == po.id).all()
-        got = received_to_date(db, po.id)
-        billed = billed_against_po(db, po.id)
-        receipts = db.query(models.DBGoodsReceipt).filter(
-            models.DBGoodsReceipt.purchase_order_id == po.id,
-            models.DBGoodsReceipt.status != "CANCELLED").count()
+    orders = q.order_by(models.DBPurchaseOrder.id.desc()).limit(500).all()
+    pre = OrderPrefetch(db, orders)
+    for po in orders:
+        lines = pre.lines.get(po.id, [])
+        got = pre.received(po.id)
+        billed = pre.billed(po.id)
+        receipts = len(pre.receipts.get(po.id, []))
 
         ordered_value = money(sum((l.qty or 0) * (l.price or 0) for l in lines))
         received_value = money(sum(got.get(l.id, 0.0) * (l.price or 0) for l in lines))
         verdict, note = match_verdict(ordered_value, received_value, billed["value"])
-        job = db.query(models.DBJob).filter(models.DBJob.id == po.job_id).first()
+        job = pre.jobs.get(po.job_id) if po.job_id else None
         rows.append({
             "purchase_order_id": po.id, "number": po.number or "",
             "supplier_name": po.supplier_name or "",
