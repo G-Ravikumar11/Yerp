@@ -490,7 +490,7 @@ def subcontract_attention(db, client_id, today=None):
         expired = [r for r in bgs if r["state"] == "expired"]
         items.append({
             "kind": "bank_guarantees", "severity": "wrong" if expired else "action",
-            "value": money(sum(r["amount"] for r in bgs)), "count": len(bgs), "view": "guarantees-view",
+            "value": money(sum(r["amount"] for r in bgs)), "count": len(bgs), "view": "registers-view",
             "title": "Bank guarantees lapsing",
             "detail": "%d guarantee%s on live orders %s - have %s extended before %s." % (
                 len(bgs), "" if len(bgs) == 1 else "s",

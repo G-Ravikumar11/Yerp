@@ -163,7 +163,10 @@ def guarantee_register(request: Request, db: Session = Depends(get_db)):
     for o in db.query(models.DBSubcontractOrder).filter(
             models.DBSubcontractOrder.client_id == client.id,
             models.DBSubcontractOrder.bank_guarantee_applicable.is_(True),
-            models.DBSubcontractOrder.status.in_(("APPROVED", "EXECUTED"))).all():
+            # A closed order's guarantee is still held through the defects period - until it is handed back.
+            models.DBSubcontractOrder.status.in_(("APPROVED", "EXECUTED", "CLOSED"))).all():
+        if o.bank_guarantee_returned_at:
+            continue
         con = contractors.get(o.contractor_id)
         valid = (o.bank_guarantee_validity or "")[:10]
         days = None
@@ -174,6 +177,8 @@ def guarantee_register(request: Request, db: Session = Depends(get_db)):
                 days = None
         rows.append({
             "order_id": o.id, "order": o.wo_number or "", "contractor": con.company_name if con else "",
+            "number": o.bank_guarantee_number or "", "bank": o.bank_guarantee_bank or "",
+            "order_status": o.status or "",
             "amount": money(o.bank_guarantee_amount), "valid_until": valid, "days_left": days,
             "completion_date": o.completion_date or "",
             "defect_liability_months": o.defect_liability_months or 0,

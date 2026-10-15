@@ -101,7 +101,7 @@ export const NAV: NavEntry[] = [
       { label: 'Measurement Book', path: '/subcontractors/measurement-book' },
       { label: 'RA Bills', path: '/subcontractors/ra-bills' },
       { label: 'Compliance', path: '/subcontractors/compliance' },
-      { label: 'Guarantees & Registers', path: '/subcontractors/registers' },
+      { label: 'Recoveries & Work Types', path: '/subcontractors/registers' },
     ],
   },
   {

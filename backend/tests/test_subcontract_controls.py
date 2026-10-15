@@ -233,7 +233,7 @@ def test_an_order_past_the_boq_needs_an_override_to_be_approved(tenant):
     _, _, res = contractor_order(tenant, lines, [(lines["EXC"], 600, 150), (lines["RCC"], 100, 9000)])
     order = fund_order(tenant, res["order"])
     assert tenant.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 200
-    detail = tenant.get("/api/wo/orders/%d" % order["id"]).json()
+    detail = tenant.get("/api/wo/orders/%d" % order["id"]).json()["order"]
     assert len(detail["boq_warnings"]) == 2
     res = tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
     assert res.status_code == 409 and "BOQ" in res.json()["detail"] and "loss" in res.json()["detail"]
@@ -328,28 +328,29 @@ def test_a_guarantee_needs_its_figures_and_is_watched_until_it_is_returned(tenan
     tenant.put("/api/wo/orders/%d" % order["id"], json=head)
     assert tenant.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 200
     tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
-    rows = tenant.get("/api/wo/bank-guarantees").json()["guarantees"]
+    rows = tenant.get("/api/registers/guarantees").json()["guarantees"]
     mine = next(r for r in rows if r["order_id"] == order["id"])
-    assert mine["state"] == "expiring" and mine["number"] == "BG/0042"
+    assert mine["state"] == "lapses within 30 days" and mine["number"] == "BG/0042" and mine["bank"] == "HDFC Bank"
     assert "bank_guarantees" in {i["kind"] for i in tenant.get("/api/attention").json()["items"]}
     res = tenant.post("/api/wo/orders/%d/bank-guarantee/return" % order["id"], json={})
     assert res.status_code == 400, "an open order's guarantee goes back only with a reason"
     res = tenant.post("/api/wo/orders/%d/bank-guarantee/return" % order["id"], json={"comments": "Replaced by BG/0043"})
     assert res.status_code == 200
-    mine = next(r for r in tenant.get("/api/wo/bank-guarantees").json()["guarantees"] if r["order_id"] == order["id"])
-    assert mine["state"] == "returned"
+    assert all(r["order_id"] != order["id"] for r in tenant.get("/api/registers/guarantees").json()["guarantees"])
+    assert res.json()["order"]["bank_guarantee_state"] == "returned"
 
 
 # --- the budget -------------------------------------------------------------------------------------------------
 
 def test_a_budget_set_by_whoever_prices_the_order_is_confirmed_by_the_approver(tenant, portal):
     order = priced(tenant, fund=False)
-    sign_in(portal, staff(tenant, "ho_qs"))
+    # Planning & Billing keep the orders up to date but cannot approve them.
+    sign_in(portal, staff(tenant, "planning_billing"))
     res = portal.post("/api/wo/projects/%d/budgets" % order["job_id"], json={"name": "Civil", "allocated_amount": 9e6})
     assert res.status_code == 200 and res.json()["confirmed"] is False
     tenant.post("/api/wo/orders/%d/charge-budget" % order["id"], json={"budget_id": res.json()["id"]})
     tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
-    assert tenant.get("/api/wo/orders/%d" % order["id"]).json()["unconfirmed_budgets"]
+    assert tenant.get("/api/wo/orders/%d" % order["id"]).json()["order"]["unconfirmed_budgets"]
     assert tenant.post("/api/wo/orders/%d/approve" % order["id"], json={}).status_code == 200
     row = tenant.get("/api/wo/projects/%d/budgets" % order["job_id"]).json()["budgets"][0]
     assert row["confirmed"] is True

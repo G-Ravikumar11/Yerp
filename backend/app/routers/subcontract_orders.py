@@ -121,7 +121,6 @@ from app.validators.common import clean_rich_text, clean_tax_ids
 from app.core.queries import by_id
 from app.schemas.subcontract_orders import CloseOrderIn
 from app.services.subcontract_rules import (
-    bank_guarantee_rows,
     check_order_dates,
     checked_date,
     owned_or_400,
@@ -1163,24 +1162,6 @@ def wo_close(order_id: int, body: CloseOrderIn, request: Request, db: Session = 
     return {"order": wo_dict(db, order, detail=True),
             "message": "%s closed. Work finished %s; what was never done is back in the budget." % (
                 order.wo_number, finished)}
-
-
-@router.get("/api/wo/bank-guarantees")
-def wo_bank_guarantees(request: Request, db: Session = Depends(get_db)):
-    """Every guarantee the contractors have given, with when it runs out - so it is extended or encashed in time,
-    not found to have lapsed when it is needed."""
-    client = require_erp_read(request, db)
-    viewer = STAFF_VIEWER.get()
-    rows = bank_guarantee_rows(db, client.id)
-    if viewer:
-        seen = wo_involved_ids(db, client.id, viewer)
-        rows = [r for r in rows if r["order_id"] in seen]
-    return {"guarantees": rows, "summary": {
-        "count": len(rows),
-        "held": money(sum(r["amount"] for r in rows if r["state"] != "returned")),
-        "expiring": len([r for r in rows if r["state"] == "expiring"]),
-        "expired": len([r for r in rows if r["state"] == "expired"]),
-    }}
 
 
 @router.post("/api/wo/orders/{order_id}/bank-guarantee/return")

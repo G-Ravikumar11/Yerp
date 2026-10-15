@@ -307,28 +307,6 @@ export const updateBudget = (budgetId: number, b: { name: string; code?: string;
 export const closeOrder = (id: number, b: { actual_completion_date: string; comments: string }) => post<OrderReply>(`/api/wo/orders/${id}/close`, b)
 export const returnGuarantee = (id: number, comments: string) => post<OrderReply>(`/api/wo/orders/${id}/bank-guarantee/return`, { comments })
 
-export interface Guarantee {
-  order_id: number
-  wo_number: string
-  status: string
-  contractor: string
-  project: string
-  number: string
-  bank: string
-  amount: number
-  valid_to: string
-  days_left: number | null
-  returned_at: string
-  state: 'returned' | 'expired' | 'expiring' | 'valid' | 'undated'
-}
-
-export function useGuarantees() {
-  return useQuery({
-    queryKey: ['orders', 'guarantees'],
-    queryFn: () => get<{ guarantees: Guarantee[]; summary: { count: number; held: number; expiring: number; expired: number } }>('/api/wo/bank-guarantees'),
-  })
-}
-
 /* --- The kinds of work, which an administrator keeps ---------------------- */
 
 export interface WorkTypeRow extends WorkType {

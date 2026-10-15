@@ -3,31 +3,28 @@ import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
-import { Badge, Button, ConfirmDialog, Field, Input, Modal, Stat, StatGrid, Tabs } from '@/components/ui'
-import { decideWorkType, orderKeys, requestWorkType, returnGuarantee, useGuarantees, useWorkTypes, type Guarantee, type WorkTypeRow } from '@/api/orders'
+import { Badge, Button, Field, Input, Modal, Stat, StatGrid, Tabs } from '@/components/ui'
+import { decideWorkType, orderKeys, requestWorkType, useWorkTypes, type WorkTypeRow } from '@/api/orders'
 import { get } from '@/lib/api'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 
-type Tab = 'guarantees' | 'recoveries' | 'types'
-
-const BG_TONE = { valid: 'success', expiring: 'warning', expired: 'danger', returned: 'neutral', undated: 'warning' } as const
-const BG_WORD = { valid: 'valid', expiring: 'runs out soon', expired: 'ran out', returned: 'returned', undated: 'no date' } as const
+type Tab = 'recoveries' | 'types'
 
 /**
- * The registers kept beside the work orders: every bank guarantee a contractor has given and when it runs out,
- * the material issued to contractors to be taken off their bills, and the kinds of work an order can be raised for.
+ * The registers kept beside the work orders: the material issued to contractors to be taken off their bills, and
+ * the kinds of work an order can be raised for. (Bank guarantees are in Money, TDS, Guarantees & Advances.)
  */
 export default function RegistersPage() {
-  const [tab, setTab] = useState<Tab>('guarantees')
+  const [tab, setTab] = useState<Tab>('recoveries')
   return (
     <>
       <PageHeader
         eyebrow="Subcontractors"
-        title="Guarantees & registers"
-        description="Bank guarantees and when each runs out, the material recovered from contractors' bills, and the kinds of work orders are raised for."
+        title="Recoveries & kinds of work"
+        description="The material issued to contractors and taken back off their bills, and the kinds of work orders are raised for."
       />
       <div className="mb-5">
         <Tabs
@@ -35,77 +32,13 @@ export default function RegistersPage() {
           value={tab}
           onChange={setTab}
           items={[
-            { value: 'guarantees', label: 'Bank guarantees' },
             { value: 'recoveries', label: 'Material recovered' },
             { value: 'types', label: 'Kinds of work' },
           ]}
         />
       </div>
-      {tab === 'guarantees' && <Guarantees />}
       {tab === 'recoveries' && <Recoveries />}
       {tab === 'types' && <WorkTypes />}
-    </>
-  )
-}
-
-function Guarantees() {
-  const q = useGuarantees()
-  const { can } = useSession()
-  const [returning, setReturning] = useState<Guarantee | null>(null)
-  const back = useAction((a: { g: Guarantee; comments: string }) => returnGuarantee(a.g.order_id, a.comments), { invalidate: [orderKeys.all], onSuccess: () => setReturning(null) })
-  const rows = q.data?.guarantees ?? []
-  const s = q.data?.summary
-  const columns: TableColumn<Guarantee>[] = [
-    {
-      id: 'o',
-      header: 'Order',
-      cell: (g) => (
-        <div>
-          <Link to={`/subcontractors/work-orders/${g.order_id}`} className="font-mono text-[13px] font-semibold hover:underline">
-            {g.wo_number}
-          </Link>
-          <div className="text-xs text-muted-foreground">{g.project}</div>
-        </div>
-      ),
-    },
-    { id: 'c', header: 'Contractor', cell: (g) => g.contractor || '-' },
-    { id: 'n', header: 'Guarantee', hideBelow: 'md', cell: (g) => <div>{g.number || '-'}<div className="text-xs text-muted-foreground">{g.bank}</div></div> },
-    { id: 'a', header: 'Amount', align: 'right', sort: (g) => g.amount, cell: (g) => <span className="tabular">{formatINR(g.amount)}</span> },
-    { id: 'v', header: 'Valid to', sort: (g) => g.valid_to, cell: (g) => <div>{formatDate(g.valid_to) || '-'}{g.days_left != null && g.state !== 'returned' && <div className="text-xs text-muted-foreground">{g.days_left >= 0 ? `${g.days_left} days left` : `${-g.days_left} days ago`}</div>}</div> },
-    { id: 's', header: 'State', cell: (g) => <Badge tone={BG_TONE[g.state]}>{BG_WORD[g.state]}</Badge> },
-    {
-      id: 'act',
-      header: '',
-      align: 'right',
-      cell: (g) =>
-        g.state !== 'returned' && can('subcontracts.approve') ? (
-          <Button size="sm" variant="outline" onClick={() => setReturning(g)}>
-            Returned
-          </Button>
-        ) : null,
-    },
-  ]
-  return (
-    <>
-      <StatGrid className="xl:grid-cols-4">
-        <Stat label="Guarantees" value={s?.count ?? 0} loading={q.isPending} />
-        <Stat label="Held" value={formatINR(s?.held ?? 0)} loading={q.isPending} />
-        <Stat label="Running out within 30 days" value={s?.expiring ?? 0} tone={s?.expiring ? 'warning' : undefined} loading={q.isPending} />
-        <Stat label="Already run out" value={s?.expired ?? 0} tone={s?.expired ? 'danger' : undefined} loading={q.isPending} />
-      </StatGrid>
-      <DataTable label="Bank guarantees" rows={rows} columns={columns} rowKey={(g) => g.order_id} loading={q.isPending} empty="No order carries a bank guarantee." />
-      <ConfirmDialog
-        open={!!returning}
-        onOpenChange={(o) => !o && setReturning(null)}
-        title={`Guarantee on ${returning?.wo_number ?? 'this order'} returned?`}
-        description="It is handed back to the contractor and stops being watched for expiry."
-        confirmLabel="Mark as returned"
-        reason={{ label: returning && returning.status !== 'CLOSED' ? 'The order is still open - why is it going back now?' : 'Note (optional)', required: !!returning && returning.status !== 'CLOSED' }}
-        loading={back.isPending}
-        onConfirm={(comments) => {
-          if (returning) back.mutate({ g: returning, comments })
-        }}
-      />
     </>
   )
 }
