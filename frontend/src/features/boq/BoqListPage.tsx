@@ -87,13 +87,25 @@ export default function BoqListPage() {
         }
       >
         <div className="grid gap-4">
-          <Field label="Project" htmlFor="boq-project">
+          <Field
+            label="Project"
+            htmlFor="boq-project"
+            hint={
+              projects.isPending
+                ? 'Loading your projects…'
+                : !(projects.data ?? []).length
+                  ? 'You have no projects yet. Create the project first, then open its BOQ here.'
+                  : (projects.data ?? []).every((p) => withBoq.has(p.id))
+                    ? 'Every project already has its BOQ - a project has only one. Open its BOQ to add a revision, or create a new project first.'
+                    : 'A project has one BOQ. Projects that already have one are greyed out.'
+            }
+          >
             <Select
               id="boq-project"
               value={job}
               onChange={(e) => setJob(e.target.value)}
-              placeholder="Choose the project"
-              options={(projects.data ?? []).filter((p) => !withBoq.has(p.id)).map((p) => ({ value: p.id, label: projectLabel(p) }))}
+              placeholder={projects.isPending ? 'Loading…' : 'Choose the project'}
+              options={(projects.data ?? []).map((p) => ({ value: p.id, label: projectLabel(p) + (withBoq.has(p.id) ? ' - already has a BOQ' : ''), disabled: withBoq.has(p.id) }))}
             />
           </Field>
           <Field label="Title (optional)" htmlFor="boq-title">
