@@ -49,8 +49,6 @@ function Form({ job, day, onClose, onOpen }: { job: number; day: DiaryDetail | n
   // Always one blank row past the end, so adding a trade is typing rather than hunting for a button.
   const [labour, setLabour] = useState<LabourLine[]>([...(day?.labour ?? []), blankLabour(), blankLabour()])
   const [plant, setPlant] = useState<PlantLine[]>([...(day?.plant ?? []), blankPlant()])
-  // Workers already screened for this site, so one added in Workers & Safety does not have to be typed in again here.
-  const workers = useWorkers(job)
   const [picking, setPicking] = useState(false)
   const [photos, setPhotos] = useState<File[]>([])
   // What the day reports about the planned work, kept as differences from what the plan says now.
