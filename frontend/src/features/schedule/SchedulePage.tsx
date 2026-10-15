@@ -3,16 +3,17 @@ import { useSearchParams } from 'react-router-dom'
 import { FileUp, Plus, Printer, Sparkles } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { ProjectPicker } from '@/components/data/ProjectPicker'
-import { Button, Input, Skeleton, Stat, StatGrid, Tabs } from '@/components/ui'
+import { Button, Input, Stat, StatGrid, Tabs } from '@/components/ui'
 import { useSchedule, type Activity } from '@/api/schedule'
 import { today } from '@/lib/format'
 import { useSession } from '@/lib/session'
 import { ActivityModal } from './ActivityModal'
-import { Bars, Curve } from './Bars'
+import { Curve } from './Bars'
 import { DayPlan } from './DayPlan'
 import { DrawFromBoqModal } from './DrawFromBoqModal'
 import { ImportScheduleModal } from './ImportScheduleModal'
 import { AiDayTasks, AiDraftModal, AiPlanPanel } from './AiPlanning'
+import { ProgrammeView } from './programme/ProgrammeView'
 
 /** The day's plan, the whole programme, and how far along the work is - and what slips if the thing before it slips. */
 export default function SchedulePage() {
@@ -64,12 +65,8 @@ export default function SchedulePage() {
         <Stat label="Late activities" value={s?.late ?? 0} sub={s?.behind ? `+${s.behind} behind` : undefined} loading={q.isPending && job > 0} />
         <Stat label="Finishes" value={s?.forecast_finish || '-'} sub={s && s.slip_days > 0 ? `${s.slip_days} days late` : undefined} tone={s && s.slip_days > 0 ? 'danger' : undefined} loading={q.isPending && job > 0} />
       </StatGrid>}
-      {tab === 'programme' && (q.isPending && job > 0 ? <Skeleton className="h-48 w-full" /> : d && d.activities.length > 0 ? (
-        <>
-          <Bars activities={d.activities} onEdit={(a) => can('workorders.manage') && setEditing(a)} />
-          <Curve curve={d.curve} />
-        </>
-      ) : job > 0 ? <p className="rounded-lg border border-border bg-muted/40 p-4 text-sm">No programme yet. Add activities, or draw one from a work order: each line becomes an activity whose progress comes from the measurement book.</p> : null)}
+      {tab === 'programme' && job > 0 && <ProgrammeView key={job} job={job} />}
+      {tab === 'programme' && d && d.curve.length > 0 && <Curve curve={d.curve} />}
       <ActivityModal job={job} activity={editing && editing !== 'new' ? editing : null} others={d?.activities ?? []} employees={d?.employees ?? []} teamScope={d?.team_scope} open={!!editing} onClose={() => setEditing(null)} />
       <DrawFromBoqModal job={job} open={drawing} onClose={() => setDrawing(false)} />
       <ImportScheduleModal job={job} open={importing} onClose={() => setImporting(false)} />
