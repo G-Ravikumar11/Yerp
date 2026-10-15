@@ -9,6 +9,16 @@ export class ApiError extends Error {
   }
 }
 
+/** What to say when the server gave no message of its own (over HTTP/2 the status text is empty, so the toast was blank). */
+function plainStatus(status: number, text: string): string {
+  if (text) return text
+  if (status === 502 || status === 503 || status === 504) return 'The server took too long to answer or was restarting. Nothing may have been saved: wait a minute, reload and check before trying again.'
+  if (status === 413) return 'That is too large to send. Split it and try again.'
+  if (status === 429) return 'Too many requests at once. Wait a moment and try again.'
+  if (status >= 500) return 'The server had a problem with that. Try again, and tell us if it keeps happening.'
+  return `That did not work (error ${status}).`
+}
+
 type Options = Omit<RequestInit, 'body'> & {
   body?: unknown
   /** A 401 is an expected answer here (asking who is signed in), not a session that has ended. */
@@ -56,7 +66,7 @@ export async function api<T = unknown>(path: string, { body, headers, quiet, ...
   if (!res.ok) {
     const detail = (data as { detail?: unknown } | null)?.detail
     const message =
-      typeof detail === 'string' ? detail : Array.isArray(detail) ? 'Some of what was entered is not valid.' : res.statusText
+      typeof detail === 'string' ? detail : Array.isArray(detail) ? 'Some of what was entered is not valid.' : plainStatus(res.status, res.statusText)
     if (res.status === 401 && !quiet && !/^\/(next\/)?(login|reset-password|superadmin\/login)/.test(location.pathname)) {
       // The session ended; the login page is still the current app's.
       window.dispatchEvent(new CustomEvent('yerp:unauthorised'))
