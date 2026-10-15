@@ -183,3 +183,62 @@ def test_blank_rows_in_education_and_experience_are_dropped(tenant):
     w = res.json()["worker"]
     assert w["education"] == [{"exam": "ITI", "year": "2019", "school": "Govt ITI"}]
     assert w["experience"] == []
+
+
+# --- the HSE plan's site check: the site held against the plan from what is already recorded ------------------------
+
+def check(tenant, j):
+    res = tenant.get("/api/safety/hse-check?job_id=%d" % j["id"])
+    assert res.status_code == 200, res.text
+    body = res.json()
+    return body, {x["key"]: x for x in body["items"]}
+
+
+def test_an_empty_site_says_nobody_is_screened_and_no_talk_was_held(tenant):
+    j = job(tenant)
+    body, items = check(tenant, j)
+    assert items["screened"]["status"] == "info"
+    assert items["talk"]["status"] == "warn"
+    assert items["incidents"]["status"] == "ok" and items["permits"]["status"] == "ok"
+    assert body["total"] == len(body["items"]) - 1        # the "info" line is not scored
+
+
+def test_an_unbriefed_worker_without_a_certificate_is_flagged_by_name(tenant):
+    j = job(tenant)
+    tenant.post("/api/workers", json={"job_id": j["id"], "name": "Ravi Kumar", "age": 30, "trade": "Mason"})
+    tenant.post("/api/workers", json={"job_id": j["id"], "name": "Suresh", "age": 30, "trade": "Fitter",
+                                      "trial_briefed": True})
+    _, items = check(tenant, j)
+    assert items["briefed"]["status"] == "bad" and items["briefed"]["count"] == 1
+    assert "Ravi Kumar" in items["briefed"]["detail"] and "Suresh" not in items["briefed"]["detail"]
+    assert items["medical"]["status"] == "warn" and items["medical"]["count"] == 2
+
+
+def test_a_talk_this_week_and_a_run_out_permit_show(tenant):
+    j = job(tenant)
+    tenant.post("/api/safety/talks", json={"job_id": j["id"], "topic": "Working at height", "attendees": 12})
+    then = datetime.now() - timedelta(hours=10)
+    p = tenant.post("/api/safety/permits", json=permit_body(
+        j, valid_from=then.strftime("%Y-%m-%d %H:%M"),
+        valid_to=(then + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M"))).json()["permit"]
+    _, items = check(tenant, j)
+    assert items["talk"]["status"] == "ok"
+    assert items["permits"]["status"] == "bad" and p["number"] in items["permits"]["detail"]
+
+
+def test_a_serious_injury_left_open_past_7_days_is_overdue(tenant):
+    j = job(tenant)
+    i = tenant.post("/api/safety/incidents", json={
+        "job_id": j["id"], "kind": "Lost time injury", "description": "Fell from ladder",
+        "injured_name": "Ramaiah K", "lost_days": 5,
+        "happened_on": (date.today() - timedelta(days=10)).isoformat()}).json()["incident"]
+    _, items = check(tenant, j)
+    assert items["incidents"]["status"] == "bad"
+    assert items["reported"]["status"] == "bad" and i["number"] in items["reported"]["detail"]
+
+
+def test_another_company_sees_nothing_of_this_sites_check(tenant, second_tenant):
+    j = job(tenant)
+    tenant.post("/api/workers", json={"job_id": j["id"], "name": "Ravi Kumar", "age": 30, "trade": "Mason"})
+    items = {x["key"]: x for x in second_tenant.get("/api/safety/hse-check").json()["items"]}
+    assert items["screened"]["count"] == 0 and items["briefed"]["count"] == 0

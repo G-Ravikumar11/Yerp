@@ -16,10 +16,11 @@ import { PermitModal } from './PermitModal'
 import { SafeDays } from './SafeDays'
 import { ChecksTab } from './ChecksTab'
 import { WorkersTab } from './WorkersTab'
+import { HseTab } from './HseTab'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 type Tab = 'incidents' | 'talks' | 'permits' | 'safe' | 'checks'
-type View = 'workers' | 'safety'
+type View = 'workers' | 'safety' | 'hse'
 
 /**
  * Workers and Safety: two tabs. Workers is the screening of every worker before they start; Safety is incidents and near misses with their cause
@@ -29,7 +30,7 @@ type View = 'workers' | 'safety'
 export default function SafetyPage() {
   const { can } = useSession()
   const [params, setParams] = useSearchParams()
-  const view: View = params.get('view') === 'safety' ? 'safety' : 'workers'
+  const view: View = params.get('view') === 'safety' ? 'safety' : params.get('view') === 'hse' ? 'hse' : 'workers'
   const setView = (v: View) => setParams((p) => { const n = new URLSearchParams(p); n.set('view', v); return n }, { replace: true })
   const [job, setJob] = useState(0)
   const [tab, setTab] = useState<Tab>('incidents')
@@ -104,11 +105,18 @@ export default function SafetyPage() {
       <PageHeader
         eyebrow="Projects"
         title="Workers and Safety"
-        description={view === 'safety' ? 'Incidents and near misses with their cause and fix, the morning toolbox talk, permits to work, and the equipment checklists.' : 'Every worker screened before they start: name, age, address, trade, photo and medical certificate.'}
+        description={view === 'safety' ? 'Incidents and near misses with their cause and fix, the morning toolbox talk, permits to work, and the equipment checklists.' : view === 'hse' ? 'The company HSE plan in plain words, and each site checked against it.' : 'Every worker screened before they start: name, age, address, trade, photo and medical certificate.'}
         actions={view === 'safety' && tab !== 'checks' && <><Button variant="outline" asChild><a href={register}><FileSpreadsheet /> Register</a></Button><Button disabled={!job || noPermit} title={noPermit ? 'A permit to work is issued by a supervisor.' : undefined} onClick={add}><Plus /> New</Button></>}
       />
-      <div className="mb-6"><Tabs size="lg" label="Workers and Safety" value={view} onChange={setView} items={[{ value: 'workers', label: 'Workers', info: 'Every worker screened before starting on site, on the company’s Screening Of Worker form: details, trade, photo and medical certificate. Open a worker to read the whole form.' }, { value: 'safety', label: 'Safety', info: 'Everything about keeping the site safe: incidents, toolbox talks, permits to work, safe days and the equipment checklists. Choose a project first.' }]} /></div>
-      {view === 'workers' && <WorkersTab />}
+      <div className="mb-6"><Tabs size="lg" label="Workers and Safety" value={view} onChange={setView} items={[{ value: 'workers', label: 'Workers', info: 'Every worker screened before starting on site, on the company’s Screening Of Worker form: details, trade, photo and medical certificate. Open a worker to read the whole form.' }, { value: 'safety', label: 'Safety', info: 'Everything about keeping the site safe: incidents, toolbox talks, permits to work, safe days and the equipment checklists. Choose a project first.' }, { value: 'hse', label: 'HSE plan', info: 'The company HSE plan in plain words, and each site checked against it.' }]} /></div>      {view === 'workers' && <WorkersTab />}
+      {view === 'hse' && (
+        <HseTab
+          job={job}
+          setJob={setJob}
+          onGo={(go) => { if (go === 'workers') setView('workers'); else { setTab(go); setView('safety') } }}
+          onNewPermit={() => { setTab('permits'); setView('safety'); if (job && signoff) setPermitting(true) }}
+        />
+      )}
       {view === 'safety' && (
         <>
       <div className="mb-6"><ProjectPicker value={job} onChange={setJob} id="sf-job" allowAll /></div>
