@@ -3,7 +3,6 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import { MotionConfig } from 'framer-motion'
 import { Loader2 } from 'lucide-react'
-import { AppShell } from '@/components/layout/AppShell'
 import { Toaster, TooltipProvider } from '@/components/ui'
 import { UpdatePrompt } from '@/components/UpdatePrompt'
 import { FreshBuild } from '@/lib/freshness'
@@ -11,9 +10,7 @@ import { LegacyLinks } from '@/lib/legacyLinks'
 import { persistOptions, queryClient } from '@/lib/query'
 import { watchConnection } from '@/stores/offline'
 import { applyTheme, useUI } from '@/stores/ui'
-import { SCREENS } from '@/routes'
-import { appUi } from '@/app-mobile/gate'
-import HomePage from '@/features/dashboard/HomePage'
+import { AppShell, HomePage, SCREENS } from '@/app-mobile/entry'
 import NotFound from '@/pages/NotFound'
 
 const LoginPage = lazy(() => import('@/features/auth/LoginPage'))
@@ -26,11 +23,6 @@ const ApplyPage = lazy(() => import('@/features/careers/ApplyPage'))
 const MeetingPage = lazy(() => import('@/features/meeting/MeetingPage'))
 const SuperadminPage = lazy(() => import('@/features/superadmin/SuperadminPage'))
 const SuperadminLoginPage = lazy(() => import('@/features/auth/SuperadminLoginPage'))
-// The phone app's own layout. `__MOBILE_UI__` is false in the website's build, which drops these lines and the folder with them.
-const MobileShell = __MOBILE_UI__ ? lazy(() => import('@/app-mobile/MobileShell')) : null
-const TodayPage = __MOBILE_UI__ ? lazy(() => import('@/app-mobile/TodayPage')) : null
-const ProjectsCards = __MOBILE_UI__ ? lazy(() => import('@/app-mobile/ProjectsCards')) : null
-const MorePage = __MOBILE_UI__ ? lazy(() => import('@/app-mobile/MorePage')) : null
 const ResetPage = lazy(() => import('@/features/auth/ResetPage'))
 
 /** While a page's code is still downloading. It appears only after a moment, so a quick load shows nothing at all
@@ -79,7 +71,6 @@ export default function App() {
     return () => window.removeEventListener('yerp:unauthorised', on)
   }, [])
 
-  const phone = appUi() && !!MobileShell
   const rawBase = import.meta.env.BASE_URL || ''
   const basename = rawBase === './' || rawBase === '/' ? '' : rawBase.replace(/\/$/, '')
 
@@ -103,11 +94,9 @@ export default function App() {
             <Route path="superadmin" element={<SuperadminPage />} />
             <Route path="superadmin/login" element={<SuperadminLoginPage />} />
             <Route path="reset" element={<ResetPage />} />
-            <Route element={phone && MobileShell ? <MobileShell /> : <AppShell />}>
-              <Route index element={phone && TodayPage ? <TodayPage /> : <HomePage />} />
-              {phone && ProjectsCards && <Route path="projects" element={<ProjectsCards />} />}
-              {phone && MorePage && <Route path="more" element={<MorePage />} />}
-              {SCREENS.filter(({ path }) => !(phone && path === '/projects')).map(({ path, Component }) => (
+            <Route element={<AppShell />}>
+              <Route index element={<HomePage />} />
+              {SCREENS.map(({ path, Component }) => (
                 <Route key={path} path={path.slice(1)} element={<Component />} />
               ))}
               <Route path="*" element={<NotFound />} />

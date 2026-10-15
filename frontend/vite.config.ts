@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 import { loadEnv } from 'vite'
+import { mobileUi } from './vite.mobile-ui.ts'
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig(({ mode, command }) => {
@@ -24,12 +25,7 @@ export default defineConfig(({ mode, command }) => {
     // Each build gets its own stamp, so data saved on the device by an older build is never trusted by a newer one.
     // The same stamp is written to dist/build.json: the server puts it on every answer, and an open app that sees a
     // newer one loads it (src/lib/freshness.ts).
-    define: {
-      __BUILD__: JSON.stringify(build),
-      // The phone app's own layout (src/app-mobile) is in the mobile build and the dev server only: for the website's build
-      // this is false, so that folder is not in it at all and nothing done there can change the website.
-      __MOBILE_UI__: JSON.stringify(isMobile || command === 'serve'),
-    },
+    define: { __BUILD__: JSON.stringify(build) },
     plugins: [
       {
         name: 'yerp-build-stamp',
@@ -40,6 +36,7 @@ export default defineConfig(({ mode, command }) => {
       },
       react(),
       tailwindcss(),
+      mobileUi(),
       VitePWA({
         // A new build takes over as soon as it is installed. The page in front of the person is not reloaded under
         // them (boot-app.tsx); the next page they open is simply the new one.
