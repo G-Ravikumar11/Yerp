@@ -34,8 +34,11 @@ export interface PermitInput { job_id: number; kind: string; location: string; d
 export const issuePermit = (b: PermitInput) => post<{ permit: { number: string; valid_to: string } }>('/api/safety/permits', b)
 export const closePermit = (id: number, note: string) => post<{ permit: { number: string } }>(`/api/safety/permits/${id}/close`, { note })
 
-// Workers screened before they start on site: name, age, address, trade, and a photo and medical certificate as files.
+// Workers screened before they start on site, after the company's own paper "Screening Of Worker" form: who they
+// are, their trade, their physical and education details, previous work, and a photo and medical certificate as files.
 export const workerKeys = { all: ['workers'] as const }
+export interface EducationRow { exam: string; year: string; school: string }
+export interface ExperienceRow { organization: string; project_site: string; category: string; period: string; salary: string }
 export interface Worker {
   id: number
   job_id: number
@@ -46,11 +49,42 @@ export interface Worker {
   trade: string
   screened_on: string
   screened_by: string
+  contractor_name: string
+  father_name: string
+  dob: string
+  sex: string
+  marital_status: string
+  children: number
+  mother_tongue: string
+  other_languages: string
+  emergency_contact: string
+  identification_mark: string
+  vision_normal: boolean
+  vision_problem: string
+  health_normal: boolean
+  health_problem: string
+  weight_kg: number
+  height_cm: number
+  blood_group: string
+  education: EducationRow[]
+  experience: ExperienceRow[]
+  certificates_verified: boolean
+  trial_briefed: boolean
+  safety_officer_name: string
   photo_url: string
   photo_full_url: string
   medical: { id: number; name: string; url: string }[]
 }
-export interface WorkerData { workers: Worker[]; trades: string[]; min_age: number; summary: { workers: number; by_trade: Record<string, number>; without_medical: number; without_photo: number } }
+export interface WorkerData { workers: Worker[]; trades: string[]; min_age: number; sexes: string[]; marital_statuses: string[]; summary: { workers: number; by_trade: Record<string, number>; without_medical: number; without_photo: number } }
 export const useWorkers = (job: number) => useQuery({ queryKey: ['workers', job], queryFn: () => get<WorkerData>(`/api/workers${job ? `?job_id=${job}` : ''}`) })
-export const screenWorker = (b: { job_id: number; name: string; age: number; address: string; trade: string; screened_on: string }) => post<{ worker: Worker }>('/api/workers', b)
+export interface WorkerInput {
+  job_id: number; name: string; age: number; address: string; trade: string; screened_on: string
+  contractor_name?: string; father_name?: string; dob?: string; sex?: string; marital_status?: string
+  children?: number; mother_tongue?: string; other_languages?: string; emergency_contact?: string
+  identification_mark?: string; vision_normal?: boolean; vision_problem?: string; health_normal?: boolean
+  health_problem?: string; weight_kg?: number; height_cm?: number; blood_group?: string
+  education?: EducationRow[]; experience?: ExperienceRow[]
+  certificates_verified?: boolean; trial_briefed?: boolean; safety_officer_name?: string
+}
+export const screenWorker = (b: WorkerInput) => post<{ worker: Worker }>('/api/workers', b)
 export const removeWorker = (id: number) => del<{ message: string }>(`/api/workers/${id}`)
