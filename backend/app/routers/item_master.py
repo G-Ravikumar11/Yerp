@@ -14,6 +14,7 @@ from app.core.currency import unit_rate
 from app.core.sheets import sheet_response
 from app.schemas.item_master import BulkCategoryIn, BulkStatusIn, CategoryIn, CategoryPatch, MasterItemIn, StatusIn
 from app.services import item_master as im
+from app.services import item_usage
 from app.services.site_rates import current_lines_of_item
 
 router = APIRouter()
@@ -84,6 +85,11 @@ def items_bulk_status(body: BulkStatusIn, request: Request, db: Session = Depend
     """Switch several items on or off together. All or none."""
     client, _, who = wo_actor(request, db, "items.manage")
     items = _owned(db, client.id, body.ids)
+    if not body.is_active and not body.confirm:
+        busy = item_usage.used_codes(db, client.id, [i.item_code for i in items if i.is_active is not False])
+        if busy:
+            raise HTTPException(409, "%d of these %d item%s %s used on BOQs, orders or in the store. %s stay on those documents, but can no longer be put on new lines. Confirm to deactivate them anyway."
+                                % (len(busy), len(items), "" if len(items) == 1 else "s", "is" if len(busy) == 1 else "are", "It" if len(busy) == 1 else "They"))
     for item in items:
         item.is_active, item.updated_by_name, item.updated_at = body.is_active, who, im.now()
     log_audit(db, client.id, "items_activated" if body.is_active else "items_deactivated", "item", None, "", "%d items" % len(items), request)
@@ -175,10 +181,24 @@ def item_status(item_id: int, body: StatusIn, request: Request, db: Session = De
     """Switch an item off or on. Nothing that already uses it is touched; it just cannot be picked for new lines."""
     client, _, who = wo_actor(request, db, "items.manage")
     item = _item(db, client.id, item_id)
+    if not body.is_active and item.is_active is not False and not body.confirm:
+        usage = item_usage.where_used(db, client.id, item)
+        if usage["total"]:
+            raise HTTPException(409, "'%s' is used in %d place%s (%s). It stays on them, but can no longer be put on new lines. Confirm to deactivate it anyway."
+                                % (item.item_name, usage["total"], "" if usage["total"] == 1 else "s", ", ".join("%s %d" % (g["label"], g["count"]) for g in usage["groups"])))
     item.is_active, item.updated_by_name, item.updated_at = body.is_active, who, im.now()
     log_audit(db, client.id, "item_activated" if body.is_active else "item_deactivated", "item", item.id, item.item_code, "", request)
     db.commit()
     return {"item": im.item_dict(item), "message": "%s %s." % (item.item_code, "activated" if body.is_active else "deactivated")}
+
+
+@router.get("/api/items/{item_id}/where-used")
+def item_where_used(item_id: int, request: Request, db: Session = Depends(get_db)):
+    """Every BOQ, order and store record that carries the item's code, so nobody switches off something still in use unknowingly."""
+    client = require_erp_read(request, db)
+    item = _item(db, client.id, item_id)
+    return {"item": im.item_dict(item, len(im.sites_using(db, client.id, [item.item_code]).get(item.item_code, ())),
+                                 im.stock_of(db, client.id, [item.item_code]).get(item.item_code, 0.0)), **item_usage.where_used(db, client.id, item)}
 
 
 @router.get("/api/items/{item_id}/sites")

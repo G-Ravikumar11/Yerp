@@ -45,7 +45,7 @@ def test_deactivating_an_item_keeps_every_document_that_uses_it(tenant):
     wo = tenant.post("/api/boqs/%d/client-order" % boq["id"], json={}).json()["work_order"]
     contractor_order(tenant, lines, [(lines["RCC"], 10, 100)])
     rcc = next(r for r in rows(tenant, boq["job_id"]) if r["description"].startswith("M25 grade RCC"))
-    assert tenant.patch("/api/items/%d/status" % rcc["item_id"], json={"is_active": False}).status_code == 200
+    assert tenant.patch("/api/items/%d/status" % rcc["item_id"], json={"is_active": False, "confirm": True}).status_code == 200
     assert tenant.get("/api/boqs/%d" % boq["id"]).status_code == 200
     again = {l["fg_code"] for l in tenant.get("/api/erp/work-orders/%d" % wo["id"]).json()["lines"]}
     assert rcc["item_code"] in again

@@ -127,13 +127,29 @@ export const fetchSimilar = async (name: string, code: string, excludeId?: numbe
   (await get<{ similar: SimilarItem[] }>(`/api/items/similar?${queryString({ name, code, exclude_id: excludeId })}`)).similar
 export const fetchItem = async (id: number) => (await get<{ item: MasterItem }>(`/api/items/${id}`)).item
 
+export interface UsageGroup {
+  key: string
+  label: string
+  count: number
+  rows: { label: string; detail: string; path: string }[]
+  more: number
+}
+
+export function useWhereUsed(itemId: number | null) {
+  return useQuery({
+    queryKey: ['item-master', 'where-used', itemId],
+    enabled: itemId !== null,
+    queryFn: () => get<{ item: MasterItem; total: number; groups: UsageGroup[] }>(`/api/items/${itemId}/where-used`),
+  })
+}
+
 export const createMasterItem = (body: MasterItemInput) => post<{ item: MasterItem; message: string }>('/api/items', body)
 export const updateMasterItem = (id: number, body: MasterItemInput) => put<{ item: MasterItem; message: string }>(`/api/items/${id}`, body)
-export const setItemActive = (id: number, is_active: boolean) => patch<{ item: MasterItem; message: string }>(`/api/items/${id}/status`, { is_active })
+export const setItemActive = (id: number, is_active: boolean, confirm = false) => patch<{ item: MasterItem; message: string }>(`/api/items/${id}/status`, { is_active, confirm })
 export const addCategory = (name: string, parent_id?: number) => post<{ message: string }>('/api/item-categories', { name, parent_id })
 export const patchCategory = (id: number, body: { name?: string; is_active?: boolean }) => patch<{ message: string }>(`/api/item-categories/${id}`, body)
 export const exportUrl = (f: Partial<ItemFilters>, ids: number[] = []) =>
   `/api/items/export.xlsx?${queryString({ ...f, page: undefined, page_size: undefined, sort: undefined, direction: undefined, ids: ids.join(',') })}`
-export const bulkStatus = (ids: number[], is_active: boolean) => post<{ changed: number; message: string }>('/api/items/bulk-status', { ids, is_active })
+export const bulkStatus = (ids: number[], is_active: boolean, confirm = false) => post<{ changed: number; message: string }>('/api/items/bulk-status', { ids, is_active, confirm })
 export const bulkCategory = (ids: number[], item_category: string, item_subcategory: string) =>
   post<{ changed: number; message: string }>('/api/items/bulk-category', { ids, item_category, item_subcategory })

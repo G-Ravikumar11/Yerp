@@ -26,11 +26,13 @@ class MasterItemIn(BaseModel):
 
 class StatusIn(BaseModel):
     is_active: bool
+    confirm: bool = False          # deactivating something in use must be said to be meant
 
 
 class BulkStatusIn(BaseModel):
     ids: List[int]
     is_active: bool
+    confirm: bool = False
 
 
 class BulkCategoryIn(BaseModel):

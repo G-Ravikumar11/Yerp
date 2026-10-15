@@ -89,7 +89,8 @@ def test_list_filters_sorts_paginates_and_exports(tenant):
 def test_deactivating_keeps_history_and_blocks_new_mapping(tenant):
     item = make_item(tenant)
     site, _ = site_with(tenant, "Site A", [("PCC-M15", 10, 100)])
-    off = tenant.patch("/api/items/%d/status" % item["id"], json={"is_active": False})
+    assert tenant.patch("/api/items/%d/status" % item["id"], json={"is_active": False}).status_code == 409, "it is on a BOQ: say so first"
+    off = tenant.patch("/api/items/%d/status" % item["id"], json={"is_active": False, "confirm": True})
     assert off.status_code == 200 and off.json()["item"]["is_active"] is False
     assert [r["item_code"] for r in rows(tenant, site)] == ["PCC-M15"], "existing BOQ lines keep their item"
     other = make_item(tenant, "PCC-M20", "PCC M20")

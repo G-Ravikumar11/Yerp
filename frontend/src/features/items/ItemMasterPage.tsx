@@ -2,17 +2,19 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, Copy, Download, Eye, FileUp, ListTree, Pencil, Plus, Power, Search, SlidersHorizontal, X } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Button, Card, ConfirmDialog, Field, Input, Modal, Select, Skeleton } from '@/components/ui'
-import { bulkCategory, bulkStatus, exportUrl, fetchItem, masterKeys, setItemActive, useCategories, useMasterItems, type ItemFilters, type MasterItem } from '@/api/itemMaster'
+import { bulkCategory, bulkStatus, exportUrl, fetchItem, masterKeys, setItemActive, useCategories, useMasterItems, useWhereUsed, type ItemFilters, type MasterItem } from '@/api/itemMaster'
 import { itemKeys, useItemVocabulary } from '@/api/items'
 import { useSites } from '@/api/siteRates'
 import { useAction } from '@/lib/mutate'
 import { useDebounced } from '@/lib/hooks'
+import { ApiError } from '@/lib/api'
 import { useSession } from '@/lib/session'
 import { formatINR } from '@/lib/utils'
 import { toast } from '@/stores/toast'
 import { AddItemsModal } from './AddItemsModal'
 import { CategoriesModal } from './CategoriesModal'
 import { ImportItemsModal } from './ImportItemsModal'
+import { ItemDetailModal, UsageList } from './ItemDetailModal'
 import { ItemFormModal, type FormMode } from './ItemFormModal'
 import { buildChips, clearAll, clearFilter, isFiltered, loadFilters, saveFilters, stockLabel } from './itemLogic'
 
@@ -44,7 +46,9 @@ export default function ItemMasterPage() {
   const [adding, setAdding] = useState(false)
   const [importing, setImporting] = useState(false)
   const [managing, setManaging] = useState(false)
+  const [detail, setDetail] = useState<MasterItem | null>(null)
   const [toggling, setToggling] = useState<MasterItem | null>(null)
+  const [bulkNote, setBulkNote] = useState('')
   const [bulkOff, setBulkOff] = useState(false)
   const [moving, setMoving] = useState(false)
 
@@ -74,19 +78,25 @@ export default function ItemMasterPage() {
       return next
     })
 
-  const toggle = useAction((i: MasterItem) => setItemActive(i.id, !i.is_active), { invalidate: [masterKeys.all, itemKeys.all], onSuccess: () => setToggling(null), onError: () => setToggling(null) })
-  const bulkToggle = useAction((on: boolean) => bulkStatus(ids, on), {
+  const toggle = useAction((i: MasterItem) => setItemActive(i.id, !i.is_active, true), { invalidate: [masterKeys.all, itemKeys.all], onSuccess: () => { setToggling(null); setDetail(null) }, onError: () => setToggling(null) })
+  const usage = useWhereUsed(toggling && toggling.is_active ? toggling.id : null)
+  const bulkToggle = useAction((v: { on: boolean; confirm: boolean }) => bulkStatus(ids, v.on, v.confirm), {
     invalidate: [masterKeys.all, itemKeys.all],
     onSuccess: () => {
       setPicked(new Set())
       setBulkOff(false)
+      setBulkNote('')
     },
-    onError: () => setBulkOff(false),
+    // Some of them are in use: nothing was changed, and the server says how many. Ask again, knowing that.
+    onError: (err) => {
+      if (err instanceof ApiError && err.status === 409) setBulkNote(err.message)
+      else setBulkOff(false)
+    },
   })
 
   const actions = (r: MasterItem) => (
     <div className="flex justify-end gap-1">
-      <Button size="icon-sm" variant="ghost" aria-label={`View ${r.item_name}`} onClick={() => setForm({ item: r, mode: 'view' })}><Eye /></Button>
+      <Button size="icon-sm" variant="ghost" aria-label={`View ${r.item_name}`} onClick={() => setDetail(r)}><Eye /></Button>
       {manage && (
         <>
           <Button size="icon-sm" variant="ghost" aria-label={`Edit ${r.item_name}`} onClick={() => setForm({ item: r, mode: 'edit' })}><Pencil /></Button>
@@ -170,7 +180,7 @@ export default function ItemMasterPage() {
           <strong>{picked.size} selected</strong>
           {manage && (
             <>
-              <Button size="sm" variant="outline" loading={bulkToggle.isPending && bulkToggle.variables === true} onClick={() => bulkToggle.mutate(true)}>Activate</Button>
+              <Button size="sm" variant="outline" loading={bulkToggle.isPending && bulkToggle.variables?.on === true} onClick={() => bulkToggle.mutate({ on: true, confirm: true })}>Activate</Button>
               <Button size="sm" variant="outline" onClick={() => setBulkOff(true)}>Deactivate</Button>
               <Button size="sm" variant="outline" onClick={() => setMoving(true)}>Change category</Button>
             </>
@@ -238,7 +248,7 @@ export default function ItemMasterPage() {
                     {manage && <td className="px-3 py-2"><input type="checkbox" aria-label={`Select ${r.item_name}`} checked={picked.has(r.id)} onChange={() => flip(r.id)} /></td>}
                     <td className="px-3 py-2 font-mono text-[13px]">{r.item_code}</td>
                     <td className="max-w-sm px-3 py-2">
-                      <button type="button" className="block max-w-full truncate text-left font-medium hover:underline" onClick={() => setForm({ item: r, mode: 'view' })}>{r.item_name}</button>
+                      <button type="button" className="block max-w-full truncate text-left font-medium hover:underline" onClick={() => setDetail(r)}>{r.item_name}</button>
                       {r.specification && <div className="truncate text-xs text-muted-foreground">{r.specification}</div>}
                     </td>
                     <td className="px-3 py-2">{r.item_category || '-'}</td>
@@ -259,7 +269,7 @@ export default function ItemMasterPage() {
                 <div className="flex items-start gap-3">
                   {manage && <input className="mt-1" type="checkbox" aria-label={`Select ${r.item_name}`} checked={picked.has(r.id)} onChange={() => flip(r.id)} />}
                   <div className="min-w-0 flex-1">
-                    <button type="button" className="block text-left font-medium" onClick={() => setForm({ item: r, mode: 'view' })}>{r.item_name}</button>
+                    <button type="button" className="block text-left font-medium" onClick={() => setDetail(r)}>{r.item_name}</button>
                     <div className="font-mono text-xs text-muted-foreground">{r.item_code}{r.specification ? ` · ${r.specification}` : ''}</div>
                   </div>
                   <Badge tone={r.is_active ? 'success' : 'neutral'}>{r.is_active ? 'Active' : 'Inactive'}</Badge>
@@ -290,7 +300,9 @@ export default function ItemMasterPage() {
       )}
 
       <ItemFormModal item={form.item} mode={form.mode} onClose={() => setForm({ item: null, mode: null })} vocab={vocab.data}
-        onOpenItem={(id) => { fetchItem(id).then((item) => setForm({ item, mode: 'view' })).catch(() => toast.error('That item could not be opened.')) }} />
+        onOpenItem={(id) => { fetchItem(id).then((item) => { setForm({ item: null, mode: null }); setDetail(item) }).catch(() => toast.error('That item could not be opened.')) }} />
+      <ItemDetailModal item={detail} manage={manage} onClose={() => setDetail(null)} onEdit={(i) => { setDetail(null); setForm({ item: i, mode: 'edit' }) }}
+        onCopy={(i) => { setDetail(null); setForm({ item: i, mode: 'duplicate' }) }} onToggle={(i) => setToggling(i)} />
       <AddItemsModal open={adding} onOpenChange={setAdding} vocab={vocab.data} />
       <ImportItemsModal open={importing} onOpenChange={setImporting} vocab={vocab.data} />
       <CategoriesModal open={managing} onOpenChange={setManaging} />
@@ -300,20 +312,27 @@ export default function ItemMasterPage() {
         onOpenChange={(o) => !o && setToggling(null)}
         title={`${toggling?.is_active ? 'Deactivate' : 'Activate'} ${toggling?.item_name ?? ''}?`}
         description={toggling?.is_active ? 'It stays on every BOQ, order, measurement and bill that already uses it, but cannot be put on new lines.' : 'It can be put on new BOQ lines again.'}
-        confirmLabel={toggling?.is_active ? 'Deactivate' : 'Activate'}
+        confirmLabel={toggling?.is_active ? (usage.data?.total ? 'Deactivate anyway' : 'Deactivate') : 'Activate'}
         tone={toggling?.is_active ? 'danger' : 'primary'}
         loading={toggle.isPending}
         onConfirm={() => { if (toggling) toggle.mutate(toggling) }}
-      />
+      >
+        {toggling?.is_active && (usage.isPending ? <Skeleton className="h-10 w-full" /> : usage.data && usage.data.total > 0 && (
+          <div className="mt-3 rounded-md border border-warning/40 bg-warning-soft p-3 text-sm">
+            <p className="mb-2 font-medium text-warning">This item is in use in {usage.data.total} place{usage.data.total === 1 ? '' : 's'}:</p>
+            <UsageList groups={usage.data.groups} />
+          </div>
+        ))}
+      </ConfirmDialog>
       <ConfirmDialog
         open={bulkOff}
-        onOpenChange={setBulkOff}
+        onOpenChange={(o) => { setBulkOff(o); if (!o) setBulkNote('') }}
         title={`Deactivate ${picked.size} item${picked.size === 1 ? '' : 's'}?`}
-        description="They stay on every BOQ, order, measurement and bill that already uses them, but cannot be put on new lines."
-        confirmLabel="Deactivate"
+        description={bulkNote || 'They stay on every BOQ, order, measurement and bill that already uses them, but cannot be put on new lines.'}
+        confirmLabel={bulkNote ? 'Deactivate anyway' : 'Deactivate'}
         tone="danger"
         loading={bulkToggle.isPending}
-        onConfirm={() => bulkToggle.mutate(false)}
+        onConfirm={() => bulkToggle.mutate({ on: false, confirm: !!bulkNote })}
       />
     </>
   )
