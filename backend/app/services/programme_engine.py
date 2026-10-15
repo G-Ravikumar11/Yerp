@@ -365,7 +365,10 @@ def schedule(rows, links, cal=None):
                 r.quantity * r.rate if r.quantity and r.rate and r.quantity > 0 and r.rate > 0 else 0.0)
             continue
         kids = [out[c] for c in p.children]
-        p.amount_weight = sum(k.amount_weight for k in kids)
+        own = r.amount if r.amount and r.amount > 0 else (
+            r.quantity * r.rate if r.quantity and r.rate and r.quantity > 0 and r.rate > 0 else 0.0)
+        # a BOQ line broken into steps with no amounts of their own still weighs what the line is worth
+        p.amount_weight = sum(k.amount_weight for k in kids) or own
         p.percent = _weighted(kids, [k.percent for k in kids])
 
     duration = (finish - start).days + 1 if start and finish else 0

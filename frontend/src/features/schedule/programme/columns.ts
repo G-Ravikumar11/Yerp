@@ -14,6 +14,8 @@ export interface Col {
   align?: 'right'
   /** Left out when the grid is narrowed to leave room for the chart. */
   extra?: boolean
+  /** Said on hover over the column's heading. */
+  hint?: string
 }
 
 export const COLUMNS: Col[] = [

@@ -32,6 +32,10 @@ export function Bars({ activities, onEdit }: { activities: Activity[]; onEdit: (
 }
 
 /** Planned against actual, week by week. */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** "Oct 2026" under the curve, where each month begins (the year in full, so it is never read as a day). */
+const monthLabel = (iso: string) => `${MONTHS[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`
+
 export function Curve({ curve }: { curve: CurvePoint[] }) {
   if (curve.length < 2) return null
   const W = 760, H = 180, pad = 28
@@ -45,8 +49,12 @@ export function Curve({ curve }: { curve: CurvePoint[] }) {
         {[0, 25, 50, 75, 100].map((p) => <g key={p}><line x1={pad} x2={W - pad} y1={y(p)} y2={y(p)} stroke="currentColor" strokeOpacity=".08" /><text x="2" y={y(p) + 3} fontSize="9" fill="currentColor" fillOpacity=".5">{p}%</text></g>)}
         <path d={line('planned')} fill="none" stroke="currentColor" strokeOpacity=".45" strokeWidth="2" strokeDasharray="5 3" />
         <path d={line('actual')} fill="none" stroke="var(--color-primary)" strokeWidth="2.5" />
-        <text x={pad} y={H - 6} fontSize="9" fill="currentColor" fillOpacity=".5">{curve[0].week}</text>
-        <text x={W - pad} y={H - 6} fontSize="9" textAnchor="end" fill="currentColor" fillOpacity=".5">{curve[curve.length - 1].week}</text>
+        {curve.map((c, i) => (i === 0 || c.week.slice(0, 7) !== curve[i - 1].week.slice(0, 7)) && (
+          <g key={c.week}>
+            <line x1={x(i)} x2={x(i)} y1={pad} y2={H - pad} stroke="currentColor" strokeOpacity=".06" />
+            <text x={x(i)} y={H - 8} fontSize="10" fill="currentColor" fillOpacity=".7" textAnchor={i === 0 ? 'start' : 'middle'}>{monthLabel(c.week)}</text>
+          </g>
+        ))}
       </svg></div>
     </section>
   )

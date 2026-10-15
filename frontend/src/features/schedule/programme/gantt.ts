@@ -45,15 +45,24 @@ export function monthBands(s: Scale) {
   return out
 }
 
-/** The second line of the header: each day at day zoom, each Monday at week zoom, nothing at month zoom. */
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+/** "12 Oct": a date short enough to sit beside a bar or over a week. */
+export const shortDate = (iso: string) => `${Number(iso.slice(8, 10))} ${MONTHS[Number(iso.slice(5, 7)) - 1]}`
+
+/**
+ * The second line of the header: each day at day zoom, each week (from its Monday, as "12 Oct") at week zoom, nothing
+ * at month zoom, where the months are the marks. Each carries its full date, shown on hover.
+ */
 export function ticks(s: Scale, zoom: Zoom) {
-  const out: { label: string; x: number }[] = []
+  const out: { label: string; x: number; title: string }[] = []
   if (zoom === 'month') return out
   for (let d = s.from; d <= s.to; d++) {
-    const dom = Number(fromDay(d).slice(8, 10))
-    const monday = ((((d + 3) % 7) + 7) % 7) === 0
-    if (zoom === 'day') out.push({ label: String(dom), x: xOf(s, d) })
-    else if (monday) out.push({ label: `${dom}`, x: xOf(s, d) })
+    const iso = fromDay(d)
+    const weekday = ((((d + 3) % 7) + 7) % 7)            // 0 is a Monday (1 Jan 1970 was a Thursday)
+    const title = `${WEEKDAYS[weekday]} ${shortDate(iso)} ${iso.slice(0, 4)}`
+    if (zoom === 'day') out.push({ label: String(Number(iso.slice(8, 10))), x: xOf(s, d), title })
+    else if (weekday === 0) out.push({ label: shortDate(iso), x: xOf(s, d), title: `Week from ${title}` })
   }
   return out
 }

@@ -153,7 +153,8 @@ def export_xlsx(view):
             # rows under it are looked at, so a heading never counts itself (no circular reference).
             under = lambda col: "$%s$%d:$%s$%d" % (col, first, col, end_row)
             kids = "%s,$%s%d" % (under(PARENT), ID, y)
-            _formula(ws, "%s%d" % (WEIGHT, y), "=SUMIF(%s,%s)" % (kids, under(WEIGHT)))
+            own = r["amount"] or (r["quantity"] * r["rate"] if r["quantity"] and r["rate"] else 0)
+            _formula(ws, "%s%d" % (WEIGHT, y), "=IF(SUMIF(%s,%s)>0,SUMIF(%s,%s),%s)" % (kids, under(WEIGHT), kids, under(WEIGHT), round(own, 2)))
             _formula(ws, p, "=IF(COUNTIF(%s)=0,0,IF(COUNTIFS(%s,%s,\"<=0\")=0,SUMPRODUCT((%s=$%s%d)*%s*%s)/SUMIF(%s,%s),"
                      "IF(SUMIF(%s,%s)>0,SUMPRODUCT((%s=$%s%d)*IFERROR(%s*1,0)*%s)/SUMIF(%s,%s),AVERAGEIF(%s,%s))))" % (
                          kids, kids, under(WEIGHT), under(PARENT), ID, y, under(WEIGHT), under(PCT), kids, under(WEIGHT),

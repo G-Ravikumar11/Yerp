@@ -369,7 +369,11 @@ export function schedule(rows: ProgrammeRow[], links: ProgrammeLink[], cal: Cale
       continue
     }
     const kids = p.children.map((c) => out.get(c)!)
-    p.amount_weight = kids.reduce((s, k) => s + k.amount_weight, 0)
+    const q = r.quantity ?? 0
+    const rate = r.rate ?? 0
+    const own = (r.amount ?? 0) > 0 ? r.amount! : q > 0 && rate > 0 ? q * rate : 0
+    // a BOQ line broken into steps with no amounts of their own still weighs what the line is worth
+    p.amount_weight = kids.reduce((s, k) => s + k.amount_weight, 0) || own
     p.percent = weighted(kids, kids.map((k) => k.percent))
   }
 
