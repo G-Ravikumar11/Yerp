@@ -243,7 +243,22 @@ def boq_save_lines(db, boq, rev, rows, issue_codes, client_id):
     issued = 0
     if issue_codes:
         issued = boq_issue_codes(db, client_id, kept)
+    boq_stamp_item_ids(db, client_id, kept)
     return kept, issued
+
+
+def boq_stamp_item_ids(db, client_id, lines):
+    """Put the master item's id beside each priced line's code, so the line keeps pointing at the same item.
+
+    The code stays what orders, contractors, measurements and bills match on; the id is the stable reference
+    beside it. Derived from the code every time, so the two cannot disagree."""
+    codes = {l.item_code for l in lines if l.kind in BOQ_PRICED and l.item_code}
+    ids = {}
+    if codes:
+        ids = {i.item_code: i.id for i in db.query(models.DBItem.id, models.DBItem.item_code).filter(
+            models.DBItem.client_id == client_id, models.DBItem.item_code.in_(list(codes))).all()}
+    for l in lines:
+        l.item_id = ids.get(l.item_code) if l.kind in BOQ_PRICED and l.item_code else None
 
 
 # What a person may type as an item code on a BOQ line: letters, numbers and - _ / . in any pattern (CIV-RCC-25, RCC025X).
@@ -590,7 +605,7 @@ def bv_apply(db, client, boq, vo):
     for l in db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == cur.id).order_by(models.DBBoqLine.display_order).all():
         copies.append(models.DBBoqLine(boq_id=boq.id, revision_id=nxt.id, key=l.key, kind=l.kind, group_code=l.group_code, description=l.description,
                                        uom=l.uom, quantity=l.quantity, rate=l.rate, amount=l.amount,
-                                       item_code=l.item_code, remarks=l.remarks, material=l.material, rate_only=l.rate_only))
+                                       item_code=l.item_code, item_id=l.item_id, remarks=l.remarks, material=l.material, rate_only=l.rate_only))
     by_key = {c.key: c for c in copies}
     added = []
     for vl in db.query(models.DBBoqVariationLine).filter(models.DBBoqVariationLine.variation_id == vo.id).order_by(
@@ -622,6 +637,7 @@ def bv_apply(db, client, boq, vo):
         db.add(l)
     db.flush()
     boq_issue_codes(db, client.id, copies)                    # the extra items get their codes from the item master
+    boq_stamp_item_ids(db, client.id, copies)
     boq.current_rev = nxt.rev_no
     # The client's work order drawn from this BOQ follows it.
     for wo in [w for w in boq_client_orders(db, boq) if w.status not in ("Closed", "Rejected")]:

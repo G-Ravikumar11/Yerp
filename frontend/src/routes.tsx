@@ -14,6 +14,7 @@ export const SCREENS: Screen[] = [
   { path: '/calendar', Component: lazy(() => import('@/features/calendar/CalendarPage')) },
   { path: '/ho', Component: lazy(() => import('@/features/headoffice/HoPortalPage')) },
   { path: '/projects/boq', Component: lazy(() => import('@/features/boq/BoqListPage')) },
+  { path: '/projects/boq/rates', Component: lazy(() => import('@/features/boq/SiteRatesPage')) },
   { path: '/projects/boq/:id', Component: lazy(() => import('@/features/boq/BoqPage')) },
   { path: '/store/items', Component: lazy(() => import('@/features/items/ItemMasterPage')) },
   { path: '/subcontractors/work-orders', Component: lazy(() => import('@/features/orders/OrdersPage')) },

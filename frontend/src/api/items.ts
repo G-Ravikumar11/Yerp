@@ -26,6 +26,7 @@ export interface ItemList {
 export interface ItemVocabulary {
   kinds: ItemKind[]
   item_types: string[]
+  boq_item_types: string[]
   units: string[]
   tax_rates: string[]
 }

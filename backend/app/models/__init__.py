@@ -169,8 +169,13 @@ from app.models.safety import (
     DBWorkPermit,
     DBWorkerScreening,
 )
+from app.models.site_rates import (
+    DBSiteItemRate,
+    DBRateAuditLog,
+)
 from app.models.stores import (
     DBItem,
+    DBItemCategory,
     DBCodeSequence,
     DBBomLine,
     DBStockMovement,
