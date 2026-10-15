@@ -12,6 +12,7 @@ export default defineConfig(({ mode, command }) => {
   const api = env.VITE_API_TARGET || 'http://127.0.0.1:8931'
 
   const isMobile = mode === 'mobile' || env.VITE_MOBILE === 'true'
+  const build = String(Date.now())
 
   return {
     // Built for web, the app is served by the backend under /next/; in development it owns the root.
@@ -21,13 +22,22 @@ export default defineConfig(({ mode, command }) => {
     // Built into frontend/dist, which is not committed: the deploy builds it (see nixpacks.toml).
     build: { outDir: 'dist', emptyOutDir: true },
     // Each build gets its own stamp, so data saved on the device by an older build is never trusted by a newer one.
+    // The same stamp is written to dist/build.json: the server puts it on every answer, and an open app that sees a
+    // newer one loads it (src/lib/freshness.ts).
     define: {
-      __BUILD__: JSON.stringify(String(Date.now())),
+      __BUILD__: JSON.stringify(build),
       // The phone app's own layout (src/app-mobile) is in the mobile build and the dev server only: for the website's build
       // this is false, so that folder is not in it at all and nothing done there can change the website.
       __MOBILE_UI__: JSON.stringify(isMobile || command === 'serve'),
     },
     plugins: [
+      {
+        name: 'yerp-build-stamp',
+        apply: 'build',
+        generateBundle() {
+          this.emitFile({ type: 'asset', fileName: 'build.json', source: JSON.stringify({ build }) })
+        },
+      },
       react(),
       tailwindcss(),
       VitePWA({

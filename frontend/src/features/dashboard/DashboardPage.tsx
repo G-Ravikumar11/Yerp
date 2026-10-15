@@ -217,7 +217,7 @@ export default function DashboardPage() {
             )}
             <Stat
               label="Safety incidents"
-              to="/projects/safety"
+              to="/projects/safety?view=safety"
               value={safety.data ? safety.data.incidents.length : 0}
               loading={safety.isPending}
               tone={safety.data?.summary.open ? 'warning' : undefined}

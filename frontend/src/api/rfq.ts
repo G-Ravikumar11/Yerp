@@ -6,7 +6,7 @@ export const rfqKeys = { all: ['rfq'] as const }
 export interface Rfq { id: number; number: string; title: string; project: string; lines: number; quotes: number; needed_by: string; status: string; award_reason?: string }
 export interface Offer { supplier_name: string; rate: number; amount: number; tax_percent: number }
 export interface RfqLine { rfq_line_id: number; description: string; item_code: string; uom: string; qty: number; spread_percent: number; awarded_supplier: string; lowest: string; offers: Offer[] }
-export interface RfqSupplier { supplier_name: string; rank: string; is_l1: boolean; basic: number; tax: number; freight: number; landed: number; delivery_days: number; payment_terms: string; complete: boolean }
+export interface RfqSupplier { quote_id: number; supplier_name: string; rank: string; is_l1: boolean; basic: number; tax: number; freight: number; landed: number; delivery_days: number; payment_terms: string; complete: boolean }
 export interface Statement { rfq: Rfq; lines: RfqLine[]; suppliers: RfqSupplier[]; l1: string; l1_landed: number; saving_vs_l2: number; lowest_per_line_basic: number }
 
 export const useRfqs = () => useQuery({ queryKey: ['rfq', 'list'], queryFn: () => get<{ rfqs: Rfq[]; summary: { open: number; waiting_for_quotes: number; awarded: number } }>('/api/rfqs') })

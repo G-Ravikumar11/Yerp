@@ -6,6 +6,7 @@ import { Loader2 } from 'lucide-react'
 import { AppShell } from '@/components/layout/AppShell'
 import { Toaster, TooltipProvider } from '@/components/ui'
 import { UpdatePrompt } from '@/components/UpdatePrompt'
+import { FreshBuild } from '@/lib/freshness'
 import { LegacyLinks } from '@/lib/legacyLinks'
 import { persistOptions, queryClient } from '@/lib/query'
 import { watchConnection } from '@/stores/offline'
@@ -30,6 +31,7 @@ const MobileShell = __MOBILE_UI__ ? lazy(() => import('@/app-mobile/MobileShell'
 const TodayPage = __MOBILE_UI__ ? lazy(() => import('@/app-mobile/TodayPage')) : null
 const ProjectsCards = __MOBILE_UI__ ? lazy(() => import('@/app-mobile/ProjectsCards')) : null
 const MorePage = __MOBILE_UI__ ? lazy(() => import('@/app-mobile/MorePage')) : null
+const ResetPage = lazy(() => import('@/features/auth/ResetPage'))
 
 /** While a page's code is still downloading. It appears only after a moment, so a quick load shows nothing at all
  * rather than a flash; a slow one (a site on a weak signal) shows that something is happening instead of a blank page. */
@@ -57,6 +59,18 @@ export default function App() {
 
   useEffect(() => watchConnection(), [])
 
+  // Something was deleted. Every screen not on show had kept its own copy of its lists, and drew that copy first when
+  // opened - so the deleted record still showed elsewhere until a fresh answer came, for as long as the connection
+  // took. Those copies are dropped; the screens on show are read again at once.
+  useEffect(() => {
+    const on = () => {
+      queryClient.removeQueries({ type: 'inactive' })
+      void queryClient.invalidateQueries({ type: 'active' })
+    }
+    window.addEventListener('yerp:deleted', on)
+    return () => window.removeEventListener('yerp:deleted', on)
+  }, [])
+
   // Any request answered "not signed in" means the session ended: ask who is signed in
   // again, and the app goes to the sign-in page rather than draw failures.
   useEffect(() => {
@@ -75,6 +89,7 @@ export default function App() {
       <TooltipProvider>
         <BrowserRouter basename={basename}>
           <LegacyLinks />
+          <FreshBuild />
           <Suspense fallback={<PageLoading />}>
           <Routes>
             <Route path="login" element={<LoginPage />} />
@@ -87,6 +102,7 @@ export default function App() {
             <Route path="reset-password" element={<ResetPasswordPage />} />
             <Route path="superadmin" element={<SuperadminPage />} />
             <Route path="superadmin/login" element={<SuperadminLoginPage />} />
+            <Route path="reset" element={<ResetPage />} />
             <Route element={phone && MobileShell ? <MobileShell /> : <AppShell />}>
               <Route index element={phone && TodayPage ? <TodayPage /> : <HomePage />} />
               {phone && ProjectsCards && <Route path="projects" element={<ProjectsCards />} />}

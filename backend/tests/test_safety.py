@@ -91,3 +91,27 @@ def test_another_company_sees_none_of_it(tenant, second_tenant):
     j = job(tenant)
     tenant.post("/api/safety/incidents", json={"job_id": j["id"], "kind": "Near miss", "description": "x"})
     assert second_tenant.get("/api/safety").json()["incidents"] == []
+
+
+def test_a_worker_is_screened_with_trade_photo_and_medical_certificate(tenant):
+    j = job(tenant)
+    trades = tenant.get("/api/workers").json()["trades"]
+    assert "Carpenter helper" in trades and "Unskilled NMR labour" in trades
+    assert tenant.post("/api/workers", json={"job_id": j["id"], "name": "Ravi", "age": 16,
+                                             "trade": "Mason"}).status_code == 400          # under 18
+    assert tenant.post("/api/workers", json={"job_id": j["id"], "name": "Ravi", "age": 30,
+                                             "trade": "Plumber"}).status_code == 400        # not a trade on the list
+    res = tenant.post("/api/workers", json={"job_id": j["id"], "name": "Ravi Kumar", "age": 30,
+                                            "address": "Kukatpally, Hyderabad", "trade": "Mason helper"})
+    assert res.status_code == 200, res.text
+    w = res.json()["worker"]
+    assert w["number"] == "WKR-0001" and w["trade"] == "Mason helper" and w["screened_on"]
+    up = tenant.post("/api/files", data={"attached_type": "worker", "attached_id": str(w["id"]),
+                                         "caption": "Medical certificate", "kind": "document"},
+                     files={"file": ("fit.pdf", b"%PDF-1.4 fit to work", "application/pdf")})
+    assert up.status_code == 200, up.text
+    listed = tenant.get("/api/workers?job_id=%d" % j["id"]).json()
+    assert listed["summary"]["workers"] == 1 and listed["summary"]["by_trade"]["Mason helper"] == 1
+    assert listed["workers"][0]["medical"][0]["name"] == "fit.pdf" and listed["summary"]["without_medical"] == 0
+    assert tenant.delete("/api/workers/%d" % w["id"]).status_code == 200
+    assert tenant.get("/api/workers").json()["workers"] == []

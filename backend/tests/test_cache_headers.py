@@ -49,3 +49,37 @@ def test_pictures_that_keep_their_name_are_kept_briefly_then_checked(client):
     header, res = cache_control(client, "/next/icons/" + picture)
     assert "max-age=3600" in header and "immutable" not in header, repr(header)
     assert res.headers.get("etag"), "so the check after the hour is a 304, not the whole file again"
+
+
+# --- which build is live, and starting a device clean -----------------------------------------------------------------
+
+def test_every_answer_says_which_build_is_live(client, monkeypatch, tmp_path):
+    """An open app that sees a newer build loads it at the next change of screen (frontend/src/lib/freshness.ts)."""
+    from app.core import config
+    (tmp_path / "build.json").write_text('{"build": "1790000000000"}', encoding="utf-8")
+    monkeypatch.setattr(config, "FRONTEND_DIST", str(tmp_path))
+    assert client.get("/api/health").headers.get("X-App-Build") == "1790000000000"
+    # a rebuild on a running server is noticed
+    (tmp_path / "build.json").write_text('{"build": "1790000099999"}', encoding="utf-8")
+    os.utime(tmp_path / "build.json", (2_000_000_000, 2_000_000_000))
+    assert client.get("/api/health").headers.get("X-App-Build") == "1790000099999"
+
+
+def test_with_no_build_nothing_is_claimed(client, monkeypatch, tmp_path):
+    from app.core import config
+    monkeypatch.setattr(config, "FRONTEND_DIST", str(tmp_path))
+    assert "X-App-Build" not in client.get("/api/health").headers
+
+
+def test_the_operator_can_ask_every_device_to_start_clean(client, monkeypatch):
+    from _patching import patch_app
+    assert "X-Client-Reset" not in client.get("/api/health").headers
+    patch_app(monkeypatch, "CLIENT_RESET", "2026-10-14")
+    assert client.get("/api/health").headers.get("X-Client-Reset") == "2026-10-14"
+
+
+def test_the_reset_page_empties_the_browsers_cache_but_not_its_storage(client):
+    """Storage holds offline saves not yet sent, and cookies the sign-in: only the cache is cleared."""
+    res = client.get("/next/reset")
+    assert res.headers.get("Clear-Site-Data") == '"cache"'
+    assert "storage" not in res.headers.get("Clear-Site-Data") and "cookies" not in res.headers.get("Clear-Site-Data")

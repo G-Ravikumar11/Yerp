@@ -13,7 +13,7 @@ from sqlalchemy import text, bindparam
 from app import models
 from app.core.audit import log_audit
 from app.core.files import drop_files_of
-from app.services.subcontract_orders import _fk_map, drop_alerts_about, referrers_present, sweep_referrers
+from app.services.subcontract_orders import _fk_map, drop_alerts_about, referrers_present, sweep_referrers, table_columns
 
 # Rows that belong to the record they point at, even though the column may be left empty.
 OWNED = {
@@ -64,7 +64,19 @@ KINDS = {
     "attendance": ("attendance", "DBAttendance", "timesheet entry", "id"),
     "supplier": ("suppliers", "DBSupplier", "supplier", "name"),
     "item": ("erp_items", "DBItem", "item", "item_code"),
+    "customer": ("contacts", "DBContact", "customer", "name"),
+    "leave": ("leave_requests", "DBLeaveRequest", "leave request", "start_date"),
+    "credit_note": ("credit_notes", "DBCreditNote", "credit note", "number"),
+    "rfq_quote": ("rfq_quotes", "DBRfqQuote", "supplier quote", "supplier_name"),
+    "rental": ("plant_rentals", "DBPlantRental", "rental", "number"),
+    "rental_provider": ("plant_rental_providers", "DBPlantRentalProvider", "rental provider", "name"),
+    "allocation": ("plant_allocations", "DBPlantAllocation", "allocation", "start_date"),
+    "service": ("asset_services", "DBAssetService", "service record", "number"),
+    "machine_log": ("asset_logs", "DBAssetLog", "machine log", "log_date"),
 }
+
+# Kinds whose rows carry no company of their own: they belong to the company of the record they hang off.
+OWNED_THROUGH = {"rfq_quote": ("rfq_id", "DBRfq")}
 
 # What is kept about a record under a type name instead of a link.
 POLY = {
@@ -86,6 +98,11 @@ POLY = {
     "qc_inspections": {"alert": ["inspection"]}, "qc_ncrs": {"alert": ["ncr"]},
     "safety_incidents": {"alert": ["incident"]}, "qc_cube_sets": {"alert": ["cube_set"]},
     "money_entries": {"alert": ["money"]},
+    "plant_rentals": {"files": ["plant_rental"]},
+    "asset_services": {"files": ["plant_maintenance"]},
+    "plant_expenses": {"files": ["plant_expense"]},
+    "plant_fuel": {"files": ["plant_fuel"]},
+    "worker_screenings": {"files": ["worker"]},
 }
 
 # Kept, with the link to the project cleared, when a project goes: they exist before and apart from it.
@@ -124,7 +141,10 @@ def purge(db, table, ids, counts=None, _depth=0):
                 _in(db, "UPDATE %s SET %s = NULL WHERE %s IN :ids" % (child, col, col), ids)
             continue
         if nullable and (child, col) not in OWNED:
-            _in(db, "UPDATE %s SET %s = NULL WHERE %s IN :ids" % (child, col, col), ids)
+            n = _in(db, "UPDATE %s SET %s = NULL WHERE %s IN :ids" % (child, col, col), ids).rowcount
+            if n and n > 0:
+                kept = counts.setdefault("_kept", {})
+                kept[child] = kept.get(child, 0) + n
             continue
         if pk == ["id"]:
             kids = [r[0] for r in _in(db, "SELECT %s FROM %s WHERE %s IN :ids" % (pk[0], child, col), ids).fetchall()]
@@ -139,7 +159,8 @@ def purge(db, table, ids, counts=None, _depth=0):
 
 
 def explain(db, table, ids):
-    """What a delete would take with it, without taking it: run it and roll it back."""
+    """What a delete would take with it, without taking it: run it and roll it back. Under "_kept", what stays but
+    loses its link to it."""
     counts = purge(db, table, ids)
     db.rollback()
     return {k: v for k, v in counts.items() if v}
@@ -160,6 +181,11 @@ LABELS = {
     "site_geofences": "site fences", "material_recoveries": "material recoveries", "diary_labour": "labour lines", "diary_plant": "plant lines",
     "assets": "equipment", "leads": "tenders", "estimates": "estimates",
     "subcontract_items": "schedule lines", "boq_lines": "BOQ lines", "work_order_lines": "work order lines", "ra_bill_lines": "RA bill lines",
+    "jobs": "projects", "contacts": "customers", "leave_requests": "leave requests", "credit_notes": "credit notes",
+    "rfq_quotes": "supplier quotes", "rfq_quote_lines": "quoted rates", "plant_rentals": "rentals",
+    "plant_rental_invoices": "rental invoices", "plant_rental_extensions": "rental extensions",
+    "plant_rental_providers": "rental providers", "plant_allocations": "allocations", "asset_services": "service records",
+    "plant_expenses": "plant expenses", "plant_fuel": "fuel records", "employees": "employees", "worker_screenings": "screened workers", "suppliers": "suppliers", "contractors": "vendors",
 }
 
 
@@ -183,7 +209,13 @@ def record(db, client_id, kind, rec_id):
     from fastapi import HTTPException
     table, model, noun, col = kind_or_404(kind)
     cls = getattr(models, model)
-    row = db.query(cls).filter(cls.id == rec_id, cls.client_id == client_id).first()
+    if kind in OWNED_THROUGH:
+        link, parent_model = OWNED_THROUGH[kind]
+        parent = getattr(models, parent_model)
+        row = db.query(cls).join(parent, getattr(cls, link) == parent.id).filter(
+            cls.id == rec_id, parent.client_id == client_id).first()
+    else:
+        row = db.query(cls).filter(cls.id == rec_id, cls.client_id == client_id).first()
     if not row:
         raise HTTPException(404, "%s not found" % noun.capitalize())
     return row, table, noun, str(getattr(row, col, "") or "") or "#%d" % row.id
@@ -239,8 +271,7 @@ def delete_project(db, request, client, job):
 
 
 def _has_id(db, table):
-    from sqlalchemy import inspect
-    return any(c["name"] == "id" for c in inspect(db.get_bind()).get_columns(table))
+    return "id" in table_columns(db, table)
 
 
 def project_report(db, client, job):

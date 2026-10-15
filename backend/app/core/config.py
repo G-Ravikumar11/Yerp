@@ -94,3 +94,28 @@ SLOW_REQUEST_MS = int(os.getenv("SLOW_REQUEST_MS", "1500"))
 FRONTEND_DIST = os.path.join(BACKEND_DIR, "..", "frontend", "dist")
 # Files the server sends itself rather than the React app: see app/static/README.md.
 STATIC_DIR = os.path.join(BACKEND_DIR, "app", "static")
+
+# Set to any new value (a date will do) to have every device clear its saved copy of the app once, the next time it
+# talks to the server: for when a bad build was cached somewhere. Sign-ins and unsent offline saves are kept.
+CLIENT_RESET = os.getenv("CLIENT_RESET", "").strip()[:64]
+
+_BUILD = {"mtime": None, "stamp": ""}
+
+
+def current_build():
+    """The stamp of the React build being served (frontend/dist/build.json, written by `npm run build`). Read again
+    only when the file changes, so a rebuild on a running server is noticed. Empty when there is no build."""
+    path = os.path.join(FRONTEND_DIST, "build.json")
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return ""
+    if mtime != _BUILD["mtime"]:
+        try:
+            import json
+            with open(path, encoding="utf-8") as f:
+                _BUILD["stamp"] = str(json.load(f).get("build") or "")[:40]
+        except (OSError, ValueError):
+            _BUILD["stamp"] = ""
+        _BUILD["mtime"] = mtime
+    return _BUILD["stamp"]

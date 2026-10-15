@@ -167,6 +167,7 @@ from app.models.safety import (
     DBSafetyIncident,
     DBToolboxTalk,
     DBWorkPermit,
+    DBWorkerScreening,
 )
 from app.models.stores import (
     DBItem,

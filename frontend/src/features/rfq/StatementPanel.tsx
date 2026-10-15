@@ -2,6 +2,7 @@ import { FileSpreadsheet, Plus, Printer, ScanText } from 'lucide-react'
 import { Button, Skeleton } from '@/components/ui'
 import { useStatement } from '@/api/rfq'
 import { Recommendation } from './AiQuotes'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 import { formatINR } from '@/lib/utils'
 
 /** Lines down the side, suppliers across the top, the lowest in each row marked, and each supplier's total landed at site underneath. */
@@ -29,7 +30,7 @@ export function StatementPanel({ id, onClose, onQuote, onRead, onAward }: { id: 
       {sups.length > 0 && <p className="px-5 py-3 text-[13px]">{d.l1 && <>L1 landed: <strong>{d.l1}</strong> at {formatINR(d.l1_landed)}{d.saving_vs_l2 > 0 && ` - ${formatINR(d.saving_vs_l2)} under L2`}. </>}Lowest in every line, from whoever quoted it: {formatINR(d.lowest_per_line_basic)} basic.{d.rfq.award_reason && <span className="mt-1 block"><strong>Why not the lowest:</strong> {d.rfq.award_reason}</span>}</p>}
       <div className="overflow-x-auto">
         <table aria-label="Comparison" className="w-full text-[13px]">
-          <thead className="bg-surface"><tr><th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Item</th><th className={th}>Qty</th>{sups.map((s) => <th key={s.supplier_name} className={`${th} min-w-32`}>{s.supplier_name}{s.rank && <span className={`ml-1 rounded px-1.5 py-0.5 text-[10px] ${s.is_l1 ? 'bg-success text-white' : 'bg-muted'}`}>{s.rank}</span>}</th>)}</tr></thead>
+          <thead className="bg-surface"><tr><th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Item</th><th className={th}>Qty</th>{sups.map((s) => <th key={s.supplier_name} className={`${th} min-w-32`}>{s.supplier_name}{s.rank && <span className={`ml-1 rounded px-1.5 py-0.5 text-[10px] ${s.is_l1 ? 'bg-success text-white' : 'bg-muted'}`}>{s.rank}</span>}{open && <MasterDelete kind="rfq_quote" id={s.quote_id} label={`${s.supplier_name}'s quote`} noun="supplier quote" />}</th>)}</tr></thead>
           <tbody>
             {d.lines.map((l) => (
               <tr key={l.rfq_line_id} className="border-t border-border">

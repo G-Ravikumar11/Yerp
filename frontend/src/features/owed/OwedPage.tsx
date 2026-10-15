@@ -12,6 +12,7 @@ import { formatDate } from '@/lib/format'
 import { compactINR, formatINR } from '@/lib/utils'
 import { AgeingStrip } from './AgeingStrip'
 import { ReleaseModal } from './ReleaseModal'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 type Tab = 'owed' | 'owe' | 'retention'
 
@@ -94,6 +95,7 @@ export default function OwedPage() {
         </div>
       ),
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="retention_release" id={r.id} label={r.number} noun="retention release" /> },
   ]
 
   const positions = ret.data?.positions ?? []

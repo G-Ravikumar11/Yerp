@@ -1361,6 +1361,17 @@ def schedule_import_confirm(db, client_id, job, rows, actor_name=""):
                                                        tasks, "" if tasks == 1 else "s")
 
 
+def boq_order_lines(db, client_id, boq_id):
+    """Item code -> the line of a client work order made from this BOQ. An activity tied to that line takes its progress
+    from the measurement book."""
+    out = {}
+    for wo in db.query(models.DBWorkOrder).filter(models.DBWorkOrder.client_id == client_id, models.DBWorkOrder.boq_id == boq_id).all():
+        for wl in db.query(models.DBWorkOrderLine).filter(models.DBWorkOrderLine.work_order_id == wo.id).all():
+            if wl.fg_code:
+                out.setdefault(wl.fg_code.upper(), wl.id)
+    return out
+
+
 def schedule_from_boq(db, client_id, job, start, finish, by="section", actor_name=""):
     """Draw the programme from the project's BOQ: the work the client's sheet lists, put on the plan.
 
@@ -1408,12 +1419,7 @@ def schedule_from_boq(db, client_id, job, start, finish, by="section", actor_nam
         raise HTTPException(409, "Everything in %s is already on the programme." % (boq.number or "the BOQ"))
 
     # A client order made from this BOQ measures the work: an item drawn on its own takes its progress from that book.
-    wo_line = {}
-    if by == "item":
-        for wo in db.query(models.DBWorkOrder).filter(models.DBWorkOrder.client_id == client_id, models.DBWorkOrder.boq_id == boq.id).all():
-            for wl in db.query(models.DBWorkOrderLine).filter(models.DBWorkOrderLine.work_order_id == wo.id).all():
-                if wl.fg_code:
-                    wo_line.setdefault(wl.fg_code.upper(), wl.id)
+    wo_line = boq_order_lines(db, client_id, boq.id) if by == "item" else {}
     used_lines = {a.work_order_line_id for a in db.query(models.DBScheduleActivity.work_order_line_id).filter(
         models.DBScheduleActivity.job_id == job.id).all() if a.work_order_line_id}
 

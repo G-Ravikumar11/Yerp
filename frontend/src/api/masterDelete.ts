@@ -9,6 +9,7 @@ export type MasterKind =
   | 'project' | 'purchase_order' | 'grn' | 'rfq' | 'supplier_bill' | 'invoice' | 'quote' | 'estimate' | 'lead' | 'ra_bill'
   | 'variation_order' | 'boq_variation' | 'boq' | 'budget' | 'drawing' | 'diary' | 'inspection' | 'cube_set' | 'ncr' | 'incident'
   | 'toolbox' | 'permit' | 'supplier' | 'item' | 'equipment' | 'activity' | 'stock_issue' | 'eway' | 'payment' | 'thread' | 'retention_release' | 'attendance'
+  | 'customer' | 'leave' | 'credit_note' | 'rfq_quote' | 'rental' | 'rental_provider' | 'allocation' | 'service' | 'machine_log'
 
 const base = (kind: MasterKind, id: number) => (kind === 'project' ? `/api/jobs/${id}` : `/api/master/${kind}/${id}`)
 
