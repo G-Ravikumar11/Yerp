@@ -1535,6 +1535,7 @@ def ensure_columns():
                     ("schedule_tasks", "percent", "DOUBLE PRECISION DEFAULT 0"),
                     ("site_diaries", "amendments", "TEXT DEFAULT ''"),
                     ("schedule_activities", "boq_key", "TEXT DEFAULT ''"),
+                    ("diary_labour", "worker_ids", "TEXT DEFAULT ''"),
                     ("boq_lines", "rate_only", "BOOLEAN DEFAULT FALSE"),
                     ("sub_bills", "entry_mode", "TEXT DEFAULT ''"),
                     ("sub_bills", "scan_file_id", "INTEGER"),
@@ -1827,6 +1828,7 @@ def migrate_sqlite():
             add_col("sub_bills", "accepted_at", "TEXT DEFAULT ''")
             add_col("project_files", "original_size", "INTEGER DEFAULT 0")
             add_col("project_files", "blob_of", "INTEGER")
+            add_col("diary_labour", "worker_ids", "TEXT DEFAULT ''")
 
             # Create approval_chains table
             conn.execute(text("""
