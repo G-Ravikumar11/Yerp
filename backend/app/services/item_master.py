@@ -159,7 +159,15 @@ def sites_using(db, client_id, codes):
     return out
 
 
-def item_dict(item, site_count=0):
+def stock_of(db, client_id, codes):
+    """{item_code: on_hand} for the codes, in one query: the store's running total, not a replay of the ledger."""
+    if not codes:
+        return {}
+    return {c: m for c, m in db.query(models.DBStockBalance.item_code, models.DBStockBalance.on_hand).filter(
+        models.DBStockBalance.client_id == client_id, models.DBStockBalance.item_code.in_(list(codes))).all()}
+
+
+def item_dict(item, site_count=0, stock=None):
     return {"id": item.id, "kind": item.kind, "item_code": item.item_code, "item_name": item.item_name,
             "description": item.description or "", "item_category": item.item_category or "",
             "item_subcategory": item.item_subcategory or "", "item_type": item.item_type or "",
@@ -168,5 +176,6 @@ def item_dict(item, site_count=0):
             "default_rate": default_rate(item), "hsn_code": item.hsn_code or "", "item_tax_type": item.item_tax_type or "",
             "preferred_supplier": item.preferred_supplier or "", "reorder_level": money(item.reorder_level),
             "remarks": item.remarks or "", "is_active": item.is_active is not False, "sites": site_count,
+            "stock": money(stock) if stock is not None else None,
             "created_by": item.created_by_name or "", "updated_by": item.updated_by_name or "",
             "created_at": item.created_at or "", "updated_at": item.updated_at or ""}

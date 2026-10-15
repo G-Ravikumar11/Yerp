@@ -12,7 +12,7 @@ from app.core.audit import log_audit
 from app.core.auth import require_erp_read, wo_actor
 from app.core.currency import unit_rate
 from app.core.sheets import sheet_response
-from app.schemas.item_master import CategoryIn, CategoryPatch, MasterItemIn, StatusIn
+from app.schemas.item_master import BulkCategoryIn, BulkStatusIn, CategoryIn, CategoryPatch, MasterItemIn, StatusIn
 from app.services import item_master as im
 from app.services.site_rates import current_lines_of_item
 
@@ -61,16 +61,58 @@ def items_list(request: Request, q: str = "", category: str = "", subcategory: s
     order = column.desc() if direction == "desc" else column.asc()
     page_size = max(1, min(page_size, 200))
     rows = query.order_by(order, models.DBItem.id).offset((max(1, page) - 1) * page_size).limit(page_size).all()
-    used = im.sites_using(db, client.id, [r.item_code for r in rows])
-    return {"items": [im.item_dict(r, len(used.get(r.item_code, ()))) for r in rows], "total": total,
+    codes = [r.item_code for r in rows]
+    used, stock = im.sites_using(db, client.id, codes), im.stock_of(db, client.id, codes)
+    return {"items": [im.item_dict(r, len(used.get(r.item_code, ())), stock.get(r.item_code, 0.0)) for r in rows], "total": total,
             "page": max(1, page), "page_size": page_size}
+
+
+def _owned(db, client_id, ids):
+    ids = list(dict.fromkeys(ids or []))
+    if not ids:
+        raise HTTPException(422, "Choose at least one item.")
+    if len(ids) > 1000:
+        raise HTTPException(422, "Choose at most 1,000 items at a time.")
+    items = db.query(models.DBItem).filter(models.DBItem.client_id == client_id, models.DBItem.id.in_(ids)).all()
+    if len(items) != len(ids):
+        raise HTTPException(404, "Some of those items no longer exist. Refresh the list and try again.")
+    return items
+
+
+@router.post("/api/items/bulk-status")
+def items_bulk_status(body: BulkStatusIn, request: Request, db: Session = Depends(get_db)):
+    """Switch several items on or off together. All or none."""
+    client, _, who = wo_actor(request, db, "items.manage")
+    items = _owned(db, client.id, body.ids)
+    for item in items:
+        item.is_active, item.updated_by_name, item.updated_at = body.is_active, who, im.now()
+    log_audit(db, client.id, "items_activated" if body.is_active else "items_deactivated", "item", None, "", "%d items" % len(items), request)
+    db.commit()
+    return {"changed": len(items), "message": "%d item%s %s." % (len(items), "" if len(items) == 1 else "s", "activated" if body.is_active else "deactivated")}
+
+
+@router.post("/api/items/bulk-category")
+def items_bulk_category(body: BulkCategoryIn, request: Request, db: Session = Depends(get_db)):
+    """Move several items to another category (and subcategory). All or none."""
+    client, _, who = wo_actor(request, db, "items.manage")
+    items = _owned(db, client.id, body.ids)
+    category, subcategory = im.check_category(db, client.id, body.item_category, body.item_subcategory)
+    for item in items:
+        item.item_category, item.item_subcategory, item.updated_by_name, item.updated_at = category, subcategory, who, im.now()
+    log_audit(db, client.id, "items_recategorised", "item", None, category, "%d items" % len(items), request)
+    db.commit()
+    return {"changed": len(items), "message": "%d item%s moved to %s." % (len(items), "" if len(items) == 1 else "s", category or "no category")}
 
 
 @router.get("/api/items/export.xlsx")
 def items_export(request: Request, q: str = "", category: str = "", subcategory: str = "", item_type: str = "", uom: str = "",
-                 status: str = "all", kind: str = "", site_id: Optional[int] = None, db: Session = Depends(get_db)):
+                 status: str = "all", kind: str = "", site_id: Optional[int] = None, ids: str = "", db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
-    rows = _filtered(db, client.id, q, category, subcategory, item_type, uom, status, kind, site_id).order_by(models.DBItem.item_code).all()
+    query = _filtered(db, client.id, q, category, subcategory, item_type, uom, status, kind, site_id)
+    picked = [int(i) for i in ids.split(",") if i.strip().isdigit()]
+    if picked:
+        query = query.filter(models.DBItem.id.in_(picked))          # the rows ticked on screen, when some are
+    rows = query.order_by(models.DBItem.item_code).all()
     used = im.sites_using(db, client.id, [r.item_code for r in rows])
     headers = ["Item Code", "Item Name", "Description", "Category", "Subcategory", "Item Type", "UOM", "Specification",
                "Default Purchase Rate", "Default Selling Rate", "HSN/SAC", "GST", "Sites Using", "Status"]

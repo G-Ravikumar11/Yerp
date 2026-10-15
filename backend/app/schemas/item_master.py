@@ -1,5 +1,5 @@
 """What the item master endpoints are sent."""
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -26,6 +26,17 @@ class MasterItemIn(BaseModel):
 
 class StatusIn(BaseModel):
     is_active: bool
+
+
+class BulkStatusIn(BaseModel):
+    ids: List[int]
+    is_active: bool
+
+
+class BulkCategoryIn(BaseModel):
+    ids: List[int]
+    item_category: str = ""
+    item_subcategory: str = ""
 
 
 class CategoryIn(BaseModel):

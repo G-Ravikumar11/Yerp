@@ -23,6 +23,8 @@ export interface MasterItem {
   remarks: string
   is_active: boolean
   sites: number
+  /** The store's running total for the item, or null when none is kept. */
+  stock: number | null
   created_by: string
   updated_by: string
   created_at: string
@@ -83,7 +85,7 @@ export const masterKeys = {
   sites: (id: number | null) => ['item-master', 'sites', id] as const,
 }
 
-export function queryString(f: Partial<ItemFilters>) {
+export function queryString(f: Partial<ItemFilters> & { ids?: string }) {
   const p = new URLSearchParams()
   Object.entries(f).forEach(([k, v]) => v !== '' && v !== undefined && v !== null && p.set(k, String(v)))
   return p.toString()
@@ -113,4 +115,8 @@ export const updateMasterItem = (id: number, body: MasterItemInput) => put<{ ite
 export const setItemActive = (id: number, is_active: boolean) => patch<{ item: MasterItem; message: string }>(`/api/items/${id}/status`, { is_active })
 export const addCategory = (name: string, parent_id?: number) => post<{ message: string }>('/api/item-categories', { name, parent_id })
 export const patchCategory = (id: number, body: { name?: string; is_active?: boolean }) => patch<{ message: string }>(`/api/item-categories/${id}`, body)
-export const exportUrl = (f: Partial<ItemFilters>) => `/api/items/export.xlsx?${queryString({ ...f, page: undefined, page_size: undefined, sort: undefined, direction: undefined })}`
+export const exportUrl = (f: Partial<ItemFilters>, ids: number[] = []) =>
+  `/api/items/export.xlsx?${queryString({ ...f, page: undefined, page_size: undefined, sort: undefined, direction: undefined, ids: ids.join(',') })}`
+export const bulkStatus = (ids: number[], is_active: boolean) => post<{ changed: number; message: string }>('/api/items/bulk-status', { ids, is_active })
+export const bulkCategory = (ids: number[], item_category: string, item_subcategory: string) =>
+  post<{ changed: number; message: string }>('/api/items/bulk-category', { ids, item_category, item_subcategory })
