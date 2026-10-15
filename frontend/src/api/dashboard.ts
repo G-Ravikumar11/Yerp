@@ -72,6 +72,8 @@ export function attentionHref(view: string): { to: string; external: boolean } {
     'subcontracts-view': '/subcontractors/work-orders',
     'subbills-view': '/subcontractors/ra-bills',
     'vendors-view': '/subcontractors/vendors',
+    'compliance-view': '/subcontractors/compliance',
+    'guarantees-view': '/subcontractors/bank-guarantees',
     'approvals-view': '/approvals',
     'items-view': '/store/items',
     'measurement-view': '/clients/measurement',

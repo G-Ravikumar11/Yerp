@@ -375,7 +375,7 @@ def test_a_revision_says_what_stops_it_being_approved_before_anyone_tries(tenant
     item = book(tenant, order["id"])["lines"][0]
     measure(tenant, order["id"], item["item_id"], 3)
     bill = raise_bill(tenant, order["id"]).json()["bill"]
-    rev = tenant.post("/api/wo/orders/%d/amend" % order["id"], json={}).json()["order"]
+    rev = tenant.post("/api/wo/orders/%d/amend" % order["id"], json={"comments": "More quantity"}).json()["order"]
     assert any(bill["number"] in b and "still open" in b for b in rev["revision_blockers"])
     refused = tenant.post("/api/wo/orders/%d/self-approve" % rev["id"], json={})
     assert refused.status_code == 409 and bill["number"] in refused.json()["detail"]

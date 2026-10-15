@@ -700,6 +700,12 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
         owed = money(worth - settled_on(db, client.id, doc_type, doc.id))
         if owed <= 0:
             raise HTTPException(409, "%s is already fully settled." % doc.number)
+        if direction == "OUT" and party_type == "contractor":
+            # Nobody is paid whose labour licence, PF, ESI or insurance has lapsed - the Master alone may, saying why.
+            from app.services.subcontract_rules import compliance_gate
+            papers = compliance_gate(db, client.id, party_id, actor_id, body.note, "paid")
+            if papers:
+                body.note = papers[:300]
         if amount > owed + 0.009:
             raise HTTPException(400, "%s has only %s left to settle; %s is more than that."
                                      % (doc.number, inr(owed), inr(amount)))

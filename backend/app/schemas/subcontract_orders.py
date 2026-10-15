@@ -74,14 +74,24 @@ class WorkOrderHeadIn(BaseModel):
     bank_guarantee_applicable: Optional[bool] = False
     bank_guarantee_amount: Optional[float] = 0
     bank_guarantee_validity: Optional[str] = ""
+    bank_guarantee_number: Optional[str] = ""
+    bank_guarantee_bank: Optional[str] = ""
     gst_rate: Optional[float] = 18.0
-    tds_rate: Optional[float] = 1.0
+    # Left out, it is the rate the law sets for the contractor (1%, 2%, or 20% with no PAN).
+    tds_rate: Optional[float] = None
     retention_percent: Optional[float] = 0
     mobilization_advance_percent: Optional[float] = 0
     advance_recovery_percent: Optional[float] = 0
     labour_cess_percent: Optional[float] = 0
     billing_cycle: Optional[str] = ""
     payment_days: Optional[int] = 0
+    ld_percent_per_week: Optional[float] = 0
+    ld_cap_percent: Optional[float] = 0
+
+
+class CloseOrderIn(BaseModel):
+    actual_completion_date: str
+    comments: Optional[str] = ""
 
 
 class BoqLineIn(BaseModel):

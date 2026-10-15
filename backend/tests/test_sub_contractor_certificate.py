@@ -69,7 +69,9 @@ def test_a_contractor_registered_by_ho_qs_waits_for_approval(tenant, portal):
     qs = staff(tenant, "ho_qs")
     pm = staff(tenant, "project_manager")
     sign_in(portal, qs)
-    con = portal.post("/api/wo/contractors", json={"company_name": "Najir Hossain", "nature_of_work": "Concrete"}).json()
+    con = portal.post("/api/wo/contractors", json={"company_name": "Najir Hossain", "nature_of_work": "Concrete",
+                                                   "pan": "BNAPH8617N", "bank_account": "50100012345678",
+                                                   "bank_ifsc": "HDFC0001234"}).json()
     assert con["registration_status"] == "PENDING"
     # Not by the person who filled it in.
     assert portal.post("/api/wo/contractors/%d/approve" % con["id"], json={}).status_code == 403

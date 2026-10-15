@@ -150,6 +150,16 @@ class DBSubcontractOrder(Base):
     bank_guarantee_applicable = Column(Boolean, default=False)
     bank_guarantee_amount = Column(Float, default=0.0)
     bank_guarantee_validity = Column(String, default="")
+    # Which guarantee it is and who stands behind it, so the register can be read against the bank's own letter -
+    # and when it was handed back, which is when it stops being watched for expiry.
+    bank_guarantee_number = Column(String, default="")
+    bank_guarantee_bank = Column(String, default="")
+    bank_guarantee_returned_at = Column(String, default="")
+
+    # Liquidated damages: so much of the order value for every week the work runs past its completion date, never
+    # more than the cap. A later completion date agreed with the contractor is an amendment of the order.
+    ld_percent_per_week = Column(Float, default=0.0)
+    ld_cap_percent = Column(Float, default=0.0)
 
     # Held rather than recomputed on read, so an approved order still prints
     # the figures it was approved on after a rate is edited elsewhere.
@@ -191,6 +201,12 @@ class DBSubcontractOrder(Base):
     approved_at = Column(String, default="")
     executed_at = Column(String, default="")
     rejection_reason = Column(Text, default="")
+    # Closing it out: when the work actually finished (the defects period runs from here, not from the date it was
+    # planned to), when it was closed, by whom and why.
+    actual_completion_date = Column(String, default="")
+    closed_at = Column(String, default="")
+    closed_by_name = Column(String, default="")
+    close_reason = Column(Text, default="")
 
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     updated_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -222,6 +238,11 @@ class DBProjectBudget(Base):
     notes = Column(Text, default="")
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    # Who set the figure. One set or raised by somebody who cannot approve orders is not confirmed until an approver
+    # signs an order that spends it - otherwise whoever prices an order can also give it the money to fit.
+    set_by_name = Column(String, default="")
+    confirmed = Column(Boolean, default=True)
+    confirmed_by_name = Column(String, default="")
 
 
 class DBSubcontractItem(Base):
@@ -443,6 +464,13 @@ class DBSubBill(Base):
     work_name = Column(String, default="")           # Name of the Work, on the abstract and the book
     hsn_sac = Column(String, default="")             # 3.2 HSN/SAC
     debit_notes = Column(Float, default=0.0)         # 4.04 Recoveries in Debit Notes, before GST
+    # Liquidated damages taken off this bill for work running past the order's completion date, and why the figure
+    # is what it is when somebody changed it from the one worked out.
+    ld_amount = Column(Float, default=0.0)
+    ld_note = Column(String, default="")
+    ld_set_by_hand = Column(Boolean, default=False)
+    # Why a rule that would have stopped it was overridden when it was certified, in the words of whoever did.
+    override_note = Column(Text, default="")
     # Who prepared it and when it was sent. Certifying then climbs the
     # hierarchy one signature at a time (approval_chains, "sub_bill").
     submitted_by = Column(Integer, nullable=True)

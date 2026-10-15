@@ -118,6 +118,17 @@ from app.services.subcontract_orders import (
     work_type_dict,
 )
 from app.validators.common import clean_rich_text, clean_tax_ids
+from app.core.queries import by_id
+from app.schemas.subcontract_orders import CloseOrderIn
+from app.services.subcontract_rules import (
+    bank_guarantee_rows,
+    check_order_dates,
+    checked_date,
+    owned_or_400,
+    registration_missing,
+    statutory_tds,
+    tds_enforced,
+)
 
 
 router = APIRouter()
@@ -366,6 +377,7 @@ def wo_create_contractor(body: ContractorIn, request: Request,
     db.refresh(con)
     return {"id": con.id, "vendor_code": con.vendor_code, "company_name": con.company_name,
             "registration_status": con.registration_status,
+            "tds_rate": statutory_tds(con)[0], "tds_basis": statutory_tds(con)[1],
             "message": con.vendor_code + (" added." if owner else " registered - it now waits for approval.")}
 
 
@@ -485,17 +497,26 @@ def wo_create_budget(job_id: int, body: ProjectBudgetIn, request: Request,
     if not name:
         raise HTTPException(400, "The cost centre needs a name")
     budget_breaks_vendor_limit(db, client.id, body.order_id, body.allocated_amount)
+    if money(body.allocated_amount or 0) < 0:
+        raise HTTPException(400, "An allocation cannot be negative.")
+    who, approver = budget_setter(request, db, client)
     budget = models.DBProjectBudget(
         client_id=client.id, job_id=job_id, name=name,
         code=(body.code or "").strip().upper(),
         department=(body.department or "").strip(),
         allocated_amount=money(body.allocated_amount or 0),
-        notes=(body.notes or "").strip())
+        notes=(body.notes or "").strip(), set_by_name=who, confirmed=approver,
+        confirmed_by_name=who if approver else "")
     db.add(budget)
+    db.flush()
+    log_audit(db, client.id, "budget_allocated", "job", job_id, name,
+              "%s allocated by %s%s" % (format_money_plain(budget.allocated_amount), who,
+                                        "" if approver else " - to be confirmed by an approver"), request)
     db.commit()
     db.refresh(budget)
-    return {"id": budget.id, "message": name + " allocated " +
-            format_money_plain(budget.allocated_amount) + "."}
+    return {"id": budget.id, "confirmed": approver,
+            "message": name + " allocated " + format_money_plain(budget.allocated_amount) + "." +
+            ("" if approver else " An approver confirms it when they approve an order that spends it.")}
 
 
 @router.put("/api/wo/projects/budgets/{budget_id}")
@@ -510,20 +531,44 @@ def wo_update_budget(budget_id: int, body: ProjectBudgetIn, request: Request,
     if not budget:
         raise HTTPException(404, "Cost centre not found")
     wanted = money(body.allocated_amount or 0)
+    if wanted < 0:
+        raise HTTPException(400, "An allocation cannot be negative.")
     budget_breaks_vendor_limit(db, client.id, body.order_id, wanted)
     committed = wo_committed_by_budget(db, client.id).get(budget.id, 0.0)
-    if wanted > 0 and wanted < committed:
+    # Nought included: an allocation of nothing is read as one never set, which would let an order past the check.
+    if committed > 0 and wanted < committed - 0.009:
         raise HTTPException(
             409, "%s is already committed against this cost centre. Cancel or "
                  "amend those orders before reducing the allocation below it."
                  % format_money_plain(committed))
+    was = money(budget.allocated_amount or 0)
+    who, approver = budget_setter(request, db, client)
     budget.name = (body.name or budget.name or "").strip()
     budget.code = (body.code or "").strip().upper()
     budget.department = (body.department or "").strip()
     budget.allocated_amount = wanted
     budget.notes = (body.notes or "").strip()
+    if wanted > was + 0.009:
+        # More money is a decision: somebody who cannot approve orders raising it leaves it to be confirmed.
+        budget.set_by_name = who
+        budget.confirmed = approver
+        budget.confirmed_by_name = who if approver else ""
+    elif approver and budget.confirmed is False:
+        budget.confirmed, budget.confirmed_by_name = True, who
+    log_audit(db, client.id, "budget_changed", "job", budget.job_id, budget.name,
+              "%s -> %s by %s" % (format_money_plain(was), format_money_plain(wanted), who), request)
     db.commit()
-    return {"id": budget.id, "message": budget.name + " updated."}
+    return {"id": budget.id, "confirmed": budget.confirmed is not False, "message": budget.name + " updated."}
+
+
+def budget_setter(request, db, client):
+    """(name, may approve orders) of whoever is setting a budget figure."""
+    emp = session_employee(request, db)
+    if emp is None:
+        return owner_label(db, client.id), True
+    from app.core.permissions import employee_can
+    name = ("%s %s" % (emp.first_name or "", emp.last_name or "")).strip() or "staff"
+    return name, bool(employee_can(emp, "subcontracts.approve"))
 
 
 @router.get("/api/wo/vocabulary")
@@ -602,6 +647,47 @@ def wo_list_orders(request: Request, status: str = "", q: str = "",
     }
 
 
+def wo_take_head(db, client, order, body, creating):
+    """The order's head as the form sent it, checked: the contractor, project and business unit are this
+    company's own, every percentage is a percentage, the dates are dates and run forwards."""
+    order.business_unit_id = owned_or_400(db, models.DBBusinessUnit, client.id, body.business_unit_id, "business unit")
+    was_contractor = order.contractor_id
+    order.contractor_id = owned_or_400(db, models.DBContractor, client.id, body.contractor_id, "contractor")
+    order.job_id = owned_or_400(db, models.DBJob, client.id, body.job_id, "project")
+    order.work_type = (body.work_type or "").strip()
+    order.subject = (body.subject or "").strip()
+    order.scope_of_work = clean_rich_text(body.scope_of_work)
+    order.commencement_date = checked_date(body.commencement_date, "commencement date")
+    order.completion_date = checked_date(body.completion_date, "completion date")
+    check_order_dates(order)
+    order.duration_months = max(0.0, float(body.duration_months or 0))
+    order.defect_liability_months = max(0, int(body.defect_liability_months or 0))
+    order.bank_guarantee_applicable = bool(body.bank_guarantee_applicable)
+    order.bank_guarantee_amount = max(0.0, money(body.bank_guarantee_amount or 0))
+    order.bank_guarantee_validity = checked_date(body.bank_guarantee_validity, "bank guarantee validity")
+    order.bank_guarantee_number = (body.bank_guarantee_number or "").strip()[:60]
+    order.bank_guarantee_bank = (body.bank_guarantee_bank or "").strip()[:120]
+    if body.gst_rate is not None or creating:
+        order.gst_rate = wo_percent(18.0 if body.gst_rate is None else body.gst_rate, "GST rate")
+    if body.tds_rate is not None:
+        order.tds_rate = wo_percent(body.tds_rate, "TDS rate")
+    elif creating or order.contractor_id != was_contractor:
+        # Nobody said: the rate the law sets for this contractor.
+        rate = statutory_tds(by_id(db, models.DBContractor, order.contractor_id))[0] if tds_enforced() else None
+        if rate is not None:
+            order.tds_rate = rate
+        elif creating:
+            order.tds_rate = 1.0
+    order.retention_percent = wo_percent(body.retention_percent, "retention")
+    order.mobilization_advance_percent = wo_percent(body.mobilization_advance_percent, "mobilisation advance")
+    order.advance_recovery_percent = wo_percent(body.advance_recovery_percent, "advance recovery")
+    order.labour_cess_percent = wo_percent(body.labour_cess_percent, "labour cess")
+    order.ld_percent_per_week = wo_percent(body.ld_percent_per_week, "liquidated damages a week")
+    order.ld_cap_percent = wo_percent(body.ld_cap_percent, "liquidated damages cap")
+    order.billing_cycle = wo_billing_cycle(body.billing_cycle)
+    order.payment_days = max(0, int(body.payment_days or 0))
+
+
 @router.post("/api/wo/orders")
 def wo_create_order(body: WorkOrderHeadIn, request: Request,
                     db: Session = Depends(get_db)):
@@ -613,26 +699,8 @@ def wo_create_order(body: WorkOrderHeadIn, request: Request,
     order = models.DBSubcontractOrder(
         client_id=client.id, status="DRAFT",
         wo_number=next_wo_number(db, client.id, dept, body.commencement_date),
-        business_unit_id=body.business_unit_id, contractor_id=body.contractor_id,
-        job_id=body.job_id, department=dept, work_type=(body.work_type or "").strip(),
-        subject=(body.subject or "").strip(),
-        scope_of_work=clean_rich_text(body.scope_of_work),
-        commencement_date=(body.commencement_date or "").strip(),
-        completion_date=(body.completion_date or "").strip(),
-        duration_months=body.duration_months or 0,
-        defect_liability_months=body.defect_liability_months or 0,
-        bank_guarantee_applicable=bool(body.bank_guarantee_applicable),
-        bank_guarantee_amount=money(body.bank_guarantee_amount or 0),
-        bank_guarantee_validity=(body.bank_guarantee_validity or "").strip(),
-        gst_rate=body.gst_rate if body.gst_rate is not None else 18.0,
-        tds_rate=body.tds_rate if body.tds_rate is not None else 1.0,
-        retention_percent=body.retention_percent or 0,
-        mobilization_advance_percent=body.mobilization_advance_percent or 0,
-        advance_recovery_percent=body.advance_recovery_percent or 0,
-        labour_cess_percent=wo_percent(body.labour_cess_percent, "labour cess"),
-        billing_cycle=wo_billing_cycle(body.billing_cycle),
-        payment_days=max(0, int(body.payment_days or 0)),
-        submitted_by=actor_id)
+        department=dept, submitted_by=actor_id)
+    wo_take_head(db, client, order, body, creating=True)
     db.add(order)
     db.flush()
     recost_order(db, order)
@@ -696,6 +764,7 @@ def wo_copy_order(order_id: int, request: Request, db: Session = Depends(get_db)
         defect_liability_months=source.defect_liability_months,
         bank_guarantee_applicable=source.bank_guarantee_applicable,
         bank_guarantee_amount=source.bank_guarantee_amount,
+        ld_percent_per_week=source.ld_percent_per_week or 0, ld_cap_percent=source.ld_cap_percent or 0,
         gst_rate=source.gst_rate, tds_rate=source.tds_rate,
         retention_percent=source.retention_percent,
         mobilization_advance_percent=source.mobilization_advance_percent,
@@ -770,29 +839,7 @@ def wo_update_order(order_id: int, body: WorkOrderHeadIn, request: Request,
             409, order.wo_number + " is " + order.status.lower() +
                  " and cannot be edited. Amend it instead.")
     before = wo_snapshot(order)
-
-    for field in ("business_unit_id", "contractor_id", "job_id"):
-        setattr(order, field, getattr(body, field))
-    order.work_type = (body.work_type or "").strip()
-    order.subject = (body.subject or "").strip()
-    order.scope_of_work = clean_rich_text(body.scope_of_work)
-    order.commencement_date = (body.commencement_date or "").strip()
-    order.completion_date = (body.completion_date or "").strip()
-    order.duration_months = body.duration_months or 0
-    order.defect_liability_months = body.defect_liability_months or 0
-    order.bank_guarantee_applicable = bool(body.bank_guarantee_applicable)
-    order.bank_guarantee_amount = money(body.bank_guarantee_amount or 0)
-    order.bank_guarantee_validity = (body.bank_guarantee_validity or "").strip()
-    if body.gst_rate is not None:
-        order.gst_rate = body.gst_rate
-    if body.tds_rate is not None:
-        order.tds_rate = body.tds_rate
-    order.retention_percent = body.retention_percent or 0
-    order.mobilization_advance_percent = body.mobilization_advance_percent or 0
-    order.advance_recovery_percent = body.advance_recovery_percent or 0
-    order.labour_cess_percent = wo_percent(body.labour_cess_percent, "labour cess")
-    order.billing_cycle = wo_billing_cycle(body.billing_cycle)
-    order.payment_days = max(0, int(body.payment_days or 0))
+    wo_take_head(db, client, order, body, creating=False)
 
     # The number carries the discipline, so changing the discipline on a draft
     # has to reissue it - otherwise it is filed under the wrong one for ever.
@@ -1020,8 +1067,9 @@ def wo_self_approve(order_id: int, body: WoActionIn, request: Request,
     actor_name = client.contact_name or client.company_name or "Master"
     if order.status == "DRAFT":
         wo_apply(db, client, order, "SUBMIT", None, actor_name, "Raised by the Master", quiet=True)
+    # The Master's own words only: a reason filled in on their behalf would count as one where a rule asks for it.
     wo_apply(db, client, order, "APPROVE", None, actor_name,
-             (body.comments or "").strip() or "Approved by the Master", override=bool(body.override), quiet=True)
+             (body.comments or "").strip(), override=bool(body.override), quiet=True)
     log_audit(db, client.id, "subcontract_self_approved", "subcontract_order", order.id,
               order.wo_number, "approved by the Master as issued", request)
     db.commit()
@@ -1086,6 +1134,76 @@ def wo_cancel(order_id: int, body: WoActionIn, request: Request,
     db.refresh(order)
     return {"order": wo_dict(db, order, detail=True),
             "message": order.wo_number + " cancelled."}
+
+
+@router.post("/api/wo/orders/{order_id}/close")
+def wo_close(order_id: int, body: CloseOrderIn, request: Request, db: Session = Depends(get_db)):
+    """The work is over. Recorded with the date it actually finished - the defects period and the retention due at
+    its end run from there - and the part of the order never done goes back to the project's budget and BOQ.
+
+    Only once every bill on it is certified or cancelled and every measured quantity billed, so nothing done is left
+    unpaid; and with the mobilisation advance recovered, unless the Master closes it past that with a reason."""
+    client, actor_id, actor_name = wo_actor(request, db, "subcontracts.approve")
+    order = wo_or_404(db, client.id, order_id)
+    finished = checked_date(body.actual_completion_date, "actual completion date")
+    if not finished:
+        raise HTTPException(400, "When did the work actually finish? The defects period runs from that date.")
+    if finished > date.today().isoformat():
+        raise HTTPException(400, "The work cannot have finished on %s - that is still to come." % finished)
+    if order.commencement_date and finished < order.commencement_date:
+        raise HTTPException(400, "The work cannot have finished (%s) before it started (%s)."
+                                 % (finished, order.commencement_date))
+    order.actual_completion_date = finished
+    wo_apply(db, client, order, "CLOSE", actor_id, actor_name, body.comments)
+    log_audit(db, client.id, "subcontract_closed", "subcontract_order", order.id, order.wo_number,
+              "finished %s: %s" % (finished, order.close_reason), request)
+    db.commit()
+    db.refresh(order)
+    return {"order": wo_dict(db, order, detail=True),
+            "message": "%s closed. Work finished %s; what was never done is back in the budget." % (
+                order.wo_number, finished)}
+
+
+@router.get("/api/wo/bank-guarantees")
+def wo_bank_guarantees(request: Request, db: Session = Depends(get_db)):
+    """Every guarantee the contractors have given, with when it runs out - so it is extended or encashed in time,
+    not found to have lapsed when it is needed."""
+    client = require_erp_read(request, db)
+    viewer = STAFF_VIEWER.get()
+    rows = bank_guarantee_rows(db, client.id)
+    if viewer:
+        seen = wo_involved_ids(db, client.id, viewer)
+        rows = [r for r in rows if r["order_id"] in seen]
+    return {"guarantees": rows, "summary": {
+        "count": len(rows),
+        "held": money(sum(r["amount"] for r in rows if r["state"] != "returned")),
+        "expiring": len([r for r in rows if r["state"] == "expiring"]),
+        "expired": len([r for r in rows if r["state"] == "expired"]),
+    }}
+
+
+@router.post("/api/wo/orders/{order_id}/bank-guarantee/return")
+def wo_return_bank_guarantee(order_id: int, body: WoActionIn, request: Request, db: Session = Depends(get_db)):
+    """The guarantee handed back to the contractor (or allowed to lapse with nothing owed under it): it stops
+    being watched."""
+    client, actor_id, actor_name = wo_actor(request, db, "subcontracts.approve")
+    order = wo_or_404(db, client.id, order_id)
+    if not order.bank_guarantee_applicable:
+        raise HTTPException(409, "%s carries no bank guarantee." % order.wo_number)
+    if order.bank_guarantee_returned_at:
+        raise HTTPException(409, "The guarantee on %s was already returned on %s."
+                                 % (order.wo_number, order.bank_guarantee_returned_at[:10]))
+    if order.status not in ("CLOSED", "CANCELLED") and not (body.comments or "").strip():
+        raise HTTPException(400, "%s is still open. Say why its guarantee is being returned early." % order.wo_number)
+    order.bank_guarantee_returned_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    record_wo_action(db, client, order, actor_id, actor_name, "BG RETURNED", order.status,
+                     (body.comments or "").strip() or "Bank guarantee returned")
+    log_audit(db, client.id, "bank_guarantee_returned", "subcontract_order", order.id, order.wo_number,
+              (body.comments or "").strip(), request)
+    db.commit()
+    db.refresh(order)
+    return {"order": wo_dict(db, order, detail=True),
+            "message": "The guarantee on %s is marked as returned." % order.wo_number}
 
 
 @router.get("/api/wo/orders/{order_id}/delete-preview")
@@ -1216,6 +1334,10 @@ def wo_amend(order_id: int, body: WoActionIn, request: Request,
     if pending:
         raise HTTPException(409, "%s is already amending %s. Finish or cancel it first."
                                  % (pending.wo_number, order.wo_number))
+    reason = (body.comments or "").strip()
+    if not reason:
+        raise HTTPException(400, "Say why the order is being amended - more quantity, a new completion date, a "
+                                 "changed rate - so the revision's history says so.")
 
     revision = models.DBSubcontractOrder(
         client_id=client.id, status="DRAFT",
@@ -1231,6 +1353,8 @@ def wo_amend(order_id: int, body: WoActionIn, request: Request,
         bank_guarantee_applicable=order.bank_guarantee_applicable,
         bank_guarantee_amount=order.bank_guarantee_amount,
         bank_guarantee_validity=order.bank_guarantee_validity,
+        bank_guarantee_number=order.bank_guarantee_number, bank_guarantee_bank=order.bank_guarantee_bank,
+        ld_percent_per_week=order.ld_percent_per_week or 0, ld_cap_percent=order.ld_cap_percent or 0,
         gst_rate=order.gst_rate, tds_rate=order.tds_rate,
         retention_percent=order.retention_percent,
         mobilization_advance_percent=order.mobilization_advance_percent,
@@ -1246,9 +1370,9 @@ def wo_amend(order_id: int, body: WoActionIn, request: Request,
     # The original stays live - measured and billed as before - until the
     # revision is approved and takes its history over.
     record_wo_action(db, client, order, actor_id, actor_name, "REVISE", order.status,
-                     revision.wo_number + " drawn up to amend it")
+                     revision.wo_number + " drawn up to amend it: " + reason)
     record_wo_action(db, client, revision, actor_id, actor_name, "CREATE", "",
-                     "Amends " + (order.wo_number or ""))
+                     "Amends " + (order.wo_number or "") + ": " + reason)
     log_audit(db, client.id, "subcontract_amended", "subcontract_order", revision.id,
               revision.wo_number, "amends " + (order.wo_number or ""), request)
     db.commit()
@@ -1522,6 +1646,10 @@ def decide_contractor_registration(con_id: int, action: str, request: Request, b
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     who = actor_name if actor_id else owner_label(db, client.id)
     if move == "approve":
+        missing = registration_missing(con)
+        if missing:
+            raise HTTPException(409, "%s's registration form still needs %s - they are paid on what it says. Send it "
+                                     "back to be completed." % (con.company_name, ", ".join(missing)))
         con.registration_status, con.approved_by_name, con.approved_at = "APPROVED", who, now
         con.rejection_reason = ""
     else:
