@@ -342,3 +342,33 @@ export function useWorkTypes() {
 }
 export const requestWorkType = (b: { name: string; department: string; code?: string; request_reason?: string }) => post<{ message: string }>('/api/wo/work-types', b)
 export const decideWorkType = (id: number, approve: boolean) => post<{ message: string }>(`/api/wo/work-types/${id}/decide?approve=${approve ? 'true' : 'false'}`)
+
+export interface Move {
+  action: 'submit' | 'approve' | 'reject' | 'execute' | 'cancel' | 'amend' | 'self-approve'
+  comments?: string
+  override?: boolean
+}
+
+/** One state change. The server decides whether it is allowed and says why not. */
+export const moveOrder = (id: number, { action, comments, override }: Move) => post<OrderReply>(`/api/wo/orders/${id}/${action}`, { comments: comments ?? '', override: !!override })
+
+export interface ScheduleImport {
+  lines: Partial<OrderItem>[]
+  skipped_rows: number
+  gross_amount: number
+  message: string
+}
+
+/** Reads a workbook into schedule lines and hands them back - nothing is saved until the schedule is. */
+export function importSchedule(id: number, file: File) {
+  const form = new FormData()
+  form.append('file', file)
+  return api<ScheduleImport>(`/api/wo/orders/${id}/boq/import`, { method: 'POST', body: form })
+}
+
+/** The departments added to this site. With no site chosen, every one that is on any site; a department already on the order stays listed. */
+export function departmentsForSite(v: Vocabulary | undefined, jobId: number | null | undefined, keep = ''): string[] {
+  const all = v?.departments ?? []
+  if (!jobId) return all
+  return all.filter((d) => d === keep || v?.department_sites?.[d]?.includes(jobId))
+}
