@@ -3,15 +3,14 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import { MotionConfig } from 'framer-motion'
 import { Loader2 } from 'lucide-react'
-import { AppShell } from '@/components/layout/AppShell'
 import { Toaster, TooltipProvider } from '@/components/ui'
+import { UpdatePrompt } from '@/components/UpdatePrompt'
 import { FreshBuild } from '@/lib/freshness'
 import { LegacyLinks } from '@/lib/legacyLinks'
 import { persistOptions, queryClient } from '@/lib/query'
 import { watchConnection } from '@/stores/offline'
 import { applyTheme, useUI } from '@/stores/ui'
-import { SCREENS } from '@/routes'
-import HomePage from '@/features/dashboard/HomePage'
+import { AppShell, HomePage, SCREENS } from '@/app-mobile/entry'
 import NotFound from '@/pages/NotFound'
 
 const LoginPage = lazy(() => import('@/features/auth/LoginPage'))
@@ -106,6 +105,7 @@ export default function App() {
           </Suspense>
         </BrowserRouter>
         <Toaster />
+        <UpdatePrompt />
       </TooltipProvider>
       </MotionConfig>
     </PersistQueryClientProvider>

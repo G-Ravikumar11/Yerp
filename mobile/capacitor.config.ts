@@ -8,6 +8,11 @@ const config: CapacitorConfig = {
     androidScheme: 'https',
     cleartext: false,
   },
+  android: {
+    // The page sits between the status bar and the gesture bar on every Android version, instead of drawing under them
+    // (where the top row and the bottom tab bar were hidden behind them).
+    adjustMarginsForEdgeToEdge: 'force',
+  },
   plugins: {
     SplashScreen: {
       launchShowDuration: 1500,

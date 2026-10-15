@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 import { loadEnv } from 'vite'
+import { mobileUi } from './vite.mobile-ui.ts'
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig(({ mode, command }) => {
@@ -35,6 +36,7 @@ export default defineConfig(({ mode, command }) => {
       },
       react(),
       tailwindcss(),
+      mobileUi(),
       VitePWA({
         // A new build takes over as soon as it is installed. The page in front of the person is not reloaded under
         // them (boot-app.tsx); the next page they open is simply the new one.

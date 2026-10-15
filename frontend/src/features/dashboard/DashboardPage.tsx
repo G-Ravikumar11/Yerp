@@ -62,8 +62,8 @@ function Panel({ id, title, description, action, className, children }: { id?: s
   return (
     <motion.div id={id} variants={rise} className={cn('scroll-mt-24', className)}>
       <Card className="flex h-full flex-col transition-shadow duration-500">
-        <CardHeader className="flex-row items-start justify-between gap-3 space-y-0">
-          <div>
+        <CardHeader className="flex-col gap-3 space-y-0 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
             <CardTitle>{title}</CardTitle>
             {description && <CardDescription className="mt-1">{description}</CardDescription>}
           </div>
@@ -229,7 +229,7 @@ export default function DashboardPage() {
           title="How the business is doing"
           description={VIEWS.find((v) => v.value === view)?.hint}
           className="lg:col-span-2"
-          action={<Select aria-label="Chart" className="h-9 w-56" value={view} onChange={(e) => pickView(e.target.value as View)} options={available} />}
+          action={<Select aria-label="Chart" className="h-9 w-full sm:w-56" value={view} onChange={(e) => pickView(e.target.value as View)} options={available} />}
         >
           {chart}
         </Panel>

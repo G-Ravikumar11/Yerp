@@ -180,8 +180,12 @@ async function mountPlan(canvas: HTMLCanvasElement, plan: Plan3D): Promise<PlanV
   }
 
   // Camera: turned by hand only, with a little momentum after a flick.
-  const home = { yaw: 0.7, pitch: 0.7, dist: size * 1.45 }
+  // Far enough back for the whole plan to fit across the narrower side: a phone held upright is narrower than it is
+  // tall, so it stands further off. Kept in step with the canvas until the person zooms by hand.
+  const fitDist = (aspect: number) => (size * 1.45) / Math.min(1, Math.max(aspect, 0.35))
+  const home = { yaw: 0.7, pitch: 0.7, dist: fitDist(1) }
   let { yaw, pitch, dist } = home
+  let zoomed = false
   let vyaw = 0
   let vpitch = 0
   let drag: { x: number; y: number } | null = null
@@ -213,10 +217,29 @@ async function mountPlan(canvas: HTMLCanvasElement, plan: Plan3D): Promise<PlanV
     renderer.setSize(w, h, false)
     cam.aspect = w / h
     cam.updateProjectionMatrix()
+    home.dist = fitDist(w / h)
+    if (!zoomed) dist = home.dist
     draw()
   }
-  const down = (e: PointerEvent) => { drag = { x: e.clientX, y: e.clientY }; vyaw = vpitch = 0; canvas.setPointerCapture(e.pointerId) }
+  // One finger (or the mouse) turns it; two fingers pinch to zoom, as there is no scroll wheel on a phone.
+  const touches = new Map<number, { x: number; y: number }>()
+  let pinch = 0
+  const spread = () => { const [a, b] = [...touches.values()]; return Math.hypot(a.x - b.x, a.y - b.y) }
+  const zoomTo = (next: number) => { dist = Math.max(size * 0.35, Math.min(size * 4, next)); zoomed = true; draw() }
+  const down = (e: PointerEvent) => {
+    touches.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    canvas.setPointerCapture(e.pointerId)
+    vyaw = vpitch = 0
+    if (touches.size === 2) { drag = null; pinch = spread() } else drag = { x: e.clientX, y: e.clientY }
+  }
   const move = (e: PointerEvent) => {
+    if (touches.has(e.pointerId)) touches.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (touches.size === 2) {
+      const now = spread()
+      if (pinch > 0 && now > 0) zoomTo(dist * (pinch / now))
+      pinch = now
+      return
+    }
     if (!drag) return
     vyaw = -(e.clientX - drag.x) * 0.008
     vpitch = (e.clientY - drag.y) * 0.006
@@ -225,11 +248,17 @@ async function mountPlan(canvas: HTMLCanvasElement, plan: Plan3D): Promise<PlanV
     drag = { x: e.clientX, y: e.clientY }
     draw()
   }
-  const up = () => { drag = null; draw() }
+  const up = (e: PointerEvent) => {
+    touches.delete(e.pointerId)
+    pinch = 0
+    // Lifting one finger of a pinch leaves the other to turn it, from where it is now.
+    const left = [...touches.values()][0]
+    drag = left ? { ...left } : null
+    draw()
+  }
   const wheel = (e: WheelEvent) => {
     e.preventDefault()
-    dist = Math.max(size * 0.35, Math.min(size * 4, dist * (1 + e.deltaY * 0.0012)))
-    draw()
+    zoomTo(dist * (1 + e.deltaY * 0.0012))
   }
   canvas.addEventListener('pointerdown', down)
   canvas.addEventListener('pointermove', move)
@@ -254,7 +283,7 @@ async function mountPlan(canvas: HTMLCanvasElement, plan: Plan3D): Promise<PlanV
       disposables.forEach((d) => d.dispose())
       renderer.dispose()
     },
-    reset: () => { ({ yaw, pitch, dist } = home); vyaw = vpitch = 0; draw() },
+    reset: () => { ({ yaw, pitch, dist } = home); zoomed = false; vyaw = vpitch = 0; draw() },
     png: () => {
       place()
       renderer.render(scene, cam) // drawn again just before it is read, so the picture is never blank
@@ -343,7 +372,7 @@ function Plan3DBody({ drawing, onClose }: { drawing: Drawing; onClose: () => voi
           <Viewer plan={plan} name={`${drawing.number}-${drawing.current_revision}`} />
           <p className="mt-3 text-[12px] text-muted-foreground">
             {plan.walls?.length ?? 0} walls, {plan.rooms?.length ?? 0} rooms{plan.width_m ? `, about ${plan.width_m} m wide` : ', size estimated'}.
-            {plan.low_confidence && ' The sheet was hard to read, so check this against the drawing.'} A visual aid only: do not take quantities from it. Drag to rotate, scroll to zoom.
+            {plan.low_confidence && ' The sheet was hard to read, so check this against the drawing.'} A visual aid only: do not take quantities from it. Drag to rotate; scroll or pinch to zoom.
           </p>
         </>
       )}
