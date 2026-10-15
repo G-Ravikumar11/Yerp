@@ -794,42 +794,11 @@ def record_quote(rfq_id: int, body: QuoteIn, request: Request, db: Session = Dep
     revised quote is the same supplier changing their mind, not a new one."""
     client, actor_id, actor_name = wo_actor(request, db, "purchase.manage")
     r = rfq_or_404(db, client.id, rfq_id)
-    if r.status != "OPEN":
-        raise HTTPException(409, "%s is %s; its quotes are closed." % (r.number, r.status.lower()))
-    name = (body.supplier_name or "").strip()
-    if not name:
-        raise HTTPException(400, "Whose quote is this?")
-    valid_ids = {l.id for l in _rfq_lines(db, r.id)}
-    lines = [l for l in body.lines if l.rfq_line_id in valid_ids and (l.rate or 0) > 0]
-    if not lines:
-        raise HTTPException(400, "The quote has no rates on it.")
-    if any(l.rate < 0 for l in body.lines) or (body.freight or 0) < 0:
-        raise HTTPException(400, "A rate or freight cannot be negative.")
-    existing = next((q for q in db.query(models.DBRfqQuote).filter(
-        models.DBRfqQuote.rfq_id == r.id).all() if norm_name(q.supplier_name) == norm_name(name)), None)
-    if existing:
-        db.query(models.DBRfqQuoteLine).filter(
-            models.DBRfqQuoteLine.quote_id == existing.id).delete()
-        q = existing
-    else:
-        q = models.DBRfqQuote(rfq_id=r.id)
-        db.add(q)
-    q.supplier_name = name
-    q.quote_ref = (body.quote_ref or "").strip()
-    q.quote_date = (body.quote_date or datetime.now().strftime("%Y-%m-%d"))[:10]
-    q.delivery_days = max(0, int(body.delivery_days or 0))
-    q.payment_terms = (body.payment_terms or "").strip()
-    q.freight = money(body.freight or 0)
-    q.valid_until = (body.valid_until or "").strip()
-    q.notes = (body.notes or "").strip()
-    db.flush()
-    for l in lines:
-        db.add(models.DBRfqQuoteLine(quote_id=q.id, rfq_line_id=l.rfq_line_id,
-                                     rate=unit_rate(l.rate), tax_percent=l.tax_percent or 0,
-                                     remarks=(l.remarks or "").strip()))
+    from app.services.rfq_quotes import save_quote          # the same checks for a quote a supplier sends himself
+    q, revised = save_quote(db, r, body.model_dump(), source="buyer")
     db.commit()
-    return {"ok": True, "comparison": comparative_statement(db, r),
-            "message": "%s's quote %s on %s." % (name, "revised" if existing else "recorded", r.number)}
+    return {"ok": True, "quote_id": q.id, "comparison": comparative_statement(db, r),
+            "message": "%s's quote %s on %s." % (q.supplier_name, "revised" if revised else "recorded", r.number)}
 
 
 @router.post("/api/rfqs/{rfq_id}/award")

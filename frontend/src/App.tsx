@@ -20,6 +20,7 @@ const OnboardPage = lazy(() => import('@/features/auth/OnboardPage'))
 const PortalPage = lazy(() => import('@/features/portal/PortalPage'))
 const JobsPage = lazy(() => import('@/features/careers/JobsPage'))
 const ApplyPage = lazy(() => import('@/features/careers/ApplyPage'))
+const VendorQuotePage = lazy(() => import('@/features/rfq/VendorQuotePage'))
 const MeetingPage = lazy(() => import('@/features/meeting/MeetingPage'))
 const SuperadminPage = lazy(() => import('@/features/superadmin/SuperadminPage'))
 const SuperadminLoginPage = lazy(() => import('@/features/auth/SuperadminLoginPage'))
@@ -86,6 +87,7 @@ export default function App() {
             <Route path="login" element={<LoginPage />} />
             <Route path="jobs" element={<JobsPage />} />
             <Route path="apply" element={<ApplyPage />} />
+            <Route path="quote" element={<VendorQuotePage />} />
             <Route path="meeting" element={<MeetingPage />} />
             <Route path="onboard" element={<OnboardPage />} />
             <Route path="portal" element={<PortalPage />} />

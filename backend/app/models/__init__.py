@@ -127,6 +127,7 @@ from app.models.procurement import (
     DBRfqLine,
     DBRfqQuote,
     DBRfqQuoteLine,
+    DBRfqInvite,
 )
 from app.models.projects import (
     DBJob,

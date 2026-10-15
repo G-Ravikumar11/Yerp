@@ -51,6 +51,7 @@ SUBCONTRACT_CONTROL_COLUMNS = (
 )
 
 QUALITY_COLUMNS = (
+    ("rfq_quotes", "source", "VARCHAR DEFAULT ''"),
     # (table, column, Postgres type, SQLite type) - what the quality module grew after it was first created.
     ("qc_inspections", "building", "VARCHAR DEFAULT ''"), ("qc_inspections", "floor_area", "VARCHAR DEFAULT ''"),
     ("qc_inspections", "work_activity", "VARCHAR DEFAULT ''"), ("qc_inspections", "assigned_to", "VARCHAR DEFAULT ''"),

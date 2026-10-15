@@ -104,6 +104,8 @@ POLY = {
     "plant_fuel": {"files": ["plant_fuel"]},
     "worker_screenings": {"files": ["worker"]},
     "equipment_checks": {"files": ["equipment_check"]},
+    # the quotation a supplier sent, and one sent through his link without rates
+    "rfq_quotes": {"files": ["rfq_quote"]}, "rfq_invites": {"files": ["rfq_invite"]},
 }
 
 # Kept, with the link to the project cleared, when a project goes: they exist before and apart from it.
@@ -172,7 +174,7 @@ LABELS = {
     "line_items": "invoice lines", "payments": "payments", "money_entries": "payments", "sub_bills": "contractor bills",
     "ra_bills": "RA bills", "measurements": "measurements", "sub_measurements": "measurements", "work_orders": "client work orders",
     "subcontract_orders": "work orders", "purchase_orders": "purchase orders", "goods_receipts": "goods receipts", "bills": "supplier bills",
-    "invoices": "invoices", "quotes": "quotes", "rfqs": "enquiries", "rfq_quotes": "supplier quotes", "boqs": "BOQs", "drawings": "drawings",
+    "invoices": "invoices", "quotes": "quotes", "rfqs": "enquiries", "rfq_quotes": "supplier quotes", "rfq_invites": "quote links", "boqs": "BOQs", "drawings": "drawings",
     "site_diaries": "site diary days", "qc_inspections": "inspections", "qc_cube_sets": "cube sets", "qc_ncrs": "NCRs",
     "safety_incidents": "incidents", "toolbox_talks": "toolbox talks", "work_permits": "permits", "schedule_activities": "activities",
     "stock_issues": "stock issues", "stock_movements": "stock movements", "eway_bills": "e-way bills", "project_threads": "chat threads",

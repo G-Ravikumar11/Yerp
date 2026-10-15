@@ -1,4 +1,4 @@
-import { CalendarClock, Truck, X } from 'lucide-react'
+import { CalendarClock, FileText, Truck, X } from 'lucide-react'
 import { Badge, Button } from '@/components/ui'
 import type { RfqSupplier, Statement } from '@/api/rfq'
 import { cellTone, type Comparison } from '@/lib/rfqCompare'
@@ -21,7 +21,18 @@ const ref = (s: RfqSupplier) => [s.quote_ref, s.quote_date && formatDate(s.quote
 
 function RankBadge({ rank }: { rank?: string }) {
   if (!rank) return <Badge tone="warning">Part quote</Badge>
-  return <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold', rank === 'L1' ? 'bg-success text-white' : 'bg-muted text-muted-foreground')}>{rank}</span>
+  return <span title={rank === 'L1' ? 'L1: the lowest total for all items' : `${rank}: number ${rank.slice(1)} from the lowest total`} className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold', rank === 'L1' ? 'bg-success text-white' : 'bg-muted text-muted-foreground')}>{rank}</span>
+}
+
+/** The supplier's own quotation file, and whether the supplier sent it through their link. */
+function QuoteFile({ s }: { s: RfqSupplier }) {
+  if (!s.document && s.source !== 'vendor') return null
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] print:hidden">
+      {s.document && <a href={`/api/files/${s.document.id}`} target="_blank" rel="noopener" className="inline-flex items-center gap-1 font-medium text-primary underline-offset-2 hover:underline" title={s.document.name}><FileText className="size-3" /> Their quotation</a>}
+      {s.source === 'vendor' && <span className="rounded bg-info/10 px-1 text-info">sent by the supplier</span>}
+    </div>
+  )
 }
 
 function Coverage({ d, s }: { d: Statement; s: RfqSupplier }) {
@@ -57,7 +68,8 @@ export function ComparisonMatrix({ d, c, open, onRemove, onAwardVendor }: ViewPr
                       {sups.length > 1 && <button type="button" aria-label={`Stop comparing ${s.supplier_name}`} title="Take out of the comparison" onClick={() => onRemove(s.supplier_name)} className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground print:hidden"><X className="size-3.5" /></button>}
                     </div>
                     {ref(s) && <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{ref(s)}</div>}
-                    <div className={cn('mt-1.5 text-[15px] font-bold tabular', rank === 'L1' && 'text-success')}>{formatINR(s.landed)}</div>
+                    <QuoteFile s={s} />
+                    <div className={cn('mt-1.5 text-[15px] font-bold tabular', rank === 'L1' && 'text-success')} title="Total at site: rates + GST + transport">{formatINR(s.landed)}</div>
                     <div className="mt-1 grid gap-0.5 text-[11px] text-muted-foreground">
                       <span className="flex items-center gap-1"><Truck className="size-3" /> {days(s)}</span>
                       <span className="flex items-center gap-1 truncate" title={s.payment_terms}><CalendarClock className="size-3 shrink-0" /> {s.payment_terms || 'Terms not stated'}</span>
@@ -95,7 +107,7 @@ export function ComparisonMatrix({ d, c, open, onRemove, onAwardVendor }: ViewPr
           })}
         </tbody>
         {sups.length > 0 && <tfoot className="sticky bottom-0 z-20 bg-card shadow-[0_-1px_0_var(--color-border)] print:static">
-          {([['Basic', 'basic'], ['GST / tax', 'tax'], ['Freight', 'freight'], ['Landed at site', 'landed']] as const).map(([label, k]) => (
+          {([['Basic', 'basic'], ['GST / tax', 'tax'], ['Transport', 'freight'], ['Total at site', 'landed']] as const).map(([label, k]) => (
             <tr key={k} className={k === 'landed' ? 'border-t-2 border-border font-bold' : ''}>
               <td className={cn(stickItem, 'px-3 py-1.5 text-right')}>{label}</td><td className={stickQty} />
               {sups.map((s) => <td key={s.supplier_name} className={cn('whitespace-nowrap px-3 py-1.5 text-right tabular', k === 'landed' && c.rank.get(s.supplier_name) === 'L1' && 'bg-success/10 text-success')}>{formatINR(s[k])}</td>)}
@@ -129,15 +141,15 @@ export function Scorecards({ d, c, open, onRemove, onAwardVendor }: ViewProps) {
           <li key={s.supplier_name} aria-label={s.supplier_name} className={cn('flex flex-col rounded-xl border bg-card p-4 shadow-card', rank === 'L1' ? 'border-success/50 ring-1 ring-success/30' : 'border-border')}>
             <div className="flex items-start gap-2">
               <RankBadge rank={rank} />
-              <div className="min-w-0 flex-1"><div className="truncate font-semibold">{s.supplier_name}</div>{ref(s) && <div className="text-[11px] text-muted-foreground">{ref(s)}</div>}</div>
+              <div className="min-w-0 flex-1"><div className="truncate font-semibold">{s.supplier_name}</div>{ref(s) && <div className="text-[11px] text-muted-foreground">{ref(s)}</div>}<QuoteFile s={s} /></div>
               {c.suppliers.length > 1 && <button type="button" aria-label={`Stop comparing ${s.supplier_name}`} onClick={() => onRemove(s.supplier_name)} className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"><X className="size-4" /></button>}
             </div>
             <div className={cn('mt-3 text-2xl font-bold tabular', rank === 'L1' && 'text-success')}>{formatINR(s.landed)}</div>
-            <div className="text-[11px] text-muted-foreground">landed at site</div>
+            <div className="text-[11px] text-muted-foreground">total at site (rates + GST + transport)</div>
             <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[13px]">
               <dt className="text-muted-foreground">Basic</dt><dd className="text-right tabular">{formatINR(s.basic)}</dd>
               <dt className="text-muted-foreground">GST / tax</dt><dd className="text-right tabular">{formatINR(s.tax)}</dd>
-              <dt className="text-muted-foreground">Freight</dt><dd className="text-right tabular">{formatINR(s.freight)}</dd>
+              <dt className="text-muted-foreground">Transport</dt><dd className="text-right tabular">{formatINR(s.freight)}</dd>
               <dt className="text-muted-foreground">Delivery</dt><dd className="text-right">{days(s)}</dd>
               <dt className="text-muted-foreground">Payment</dt><dd className="truncate text-right" title={s.payment_terms}>{s.payment_terms || 'Not stated'}</dd>
               <dt className="text-muted-foreground">Lowest on</dt><dd className="text-right">{won} of {d.lines.length} lines</dd>

@@ -77,7 +77,9 @@ FILE_TYPES = ("image/jpeg", "image/png", "image/webp", "image/gif", "application
               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
               "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
               "application/octet-stream")
-FILE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf", ".dwg", ".dxf", ".xlsx", ".docx")
+# Office files old and new, text and OpenOffice too: a supplier's quotation arrives in whatever he uses.
+FILE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf", ".dwg", ".dxf", ".xlsx", ".docx",
+                   ".doc", ".docm", ".xls", ".xlsm", ".csv", ".txt", ".rtf", ".odt", ".ods", ".bmp", ".tif", ".tiff")
 
 
 def file_dict(f):
