@@ -84,6 +84,16 @@ QUALITY_COLUMNS = (
     ("asset_services", "approved_by", "VARCHAR DEFAULT ''"),
     ("schedule_activities", "status", "VARCHAR DEFAULT ''"), ("schedule_activities", "notes", "TEXT DEFAULT ''"),
     ("project_messages", "parent_id", "INTEGER"), ("project_messages", "edited_at", "VARCHAR DEFAULT ''"),
+    # The programme (Planning & Progress, the Excel-style schedule)
+    ("schedule_activities", "parent_id", "INTEGER"), ("schedule_activities", "description", "TEXT DEFAULT ''"),
+    ("schedule_activities", "boq_ref", "VARCHAR DEFAULT ''"), ("schedule_activities", "uom", "VARCHAR DEFAULT ''"),
+    ("schedule_activities", "quantity", "FLOAT DEFAULT 0"), ("schedule_activities", "rate", "FLOAT DEFAULT 0"),
+    ("schedule_activities", "amount", "FLOAT DEFAULT 0"), ("schedule_activities", "labour_required", "FLOAT DEFAULT 0"),
+    ("schedule_activities", "duration_days", "INTEGER"), ("schedule_activities", "not_before", "VARCHAR DEFAULT ''"),
+    ("schedule_activities", "productivity", "BOOLEAN DEFAULT FALSE"),
+    ("schedule_activities", "output_per_day", "FLOAT DEFAULT 0"), ("schedule_activities", "gangs", "FLOAT DEFAULT 0"),
+    ("schedule_activities", "qty_done", "FLOAT DEFAULT 0"),
+    ("schedule_progress", "qty_done", "FLOAT"),
 )
 
 
