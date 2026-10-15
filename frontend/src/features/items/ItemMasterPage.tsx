@@ -15,7 +15,7 @@ import { CategoriesModal } from './CategoriesModal'
 import { ImportItemsModal } from './ImportItemsModal'
 import { ItemDetailModal, UsageList } from './ItemDetailModal'
 import { ItemFormModal, type FormMode } from './ItemFormModal'
-import { buildChips, clearAll, clearFilter, isFiltered, loadFilters, saveFilters, stockLabel } from './itemLogic'
+import { NO_CATEGORY, buildChips, clearAll, clearFilter, isFiltered, loadFilters, purchaseRateOf, saveFilters, stockLabel } from './itemLogic'
 
 const COLUMNS: { id: string; label: string; sort?: string; right?: boolean }[] = [
   { id: 'code', label: 'Code', sort: 'code' },
@@ -139,7 +139,7 @@ export default function ItemMasterPage() {
       {showFilters && (
         <Card className="mb-3 grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
           <Field label="Category" htmlFor="f-cat">
-            <Select id="f-cat" value={f.category} placeholder="Any category" onChange={(e) => change({ category: e.target.value, subcategory: '' })} options={(cats.data ?? []).map((c) => ({ value: c.name, label: c.name }))} />
+            <Select id="f-cat" value={f.category} placeholder="Any category" onChange={(e) => change({ category: e.target.value, subcategory: '' })} options={[{ value: NO_CATEGORY, label: 'No category yet' }, ...(cats.data ?? []).map((c) => ({ value: c.name, label: c.name }))]} />
           </Field>
           <Field label="Subcategory" htmlFor="f-sub">
             <Select id="f-sub" value={f.subcategory} placeholder={subs.length ? 'Any subcategory' : 'Choose a category first'} disabled={!subs.length} onChange={(e) => change({ subcategory: e.target.value })} options={subs.map((s) => ({ value: s.name, label: s.name }))} />
@@ -248,9 +248,9 @@ export default function ItemMasterPage() {
                       <button type="button" className="block max-w-full truncate text-left font-medium hover:underline" onClick={() => setDetail(r)}>{r.item_name}</button>
                       {r.specification && <div className="truncate text-xs text-muted-foreground">{r.specification}</div>}
                     </td>
-                    <td className="px-3 py-2">{r.item_category || '-'}</td>
+                    <td className="px-3 py-2">{r.item_category || <span className="text-muted-foreground">Not set yet</span>}</td>
                     <td className="px-3 py-2">{r.units_of_measure}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{r.purchase_rate ? formatINR(r.purchase_rate) : '-'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums"><Rate item={r} /></td>
                     <td className="px-3 py-2 text-right tabular-nums">{stockLabel(r.kind, r.stock, r.units_of_measure)}</td>
                     <td className="px-3 py-2"><Badge tone={r.is_active ? 'success' : 'neutral'}>{r.is_active ? 'Active' : 'Inactive'}</Badge></td>
                     <td className="px-3 py-2">{actions(r)}</td>
@@ -272,9 +272,9 @@ export default function ItemMasterPage() {
                   <Badge tone={r.is_active ? 'success' : 'neutral'}>{r.is_active ? 'Active' : 'Inactive'}</Badge>
                 </div>
                 <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
-                  <div><dt className="text-xs text-muted-foreground">Category</dt><dd>{r.item_category || '-'}</dd></div>
+                  <div><dt className="text-xs text-muted-foreground">Category</dt><dd>{r.item_category || <span className="text-muted-foreground">Not set yet</span>}</dd></div>
                   <div><dt className="text-xs text-muted-foreground">Unit</dt><dd>{r.units_of_measure}</dd></div>
-                  <div><dt className="text-xs text-muted-foreground">Purchase rate</dt><dd>{r.purchase_rate ? formatINR(r.purchase_rate) : '-'}</dd></div>
+                  <div><dt className="text-xs text-muted-foreground">Purchase rate</dt><dd><Rate item={r} /></dd></div>
                   <div><dt className="text-xs text-muted-foreground">In stock</dt><dd>{stockLabel(r.kind, r.stock, r.units_of_measure)}</dd></div>
                 </dl>
                 <div className="mt-2">{actions(r)}</div>
@@ -331,6 +331,18 @@ export default function ItemMasterPage() {
         onConfirm={() => bulkToggle.mutate({ on: false, confirm: !!bulkNote })}
       />
     </>
+  )
+}
+
+/** The purchase rate, or the last rate the item was bought or sold at (said so), or a dash. */
+function Rate({ item }: { item: MasterItem }) {
+  const rate = purchaseRateOf(item)
+  if (!rate) return <span className="text-muted-foreground">-</span>
+  return (
+    <span>
+      {formatINR(rate.value)}
+      {rate.lastUsed && <span className="block text-[11px] text-muted-foreground">last rate used</span>}
+    </span>
   )
 }
 

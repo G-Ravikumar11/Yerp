@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { DEFAULT_FILTERS, GST_RATES, buildChips, clearAll, clearFilter, defaultTypeFor, groupINR, isFiltered, loadFilters, matchUnit, orderUnits, saveFilters, stockLabel, validateItem, type ItemForm } from './itemLogic'
+import { DEFAULT_FILTERS, GST_RATES, NO_CATEGORY, purchaseRateOf, buildChips, clearAll, clearFilter, defaultTypeFor, groupINR, isFiltered, loadFilters, matchUnit, orderUnits, saveFilters, stockLabel, validateItem, type ItemForm } from './itemLogic'
 
 describe('filter chips', () => {
   it('has none when nothing is chosen, and the default "active only" is not a chip', () => {
@@ -49,10 +49,29 @@ describe('remembering filters per person', () => {
 })
 
 describe('stock column', () => {
-  it('shows a quantity with its unit for a material, and a dash for a work item', () => {
+  it('shows the quantity wherever the store has a record, whatever the item is', () => {
     expect(stockLabel('RM', 12500.5, 'kg')).toBe('12,500.5 kg')
-    expect(stockLabel('FG', 4, 'cum')).toBe('-')
-    expect(stockLabel('RM', null, 'kg')).toBe('-')
+    expect(stockLabel('FG', 4, 'cum')).toBe('4 cum')
+    expect(stockLabel('RM', 0, 'kg')).toBe('0 kg')
+  })
+
+  it('says none in hand for a material with no record, and not stocked for a work item', () => {
+    expect(stockLabel('RM', null, 'Bags')).toBe('0 Bags')
+    expect(stockLabel('FG', null, 'cum')).toBe('Not stocked')
+  })
+})
+
+describe('purchase rate column', () => {
+  it('shows the kept rate, else the last rate used and says so, else nothing', () => {
+    expect(purchaseRateOf({ purchase_rate: 415, last_rate: 300 })).toEqual({ value: 415, lastUsed: false })
+    expect(purchaseRateOf({ purchase_rate: 0, last_rate: 250 })).toEqual({ value: 250, lastUsed: true })
+    expect(purchaseRateOf({ purchase_rate: 0, last_rate: 0 })).toBeNull()
+  })
+})
+
+describe('items with no category', () => {
+  it('have a chip of their own', () => {
+    expect(buildChips({ ...DEFAULT_FILTERS, category: NO_CATEGORY }).map((c) => c.label)).toEqual(['No category yet'])
   })
 })
 

@@ -25,7 +25,7 @@ const STATUS_LABEL: Record<string, string> = { active: 'Active items', inactive:
 /** One removable chip for every filter that is not at its default. The search box is not a chip: it is already on screen. */
 export function buildChips(f: ItemFilters, siteName: (id: string) => string = (id) => id): Chip[] {
   const chips: Chip[] = []
-  if (f.category) chips.push({ key: 'category', label: `Category: ${f.category}` })
+  if (f.category) chips.push({ key: 'category', label: f.category === NO_CATEGORY ? 'No category yet' : `Category: ${f.category}` })
   if (f.subcategory) chips.push({ key: 'subcategory', label: `Subcategory: ${f.subcategory}` })
   if (f.item_type) chips.push({ key: 'item_type', label: `Type: ${f.item_type}` })
   if (f.uom) chips.push({ key: 'uom', label: `Unit: ${f.uom}` })
@@ -73,11 +73,21 @@ export function saveFilters(user: string, f: ItemFilters) {
   }
 }
 
-/** Stock only means something for a material the store keeps; a work item used in BOQs has none. */
+/** What the store holds. A quantity wherever the store has a record of the item; otherwise a material has none in hand, and a work item is not kept in stock at all. */
 export function stockLabel(kind: 'RM' | 'FG', stock: number | null, unit: string) {
-  if (kind === 'FG' || stock === null) return '-'
+  if (stock === null) return kind === 'RM' ? `0 ${unit}` : 'Not stocked'
   return `${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(stock)} ${unit}`
 }
+
+/** The rate to show as the purchase rate: the one kept for the item, else the last one it was bought or sold at, said so. */
+export function purchaseRateOf(i: { purchase_rate: number; last_rate: number }): { value: number; lastUsed: boolean } | null {
+  if (i.purchase_rate > 0) return { value: i.purchase_rate, lastUsed: false }
+  if (i.last_rate > 0) return { value: i.last_rate, lastUsed: true }
+  return null
+}
+
+/** The filter value that finds items nobody has put in a category yet. */
+export const NO_CATEGORY = '__none__'
 
 /* --- The item form ----------------------------------------------------------------------------------------------- */
 

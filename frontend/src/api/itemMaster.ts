@@ -14,6 +14,8 @@ export interface MasterItem {
   specification: string
   purchase_rate: number
   selling_rate: number
+  /** What it was last bought or sold at, from before purchase rates were kept here. 0 when never. */
+  last_rate: number
   /** The selling rate when one is kept, else null. A default only: a site's finalised rate never follows it. */
   default_rate: number | null
   hsn_code: string

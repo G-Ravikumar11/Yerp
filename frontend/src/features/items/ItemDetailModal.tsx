@@ -3,7 +3,7 @@ import { Copy, ExternalLink, Pencil, Power } from 'lucide-react'
 import { Badge, Button, Modal, Skeleton } from '@/components/ui'
 import { useItemSites, useWhereUsed, type MasterItem, type UsageGroup } from '@/api/itemMaster'
 import { formatINR } from '@/lib/utils'
-import { stockLabel } from './itemLogic'
+import { purchaseRateOf, stockLabel } from './itemLogic'
 
 const Row = ({ label, children }: { label: string; children: React.ReactNode }) => (
   <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-4">
@@ -72,11 +72,11 @@ export function ItemDetailModal({ item, manage, onClose, onEdit, onCopy, onToggl
             </h3>
             <dl className="grid gap-2">
               <Row label="What it is">{i.kind === 'RM' ? 'Material (kept in stock)' : 'Work item (used in BOQs)'}</Row>
-              <Row label="Category">{[i.item_category, i.item_subcategory].filter(Boolean).join(' › ')}</Row>
+              <Row label="Category">{[i.item_category, i.item_subcategory].filter(Boolean).join(' › ') || 'Not set yet. Edit the item to file it.'}</Row>
               <Row label="Unit">{i.units_of_measure}</Row>
               <Row label="Grade or specification">{i.specification}</Row>
               <Row label="Description">{i.description !== i.item_name ? i.description : ''}</Row>
-              <Row label="Usual purchase rate">{i.purchase_rate ? formatINR(i.purchase_rate) : ''}</Row>
+              <Row label="Usual purchase rate">{(() => { const r = purchaseRateOf(i); return r ? `${formatINR(r.value)}${r.lastUsed ? ' (the last rate it was bought or sold at)' : ''}` : '' })()}</Row>
               <Row label="Usual selling rate">{i.selling_rate ? formatINR(i.selling_rate) : ''}</Row>
               <Row label="GST (tax) rate">{i.item_tax_type}</Row>
               <Row label="HSN / SAC code">{i.hsn_code}</Row>
@@ -87,7 +87,7 @@ export function ItemDetailModal({ item, manage, onClose, onEdit, onCopy, onToggl
 
           <section aria-labelledby="d-stock">
             <h3 id="d-stock" className="mb-2 border-b pb-1 text-sm font-semibold">In stock</h3>
-            {i.kind === 'RM' ? (
+            {i.kind === 'RM' || i.stock !== null ? (
               <p className="text-sm"><strong>{stockLabel(i.kind, i.stock, i.units_of_measure)}</strong> <span className="text-muted-foreground">in the store in total{i.reorder_level ? ` · warn below ${i.reorder_level} ${i.units_of_measure}` : ''}</span></p>
             ) : (
               <p className="text-sm text-muted-foreground">A work item is not kept in stock.</p>

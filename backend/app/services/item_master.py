@@ -238,9 +238,10 @@ def item_dict(item, site_count=0, stock=None):
             "item_subcategory": item.item_subcategory or "", "item_type": item.item_type or "",
             "units_of_measure": item.units_of_measure or "", "specification": item.specification or "",
             "purchase_rate": unit_rate(item.purchase_rate), "selling_rate": unit_rate(item.selling_rate),
+            "last_rate": unit_rate(item.last_rate),            # what it was last bought or sold at, from before rates were kept here
             "default_rate": default_rate(item), "hsn_code": item.hsn_code or "", "item_tax_type": item.item_tax_type or "",
             "preferred_supplier": item.preferred_supplier or "", "reorder_level": money(item.reorder_level),
             "remarks": item.remarks or "", "is_active": item.is_active is not False, "sites": site_count,
-            "stock": money(stock) if stock is not None else None,
+            "stock": money(stock) if stock is not None else None,        # None: the store holds no record of it
             "created_by": item.created_by_name or "", "updated_by": item.updated_by_name or "",
             "created_at": item.created_at or "", "updated_at": item.updated_at or ""}

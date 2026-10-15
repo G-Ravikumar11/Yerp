@@ -19,6 +19,7 @@ from app.services.site_rates import current_lines_of_item
 
 router = APIRouter()
 
+NO_CATEGORY = "__none__"        # the filter value for items nobody has put in a category yet
 SORTS = {"code": models.DBItem.item_code, "name": models.DBItem.item_name, "category": models.DBItem.item_category,
          "subcategory": models.DBItem.item_subcategory, "type": models.DBItem.item_type, "uom": models.DBItem.units_of_measure,
          "rate": models.DBItem.selling_rate, "status": models.DBItem.is_active}
@@ -37,6 +38,9 @@ def _filtered(db, client_id, q, category, subcategory, item_type, uom, status, k
         like = "%" + q.strip() + "%"
         query = query.filter(or_(models.DBItem.item_code.ilike(like), models.DBItem.item_name.ilike(like),
                                  models.DBItem.description.ilike(like), models.DBItem.specification.ilike(like)))
+    if category == NO_CATEGORY:
+        query = query.filter(or_(models.DBItem.item_category == "", models.DBItem.item_category.is_(None)))
+        category = ""
     for column, value in ((models.DBItem.item_category, category), (models.DBItem.item_subcategory, subcategory),
                           (models.DBItem.item_type, item_type), (models.DBItem.units_of_measure, uom), (models.DBItem.kind, (kind or "").upper())):
         if value:
@@ -64,7 +68,7 @@ def items_list(request: Request, q: str = "", category: str = "", subcategory: s
     rows = query.order_by(order, models.DBItem.id).offset((max(1, page) - 1) * page_size).limit(page_size).all()
     codes = [r.item_code for r in rows]
     used, stock = im.sites_using(db, client.id, codes), im.stock_of(db, client.id, codes)
-    return {"items": [im.item_dict(r, len(used.get(r.item_code, ())), stock.get(r.item_code, 0.0)) for r in rows], "total": total,
+    return {"items": [im.item_dict(r, len(used.get(r.item_code, ())), stock.get(r.item_code)) for r in rows], "total": total,
             "page": max(1, page), "page_size": page_size}
 
 
@@ -248,7 +252,7 @@ def item_where_used(item_id: int, request: Request, db: Session = Depends(get_db
     client = require_erp_read(request, db)
     item = _item(db, client.id, item_id)
     return {"item": im.item_dict(item, len(im.sites_using(db, client.id, [item.item_code]).get(item.item_code, ())),
-                                 im.stock_of(db, client.id, [item.item_code]).get(item.item_code, 0.0)), **item_usage.where_used(db, client.id, item)}
+                                 im.stock_of(db, client.id, [item.item_code]).get(item.item_code)), **item_usage.where_used(db, client.id, item)}
 
 
 @router.get("/api/items/{item_id}/sites")

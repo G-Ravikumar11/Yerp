@@ -21,7 +21,7 @@ def test_the_list_carries_each_items_stock_in_one_pass(tenant):
         db.add(models.DBStockBalance(client_id=client_id_of(material["id"]), item_code="STK-1", on_hand=120.5, uom="Bags"))
         db.commit()
     got = {i["item_code"]: i for i in tenant.get("/api/items").json()["items"]}
-    assert got["STK-1"]["stock"] == 120.5 and got["WRK-1"]["stock"] == 0
+    assert got["STK-1"]["stock"] == 120.5 and got["WRK-1"]["stock"] is None, "no record in the store is not the same as none left"
     assert work["id"] != material["id"]
 
 
@@ -96,3 +96,21 @@ def test_a_long_list_is_paged_and_costs_a_handful_of_queries(tenant):
     selects = [s for s in seen if s.lstrip().upper().startswith("SELECT")]
     assert len(selects) <= 12, "the page must not cost a query per row: %d" % len(selects)
     assert took < 3
+
+
+def test_items_with_no_category_can_be_found_and_filed_together(tenant):
+    a, b = make_item(tenant, "NOC-1", "Uncategorised one", item_category=""), make_item(tenant, "NOC-2", "Uncategorised two", item_category="")
+    make_item(tenant, "HAS-1", "Has one", item_category="Cement")
+    found = tenant.get("/api/items", params={"category": "__none__"}).json()
+    assert {i["item_code"] for i in found["items"]} == {"NOC-1", "NOC-2"} and found["total"] == 2
+    assert tenant.post("/api/items/bulk-category", json={"ids": [a["id"], b["id"]], "item_category": "Masonry"}).status_code == 200
+    assert tenant.get("/api/items", params={"category": "__none__"}).json()["total"] == 0
+
+
+def test_the_last_rate_from_before_is_offered_where_no_purchase_rate_is_kept(tenant):
+    item = make_item(tenant, "LST-1", "Old rate")
+    with main.SessionLocal() as db:
+        db.get(models.DBItem, item["id"]).last_rate = 250.0
+        db.commit()
+    got = tenant.get("/api/items/%d" % item["id"]).json()["item"]
+    assert got["purchase_rate"] == 0 and got["last_rate"] == 250.0
