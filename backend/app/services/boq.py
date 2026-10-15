@@ -15,7 +15,7 @@ from app.core.permissions import employee_can
 from app.core.queries import by_id, chain_rows, forget_chain
 from app.core.units import canonical_unit
 from app.schemas.items import ItemIn
-from app.services.items import CATEGORY_BY_KIND
+from app.services.items import CATEGORY_BY_KIND, issue_item_codes
 
 
 def boq_client_orders(db, boq):
@@ -283,7 +283,10 @@ def boq_check_typed_codes(db, client_id, lines):
         seen[l.item_code] = l
     if not seen:
         return
-    known = {i.item_code: i for i in db.query(models.DBItem).filter(models.DBItem.item_code.in_(list(seen))).all()}
+    codes = list(seen)
+    known = {}
+    for at in range(0, len(codes), 500):
+        known.update({i.item_code: i for i in db.query(models.DBItem).filter(models.DBItem.item_code.in_(codes[at:at + 500])).all()})
     for code, l in seen.items():
         item = known.get(code)
         if item is not None:
@@ -295,7 +298,7 @@ def boq_check_typed_codes(db, client_id, lines):
         db.add(models.DBItem(client_id=client_id, kind="FG", item_code=code, item_name=name,
                              description=(l.description or "").strip() or name, category=CATEGORY_BY_KIND["FG"], sub_category="FG",
                              item_type="Purchased", units_of_measure=canonical_unit(l.uom) or "Nos"))
-        db.flush()
+    db.flush()
 
 
 def boq_issue_codes(db, client_id, lines):
@@ -305,21 +308,30 @@ def boq_issue_codes(db, client_id, lines):
     by_name = {}
     for it in db.query(models.DBItem).filter(models.DBItem.client_id == client_id, models.DBItem.kind == "FG").all():
         by_name.setdefault(re.sub(r"\s+", " ", (it.item_name or "")).strip().lower(), []).append(it)
-    claimed, given = set(), 0
+    given, todo = 0, []
     for l in lines:
         if l.kind not in BOQ_PRICED or l.item_code:
             continue
         name = re.sub(r"\s+", " ", (l.description or "").split("\n")[0]).strip()[:200]
         match = next((i for i in by_name.get(name.lower(), []) if i.item_code not in in_use), None)
-        if match is None:
-            match = build_item(db, client_id, ItemIn(
-                kind="FG", item_name=name, description=(l.description or "").strip(),
-                units_of_measure=canonical_unit(l.uom) or "Nos"), claimed)
-            db.flush()
-            by_name.setdefault(name.lower(), []).append(match)
-        l.item_code = match.item_code
-        in_use.add(match.item_code)
-        given += 1
+        if match is not None:
+            l.item_code = match.item_code
+            in_use.add(match.item_code)
+            given += 1
+        else:
+            todo.append((l, name))
+    if todo:                       # every new code in one go and every new item in one flush, not one round trip each
+        codes = issue_item_codes(db, len(todo), in_use)
+        for (l, name), code in zip(todo, codes):
+            item = models.DBItem(client_id=client_id, kind="FG", item_code=code, item_name=name,
+                                 description=(l.description or "").strip() or name, category=CATEGORY_BY_KIND["FG"],
+                                 sub_category="FG", item_type="Purchased", units_of_measure=canonical_unit(l.uom) or "Nos")
+            db.add(item)
+            by_name.setdefault(name.lower(), []).append(item)
+            l.item_code = code
+            in_use.add(code)
+            given += 1
+        db.flush()
     return given
 
 
