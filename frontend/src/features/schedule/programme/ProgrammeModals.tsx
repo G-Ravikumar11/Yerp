@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Plus, Trash2 } from 'lucide-react'
 import { Button, Field, Input, Modal, Select } from '@/components/ui'
 import type { Holiday, ProgrammeRowView, ProgrammeView, RowChange } from '@/api/programme'
@@ -112,7 +113,7 @@ export function CalendarModal({ open, view, editable, onClose, onSave, onAddHoli
 }
 
 /** Everything about one row, including what the grid has no column for. */
-export function RowDetailModal({ row, editable, onClose, onSave }: { row: ProgrammeRowView; editable: boolean; onClose: () => void; onSave: (change: RowChange) => Promise<unknown> }) {
+export function RowDetailModal({ job, row, editable, onClose, onSave }: { job: number; row: ProgrammeRowView; editable: boolean; onClose: () => void; onSave: (change: RowChange) => Promise<unknown> }) {
   const [f, setF] = useState<Record<string, string | boolean>>(() => ({
     name: row.name, boq_ref: row.boq_ref, description: row.description, uom: row.uom, quantity: row.quantity ? String(row.quantity) : '',
     rate: row.rate ? String(row.rate) : '', amount: row.amount ? String(row.amount) : '', labour_required: row.labour_required ? String(row.labour_required) : '',
@@ -142,7 +143,7 @@ export function RowDetailModal({ row, editable, onClose, onSave }: { row: Progra
   return (
     <Modal open onOpenChange={(o) => !o && onClose()} size="lg" title={`${row.wbs} ${row.name}`}
       description={row.summary ? 'A heading: its dates are those of the rows under it.' : `${row.start ? `${formatDate(row.start)} to ${formatDate(row.end!)}, ${row.days} working days` : 'Not scheduled yet'}${row.critical ? ' - on the critical path' : row.float_days ? ` - ${row.float_days} working days to spare` : ''}`}
-      footer={editable ? <><Button variant="ghost" onClick={onClose}>Cancel</Button><Button loading={busy} onClick={save}>Save</Button></> : <Button variant="ghost" onClick={onClose}>Close</Button>}>
+      footer={<>{!row.summary && <Link to={`/projects/programme/${job}/activity/${row.id}`} className="mr-auto text-sm font-medium text-primary underline underline-offset-4">Open the activity page: progress by date, tasks, photos</Link>}{editable ? <><Button variant="ghost" onClick={onClose}>Cancel</Button><Button loading={busy} onClick={save}>Save</Button></> : <Button variant="ghost" onClick={onClose}>Close</Button>}</>}>
       <fieldset disabled={!editable} className="grid gap-3 sm:grid-cols-2">
         <Field label="Activity (short name)" htmlFor="rd-name" className="sm:col-span-2"><Input id="rd-name" value={String(f.name ?? '')} onChange={set('name')} /></Field>
         <Field label="Full description" htmlFor="rd-desc" className="sm:col-span-2">

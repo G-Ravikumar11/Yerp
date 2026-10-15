@@ -27,7 +27,7 @@ export const COLUMNS: Col[] = [
   { id: 'quantity', label: 'Quantity', w: 84, kind: 'number', align: 'right', extra: true },
   { id: 'labour_required', label: 'Labour', w: 64, kind: 'number', align: 'right', extra: true },
   { id: 'predecessors', label: 'Predecessor', w: 108, kind: 'text', leafOnly: true },
-  { id: 'percent', label: '% Done', w: 64, kind: null, align: 'right' },
+  { id: 'percent', label: '% Done', w: 64, kind: 'number', leafOnly: true, align: 'right' },
 ]
 
 export const editableCell = (col: Col | undefined, r: ProgrammeRowView | undefined) => !!col && !!r && col.kind !== null && !(col.leafOnly && r.summary)

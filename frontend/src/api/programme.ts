@@ -85,6 +85,7 @@ export const useProgramme = (job: number) =>
   useQuery({ queryKey: programmeKeys.one(job), enabled: job > 0, staleTime: 0, refetchOnMount: 'always', queryFn: () => get<ProgrammeView>(`/api/jobs/${job}/programme`) })
 
 const base = (job: number) => `/api/jobs/${job}/programme`
+export const loadProgramme = (job: number) => get<ProgrammeView>(base(job))
 
 export const editRows = (job: number, changes: RowChange[]) => api<ProgrammeView>(`${base(job)}/rows`, { method: 'PATCH', body: { changes } })
 export const addRows = (job: number, anchor_id: number | null, position: 'after' | 'child' | 'end', rows: Record<string, unknown>[] = [{}]) =>

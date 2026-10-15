@@ -4,8 +4,9 @@ import { Bookmark, CalendarDays, ChevronsDownUp, ChevronsUpDown, Copy, CopyPlus,
 import { Button, ConfirmDialog, Skeleton, Tabs, Tooltip } from '@/components/ui'
 import {
   addHoliday, addPublicHolidays, addRows, saveBaseline, copyUnits, deleteRow, duplicateRow, editRows, moveRow, programmeKeys, recompute, removeHoliday,
-  programmeFileUrl, restoreProgramme, setCalendar, snapshotOf, useProgramme, type EditableField, type ProgrammeRowView, type ProgrammeView as View, type RowChange, type Snapshot,
+  loadProgramme, programmeFileUrl, restoreProgramme, setCalendar, snapshotOf, useProgramme, type EditableField, type ProgrammeRowView, type ProgrammeView as View, type RowChange, type Snapshot,
 } from '@/api/programme'
+import { setProgress } from '@/api/schedule'
 import { ApiError } from '@/lib/api'
 import { formatDate } from '@/lib/format'
 import { useSession } from '@/lib/session'
@@ -52,7 +53,7 @@ export function ProgrammeView({ job }: { job: number }) {
   const v = q.data
   const [zoom, setZoom] = useState<Zoom>('week')
   const [critical, setCritical] = useState(false)
-  const [compact, setCompact] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1600)
+  const [compact, setCompact] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1900)
   const [collapsed, setCollapsed] = useState<Set<number>>(() => loadCollapsed(job))
   const [active, setActive] = useState({ r: 0, c: 2 })
   const undo = useRef<Snapshot[]>([])
@@ -140,6 +141,18 @@ export function ProgrammeView({ job }: { job: number }) {
 
   const onEdit = (id: number, field: EditableField, value: string) => {
     if (!v) return
+    if ((field as string) === 'percent') {
+      // Progress is a dated report, as on the Day plan; a row with a quantity keeps how much is done in its own unit.
+      if (!value.trim()) return                      // Delete on a % cell does not wipe a day's report
+      const row = byId.get(id)
+      const pct = Number(value.replace('%', '').trim())
+      if (!row || row.summary || !Number.isFinite(pct) || pct < 0 || pct > 100) { toast.error('% done is a number from 0 to 100.'); return }
+      void change(async () => {
+        await setProgress(id, pct, row.quantity > 0 ? Math.round(pct * row.quantity) / 100 : undefined)
+        return loadProgramme(job)
+      })
+      return
+    }
     const ch: RowChange = { id, [field]: value }
     void change(() => editRows(job, [ch]), recompute(v, ch))
   }
@@ -312,7 +325,7 @@ export function ProgrammeView({ job }: { job: number }) {
       {picking && <BoqPickerModal job={job} anchor={current?.id ?? null} onClose={() => setPicking(false)} />}
       {importing && <ProgrammeImportModal job={job} open onClose={() => setImporting(false)} />}
       {baselining && <BaselineModal onClose={() => setBaselining(false)} hasOne={!!v.baseline} onSave={(label) => change(() => saveBaseline(job, label))} />}
-      {detailRow && <RowDetailModal key={detailRow.id} row={detailRow} editable={editable} onClose={() => setDetail(null)} onSave={(ch) => change(() => editRows(job, [ch]), recompute(v, ch))} />}
+      {detailRow && <RowDetailModal key={detailRow.id} job={job} row={detailRow} editable={editable} onClose={() => setDetail(null)} onSave={(ch) => change(() => editRows(job, [ch]), recompute(v, ch))} />}
     </section>
   )
 }

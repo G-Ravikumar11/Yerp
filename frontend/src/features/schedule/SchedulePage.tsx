@@ -10,6 +10,7 @@ import { useSession } from '@/lib/session'
 import { ActivityModal } from './ActivityModal'
 import { Curve } from './Bars'
 import { DayPlan } from './DayPlan'
+import { programmeFileUrl } from '@/api/programme'
 import { ProgrammeImportModal } from './programme/ProgrammeImportModal'
 import { AiDayTasks, AiDraftModal, AiPlanPanel } from './AiPlanning'
 import { BoqPickerModal } from './programme/BoqPickerModal'
@@ -39,9 +40,11 @@ export default function SchedulePage() {
   const [importing, setImporting] = useState(false)  // import a programme sheet
   const [drafting, setDrafting] = useState(false)  // draft a programme with AI
   const v = s?.variance ?? 0
+  // On the programme the grid's own toolbar has Row, Draw from BOQ and Import, so the page does not repeat them.
+  const inGrid = tab === 'programme' && job > 0
   return (
     <>
-      <PageHeader eyebrow="Projects" title="Planning & Progress" description="What is to be done each day, how far along the work is, and what slips if the thing before it slips." actions={<>{can('workorders.manage') && <Button disabled={!job} onClick={() => setEditing('new')}><Plus /> Activity</Button>}<Button variant="outline" disabled={!job} onClick={() => setDrawing(true)}>Draw from BOQ</Button><Button variant="outline" disabled={!job} onClick={() => setImporting(true)}><FileUp /> Import a programme</Button>{can('workorders.manage') && <Button variant="outline" disabled={!job} onClick={() => setDrafting(true)}><Sparkles /> Draft with AI</Button>}<Button variant="outline" onClick={() => window.print()}><Printer /> Print</Button></>} />
+      <PageHeader eyebrow="Projects" title="Planning & Progress" description="What is to be done each day, how far along the work is, and what slips if the thing before it slips." actions={<>{!inGrid && can('workorders.manage') && <Button disabled={!job} onClick={() => setEditing('new')}><Plus /> Activity</Button>}{!inGrid && <Button variant="outline" disabled={!job} onClick={() => setDrawing(true)}>Draw from BOQ</Button>}{!inGrid && <Button variant="outline" disabled={!job} onClick={() => setImporting(true)}><FileUp /> Import a programme</Button>}{can('workorders.manage') && <Button variant="outline" disabled={!job} onClick={() => setDrafting(true)}><Sparkles /> Draft with AI</Button>}<Button variant="outline" onClick={() => (inGrid ? window.open(programmeFileUrl(job, 'pdf'), '_blank') : window.print())}><Printer /> {inGrid ? 'Print A3 PDF' : 'Print'}</Button></>} />
       <div className="mb-4 flex flex-wrap items-end gap-4"><ProjectPicker value={job} onChange={setJob} id="sch-job" /></div>
       {job > 0 && (
         <div className="mb-5 flex flex-wrap items-center gap-3">
@@ -55,9 +58,9 @@ export default function SchedulePage() {
           )}
         </div>
       )}
-      {job > 0 && <AiPlanPanel job={job} />}
       {job > 0 && tab === 'day' && <AiDayTasks job={job} on={on} canAdd={can('site.record') || can('workorders.manage')} />}
       {job > 0 && tab === 'day' && <DayPlan job={job} on={on} canReport={can('site.record') || can('workorders.manage')} />}
+      {job > 0 && tab === 'day' && <AiPlanPanel job={job} />}
       {(tab === 'programme' || !job) && <StatGrid>
         <Stat label="Planned by today" value={`${s?.planned_percent ?? 0}%`} loading={q.isPending && job > 0} />
         <Stat label="Done" value={`${s?.actual_percent ?? 0}%`} loading={q.isPending && job > 0} />
@@ -67,6 +70,7 @@ export default function SchedulePage() {
       </StatGrid>}
       {tab === 'programme' && job > 0 && <ProgrammeView key={job} job={job} />}
       {tab === 'programme' && d && d.curve.length > 0 && <Curve curve={d.curve} />}
+      {job > 0 && tab === 'programme' && <AiPlanPanel job={job} />}
       <ActivityModal job={job} activity={editing && editing !== 'new' ? editing : null} others={d?.activities ?? []} employees={d?.employees ?? []} teamScope={d?.team_scope} open={!!editing} onClose={() => setEditing(null)} />
       {drawing && <BoqPickerModal job={job} onClose={() => setDrawing(false)} onDone={() => setTab('programme')} />}
       <ProgrammeImportModal job={job} open={importing} onClose={() => setImporting(false)} />

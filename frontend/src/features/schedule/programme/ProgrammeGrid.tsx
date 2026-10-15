@@ -35,6 +35,7 @@ function raw(col: Col, r: ProgrammeRowView): string {
     case 'days': return r.days === null ? (r.typed.days === null ? '' : String(r.typed.days)) : String(r.days)
     case 'quantity': return r.quantity ? String(r.quantity) : ''
     case 'labour_required': return r.labour_required ? String(r.labour_required) : ''
+    case 'percent': return String(Math.round(r.percent))
     default: return String(r[col.id as keyof ProgrammeRowView] ?? '')
   }
 }
@@ -70,7 +71,21 @@ export interface GridProps {
 export function ProgrammeGrid(p: GridProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const cols = p.columns
+  // On a phone the table is wider than the screen; frozen, its dates could never be scrolled to, so there only the SL.NO and the item stay in place while the rest scrolls with the chart.
+  const [narrow, setNarrow] = useState(false)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const look = () => setNarrow(el.clientWidth < 760)
+    look()
+    const ro = new ResizeObserver(look)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  const cols = useMemo(() => (narrow ? p.columns.map((c) => (c.id === 'name' ? { ...c, w: 150 } : c.id === 'wbs' ? { ...c, w: Math.min(c.w, 58) } : c)) : p.columns), [narrow, p.columns])
+  const FROZEN = 2                                           // SL.NO and the item
+  const frozenW = cols.slice(0, FROZEN).reduce((s, c) => s + c.w, 0)
+  const blocks: [number, number][] = [[0, FROZEN], [FROZEN, cols.length]]
   const left = cols.reduce((s, c) => s + c.w, 0)
   const todayStr = todayIso()
   const scale = useMemo(() => scaleFor(p.view.start, p.view.finish, todayStr, p.zoom), [p.view.start, p.view.finish, todayStr, p.zoom])
@@ -178,11 +193,11 @@ export function ProgrammeGrid(p: GridProps) {
 
         {/* the header */}
         <div className="sticky top-0 z-30 flex" style={{ height: HEAD_H, width: left + scale.width }}>
-          <div className="sticky left-0 z-40 flex border-b border-r border-border bg-surface" style={{ width: left }}>
-            {cols.map((c) => (
+          {blocks.map(([a, b], blk) => (<div key={blk} className={cn('flex border-b border-r border-border bg-surface', blk === 0 ? 'z-50' : 'z-40', (blk === 0 || !narrow) && 'sticky')} style={{ width: cols.slice(a, b).reduce((s, c) => s + c.w, 0), left: blk === 0 ? 0 : frozenW }}>
+            {cols.slice(a, b).map((c) => (
               <div key={c.id} role="columnheader" className={cn('flex items-end border-r border-border px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground', c.align === 'right' && 'justify-end')} style={{ width: c.w }}>{c.label}</div>
             ))}
-          </div>
+          </div>))}
           <div className="relative border-b border-border bg-surface" style={{ width: scale.width }}>
             {months.map((m) => <div key={m.x} className="absolute top-0 h-6 truncate border-l border-border px-1.5 pt-1 text-[11px] font-semibold" style={{ left: m.x, width: m.w }}>{m.label}</div>)}
             {marks.map((t) => <div key={t.x} className="absolute bottom-0 h-6 border-l border-border/60 pt-1 text-center text-[10px] text-muted-foreground" style={{ left: t.x, width: p.zoom === 'day' ? scale.px : scale.px * 7 }}>{t.label}</div>)}
@@ -207,8 +222,9 @@ export function ProgrammeGrid(p: GridProps) {
               onDragLeave={() => setDropAt((d) => (d === r.id ? null : d))}
               onDrop={(ev) => { ev.preventDefault(); if (dragId !== null && dragId !== r.id) p.onDrop(dragId, r.id, ev.altKey); setDragId(null); setDropAt(null) }}
             >
-              <div className={cn('sticky left-0 z-20 flex border-r border-border', on ? 'bg-primary-soft' : 'bg-card', r.summary && 'font-semibold')} style={{ width: left }}>
-                {cols.map((c, ci) => {
+              {blocks.map(([a, b], blk) => (<div key={blk} className={cn('flex border-r border-border', blk === 0 ? 'z-30' : 'z-20', (blk === 0 || !narrow) && 'sticky', 'bg-card', on && '[background-image:linear-gradient(var(--primary-soft),var(--primary-soft))]', r.summary && 'font-semibold')} style={{ width: cols.slice(a, b).reduce((s, c) => s + c.w, 0), left: blk === 0 ? 0 : frozenW }}>
+                {cols.slice(a, b).map((c, k) => {
+                  const ci = a + k
                   const active = on && ci === p.active.c
                   const editable = p.editable && editableCell(c, r)
                   return (
@@ -260,11 +276,9 @@ export function ProgrammeGrid(p: GridProps) {
                             </button>
                           ) : <span className="w-4 shrink-0" />}
                           <span className={cn('truncate', r.critical && p.showCritical && !r.summary && 'text-danger')} title={r.description || r.name}>{r.name}</span>
-                          {(r.description || r.problem) && (
-                            <button type="button" className={cn('grid size-5 shrink-0 place-items-center rounded hover:bg-accent', r.problem ? 'text-danger' : 'text-muted-foreground')} aria-label={`Details of ${r.name}`} title={r.problem || 'Full description and details'} onMouseDown={(ev) => ev.stopPropagation()} onClick={() => p.onDetail(r.id)}>
-                              <Info className="size-3.5" />
-                            </button>
-                          )}
+                          <button type="button" className={cn('grid size-5 shrink-0 place-items-center rounded hover:bg-accent', r.problem ? 'text-danger' : r.description ? 'text-muted-foreground' : 'text-muted-foreground/40 hover:text-muted-foreground')} aria-label={`Details of ${r.name}`} title={r.problem || 'Full description, links, progress and settings'} onMouseDown={(ev) => ev.stopPropagation()} onClick={() => p.onDetail(r.id)}>
+                            <Info className="size-3.5" />
+                          </button>
                         </span>
                       ) : (
                         <span className="truncate">{shown(c, r)}</span>
@@ -272,7 +286,7 @@ export function ProgrammeGrid(p: GridProps) {
                     </div>
                   )
                 })}
-              </div>
+              </div>))}
               {/* the bar */}
               <div className="relative" style={{ width: scale.width, height: ROW_H }}>
                 {s !== null && e !== null && (r.summary ? (
@@ -300,7 +314,7 @@ export function ProgrammeGrid(p: GridProps) {
             </div>
           )
         })}
-        {p.rows.length === 0 && <p className="sticky left-0 p-6 text-sm text-muted-foreground" style={{ top: HEAD_H, width: left }}>Nothing here yet.</p>}
+        {p.rows.length === 0 && <p className={cn('p-6 text-sm text-muted-foreground', !narrow && 'sticky left-0')} style={{ top: HEAD_H, width: left }}>Nothing here yet.</p>}
       </div>
     </div>
   )
