@@ -4,6 +4,8 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+
+from app.core.fastjson import fast_json
 from sqlalchemy.orm import Session
 
 from app import models
@@ -137,8 +139,8 @@ def boq_get(boq_id: int, request: Request, rev: Optional[int] = None, db: Sessio
     boq = boq_or_404(db, client.id, boq_id)
     revision = boq_revision_of(db, boq, rev)
     lines, total = boq_lines_with_subtotals(db, revision)
-    return {"boq": boq_head(db, boq, revision), "revisions": boq_revisions_list(db, boq), "lines": lines, "total": total,
-            "editable": revision.status == "OPEN" and revision.rev_no == boq.current_rev}
+    return fast_json({"boq": boq_head(db, boq, revision), "revisions": boq_revisions_list(db, boq), "lines": lines, "total": total,
+                      "editable": revision.status == "OPEN" and revision.rev_no == boq.current_rev})
 
 
 @router.get("/api/boqs/{boq_id}/summary")
@@ -148,7 +150,7 @@ def boq_get_summary(boq_id: int, request: Request, rev: Optional[int] = None, gs
     client = require_erp_read(request, db)
     boq = boq_or_404(db, client.id, boq_id)
     revision = boq_revision_of(db, boq, rev)
-    return {"boq": boq_head(db, boq, revision), **boq_summary(db, revision, gst)}
+    return fast_json({"boq": boq_head(db, boq, revision), **boq_summary(db, revision, gst)})
 
 
 @router.put("/api/boqs/{boq_id}/lines")
@@ -373,7 +375,7 @@ def boq_tracker(boq_id: int, request: Request, db: Session = Depends(get_db)):
     """Per BOQ line: the client's quantity and rate, what the contractors have been given (and at what rate), what they have
     executed and billed, what the client has been billed, and the flags worth looking at."""
     client = require_items_access(request, db, ("reports.view",))
-    return boq_tracker_data(db, client, boq_or_404(db, client.id, boq_id))
+    return fast_json(boq_tracker_data(db, client, boq_or_404(db, client.id, boq_id)))
 
 
 @router.get("/api/boqs/{boq_id}/export.xlsx")
