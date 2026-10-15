@@ -388,6 +388,62 @@ def form_pdf_response(spec, name):
                                       "Content-Length": str(len(pdf))})
 
 
+def rfq_comparison_form_spec(db, client, d):
+    """The comparative statement on one landscape sheet: each line against each supplier with the lowest in each
+    row marked, then each supplier's basic, tax, freight and landed total, its rank, and its terms."""
+    from app.documents import form_pdf as fp
+    rfq, sups = d["rfq"], d["suppliers"]
+    company = letterhead(db, client)
+    job = db.query(models.DBJob).filter(models.DBJob.id == rfq["job_id"]).first() if rfq.get("job_id") else None
+    num = lambda v: fp.plain_number(v)  # noqa: E731
+    cols = [("#", 6, "C"), ("Item", 56, "L"), ("Qty", 20, "R")] + [(s["supplier_name"], 34, "R") for s in sups]
+    rows = []
+    for i, l in enumerate(d["lines"], 1):
+        by = {o["supplier_name"]: o for o in l["offers"]}
+        cells = []
+        for s in sups:
+            o = by.get(s["supplier_name"])
+            if not o:
+                cells.append("not quoted")
+            else:
+                mark = "*" if o["rate"] <= l["lowest_rate"] + 0.0001 else ""
+                cells.append("%s%s\n%s +%g%%" % (num(o["rate"]), mark, num(o["amount"]), o["tax_percent"] or 0))
+        rows.append([str(i), (l["description"] + (("\n" + l["item_code"]) if l["item_code"] else "")),
+                     "%s %s" % (fp.qty_text(l["qty"]), l["uom"])] + cells)
+    foot = [["", "Basic", ""] + [num(s["basic"]) for s in sups],
+            ["", "GST / tax", ""] + [num(s["tax"]) for s in sups],
+            ["", "Freight", ""] + [num(s["freight"]) for s in sups],
+            ["", "LANDED AT SITE", ""] + [num(s["landed"]) for s in sups],
+            ["", "Rank", ""] + [s.get("rank") or "part quote" for s in sups],
+            ["", "Delivery", ""] + [("%d days" % s["delivery_days"]) if s["delivery_days"] else "-" for s in sups],
+            ["", "Payment", ""] + [s["payment_terms"] or "-" for s in sups]]
+    summary = []
+    if d["l1"]:
+        summary.append("L1 landed: %s at Rs %s%s." % (d["l1"], num(d["l1_landed"]),
+                       (", Rs %s under L2" % num(d["saving_vs_l2"])) if d["saving_vs_l2"] > 0 else ""))
+    summary.append("Lowest in every line, from whoever quoted it: Rs %s basic.  * marks the lowest rate in its line."
+                   % num(d["lowest_per_line_basic"]))
+    if rfq.get("award_reason"):
+        summary.append("Why not the lowest: %s" % rfq["award_reason"])
+    blocks = [
+        {"type": "header", "company": company, "title": "COMPARATIVE STATEMENT",
+         "facts": [("Enquiry", rfq["number"]), ("Date", form_pdf.date_text(rfq.get("created_at", "")[:10]) or "-"),
+                   ("Needed By", form_pdf.date_text(rfq.get("needed_by")) or "-"),
+                   ("Project", (job.number if job else "") or "General")]},
+        {"type": "pairs", "cols": 1, "rows": [("For", rfq.get("title") or "-"), ("Suppliers compared", str(len(sups)))]},
+        {"type": "table", "columns": cols, "rows": rows, "foot": foot},
+        {"type": "text", "text": "\n".join(summary), "style": "small"},
+    ]
+    sig = doc_signatories(db, client.id)
+    signatures, seal = sign_boxes(db, client.id, [("Prepared By", _sig_line(sig["prepared"])),
+                                                  ("Recommended By", _sig_line(sig["recommended"])),
+                                                  ("Authorized Signatory", _sig_line(sig["authorised"]))], None)
+    blocks.append({"type": "signatures", "boxes": signatures, "seal": seal})
+    return {"title": "Comparative statement %s" % rfq["number"], "author": company["name"], "landscape": True,
+            "watermark": "", "blocks": blocks,
+            "footer": "%s  |  %s  |  Printed %s" % (rfq["number"], company["name"], datetime.now().strftime("%d/%m/%Y %H:%M"))}
+
+
 def po_form_spec(db, client, order):
     """The purchase order: supplier with GSTIN, the lines with their GST, the
     total in words, delivery and payment, and the signatures."""

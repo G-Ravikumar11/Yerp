@@ -138,3 +138,37 @@ def test_another_tenant_cannot_see_or_quote(tenant, second_tenant):
     r = rfq(tenant)
     assert second_tenant.get("/api/rfqs/%d" % r["rfq"]["id"]).status_code == 404
     assert second_tenant.get("/api/rfqs").json()["rfqs"] == []
+
+
+def _compared(tenant):
+    r = rfq(tenant)
+    quote(tenant, r, "ACC", 390, 62000)
+    quote(tenant, r, "UltraTech", 380, 63500, freight=1000)
+    quote(tenant, r, "Dalmia", 395, 61000)
+    return r["rfq"]["id"]
+
+
+def test_the_comparison_pdf_is_a_landscape_pdf(tenant):
+    res = tenant.get("/api/rfqs/%d/comparison.pdf" % _compared(tenant))
+    assert res.status_code == 200 and res.headers["content-type"] == "application/pdf"
+    assert res.content.startswith(b"%PDF")
+
+
+def test_the_comparison_can_be_narrowed_to_the_suppliers_chosen(tenant):
+    from app.services.procurement import narrow_statement
+    rid = _compared(tenant)
+    d = tenant.get("/api/rfqs/%d" % rid).json()
+    n = narrow_statement(d, ["ACC", "Dalmia"])
+    assert [s["supplier_name"] for s in n["suppliers"]] == ["ACC", "Dalmia"]
+    # UltraTech is out, so ACC is the lowest cement rate and L1 is worked out between the two left.
+    assert n["lines"][0]["lowest"] == "ACC" and n["lines"][0]["lowest_rate"] == 390
+    assert {s["supplier_name"]: s["rank"] for s in n["suppliers"]} == {"ACC": "L2", "Dalmia": "L1"}
+    assert n["l1"] == "Dalmia" and n["saving_vs_l2"] == round(1630000 * 1.18 - 1615000 * 1.18, 2)
+    assert narrow_statement(d, []) is d and narrow_statement(d, ["Nobody"]) is d
+
+
+def test_a_narrowed_comparison_still_downloads(tenant):
+    rid = _compared(tenant)
+    for ext in ("xlsx", "pdf"):
+        res = tenant.get("/api/rfqs/%d/comparison.%s?supplier=ACC&supplier=Dalmia" % (rid, ext))
+        assert res.status_code == 200, res.text

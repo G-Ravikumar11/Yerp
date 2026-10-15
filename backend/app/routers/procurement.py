@@ -2,8 +2,9 @@
 import base64
 import re
 from datetime import datetime
+from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app import models
@@ -19,7 +20,7 @@ from app.core.notifications import default_from_email, send_email_background
 from app.core.serials import allocate_grn_number, allocate_po_number, next_sequence_number
 from app.core.sheets import sheet_response
 from app.documents import form_pdf
-from app.documents.forms import _pre, form_pdf_response, po_form_spec
+from app.documents.forms import _pre, form_pdf_response, po_form_spec, rfq_comparison_form_spec
 from app.documents.letterhead import our_party
 from app.routers.employee_portal import employee_create_purchase_order
 from app.schemas.procurement import AwardIn, GRNActionIn, GRNIn, GRNUpdateIn, QuoteIn, RfqIn, SupplierIn
@@ -37,6 +38,7 @@ from app.services.procurement import (
     grn_dict,
     grn_or_404,
     match_verdict,
+    narrow_statement,
     next_supplier_code,
     order_is_committed,
     purchase_order_or_404,
@@ -984,11 +986,13 @@ def send_purchase_order_email(order_id: int, request: Request, body: dict = None
 
 
 @router.get("/api/rfqs/{rfq_id}/comparison.xlsx")
-def rfq_comparison_export(rfq_id: int, request: Request, db: Session = Depends(get_db)):
+def rfq_comparison_export(rfq_id: int, request: Request, supplier: List[str] = Query(default=[]),
+                          db: Session = Depends(get_db)):
     """The comparative statement: each line against each supplier, then each
-    supplier's total landed at site and its rank."""
+    supplier's total landed at site and its rank. `supplier` (repeat it) narrows
+    it to the suppliers the buyer is comparing; none means everybody."""
     client = require_erp_read(request, db)
-    d = comparative_statement(db, rfq_or_404(db, client.id, rfq_id))
+    d = narrow_statement(comparative_statement(db, rfq_or_404(db, client.id, rfq_id)), supplier)
     names = [s["supplier_name"] for s in d["suppliers"]]
     rows = []
     for l in d["lines"]:
@@ -1006,3 +1010,15 @@ def rfq_comparison_export(rfq_id: int, request: Request, db: Session = Depends(g
                           preamble=_pre(client, "COMPARATIVE STATEMENT", ("Enquiry", rfq.get("number", ""),
                                                                           "L1", d.get("l1") or "-")),
                           closing=closing)
+
+
+@router.get("/api/rfqs/{rfq_id}/comparison.pdf")
+def rfq_comparison_pdf(rfq_id: int, request: Request, supplier: List[str] = Query(default=[]),
+                       db: Session = Depends(get_db)):
+    """The same comparison as a signed-off sheet to print: A4 landscape, one column a supplier."""
+    client = require_erp_read(request, db)
+    r = rfq_or_404(db, client.id, rfq_id)
+    d = narrow_statement(comparative_statement(db, r), supplier)
+    if not d["suppliers"]:
+        raise HTTPException(409, "No quotes yet, so there is nothing to compare.")
+    return form_pdf_response(rfq_comparison_form_spec(db, client, d), "comparison_%s" % r.number)

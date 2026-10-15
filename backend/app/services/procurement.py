@@ -459,6 +459,37 @@ def comparative_statement(db, rfq):
             "saving_vs_l2": money(ranked[1]["landed"] - ranked[0]["landed"]) if len(ranked) > 1 else 0.0}
 
 
+def narrow_statement(d, names):
+    """The statement for only the suppliers named, ranked among themselves - what the buyer put side by side on
+    screen, so the workbook and the PDF show the same L1, the same lowest in each row. No names, or none that
+    quoted: the whole statement."""
+    from app.services.crm import norm_name as norm
+    keep = {norm(n) for n in names or []}
+    sups = [dict(s) for s in d["suppliers"] if norm(s["supplier_name"]) in keep]
+    if not sups:
+        return d
+    ranked = sorted((s for s in sups if s["complete"]), key=lambda s: s["landed"])
+    for s in sups:
+        s["is_l1"] = bool(ranked) and s["quote_id"] == ranked[0]["quote_id"]
+        s.pop("rank", None)
+    for i, s in enumerate(ranked):
+        s["rank"] = "L%d" % (i + 1)
+    shown = {norm(s["supplier_name"]) for s in sups}
+    rows = []
+    for l in d["lines"]:
+        offers = [o for o in l["offers"] if norm(o["supplier_name"]) in shown]
+        low = min(offers, key=lambda o: o["rate"]) if offers else None
+        high = max(offers, key=lambda o: o["rate"]) if offers else None
+        rows.append({**l, "offers": offers, "lowest": low["supplier_name"] if low else "",
+                     "lowest_rate": low["rate"] if low else 0,
+                     "spread_percent": (round((high["rate"] - low["rate"]) / low["rate"] * 100, 1)
+                                        if low and low["rate"] else 0.0)})
+    return {**d, "suppliers": sups, "lines": rows,
+            "l1": ranked[0]["supplier_name"] if ranked else "", "l1_landed": ranked[0]["landed"] if ranked else 0.0,
+            "lowest_per_line_basic": money(sum(r["lowest_rate"] * r["qty"] for r in rows)),
+            "saving_vs_l2": money(ranked[1]["landed"] - ranked[0]["landed"]) if len(ranked) > 1 else 0.0}
+
+
 def rfq_dict(db, r):
     job = db.query(models.DBJob).filter(models.DBJob.id == r.job_id).first() if r.job_id else None
     return {"id": r.id, "number": r.number, "title": r.title or "", "job_id": r.job_id,
