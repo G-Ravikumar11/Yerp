@@ -1556,6 +1556,29 @@ def ensure_columns():
                     ("schedule_tasks", "percent", "DOUBLE PRECISION DEFAULT 0"),
                     ("site_diaries", "amendments", "TEXT DEFAULT ''"),
                     ("schedule_activities", "boq_key", "TEXT DEFAULT ''"),
+                    ("diary_labour", "worker_ids", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "contractor_name", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "father_name", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "dob", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "sex", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "marital_status", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "children", "INTEGER DEFAULT 0"),
+                    ("worker_screenings", "mother_tongue", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "other_languages", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "emergency_contact", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "identification_mark", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "vision_normal", "BOOLEAN DEFAULT TRUE"),
+                    ("worker_screenings", "vision_problem", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "health_normal", "BOOLEAN DEFAULT TRUE"),
+                    ("worker_screenings", "health_problem", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "weight_kg", "DOUBLE PRECISION DEFAULT 0"),
+                    ("worker_screenings", "height_cm", "DOUBLE PRECISION DEFAULT 0"),
+                    ("worker_screenings", "blood_group", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "education", "TEXT DEFAULT '[]'"),
+                    ("worker_screenings", "experience", "TEXT DEFAULT '[]'"),
+                    ("worker_screenings", "certificates_verified", "BOOLEAN DEFAULT FALSE"),
+                    ("worker_screenings", "trial_briefed", "BOOLEAN DEFAULT FALSE"),
+                    ("worker_screenings", "safety_officer_name", "TEXT DEFAULT ''"),
                     ("boq_lines", "rate_only", "BOOLEAN DEFAULT FALSE"),
                     ("sub_bills", "entry_mode", "TEXT DEFAULT ''"),
                     ("sub_bills", "scan_file_id", "INTEGER"),
@@ -1860,6 +1883,29 @@ def migrate_sqlite():
             add_col("sub_bills", "accepted_at", "TEXT DEFAULT ''")
             add_col("project_files", "original_size", "INTEGER DEFAULT 0")
             add_col("project_files", "blob_of", "INTEGER")
+            add_col("diary_labour", "worker_ids", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "contractor_name", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "father_name", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "dob", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "sex", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "marital_status", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "children", "INTEGER DEFAULT 0")
+            add_col("worker_screenings", "mother_tongue", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "other_languages", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "emergency_contact", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "identification_mark", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "vision_normal", "BOOLEAN DEFAULT 1")
+            add_col("worker_screenings", "vision_problem", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "health_normal", "BOOLEAN DEFAULT 1")
+            add_col("worker_screenings", "health_problem", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "weight_kg", "FLOAT DEFAULT 0")
+            add_col("worker_screenings", "height_cm", "FLOAT DEFAULT 0")
+            add_col("worker_screenings", "blood_group", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "education", "TEXT DEFAULT '[]'")
+            add_col("worker_screenings", "experience", "TEXT DEFAULT '[]'")
+            add_col("worker_screenings", "certificates_verified", "BOOLEAN DEFAULT 0")
+            add_col("worker_screenings", "trial_briefed", "BOOLEAN DEFAULT 0")
+            add_col("worker_screenings", "safety_officer_name", "TEXT DEFAULT ''")
 
             # Create approval_chains table
             conn.execute(text("""

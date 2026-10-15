@@ -127,6 +127,9 @@ class DBDiaryLabour(Base):
     rate = Column(Float, default=0.0)            # per manday
     amount = Column(Float, default=0.0)
     display_order = Column(Integer, default=0)
+    # Comma-separated worker_screenings ids, when this line was added "from Workers & Safety" rather than typed by
+    # hand - the headcount then always matches how many are named here, and the diary shows them by name.
+    worker_ids = Column(Text, default="")
 
 
 class DBDiaryPlant(Base):

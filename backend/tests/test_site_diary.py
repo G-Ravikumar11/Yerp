@@ -371,3 +371,52 @@ def test_one_company_cannot_reopen_anothers_diary(tenant, second_tenant):
     d = signed_off(tenant)
     assert second_tenant.post("/api/diary/%d/reopen" % d["id"], json={"reason": "Not mine"}).status_code == 404
     assert tenant.get("/api/diary/%d" % d["id"]).json()["status"] == "SUBMITTED"
+
+
+# --- A worker screened in Workers & Safety is named on the diary, not retyped --------------------------------------
+
+def screen(tenant, job, name="Ravi Kumar", trade="Mason helper", age=30):
+    res = tenant.post("/api/workers", json={"job_id": job["id"], "name": name, "age": age, "trade": trade})
+    assert res.status_code == 200, res.text
+    return res.json()["worker"]
+
+
+def test_a_labour_line_can_name_the_worker_it_is_for(tenant):
+    j = project(tenant)
+    w = screen(tenant, j)
+    d = diary(tenant, j, labour=[{"trade": w["trade"], "agency": "Own", "headcount": 0, "hours": 8, "rate": 700,
+                                  "worker_ids": [w["id"]]}])
+    detail = tenant.get("/api/diary/%d" % d["id"]).json()
+    assert len(detail["labour"]) == 1
+    line = detail["labour"][0]
+    # The headcount always matches how many are named - the posted 0 is not trusted over the real list.
+    assert line["headcount"] == 1 and line["worker_ids"] == [w["id"]]
+    assert line["workers"] == [{"id": w["id"], "name": "Ravi Kumar", "trade": w["trade"]}]
+
+
+def test_a_line_with_no_named_workers_is_still_a_plain_headcount(tenant):
+    j = project(tenant)
+    d = diary(tenant, j, labour=[{"trade": "Mason", "agency": "Own", "headcount": 4, "hours": 8, "rate": 700}])
+    line = tenant.get("/api/diary/%d" % d["id"]).json()["labour"][0]
+    assert line["headcount"] == 4 and line["worker_ids"] == [] and line["workers"] == []
+
+
+def test_two_workers_named_on_one_line_both_come_back_by_name(tenant):
+    j = project(tenant)
+    a, b = screen(tenant, j, "Ravi Kumar", "Mason helper"), screen(tenant, j, "Suresh", "Carpenter")
+    d = diary(tenant, j, labour=[{"trade": "Mixed", "agency": "Own", "headcount": 0, "hours": 8, "rate": 0,
+                                  "worker_ids": [a["id"], b["id"]]}])
+    line = tenant.get("/api/diary/%d" % d["id"]).json()["labour"][0]
+    assert line["headcount"] == 2
+    assert {w["name"] for w in line["workers"]} == {"Ravi Kumar", "Suresh"}
+
+
+def test_another_companys_worker_cannot_be_named_on_this_diary(tenant, second_tenant):
+    j = project(tenant)
+    theirs = screen(tenant, j)
+    other_job = second_tenant.post("/api/jobs", json={"name": "Rival site", "customer_name": "X"}).json()
+    d = diary(second_tenant, other_job, labour=[{"trade": "Mason", "agency": "Own", "headcount": 0, "hours": 8,
+                                                 "rate": 0, "worker_ids": [theirs["id"]]}])
+    line = second_tenant.get("/api/diary/%d" % d["id"]).json()["labour"][0]
+    # Headcount still honours a worker id that was sent, but the name never crosses tenants to show it.
+    assert line["headcount"] == 1 and line["workers"] == []
