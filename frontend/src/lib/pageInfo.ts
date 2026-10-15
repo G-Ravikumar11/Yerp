@@ -50,6 +50,7 @@ export const PAGE_INFO: Record<string, string> = {
   '/subcontractors/measurement-book': 'The subcontractors\' measurement book: record work done against each work order, to be checked and billed.',
   '/subcontractors/ra-bills': 'Running-account bills from subcontractors: certify what is measured, apply deductions and retention, and send for payment.',
   '/subcontractors/ra-bills/:id': 'One RA bill: the measured work, deductions, retention and what is payable.',
+  '/subcontractors/registers': 'Recoveries and kinds of work: the material issued to contractors and taken back off their bills, and the kinds of work that orders are raised for.',
   '/subcontractors/compliance': 'Each subcontractor\'s statutory papers - registrations, insurance, licences - with expiry dates so nothing lapses unnoticed.',
 
   '/store/items': 'The Item Master: every material and consumable with its unit, code and rate. Orders, stock and costing all use this list.',

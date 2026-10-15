@@ -7,7 +7,6 @@ import { Badge, Button, Field, Input, Modal, Stat, StatGrid, Tabs } from '@/comp
 import { decideWorkType, orderKeys, requestWorkType, useWorkTypes, type WorkTypeRow } from '@/api/orders'
 import { get } from '@/lib/api'
 import { useAction } from '@/lib/mutate'
-import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 
