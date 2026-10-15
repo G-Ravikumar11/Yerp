@@ -82,7 +82,19 @@ export interface PermissionRole {
   head_office?: boolean
 }
 
+/** One card on the Access screen: a portal, set to No access, Read only or Read & write. `read` and `write` are the rights it sets. */
+export interface Portal {
+  code: string
+  label: string
+  blurb: string
+  read: string[]
+  write: string[]
+  /** Set when the portal cannot be given to anybody but the Master, and why. */
+  locked?: string
+}
+
 export interface HrCatalogue {
+  portals: Portal[]
   levels: { code: string; label: string }[]
   roles: { code: string; label: string }[]
   permission_roles: PermissionRole[]

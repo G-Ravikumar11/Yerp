@@ -12,6 +12,7 @@ from app.core.dates import _parse_date
 from app.core.scheduler import scheduled_job
 from app.services.employee_portal import attendance_settings_for, leave_balance_for, working_days_between
 from app.services.hr import resolve_basic_pay
+from app.services.holidays import custom_holidays
 from app.services.wallet_ai import require_credit
 
 
@@ -85,7 +86,7 @@ def pay_period_days(db, client_id, emp, payslip):
     start = _parse_date(payslip.period_start)
     end = _parse_date(payslip.period_end)
     total = (end - start).days + 1 if start and end and end >= start else 0
-    work = working_days_between(start, end, attendance_settings_for(db, client_id)) if total else 0.0
+    work = working_days_between(start, end, attendance_settings_for(db, client_id), holidays=custom_holidays(db, client_id, start, end)) if total else 0.0
     balance = leave_balance_for(db, emp)["annual_remaining"] if emp else 0.0
     return {"total": total, "work": work, "balance_leaves": balance}
 

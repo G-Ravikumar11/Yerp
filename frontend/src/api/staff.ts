@@ -166,6 +166,8 @@ export async function downloadMyFile(id: number) {
 export interface ClockState {
   clocked_in: boolean
   is_working_day?: boolean
+  /** The name of today's holiday when the business has marked it off, otherwise empty. */
+  holiday?: string
   clock_in?: string
   clock_out?: string
   total_hours?: number

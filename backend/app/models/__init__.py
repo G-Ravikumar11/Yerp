@@ -91,6 +91,7 @@ from app.models.hr import (
     DBLeaveRequest,
     DBEmployeeSite,
     DBDepartmentSite,
+    DBCustomHoliday,
     DBSiteGeofence,
 )
 from app.models.invoicing import (

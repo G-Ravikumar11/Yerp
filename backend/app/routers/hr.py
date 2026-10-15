@@ -24,6 +24,7 @@ from app.core.permissions import (
     PERMISSION_KEYS,
     PERMISSION_ROLES,
     PORTAL_PERMISSIONS,
+    PORTALS,
     ROLE_PERMISSIONS,
     permission_list,
     permissions_for,
@@ -199,6 +200,7 @@ def get_hr_levels(request: Request, db: Session = Depends(get_db)):
         "roles": EMPLOYEE_ROLES,
         "permission_roles": PERMISSION_ROLES,
         "permissions": PORTAL_PERMISSIONS,
+        "portals": PORTALS,
     }
 
 
