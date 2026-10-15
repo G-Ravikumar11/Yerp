@@ -35,6 +35,7 @@ import { VariationDialog } from './VariationDialog'
 interface Row {
   key: string
   kind: BoqKind
+  item_no: string
   group_code: string
   description: string
   uom: string
@@ -47,8 +48,8 @@ interface Row {
   rate_only: boolean
 }
 
-const blank = (): Row => ({ key: '', kind: 'item', group_code: '', description: '', uom: '', quantity: null, rate: null, item_code: '', remarks: '', material: '', rate_only: false })
-const fromLines = (lines: BoqLine[]): Row[] => lines.map((l) => ({ key: l.key, kind: l.kind, group_code: l.group_code ?? '', description: l.description, uom: l.uom, quantity: l.kind === 'section' || l.kind === 'note' || l.rate_only ? null : l.quantity, rate: l.kind === 'section' || l.kind === 'note' ? null : l.rate, item_code: l.item_code, remarks: l.remarks, material: l.material ?? '', rate_only: !!l.rate_only }))
+const blank = (): Row => ({ key: '', kind: 'item', item_no: '', group_code: '', description: '', uom: '', quantity: null, rate: null, item_code: '', remarks: '', material: '', rate_only: false })
+const fromLines = (lines: BoqLine[]): Row[] => lines.map((l) => ({ key: l.key, kind: l.kind, item_no: l.item_no ?? '', group_code: l.group_code ?? '', description: l.description, uom: l.uom, quantity: l.kind === 'section' || l.kind === 'note' || l.rate_only ? null : l.quantity, rate: l.kind === 'section' || l.kind === 'note' ? null : l.rate, item_code: l.item_code, remarks: l.remarks, material: l.material ?? '', rate_only: !!l.rate_only }))
 /**
  * What a row is, from what is in it - there is no Kind column to set. A row with a quantity, a rate or R/o is an item;
  * with only words it is a heading. A note, which can only come from an older BOQ, stays one.
@@ -155,6 +156,7 @@ export default function BoqPage() {
 
   const columns = useMemo<Column<Row>[]>(
     () => [
+      { id: 'item_no', header: 'Item No.', hint: 'The client’s numbering: I, 2, 2.1, 2.1.1. The programme is drawn from the BOQ in this tree.', width: 84, mono: true, pin: true, placeholder: '2.1' },
       { id: 'group_code', header: 'Group code', hint: 'Pick one, or type your own', type: 'select', freeText: true, customLabel: 'Customize...', width: 190, pin: true, options: groupOptions },
       { id: 'item_code', header: 'Item code', hint: 'Type this work\u2019s item code (any pattern, e.g. CIV-RCC-25). It is kept everywhere. Blank: one is given on save.', width: 150, mono: true, placeholder: 'Type the code' },
       { id: 'description', header: 'Description', hint: 'Paste the client’s lines here', width: 420, required: true, placeholder: 'What is the work?' },
@@ -265,7 +267,7 @@ export default function BoqPage() {
                 <Save /> Save the BOQ
               </Button>
               {dirty && <Badge tone="warning">Unsaved changes</Badge>}
-              <span className="text-xs text-muted-foreground">Paste lines straight from Excel (Group code, Description, Unit, Qty, Rate). A line with no quantity or rate is saved as a heading.</span>
+              <span className="text-xs text-muted-foreground">Paste lines straight from Excel (Item No., Group code, Description, Unit, Qty, Rate). A line with no quantity or rate is saved as a heading.</span>
             </div>
           )}
           {!editable && viewing !== undefined && (

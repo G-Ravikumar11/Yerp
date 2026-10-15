@@ -15,6 +15,14 @@ class ProgrammeAddIn(BaseModel):
     rows: List[dict] = Field(default_factory=lambda: [{}])
 
 
+class ProgrammeFromBoqIn(BaseModel):
+    # each: {"id": a BOQ node id, "name": the short name if changed, "splits": [{"label": "A-16", "quantity": 300}]}
+    picks: List[dict] = Field(default_factory=list)
+    anchor_id: Optional[int] = None
+    position: str = "end"                   # after | child | end
+    start: str = ""
+
+
 class ProgrammeMoveIn(BaseModel):
     id: int
     parent_id: Optional[int] = None

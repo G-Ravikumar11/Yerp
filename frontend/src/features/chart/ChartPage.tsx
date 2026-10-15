@@ -8,7 +8,7 @@ import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { formatDate, today } from '@/lib/format'
 import { ActivityModal } from '@/features/schedule/ActivityModal'
-import { DrawFromBoqModal } from '@/features/schedule/DrawFromBoqModal'
+import { BoqPickerModal } from '@/features/schedule/programme/BoqPickerModal'
 import { ProgressBar } from '@/features/schedule/ProgressBar'
 import { ProgressControl } from '@/features/schedule/ProgressControl'
 import { Curve } from '@/features/schedule/Bars'
@@ -68,7 +68,7 @@ export default function ChartPage() {
         actions={<>
           {manage && <Button disabled={!job} onClick={() => setEditing('new')}><Plus /> Activity</Button>}
           {manage && <Button variant="outline" disabled={!job} onClick={() => setEditing('milestone')}><Flag /> Milestone</Button>}
-          <Button variant="outline" disabled={!job} onClick={() => setDrawing(true)}>Draw from a work order</Button>
+          <Button variant="outline" disabled={!job} onClick={() => setDrawing(true)}>Draw from BOQ</Button>
           <Button variant="outline" disabled={!job || !d?.activities.length} onClick={() => (identity.data?.logo_url ? void printChart(identity.data.logo_url) : setAskLogo(true))}><Printer /> Print</Button>
         </>}
       />
@@ -146,7 +146,7 @@ export default function ChartPage() {
       <ActivityModal job={job} activity={editing && editing !== 'new' && editing !== 'milestone' ? editing : null} milestone={editing === 'milestone'} others={d?.activities ?? []} employees={d?.employees ?? []} teamScope={d?.team_scope} open={!!editing} onClose={() => setEditing(null)} />
       {job > 0 && d && d.activities.length > 0 && <PrintReport schedule={d} company={{ name: identity.data?.name || 'Company', address: identity.data?.address || '', gstin: identity.data?.gstin || '', logo_url: identity.data?.logo_url || '' }} />}
       <LogoPrintModal open={askLogo} onClose={() => setAskLogo(false)} onPrint={(logo) => { setAskLogo(false); void printChart(logo) }} />
-      <DrawFromBoqModal job={job} open={drawing} onClose={() => setDrawing(false)} />
+      {drawing && <BoqPickerModal job={job} onClose={() => setDrawing(false)} />}
       <ConfirmDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)} title={`Delete ${removing?.name ?? (removing?.is_milestone ? 'this milestone' : 'this activity')}?`} description="Do you want to delete this? It cannot be undone." tone="danger" confirmLabel="Yes" cancelLabel="Cancel" loading={remove.isPending} onConfirm={() => { if (removing) remove.mutate(removing) }} />
     </>
   )

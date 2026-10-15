@@ -22,6 +22,8 @@ export interface BoqLine {
   id?: number
   key: string
   kind: BoqKind
+  /** The client's own numbering: I, 2, 2.1, 2.1.1. The programme's tree is drawn from it. */
+  item_no?: string
   group_code: string
   description: string
   uom: string

@@ -187,7 +187,7 @@ def boq_new_revision(boq_id: int, body: dict, request: Request, db: Session = De
     db.add(nxt)
     db.flush()
     for l in db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == cur.id).order_by(models.DBBoqLine.display_order).all():
-        db.add(models.DBBoqLine(boq_id=boq.id, revision_id=nxt.id, key=l.key, kind=l.kind, group_code=l.group_code, description=l.description,
+        db.add(models.DBBoqLine(boq_id=boq.id, revision_id=nxt.id, key=l.key, kind=l.kind, item_no=l.item_no, group_code=l.group_code, description=l.description,
                                 uom=l.uom, quantity=l.quantity, rate=l.rate, amount=l.amount,
                                 item_code=l.item_code, remarks=l.remarks, material=l.material, rate_only=l.rate_only,
                                 display_order=l.display_order))
@@ -267,14 +267,17 @@ async def boq_import(boq_id: int, request: Request, file: UploadFile = File(...)
             continue
         if stated and not rate and qty:
             rate = unit_rate(stated / qty)           # a sheet with an amount and no rate: the rate is what it implies
-        kind = boq_kind_of(text, qty, rate)
+        no = (row.get("item_no") or "").strip()[:20]
+        # A numbered line with no quantity is a heading of the client's tree (2.1 "Excavation in all kinds of soil ..."),
+        # however long it runs; only an unnumbered one can be a note.
+        kind = "section" if no and not (qty or rate or rate_only) else boq_kind_of(text, qty, rate)
         rate_only = rate_only and kind in BOQ_PRICED
         if kind in BOQ_PRICED and not rate_only:
             running += qty * rate
             if stated and abs(stated - qty * rate) > 1:
                 warnings.append("Row %s: %s x %s is %s but the sheet says %s." % (
                     row.get("_line"), qty, rate, inr(qty * rate), inr(stated)))
-        lines.append({"key": "", "kind": kind, "group_code": (row.get("group_code") or "").strip()[:40], "description": text,
+        lines.append({"key": "", "kind": kind, "item_no": no, "group_code": (row.get("group_code") or "").strip()[:40], "description": text,
                       "uom": (row.get("uom") or "").strip() if kind in BOQ_PRICED else "", "quantity": qty if kind in BOQ_PRICED else 0,
                       "rate": rate if kind in BOQ_PRICED else 0, "amount": money(qty * rate) if kind in BOQ_PRICED else 0,
                       "item_code": (row.get("item_code") or "").strip().upper()[:40] if kind in BOQ_PRICED else "", "remarks": (row.get("remarks") or "").strip(),

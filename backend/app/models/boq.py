@@ -50,6 +50,8 @@ class DBBoqLine(Base):
     # Stays the same on a line through every revision, so a change can be followed and orders can point at it.
     key = Column(String, nullable=False, index=True)
     kind = Column(String, default="item")                     # section | item | sub | note
+    # The client's own numbering (I, 2, 2.1, 2.1.1, A): the programme draws its tree from it.
+    item_no = Column(String, default="")
     # The group the line belongs to (PCC, RCC, Steel ...): picked from a list or typed, and kept as the sheet has it.
     group_code = Column(String, default="", index=True)
     description = Column(Text, default="")

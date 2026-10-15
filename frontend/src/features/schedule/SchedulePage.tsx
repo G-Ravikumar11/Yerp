@@ -10,9 +10,9 @@ import { useSession } from '@/lib/session'
 import { ActivityModal } from './ActivityModal'
 import { Curve } from './Bars'
 import { DayPlan } from './DayPlan'
-import { DrawFromBoqModal } from './DrawFromBoqModal'
 import { ImportScheduleModal } from './ImportScheduleModal'
 import { AiDayTasks, AiDraftModal, AiPlanPanel } from './AiPlanning'
+import { BoqPickerModal } from './programme/BoqPickerModal'
 import { ProgrammeView } from './programme/ProgrammeView'
 
 /** The day's plan, the whole programme, and how far along the work is - and what slips if the thing before it slips. */
@@ -68,7 +68,7 @@ export default function SchedulePage() {
       {tab === 'programme' && job > 0 && <ProgrammeView key={job} job={job} />}
       {tab === 'programme' && d && d.curve.length > 0 && <Curve curve={d.curve} />}
       <ActivityModal job={job} activity={editing && editing !== 'new' ? editing : null} others={d?.activities ?? []} employees={d?.employees ?? []} teamScope={d?.team_scope} open={!!editing} onClose={() => setEditing(null)} />
-      <DrawFromBoqModal job={job} open={drawing} onClose={() => setDrawing(false)} />
+      {drawing && <BoqPickerModal job={job} onClose={() => setDrawing(false)} onDone={() => setTab('programme')} />}
       <ImportScheduleModal job={job} open={importing} onClose={() => setImporting(false)} />
       <AiDraftModal job={job} open={drafting} onClose={() => setDrafting(false)} />
     </>

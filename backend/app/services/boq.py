@@ -115,7 +115,7 @@ def boq_amount(kind, qty, rate, rate_only=False):
 
 
 def boq_line_dict(l):
-    return {"id": l.id, "key": l.key, "kind": l.kind, "group_code": l.group_code or "", "description": l.description or "",
+    return {"id": l.id, "key": l.key, "kind": l.kind, "item_no": l.item_no or "", "group_code": l.group_code or "", "description": l.description or "",
             "uom": l.uom or "", "quantity": money(l.quantity), "rate": unit_rate(l.rate), "amount": money(l.amount),
             "item_code": l.item_code or "", "remarks": l.remarks or "",
             "material": l.material or "", "rate_only": bool(l.rate_only)}
@@ -230,7 +230,8 @@ def boq_save_lines(db, boq, rev, rows, issue_codes, client_id):
             key = boq_new_key()
         seen.add(key)
         line = models.DBBoqLine(
-            boq_id=boq.id, revision_id=rev.id, key=key, kind=kind, group_code=(r.group_code or "").strip()[:40],
+            boq_id=boq.id, revision_id=rev.id, key=key, kind=kind, item_no=(getattr(r, "item_no", "") or "").strip()[:20],
+            group_code=(r.group_code or "").strip()[:40],
             description=text, uom=(r.uom or "").strip()[:20] if kind in BOQ_PRICED else "", quantity=qty, rate=rate,
             amount=boq_amount(kind, qty, rate, rate_only),
             item_code=(r.item_code or "").strip().upper()[:40] if kind in BOQ_PRICED else "",
@@ -588,7 +589,7 @@ def bv_apply(db, client, boq, vo):
     db.flush()
     copies = []
     for l in db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == cur.id).order_by(models.DBBoqLine.display_order).all():
-        copies.append(models.DBBoqLine(boq_id=boq.id, revision_id=nxt.id, key=l.key, kind=l.kind, group_code=l.group_code, description=l.description,
+        copies.append(models.DBBoqLine(boq_id=boq.id, revision_id=nxt.id, key=l.key, kind=l.kind, item_no=l.item_no, group_code=l.group_code, description=l.description,
                                        uom=l.uom, quantity=l.quantity, rate=l.rate, amount=l.amount,
                                        item_code=l.item_code, remarks=l.remarks, material=l.material, rate_only=l.rate_only))
     by_key = {c.key: c for c in copies}

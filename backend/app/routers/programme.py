@@ -22,10 +22,11 @@ from sqlalchemy.orm import Session
 from app.core.auth import require_erp_read, wo_actor
 from app.db import get_db
 from app.schemas.programme import (ProgrammeAddIn, ProgrammeCalendarIn, ProgrammeCopyIn, ProgrammeEditIn,
-                                   ProgrammeHolidayIn, ProgrammeMoveIn, ProgrammePublicHolidaysIn, ProgrammeRestoreIn)
+                                   ProgrammeFromBoqIn, ProgrammeHolidayIn, ProgrammeMoveIn, ProgrammePublicHolidaysIn, ProgrammeRestoreIn)
 from app.services.programme import (add_holiday, add_public_holidays, add_rows, copy_to_units, delete_holiday,
                                     delete_row, duplicate_row, edit_rows, move_row, programme_view, restore,
                                     set_calendar)
+from app.services.programme_boq import draw_from_boq, programme_boq
 from app.services.projects import _d, job_or_404
 
 router = APIRouter()
@@ -54,6 +55,21 @@ def programme_add(job_id: int, body: ProgrammeAddIn, request: Request, db: Sessi
     client, job = _writer(request, db, job_id)
     made = add_rows(db, client, job, body.anchor_id, body.position, body.rows)
     return {**programme_view(db, client, job), "made": made}
+
+
+@router.get("/api/jobs/{job_id}/programme/boq")
+def programme_boq_tree(job_id: int, request: Request, db: Session = Depends(get_db)):
+    """The project's BOQ as a tree to pick from, with what is already on the programme from each line."""
+    client = require_erp_read(request, db)
+    return programme_boq(db, client, job_or_404(db, client.id, job_id))
+
+
+@router.post("/api/jobs/{job_id}/programme/from-boq")
+def programme_from_boq(job_id: int, body: ProgrammeFromBoqIn, request: Request, db: Session = Depends(get_db)):
+    client, job = _writer(request, db, job_id)
+    made, message, warnings = draw_from_boq(db, client, job, body.picks, body.anchor_id, body.position, body.start)
+    db.commit()
+    return {**programme_view(db, client, job), "made": made, "message": message, "warnings": warnings}
 
 
 @router.post("/api/jobs/{job_id}/programme/move")

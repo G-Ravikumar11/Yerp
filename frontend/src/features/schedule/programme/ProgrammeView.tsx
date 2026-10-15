@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { CalendarDays, ChevronsDownUp, ChevronsUpDown, Copy, CopyPlus, Columns3, IndentDecrease, IndentIncrease, ListPlus, Plus, Redo2, Trash2, Undo2, Zap } from 'lucide-react'
+import { CalendarDays, ChevronsDownUp, ChevronsUpDown, Copy, CopyPlus, Columns3, IndentDecrease, IndentIncrease, ListPlus, ListTree, Plus, Redo2, Trash2, Undo2, Zap } from 'lucide-react'
 import { Button, ConfirmDialog, Skeleton, Tabs, Tooltip } from '@/components/ui'
 import {
   addHoliday, addPublicHolidays, addRows, copyUnits, deleteRow, duplicateRow, editRows, moveRow, programmeKeys, recompute, removeHoliday,
@@ -12,6 +12,7 @@ import { useSession } from '@/lib/session'
 import { toast } from '@/stores/toast'
 import { COLUMNS, editableCell } from './columns'
 import { ProgrammeGrid } from './ProgrammeGrid'
+import { BoqPickerModal } from './BoqPickerModal'
 import { CalendarModal, CopyUnitsModal, RowDetailModal } from './ProgrammeModals'
 import type { Zoom } from './gantt'
 
@@ -61,13 +62,16 @@ export function ProgrammeView({ job }: { job: number }) {
   const [deleting, setDeleting] = useState<ProgrammeRowView | null>(null)
   const [copying, setCopying] = useState<ProgrammeRowView | null>(null)
   const [calendarOpen, setCalendarOpen] = useState(false)
+  const [picking, setPicking] = useState(false)
   const [detail, setDetail] = useState<number | null>(null)
 
   useEffect(() => {
     try { localStorage.setItem(`yerp-programme-collapsed-${job}`, JSON.stringify([...collapsed])) } catch { /* not kept */ }
   }, [collapsed, job])
 
-  const columns = useMemo(() => COLUMNS.filter((c) => !compact || !c.extra), [compact])
+  // SL.NO as wide as the deepest number needs (1.1.2.1 is wider than 1)
+  const wbsWidth = useMemo(() => Math.max(70, 34 + 7 * Math.max(0, ...(v?.rows ?? []).map((r) => r.wbs.length))), [v])
+  const columns = useMemo(() => COLUMNS.filter((c) => !compact || !c.extra).map((c) => (c.id === 'wbs' ? { ...c, w: wbsWidth } : c)), [compact, wbsWidth])
   const visible = useMemo(() => (v ? shownRows(v.rows, collapsed) : []), [v, collapsed])
   const current = visible[Math.min(active.r, Math.max(0, visible.length - 1))]
   const byId = useMemo(() => new Map((v?.rows ?? []).map((r) => [r.id, r])), [v])
@@ -232,6 +236,7 @@ export function ProgrammeView({ job }: { job: number }) {
           <Tooltip content="Redo (Ctrl+Y)"><Button size="icon-sm" variant="ghost" aria-label="Redo" onClick={doRedo} disabled={busy || !depth.redo}><Redo2 /></Button></Tooltip>
           <span className="mx-1 h-6 w-px bg-border" />
           <Tooltip content="The same activities for other units, from their own start dates"><Button size="sm" variant="outline" onClick={() => current && setCopying(current)} disabled={busy || !current}><CopyPlus /> Copy to other units</Button></Tooltip>
+          <Tooltip content="Pick BOQ lines to put on the programme, after the selected row"><Button size="sm" variant="outline" onClick={() => setPicking(true)} disabled={busy}><ListTree /> Draw from BOQ</Button></Tooltip>
         </>}
         <Tooltip content="Show everything"><Button size="icon-sm" variant="ghost" aria-label="Expand all" onClick={() => setCollapsed(new Set())}><ChevronsUpDown /></Button></Tooltip>
         <Tooltip content="Show the top level only"><Button size="icon-sm" variant="ghost" aria-label="Collapse all" onClick={() => setCollapsed(new Set(v.rows.filter((r) => r.summary).map((r) => r.id)))}><ChevronsDownUp /></Button></Tooltip>
@@ -289,6 +294,7 @@ export function ProgrammeView({ job }: { job: number }) {
         onAddHoliday={(d, n) => change(() => addHoliday(job, d, n))}
         onRemoveHoliday={(h) => change(() => removeHoliday(job, h.id))}
         onPublic={(y) => change(() => addPublicHolidays(job, y))} />}
+      {picking && <BoqPickerModal job={job} anchor={current?.id ?? null} onClose={() => setPicking(false)} />}
       {detailRow && <RowDetailModal key={detailRow.id} row={detailRow} editable={editable} onClose={() => setDetail(null)} onSave={(ch) => change(() => editRows(job, [ch]), recompute(v, ch))} />}
     </section>
   )

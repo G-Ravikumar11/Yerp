@@ -94,6 +94,7 @@ QUALITY_COLUMNS = (
     ("schedule_activities", "output_per_day", "FLOAT DEFAULT 0"), ("schedule_activities", "gangs", "FLOAT DEFAULT 0"),
     ("schedule_activities", "qty_done", "FLOAT DEFAULT 0"),
     ("schedule_progress", "qty_done", "FLOAT"),
+    ("boq_lines", "item_no", "VARCHAR DEFAULT ''"),
 )
 
 

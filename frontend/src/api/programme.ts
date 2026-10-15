@@ -175,3 +175,39 @@ export function recompute(v: ProgrammeView, change?: RowChange): ProgrammeView {
       .sort((a, b) => order.get(a.id)! - order.get(b.id)!),
   }
 }
+
+/** A line of the BOQ as the picker shows it (backend/app/services/programme_boq.py). */
+export interface BoqNode {
+  /** The BOQ line's key; "<key>#own" for an item's own work when it also has sub-items. */
+  id: string
+  key: string
+  ref: string
+  item_no: string
+  parent: string | null
+  level: number
+  heading: boolean
+  name: string
+  description: string
+  uom: string
+  quantity: number
+  rate: number
+  amount: number
+  rate_only: boolean
+  drawn_rows: number
+  drawn_quantity: number
+}
+export interface ProgrammeBoq {
+  boq: { id: number; number: string; revision: string } | null
+  items: BoqNode[]
+  numbered: boolean
+}
+export interface BoqPick {
+  id: string
+  name?: string
+  splits?: { label: string; quantity: number }[]
+}
+
+export const useProgrammeBoq = (job: number, enabled: boolean) =>
+  useQuery({ queryKey: ['schedule', 'programme-boq', job], enabled: enabled && job > 0, staleTime: 0, queryFn: () => get<ProgrammeBoq>(`${base(job)}/boq`) })
+export const drawProgrammeFromBoq = (job: number, body: { picks: BoqPick[]; anchor_id: number | null; position: 'after' | 'child' | 'end'; start: string }) =>
+  post<ProgrammeView & { warnings?: string[] }>(`${base(job)}/from-boq`, body)
