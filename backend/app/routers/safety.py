@@ -10,7 +10,8 @@ from app.documents import form_pdf
 from app import models
 from app.db import get_db
 
-from app.constants.common import INCIDENT_KINDS, INJURY_KINDS, PERMIT_PRECAUTIONS, WORKER_MIN_AGE, WORKER_TRADES
+from app.constants.common import (INCIDENT_KINDS, INJURY_KINDS, PERMIT_PRECAUTIONS, WORKER_MARITAL_STATUS,
+                                  WORKER_MIN_AGE, WORKER_SEX, WORKER_TRADES)
 from app.constants.quality import SERIOUS_KINDS
 from app.core.auth import require_erp_read, wo_actor
 from app.core.notifications import notify
@@ -263,6 +264,14 @@ def incident_pdf(iid: int, request: Request, db: Session = Depends(get_db)):
 
 # ---- Workers: screened before they start on site -------------------------------------------------------------------
 
+def _rows(text):
+    try:
+        got = json.loads(text or "[]")
+        return got if isinstance(got, list) else []
+    except (TypeError, ValueError):
+        return []
+
+
 def _worker_dict(w, files):
     mine = [f for f in files if f.attached_id == w.id]
     photo = next((f for f in mine if (f.caption or "") == "Photo"), None) or next(
@@ -271,6 +280,18 @@ def _worker_dict(w, files):
     return {"id": w.id, "job_id": w.job_id, "number": w.number or "", "name": w.name or "", "age": w.age or 0,
             "address": w.address or "", "trade": w.trade or "", "screened_on": w.screened_on or "",
             "screened_by": w.screened_by or "",
+            "contractor_name": w.contractor_name or "", "father_name": w.father_name or "", "dob": w.dob or "",
+            "sex": w.sex or "", "marital_status": w.marital_status or "", "children": w.children or 0,
+            "mother_tongue": w.mother_tongue or "", "other_languages": w.other_languages or "",
+            "emergency_contact": w.emergency_contact or "", "identification_mark": w.identification_mark or "",
+            "vision_normal": w.vision_normal if w.vision_normal is not None else True,
+            "vision_problem": w.vision_problem or "",
+            "health_normal": w.health_normal if w.health_normal is not None else True,
+            "health_problem": w.health_problem or "",
+            "weight_kg": w.weight_kg or 0, "height_cm": w.height_cm or 0, "blood_group": w.blood_group or "",
+            "education": _rows(w.education), "experience": _rows(w.experience),
+            "certificates_verified": bool(w.certificates_verified), "trial_briefed": bool(w.trial_briefed),
+            "safety_officer_name": w.safety_officer_name or "",
             "photo_url": ("/api/files/%d/thumb" % photo.id) if photo else "",
             "photo_full_url": ("/api/files/%d" % photo.id) if photo else "",
             "medical": [{"id": f.id, "name": f.name or "", "url": "/api/files/%d" % f.id} for f in medical]}
@@ -293,14 +314,43 @@ def worker_list(request: Request, job_id: int = 0, db: Session = Depends(get_db)
     for w in workers:
         by_trade[w["trade"]] = by_trade.get(w["trade"], 0) + 1
     return {"workers": workers, "trades": list(WORKER_TRADES), "min_age": WORKER_MIN_AGE,
+            "sexes": list(WORKER_SEX), "marital_statuses": list(WORKER_MARITAL_STATUS),
             "summary": {"workers": len(workers), "by_trade": by_trade,
                         "without_medical": len([w for w in workers if not w["medical"]]),
                         "without_photo": len([w for w in workers if not w["photo_url"]])}}
 
 
+def _edu_rows(rows):
+    out = []
+    for r in (rows or [])[:20]:
+        if not isinstance(r, dict):
+            continue
+        exam, school = (r.get("exam") or "").strip()[:120], (r.get("school") or "").strip()[:160]
+        if not exam and not school:
+            continue
+        out.append({"exam": exam, "year": (r.get("year") or "").strip()[:10], "school": school})
+    return out
+
+
+def _exp_rows(rows):
+    out = []
+    for r in (rows or [])[:20]:
+        if not isinstance(r, dict):
+            continue
+        org, site = (r.get("organization") or "").strip()[:160], (r.get("project_site") or "").strip()[:160]
+        if not org and not site:
+            continue
+        out.append({"organization": org, "project_site": site,
+                    "category": (r.get("category") or "").strip()[:80], "period": (r.get("period") or "").strip()[:80],
+                    "salary": (r.get("salary") or "").strip()[:40]})
+    return out
+
+
 @router.post("/api/workers")
 def worker_screen(body: WorkerIn, request: Request, db: Session = Depends(get_db)):
-    """Screen a worker: name, age, address and trade. The photo and the medical certificate follow as files."""
+    """Screen a worker, after the company's own paper form: who they are, their trade, their physical and
+    education details, previous work, and whether they have been briefed. The photo and the medical certificate
+    follow as files."""
     client, _, actor_name = wo_actor(request, db, "site.record")
     job = job_or_404(db, client.id, body.job_id)
     name = (body.name or "").strip()
@@ -312,10 +362,29 @@ def worker_screen(body: WorkerIn, request: Request, db: Session = Depends(get_db
         raise HTTPException(400, "A worker on site must be at least %d." % WORKER_MIN_AGE)
     if body.age > 75:
         raise HTTPException(400, "Check the age: %d is past working age on a site." % body.age)
+    if body.sex and body.sex not in WORKER_SEX:
+        raise HTTPException(400, "Sex: " + ", ".join(WORKER_SEX))
+    if body.marital_status and body.marital_status not in WORKER_MARITAL_STATUS:
+        raise HTTPException(400, "Marital status: " + ", ".join(WORKER_MARITAL_STATUS))
     w = models.DBWorkerScreening(
         client_id=client.id, job_id=job.id, number=next_number(db, models.DBWorkerScreening, client.id, "WKR"),
         name=name[:120], age=int(body.age), address=(body.address or "").strip()[:500], trade=body.trade,
-        screened_on=(body.screened_on or date.today().isoformat())[:10], screened_by=actor_name)
+        screened_on=(body.screened_on or date.today().isoformat())[:10], screened_by=actor_name,
+        contractor_name=(body.contractor_name or "").strip()[:160], father_name=(body.father_name or "").strip()[:120],
+        dob=(body.dob or "")[:10], sex=body.sex or "", marital_status=body.marital_status or "",
+        children=max(0, int(body.children or 0)), mother_tongue=(body.mother_tongue or "").strip()[:60],
+        other_languages=(body.other_languages or "").strip()[:160],
+        emergency_contact=(body.emergency_contact or "").strip()[:160],
+        identification_mark=(body.identification_mark or "").strip()[:200],
+        vision_normal=body.vision_normal if body.vision_normal is not None else True,
+        vision_problem=(body.vision_problem or "").strip()[:200] if not body.vision_normal else "",
+        health_normal=body.health_normal if body.health_normal is not None else True,
+        health_problem=(body.health_problem or "").strip()[:200] if not body.health_normal else "",
+        weight_kg=max(0.0, float(body.weight_kg or 0)), height_cm=max(0.0, float(body.height_cm or 0)),
+        blood_group=(body.blood_group or "").strip()[:10],
+        education=json.dumps(_edu_rows(body.education)), experience=json.dumps(_exp_rows(body.experience)),
+        certificates_verified=bool(body.certificates_verified), trial_briefed=bool(body.trial_briefed),
+        safety_officer_name=(body.safety_officer_name or "").strip()[:120])
     db.add(w)
     db.commit()
     return {"worker": _worker_dict(w, [])}

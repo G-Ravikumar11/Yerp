@@ -463,13 +463,25 @@ def diary_dict(db, d, detail=False):
         "created_at": d.created_at or "",
     }
     if detail:
+        lines = db.query(models.DBDiaryLabour).filter(
+            models.DBDiaryLabour.site_diary_id == d.id).order_by(
+                models.DBDiaryLabour.display_order, models.DBDiaryLabour.id).all()
+        all_ids = set()
+        for l in lines:
+            all_ids.update(_parse_worker_ids(l.worker_ids))
+        workers = {}
+        if all_ids:
+            for w in db.query(models.DBWorkerScreening).filter(
+                    models.DBWorkerScreening.client_id == d.client_id,
+                    models.DBWorkerScreening.id.in_(all_ids)).all():
+                workers[w.id] = {"id": w.id, "name": w.name or "", "trade": w.trade or ""}
         row["labour"] = [{
             "id": l.id, "trade": l.trade or "", "agency": l.agency or "Own",
             "headcount": money(l.headcount), "hours": money(l.hours),
             "rate": money(l.rate), "amount": money(l.amount),
-        } for l in db.query(models.DBDiaryLabour).filter(
-            models.DBDiaryLabour.site_diary_id == d.id).order_by(
-                models.DBDiaryLabour.display_order, models.DBDiaryLabour.id).all()]
+            "worker_ids": _parse_worker_ids(l.worker_ids),
+            "workers": [workers[i] for i in _parse_worker_ids(l.worker_ids) if i in workers],
+        } for l in lines]
         row["plant"] = [{
             "id": p.id, "plant": p.plant or "",
             "worked_hours": money(p.worked_hours), "idle_hours": money(p.idle_hours),
@@ -481,12 +493,24 @@ def diary_dict(db, d, detail=False):
     return row
 
 
+def _parse_worker_ids(text):
+    out = []
+    for p in (text or "").split(","):
+        p = p.strip()
+        if p.isdigit():
+            out.append(int(p))
+    return out
+
+
 def _replace_diary_lines(db, diary, labour, plant):
     if labour is not None:
         db.query(models.DBDiaryLabour).filter(
             models.DBDiaryLabour.site_diary_id == diary.id).delete()
         for i, l in enumerate((labour or [])[:60]):
-            heads = money(l.get("headcount") or 0)
+            # A row added "from Workers & Safety" names its people; its headcount always matches how many are
+            # named, so a line cannot claim more heads than it has named workers for.
+            ids = [int(w) for w in (l.get("worker_ids") or []) if str(w).strip().isdigit()][:200]
+            heads = float(len(ids)) if ids else money(l.get("headcount") or 0)
             if not heads:
                 continue
             db.add(models.DBDiaryLabour(
@@ -494,7 +518,8 @@ def _replace_diary_lines(db, diary, labour, plant):
                 agency=(l.get("agency") or "Own")[:120], headcount=heads,
                 hours=money(l.get("hours") if l.get("hours") is not None
                             else (diary.working_hours or 8)),
-                rate=money(l.get("rate") or 0), display_order=i))
+                rate=money(l.get("rate") or 0), display_order=i,
+                worker_ids=",".join(str(w) for w in ids)))
     if plant is not None:
         db.query(models.DBDiaryPlant).filter(
             models.DBDiaryPlant.site_diary_id == diary.id).delete()

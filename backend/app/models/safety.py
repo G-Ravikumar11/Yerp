@@ -1,7 +1,7 @@
 """Incidents, toolbox talks, work permits, and the screening of workers before they start."""
 from datetime import datetime
 
-from sqlalchemy import Column, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text
 
 from app.db.session import Base
 
@@ -75,18 +75,46 @@ class DBWorkPermit(Base):
 
 
 class DBWorkerScreening(Base):
-    """A worker screened before starting on site: who they are, their trade, and the proof - a photo and a medical
-    certificate, kept as files attached to this record (attached_type "worker")."""
+    """A worker screened before starting on site, after the company's own paper "Screening Of Worker" form: who
+    they are, their trade, their physical and education details, their previous work, and the proof - a photo and
+    a medical certificate, kept as files attached to this record (attached_type "worker")."""
     __tablename__ = "worker_screenings"
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
-    number = Column(String, default="", index=True)             # WKR-0001
+    number = Column(String, default="", index=True)             # WKR-0001, also the form's "Worker ID No"
     name = Column(String, default="")
     age = Column(Integer, default=0)
     address = Column(Text, default="")
-    trade = Column(String, default="", index=True)              # one of WORKER_TRADES
+    trade = Column(String, default="", index=True)              # one of WORKER_TRADES; the form's "Suitable for employment as"
     screened_on = Column(String, default="", index=True)
     screened_by = Column(String, default="")
+
+    contractor_name = Column(String, default="")                # Name of the Contractor / Sub-Contractor
+    father_name = Column(String, default="")                    # Father / Husband's Name
+    dob = Column(String, default="")
+    sex = Column(String, default="")
+    marital_status = Column(String, default="")
+    children = Column(Integer, default=0)
+    mother_tongue = Column(String, default="")
+    other_languages = Column(String, default="")
+    emergency_contact = Column(String, default="")
+    identification_mark = Column(String, default="")
+
+    vision_normal = Column(Boolean, default=True)
+    vision_problem = Column(String, default="")
+    health_normal = Column(Boolean, default=True)
+    health_problem = Column(String, default="")
+    weight_kg = Column(Float, default=0.0)
+    height_cm = Column(Float, default=0.0)
+    blood_group = Column(String, default="")
+
+    education = Column(Text, default="[]")                      # [{exam, year, school}]
+    experience = Column(Text, default="[]")                     # [{organization, project_site, category, period, salary}]
+
+    certificates_verified = Column(Boolean, default=False)
+    trial_briefed = Column(Boolean, default=False)              # seen and briefed the site's EHS rules
+    safety_officer_name = Column(String, default="")
+
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))

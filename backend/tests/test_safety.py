@@ -115,3 +115,71 @@ def test_a_worker_is_screened_with_trade_photo_and_medical_certificate(tenant):
     assert listed["workers"][0]["medical"][0]["name"] == "fit.pdf" and listed["summary"]["without_medical"] == 0
     assert tenant.delete("/api/workers/%d" % w["id"]).status_code == 200
     assert tenant.get("/api/workers").json()["workers"] == []
+
+
+# --- the full "Screening Of Worker" form: everyone's actual paper form, all its fields ------------------------------
+
+def test_the_full_screening_form_is_saved_and_read_back(tenant):
+    j = job(tenant)
+    data = tenant.get("/api/workers").json()
+    assert "Male" in data["sexes"] and "Married" in data["marital_statuses"]
+    body = {
+        "job_id": j["id"], "name": "Ravi Kumar", "age": 30, "trade": "Mason helper",
+        "contractor_name": "Sri Sai Contractors", "father_name": "Venkat Rao", "dob": "1996-05-14",
+        "sex": "Male", "marital_status": "Married", "children": 2,
+        "mother_tongue": "Telugu", "other_languages": "Hindi, English",
+        "emergency_contact": "Lakshmi, 98765 43210", "identification_mark": "Scar on left hand",
+        "vision_normal": False, "vision_problem": "Needs glasses for reading",
+        "health_normal": True, "weight_kg": 68, "height_cm": 170, "blood_group": "B+",
+        "education": [{"exam": "SSC", "year": "2012", "school": "ZP High School"}],
+        "experience": [{"organization": "L&T", "project_site": "Nuzividu", "category": "Mason",
+                        "period": "2023-2025", "salary": "700/day"}],
+        "certificates_verified": True, "trial_briefed": True, "safety_officer_name": "Prasad",
+    }
+    res = tenant.post("/api/workers", json=body)
+    assert res.status_code == 200, res.text
+    w = res.json()["worker"]
+    assert w["contractor_name"] == "Sri Sai Contractors" and w["father_name"] == "Venkat Rao"
+    assert w["dob"] == "1996-05-14" and w["sex"] == "Male" and w["marital_status"] == "Married" and w["children"] == 2
+    assert w["mother_tongue"] == "Telugu" and w["other_languages"] == "Hindi, English"
+    assert w["emergency_contact"].startswith("Lakshmi") and w["identification_mark"] == "Scar on left hand"
+    assert w["vision_normal"] is False and w["vision_problem"] == "Needs glasses for reading"
+    assert w["health_normal"] is True and w["health_problem"] == ""
+    assert w["weight_kg"] == 68 and w["height_cm"] == 170 and w["blood_group"] == "B+"
+    assert w["education"] == [{"exam": "SSC", "year": "2012", "school": "ZP High School"}]
+    assert w["experience"] == [{"organization": "L&T", "project_site": "Nuzividu", "category": "Mason",
+                                "period": "2023-2025", "salary": "700/day"}]
+    assert w["certificates_verified"] is True and w["trial_briefed"] is True and w["safety_officer_name"] == "Prasad"
+    # Reading the worker back (as selecting it in the list would) shows every field, not just the summary columns.
+    again = tenant.get("/api/workers?job_id=%d" % j["id"]).json()["workers"][0]
+    assert again == w
+
+
+def test_a_worker_with_only_the_required_fields_is_still_fine(tenant):
+    j = job(tenant)
+    res = tenant.post("/api/workers", json={"job_id": j["id"], "name": "Suresh", "age": 25, "trade": "Fitter"})
+    assert res.status_code == 200, res.text
+    w = res.json()["worker"]
+    assert w["education"] == [] and w["experience"] == [] and w["vision_normal"] is True
+    assert w["certificates_verified"] is False and w["contractor_name"] == ""
+
+
+def test_an_invalid_sex_or_marital_status_is_refused(tenant):
+    j = job(tenant)
+    assert tenant.post("/api/workers", json={"job_id": j["id"], "name": "X", "age": 25, "trade": "Fitter",
+                                             "sex": "Robot"}).status_code == 400
+    assert tenant.post("/api/workers", json={"job_id": j["id"], "name": "X", "age": 25, "trade": "Fitter",
+                                             "marital_status": "Engaged"}).status_code == 400
+
+
+def test_blank_rows_in_education_and_experience_are_dropped(tenant):
+    j = job(tenant)
+    res = tenant.post("/api/workers", json={
+        "job_id": j["id"], "name": "X", "age": 25, "trade": "Fitter",
+        "education": [{"exam": "", "year": "2020", "school": ""}, {"exam": "ITI", "year": "2019", "school": "Govt ITI"}],
+        "experience": [{"organization": "", "project_site": ""}],
+    })
+    assert res.status_code == 200, res.text
+    w = res.json()["worker"]
+    assert w["education"] == [{"exam": "ITI", "year": "2019", "school": "Govt ITI"}]
+    assert w["experience"] == []

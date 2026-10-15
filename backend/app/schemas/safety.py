@@ -59,3 +59,25 @@ class WorkerIn(BaseModel):
     address: Optional[str] = ""
     trade: str
     screened_on: Optional[str] = ""
+    contractor_name: Optional[str] = ""
+    father_name: Optional[str] = ""
+    dob: Optional[str] = ""
+    sex: Optional[str] = ""
+    marital_status: Optional[str] = ""
+    children: Optional[int] = 0
+    mother_tongue: Optional[str] = ""
+    other_languages: Optional[str] = ""
+    emergency_contact: Optional[str] = ""
+    identification_mark: Optional[str] = ""
+    vision_normal: Optional[bool] = True
+    vision_problem: Optional[str] = ""
+    health_normal: Optional[bool] = True
+    health_problem: Optional[str] = ""
+    weight_kg: Optional[float] = 0
+    height_cm: Optional[float] = 0
+    blood_group: Optional[str] = ""
+    education: Optional[list] = None
+    experience: Optional[list] = None
+    certificates_verified: Optional[bool] = False
+    trial_briefed: Optional[bool] = False
+    safety_officer_name: Optional[str] = ""
