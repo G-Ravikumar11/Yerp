@@ -210,7 +210,7 @@ def test_a_revision_goes_up_the_same_line_and_the_owner_may_decide_it(tenant, po
     person(tenant, "project_manager")
     base = priced_order(tenant)
     assert tenant.post("/api/wo/orders/%d/self-approve" % base["id"], json={}).json()["order"]["status"] == "APPROVED"
-    rev = tenant.post("/api/wo/orders/%d/amend" % base["id"], json={}).json()["order"]
+    rev = tenant.post("/api/wo/orders/%d/amend" % base["id"], json={"comments": "More quantity"}).json()["order"]
     assert rev["status"] == "DRAFT"
     assert "SUBMIT" in rev["actions"]
     sent = tenant.post("/api/wo/orders/%d/submit" % rev["id"], json={})

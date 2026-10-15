@@ -42,6 +42,9 @@ export interface Guarantee {
   completion_date: string
   defect_liability_months: number
   state: string
+  number?: string
+  bank?: string
+  order_status?: string
 }
 
 export interface Advance {

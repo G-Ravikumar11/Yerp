@@ -303,7 +303,7 @@ def test_an_amendment_supersedes_rather_than_edits(tenant):
     order = priced(tenant)
     tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
     tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
-    res = tenant.post("/api/wo/orders/%d/amend" % order["id"], json={})
+    res = tenant.post("/api/wo/orders/%d/amend" % order["id"], json={"comments": "More quantity"})
     assert res.status_code == 200, res.text
     revision = res.json()["order"]
 
@@ -318,7 +318,7 @@ def test_an_amendment_supersedes_rather_than_edits(tenant):
     # Live until the revision is approved - the site keeps measuring meanwhile.
     original = tenant.get("/api/wo/orders/%d" % order["id"]).json()["order"]
     assert original["status"] == "APPROVED"
-    assert tenant.post("/api/wo/orders/%d/amend" % order["id"], json={}).status_code == 409, \
+    assert tenant.post("/api/wo/orders/%d/amend" % order["id"], json={"comments": "More quantity"}).status_code == 409, \
         "one revision at a time"
 
     tenant.post("/api/wo/orders/%d/submit" % revision["id"], json={})
@@ -332,7 +332,7 @@ def test_a_superseded_order_prints_as_superseded(tenant):
     order = priced(tenant)
     tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
     tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
-    rev = tenant.post("/api/wo/orders/%d/amend" % order["id"], json={}).json()["order"]
+    rev = tenant.post("/api/wo/orders/%d/amend" % order["id"], json={"comments": "More quantity"}).json()["order"]
     tenant.post("/api/wo/orders/%d/submit" % rev["id"], json={})
     tenant.post("/api/wo/orders/%d/approve" % rev["id"], json={})
     doc = tenant.get("/api/wo/orders/%d/document" % order["id"]).json()
@@ -632,7 +632,7 @@ def test_an_amendment_carries_the_cost_centres_across(tenant):
     tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
     tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
     revision = tenant.post("/api/wo/orders/%d/amend" % order["id"],
-                           json={}).json()["order"]
+                           json={"comments": "More quantity"}).json()["order"]
     assert all(i["budget_id"] == budget["id"] for i in revision["items"])
 
 
@@ -730,7 +730,7 @@ def test_an_amendment_keeps_the_commercial_terms(tenant):
     tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
     tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
     revision = tenant.post("/api/wo/orders/%d/amend" % order["id"],
-                           json={}).json()["order"]
+                           json={"comments": "More quantity"}).json()["order"]
     assert revision["retention_percent"] == 5
     assert revision["mobilization_advance_percent"] == 10
     assert revision["advance_recovery_percent"] == 20

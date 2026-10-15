@@ -80,12 +80,71 @@ def resolve_order_id(db, client_id, order_id):
     return order.id
 
 
-def purchase_order_to_dict(db, o, include_chain=False):
-    submitter = db.query(models.DBEmployee).filter(
-        models.DBEmployee.id == o.submitted_by).first() if o.submitted_by else None
-    job = db.query(models.DBJob).filter(models.DBJob.id == o.job_id).first() if o.job_id else None
-    billed = db.query(models.DBBill).filter(
-        models.DBBill.purchase_order_id == o.id).all()
+def _in_chunks(db, column, values, extra=()):
+    """Rows whose column is in values, asked for in pieces so a long list never hits a database's parameter limit."""
+    values = list(values)
+    out = []
+    for i in range(0, len(values), 500):
+        out.extend(db.query(column.class_).filter(column.in_(values[i:i + 500]), *extra).all())
+    return out
+
+
+class OrderPrefetch:
+    """What the order list and the three-way match read for each order - its project, submitter, lines, bills and
+    receipts - fetched for the whole list at once. Asked for one order at a time that was six or more queries an
+    order, and a list is up to 500 of them."""
+
+    def __init__(self, db, orders):
+        ids = [o.id for o in orders]
+        job_ids = {o.job_id for o in orders if o.job_id}
+        who = {o.submitted_by for o in orders if o.submitted_by}
+        self.jobs = {j.id: j for j in _in_chunks(db, models.DBJob.id, job_ids)}
+        self.submitters = {e.id: e for e in _in_chunks(db, models.DBEmployee.id, who)}
+        self.lines, self.all_bills, self.receipts = {}, {}, {}
+        for l in sorted(_in_chunks(db, models.DBPurchaseOrderLineItem.order_id, ids), key=lambda x: x.id):
+            self.lines.setdefault(l.order_id, []).append(l)
+        for b in _in_chunks(db, models.DBBill.purchase_order_id, ids):
+            self.all_bills.setdefault(b.purchase_order_id, []).append(b)
+        grn_po = {}
+        for g in _in_chunks(db, models.DBGoodsReceipt.purchase_order_id, ids,
+                            (models.DBGoodsReceipt.status != "CANCELLED",)):
+            self.receipts.setdefault(g.purchase_order_id, []).append(g)
+            grn_po[g.id] = g.purchase_order_id
+        self._received = {}
+        for gl in _in_chunks(db, models.DBGoodsReceiptLine.goods_receipt_id, grn_po):
+            slot = self._received.setdefault(grn_po[gl.goods_receipt_id], {})
+            slot[gl.po_line_id] = slot.get(gl.po_line_id, 0.0) + (gl.accepted_qty or 0.0)
+        live = {b.id: b.purchase_order_id for bs in self.all_bills.values() for b in bs if b.status != "Rejected"}
+        self._billed_lines = {}
+        for bl in _in_chunks(db, models.DBBillLineItem.bill_id, live):
+            key = getattr(bl, "po_line_id", None)
+            if key:
+                slot = self._billed_lines.setdefault(live[bl.bill_id], {})
+                slot[key] = slot.get(key, 0.0) + (bl.qty or 0.0)
+
+    def received(self, po_id):
+        return self._received.get(po_id, {})
+
+    def billed(self, po_id):
+        """The same answer as billed_against_po, from what was fetched."""
+        bills = [b for b in self.all_bills.get(po_id, []) if b.status != "Rejected"]
+        return {"bills": bills,
+                "value": money(sum((b.amount if b.amount else b.total) or 0 for b in bills)),
+                "paid": money(sum(b.amount_paid or 0 for b in bills)),
+                "per_line": self._billed_lines.get(po_id, {})}
+
+
+def purchase_order_to_dict(db, o, include_chain=False, pre=None):
+    if pre is not None:
+        submitter = pre.submitters.get(o.submitted_by) if o.submitted_by else None
+        job = pre.jobs.get(o.job_id) if o.job_id else None
+        billed = pre.all_bills.get(o.id, [])
+    else:
+        submitter = db.query(models.DBEmployee).filter(
+            models.DBEmployee.id == o.submitted_by).first() if o.submitted_by else None
+        job = db.query(models.DBJob).filter(models.DBJob.id == o.job_id).first() if o.job_id else None
+        billed = db.query(models.DBBill).filter(
+            models.DBBill.purchase_order_id == o.id).all()
     row = {
         "id": o.id, "number": o.number,
         "supplier_name": o.supplier_name or "", "supplier_email": o.supplier_email or "",
@@ -110,14 +169,17 @@ def purchase_order_to_dict(db, o, include_chain=False):
 
     # What has physically arrived, alongside what has been billed. An order
     # showing a bill and no receipt is the one worth looking at before paying.
-    got = received_to_date(db, o.id)
-    row["received_total"] = money(sum(
-        got.get(l.id, 0.0) * (l.price or 0)
-        for l in db.query(models.DBPurchaseOrderLineItem).filter(
-            models.DBPurchaseOrderLineItem.order_id == o.id).all()))
-    row["receipt_count"] = db.query(models.DBGoodsReceipt).filter(
-        models.DBGoodsReceipt.purchase_order_id == o.id,
-        models.DBGoodsReceipt.status != "CANCELLED").count()
+    if pre is not None:
+        got, lines = pre.received(o.id), pre.lines.get(o.id, [])
+        row["receipt_count"] = len(pre.receipts.get(o.id, []))
+    else:
+        got = received_to_date(db, o.id)
+        lines = db.query(models.DBPurchaseOrderLineItem).filter(
+            models.DBPurchaseOrderLineItem.order_id == o.id).order_by(models.DBPurchaseOrderLineItem.id).all()
+        row["receipt_count"] = db.query(models.DBGoodsReceipt).filter(
+            models.DBGoodsReceipt.purchase_order_id == o.id,
+            models.DBGoodsReceipt.status != "CANCELLED").count()
+    row["received_total"] = money(sum(got.get(l.id, 0.0) * (l.price or 0) for l in lines))
     row["line_items"] = [{
         "id": l.id, "description": l.description or "",
         "item_code": getattr(l, "item_code", "") or "",
@@ -125,9 +187,7 @@ def purchase_order_to_dict(db, o, include_chain=False):
         "qty": l.qty or 0.0, "price": l.price or 0.0,
         "tax_rate": l.tax_rate or "",
         "received_qty": money(got.get(l.id, 0.0)),
-    } for l in db.query(models.DBPurchaseOrderLineItem).filter(
-        models.DBPurchaseOrderLineItem.order_id == o.id).order_by(
-            models.DBPurchaseOrderLineItem.id).all()]
+    } for l in lines]
     if include_chain:
         row["chain"] = get_approval_chain_history("purchase_order", o.id, db)
     return row

@@ -81,3 +81,32 @@ class WorkerIn(BaseModel):
     certificates_verified: Optional[bool] = False
     trial_briefed: Optional[bool] = False
     safety_officer_name: Optional[str] = ""
+
+
+class CheckItemIn(BaseModel):
+    key: str
+    answer: Optional[str] = ""
+    remarks: Optional[str] = ""
+
+
+class CheckIn(BaseModel):
+    job_id: int
+    form_type: str
+    equipment_no: str
+    specs: Optional[str] = ""
+    location: Optional[str] = ""
+    extinguisher_type: Optional[str] = ""
+    board_type: Optional[str] = ""
+    contractor_name: Optional[str] = ""
+    inspection_date: Optional[str] = ""
+    next_inspection_date: Optional[str] = ""
+    items: list[CheckItemIn]
+    readings: Optional[dict] = None
+    signoffs: Optional[dict] = None
+
+
+class CheckSignoffIn(BaseModel):
+    role: str                         # a sign-off role of the form, or "review" for the client / PMC decision
+    name: str
+    date: Optional[str] = ""
+    decision: Optional[str] = ""      # for "review": accepted | rejected

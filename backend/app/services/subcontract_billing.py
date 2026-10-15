@@ -201,7 +201,7 @@ def recost_sub_bill(db, bill):
     bill.tds_amount = rupees(this_bill * (bill.tds_percent or 0) / 100.0)
     bill.labour_cess_amount = rupees(this_bill * (bill.labour_cess_percent or 0) / 100.0)
     deductions = ((bill.advance_recovery or 0) + (bill.other_deductions or 0) + (bill.back_charges or 0) + bill.retention_amount
-                  + bill.tds_amount + bill.labour_cess_amount)
+                  + bill.tds_amount + bill.labour_cess_amount + (bill.ld_amount or 0))
     bill.net_payable = rupees(gross + bill.gst_amount - deductions)
     bill.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return bill
@@ -215,7 +215,7 @@ def sub_bill_room(bill):
     return money(rupees((bill.this_bill or 0) - (bill.debit_notes or 0))
                  - (bill.advance_recovery or 0) - (bill.other_deductions or 0) - (bill.back_charges or 0)
                  - (bill.retention_amount or 0) - (bill.tds_amount or 0)
-                 - (bill.labour_cess_amount or 0))
+                 - (bill.labour_cess_amount or 0) - (bill.ld_amount or 0))
 
 
 def bill_scan_required():
@@ -244,6 +244,8 @@ def sub_bill_dict(db, bill, detail=False, credits=None):
         "advance_recovery": money(bill.advance_recovery),
         "other_deductions": money(bill.other_deductions),
         "back_charges": money(bill.back_charges),
+        "ld_amount": money(bill.ld_amount), "ld_note": bill.ld_note or "",
+        "ld_set_by_hand": bool(bill.ld_set_by_hand), "override_note": bill.override_note or "",
         "deduction_notes": bill.deduction_notes or "",
         "gst_percent": bill.gst_percent or 0, "gst_amount": money(bill.gst_amount),
         "cgst_amount": money(bill.cgst_amount), "sgst_amount": money(bill.sgst_amount),
@@ -299,6 +301,13 @@ def sub_bill_dict(db, bill, detail=False, credits=None):
         row["credit_notes"] = credit["credit_notes"]
         # What would make paying them unsafe - a lapsed licence, a missing registration - shown where the bill is read.
         row["compliance_warnings"] = contractor_compliance(db, bill.client_id, bill.contractor_id)["warnings"]
+        from app.services.subcontract_rules import bill_boq_overbilling, compliance_problems, ld_due
+        # What would stop it being certified or paid: said where the bill is read, before anybody presses the button.
+        row["compliance_blocks"] = compliance_problems(db, bill.client_id, bill.contractor_id)
+        row["boq_warnings"] = bill_boq_overbilling(db, bill) if (bill.status or "") in ("DRAFT", "SUBMITTED") else []
+        if order is not None and (bill.status or "") == "DRAFT":
+            due, why = ld_due(db, order, bill)
+            row["ld_worked"] = {"amount": due, "why": why}
         row["open_back_charges"] = [{"id": c.id, "number": c.number, "kind": c.kind, "reason": c.reason, "amount": money(c.amount)}
                                     for c in db.query(models.DBBackCharge).filter(
                                         models.DBBackCharge.client_id == bill.client_id,
@@ -340,7 +349,9 @@ def sub_bill_dict(db, bill, detail=False, credits=None):
                                 "value": money(order.net_order_value),
                                 "retention_percent": order.retention_percent or 0,
                                 "commencement_date": order.commencement_date or "",
-                                "completion_date": order.completion_date or ""} if order else {})
+                                "completion_date": order.completion_date or "",
+                                "ld_percent_per_week": order.ld_percent_per_week or 0,
+                                "ld_cap_percent": order.ld_cap_percent or 0} if order else {})
     return row
 
 
@@ -612,6 +623,21 @@ def sub_advance_recovery(db, order, bill, asked=None):
     return money(max(0.0, min(instalment, balance, bearable)))
 
 
+def apply_ld(db, order, bill):
+    """Put the liquidated damages worked out for this bill on it - unless somebody set the figure by hand - never
+    more than the bill can bear after everything else taken off it."""
+    if bill.ld_set_by_hand:
+        return
+    from app.services.subcontract_rules import ld_due
+    bill.ld_amount = 0.0
+    recost_sub_bill(db, bill)
+    due, why = ld_due(db, order, bill)
+    bearable = max(0.0, money(sub_bill_room(bill) - 0.5))
+    bill.ld_amount = money(min(due, bearable))
+    bill.ld_note = (why + ("" if bill.ld_amount >= due else "; %s of it waits for the next bill" % inr(due - bill.ld_amount)))[:300] if due else ""
+    recost_sub_bill(db, bill)
+
+
 def sub_bill_chain_rows(db, bill_id):
     return chain_rows(db, "sub_bill", bill_id)
 
@@ -872,10 +898,14 @@ def release_dict(db, r, settled=None):
         "place_of_supply": r.place_of_supply or "",
         "net_amount": money(r.net_amount),
         "settled": money(got),
-        "outstanding": money(max(0.0, (r.net_amount or 0) - got)) if r.status != "CANCELLED" else 0.0,
+        # Owed only once certified: one waiting for its second signature is not yet anybody's debt.
+        "outstanding": money(max(0.0, (r.net_amount or 0) - got)) if r.status in ("CERTIFIED", "PAID") else 0.0,
         "status": r.status or "CERTIFIED", "notes": r.notes or "",
         "cancel_reason": r.cancel_reason or "",
         "created_by_name": r.created_by_name or "", "paid_at": r.paid_at or "",
+        "certified_by_name": r.certified_by_name or "", "certified_at": r.certified_at or "",
+        "override_note": r.override_note or "",
+        "can_certify": (r.status or "") == "SUBMITTED",
         "created_at": r.created_at or "",
     }
 
@@ -955,14 +985,17 @@ def retention_positions(db, client_id, today=None):
         o = orders.get(order_id)
         job = jobs.get(o.job_id if o else bills[0].job_id)
         con = contractors.get(o.contractor_id if o else bills[0].contractor_id)
-        # The defects period runs from the order's completion; the second
-        # half is theirs once it has run out.
-        ends = months_after(o.completion_date, o.defect_liability_months) \
-            if o and o.completion_date and (o.defect_liability_months or 0) > 0 else ""
+        # The defects period runs from when the work actually finished - recorded when the order is closed - and
+        # until then from the date it was due to; the second half is theirs once it has run out.
+        finished = (o.actual_completion_date or o.completion_date) if o else ""
+        ends = months_after(finished, o.defect_liability_months) \
+            if o and finished and (o.defect_liability_months or 0) > 0 else ""
         position("contractor", order_id, (o.wo_number if o else ""), job,
                  con.company_name if con else "", bills, lambda b: b.gst_percent, released,
                  {"contractor_id": con.id if con else None, "dlp_ends": ends,
                   "dlp_months": (o.defect_liability_months or 0) if o else 0,
+                  "order_status": (o.status or "") if o else "",
+                  "actual_completion_date": (o.actual_completion_date or "") if o else "",
                   "dlp_over": bool(ends and ends <= today.isoformat())})
 
     out.sort(key=lambda r: (r["side"] != "client", -r["balance"]))

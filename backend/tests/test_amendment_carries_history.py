@@ -21,7 +21,7 @@ def certified_bill(tenant, order_id, item_id, qty):
 
 
 def revise(tenant, order_id, boq):
-    rev = tenant.post("/api/wo/orders/%d/amend" % order_id, json={})
+    rev = tenant.post("/api/wo/orders/%d/amend" % order_id, json={"comments": "More quantity"})
     assert rev.status_code == 200, rev.text
     rev = rev.json()["order"]
     put = tenant.put("/api/wo/orders/%d/boq" % rev["id"], json=boq)

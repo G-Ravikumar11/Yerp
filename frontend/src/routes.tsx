@@ -23,6 +23,7 @@ export const SCREENS: Screen[] = [
   { path: '/approvals', Component: lazy(() => import('@/features/approvals/ApprovalsPage')) },
   { path: '/subcontractors/vendors', Component: lazy(() => import('@/features/vendors/VendorsPage')) },
   { path: '/subcontractors/compliance', Component: lazy(() => import('@/features/compliance/CompliancePage')) },
+  { path: '/subcontractors/registers', Component: lazy(() => import('@/features/orders/RegistersPage')) },
   { path: '/subcontractors/ra-bills', Component: lazy(() => import('@/features/subbills/RaBillsPage')) },
   { path: '/subcontractors/ra-bills/:id', Component: lazy(() => import('@/features/subbills/BillPage')) },
   { path: '/subcontractors/work-orders/:id', Component: lazy(() => import('@/features/orders/OrderPage')) },

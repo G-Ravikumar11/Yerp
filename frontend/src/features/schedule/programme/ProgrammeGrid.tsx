@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { ChevronDown, ChevronRight, GripVertical, Info } from 'lucide-react'
+import { ChevronDown, ChevronRight, GripVertical, Info, Plus } from 'lucide-react'
 import { calendarOf, type EditableField, type ProgrammeRowView, type ProgrammeView } from '@/api/programme'
 import { toDay } from '@/lib/programme'
 import { formatDate, today as todayIso } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { ROW_H, editableCell, type Col } from './columns'
-import { daysOff, monthBands, scaleFor, ticks, xOf, type Zoom } from './gantt'
+import { daysOff, monthBands, scaleFor, shortDate, ticks, xOf, type Zoom } from './gantt'
 
 const HEAD_H = 52
 
@@ -58,6 +58,8 @@ export interface GridProps {
   onUndo: () => void
   onRedo: () => void
   onAddAfter: (id: number | null) => void
+  /** A sub-item under the row (the + beside its name). */
+  onAddChild?: (id: number) => void
   onDelete: (id: number) => void
   onDetail: (id: number) => void
   onDrop: (dragId: number, targetId: number, asChild: boolean) => void
@@ -187,7 +189,8 @@ export function ProgrammeGrid(p: GridProps) {
       style={{ height: p.height }}
     >
       <div className="relative" style={{ width: left + scale.width, height: HEAD_H + bodyH }}>
-        {/* days off and today, behind the bars */}
+        {/* days off, a faint line down from each date in the header, and today, behind the bars */}
+        {(p.zoom === 'month' ? months : marks).map((t) => <div key={`l${t.x}`} aria-hidden className="absolute w-px bg-border/60" style={{ left: left + t.x, top: HEAD_H, height: bodyH }} />)}
         {off.map((x) => <div key={x} aria-hidden className="absolute bg-muted/70" style={{ left: left + x, top: HEAD_H, width: scale.px, height: bodyH }} />)}
         <div aria-hidden className="absolute z-[1] w-0.5 bg-danger/70" style={{ left: left + todayX + scale.px / 2, top: HEAD_H, height: bodyH }} title="Today" />
 
@@ -195,12 +198,12 @@ export function ProgrammeGrid(p: GridProps) {
         <div className="sticky top-0 z-30 flex" style={{ height: HEAD_H, width: left + scale.width }}>
           {blocks.map(([a, b], blk) => (<div key={blk} className={cn('flex border-b border-r border-border bg-surface', blk === 0 ? 'z-50' : 'z-40', (blk === 0 || !narrow) && 'sticky')} style={{ width: cols.slice(a, b).reduce((s, c) => s + c.w, 0), left: blk === 0 ? 0 : frozenW }}>
             {cols.slice(a, b).map((c) => (
-              <div key={c.id} role="columnheader" className={cn('flex items-end border-r border-border px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground', c.align === 'right' && 'justify-end')} style={{ width: c.w }}>{c.label}</div>
+              <div key={c.id} role="columnheader" title={c.hint} className={cn('flex items-end border-r border-border px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground', c.align === 'right' && 'justify-end')} style={{ width: c.w }}>{c.label}</div>
             ))}
           </div>))}
           <div className="relative border-b border-border bg-surface" style={{ width: scale.width }}>
-            {months.map((m) => <div key={m.x} className="absolute top-0 h-6 truncate border-l border-border px-1.5 pt-1 text-[11px] font-semibold" style={{ left: m.x, width: m.w }}>{m.label}</div>)}
-            {marks.map((t) => <div key={t.x} className="absolute bottom-0 h-6 border-l border-border/60 pt-1 text-center text-[10px] text-muted-foreground" style={{ left: t.x, width: p.zoom === 'day' ? scale.px : scale.px * 7 }}>{t.label}</div>)}
+            {months.map((m) => <div key={m.x} className="absolute top-0 h-6 truncate border-l border-border px-1.5 pt-1 text-[12px] font-semibold text-foreground" style={{ left: m.x, width: m.w }}>{m.label}</div>)}
+            {marks.map((t) => <div key={t.x} className={cn('absolute bottom-0 h-6 whitespace-nowrap border-l border-border pt-1 text-[11px] font-medium text-foreground/80', p.zoom === 'day' ? 'text-center' : 'pl-1')} style={{ left: t.x, width: p.zoom === 'day' ? scale.px : scale.px * 7 }} title={t.title}>{t.label}</div>)}
           </div>
         </div>
 
@@ -216,7 +219,7 @@ export function ProgrammeGrid(p: GridProps) {
               key={r.id}
               role="row"
               aria-rowindex={vi.index + 1}
-              className={cn('absolute left-0 flex border-b border-border/60', dropAt === r.id && 'border-t-2 border-t-primary')}
+              className={cn('group/row absolute left-0 flex border-b border-border/60', dropAt === r.id && 'border-t-2 border-t-primary')}
               style={{ top: vi.start, height: ROW_H, width: left + scale.width }}
               onDragOver={(ev) => { if (dragId !== null) { ev.preventDefault(); setDropAt(r.id) } }}
               onDragLeave={() => setDropAt((d) => (d === r.id ? null : d))}
@@ -232,7 +235,7 @@ export function ProgrammeGrid(p: GridProps) {
                       key={c.id}
                       role="gridcell"
                       aria-selected={active}
-                      className={cn('relative flex items-center overflow-hidden border-r border-border/60 px-2', c.align === 'right' && 'justify-end tabular-nums', active && 'outline outline-2 -outline-offset-2 outline-primary', !editable && c.kind !== null && 'text-muted-foreground', c.id === 'wbs' && 'font-mono text-[11.5px]')}
+                      className={cn('relative flex items-center border-r border-border/60 px-2', active && editing !== null && c.kind === 'date' ? 'z-10 overflow-visible' : 'overflow-hidden', c.align === 'right' && 'justify-end tabular-nums', active && 'outline outline-2 -outline-offset-2 outline-primary', !editable && c.kind !== null && 'text-muted-foreground', c.id === 'wbs' && 'font-mono text-[11.5px]')}
                       style={{ width: c.w }}
                       onMouseDown={() => { if (editing !== null) commit(); p.setActive({ r: vi.index, c: ci }) }}
                       onDoubleClick={() => { p.setActive({ r: vi.index, c: ci }); if (editable) setEditing(raw(c, r)); else if (c.id === 'wbs') p.onDetail(r.id) }}
@@ -252,7 +255,9 @@ export function ProgrammeGrid(p: GridProps) {
                             else if (ev.key === 'Tab') { ev.preventDefault(); commit([0, ev.shiftKey ? -1 : 1]) }
                             else if (ev.key === 'Escape') { ev.preventDefault(); setEditing(null); requestAnimationFrame(() => scrollRef.current?.focus()) }
                           }}
-                          className="absolute inset-0 w-full bg-background px-2 text-[12.5px] outline-none"
+                          className={cn('absolute inset-y-0 left-0 bg-background px-2 text-[12.5px] outline-none',
+                            // a date needs more room than its cell: the box opens wider, over the next cell, so the year shows
+                            c.kind === 'date' ? 'w-[160px] rounded-sm border border-primary shadow-lg' : 'right-0')}
                         />
                       ) : c.id === 'wbs' ? (
                         <span className="flex items-center gap-0.5">
@@ -276,6 +281,13 @@ export function ProgrammeGrid(p: GridProps) {
                             </button>
                           ) : <span className="w-4 shrink-0" />}
                           <span className={cn('truncate', r.critical && p.showCritical && !r.summary && 'text-danger')} title={r.description || r.name}>{r.name}</span>
+                          {p.editable && p.onAddChild && (
+                            <button type="button" className={cn('grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-primary focus:opacity-100', !on && 'opacity-0 group-hover/row:opacity-100')}
+                              aria-label={`Add a sub-item under ${r.name}`} title="Add a sub-item under this row: break it into steps, each with its own dates"
+                              onMouseDown={(ev) => ev.stopPropagation()} onClick={() => p.onAddChild!(r.id)}>
+                              <Plus className="size-3.5" />
+                            </button>
+                          )}
                           <button type="button" className={cn('grid size-5 shrink-0 place-items-center rounded hover:bg-accent', r.problem ? 'text-danger' : r.description ? 'text-muted-foreground' : 'text-muted-foreground/40 hover:text-muted-foreground')} aria-label={`Details of ${r.name}`} title={r.problem || 'Full description, links, progress and settings'} onMouseDown={(ev) => ev.stopPropagation()} onClick={() => p.onDetail(r.id)}>
                             <Info className="size-3.5" />
                           </button>
@@ -310,6 +322,12 @@ export function ProgrammeGrid(p: GridProps) {
                     </div>
                   </>
                 ))}
+                {s !== null && e !== null && (
+                  <span className={cn('pointer-events-none absolute top-[8px] whitespace-nowrap text-[11px] leading-[15px]', r.summary ? 'font-semibold text-foreground/85' : 'text-muted-foreground')}
+                    style={{ left: xOf(scale, e) + scale.px + (r.milestone ? 8 : 5) }}>
+                    {s === e ? shortDate(r.start!) : `${shortDate(r.start!)} - ${shortDate(r.end!)}`}
+                  </span>
+                )}
               </div>
             </div>
           )

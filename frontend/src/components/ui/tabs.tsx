@@ -1,12 +1,15 @@
 import { motion } from 'framer-motion'
 import { useId } from 'react'
 import { cn } from '@/lib/utils'
+import { InfoTip } from './info'
 
 export interface TabItem<V extends string> {
   value: V
   label: string
   /** A count, shown quietly beside the label. */
   count?: number
+  /** A few lines on what this tab holds, shown from an (i) beside the tabs while it is the chosen one. */
+  info?: string
 }
 
 /**
@@ -16,7 +19,7 @@ export interface TabItem<V extends string> {
 export function Tabs<V extends string>({ items, value, onChange, label, size = 'md' }: { items: readonly TabItem<V>[]; value: V; onChange: (v: V) => void; label: string; size?: 'md' | 'lg' }) {
   const id = useId()
   const lg = size === 'lg'
-  return (
+  const list = (
     <div role="tablist" aria-label={label} className={cn('flex gap-1 overflow-x-auto bg-muted', lg ? 'w-fit rounded-xl p-1' : 'rounded-xl p-1')}>
       {items.map((t) => {
         const on = t.value === value
@@ -41,6 +44,15 @@ export function Tabs<V extends string>({ items, value, onChange, label, size = '
           </button>
         )
       })}
+    </div>
+  )
+  const current = items.find((t) => t.value === value)
+  if (!items.some((t) => t.info)) return list
+  // The (i) explains the tab that is open, so it sits beside the row and follows the choice.
+  return (
+    <div className="flex max-w-full items-center gap-2">
+      <div className="min-w-0">{list}</div>
+      {current?.info && <InfoTip title={current.label}>{current.info}</InfoTip>}
     </div>
   )
 }

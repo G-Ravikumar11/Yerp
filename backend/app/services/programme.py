@@ -226,6 +226,14 @@ def add_rows(db, client, job, anchor_id, position, rows):
     if position == "after" and anchor is not None:
         at = next(i for i, a in enumerate(sibs) if a.id == anchor.id)
         before = sibs[at + 1].id if at + 1 < len(sibs) else None
+    # The first sub-item of a row with a plan takes the plan over: a row with sub-items takes its dates from them, so
+    # without this the row would lose its dates the moment it was broken into steps.
+    takes_over = None
+    if position == "child" and not sibs:
+        waits = bool(anchor.depends_on_id) or db.query(models.DBScheduleLink.id).filter(
+            models.DBScheduleLink.activity_id == anchor.id).first() is not None
+        if _d(anchor.planned_start) or anchor.duration_days or waits:
+            takes_over = anchor
     made = []
     for spec in rows or [{}]:
         a = models.DBScheduleActivity(client_id=client.id, job_id=job.id, name=(spec.get("name") or "New activity")[:200])
@@ -234,6 +242,12 @@ def add_rows(db, client, job, anchor_id, position, rows):
         acts.append(a)
         _place(acts, a, parent, before)
         made.append(a)
+        if takes_over is not None and len(made) == 1 and not {"start", "end", "days", "predecessors"} & set(spec):
+            a.planned_start, a.planned_finish = takes_over.planned_start, takes_over.planned_finish
+            a.duration_days, a.not_before = takes_over.duration_days, takes_over.not_before
+            db.query(models.DBScheduleLink).filter(models.DBScheduleLink.activity_id == takes_over.id).update(
+                {models.DBScheduleLink.activity_id: a.id}, synchronize_session=False)
+            a.depends_on_id, takes_over.depends_on_id = takes_over.depends_on_id, None
         if spec:
             edit_rows(db, client, job, [{"id": a.id, **{k: v for k, v in spec.items() if k != "name"}}], check=False)
     _check_loops(db, client, job, {a.id for a in made})

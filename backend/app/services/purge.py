@@ -103,6 +103,7 @@ POLY = {
     "plant_expenses": {"files": ["plant_expense"]},
     "plant_fuel": {"files": ["plant_fuel"]},
     "worker_screenings": {"files": ["worker"]},
+    "equipment_checks": {"files": ["equipment_check"]},
 }
 
 # Kept, with the link to the project cleared, when a project goes: they exist before and apart from it.

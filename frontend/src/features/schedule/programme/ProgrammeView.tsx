@@ -3,10 +3,11 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Bookmark, CalendarDays, ChevronsDownUp, ChevronsUpDown, Copy, CopyPlus, Columns3, FileDown, FileSpreadsheet, FileUp, IndentDecrease, IndentIncrease, ListPlus, ListTree, Plus, Redo2, Trash2, Undo2, Zap } from 'lucide-react'
 import { Button, ConfirmDialog, Skeleton, Tabs, Tooltip } from '@/components/ui'
 import {
-  addHoliday, addPublicHolidays, addRows, saveBaseline, copyUnits, deleteRow, duplicateRow, editRows, moveRow, programmeKeys, recompute, removeHoliday,
+  addHoliday, addPublicHolidays, addRows, calendarOf, saveBaseline, copyUnits, deleteRow, duplicateRow, editRows, moveRow, programmeKeys, recompute, removeHoliday,
   loadProgramme, programmeFileUrl, restoreProgramme, setCalendar, snapshotOf, useProgramme, type EditableField, type ProgrammeRowView, type ProgrammeView as View, type RowChange, type Snapshot,
 } from '@/api/programme'
 import { setProgress } from '@/api/schedule'
+import { toDay } from '@/lib/programme'
 import { ApiError } from '@/lib/api'
 import { formatDate } from '@/lib/format'
 import { useSession } from '@/lib/session'
@@ -75,7 +76,16 @@ export function ProgrammeView({ job }: { job: number }) {
 
   // SL.NO as wide as the deepest number needs (1.1.2.1 is wider than 1)
   const wbsWidth = useMemo(() => Math.max(70, 34 + 7 * Math.max(0, ...(v?.rows ?? []).map((r) => r.wbs.length))), [v])
-  const columns = useMemo(() => COLUMNS.filter((c) => !compact || !c.extra).map((c) => (c.id === 'wbs' ? { ...c, w: wbsWidth } : c)), [compact, wbsWidth])
+  // Days are working days unless the project counts every day: the column says which, and what it skips
+  const countsEveryDay = !!v?.calendar.calendar_days
+  const columns = useMemo(() => COLUMNS.filter((c) => !compact || !c.extra).map((c) => (
+    c.id === 'wbs' ? { ...c, w: wbsWidth }
+      : c.id === 'days' ? (countsEveryDay
+        ? { ...c, label: 'Days', hint: 'Every day counts, Sundays and holidays too (Calendar: count calendar days)' }
+        : { ...c, label: 'Working days', w: 72, hint: 'Working days: Sundays and the project’s holidays are not counted. To count every day, open Calendar and tick "Count calendar days".' })
+        : c)), [compact, wbsWidth, countsEveryDay])
+  // the whole project in working days, beside the sheet's calendar-day count
+  const workingDays = useMemo(() => (v?.start && v.finish && !v.calendar.calendar_days ? calendarOf(v).span(toDay(v.start), toDay(v.finish)) : null), [v])
   const visible = useMemo(() => (v ? shownRows(v.rows, collapsed) : []), [v, collapsed])
   const current = visible[Math.min(active.r, Math.max(0, visible.length - 1))]
   const byId = useMemo(() => new Map((v?.rows ?? []).map((r) => [r.id, r])), [v])
@@ -238,6 +248,11 @@ export function ProgrammeView({ job }: { job: number }) {
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground" title="Calendar days from the first Start to the last End, both counted, as on the sheet">Time duration in days</p>
           <p className="text-2xl font-semibold tabular-nums">{v.duration || '-'}</p>
           <p className="text-xs text-muted-foreground">{v.start ? `${formatDate(v.start)} to ${formatDate(v.finish!)}` : 'No dates yet'}{v.calendar.calendar_days ? ' · calendar days' : ''}</p>
+          {workingDays !== null && (
+            <p className="text-xs text-muted-foreground" title="Sundays and the project's holidays are not working days">
+              {v.duration} calendar days, of which {workingDays} working
+            </p>
+          )}
           {baseFinish && (
             <p className={`text-xs ${slip > 0 ? 'text-danger' : 'text-muted-foreground'}`} title={`Baseline "${v.baseline!.label}" saved ${formatDate(v.baseline!.saved_at.slice(0, 10))}`}>
               Baseline finish {formatDate(baseFinish)}{slip > 0 ? `, now ${slip} day${slip === 1 ? '' : 's'} later` : slip < 0 ? `, now ${-slip} day${slip === -1 ? '' : 's'} earlier` : ', on it'}
@@ -302,6 +317,7 @@ export function ProgrammeView({ job }: { job: number }) {
         onUndo={doUndo}
         onRedo={doRedo}
         onAddAfter={addAfter}
+        onAddChild={addChild}
         onDelete={(id) => setDeleting(byId.get(id) ?? null)}
         onDetail={setDetail}
         onDrop={onDrop}
@@ -309,7 +325,7 @@ export function ProgrammeView({ job }: { job: number }) {
       />}
       <p className="text-xs text-muted-foreground">
         {v.rows.length} rows · Days are working days{v.calendar.calendar_days ? ' (calendar days counted)' : `; ${v.calendar.weekly_off.map((d) => ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][d - 1]).join(', ') || 'no day'} off${v.calendar.holidays.length ? ` and ${v.calendar.holidays.length} holiday${v.calendar.holidays.length === 1 ? '' : 's'}` : ''}`}.
-        {editable && ' Double-click or type to edit; Enter and Tab move on; paste a block straight from Excel.'}
+        {editable && ' Double-click or type to edit; Enter and Tab move on; paste a block straight from Excel. To break a row into steps, press the + beside its name (or select it and press Sub-item): the first step takes over its dates, and the row then runs from its first step to its last.'}
       </p>
 
       <ConfirmDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)} tone="danger" confirmLabel="Delete"

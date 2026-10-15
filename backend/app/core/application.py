@@ -43,6 +43,14 @@ async def lifespan(app: FastAPI):
             with SessionLocal() as db:
                 _fk_map(db)
         _boot_step("read the schema for deletes", lambda: threading.Thread(target=warm, daemon=True).start())
+
+        def warm_holidays():
+            # The festival dates take about a second to work out; done here, nobody's first calendar waits for it.
+            from datetime import datetime
+            from app.routers.holiday_calendar import holidays_for
+            for year in (datetime.now().year, datetime.now().year + 1):
+                holidays_for(year)
+        _boot_step("work out this year's holidays", lambda: threading.Thread(target=warm_holidays, daemon=True).start())
         DB_READY["error"] = ""
         logger.info("Database initialized successfully")
     else:

@@ -529,10 +529,11 @@ def _bill_figures(bill):
     # Back-charges printed with the other recoveries: the certificate has one row for them.
     adv, other = money(bill.advance_recovery), money(money(bill.other_deductions) + money(bill.back_charges))
     ret, tds, cess = money(bill.retention_amount), money(bill.tds_amount), money(bill.labour_cess_amount)
+    ld = money(getattr(bill, "ld_amount", 0) or 0)
     return {"work": work, "mob": 0.0, "mat": 0.0, "debit": debit, "gross": gross,
             "sgst": money(bill.sgst_amount), "cgst": money(bill.cgst_amount), "igst": money(bill.igst_amount),
             "gst": gst, "total": money(gross + gst), "adv": adv, "other": other, "ret": ret, "tds": tds,
-            "cess": cess, "ded": money(adv + other + ret + tds + cess), "net": money(bill.net_payable)}
+            "cess": cess, "ld": ld, "ded": money(adv + other + ret + tds + cess + ld), "net": money(bill.net_payable)}
 
 
 def short_entry_code(entry):
@@ -613,9 +614,14 @@ def sub_bill_certificate(db, client, bill):
         fig("5.03", "Recovery of Retention @ %g %% " % (bill.retention_percent or 0), "ret"),
         fig("5.04", "Tax Deduction at Source @ %.2f%% " % (bill.tds_percent or 0), "tds", "Accounts"),
     ]
+    sl = 5
     if cess_on:
         money_rows.append(fig("5.05", "Labour Welfare Cess @ %g%%" % (bill.labour_cess_percent or 0), "cess", "Accounts"))
-    money_rows.append(fig("5.06" if cess_on else "5.05", "Total Deduction ", "ded", bold=True))
+        sl = 6
+    if this["ld"] or prev["ld"]:
+        money_rows.append(fig("5.%02d" % sl, "Liquidated Damages", "ld"))
+        sl += 1
+    money_rows.append(fig("5.%02d" % sl, "Total Deduction ", "ded", bold=True))
     net_row = fig("", "Net Amount for Payment ", "net", bold=True)
     net_row["span_label"] = True
     money_rows.append(net_row)

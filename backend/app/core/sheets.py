@@ -271,6 +271,27 @@ def sheet_note() -> str:
             % (ctx["sheet"], ", ".join("'%s'" % n for n in others)))
 
 
+def without_junk_names(raw: bytes) -> bytes:
+    """A workbook copied between files again and again collects tens of thousands of defined names (a client's BOQ
+    carried 86,000), and openpyxl spends seconds building every one though a sheet is read for its cells only. When
+    there are that many they are taken out of the workbook before it is opened; a normal file is left as it is."""
+    import re
+    import zipfile
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            xml = z.read("xl/workbook.xml")
+            if xml.count(b"<definedName ") < 2000:
+                return raw
+            xml = re.sub(rb"<definedNames>.*?</definedNames>", b"", xml, flags=re.S)
+            out = io.BytesIO()
+            with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as w:
+                for item in z.infolist():
+                    w.writestr(item, xml if item.filename == "xl/workbook.xml" else z.read(item.filename))
+            return out.getvalue()
+    except Exception:
+        return raw
+
+
 def open_workbook(raw: bytes):
     """The workbook, or a plain refusal saying why it would not open."""
     try:
@@ -280,7 +301,7 @@ def open_workbook(raw: bytes):
             400, "Excel workbooks are not supported on this server yet. "
                  "Save the sheet as CSV and upload that.")
     try:
-        return openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True, keep_links=False)
+        return openpyxl.load_workbook(io.BytesIO(without_junk_names(raw)), read_only=True, data_only=True, keep_links=False)
     except Exception as exc:
         raise HTTPException(400, "That workbook could not be opened (%s)." % exc)
 
@@ -349,6 +370,17 @@ def read_xlsx_outline(raw: bytes, sheet: str = ""):
         book.close()
 
 
+def read_xlsx_table_and_context(raw: bytes, sheet: str = ""):
+    """The rows of one worksheet and the sheet context (see workbook_context), from a single opening of the file."""
+    book = open_workbook(raw)
+    try:
+        worksheet, chosen = pick_sheet(book, sheet)
+        table = [[cell_text(c) for c in row] for row in worksheet.iter_rows(values_only=True)]
+        return table, {"sheet": chosen, "sheets": list(book.sheetnames)}
+    finally:
+        book.close()
+
+
 def read_xlsx_table(raw: bytes, sheet: str = ""):
     """Rows from one worksheet, as strings."""
     book = open_workbook(raw)
@@ -406,12 +438,12 @@ async def read_sheet_rows(upload: UploadFile, sheet: str = ""):
             import_guard.check_workbook_bytes(raw, upload.filename)
         except ValueError as exc:
             raise HTTPException(400, str(exc))
-        table = read_xlsx_table(raw, sheet)
         # Remembered so a complaint further down can say which of a workbook's
         # tabs it was actually looking at. Being told a column is missing is
         # no use at all when the file has eight sheets and you never got to
-        # say which one you meant.
-        _SHEET_CONTEXT.set(workbook_context(raw, sheet))
+        # say which one you meant. One opening of the workbook gives both.
+        table, context = read_xlsx_table_and_context(raw, sheet)
+        _SHEET_CONTEXT.set(context)
     else:
         _SHEET_CONTEXT.set(None)
         try:

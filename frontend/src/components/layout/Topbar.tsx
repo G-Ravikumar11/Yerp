@@ -10,7 +10,8 @@ import { initials, useSession } from '@/lib/session'
 import { cn } from '@/lib/utils'
 import { type Theme, useUI } from '@/stores/ui'
 import { useState } from 'react'
-import { ConfirmDialog, Skeleton, Tooltip } from '@/components/ui'
+import { ConfirmDialog, InfoTip, Skeleton, Tooltip } from '@/components/ui'
+import { infoFor } from '@/lib/pageInfo'
 import { NotificationBell } from './NotificationBell'
 import { SyncIndicator } from './SyncIndicator'
 import { ActivityIndicator } from './ActivityIndicator'
@@ -20,7 +21,9 @@ function Breadcrumbs() {
   const { pathname } = useLocation()
   const { user } = useSession()
   const trail = trailFor(pathname, user?.type === 'employee')
+  const info = infoFor(pathname)
   return (
+    <div className="flex min-w-0 items-center gap-1.5">
     <nav aria-label="Breadcrumb" className="min-w-0">
       <ol className="flex items-center gap-1.5 text-[13px]">
         {trail.map((crumb, i) => {
@@ -44,6 +47,8 @@ function Breadcrumbs() {
         })}
       </ol>
     </nav>
+    {info && <InfoTip title={trail[trail.length - 1]?.label ?? ''}>{info}</InfoTip>}
+    </div>
   )
 }
 

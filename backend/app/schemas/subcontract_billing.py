@@ -100,6 +100,9 @@ class SubBillEditIn(BaseModel):
     advance_recovery: Optional[float] = None
     other_deductions: Optional[float] = None      # besides material recovered, which stays
     deduction_notes: Optional[str] = None
+    # Liquidated damages: worked out from the order's completion date; changed here only with the reason why.
+    ld_amount: Optional[float] = None
+    ld_note: Optional[str] = None
 
 
 class RetentionReleaseIn(BaseModel):
@@ -110,3 +113,6 @@ class RetentionReleaseIn(BaseModel):
     release_on: Optional[str] = ""
     gst_percent: Optional[float] = None
     notes: Optional[str] = ""
+    # Release it although a check says not yet - the defects period still running, a back-charge open. The notes
+    # then say why.
+    override: Optional[bool] = False

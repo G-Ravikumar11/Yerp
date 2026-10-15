@@ -68,6 +68,18 @@ def month_usage(db, client_id, action_key):
     return sum(r.quantity or 1 for r in rows)
 
 
+def month_usage_all(db, client_id):
+    """Units consumed this calendar month for every action at once: one query, not one per pricing rule."""
+    prefix = datetime.now().strftime("%Y-%m")
+    used = {}
+    for key, qty in db.query(models.DBWalletTransaction.action_key, models.DBWalletTransaction.quantity).filter(
+            models.DBWalletTransaction.client_id == client_id,
+            models.DBWalletTransaction.direction == "debit",
+            models.DBWalletTransaction.created_at.like(prefix + "%")):
+        used[key] = used.get(key, 0) + (qty or 1)
+    return used
+
+
 def quote_action(db, client_id, action_key, quantity=1):
     """What an action would cost right now, after any free allowance.
 
@@ -189,12 +201,13 @@ def wallet_state(db, client, include_rules=True):
         if not rules:
             rules = seed_pricing_rules(db)
             db.commit()
+        usage = month_usage_all(db, client.id)
         data["pricing"] = [{
             "action_key": r.action_key, "label": r.label, "description": r.description,
             "module": r.module,
             "unit_price": to_major(r.unit_price_minor, r.currency),
             "free_allowance": r.free_allowance,
-            "used_this_month": month_usage(db, client.id, r.action_key),
+            "used_this_month": usage.get(r.action_key, 0),
         } for r in rules]
     return data
 

@@ -29,6 +29,10 @@ os.environ.setdefault("SUPERADMIN_PASSWORD", "TestSuper123")
 os.environ.setdefault("SUPERADMIN_EMAILS", "hello@billing.com")
 # The suite's bills have no paper behind them; the rule that one must is tested where it matters.
 os.environ.setdefault("REQUIRE_BILL_SCAN", "0")
+# Nor do its contractors hold labour licences, or (mostly) PANs: the rules that refuse to pay them, or that set TDS at
+# the statutory rate, are switched back on in test_subcontract_controls.py where they are what is being tested.
+os.environ.setdefault("REQUIRE_CONTRACTOR_COMPLIANCE", "0")
+os.environ.setdefault("ENFORCE_STATUTORY_TDS", "0")
 # Hashing a password costs real time on purpose; the suite hashes thousands.
 os.environ.setdefault("PASSWORD_ITERATIONS", "1000")
 # Tests drive run_due_jobs() directly; a loop ticking in the background would

@@ -37,7 +37,7 @@ def test_an_approved_order_goes_with_its_measurements_and_bills(tenant):
 
 def test_a_revision_takes_the_whole_chain_with_it(tenant):
     order = live_order(tenant, pay_advance=False)
-    rev = tenant.post("/api/wo/orders/%d/amend" % order["id"], json={}).json()["order"]
+    rev = tenant.post("/api/wo/orders/%d/amend" % order["id"], json={"comments": "More quantity"}).json()["order"]
     prev = tenant.get("/api/wo/orders/%d/delete-preview" % rev["id"]).json()
     assert prev["counts"]["versions"] == 2
     assert tenant.delete("/api/wo/orders/%d" % rev["id"]).status_code == 200
@@ -84,7 +84,7 @@ def test_delete_all_needs_the_phrase_then_clears_every_work_order(tenant):
     from test_work_order_pricing import fg, job
     live_order(tenant, mobilization_advance_percent=10)
     sub = live_order(tenant, pay_advance=False)
-    tenant.post("/api/wo/orders/%d/amend" % sub["id"], json={})
+    tenant.post("/api/wo/orders/%d/amend" % sub["id"], json={"comments": "More quantity"})
     tenant.post("/api/erp/work-orders/build", json={
         "job_id": job(tenant)["id"], "reference": "PO/ALL/1",
         "lines": [{"code": fg(tenant), "qty": 10, "rate": 500}]})

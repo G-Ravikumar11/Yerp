@@ -45,6 +45,7 @@ const STATUS_TONE: Record<string, BadgeProps['tone']> = {
   REJECTED: 'danger',
   CANCELLED: 'danger',
   AMENDED: 'neutral',
+  CLOSED: 'neutral',
 }
 
 export function StatusBadge({ status }: { status: string }) {

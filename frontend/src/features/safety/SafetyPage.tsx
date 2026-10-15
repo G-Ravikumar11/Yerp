@@ -14,11 +14,13 @@ import { formatDate } from '@/lib/format'
 import { IncidentModal } from './IncidentModal'
 import { PermitModal } from './PermitModal'
 import { SafeDays } from './SafeDays'
+import { ChecksTab } from './ChecksTab'
 import { WorkersTab } from './WorkersTab'
+import { HseTab } from './HseTab'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
-type Tab = 'incidents' | 'talks' | 'permits' | 'safe'
-type View = 'workers' | 'safety'
+type Tab = 'incidents' | 'talks' | 'permits' | 'safe' | 'checks'
+type View = 'workers' | 'safety' | 'hse'
 
 /**
  * Workers and Safety: two tabs. Workers is the screening of every worker before they start; Safety is incidents and near misses with their cause
@@ -28,7 +30,7 @@ type View = 'workers' | 'safety'
 export default function SafetyPage() {
   const { can } = useSession()
   const [params, setParams] = useSearchParams()
-  const view: View = params.get('view') === 'safety' ? 'safety' : 'workers'
+  const view: View = params.get('view') === 'safety' ? 'safety' : params.get('view') === 'hse' ? 'hse' : 'workers'
   const setView = (v: View) => setParams((p) => { const n = new URLSearchParams(p); n.set('view', v); return n }, { replace: true })
   const [job, setJob] = useState(0)
   const [tab, setTab] = useState<Tab>('incidents')
@@ -96,18 +98,25 @@ export default function SafetyPage() {
     },
     { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="permit" id={r.id} label={String(r.number)} noun="permit" /> },
   ]
-  const register = `/api/safety/${tab === 'safe' ? 'incidents' : tab}.xlsx${job ? `?job_id=${job}` : ''}`
+  const register = `/api/safety/${tab === 'safe' || tab === 'checks' ? 'incidents' : tab}.xlsx${job ? `?job_id=${job}` : ''}`
   const noPermit = tab === 'permits' && !signoff
   return (
     <>
       <PageHeader
         eyebrow="Projects"
         title="Workers and Safety"
-        description={view === 'safety' ? 'Incidents and near misses with their cause and fix, the morning toolbox talk, and permits to work.' : 'Every worker screened before they start: name, age, address, trade, photo and medical certificate.'}
-        actions={view === 'safety' && <><Button variant="outline" asChild><a href={register}><FileSpreadsheet /> Register</a></Button><Button disabled={!job || noPermit} title={noPermit ? 'A permit to work is issued by a supervisor.' : undefined} onClick={add}><Plus /> New</Button></>}
+        description={view === 'safety' ? 'Incidents and near misses with their cause and fix, the morning toolbox talk, permits to work, and the equipment checklists.' : view === 'hse' ? 'The company HSE plan in plain words, and each site checked against it.' : 'Every worker screened before they start: name, age, address, trade, photo and medical certificate.'}
+        actions={view === 'safety' && tab !== 'checks' && <><Button variant="outline" asChild><a href={register}><FileSpreadsheet /> Register</a></Button><Button disabled={!job || noPermit} title={noPermit ? 'A permit to work is issued by a supervisor.' : undefined} onClick={add}><Plus /> New</Button></>}
       />
-      <div className="mb-6"><Tabs size="lg" label="Workers and Safety" value={view} onChange={setView} items={[{ value: 'workers', label: 'Workers' }, { value: 'safety', label: 'Safety' }]} /></div>
-      {view === 'workers' && <WorkersTab />}
+      <div className="mb-6"><Tabs size="lg" label="Workers and Safety" value={view} onChange={setView} items={[{ value: 'workers', label: 'Workers', info: 'Every worker screened before starting on site, on the company’s Screening Of Worker form: details, trade, photo and medical certificate. Open a worker to read the whole form.' }, { value: 'safety', label: 'Safety', info: 'Everything about keeping the site safe: incidents, toolbox talks, permits to work, safe days and the equipment checklists. Choose a project first.' }, { value: 'hse', label: 'HSE plan', info: 'The company HSE plan in plain words, and each site checked against it.' }]} /></div>      {view === 'workers' && <WorkersTab />}
+      {view === 'hse' && (
+        <HseTab
+          job={job}
+          setJob={setJob}
+          onGo={(go) => { if (go === 'workers') setView('workers'); else { setTab(go); setView('safety') } }}
+          onNewPermit={() => { setTab('permits'); setView('safety'); if (job && signoff) setPermitting(true) }}
+        />
+      )}
       {view === 'safety' && (
         <>
       <div className="mb-6"><ProjectPicker value={job} onChange={setJob} id="sf-job" allowAll /></div>
@@ -119,11 +128,12 @@ export default function SafetyPage() {
         <Stat label="Toolbox talks this week" value={s?.talks_this_week ?? 0} loading={q.isPending} />
         <Stat label="Permits live" value={s?.active_permits ?? 0} sub={s?.expired_open ? `${s.expired_open} run out` : undefined} tone={s?.expired_open ? 'danger' : undefined} loading={q.isPending} />
       </StatGrid>
-      <div className="mb-4"><Tabs label="Safety" value={tab} onChange={setTab} items={[{ value: 'incidents', label: 'Incidents' }, { value: 'talks', label: 'Toolbox talks' }, { value: 'permits', label: 'Permits to work' }, { value: 'safe', label: 'Safe days' }]} /></div>
+      <div className="mb-4"><Tabs label="Safety" value={tab} onChange={setTab} items={[{ value: 'incidents', label: 'Incidents', info: 'Accidents, injuries and near misses. Log what happened; an incident closes only with its root cause and what stops it happening again.' }, { value: 'talks', label: 'Toolbox talks', info: 'The short safety talk before work: the topic and who stood through it.' }, { value: 'permits', label: 'Permits to work', info: 'Written permission for risky work - at height, hot work, excavation and the like - issued only once the precautions are in place, for one shift at most, and closed when the work stops.' }, { value: 'safe', label: 'Safe days', info: 'How many days the site has gone without a lost-time injury, and what ended each run.' }, { value: 'checks', label: 'Equipment checks', info: 'Inspection checklists for grinders, breaking machines, hammer drills, fire extinguishers and electrical boards. Answer every item, add photos, get it signed; a fault is flagged and the next inspection date is tracked.' }]} /></div>
       {tab === 'incidents' && <DataTable label="Incidents" rows={d?.incidents ?? []} columns={incidents} rowKey={(i) => i.id} loading={q.isPending} empty="Nothing reported. A near miss written down is the cheapest lesson there is." />}
       {tab === 'talks' && <DataTable label="Toolbox talks" rows={d?.talks ?? []} columns={talks} rowKey={(t) => t.id} loading={q.isPending} empty="No talks recorded." />}
       {tab === 'permits' && <DataTable label="Permits" rows={d?.permits ?? []} columns={permits} rowKey={(p) => p.id} loading={q.isPending} empty="No permits issued." />}
       {tab === 'safe' && <SafeDays incidents={d?.incidents ?? []} loading={q.isPending} />}
+      {tab === 'checks' && <ChecksTab job={job} />}
         </>
       )}
 

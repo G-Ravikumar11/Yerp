@@ -178,3 +178,25 @@ def test_who_may_change_it(tenant, portal, second_tenant):
     assert crew.patch(url(j, "/rows"), json={"changes": [{"id": rid, "name": "Mine"}]}).status_code == 403
     assert second_tenant.patch(url(j, "/rows"), json={"changes": [{"id": rid, "name": "Mine"}]}).status_code == 404
     assert second_tenant.post(url(j, "/restore"), json={"rows": [], "links": []}).status_code == 404
+
+
+def test_the_first_sub_item_takes_over_the_rows_plan(tenant):
+    """Broken into steps, a row keeps its dates: its first step starts where it started, for as long, after what it
+    waited on; the steps after it are planned on their own."""
+    mon = _monday()
+    j = job(tenant)
+    first, _ = add(tenant, j, "Shuttering", start=mon.isoformat(), days=2)
+    works, _ = add(tenant, j, "General works", days=10)
+    ok(edit(tenant, j, works, predecessors="1"))
+    before = rows(ok(tenant.get(url(j))))["General works"]
+    step, v = add(tenant, j, "Putty", works, "child")
+    r = rows(v)
+    assert r["Putty"]["start"] == before["start"] and r["Putty"]["days"] == 10 and r["Putty"]["predecessors"] == "1"
+    assert r["General works"]["summary"] and (r["General works"]["start"], r["General works"]["end"]) == (before["start"], before["end"])
+    # a second step is the user's to plan
+    _, v = add(tenant, j, "Primer", step, "after")
+    assert rows(v)["Primer"]["start"] is None and rows(v)["General works"]["end"] == before["end"]
+    # a row with no plan gives its first step nothing
+    empty, _ = add(tenant, j, "Snags")
+    _, v = add(tenant, j, "Doors", empty, "child")
+    assert rows(v)["Doors"]["start"] is None
