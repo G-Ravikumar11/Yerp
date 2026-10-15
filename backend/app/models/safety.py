@@ -118,3 +118,32 @@ class DBWorkerScreening(Base):
     safety_officer_name = Column(String, default="")
 
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBEquipmentCheck(Base):
+    """One inspection of a tool, an extinguisher or an electrical board, on the company's paper checklist. The answers,
+    the readings and the sign-offs are kept as they were filled in; the photos are files attached to this record
+    (attached_type "equipment_check", caption "item:<key>")."""
+    __tablename__ = "equipment_checks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    number = Column(String, default="", index=True)             # CHK-0001
+    form_type = Column(String, default="", index=True)          # a key of EQUIPMENT_CHECKS
+    equipment_no = Column(String, default="", index=True)       # the equipment, extinguisher or board number
+    specs = Column(String, default="")
+    location = Column(String, default="")
+    extinguisher_type = Column(String, default="")
+    board_type = Column(String, default="")
+    contractor_name = Column(String, default="")
+    inspection_date = Column(String, default="", index=True)
+    next_inspection_date = Column(String, default="", index=True)
+    items = Column(Text, default="[]")                          # [{key, answer, remarks}]
+    readings = Column(Text, default="{}")                       # {wheel_rpm, machine_rpm, earth_resistance}
+    signoffs = Column(Text, default="{}")                       # {role: {name, date}}
+    decision = Column(String, default="")                       # "" | accepted | rejected  (the client / PMC review)
+    decision_by = Column(String, default="")
+    decision_on = Column(String, default="")
+    recorded_by = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))

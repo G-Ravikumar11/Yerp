@@ -88,3 +88,74 @@ export interface WorkerInput {
 }
 export const screenWorker = (b: WorkerInput) => post<{ worker: Worker }>('/api/workers', b)
 export const removeWorker = (id: number) => del<{ message: string }>(`/api/workers/${id}`)
+
+// Equipment checks: the company's inspection checklists - portable grinder, breaking machine, hammer drill, fire
+// extinguisher and electrical board - each answered item by item, with photos, readings and sign-offs.
+export interface CheckFormItem { key: string; label: string; section?: string; bad_if_yes: boolean; optional: boolean }
+export interface CheckForm {
+  key: string
+  label: string
+  title: string
+  doc_ref: string
+  equipment_label: string
+  specs_label: string
+  fields: string[]
+  extinguisher_types?: string[]
+  default_interval_days?: number
+  items: CheckFormItem[]
+  readings: { key: string; label: string; unit: string }[]
+  signoffs: { role: string; label: string }[]
+  review: { label: string; signoff_label: string } | null
+}
+export interface CheckPhoto { id: number; url: string; thumb_url: string }
+export interface CheckItem extends CheckFormItem { answer: string; remarks: string; photos: CheckPhoto[] }
+export interface Check {
+  id: number
+  job_id: number
+  project: string
+  number: string
+  form_type: string
+  form_label: string
+  doc_ref: string
+  equipment_no: string
+  specs: string
+  location: string
+  extinguisher_type: string
+  board_type: string
+  contractor_name: string
+  inspection_date: string
+  next_inspection_date: string
+  items: CheckItem[]
+  readings: Record<string, number>
+  signoffs: Record<string, { name: string; date: string }>
+  has_review: boolean
+  decision: '' | 'accepted' | 'rejected'
+  decision_by: string
+  decision_on: string
+  recorded_by: string
+  result: 'pass' | 'fail'
+  failed: string[]
+  rpm_wrong: boolean
+  photo_count: number
+  current: boolean
+  due_in_days: number | null
+  due_state: '' | 'ok' | 'soon' | 'overdue'
+}
+export interface CheckSummary { total: number; equipment: number; failed: number; overdue: number; due_soon: number; awaiting_review: number }
+export interface CheckData { checks: Check[]; forms: CheckForm[]; summary: CheckSummary }
+export const useChecks = (job: number, form = '') => useQuery({
+  queryKey: ['safety', 'checks', job, form],
+  queryFn: () => get<CheckData>(`/api/safety/checks?${new URLSearchParams({ ...(job ? { job_id: String(job) } : {}), ...(form ? { form_type: form } : {}) })}`),
+})
+export interface CheckInput {
+  job_id: number; form_type: string; equipment_no: string; specs: string; location: string; extinguisher_type: string
+  board_type: string; contractor_name: string; inspection_date: string; next_inspection_date: string
+  items: { key: string; answer: string; remarks: string }[]
+  readings: Record<string, number>
+  signoffs: Record<string, { name: string; date: string }>
+}
+export const recordCheck = (b: CheckInput) => post<{ check: Check }>('/api/safety/checks', b)
+export const signCheck = (id: number, b: { role: string; name: string; date: string; decision?: string }) => post<{ check: Check }>(`/api/safety/checks/${id}/signoff`, b)
+export const removeCheck = (id: number) => del<{ message: string }>(`/api/safety/checks/${id}`)
+/** A fault is a No on an item worded the good way, or a Yes on one worded the faulty way (is it corroded?). */
+export const isFault = (i: { answer: string; bad_if_yes: boolean }) => (i.answer === 'yes' || i.answer === 'no') && (i.answer === 'yes') === i.bad_if_yes

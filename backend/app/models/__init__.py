@@ -170,6 +170,7 @@ from app.models.recruitment import (
     DBDocumentRequest,
 )
 from app.models.safety import (
+    DBEquipmentCheck,
     DBSafetyIncident,
     DBToolboxTalk,
     DBWorkPermit,

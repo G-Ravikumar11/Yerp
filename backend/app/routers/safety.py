@@ -18,12 +18,14 @@ from app.core.notifications import notify
 from app.core.serials import next_number
 from app.core.sheets import sheet_response
 from app.documents.forms import _field_doc, _job_line, _pre, form_pdf_response
+from app.routers.equipment_checks import router as checks_router
 from app.schemas.safety import IncidentCloseIn, IncidentIn, PermitCloseIn, PermitIn, TalkIn, WorkerIn
 from app.services.projects import job_or_404
 from app.services.safety import incident_dict, permit_dict
 
 
 router = APIRouter()
+router.include_router(checks_router)
 
 
 @router.get("/api/safety")
