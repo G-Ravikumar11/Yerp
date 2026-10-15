@@ -423,10 +423,14 @@ def test_the_chart_reports_overdue_work_delays_and_the_timeline(tenant):
     act(tenant, j, "Excavation", d(-20), d(-5))
     s = act(tenant, j, "Raft", d(-4), d(30), depends_on_id=tenant.get("/api/jobs/%d/schedule" % j["id"]).json()["activities"][0]["id"])
     late, ok = s["activities"]
-    assert late["overdue"] and late["days_late"] == 5 and late["delayed"]
+    # five days past its end - six when that end falls on a Sunday, which is no working day, so it ends the Saturday
+    late_by = (date.today() - date.fromisoformat(last_working(d(-5)))).days
+    assert late["overdue"] and late["days_late"] == late_by and late["delayed"]
     assert not ok["overdue"] and ok["delayed"]                  # it cannot start until the late one is done
     assert s["summary"]["overdue"] == 1
-    assert s["summary"]["start"] == d(-20) and s["summary"]["end"] == d(30) and s["summary"]["duration_days"] == 51
+    first, last = snap(d(-20)), last_working(d(30))           # a Sunday start or end moves to the working day
+    span = (date.fromisoformat(last) - date.fromisoformat(first)).days + 1
+    assert s["summary"]["start"] == first and s["summary"]["end"] == last and s["summary"]["duration_days"] == span
     # Finished work is not overdue, and a milestone is counted and tracked.
     tenant.post("/api/schedule/activities/%d/progress" % late["id"], json={"percent": 100})
     s = act(tenant, j, "Handover", d(31), d(31), is_milestone=True)

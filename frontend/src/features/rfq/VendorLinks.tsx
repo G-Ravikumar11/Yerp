@@ -121,13 +121,13 @@ export function SupplierLinks({ statement, onAddFromFile }: { statement: Stateme
     }
   }
   return (
-    <div className="border-b border-border px-5 py-4">
-      <h3 className="mb-2 text-sm font-semibold">Suppliers asked by link</h3>
+    <div className="border-t border-border px-5 py-3">
+      <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Asked by link</h3>
       <ul className="grid gap-2">
         {invites.map((inv) => {
           const s = STATUS[inv.status]
           return (
-            <li key={inv.id} className="rounded-lg border border-border px-3 py-2 text-sm">
+            <li key={inv.id} className="rounded-lg bg-surface/60 px-3 py-2 text-sm">
               <div className="flex flex-wrap items-center gap-2">
                 <strong className="mr-1">{inv.supplier_name}</strong>
                 <Badge tone={s.tone} dot>{s.label}</Badge>

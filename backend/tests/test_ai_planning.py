@@ -92,7 +92,10 @@ def test_a_project_with_only_a_boq_is_drafted_from_it(tenant, monkeypatch):
     res = tenant.post("/api/ai/planning/jobs/%d/draft/apply" % jid, json={"boq": True, "activities": out["activities"]})
     assert res.status_code == 200, res.text
     acts = res.json()["schedule"]["activities"]
-    assert len(acts) == 4 and acts[0]["planned_start"] == d(0) and acts[-1]["planned_finish"] == d(60)
+    assert len(acts) == 4 and acts[0]["planned_start"] == d(0)
+    # The span asked for, or a day or two after it: an activity that would start on a Sunday starts on the Monday,
+    # and the ones waiting on it move with it.
+    assert d(60) <= acts[-1]["planned_finish"] <= d(63), acts[-1]["planned_finish"]
     again = boq_draft(tenant, jid)
     assert again.status_code == 409 and "already on the programme" in again.json()["detail"]
     # drawing from the BOQ by item afterwards finds the same lines already placed

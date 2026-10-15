@@ -109,6 +109,27 @@ def keep_quote_document(rfq_id: int, quote_id: int, request: Request, file: Uplo
     return {"ok": True, "document": {"id": f.id, "name": f.name}, "message": "%s's quotation kept with the quote." % q.supplier_name}
 
 
+@router.get("/api/rfqs/{rfq_id}/quotes/{quote_id}/document-text")
+def quote_document_text(rfq_id: int, quote_id: int, request: Request, db: Session = Depends(get_db)):
+    """The supplier's quotation as text, to read beside the quote when it is a Word, Excel or other file a browser
+    cannot show (a PDF or a photo is shown as it is)."""
+    from app.ai import doc_text
+    from app.core.files import _file_or_404, file_bytes
+    client = require_erp_read(request, db)
+    rfq = rfq_or_404(db, client.id, rfq_id)
+    doc = db.query(models.DBFile).filter(models.DBFile.client_id == client.id, models.DBFile.attached_type == "rfq_quote",
+                                         models.DBFile.attached_id == quote_id).order_by(models.DBFile.id.desc()).first()
+    if doc is None or not db.query(models.DBRfqQuote.id).filter(models.DBRfqQuote.id == quote_id, models.DBRfqQuote.rfq_id == rfq.id).first():
+        raise HTTPException(404, "There is no quotation file with this quote.")
+    f = _file_or_404(db, client.id, doc.id, bytes_too=True)
+    data = file_bytes(db, f) or b""
+    try:
+        kind, text, picture = doc_text.to_text_or_picture(data, f.name or "", f.content_type or "")
+    except doc_text.Unreadable as exc:
+        raise HTTPException(400, str(exc))
+    return {"id": f.id, "name": f.name or "", "kind": kind, "text": text, "shown_as_is": kind in ("pdf", "picture")}
+
+
 # --- the supplier ---------------------------------------------------------------------------------------------------
 
 def _invite(db, token, request, action, limit):

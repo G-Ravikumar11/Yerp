@@ -10,10 +10,9 @@ import { AwardModal, type AwardPreset } from './AwardModal'
 import { NewRfqModal } from './NewRfqModal'
 import { QuoteModal } from './QuoteModal'
 import { AskSuppliersModal } from './VendorLinks'
-import { StatementPanel, type CompareView } from './StatementPanel'
+import { StatementPanel } from './StatementPanel'
 import { FilterBar, useListFilters } from '@/components/data/filters'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
-import { formatCompare } from '@/lib/rfqCompare'
 
 const tone = (s: string) => (s === 'AWARDED' ? 'success' : s === 'OPEN' ? 'warning' : 'neutral') as 'success' | 'warning' | 'neutral'
 
@@ -32,9 +31,6 @@ export default function RfqPage() {
   // The enquiry, the vendors compared and the view live in the link, so a comparison survives a refresh and can be sent on.
   const [params, setParams] = useSearchParams()
   const open = Number(params.get('id')) || null
-  // A phone opens on the scorecards unless the link says otherwise; six columns do not fit across one.
-  const asked = params.get('view')
-  const view: CompareView = asked === 'cards' || asked === 'matrix' ? asked : window.matchMedia('(max-width: 639px)').matches ? 'cards' : 'matrix'
   const patch = (next: Record<string, string | null>, replace = true) => setParams((p) => {
     const n = new URLSearchParams(p)
     for (const [k, v] of Object.entries(next)) if (v) n.set(k, v); else n.delete(k)
@@ -69,7 +65,7 @@ export default function RfqPage() {
       <PageHeader eyebrow="Store" title="Enquiries & Comparison" description="Ask suppliers for prices, see their quotes side by side, and give the order to the best one. Each supplier can send their quote through a link, in any format."
         actions={<Button onClick={() => setCreating(true)}><Plus /> New enquiry</Button>} />
       {open ? (
-        <StatementPanel id={open} compareParam={params.get('compare')} onCompare={(names) => patch({ compare: names ? formatCompare(names) : null })} view={view} onView={(v) => patch({ view: v })} onBack={() => setOpen(null)} onQuote={(supplier) => setQuoting(supplier ?? '')} onAsk={() => setAsking(true)} onAward={(p) => { setPreset(p ?? null); setAwarding(true) }} />
+        <StatementPanel id={open} onBack={() => setOpen(null)} onQuote={(supplier) => setQuoting(supplier ?? '')} onAsk={() => setAsking(true)} onAward={(p) => { setPreset(p ?? null); setAwarding(true) }} />
       ) : (
         <>
           <StatGrid className="lg:grid-cols-3 xl:grid-cols-3">

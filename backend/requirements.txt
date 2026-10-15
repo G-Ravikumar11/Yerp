@@ -21,5 +21,9 @@ reportlab==4.2.5
 pillow==12.0.0
 # Reads the text inside a PDF so a text model can use it (app/ai/pdf_text.py).
 pypdf==6.16.2
+# Draws a scanned PDF's pages as pictures, so a quotation scan is read without a Claude key (app/ai/doc_text.py).
+pypdfium2==5.13.0
+# Old Excel files (.xls) as suppliers still send them (app/ai/doc_text.py).
+xlrd==2.0.1
 # Public holidays for the calendar (app/routers/holiday_calendar.py).
 holidays==0.106

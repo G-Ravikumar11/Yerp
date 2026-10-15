@@ -87,3 +87,82 @@ def read_quote(rfq_id: int, request: Request, file: Optional[UploadFile] = File(
     out.update({"available": True, "model": result.model, "low_confidence": out["confidence"] is not None and out["confidence"] < 0.7,
                 "lines_priced": len(out["lines"]), "lines_in_enquiry": len(lines)})
     return out
+
+
+# --- checking a quote against the supplier's own quotation ---------------------------------------------------------
+#
+# As an RA bill is checked against its hard copy: the model only READS the supplier's document; what agrees and what
+# differs is plain arithmetic here, so every difference shown is one anyone can check against the paper.
+
+def _same(a, b, pct=0.005, floor=0.01):
+    return a is not None and b is not None and abs(a - b) <= max(floor, abs(b) * pct)
+
+
+def compare_quote(read: dict, lines, entered: dict, quote) -> dict:
+    """read: what clean() made of the document. entered: {rfq_line_id: (rate, tax_percent)} as saved in the app.
+    Returns one row per enquiry item and the terms, each marked agrees / differs / only_entered / only_paper."""
+    paper = {l["rfq_line_id"]: l for l in read.get("lines") or []}
+    rows, differs = [], 0
+    for l in lines:
+        e, p = entered.get(l.id), paper.get(l.id)
+        row = {"rfq_line_id": l.id, "item": l.description or "", "uom": l.uom or "", "qty": l.qty or 0,
+               "entered_rate": e[0] if e else None, "paper_rate": p["rate"] if p else None,
+               "entered_tax": e[1] if e else None, "paper_tax": p["tax_percent"] if p else None}
+        if e and p:
+            ok = _same(p["rate"], e[0]) and (p["tax_percent"] is None or _same(p["tax_percent"], e[1], 0, 0.01))
+            row["status"] = "agrees" if ok else "differs"
+        elif e:
+            row["status"] = "only_entered"            # entered in the app, not found on their quotation
+        elif p:
+            row["status"] = "only_paper"              # on their quotation, not entered in the app
+        else:
+            row["status"] = "not_quoted"
+        differs += row["status"] in ("differs", "only_entered", "only_paper")
+        rows.append(row)
+    terms = []
+    for label, ours, theirs in (("Transport to site", quote.freight or 0, read.get("freight") or None),
+                                ("Delivery (days)", quote.delivery_days or 0, read.get("delivery_days") or None)):
+        if theirs is None:
+            continue
+        ok = _same(float(theirs), float(ours))
+        terms.append({"item": label, "entered": ours, "paper": theirs, "status": "agrees" if ok else "differs"})
+        differs += not ok
+    if read.get("quote_ref") and quote.quote_ref and read["quote_ref"].replace(" ", "").lower() != quote.quote_ref.replace(" ", "").lower():
+        terms.append({"item": "Quotation no.", "entered": quote.quote_ref, "paper": read["quote_ref"], "status": "differs"})
+        differs += 1
+    return {"rows": rows, "terms": terms, "differences": differs, "agrees": differs == 0 and any(r["status"] == "agrees" for r in rows),
+            "unmatched": read.get("unmatched") or []}
+
+
+@router.post("/api/ai/rfqs/{rfq_id}/quotes/{quote_id}/check")
+def check_quote_against_document(rfq_id: int, quote_id: int, request: Request, db: Session = Depends(get_db)):
+    """Read the supplier's own quotation kept with this quote, and compare it item by item with what was entered."""
+    from app import models
+    from app.core.files import _file_or_404, file_bytes
+    from fastapi import HTTPException
+    client = require_erp_read(request, db)
+    rfq = rfq_or_404(db, client.id, rfq_id)
+    quote = db.query(models.DBRfqQuote).filter(models.DBRfqQuote.id == quote_id, models.DBRfqQuote.rfq_id == rfq.id).first()
+    if quote is None:
+        raise HTTPException(404, "That quote is not on this enquiry.")
+    doc = db.query(models.DBFile).filter(models.DBFile.client_id == client.id, models.DBFile.attached_type == "rfq_quote",
+                                         models.DBFile.attached_id == quote.id).order_by(models.DBFile.id.desc()).first()
+    if doc is None:
+        raise HTTPException(409, "Attach %s's quotation first; there is nothing to check against yet." % quote.supplier_name)
+    f = _file_or_404(db, client.id, doc.id, bytes_too=True)
+    data = file_bytes(db, f)
+    if not data:
+        raise HTTPException(404, "The quotation file has no content.")
+    lines = _rfq_lines(db, rfq.id)
+    attachments, text = inputs.read_bytes(data, f.name or "", f.content_type or "", "", "quotation")
+    result = guard.run_feature(db, request, client, ACTION_KEY, "Quote check %s (%s)" % (rfq.number, quote.supplier_name),
+                               rfq.number or "", lambda: ask_json(SYSTEM, build_prompt(lines, text), attachments, smart=True, max_tokens=3000))
+    if not result.ok:
+        return {"available": False, "reason": result.reason, "message": result.message}
+    read = clean(result.data, {l.id for l in lines})
+    entered = {ql.rfq_line_id: (ql.rate, ql.tax_percent or 0) for ql in db.query(models.DBRfqQuoteLine).filter(
+        models.DBRfqQuoteLine.quote_id == quote.id).all() if (ql.rate or 0) > 0}
+    out = compare_quote(read, lines, entered, quote)
+    out.update({"available": True, "confidence": read.get("confidence"), "model": result.model,
+                "low_confidence": read.get("confidence") is not None and read["confidence"] < 0.7})
+    return out
