@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, ConfirmDialog, Stat, StatGrid, Tabs } from '@/components/ui'
-import { cancelRelease, owedKeys, useOwedPayables, useOwedReceivables, useRetentionPage, type Payable, type Position, type Receivable, type Release } from '@/api/owed'
+import { cancelRelease, certifyRelease, owedKeys, useOwedPayables, useOwedReceivables, useRetentionPage, type Payable, type Position, type Receivable, type Release } from '@/api/owed'
 import { PayModal } from '@/features/money/PayModal'
 import { EInvoiceModal } from '@/features/einvoice/EInvoiceModal'
 import { useAction } from '@/lib/mutate'
@@ -36,6 +36,8 @@ export default function OwedPage() {
   const [cancelling, setCancelling] = useState<Release | null>(null)
   const [einvoice, setEinvoice] = useState<number | null>(null)
   const cancel = useAction((a: { r: Release; reason: string }) => cancelRelease(a.r.id, a.reason), { invalidate: [owedKeys.all], onSuccess: () => setCancelling(null) })
+  const [certifying, setCertifying] = useState<Release | null>(null)
+  const certify = useAction((a: { r: Release; comments: string }) => certifyRelease(a.r.id, a.comments), { invalidate: [owedKeys.all], onSuccess: () => setCertifying(null) })
   const canPay = can('bills.pay')
   const rs = recv.data?.summary ?? {}
   const ps = pay.data?.summary ?? {}
@@ -72,7 +74,8 @@ export default function OwedPage() {
       cell: (p) =>
         contractor ? (p.dlp_ends ? (p.dlp_over && p.balance > 0 ? <Badge tone="warning">ended {p.dlp_ends} - pay it</Badge> : `ends ${p.dlp_ends}`) : <span className="text-muted-foreground">not set on the order</span>) : p.balance <= 0 ? <Badge tone="success">all released</Badge> : p.finished ? <Badge tone="danger">job finished - claim it</Badge> : <Badge>{p.job_status || 'running'}</Badge>,
     },
-    { id: 'act', header: '', align: 'right', cell: (p) => (p.balance > 0 && canPay ? <Button size="sm" variant="outline" onClick={() => setReleasing(p)}>Release</Button> : null) },
+    // Owing a contractor money is a decision, as certifying their bill is.
+    { id: 'act', header: '', align: 'right', cell: (p) => (p.balance > 0 && (contractor ? can('subcontracts.approve') : canPay) ? <Button size="sm" variant="outline" onClick={() => setReleasing(p)}>Release</Button> : null) },
   ]
 
   const relCols: TableColumn<Release>[] = [
@@ -81,7 +84,16 @@ export default function OwedPage() {
     { id: 'amt', header: 'Amount', hideBelow: 'md', align: 'right', cell: (r) => <span className={money}>{formatINR(r.amount)}</span> },
     { id: 'net', header: 'With GST', align: 'right', cell: (r) => <div className={`${money} font-bold`}>{formatINR(r.net_amount)}<div className="text-xs font-normal text-muted-foreground">GST {formatINR(r.gst_amount)}</div></div> },
     { id: 'out', header: 'Outstanding', hideBelow: 'lg', align: 'right', cell: (r) => <span className={money}>{formatINR(r.outstanding)}</span> },
-    { id: 'st', header: 'Status', cell: (r) => <Badge tone={r.status === 'PAID' ? 'success' : r.status === 'CANCELLED' ? 'neutral' : 'warning'}>{r.status === 'CERTIFIED' ? (r.side === 'client' ? 'to receive' : 'to pay') : r.status.toLowerCase()}</Badge> },
+    {
+      id: 'st',
+      header: 'Status',
+      cell: (r) => (
+        <div>
+          <Badge tone={r.status === 'PAID' ? 'success' : r.status === 'CANCELLED' ? 'neutral' : 'warning'}>{r.status === 'CERTIFIED' ? (r.side === 'client' ? 'to receive' : 'to pay') : r.status === 'SUBMITTED' ? 'to certify' : r.status.toLowerCase()}</Badge>
+          {r.override_note && <div className="mt-1 max-w-xs text-xs text-muted-foreground">{r.override_note}</div>}
+        </div>
+      ),
+    },
     {
       id: 'act',
       header: '',
@@ -91,7 +103,8 @@ export default function OwedPage() {
           {r.status === 'CERTIFIED' && r.outstanding > 0 && canPay && <Button size="sm" variant="outline" onClick={() => setSettle({ type: 'retention_release', id: r.id, title: r.number, verb: r.side === 'client' ? 'Receive' : 'Pay' })}>{r.side === 'client' ? 'Receive' : 'Pay'}</Button>}
           <Button size="sm" variant="outline" asChild><a href={`/api/retention/releases/${r.id}/export.xlsx`}>Sheet</a></Button>
           {r.side === 'client' && r.status !== 'CANCELLED' && can('accounts.manage') && <Button size="sm" variant="outline" onClick={() => setEinvoice(r.id)}>e-Invoice</Button>}
-          {r.status === 'CERTIFIED' && !r.settled && canPay && <Button size="sm" variant="outline" onClick={() => setCancelling(r)}>Cancel</Button>}
+          {r.status === 'SUBMITTED' && can('subcontracts.approve') && <Button size="sm" onClick={() => setCertifying(r)}>Certify</Button>}
+          {((r.status === 'CERTIFIED' && !r.settled && canPay) || (r.status === 'SUBMITTED' && can('subcontracts.approve'))) && <Button size="sm" variant="outline" onClick={() => setCancelling(r)}>Cancel</Button>}
         </div>
       ),
     },
@@ -149,6 +162,18 @@ export default function OwedPage() {
       <ReleaseModal position={releasing} stages={ret.data?.stages ?? []} onClose={() => setReleasing(null)} />
       <EInvoiceModal docType="retention_release" docId={einvoice} onClose={() => setEinvoice(null)} />
       {settle && <PayModal docType={settle.type} docId={settle.id} title={settle.title} verb={settle.verb} open onOpenChange={(o) => !o && setSettle(null)} invalidate={[owedKeys.all, ['dashboard']]} />}
+      <ConfirmDialog
+        open={!!certifying}
+        onOpenChange={(o) => !o && setCertifying(null)}
+        title={`Certify ${certifying?.number ?? 'this release'}?`}
+        description={certifying ? `${formatINR(certifying.net_amount)} becomes owed to ${certifying.party || 'the contractor'}. Raised by ${certifying.created_by_name || 'staff'}; somebody else certifies it.` : undefined}
+        confirmLabel="Certify"
+        reason={{ label: 'Note (the Master gives the reason here when a check still holds it)' }}
+        loading={certify.isPending}
+        onConfirm={(comments) => {
+          if (certifying) certify.mutate({ r: certifying, comments })
+        }}
+      />
       <ConfirmDialog open={!!cancelling} onOpenChange={(o) => !o && setCancelling(null)} title={`Cancel ${cancelling?.number ?? 'this release'}?`} description="The retention goes back to being held." confirmLabel="Cancel the release" tone="danger" reason={{ label: 'Why is this release being cancelled?', required: true }} loading={cancel.isPending} onConfirm={(reason) => { if (cancelling) cancel.mutate({ r: cancelling, reason }) }} />
     </>
   )

@@ -1068,6 +1068,9 @@ def edit_sub_bill(bill_id: int, body: SubBillEditIn, request: Request, db: Sessi
         bill.ld_amount = wanted
         bill.ld_set_by_hand = abs(wanted - due) > 0.009
         bill.ld_note = (note or why)[:300]
+    else:
+        # The period may have moved: the damages worked out follow it, unless somebody set them by hand.
+        apply_ld(db, order, bill)
     recost_sub_bill(db, bill)
     if body.advance_recovery is not None:
         bill.advance_recovery = 0.0
@@ -1320,7 +1323,23 @@ def list_material_recoveries(request: Request, order_id: int = 0, db: Session = 
         models.DBMaterialRecovery.client_id == client.id)
     if order_id:
         q = q.filter(models.DBMaterialRecovery.order_id == order_id)
-    rows = [material_recovery_dict(r) for r in q.order_by(models.DBMaterialRecovery.id.desc()).all()]
+    found = q.order_by(models.DBMaterialRecovery.id.desc()).limit(1000).all()
+    orders = {o.id: o for o in db.query(models.DBSubcontractOrder).filter(
+        models.DBSubcontractOrder.client_id == client.id,
+        models.DBSubcontractOrder.id.in_({r.order_id for r in found} or {0})).all()}
+    cons = {c.id: c for c in db.query(models.DBContractor).filter(
+        models.DBContractor.client_id == client.id,
+        models.DBContractor.id.in_({o.contractor_id for o in orders.values() if o.contractor_id} or {0})).all()}
+    bills = {b.id: b.number for b in db.query(models.DBSubBill).filter(
+        models.DBSubBill.id.in_({r.sub_bill_id for r in found if r.sub_bill_id} or {0})).all()}
+    rows = []
+    for r in found:
+        row = material_recovery_dict(r)
+        o = orders.get(r.order_id)
+        row["order"] = (o.wo_number or "") if o else ""
+        row["contractor"] = cons[o.contractor_id].company_name if o and o.contractor_id in cons else ""
+        row["bill"] = bills.get(r.sub_bill_id, "")
+        rows.append(row)
     return {"recoveries": rows, "summary": {
         "waiting": money(sum(r["amount"] for r in rows if r["state"] == "waiting")),
         "recovered": money(sum(r["amount"] for r in rows if r["state"] == "recovered"))}}

@@ -1,10 +1,11 @@
 import { Link } from 'react-router-dom'
-import { ArrowLeft, ArrowRight, Check, Circle, FileSignature, Receipt, Ruler } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, Circle, FileSignature, Flag, Receipt, Ruler } from 'lucide-react'
 import { Badge, Button, Card, CardContent } from '@/components/ui'
 import { useMeasurementBook } from '@/api/mb'
 import { useSubBills } from '@/api/subbills'
 import type { Order } from '@/api/orders'
 import { compactINR, formatINR } from '@/lib/utils'
+import { formatDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 export type OrderTab = 'details' | 'schedule' | 'terms' | 'approval' | 'next'
@@ -60,7 +61,7 @@ function Step({ done, title, children, action }: { done: boolean; title: string;
 }
 
 /** Once the order is live: the work that follows from it, with where it stands and a way in. */
-export function NextSteps({ order, canExecute, onExecute }: { order: Order; canExecute: boolean; onExecute: () => void }) {
+export function NextSteps({ order, canExecute, onExecute, canClose, onClose }: { order: Order; canExecute: boolean; onExecute: () => void; canClose?: boolean; onClose?: () => void }) {
   const book = useMeasurementBook(order.id)
   const bills = useSubBills(order.id)
   const s = book.data?.summary
@@ -69,6 +70,22 @@ export function NextSteps({ order, canExecute, onExecute }: { order: Order; canE
   const paid = list.filter((b) => b.status === 'PAID').length
   const measured = (s?.measured_value ?? 0) > 0
   const billedValue = bills.data?.summary.claimed ?? 0
+  if (order.status === 'CLOSED') {
+    return (
+      <Card>
+        <CardContent className="space-y-2 py-6 text-sm">
+          <p className="font-medium">
+            {order.wo_number} is closed. The work finished on {formatDate(order.actual_completion_date)}.
+          </p>
+          <p className="text-muted-foreground">
+            It now holds {formatINR(order.billed_value ?? 0)} of the budget - the work billed on it. Closed by {order.closed_by_name || 'the Master'} on {formatDate(order.closed_at)}
+            {order.close_reason && `: ${order.close_reason}`}
+          </p>
+          {order.defect_liability_months > 0 && <p className="text-muted-foreground">The defects period of {order.defect_liability_months} months runs from the date the work finished. Release the retention from Money, Owed.</p>}
+        </CardContent>
+      </Card>
+    )
+  }
   if (!live) {
     return (
       <Card>
@@ -135,6 +152,24 @@ export function NextSteps({ order, canExecute, onExecute }: { order: Order; canE
           </Step>
           <Step done={list.length > 0 && paid === list.length} title="Certify and pay">
             {list.length ? `${paid} of ${list.length} paid.` : 'Bills climb the approval route, then are paid.'}
+          </Step>
+          <Step
+            done={false}
+            title="Close it out"
+            action={
+              canClose && onClose ? (
+                <Button size="sm" variant="outline" disabled={(order.close_blockers ?? []).length > 0} onClick={onClose}>
+                  <Flag /> Close the order
+                </Button>
+              ) : undefined
+            }
+          >
+            {(order.close_blockers ?? []).length ? (
+              <span className="text-warning">{(order.close_blockers ?? []).join(' ')}</span>
+            ) : (
+              'When the work is over: record the date it actually finished. What was never done goes back to the budget, and the defects period runs from that date.'
+            )}
+            {!!order.advance_outstanding && <span className="block">{formatINR(order.advance_outstanding)} of the mobilisation advance is still to be recovered.</span>}
           </Step>
         </ol>
       </CardContent>

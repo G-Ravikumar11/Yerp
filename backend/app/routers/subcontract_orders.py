@@ -599,6 +599,7 @@ def wo_vocabulary(request: Request, db: Session = Depends(get_db)):
         "tds_options": [
             {"rate": 1, "label": "1% - Section 194C, individual or HUF"},
             {"rate": 2, "label": "2% - Section 194C, company or firm"},
+            {"rate": 20, "label": "20% - Section 206AA, no PAN given"},
             {"rate": 0, "label": "Nil - exempt or lower-deduction certificate held"},
         ],
         "may_administer": may_administer(request, db),

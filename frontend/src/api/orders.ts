@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { api, get, post, put } from '@/lib/api'
 
-export type OrderStatus = 'DRAFT' | 'PROVISIONAL' | 'APPROVED' | 'EXECUTED' | 'AMENDED' | 'CANCELLED'
-export type OrderAction = 'SUBMIT' | 'APPROVE' | 'REJECT' | 'EXECUTE' | 'AMEND' | 'CANCEL'
+export type OrderStatus = 'DRAFT' | 'PROVISIONAL' | 'APPROVED' | 'EXECUTED' | 'AMENDED' | 'CANCELLED' | 'CLOSED'
+export type OrderAction = 'SUBMIT' | 'APPROVE' | 'REJECT' | 'EXECUTE' | 'AMEND' | 'CANCEL' | 'CLOSE'
 
 export interface OrderItem {
   id?: number
@@ -59,6 +59,11 @@ export interface BudgetRow {
   this_order: number
   available: number
   over: boolean
+  notes?: string
+  set_by?: string
+  /** False when set or raised by somebody who cannot approve orders, until an approver signs an order that spends it. */
+  confirmed?: boolean
+  confirmed_by?: string
 }
 
 export interface BillingHead {
@@ -102,6 +107,18 @@ export interface Order {
   bank_guarantee_applicable: boolean
   bank_guarantee_amount: number
   bank_guarantee_validity: string
+  bank_guarantee_number: string
+  bank_guarantee_bank: string
+  bank_guarantee_returned_at: string
+  /** returned | expired | expiring | valid | undated, or blank when the order carries none. */
+  bank_guarantee_state: string
+  ld_percent_per_week: number
+  ld_cap_percent: number
+  /** Recorded when the order is closed: the defects period runs from here. */
+  actual_completion_date: string
+  closed_at: string
+  closed_by_name: string
+  close_reason: string
   gross_amount: number
   gst_rate: number
   gst_amount: number
@@ -140,6 +157,17 @@ export interface Order {
   budget_warnings?: string[]
   /** What would stop this revision being approved now: a bill still open on the order it replaces, lines it drops. */
   revision_blockers?: string[]
+  /** What approving it would run into: past the client's BOQ, TDS below the statutory rate, the contractor's papers. */
+  boq_warnings?: string[]
+  tds_warning?: string
+  compliance_warnings?: string[]
+  unconfirmed_budgets?: string[]
+  /** What stands between a live order and closing it. */
+  close_blockers?: string[]
+  advance_outstanding?: number
+  /** A closed order: the work billed on it, which is all it now holds of the budget. */
+  billed_value?: number
+  statutory_tds?: { rate: number; why: string } | null
 }
 
 export interface OrderSummary {
@@ -167,6 +195,8 @@ export interface OrderHead {
   bank_guarantee_applicable: boolean
   bank_guarantee_amount: number
   bank_guarantee_validity: string
+  bank_guarantee_number: string
+  bank_guarantee_bank: string
   gst_rate: number
   tds_rate: number
   retention_percent: number
@@ -175,6 +205,8 @@ export interface OrderHead {
   labour_cess_percent: number
   billing_cycle: string
   payment_days: number
+  ld_percent_per_week: number
+  ld_cap_percent: number
 }
 
 export const orderKeys = {
@@ -230,6 +262,9 @@ export interface Contractor {
   pan: string
   gst_number: string
   nature_of_work: string
+  /** The TDS the law sets for paying them: 1% a person or HUF, 2% anybody else, 20% with no PAN. */
+  tds_rate?: number | null
+  tds_basis?: string
 }
 
 export function useOrderVocabulary() {
@@ -264,34 +299,46 @@ export const saveSchedule = (id: number, lines: Partial<OrderItem>[]) => put<Ord
 export const saveTerms = (id: number, terms: OrderTerm[]) => put<OrderReply>(`/api/wo/orders/${id}/terms`, { terms })
 export const copyOrder = (id: number) => post<OrderReply>(`/api/wo/orders/${id}/copy`)
 export const chargeBudget = (id: number, budgetId: number, onlyBlank: boolean) => post<OrderReply>(`/api/wo/orders/${id}/charge-budget`, { budget_id: budgetId, only_blank: onlyBlank })
-export const createBudget = (jobId: number, b: { name: string; code?: string; allocated_amount: number; order_id?: number }) => post<{ id: number; message: string }>(`/api/wo/projects/${jobId}/budgets`, b)
+export const createBudget = (jobId: number, b: { name: string; code?: string; allocated_amount: number; order_id?: number }) => post<{ id: number; message: string; confirmed?: boolean }>(`/api/wo/projects/${jobId}/budgets`, b)
+export const updateBudget = (budgetId: number, b: { name: string; code?: string; allocated_amount: number; order_id?: number; notes?: string }) =>
+  put<{ id: number; message: string; confirmed?: boolean }>(`/api/wo/projects/budgets/${budgetId}`, b)
 
-export interface Move {
-  action: 'submit' | 'approve' | 'reject' | 'execute' | 'cancel' | 'amend' | 'self-approve'
-  comments?: string
-  override?: boolean
+/** The work is over: closed with the date it actually finished. */
+export const closeOrder = (id: number, b: { actual_completion_date: string; comments: string }) => post<OrderReply>(`/api/wo/orders/${id}/close`, b)
+export const returnGuarantee = (id: number, comments: string) => post<OrderReply>(`/api/wo/orders/${id}/bank-guarantee/return`, { comments })
+
+export interface Guarantee {
+  order_id: number
+  wo_number: string
+  status: string
+  contractor: string
+  project: string
+  number: string
+  bank: string
+  amount: number
+  valid_to: string
+  days_left: number | null
+  returned_at: string
+  state: 'returned' | 'expired' | 'expiring' | 'valid' | 'undated'
 }
 
-/** One state change. The server decides whether it is allowed and says why not. */
-export const moveOrder = (id: number, { action, comments, override }: Move) => post<OrderReply>(`/api/wo/orders/${id}/${action}`, { comments: comments ?? '', override: !!override })
-
-export interface ScheduleImport {
-  lines: Partial<OrderItem>[]
-  skipped_rows: number
-  gross_amount: number
-  message: string
+export function useGuarantees() {
+  return useQuery({
+    queryKey: ['orders', 'guarantees'],
+    queryFn: () => get<{ guarantees: Guarantee[]; summary: { count: number; held: number; expiring: number; expired: number } }>('/api/wo/bank-guarantees'),
+  })
 }
 
-/** Reads a workbook into schedule lines and hands them back - nothing is saved until the schedule is. */
-export function importSchedule(id: number, file: File) {
-  const form = new FormData()
-  form.append('file', file)
-  return api<ScheduleImport>(`/api/wo/orders/${id}/boq/import`, { method: 'POST', body: form })
+/* --- The kinds of work, which an administrator keeps ---------------------- */
+
+export interface WorkTypeRow extends WorkType {
+  status?: string
+  requested_by_name?: string
+  request_reason?: string
 }
 
-/** The departments added to this site. With no site chosen, every one that is on any site; a department already on the order stays listed. */
-export function departmentsForSite(v: Vocabulary | undefined, jobId: number | null | undefined, keep = ''): string[] {
-  const all = v?.departments ?? []
-  if (!jobId) return all
-  return all.filter((d) => d === keep || v?.department_sites?.[d]?.includes(jobId))
+export function useWorkTypes() {
+  return useQuery({ queryKey: ['orders', 'work-types'], queryFn: () => get<{ work_types: WorkTypeRow[]; requested: WorkTypeRow[]; may_administer: boolean }>('/api/wo/work-types') })
 }
+export const requestWorkType = (b: { name: string; department: string; code?: string; request_reason?: string }) => post<{ message: string }>('/api/wo/work-types', b)
+export const decideWorkType = (id: number, approve: boolean) => post<{ message: string }>(`/api/wo/work-types/${id}/decide?approve=${approve ? 'true' : 'false'}`)
