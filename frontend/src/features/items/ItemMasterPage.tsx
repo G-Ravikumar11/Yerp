@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, Copy, Download, Eye, FileUp, ListTree, Pencil, Plus, Power, Search, SlidersHorizontal, X } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Button, Card, ConfirmDialog, Field, Input, Modal, Select, Skeleton } from '@/components/ui'
-import { bulkCategory, bulkStatus, exportUrl, masterKeys, setItemActive, useCategories, useMasterItems, type ItemFilters, type MasterItem } from '@/api/itemMaster'
+import { bulkCategory, bulkStatus, exportUrl, fetchItem, masterKeys, setItemActive, useCategories, useMasterItems, type ItemFilters, type MasterItem } from '@/api/itemMaster'
 import { itemKeys, useItemVocabulary } from '@/api/items'
 import { useSites } from '@/api/siteRates'
 import { useAction } from '@/lib/mutate'
 import { useDebounced } from '@/lib/hooks'
 import { useSession } from '@/lib/session'
 import { formatINR } from '@/lib/utils'
+import { toast } from '@/stores/toast'
 import { AddItemsModal } from './AddItemsModal'
 import { CategoriesModal } from './CategoriesModal'
 import { ImportItemsModal } from './ImportItemsModal'
@@ -288,7 +289,8 @@ export default function ItemMasterPage() {
         </div>
       )}
 
-      <ItemFormModal item={form.item} mode={form.mode} onClose={() => setForm({ item: null, mode: null })} vocab={vocab.data} />
+      <ItemFormModal item={form.item} mode={form.mode} onClose={() => setForm({ item: null, mode: null })} vocab={vocab.data}
+        onOpenItem={(id) => { fetchItem(id).then((item) => setForm({ item, mode: 'view' })).catch(() => toast.error('That item could not be opened.')) }} />
       <AddItemsModal open={adding} onOpenChange={setAdding} vocab={vocab.data} />
       <ImportItemsModal open={importing} onOpenChange={setImporting} vocab={vocab.data} />
       <CategoriesModal open={managing} onOpenChange={setManaging} />

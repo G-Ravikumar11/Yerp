@@ -1,13 +1,15 @@
 """The BOQ item master: items filed by work category, with defaults that never overwrite a site's price."""
+import difflib
 import math
 import re
 
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from app import models
 from app.constants.boq import BOQ_PRICED
 from app.core.currency import money, unit_rate
+from app.core.serials import encode_serial
 from app.core.units import BOQ_ITEM_TYPES, CATEGORY_BY_KIND, ITEM_KINDS, UNITS_OF_MEASURE, canonical_unit
 from app.services.boq import BOQ_ITEM_CODE
 from app.services.items import issue_item_code
@@ -76,11 +78,14 @@ def check_category(db, client_id, category, subcategory):
     return cat.name, subcategory
 
 
+ALLOWED_GST = (0, 5, 12, 18, 28)
+
+
 def gst_text(percent):
     if percent is None:
         return None
-    if not math.isfinite(percent) or percent < 0 or percent > 100:
-        raise HTTPException(422, "GST must be between 0 and 100.")
+    if not math.isfinite(percent) or percent not in ALLOWED_GST:
+        raise HTTPException(422, "GST must be one of 0, 5, 12, 18 or 28 per cent.")
     return "%g%%" % percent
 
 
@@ -112,6 +117,67 @@ def _fields(db, client_id, body):
     return out
 
 
+def raise_if_code_taken(db, client_id, code, except_id=None):
+    """A clear refusal that names the item holding the code (when it is this company's own)."""
+    other = db.query(models.DBItem).filter(models.DBItem.item_code == code).first()
+    if other is None or other.id == except_id:
+        return
+    if other.client_id == client_id:
+        raise HTTPException(409, "This code is already used by '%s'. Use a different code, or open that item." % other.item_name)
+    raise HTTPException(409, "This code is already used by another item. Use a different code, or leave it blank to be given the next free one.")
+
+
+def peek_next_code(db):
+    """The code the next blank item would be given, without using it up: a suggestion, which the person can change."""
+    row = db.query(models.DBCodeSequence).filter(models.DBCodeSequence.name == "item").first()
+    number = (row.next_value if row else 1) or 1
+    for _ in range(64):
+        code = encode_serial(number)
+        if not db.query(models.DBItem.id).filter(models.DBItem.item_code == code).first():
+            return code
+        number += 1
+    raise HTTPException(500, "Could not find a free code; the series may need resetting.")
+
+
+def _words(text):
+    return re.sub(r"[^a-z0-9 ]+", " ", (text or "").lower()).split()
+
+
+def similar_items(db, client_id, name, code="", exclude_id=None, limit=5):
+    """Items already in the master that this name or code might be a repeat of: the exact code, the same name, or a close one."""
+    out, seen = [], set()
+
+    def add(item, reason):
+        if item.id != exclude_id and item.id not in seen:
+            seen.add(item.id)
+            out.append({"id": item.id, "item_code": item.item_code, "item_name": item.item_name, "units_of_measure": item.units_of_measure or "",
+                        "item_category": item.item_category or "", "is_active": item.is_active is not False, "reason": reason})
+
+    code = (code or "").strip().upper()
+    if code:
+        same = db.query(models.DBItem).filter(models.DBItem.client_id == client_id, models.DBItem.item_code == code).first()
+        if same:
+            add(same, "Same code")
+    words = _words(name)
+    if words:
+        key = " ".join(words)
+        longest = sorted(set(words), key=len, reverse=True)[:2]
+        query = db.query(models.DBItem).filter(models.DBItem.client_id == client_id)
+        pool = query.filter(or_(*[models.DBItem.item_name.ilike("%" + w + "%") for w in longest])).limit(300).all()
+        scored = []
+        for item in pool:
+            theirs = " ".join(_words(item.item_name))
+            if theirs == key:
+                scored.append((2.0, item, "Same name"))
+                continue
+            ratio = difflib.SequenceMatcher(None, key, theirs).ratio()
+            if ratio >= 0.78 or (len(words) >= 2 and set(words) <= set(theirs.split())):
+                scored.append((ratio, item, "Looks similar"))
+        for _, item, reason in sorted(scored, key=lambda t: -t[0]):
+            add(item, reason)
+    return out[:limit]
+
+
 def create_master_item(db, client_id, body, who, taken=None):
     """A new item, or a clear refusal: a code already in use is never made a second time. Does not commit."""
     kind = (body.kind or "FG").upper()
@@ -120,8 +186,7 @@ def create_master_item(db, client_id, body, who, taken=None):
     fields = _fields(db, client_id, body)
     code = clean_code(body.item_code)
     if code:
-        if db.query(models.DBItem.id).filter(models.DBItem.item_code == code).first():
-            raise HTTPException(409, "%s is already in use by another item. Leave the code blank to be issued the next one." % code)
+        raise_if_code_taken(db, client_id, code)
     else:
         code = issue_item_code(db, taken)
     item = models.DBItem(client_id=client_id, kind=kind, item_code=code, category=CATEGORY_BY_KIND[kind], sub_category=kind,

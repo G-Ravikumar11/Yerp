@@ -78,3 +78,71 @@ export function stockLabel(kind: 'RM' | 'FG', stock: number | null, unit: string
   if (kind === 'FG' || stock === null) return '-'
   return `${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(stock)} ${unit}`
 }
+
+/* --- The item form ----------------------------------------------------------------------------------------------- */
+
+/** GST rates an item may carry. The server checks the same list. */
+export const GST_RATES = ['0', '5', '12', '18', '28']
+
+const COMMON_UNITS = ['cum', 'sqm', 'rmt', 'Bags', 'Kgs', 'MT', 'Nos', 'Meters', 'Litres', 'Hours', 'Days']
+
+/** The units a contractor reaches for first, then the rest in the order the app lists them. */
+export function orderUnits(units: readonly string[]): string[] {
+  const first = COMMON_UNITS.filter((u) => units.includes(u))
+  return [...first, ...units.filter((u) => !first.includes(u))]
+}
+
+/** The unit as the app spells it ("bags" -> "Bags"), or '' when it is not one of them. */
+export function matchUnit(text: string, units: readonly string[]): string {
+  const t = text.trim().toLowerCase()
+  return units.find((u) => u.toLowerCase() === t) ?? ''
+}
+
+export interface ItemForm {
+  item_code: string
+  item_name: string
+  kind: 'RM' | 'FG'
+  units_of_measure: string
+  item_category: string
+  item_subcategory: string
+  specification: string
+  purchase_rate: string
+  selling_rate: string
+  gst_percent: string
+  hsn_code: string
+  item_type: string
+  preferred_supplier: string
+  reorder_level: string
+  description: string
+  remarks: string
+  is_active: boolean
+}
+
+export type ItemErrors = Partial<Record<keyof ItemForm, string>>
+
+const CODE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,29}$/
+const isMoney = (v: string) => v.trim() === '' || (Number.isFinite(Number(v)) && Number(v) >= 0)
+
+/** Everything wrong with the form, in words that say how to put it right. Empty when it can be saved. */
+export function validateItem(f: ItemForm, units: readonly string[]): ItemErrors {
+  const e: ItemErrors = {}
+  if (!f.item_name.trim()) e.item_name = 'Give the item a name, for example "Cement - OPC 53 grade".'
+  if (!f.units_of_measure.trim()) e.units_of_measure = 'Choose how the item is counted, for example Bags, cum or Kgs.'
+  else if (!matchUnit(f.units_of_measure, units)) e.units_of_measure = `"${f.units_of_measure}" is not a unit in the list. Pick one, for example Bags, cum or Kgs.`
+  if (f.item_code.trim() && !CODE.test(f.item_code.trim())) e.item_code = 'Use letters, numbers and - _ / . only, up to 30 characters, with no spaces.'
+  if (f.item_subcategory && !f.item_category) e.item_subcategory = 'Choose the category first.'
+  if (!isMoney(f.purchase_rate)) e.purchase_rate = 'Enter an amount of 0 or more, for example 415.'
+  if (!isMoney(f.selling_rate)) e.selling_rate = 'Enter an amount of 0 or more, for example 520.'
+  if (f.gst_percent !== '' && !GST_RATES.includes(f.gst_percent)) e.gst_percent = 'Choose 0, 5, 12, 18 or 28 per cent.'
+  if (!isMoney(f.reorder_level)) e.reorder_level = 'Enter a quantity of 0 or more.'
+  return e
+}
+
+/** Raw materials are bought and kept in stock; work items are what a BOQ line is made of. */
+export const defaultTypeFor = (kind: 'RM' | 'FG') => (kind === 'RM' ? 'Purchased' : 'Work')
+
+/** The same figure written the Indian way: 1,25,000.50. */
+export function groupINR(text: string): string {
+  const n = Number(text)
+  return text.trim() === '' || !Number.isFinite(n) ? '' : new Intl.NumberFormat('en-IN', { maximumFractionDigits: 4 }).format(n)
+}

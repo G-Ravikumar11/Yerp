@@ -104,6 +104,20 @@ def items_bulk_category(body: BulkCategoryIn, request: Request, db: Session = De
     return {"changed": len(items), "message": "%d item%s moved to %s." % (len(items), "" if len(items) == 1 else "s", category or "no category")}
 
 
+@router.get("/api/items/next-code")
+def item_next_code(request: Request, db: Session = Depends(get_db)):
+    """The next free code, offered when someone starts a new item. Nothing is reserved: they can type their own."""
+    require_erp_read(request, db)
+    return {"code": im.peek_next_code(db)}
+
+
+@router.get("/api/items/similar")
+def item_similar(request: Request, name: str = "", code: str = "", exclude_id: Optional[int] = None, db: Session = Depends(get_db)):
+    """What already looks like this name or code, so a repeat is noticed before it is saved."""
+    client = require_erp_read(request, db)
+    return {"similar": im.similar_items(db, client.id, name, code, exclude_id)}
+
+
 @router.get("/api/items/export.xlsx")
 def items_export(request: Request, q: str = "", category: str = "", subcategory: str = "", item_type: str = "", uom: str = "",
                  status: str = "all", kind: str = "", site_id: Optional[int] = None, ids: str = "", db: Session = Depends(get_db)):

@@ -32,6 +32,7 @@ export interface MasterItem {
 }
 
 export interface MasterItemInput {
+  kind?: 'RM' | 'FG'
   item_code?: string
   item_name: string
   description?: string
@@ -85,7 +86,7 @@ export const masterKeys = {
   sites: (id: number | null) => ['item-master', 'sites', id] as const,
 }
 
-export function queryString(f: Partial<ItemFilters> & { ids?: string }) {
+export function queryString(f: object) {
   const p = new URLSearchParams()
   Object.entries(f).forEach(([k, v]) => v !== '' && v !== undefined && v !== null && p.set(k, String(v)))
   return p.toString()
@@ -109,6 +110,22 @@ export function useItemSites(itemId: number | null) {
       ),
   })
 }
+
+export interface SimilarItem {
+  id: number
+  item_code: string
+  item_name: string
+  units_of_measure: string
+  item_category: string
+  is_active: boolean
+  /** Why it is shown: "Same code", "Same name" or "Looks similar". */
+  reason: string
+}
+
+export const fetchNextCode = async () => (await get<{ code: string }>('/api/items/next-code')).code
+export const fetchSimilar = async (name: string, code: string, excludeId?: number) =>
+  (await get<{ similar: SimilarItem[] }>(`/api/items/similar?${queryString({ name, code, exclude_id: excludeId })}`)).similar
+export const fetchItem = async (id: number) => (await get<{ item: MasterItem }>(`/api/items/${id}`)).item
 
 export const createMasterItem = (body: MasterItemInput) => post<{ item: MasterItem; message: string }>('/api/items', body)
 export const updateMasterItem = (id: number, body: MasterItemInput) => put<{ item: MasterItem; message: string }>(`/api/items/${id}`, body)

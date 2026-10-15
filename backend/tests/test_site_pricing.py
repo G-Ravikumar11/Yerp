@@ -40,7 +40,7 @@ def test_codes_are_trimmed_upper_cased_unique_and_generated_when_blank(tenant):
     item = make_item(tenant, code="  pcc/m15.a ")
     assert item["item_code"] == "PCC/M15.A"
     dup = tenant.post("/api/items", json={"item_code": "pcc/m15.a", "item_name": "Again", "units_of_measure": "cum"})
-    assert dup.status_code == 409 and "already in use" in dup.json()["detail"]
+    assert dup.status_code == 409 and "already used by" in dup.json()["detail"] and "Again" not in dup.json()["detail"]
     for bad in ("HAS SPACE", "bad#code", "X" * 31):
         assert tenant.post("/api/items", json={"item_code": bad, "item_name": "n", "units_of_measure": "cum"}).status_code == 400
     auto = tenant.post("/api/items", json={"item_name": "Cement OPC 53", "units_of_measure": "Bags"})
@@ -187,7 +187,7 @@ def test_create_item_refuses_a_duplicate_code(tenant):
     tenant.put("/api/boqs/%d/lines" % boq["id"], json={"lines": [{"kind": "item", "description": "Something new", "uom": "cum", "quantity": 1}]})
     key = rows(tenant, boq["job_id"])[0]["line_key"]
     res = tenant.post("/api/sites/%d/boq-items/%s/create-item" % (boq["job_id"], key), json={"item_code": "pcc-m15"})
-    assert res.status_code == 409 and "already in use" in res.json()["detail"]
+    assert res.status_code == 409 and "already used by" in res.json()["detail"]
 
 
 def test_ownership_a_rate_cannot_go_on_an_item_or_site_that_is_not_theirs(tenant, second_tenant):
