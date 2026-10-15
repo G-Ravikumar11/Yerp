@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { api, get, post, put } from '@/lib/api'
+import { api, apiUrl, get, post, put } from '@/lib/api'
 import { Calendar, parsePredecessors, schedule, toDay, type ProgrammeRow } from '@/lib/programme'
 
 /** One row of the programme, worked out by the server (backend/app/services/programme.py). */
@@ -219,3 +219,32 @@ export const useProgrammeBoq = (job: number, enabled: boolean) =>
   useQuery({ queryKey: ['schedule', 'programme-boq', job], enabled: enabled && job > 0, staleTime: 0, queryFn: () => get<ProgrammeBoq>(`${base(job)}/boq`) })
 export const drawProgrammeFromBoq = (job: number, body: { picks: BoqPick[]; anchor_id: number | null; position: 'after' | 'child' | 'end'; start: string }) =>
   post<ProgrammeView & { warnings?: string[] }>(`${base(job)}/from-boq`, body)
+
+/** A row read from a schedule sheet, as the preview gives it and the confirm takes it back. */
+export interface ImportNode {
+  key: number
+  parent: number | null
+  name: string
+  description: string
+  boq_ref: string
+  uom: string
+  quantity: number
+  labour: number
+  start: string
+  days: number | null
+  percent: number | null
+  heading: boolean
+  links: { pred: number; kind: string; lag: number }[]
+}
+export interface ImportPreview { sheet: string; sheets: string[]; nodes: ImportNode[]; calendar: Record<string, unknown> | null; warnings: string[]; own: boolean }
+
+export const readProgrammeSheet = (job: number, file: File, sheet = '') => {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('sheet', sheet)
+  return api<ImportPreview>(`${base(job)}/import`, { method: 'POST', body: form })
+}
+export const importProgramme = (job: number, preview: ImportPreview) =>
+  post<ProgrammeView>(`${base(job)}/import/confirm`, { nodes: preview.nodes, calendar: preview.calendar })
+/** The programme as an Excel sheet with live formulas, or as an A3 PDF. */
+export const programmeFileUrl = (job: number, kind: 'export' | 'pdf') => apiUrl(`${base(job)}/${kind}`)

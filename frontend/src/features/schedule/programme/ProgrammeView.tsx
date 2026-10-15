@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Bookmark, CalendarDays, ChevronsDownUp, ChevronsUpDown, Copy, CopyPlus, Columns3, IndentDecrease, IndentIncrease, ListPlus, ListTree, Plus, Redo2, Trash2, Undo2, Zap } from 'lucide-react'
+import { Bookmark, CalendarDays, ChevronsDownUp, ChevronsUpDown, Copy, CopyPlus, Columns3, FileDown, FileSpreadsheet, FileUp, IndentDecrease, IndentIncrease, ListPlus, ListTree, Plus, Redo2, Trash2, Undo2, Zap } from 'lucide-react'
 import { Button, ConfirmDialog, Skeleton, Tabs, Tooltip } from '@/components/ui'
 import {
   addHoliday, addPublicHolidays, addRows, saveBaseline, copyUnits, deleteRow, duplicateRow, editRows, moveRow, programmeKeys, recompute, removeHoliday,
-  restoreProgramme, setCalendar, snapshotOf, useProgramme, type EditableField, type ProgrammeRowView, type ProgrammeView as View, type RowChange, type Snapshot,
+  programmeFileUrl, restoreProgramme, setCalendar, snapshotOf, useProgramme, type EditableField, type ProgrammeRowView, type ProgrammeView as View, type RowChange, type Snapshot,
 } from '@/api/programme'
 import { ApiError } from '@/lib/api'
 import { formatDate } from '@/lib/format'
@@ -13,6 +13,7 @@ import { toast } from '@/stores/toast'
 import { COLUMNS, editableCell } from './columns'
 import { ProgrammeGrid } from './ProgrammeGrid'
 import { BoqPickerModal } from './BoqPickerModal'
+import { ProgrammeImportModal } from './ProgrammeImportModal'
 import { BaselineModal, CalendarModal, CopyUnitsModal, RowDetailModal } from './ProgrammeModals'
 import type { Zoom } from './gantt'
 
@@ -64,6 +65,7 @@ export function ProgrammeView({ job }: { job: number }) {
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [picking, setPicking] = useState(false)
   const [baselining, setBaselining] = useState(false)
+  const [importing, setImporting] = useState(false)
   const [detail, setDetail] = useState<number | null>(null)
 
   useEffect(() => {
@@ -247,11 +249,14 @@ export function ProgrammeView({ job }: { job: number }) {
           <Tooltip content="The same activities for other units, from their own start dates"><Button size="sm" variant="outline" onClick={() => current && setCopying(current)} disabled={busy || !current}><CopyPlus /> Copy to other units</Button></Tooltip>
           <Tooltip content="Keep the programme as it stands now: planned % is measured against it, and each row shows how far it has slipped from it"><Button size="sm" variant="outline" onClick={() => setBaselining(true)} disabled={busy || !v.rows.length}><Bookmark /> Save baseline</Button></Tooltip>
           <Tooltip content="Pick BOQ lines to put on the programme, after the selected row"><Button size="sm" variant="outline" onClick={() => setPicking(true)} disabled={busy}><ListTree /> Draw from BOQ</Button></Tooltip>
+          <Tooltip content="Read a schedule sheet (GH, APTIDCO, or one exported from here) onto the programme"><Button size="sm" variant="outline" onClick={() => setImporting(true)} disabled={busy}><FileUp /> Import</Button></Tooltip>
         </>}
         <Tooltip content="Show everything"><Button size="icon-sm" variant="ghost" aria-label="Expand all" onClick={() => setCollapsed(new Set())}><ChevronsUpDown /></Button></Tooltip>
         <Tooltip content="Show the top level only"><Button size="icon-sm" variant="ghost" aria-label="Collapse all" onClick={() => setCollapsed(new Set(v.rows.filter((r) => r.summary).map((r) => r.id)))}><ChevronsDownUp /></Button></Tooltip>
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           <Tooltip content="The rows with no slack: one day late on any of them is a day late at the end"><Button size="sm" variant={critical ? 'soft' : 'ghost'} aria-pressed={critical} onClick={() => setCritical((c) => !c)}><Zap /> Critical path</Button></Tooltip>
+          <Tooltip content="Download as an Excel sheet with live formulas: change a Start or Days in Excel and everything after it moves"><Button size="sm" variant="ghost" onClick={() => window.open(programmeFileUrl(job, 'export'), '_blank')}><FileSpreadsheet /> Excel</Button></Tooltip>
+          <Tooltip content="Print on A3 landscape, the headings on every page and the chart fitted to the width"><Button size="sm" variant="ghost" onClick={() => window.open(programmeFileUrl(job, 'pdf'), '_blank')}><FileDown /> PDF</Button></Tooltip>
           <Tooltip content="Working days and holidays"><Button size="sm" variant="ghost" onClick={() => setCalendarOpen(true)}><CalendarDays /> Calendar</Button></Tooltip>
           <Tooltip content={compact ? 'Show BOQ Ref, U.O.M, Quantity and Labour' : 'Hide some columns to give the chart room'}><Button size="icon-sm" variant="ghost" aria-label="Columns" aria-pressed={!compact} onClick={() => setCompact((c) => !c)}><Columns3 /></Button></Tooltip>
           <div className="w-52"><Tabs label="Zoom" size="md" value={zoom} onChange={setZoom} items={[{ value: 'day', label: 'Day' }, { value: 'week', label: 'Week' }, { value: 'month', label: 'Month' }]} /></div>
@@ -305,6 +310,7 @@ export function ProgrammeView({ job }: { job: number }) {
         onRemoveHoliday={(h) => change(() => removeHoliday(job, h.id))}
         onPublic={(y) => change(() => addPublicHolidays(job, y))} />}
       {picking && <BoqPickerModal job={job} anchor={current?.id ?? null} onClose={() => setPicking(false)} />}
+      {importing && <ProgrammeImportModal job={job} open onClose={() => setImporting(false)} />}
       {baselining && <BaselineModal onClose={() => setBaselining(false)} hasOne={!!v.baseline} onSave={(label) => change(() => saveBaseline(job, label))} />}
       {detailRow && <RowDetailModal key={detailRow.id} row={detailRow} editable={editable} onClose={() => setDetail(null)} onSave={(ch) => change(() => editRows(job, [ch]), recompute(v, ch))} />}
     </section>

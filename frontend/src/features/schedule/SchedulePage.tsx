@@ -10,7 +10,7 @@ import { useSession } from '@/lib/session'
 import { ActivityModal } from './ActivityModal'
 import { Curve } from './Bars'
 import { DayPlan } from './DayPlan'
-import { ImportScheduleModal } from './ImportScheduleModal'
+import { ProgrammeImportModal } from './programme/ProgrammeImportModal'
 import { AiDayTasks, AiDraftModal, AiPlanPanel } from './AiPlanning'
 import { BoqPickerModal } from './programme/BoqPickerModal'
 import { ProgrammeView } from './programme/ProgrammeView'
@@ -69,7 +69,7 @@ export default function SchedulePage() {
       {tab === 'programme' && d && d.curve.length > 0 && <Curve curve={d.curve} />}
       <ActivityModal job={job} activity={editing && editing !== 'new' ? editing : null} others={d?.activities ?? []} employees={d?.employees ?? []} teamScope={d?.team_scope} open={!!editing} onClose={() => setEditing(null)} />
       {drawing && <BoqPickerModal job={job} onClose={() => setDrawing(false)} onDone={() => setTab('programme')} />}
-      <ImportScheduleModal job={job} open={importing} onClose={() => setImporting(false)} />
+      <ProgrammeImportModal job={job} open={importing} onClose={() => setImporting(false)} />
       <AiDraftModal job={job} open={drafting} onClose={() => setDrafting(false)} />
     </>
   )

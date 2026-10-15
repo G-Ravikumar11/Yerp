@@ -16,17 +16,23 @@
 
 Every change answers with the whole programme worked out again.
 """
-from fastapi import APIRouter, Depends, Request
+import re
+
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.core.auth import require_erp_read, wo_actor
 from app.db import get_db
 from app.schemas.programme import (ProgrammeAddIn, ProgrammeBaselineIn, ProgrammeCalendarIn, ProgrammeCopyIn, ProgrammeEditIn,
-                                   ProgrammeFromBoqIn, ProgrammeHolidayIn, ProgrammeMoveIn, ProgrammePublicHolidaysIn, ProgrammeRestoreIn)
+                                   ProgrammeFromBoqIn, ProgrammeHolidayIn, ProgrammeImportIn, ProgrammeMoveIn, ProgrammePublicHolidaysIn, ProgrammeRestoreIn)
 from app.services.programme import (add_holiday, add_public_holidays, add_rows, copy_to_units, delete_holiday,
                                     delete_row, duplicate_row, edit_rows, move_row, programme_view, restore, save_baseline,
                                     set_calendar)
 from app.services.programme_boq import draw_from_boq, programme_boq
+from app.services.programme_excel import export_xlsx
+from app.services.programme_pdf import programme_pdf
+from app.services.programme_sheet import apply_import, parse_sheet
 from app.services.projects import _d, job_or_404
 
 router = APIRouter()
@@ -145,3 +151,38 @@ def programme_restore(job_id: int, body: ProgrammeRestoreIn, request: Request, d
     client, job = _writer(request, db, job_id)
     restore(db, client, job, body.rows, body.links)
     return programme_view(db, client, job)
+
+@router.get("/api/jobs/{job_id}/programme/export")
+def programme_export(job_id: int, request: Request, db: Session = Depends(get_db)):
+    """The programme as the office's Excel schedule, with live formulas."""
+    client = require_erp_read(request, db)
+    job = job_or_404(db, client.id, job_id)
+    body = export_xlsx(programme_view(db, client, job))
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", "Programme_%s" % (job.number or job.id))
+    return Response(body, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": 'attachment; filename="%s.xlsx"' % name})
+
+
+@router.post("/api/jobs/{job_id}/programme/import")
+async def programme_import_preview(job_id: int, request: Request, file: UploadFile = File(...), sheet: str = Form(""),
+                                   db: Session = Depends(get_db)):
+    """Read a schedule sheet - the GH or the APTIDCO / finishing-works layout, or one this app exported - without
+    saving: the rows come back for a look, the save is the confirm call."""
+    _writer(request, db, job_id)
+    return parse_sheet(await file.read(), sheet)
+
+
+@router.post("/api/jobs/{job_id}/programme/import/confirm")
+def programme_import_confirm(job_id: int, body: ProgrammeImportIn, request: Request, db: Session = Depends(get_db)):
+    client, job = _writer(request, db, job_id)
+    n, links, message = apply_import(db, client, job, body.nodes, body.calendar)
+    return {**programme_view(db, client, job), "message": message, "made": n, "links": links}
+
+@router.get("/api/jobs/{job_id}/programme/pdf")
+def programme_print(job_id: int, request: Request, db: Session = Depends(get_db)):
+    """The programme on A3 landscape: the header block, the columns and the bar chart fitted to the page."""
+    client = require_erp_read(request, db)
+    job = job_or_404(db, client.id, job_id)
+    body = programme_pdf(programme_view(db, client, job))
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", "Programme_%s" % (job.number or job.id))
+    return Response(body, media_type="application/pdf", headers={"Content-Disposition": 'inline; filename="%s.pdf"' % name})

@@ -61,3 +61,7 @@ class ProgrammePublicHolidaysIn(BaseModel):
 class ProgrammeRestoreIn(BaseModel):
     rows: List[dict]
     links: List[dict] = Field(default_factory=list)
+
+class ProgrammeImportIn(BaseModel):
+    nodes: List[dict]
+    calendar: Optional[dict] = None
