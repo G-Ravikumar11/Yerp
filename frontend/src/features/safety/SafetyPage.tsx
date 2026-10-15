@@ -14,10 +14,11 @@ import { formatDate } from '@/lib/format'
 import { IncidentModal } from './IncidentModal'
 import { PermitModal } from './PermitModal'
 import { SafeDays } from './SafeDays'
+import { ChecksTab } from './ChecksTab'
 import { WorkersTab } from './WorkersTab'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
-type Tab = 'incidents' | 'talks' | 'permits' | 'safe'
+type Tab = 'incidents' | 'talks' | 'permits' | 'safe' | 'checks'
 type View = 'workers' | 'safety'
 
 /**
@@ -96,15 +97,15 @@ export default function SafetyPage() {
     },
     { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="permit" id={r.id} label={String(r.number)} noun="permit" /> },
   ]
-  const register = `/api/safety/${tab === 'safe' ? 'incidents' : tab}.xlsx${job ? `?job_id=${job}` : ''}`
+  const register = `/api/safety/${tab === 'safe' || tab === 'checks' ? 'incidents' : tab}.xlsx${job ? `?job_id=${job}` : ''}`
   const noPermit = tab === 'permits' && !signoff
   return (
     <>
       <PageHeader
         eyebrow="Projects"
         title="Workers and Safety"
-        description={view === 'safety' ? 'Incidents and near misses with their cause and fix, the morning toolbox talk, and permits to work.' : 'Every worker screened before they start: name, age, address, trade, photo and medical certificate.'}
-        actions={view === 'safety' && <><Button variant="outline" asChild><a href={register}><FileSpreadsheet /> Register</a></Button><Button disabled={!job || noPermit} title={noPermit ? 'A permit to work is issued by a supervisor.' : undefined} onClick={add}><Plus /> New</Button></>}
+        description={view === 'safety' ? 'Incidents and near misses with their cause and fix, the morning toolbox talk, permits to work, and the equipment checklists.' : 'Every worker screened before they start: name, age, address, trade, photo and medical certificate.'}
+        actions={view === 'safety' && tab !== 'checks' && <><Button variant="outline" asChild><a href={register}><FileSpreadsheet /> Register</a></Button><Button disabled={!job || noPermit} title={noPermit ? 'A permit to work is issued by a supervisor.' : undefined} onClick={add}><Plus /> New</Button></>}
       />
       <div className="mb-6"><Tabs size="lg" label="Workers and Safety" value={view} onChange={setView} items={[{ value: 'workers', label: 'Workers' }, { value: 'safety', label: 'Safety' }]} /></div>
       {view === 'workers' && <WorkersTab />}
@@ -119,11 +120,12 @@ export default function SafetyPage() {
         <Stat label="Toolbox talks this week" value={s?.talks_this_week ?? 0} loading={q.isPending} />
         <Stat label="Permits live" value={s?.active_permits ?? 0} sub={s?.expired_open ? `${s.expired_open} run out` : undefined} tone={s?.expired_open ? 'danger' : undefined} loading={q.isPending} />
       </StatGrid>
-      <div className="mb-4"><Tabs label="Safety" value={tab} onChange={setTab} items={[{ value: 'incidents', label: 'Incidents' }, { value: 'talks', label: 'Toolbox talks' }, { value: 'permits', label: 'Permits to work' }, { value: 'safe', label: 'Safe days' }]} /></div>
+      <div className="mb-4"><Tabs label="Safety" value={tab} onChange={setTab} items={[{ value: 'incidents', label: 'Incidents' }, { value: 'talks', label: 'Toolbox talks' }, { value: 'permits', label: 'Permits to work' }, { value: 'safe', label: 'Safe days' }, { value: 'checks', label: 'Equipment checks' }]} /></div>
       {tab === 'incidents' && <DataTable label="Incidents" rows={d?.incidents ?? []} columns={incidents} rowKey={(i) => i.id} loading={q.isPending} empty="Nothing reported. A near miss written down is the cheapest lesson there is." />}
       {tab === 'talks' && <DataTable label="Toolbox talks" rows={d?.talks ?? []} columns={talks} rowKey={(t) => t.id} loading={q.isPending} empty="No talks recorded." />}
       {tab === 'permits' && <DataTable label="Permits" rows={d?.permits ?? []} columns={permits} rowKey={(p) => p.id} loading={q.isPending} empty="No permits issued." />}
       {tab === 'safe' && <SafeDays incidents={d?.incidents ?? []} loading={q.isPending} />}
+      {tab === 'checks' && <ChecksTab job={job} />}
         </>
       )}
 
