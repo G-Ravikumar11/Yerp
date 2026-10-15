@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { get, patch, post, put } from '@/lib/api'
+import { api, get, patch, post, put } from '@/lib/api'
 
 export interface MasterItem {
   id: number
@@ -76,7 +76,9 @@ export interface Category {
   id: number
   name: string
   is_active: boolean
-  subcategories: { id: number; name: string; is_active: boolean }[]
+  /** How many items are filed under it, subcategories included. */
+  items: number
+  subcategories: { id: number; name: string; is_active: boolean; items: number }[]
 }
 
 export const masterKeys = {
@@ -153,3 +155,6 @@ export const exportUrl = (f: Partial<ItemFilters>, ids: number[] = []) =>
 export const bulkStatus = (ids: number[], is_active: boolean, confirm = false) => post<{ changed: number; message: string }>('/api/items/bulk-status', { ids, is_active, confirm })
 export const bulkCategory = (ids: number[], item_category: string, item_subcategory: string) =>
   post<{ changed: number; message: string }>('/api/items/bulk-category', { ids, item_category, item_subcategory })
+
+export const mergeCategory = (id: number, into_id: number) => post<{ moved: number; message: string }>(`/api/item-categories/${id}/merge`, { into_id })
+export const deleteCategory = (id: number) => api<{ message: string }>(`/api/item-categories/${id}`, { method: 'DELETE' })

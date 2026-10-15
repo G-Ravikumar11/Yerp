@@ -11,7 +11,6 @@ import { ApiError } from '@/lib/api'
 import { useSession } from '@/lib/session'
 import { formatINR } from '@/lib/utils'
 import { toast } from '@/stores/toast'
-import { AddItemsModal } from './AddItemsModal'
 import { CategoriesModal } from './CategoriesModal'
 import { ImportItemsModal } from './ImportItemsModal'
 import { ItemDetailModal, UsageList } from './ItemDetailModal'
@@ -43,7 +42,6 @@ export default function ItemMasterPage() {
   const [showFilters, setShowFilters] = useState(false)
   const [picked, setPicked] = useState<Set<number>>(new Set())
   const [form, setForm] = useState<{ item: MasterItem | null; mode: FormMode | null }>({ item: null, mode: null })
-  const [adding, setAdding] = useState(false)
   const [importing, setImporting] = useState(false)
   const [managing, setManaging] = useState(false)
   const [detail, setDetail] = useState<MasterItem | null>(null)
@@ -122,7 +120,6 @@ export default function ItemMasterPage() {
               <>
                 <Button variant="outline" onClick={() => setManaging(true)}><ListTree /> Categories</Button>
                 <Button variant="outline" onClick={() => setImporting(true)}><FileUp /> Import from Excel</Button>
-                <Button variant="outline" onClick={() => setAdding(true)}><Plus /> Add several</Button>
                 <Button onClick={() => setForm({ item: null, mode: 'create' })}><Plus /> New item</Button>
               </>
             )}
@@ -303,7 +300,6 @@ export default function ItemMasterPage() {
         onOpenItem={(id) => { fetchItem(id).then((item) => { setForm({ item: null, mode: null }); setDetail(item) }).catch(() => toast.error('That item could not be opened.')) }} />
       <ItemDetailModal item={detail} manage={manage} onClose={() => setDetail(null)} onEdit={(i) => { setDetail(null); setForm({ item: i, mode: 'edit' }) }}
         onCopy={(i) => { setDetail(null); setForm({ item: i, mode: 'duplicate' }) }} onToggle={(i) => setToggling(i)} />
-      <AddItemsModal open={adding} onOpenChange={setAdding} vocab={vocab.data} />
       <ImportItemsModal open={importing} onOpenChange={setImporting} vocab={vocab.data} />
       <CategoriesModal open={managing} onOpenChange={setManaging} />
       <MoveCategory open={moving} onOpenChange={setMoving} ids={ids} onDone={() => setPicked(new Set())} />

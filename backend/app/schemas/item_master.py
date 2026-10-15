@@ -41,6 +41,20 @@ class BulkCategoryIn(BaseModel):
     item_subcategory: str = ""
 
 
+class ImportRowIn(BaseModel):
+    line: int
+    values: dict
+    action: Optional[str] = None      # import | skip - what the person chose; blank leaves it to the row's status
+
+
+class ImportRowsIn(BaseModel):
+    rows: List[ImportRowIn]
+
+
+class MergeIn(BaseModel):
+    into_id: int
+
+
 class CategoryIn(BaseModel):
     name: str
     parent_id: Optional[int] = None
