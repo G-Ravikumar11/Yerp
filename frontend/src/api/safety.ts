@@ -24,6 +24,10 @@ export interface Permit { id: number; number: string; kind: string; location: st
 export interface SafetySummary { days_without_lti: number | null; incidents_this_month: number; near_misses: number; open: number; talks_this_week: number; active_permits: number; expired_open: number }
 export interface SafetyData { incidents: Incident[]; talks: Talk[]; permits: Permit[]; summary: SafetySummary; kinds: string[]; permit_kinds: Record<string, string[]> }
 
+export type HseGo = 'workers' | 'incidents' | 'talks' | 'permits'
+export interface HseCheckItem { key: string; rule: string; label: string; status: 'ok' | 'warn' | 'bad' | 'info'; count: number; detail: string; go: HseGo }
+export const useHseCheck = (job: number) => useQuery({ queryKey: ['safety', 'hse', job], queryFn: () => get<{ items: HseCheckItem[]; ok: number; total: number }>(`/api/safety/hse-check${job ? `?job_id=${job}` : ''}`) })
+
 export const useSafety = (job: number) => useQuery({ queryKey: ['safety', job], enabled: job >= 0, queryFn: () => get<SafetyData>(`/api/safety${job ? `?job_id=${job}` : ''}`) })
 
 export interface IncidentInput { job_id: number; kind: string; happened_on: string; happened_at: string; location: string; description: string; injured_name: string; injury: string; treatment: string; lost_days: number; immediate_action: string }

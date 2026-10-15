@@ -60,6 +60,77 @@ def safety_overview(request: Request, job_id: int = 0, db: Session = Depends(get
                         "expired_open": len([p for p in permits if p["expired"]])}}
 
 
+@router.get("/api/safety/hse-check")
+def hse_check(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+    """The site held against the company's HSE plan, from what is already recorded: each line ok, a warning, or a
+    problem, with the count behind it and where in the app to put it right."""
+    client = require_erp_read(request, db)
+
+    def scoped(model):
+        q = db.query(model).filter(model.client_id == client.id)
+        return q.filter(model.job_id == job_id) if job_id else q
+    today = date.today()
+    week_ago = (today - timedelta(days=7)).isoformat()
+    workers = scoped(models.DBWorkerScreening).all()
+    medical_ids = {f.attached_id for f in db.query(models.DBFile.attached_id).filter(
+        models.DBFile.client_id == client.id, models.DBFile.attached_type == "worker",
+        models.DBFile.caption == "Medical certificate",
+        models.DBFile.attached_id.in_([w.id for w in workers] or [0])).all()}
+    incidents = [incident_dict(i) for i in scoped(models.DBSafetyIncident).all()]
+    permits = [permit_dict(p) for p in scoped(models.DBWorkPermit).all()]
+    talks = scoped(models.DBToolboxTalk).filter(models.DBToolboxTalk.held_on >= week_ago).count()
+
+    unbriefed = [w for w in workers if not w.trial_briefed]
+    no_medical = [w for w in workers if w.id not in medical_ids]
+    open_inc = [i for i in incidents if i["status"] == "OPEN"]
+    serious_open = [i for i in open_inc if i["serious"]]
+    expired = [p for p in permits if p["expired"]]
+    # Section 8.1: more than 3 days off is notified at once; anything worse needs a written report within 7 days.
+    reportable = [i for i in open_inc if (i["lost_days"] or 0) > 3 or i["serious"]]
+    overdue = []
+    for i in reportable:
+        try:
+            if (today - datetime.strptime(i["happened_on"], "%Y-%m-%d").date()).days > 7:
+                overdue.append(i)
+        except ValueError:
+            pass
+
+    def names(rows):
+        shown = ", ".join(w.name or w.number for w in rows[:4])
+        return shown + (" and %d more" % (len(rows) - 4) if len(rows) > 4 else "")
+
+    items = [
+        {"key": "screened", "rule": "5.1.1", "label": "Workers screened before they start",
+         "status": "ok" if workers else "info", "count": len(workers),
+         "detail": "%d screened." % len(workers) if workers else "Nobody screened on this site yet.", "go": "workers"},
+        {"key": "briefed", "rule": "5.1.1", "label": "Every worker briefed on the site's EHS rules",
+         "status": "bad" if unbriefed else "ok", "count": len(unbriefed),
+         "detail": ("Not briefed yet: %s." % names(unbriefed)) if unbriefed else "Everyone screened has been briefed.",
+         "go": "workers"},
+        {"key": "medical", "rule": "5.5", "label": "Medical certificate on file",
+         "status": "warn" if no_medical else "ok", "count": len(no_medical),
+         "detail": ("Missing for: %s." % names(no_medical)) if no_medical else "Every worker has one.", "go": "workers"},
+        {"key": "talk", "rule": "5.1.2", "label": "Toolbox talk in the last 7 days",
+         "status": "ok" if talks else "warn", "count": talks,
+         "detail": "%d held this week." % talks if talks else "None recorded this week.", "go": "talks"},
+        {"key": "permits", "rule": "5.4", "label": "No permit left open past its end time",
+         "status": "bad" if expired else "ok", "count": len(expired),
+         "detail": ("Close or renew: %s." % ", ".join(p["number"] for p in expired[:6])) if expired else "No permit has run out while still open.",
+         "go": "permits"},
+        {"key": "incidents", "rule": "8", "label": "Incidents investigated and closed",
+         "status": "bad" if serious_open else ("warn" if open_inc else "ok"), "count": len(open_inc),
+         "detail": ("%d open, %d of them serious." % (len(open_inc), len(serious_open))) if open_inc else "Nothing open.",
+         "go": "incidents"},
+        {"key": "reported", "rule": "8.1", "label": "Serious injuries reported in writing within 7 days",
+         "status": "bad" if overdue else ("warn" if reportable else "ok"), "count": len(reportable),
+         "detail": ("Past 7 days: %s." % ", ".join(i["number"] for i in overdue)) if overdue else
+                   ("%d must be reported within 7 days of happening." % len(reportable) if reportable else "Nothing to report."),
+         "go": "incidents"},
+    ]
+    scored = [x for x in items if x["status"] != "info"]
+    return {"items": items, "ok": len([x for x in scored if x["status"] == "ok"]), "total": len(scored)}
+
+
 @router.post("/api/safety/incidents")
 def report_incident(body: IncidentIn, request: Request, db: Session = Depends(get_db)):
     client, _, actor_name = wo_actor(request, db, "site.record")
