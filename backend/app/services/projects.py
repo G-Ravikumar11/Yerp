@@ -2099,6 +2099,8 @@ def attention_elsewhere(db, client_id, jobs, today):
                       "is not a comparison." % (len(thin), "y" if len(thin) == 1 else "ies"),
         })
     items.extend(release_attention(db, client_id, today))
+    from app.services.subcontract_rules import subcontract_attention
+    items.extend(subcontract_attention(db, client_id, today))
     items.extend(fixed_asset_attention(db, client_id))
     return items
 

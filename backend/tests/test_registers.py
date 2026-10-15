@@ -104,9 +104,15 @@ def test_a_guarantee_is_listed_with_its_days_left(tenant):
 
 
 def test_a_lapsed_guarantee_is_called_out(tenant):
-    live_order(tenant, bank_guarantee_applicable=True, bank_guarantee_amount=100000,
-               bank_guarantee_validity="2020-01-01")
-    live_order(tenant, bank_guarantee_applicable=True, bank_guarantee_amount=50000)
+    # An order goes out only with its guarantee dated; one lapses afterwards, and one's date is lost.
+    lapsed = live_order(tenant, bank_guarantee_applicable=True, bank_guarantee_amount=100000,
+                        bank_guarantee_validity="2027-12-31")
+    undated = live_order(tenant, bank_guarantee_applicable=True, bank_guarantee_amount=50000,
+                         bank_guarantee_validity="2027-12-31")
+    with main.SessionLocal() as db:
+        db.get(main.models.DBSubcontractOrder, lapsed["id"]).bank_guarantee_validity = "2020-01-01"
+        db.get(main.models.DBSubcontractOrder, undated["id"]).bank_guarantee_validity = ""
+        db.commit()
     reg = tenant.get("/api/registers/guarantees").json()
     states = {g["state"] for g in reg["guarantees"]}
     assert "lapsed" in states and "no expiry recorded" in states
@@ -150,7 +156,8 @@ def test_a_cancelled_bill_gives_its_recovery_back(tenant):
 
 def test_another_tenant_sees_empty_registers(tenant, second_tenant):
     certified_sub_bill(tenant, mobilization_advance_percent=10, advance_recovery_percent=10,
-                       bank_guarantee_applicable=True, bank_guarantee_amount=1)
+                       bank_guarantee_applicable=True, bank_guarantee_amount=1,
+                       bank_guarantee_validity="2027-12-31")
     assert second_tenant.get("/api/registers/tds").json()["deducted"] == []
     assert second_tenant.get("/api/registers/guarantees").json()["guarantees"] == []
     assert second_tenant.get("/api/registers/advances").json()["advances"] == []

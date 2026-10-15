@@ -25,6 +25,31 @@ ITEM_MASTER_COLUMNS = (
     ("boq_lines", "item_id", "INTEGER"),
 )
 
+SUBCONTRACT_CONTROL_COLUMNS = (
+    # (table, column, Postgres type, SQLite type) - closing orders out, liquidated damages, the bank guarantee
+    # register, retention releases that need a second signature, and who set a budget. All additive and defaulted.
+    ("subcontract_orders", "bank_guarantee_number", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("subcontract_orders", "bank_guarantee_bank", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("subcontract_orders", "bank_guarantee_returned_at", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("subcontract_orders", "ld_percent_per_week", "DOUBLE PRECISION DEFAULT 0", "FLOAT DEFAULT 0"),
+    ("subcontract_orders", "ld_cap_percent", "DOUBLE PRECISION DEFAULT 0", "FLOAT DEFAULT 0"),
+    ("subcontract_orders", "actual_completion_date", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("subcontract_orders", "closed_at", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("subcontract_orders", "closed_by_name", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("subcontract_orders", "close_reason", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("project_budgets", "set_by_name", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("project_budgets", "confirmed", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
+    ("project_budgets", "confirmed_by_name", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("sub_bills", "ld_amount", "DOUBLE PRECISION DEFAULT 0", "FLOAT DEFAULT 0"),
+    ("sub_bills", "ld_note", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("sub_bills", "ld_set_by_hand", "BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"),
+    ("sub_bills", "override_note", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("retention_releases", "raised_by", "INTEGER", "INTEGER"),
+    ("retention_releases", "certified_by_name", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("retention_releases", "certified_at", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("retention_releases", "override_note", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+)
+
 QUALITY_COLUMNS = (
     # (table, column, Postgres type, SQLite type) - what the quality module grew after it was first created.
     ("qc_inspections", "building", "VARCHAR DEFAULT ''"), ("qc_inspections", "floor_area", "VARCHAR DEFAULT ''"),
@@ -1681,6 +1706,18 @@ def ensure_columns():
                 except Exception:
                     pass
 
+            # Subcontract controls: close-out, LD, the BG register, two-signature retention releases.
+            try:
+                for table, column, pg_type, _ in SUBCONTRACT_CONTROL_COLUMNS:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {pg_type}"))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step subcontract controls: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
             # Quality: the workflow columns. Additive, defaulted, safe on a live database.
             try:
                 for table, column, typedef in QUALITY_COLUMNS:
@@ -1884,6 +1921,8 @@ def migrate_sqlite():
             add_col("project_files", "original_size", "INTEGER DEFAULT 0")
             add_col("project_files", "blob_of", "INTEGER")
             add_col("diary_labour", "worker_ids", "TEXT DEFAULT ''")
+            for table, column, _, lite_type in SUBCONTRACT_CONTROL_COLUMNS:
+                add_col(table, column, lite_type)
             add_col("worker_screenings", "contractor_name", "TEXT DEFAULT ''")
             add_col("worker_screenings", "father_name", "TEXT DEFAULT ''")
             add_col("worker_screenings", "dob", "TEXT DEFAULT ''")

@@ -92,7 +92,8 @@ def job_money(db, client_id, job, pre=None):
     committed = money(sum(p.total or 0 for p in open_pos))
 
     subs = pre["subs"].get(job.id, [])
-    live_subs = [x for x in subs if (x.status or "") not in ("CANCELLED", "AMENDED")]
+    # A closed order has nothing left to bill: what it never did is no longer a commitment.
+    live_subs = [x for x in subs if (x.status or "") not in ("CANCELLED", "AMENDED", "CLOSED")]
     # What the contractors have still to bill. Their bills are incurred already;
     # counting the whole order on top counted every rupee billed twice.
     contractor_billed = {}

@@ -54,7 +54,20 @@ const editFrom = (b: SubBill): BillEdit => ({
   advance_recovery: b.advance_recovery,
   other_deductions: Math.max(0, b.other_deductions - (b.material_recovered ?? 0)),
   deduction_notes: b.deduction_notes,
+  ld_amount: b.ld_amount ?? 0,
+  ld_note: b.ld_note ?? '',
 })
+
+/** What to send: the liquidated damages only when somebody changed them - otherwise they are worked out again. */
+const editPayload = (f: BillEdit, b: SubBill): Partial<BillEdit> => {
+  if (f.ld_amount === (b.ld_amount ?? 0) && f.ld_note === (b.ld_note ?? '')) {
+    const { ld_amount: _a, ld_note: _n, ...rest } = f
+    void _a
+    void _n
+    return rest
+  }
+  return f
+}
 
 function Row({ label, value, strong, muted, negative, note }: { label: string; value: React.ReactNode; strong?: boolean; muted?: boolean; negative?: boolean; note?: string }) {
   return (
@@ -84,16 +97,17 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
   const set = <K extends keyof BillEdit>(k: K, v: BillEdit[K]) => setF((s) => ({ ...s, [k]: v }))
   const has = (a: string) => bill.actions.some((x) => x === a)
 
-  const save = useAction(() => editBill(bill.id, f), { invalidate: [billKeys.all], onSuccess: reseed })
+  const save = useAction(() => editBill(bill.id, editPayload(f, bill)), { invalidate: [billKeys.all], onSuccess: reseed })
   const move = useAction(
     async (m: BillMove) => {
       // Sent as it stands on screen, not as it was last saved.
-      if (m.action === 'submit' && editable && dirty) await editBill(bill.id, f)
+      if (m.action === 'submit' && editable && dirty) await editBill(bill.id, editPayload(f, bill))
       return moveBill(bill.id, m)
     },
     { invalidate: [billKeys.all, ['mb']], onSuccess: () => { setDialog(null); reseed() } },
   )
 
+  const blocks = [...(bill.compliance_blocks ?? []), ...(bill.boq_warnings ?? [])]
   const waiting = bill.route.find((r) => r.status === 'waiting')
   const lastStep = !waiting || waiting.step === bill.route.length
   const lines = bill.lines ?? []
@@ -189,6 +203,19 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
         </div>
       </div>
 
+      {blocks.length > 0 && bill.status !== 'CANCELLED' && (
+        <div role="alert" className="mb-5 space-y-1 rounded-xl border border-danger/30 bg-danger-soft p-3.5 text-[13.5px] text-danger">
+          <p className="font-semibold">{bill.status === 'CERTIFIED' ? 'This contractor cannot be paid yet' : 'This bill cannot be certified yet'}</p>
+          {blocks.map((w) => (
+            <p key={w}>{w}</p>
+          ))}
+          <p className="text-xs">Only the Master can go ahead regardless, giving the reason.</p>
+        </div>
+      )}
+      {bill.override_note && (
+        <p className="mb-5 rounded-xl border border-border bg-muted/40 p-3 text-[13px] text-muted-foreground">Signed past a rule: {bill.override_note}</p>
+      )}
+
       <StatGrid className="lg:grid-cols-4 xl:grid-cols-4">
         <Stat label="Previously billed" value={formatINR(bill.previously_billed)} />
         <Stat label="This bill" value={formatINR(bill.this_bill)} />
@@ -274,6 +301,20 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
               <Field label="Other deductions (₹)" htmlFor="b-other" hint={bill.material_recovered ? `Besides ${formatINR(bill.material_recovered)} of material recovered.` : undefined}>
                 <NumField id="b-other" disabled={!editable} value={f.other_deductions} onValue={(n) => set('other_deductions', n)} />
               </Field>
+              {(bill.ld_amount > 0 || (bill.ld_worked?.amount ?? 0) > 0 || !!bill.order_detail?.ld_percent_per_week) && (
+                <>
+                  <Field
+                    label="Liquidated damages (₹)"
+                    htmlFor="b-ld"
+                    hint={bill.ld_worked?.why ? `Worked out: ${formatINR(bill.ld_worked.amount)} - ${bill.ld_worked.why}.` : 'The work is not late.'}
+                  >
+                    <NumField id="b-ld" disabled={!editable} value={f.ld_amount} onValue={(n) => set('ld_amount', n)} />
+                  </Field>
+                  <Field label="Why the damages are this figure" htmlFor="b-ldn" className="sm:col-span-1 lg:col-span-2" hint="Needed when they differ from what is worked out - an extension of time agreed, say.">
+                    <Input id="b-ldn" disabled={!editable} value={f.ld_note} onChange={(e) => set('ld_note', e.target.value)} />
+                  </Field>
+                </>
+              )}
               <Field label="Deduction notes" htmlFor="b-notes" className="sm:col-span-2 lg:col-span-3">
                 <Textarea id="b-notes" disabled={!editable} value={f.deduction_notes} onChange={(e) => set('deduction_notes', e.target.value)} rows={2} />
               </Field>
@@ -303,6 +344,7 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
                   {bill.advance_recovery > 0 && <Row label="Advance recovered" value={`- ${formatINR(bill.advance_recovery)}`} negative />}
                   {bill.other_deductions > 0 && <Row label="Material and other recoveries" value={`- ${formatINR(bill.other_deductions)}`} negative />}
                   {(bill.back_charges ?? 0) > 0 && <Row label="Back-charges" value={`- ${formatINR(bill.back_charges ?? 0)}`} negative />}
+                  {bill.ld_amount > 0 && <Row label="Liquidated damages" value={`- ${formatINR(bill.ld_amount)}`} negative />}
                   <Row label={`Retention @ ${bill.retention_percent}%`} value={`- ${formatINR(bill.retention_amount)}`} negative />
                   <Row label={`TDS @ ${bill.tds_percent}%`} value={`- ${formatINR(bill.tds_amount)}`} negative />
                   {bill.labour_cess_amount > 0 && <Row label={`Labour cess @ ${bill.labour_cess_percent}%`} value={`- ${formatINR(bill.labour_cess_amount)}`} negative />}
@@ -372,7 +414,7 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
         title={lastStep ? `Certify ${bill.number}?` : 'Sign and pass it on?'}
         description={lastStep ? `Agreeing to pay ${formatINR(bill.net_payable)} to ${bill.contractor}.` : `Your signature goes on it, and it moves to the next person up the line.`}
         confirmLabel={lastStep ? 'Certify' : 'Sign and pass on'}
-        reason={{ label: 'Note (optional)' }}
+        reason={blocks.length && isOwner ? { label: 'Why is it being certified regardless?', required: true } : { label: 'Note (optional)' }}
         loading={move.isPending}
         onConfirm={(comments) => move.mutate({ action: 'certify', comments })}
       />

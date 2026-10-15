@@ -86,7 +86,14 @@ class DBRetentionRelease(Base):
     net_amount = Column(Float, default=0.0)        # what moves: the release and its tax
 
     # CERTIFIED (due) | PAID | CANCELLED
+    # SUBMITTED (a contractor's retention raised by staff, waiting for somebody else to certify it) | CERTIFIED |
+    # PAID | CANCELLED
     status = Column(String, default="CERTIFIED", index=True)
+    raised_by = Column(Integer, nullable=True)
+    certified_by_name = Column(String, default="")
+    certified_at = Column(String, default="")
+    # Why it went ahead though a check said not yet (defects period still running, a back-charge open...).
+    override_note = Column(Text, default="")
     notes = Column(Text, default="")
     cancel_reason = Column(String, default="")
     created_by_name = Column(String, default="")

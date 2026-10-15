@@ -20,8 +20,11 @@ function Form({ p, stages, onClose }: { p: Position; stages: string[]; onClose: 
   const [amount, setAmount] = useState(p.suggest?.amount ?? p.balance)
   const [on, setOn] = useState(today())
   const [notes, setNotes] = useState('')
+  const [override, setOverride] = useState(false)
   const over = amount > p.balance + 0.009
-  const save = useAction(() => raiseRelease({ side: p.side, order_id: p.order_id, stage, amount, release_on: on, notes }), { invalidate: [owedKeys.all], onSuccess: onClose })
+  // Held for the stage suggested; the server checks again for the stage actually chosen.
+  const holds = p.side === 'contractor' ? (p.holds ?? []) : []
+  const save = useAction(() => raiseRelease({ side: p.side, order_id: p.order_id, stage, amount, release_on: on, notes, override }), { invalidate: [owedKeys.all], onSuccess: onClose })
   return (
     <div>
       <p className="mb-4 text-sm text-muted-foreground">
@@ -34,15 +37,27 @@ function Form({ p, stages, onClose }: { p: Position; stages: string[]; onClose: 
         <Field label="Stage" htmlFor="rr-stage"><Select id="rr-stage" value={stage} onChange={(e) => setStage(e.target.value)} options={stages.map((s) => ({ value: s, label: s }))} /></Field>
         <Field label="Amount" htmlFor="rr-amount"><NumField id="rr-amount" value={amount} onValue={setAmount} /></Field>
         <Field label="Release on" htmlFor="rr-date"><Input id="rr-date" type="date" value={on} onChange={(e) => setOn(e.target.value)} /></Field>
-        <Field label="Notes" htmlFor="rr-notes" className="sm:col-span-2"><Input id="rr-notes" value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
+        <Field label={override ? 'Why release it regardless?' : 'Notes'} htmlFor="rr-notes" className="sm:col-span-2"><Input id="rr-notes" value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
       </div>
+      {holds.length > 0 && (
+        <div role="alert" className="mt-4 space-y-1 rounded-lg bg-warning-soft p-3 text-[13px] text-warning">
+          {holds.map((h) => (
+            <p key={h}>{h}</p>
+          ))}
+          <label className="mt-2 flex items-start gap-2.5">
+            <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} className="mt-0.5 size-4 accent-[var(--warning)]" />
+            <span>Release it anyway. The reason is kept on the release.</span>
+          </label>
+        </div>
+      )}
+      {p.side === 'contractor' && <p className="mt-3 text-xs text-muted-foreground">Raised by staff, it waits for somebody else to certify it before it is owed.</p>}
       <p className="mt-3 text-sm" role="status">
         {over ? <span className="text-danger">More than the {formatINR(p.balance)} still held.</span> : <><strong>{formatINR(amount)}</strong> {p.side === 'client' ? 'to claim' : 'to pay'}. No GST: the bills already carried it.</>}
       </p>
       <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
         {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button loading={save.isPending} disabled={over || amount <= 0} onClick={() => save.mutate()}>{p.side === 'client' ? 'Raise the claim' : 'Release it'}</Button>
+        <Button loading={save.isPending} disabled={over || amount <= 0 || (override && !notes.trim())} onClick={() => save.mutate()}>{p.side === 'client' ? 'Raise the claim' : 'Release it'}</Button>
       </div>
     </div>
   )

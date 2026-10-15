@@ -16,10 +16,14 @@ WO_HEADERS = ["FG Code", "Item Name", "Description", "Qty", "UOM", "Rate"]
 WO_TRANSITIONS = {
     "DRAFT":       {"SUBMIT": "PROVISIONAL", "CANCEL": "CANCELLED"},
     "PROVISIONAL": {"APPROVE": "APPROVED", "REJECT": "DRAFT", "CANCEL": "CANCELLED"},
-    "APPROVED":    {"EXECUTE": "EXECUTED", "AMEND": "AMENDED", "CANCEL": "CANCELLED"},
-    "EXECUTED":    {"AMEND": "AMENDED"},
+    "APPROVED":    {"EXECUTE": "EXECUTED", "AMEND": "AMENDED", "CANCEL": "CANCELLED", "CLOSE": "CLOSED"},
+    "EXECUTED":    {"AMEND": "AMENDED", "CLOSE": "CLOSED"},
     "AMENDED":     {},
     "CANCELLED":   {},
+    # The work is over: the last bill is in, the actual completion date is recorded, and what was ordered but never
+    # done goes back to the budget and the BOQ. The defects period runs from the actual date, and retention is
+    # still released against it.
+    "CLOSED":      {},
 }
 # Only a draft may be edited. Once submitted, the figures are what somebody is
 # being asked to sign off, and they must not move underneath them.
@@ -76,6 +80,8 @@ WO_DEFAULT_WORK_TYPES = (
 # be any figure at all. Cancelled and superseded orders release what they
 # held, without anybody having to remember to release it.
 WO_COMMITTED_STATUSES = ("PROVISIONAL", "APPROVED", "EXECUTED")
+# A closed order keeps only what was billed on it: the rest of its value is given back.
+WO_CLOSED = "CLOSED"
 
 WO_BILLING_CYCLES = ("", "Monthly", "Fortnightly", "On milestone", "On completion")
 
@@ -92,6 +98,8 @@ WO_TRACKED = (
     ("labour_cess_percent", "Labour cess %"), ("billing_cycle", "Billing cycle"),
     ("payment_days", "Payment days"), ("bank_guarantee_applicable", "Bank guarantee"),
     ("bank_guarantee_amount", "BG amount"), ("department", "Department"),
+    ("bank_guarantee_validity", "BG valid to"), ("bank_guarantee_number", "BG number"),
+    ("bank_guarantee_bank", "BG bank"), ("ld_percent_per_week", "LD % a week"), ("ld_cap_percent", "LD cap %"),
 )
 
 # What each move reads as once it has happened. Spelled out rather than built
@@ -101,6 +109,7 @@ WO_TRACKED = (
 WO_ACTION_PAST = {
     "SUBMIT": "submitted", "APPROVE": "approved", "REJECT": "sent back",
     "EXECUTE": "executed", "CANCEL": "cancelled", "AMEND": "amended",
+    "CLOSE": "closed",
 }
 
 # A sub contractor with no GST registration may not be given an order worth more than this.

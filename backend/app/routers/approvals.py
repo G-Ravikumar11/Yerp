@@ -18,10 +18,11 @@ from app.core.cache import cached_read
 from app.core.auth import get_client_user, session_person
 from app.core.currency import DEFAULT_CURRENCY, money
 from app.core.permissions import PERMISSION_ROLES, employee_can, role_rank
-from app.core.tenant_settings import put_setting
+from app.core.tenant_settings import put_setting, tenant_setting
+from app.services.subcontract_rules import COMPLIANCE_BLOCKS_KEY
 from app.routers.boq import act_on_boq_variation
 from app.routers.client_billing import act_on_variation
-from app.routers.subcontract_billing import act_on_sub_bill
+from app.routers.subcontract_billing import act_on_sub_bill, cancel_release, certify_release
 from app.routers.subcontract_orders import decide_contractor_registration, wo_approve, wo_reject
 from app.schemas.approvals import ApprovalDecisionIn
 from app.schemas.client_billing import RAActionIn
@@ -272,6 +273,9 @@ def get_approval_rules(request: Request, db: Session = Depends(get_db)):
         "finance_above": finance_above,
         "owner_signs_work_orders": wo_owner_signs(db, client.id),
         "owner_signs_sub_bills": sub_bill_owner_signs(db, client.id),
+        # Refuse to approve, certify or pay a contractor whose labour licence, PF, ESI or insurance is missing or
+        # lapsed (the Master can still go ahead, with a reason).
+        "compliance_blocks_payment": (tenant_setting(db, client.id, COMPLIANCE_BLOCKS_KEY, "1") or "1") != "0",
         "currency": client.currency or DEFAULT_CURRENCY,
         # Naming who would be added makes the rule checkable rather than
         # something that quietly does nothing because nobody holds the access.
@@ -313,6 +317,8 @@ def set_approval_rules(request: Request, body: dict = None, db: Session = Depend
         put_setting(db, client.id, WO_OWNER_SIGNS_KEY, "1" if body.get("owner_signs_work_orders") else "0")
     if "owner_signs_sub_bills" in body:
         put_setting(db, client.id, SUB_BILL_OWNER_SIGNS_KEY, "1" if body.get("owner_signs_sub_bills") else "0")
+    if "compliance_blocks_payment" in body:
+        put_setting(db, client.id, COMPLIANCE_BLOCKS_KEY, "1" if body.get("compliance_blocks_payment") else "0")
     for key, value in ((AUTO_BELOW_KEY, auto_below), (FINANCE_ABOVE_KEY, finance_above)):
         setting = db.query(models.DBSettings).filter(
             models.DBSettings.client_id == client.id,
@@ -377,6 +383,10 @@ def approvals_decide(body: ApprovalDecisionIn, request: Request, db: Session = D
     if kind == "sub_bill":
         return act_on_sub_bill(body.id, "certify" if decision == "approve" else "reject",
                                request, {"comments": note}, db)
+    if kind == "retention_release":
+        if decision == "approve":
+            return certify_release(body.id, request, {"comments": note}, db)
+        return cancel_release(body.id, request, {"reason": note}, db)
     if kind == "contractor":
         return decide_contractor_registration(body.id, "approve" if decision == "approve" else "reject",
                                               request, {"comments": note}, db)

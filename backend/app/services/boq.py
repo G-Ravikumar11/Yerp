@@ -337,12 +337,22 @@ def boq_given_to_contractors(db, client_id, keys=None):
         models.DBSubcontractOrder.client_id == client_id, models.DBSubcontractOrder.supersedes_id.isnot(None),
         models.DBSubcontractOrder.status.notin_(BOQ_NOT_LIVE)).all()}
     out = {}
+    billed = {}
     for it, order in q.all():
         if order.id in amended:
             continue
         g = out.setdefault(it.boq_key, {"qty": 0.0, "cost": 0.0, "items": [], "orders": []})
-        g["qty"] += it.quantity or 0
-        g["cost"] += it.total_amount or 0
+        if order.status == "CLOSED":
+            # A closed order gave the contractor only what it billed; the rest is free to give to somebody else.
+            if order.id not in billed:
+                from app.services.subcontract_rules import billed_qty_by_item
+                billed[order.id] = billed_qty_by_item(db, order.id)
+            qty = billed[order.id].get(it.id, 0.0)
+            g["qty"] += qty
+            g["cost"] += money(qty * (it.unit_rate or 0))
+        else:
+            g["qty"] += it.quantity or 0
+            g["cost"] += it.total_amount or 0
         g["items"].append(it.id)
         if order.wo_number not in g["orders"]:
             g["orders"].append(order.wo_number)

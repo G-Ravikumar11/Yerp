@@ -600,6 +600,19 @@ def approval_inbox(db, client, emp):
             except Exception:
                 over = []
             notes = ["Over the project allocation: " + "; ".join(over)] if over else []
+            from app.services.subcontract_rules import boq_breaches, compliance_problems, tds_shortfall
+            from app.services.subcontract_orders import wo_unconfirmed_budgets
+            boq = boq_breaches(db, o)
+            if boq:
+                notes.append("Past the project BOQ: " + "; ".join(boq))
+            short = tds_shortfall(db, o)
+            if short:
+                notes.append(short + " Only the Master can approve it so, with a reason.")
+            papers = compliance_problems(db, client.id, o.contractor_id)
+            if papers:
+                notes.append("The contractor's papers: " + " ".join(papers) + " Only the Master can approve past this.")
+            notes += wo_unconfirmed_budgets(db, o)
+            over = over + boq
             notes += wo_revision_blockers(db, o)
             if o.supersedes_id:
                 prev = db.query(models.DBSubcontractOrder).filter(
@@ -732,6 +745,22 @@ def approval_inbox(db, client, emp):
                 raised_by=v.raised_by_name or "", since=getattr(v, "updated_at", "") or "",
                 what=(getattr(v, "description", "") or getattr(v, "reason", "") or "")[:200],
                 view="measurement-view"))
+
+    # 5b. Contractors' retention raised by staff, waiting for a second signature before it is owed.
+    if can("subcontracts.approve"):
+        from app.services.subcontract_billing import release_dict
+        for r in db.query(models.DBRetentionRelease).filter(
+                models.DBRetentionRelease.client_id == client.id, models.DBRetentionRelease.side == "contractor",
+                models.DBRetentionRelease.status == "SUBMITTED").order_by(models.DBRetentionRelease.id).all():
+            if emp is not None and r.raised_by == emp.id:
+                continue
+            d = release_dict(db, r)
+            items.append(_row(
+                "retention_release", "Retention release", r.id, r.number, r.net_amount,
+                party=d["party"], project=d["project"], raised_by=r.created_by_name or "",
+                since=r.created_at or "", what="%s on %s" % (r.stage or "Release", d["order_number"]),
+                view="money-view", approve_label="Certify", reject_label="Cancel", note_to_approve=False,
+                warnings=[r.override_note] if r.override_note else []))
 
     # 6. Leave.
     if can("leave.approve"):
