@@ -1,0 +1,116 @@
+import { useQuery } from '@tanstack/react-query'
+import { get, patch, post, put } from '@/lib/api'
+
+export interface MasterItem {
+  id: number
+  kind: 'RM' | 'FG'
+  item_code: string
+  item_name: string
+  description: string
+  item_category: string
+  item_subcategory: string
+  item_type: string
+  units_of_measure: string
+  specification: string
+  purchase_rate: number
+  selling_rate: number
+  /** The selling rate when one is kept, else null. A default only: a site's finalised rate never follows it. */
+  default_rate: number | null
+  hsn_code: string
+  item_tax_type: string
+  preferred_supplier: string
+  reorder_level: number
+  remarks: string
+  is_active: boolean
+  sites: number
+  created_by: string
+  updated_by: string
+  created_at: string
+  updated_at: string
+}
+
+export interface MasterItemInput {
+  item_code?: string
+  item_name: string
+  description?: string
+  item_category?: string
+  item_subcategory?: string
+  item_type?: string
+  units_of_measure?: string
+  specification?: string
+  purchase_rate?: number | null
+  selling_rate?: number | null
+  hsn_code?: string
+  gst_percent?: number | null
+  preferred_supplier?: string
+  reorder_level?: number | null
+  remarks?: string
+  is_active?: boolean
+}
+
+export interface ItemFilters {
+  q: string
+  category: string
+  subcategory: string
+  item_type: string
+  uom: string
+  status: string
+  site_id: string
+  sort: string
+  direction: 'asc' | 'desc'
+  page: number
+  page_size: number
+}
+
+export interface ItemPage {
+  items: MasterItem[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface Category {
+  id: number
+  name: string
+  is_active: boolean
+  subcategories: { id: number; name: string; is_active: boolean }[]
+}
+
+export const masterKeys = {
+  all: ['item-master'] as const,
+  list: (f: ItemFilters) => ['item-master', 'list', f] as const,
+  categories: ['item-master', 'categories'] as const,
+  sites: (id: number | null) => ['item-master', 'sites', id] as const,
+}
+
+export function queryString(f: Partial<ItemFilters>) {
+  const p = new URLSearchParams()
+  Object.entries(f).forEach(([k, v]) => v !== '' && v !== undefined && v !== null && p.set(k, String(v)))
+  return p.toString()
+}
+
+export function useMasterItems(f: ItemFilters) {
+  return useQuery({ queryKey: masterKeys.list(f), queryFn: () => get<ItemPage>(`/api/items?${queryString(f)}`), placeholderData: (prev) => prev })
+}
+
+export function useCategories() {
+  return useQuery({ queryKey: masterKeys.categories, queryFn: async () => (await get<{ categories: Category[] }>('/api/item-categories')).categories })
+}
+
+export function useItemSites(itemId: number | null) {
+  return useQuery({
+    queryKey: masterKeys.sites(itemId),
+    enabled: itemId !== null,
+    queryFn: () =>
+      get<{ sites: { site_id: number; site_code: string; site_name: string; boq_number: string; quantity: number; site_rate: number | null; status: string }[] }>(
+        `/api/items/${itemId}/sites`,
+      ),
+  })
+}
+
+export const createMasterItem = (body: MasterItemInput) => post<{ item: MasterItem; message: string }>('/api/items', body)
+export const updateMasterItem = (id: number, body: MasterItemInput) => put<{ item: MasterItem; message: string }>(`/api/items/${id}`, body)
+export const setItemActive = (id: number, is_active: boolean) => patch<{ item: MasterItem; message: string }>(`/api/items/${id}/status`, { is_active })
+export const addCategory = (name: string, parent_id?: number) => post<{ message: string }>('/api/item-categories', { name, parent_id })
+export const patchCategory = (id: number, body: { name?: string; is_active?: boolean }) => patch<{ message: string }>(`/api/item-categories/${id}`, body)
+export const exportUrl = (f: Partial<ItemFilters>) => `/api/items/export.xlsx?${queryString({ ...f, page: undefined, page_size: undefined, sort: undefined, direction: undefined })}`

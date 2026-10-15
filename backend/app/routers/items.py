@@ -24,7 +24,7 @@ from app.core.sheets import (
     sheet_note,
     sheet_response,
 )
-from app.core.units import CATEGORY_BY_KIND, ITEM_KINDS, ITEM_TYPES, UNITS_OF_MEASURE, canonical_unit
+from app.core.units import BOQ_ITEM_TYPES, CATEGORY_BY_KIND, ITEM_KINDS, ITEM_TYPES, UNITS_OF_MEASURE, canonical_unit
 from app.schemas.items import BomIn, ItemBulkIn, ItemCommitIn, ItemIn, MDDecision
 from app.services.approvals import set_approval_display_status
 from app.services.items import (
@@ -263,6 +263,7 @@ def erp_vocabulary(request: Request, db: Session = Depends(get_db)):
     return {
         "kinds": list(ITEM_KINDS),
         "item_types": list(ITEM_TYPES),
+        "boq_item_types": list(BOQ_ITEM_TYPES),
         "units": list(UNITS_OF_MEASURE),
         "categories": CATEGORY_BY_KIND,
         "tax_rates": ["0%", "5%", "12%", "18%", "28%"],

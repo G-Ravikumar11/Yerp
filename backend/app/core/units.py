@@ -16,6 +16,8 @@ import re
 ITEM_KINDS = ("RM", "FG")
 CATEGORY_BY_KIND = {"RM": "RAW MATERIAL", "FG": "FINISHED GOOD"}
 ITEM_TYPES = ("Purchased", "Service")
+# The wider list the item master form offers for BOQ work items. ITEM_TYPES stays as it was for sheets and stock.
+BOQ_ITEM_TYPES = ITEM_TYPES + ("Work", "Labour", "Equipment")
 # The permitted units. Same list drives the pickers and the validators, so a
 # value the form offers can never be one the server refuses.
 #

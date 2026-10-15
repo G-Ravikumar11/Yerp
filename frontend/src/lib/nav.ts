@@ -83,6 +83,7 @@ export const NAV: NavEntry[] = [
       { label: 'Tender Pipeline', path: '/clients/pipeline', perm: 'billing.manage' },
       { label: 'Tenders & Estimates', path: '/clients/estimates', perm: 'billing.manage' },
       { label: 'BOQ', path: '/projects/boq', perm: 'workorders.manage|reports.view' },
+      { label: 'Site Item Pricing', path: '/projects/boq/rates', perm: 'siteprices.view|siteprices.edit|siteprices.finalize|workorders.manage|reports.view' },
       { label: 'Measurement & RA Bills', path: '/clients/measurement', perm: 'site.record|billing.manage' },
       { label: 'Customers', path: '/clients/customers', perm: 'customers.manage' },
       { label: 'Contacts', path: '/clients/contacts', perm: 'customers.manage' },

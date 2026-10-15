@@ -74,6 +74,12 @@ PORTAL_PERMISSIONS = [
      "label": "Recruitment"},
     {"key": "items.manage", "group": "Contracts",
      "label": "Item master"},
+    {"key": "siteprices.view", "group": "Contracts",
+     "label": "View site item prices"},
+    {"key": "siteprices.edit", "group": "Contracts",
+     "label": "Edit site item prices"},
+    {"key": "siteprices.finalize", "group": "Contracts",
+     "label": "Finalise and reopen site item prices"},
     {"key": "workorders.manage", "group": "Contracts",
      "label": "Work orders & budgets"},
     {"key": "customers.manage", "group": "Contracts",
@@ -160,7 +166,7 @@ _PROJECT_MANAGER = ["self.service", "bills.submit", "bills.approve", "bills.view
                     "attendance.view_team", "leave.approve", "reports.view",
                     "site.record", "site.signoff", "stores.receive",
                     "workorders.manage", "billing.manage", "subcontracts.approve",
-                    "customers.manage", "items.manage"] + _ALL_PORTALS
+                    "customers.manage", "items.manage", "siteprices.view", "siteprices.edit"] + _ALL_PORTALS
 # What "workorders.manage" used to open on its own. The older presets keep all
 # of it, so nobody already on one loses a screen the day the split lands.
 _SPLIT_OUT = ["billing.manage", "purchase.manage", "stores.manage", "accounts.manage"]
@@ -258,7 +264,8 @@ PERMISSION_ROLES = [
                        "and the Master.",
         "permissions": _HEAD_OFFICE + ["items.manage", "bills.approve",
                                        "subcontracts.approve", "vendors.create",
-                                       "workorders.create", "boq.create"],
+                                       "workorders.create", "boq.create", "siteprices.view",
+                                       "siteprices.edit", "siteprices.finalize"],
     },
     {
         "code": "ho_coordinator", "label": "HO Coordinator", "rank": 2, "head_office": True,

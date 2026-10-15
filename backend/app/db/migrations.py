@@ -15,6 +15,16 @@ def migration_report():
     return list(MIGRATION_ERRORS)
 
 
+ITEM_MASTER_COLUMNS = (
+    # (table, column, type) - what the BOQ item master added. Additive and defaulted, safe on a live database.
+    ("erp_items", "item_category", "VARCHAR DEFAULT ''"), ("erp_items", "item_subcategory", "VARCHAR DEFAULT ''"),
+    ("erp_items", "specification", "VARCHAR DEFAULT ''"), ("erp_items", "purchase_rate", "FLOAT DEFAULT 0"),
+    ("erp_items", "selling_rate", "FLOAT DEFAULT 0"), ("erp_items", "preferred_supplier", "VARCHAR DEFAULT ''"),
+    ("erp_items", "remarks", "VARCHAR DEFAULT ''"), ("erp_items", "created_by_name", "VARCHAR DEFAULT ''"),
+    ("erp_items", "updated_by_name", "VARCHAR DEFAULT ''"), ("erp_items", "updated_at", "VARCHAR DEFAULT ''"),
+    ("boq_lines", "item_id", "INTEGER"),
+)
+
 QUALITY_COLUMNS = (
     # (table, column, Postgres type, SQLite type) - what the quality module grew after it was first created.
     ("qc_inspections", "building", "VARCHAR DEFAULT ''"), ("qc_inspections", "floor_area", "VARCHAR DEFAULT ''"),
@@ -1636,6 +1646,18 @@ def ensure_columns():
                 except Exception:
                     pass
 
+            # BOQ item master: new columns on items and BOQ lines. Additive, defaulted, safe on a live database.
+            try:
+                for table, column, typedef in ITEM_MASTER_COLUMNS:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step item master: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
             # Quality: the workflow columns. Additive, defaulted, safe on a live database.
             try:
                 for table, column, typedef in QUALITY_COLUMNS:
@@ -1735,7 +1757,7 @@ def migrate_sqlite():
                 add_col("subcontract_orders", column, "FLOAT DEFAULT 0")
             add_col("subcontract_items", "technical_spec", "TEXT DEFAULT ''")
             add_col("business_units", "logo_url", "TEXT DEFAULT ''")
-            for table, column, typedef in QUALITY_COLUMNS:
+            for table, column, typedef in QUALITY_COLUMNS + ITEM_MASTER_COLUMNS:
                 add_col(table, column, typedef.replace("BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"))
             try:
                 conn.execute(text(SCHEDULE_BACKFILL))
