@@ -260,6 +260,13 @@
   .crane-crate-left, .crane-dot { opacity: 1; }
 }
 
+/* The error pages: the helmet adrift bobs gently and the stars twinkle. */
+.error-float { animation: error-float 6s ease-in-out infinite; transform-origin: 50% 50%; }
+.error-twinkle { animation: error-twinkle 2.4s ease-in-out infinite; }
+@keyframes error-float { 0%, 100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-14px) rotate(3deg); } }
+@keyframes error-twinkle { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .error-float, .error-twinkle { animation: none; } }
+
 /* ---- Base --------------------------------------------------------------- */
 @layer base {
   * {

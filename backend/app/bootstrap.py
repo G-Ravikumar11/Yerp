@@ -171,6 +171,8 @@ from app.routers import (
     app_updates,
     head_office,
     holiday_calendar,
+    error_log,
+    material_vouchers,
 )
 
 for _module in (
@@ -218,6 +220,8 @@ for _module in (
     app_updates,
     head_office,
     holiday_calendar,
+    error_log,
+    material_vouchers,
 ):
     app.include_router(_module.router)
 

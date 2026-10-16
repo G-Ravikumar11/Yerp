@@ -1,10 +1,12 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
-import { AlertTriangle } from 'lucide-react'
-import { Button } from '@/components/ui'
-import { appUrl } from '@/lib/paths'
+import { newRef } from '@/lib/errorCodes'
+import { ErrorPage } from '@/components/errors/ErrorPage'
+import { reportScreenFault } from '@/api/errorLog'
 
 interface State {
   error: Error | null
+  /** The reference for this failure, shown on the page and written to the console with the error. */
+  ref: string
 }
 
 /**
@@ -12,38 +14,25 @@ interface State {
  * the rest keep working; this page says it broke and offers another go.
  */
 export class PageErrorBoundary extends Component<{ children: ReactNode; resetKey: string }, State> {
-  state: State = { error: null }
+  state: State = { error: null, ref: '' }
 
-  static getDerivedStateFromError(error: Error): State {
-    return { error }
+  static getDerivedStateFromError(error: Error): Partial<State> {
+    return { error, ref: newRef() }
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('Page error:', error, info.componentStack)
+    console.error(`YE-APP ref=${this.state.ref} page error:`, error, info.componentStack)
+    // So it shows in Settings > Error log, under the same ref as on this screen.
+    reportScreenFault(this.state.ref, error.message || String(error), `${error.stack ?? ''}\n${info.componentStack ?? ''}`)
   }
 
   componentDidUpdate(prev: { resetKey: string }) {
     // Going to another page clears it.
-    if (prev.resetKey !== this.props.resetKey && this.state.error) this.setState({ error: null })
+    if (prev.resetKey !== this.props.resetKey && this.state.error) this.setState({ error: null, ref: '' })
   }
 
   render() {
     if (!this.state.error) return this.props.children
-    return (
-      <div role="alert" className="mx-auto max-w-md py-20 text-center">
-        <span className="mx-auto grid size-14 place-items-center rounded-2xl bg-danger-soft text-danger">
-          <AlertTriangle className="size-6" />
-        </span>
-        <h1 className="mt-5 text-2xl font-semibold">This page hit a problem</h1>
-        <p className="mt-2 text-[15px] text-muted-foreground">Nothing you entered elsewhere was lost. Try again, or go to another screen.</p>
-        <Button className="mt-6" onClick={() => this.setState({ error: null })}>
-          Try again
-        </Button>
-        <p className="mt-4 text-[13px] text-muted-foreground">
-          Still failing? <a className="font-medium text-primary hover:underline" href={appUrl('reset')}>Clear the saved copy of the app on this device</a>.
-          You stay signed in.
-        </p>
-      </div>
-    )
+    return <ErrorPage kind="crash" code="YE-APP" errorRef={this.state.ref} onRetry={() => this.setState({ error: null, ref: '' })} />
   }
 }

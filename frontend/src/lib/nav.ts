@@ -117,6 +117,7 @@ export const NAV: NavEntry[] = [
       { label: 'E-way Bills', path: '/store/eway' },
       { label: 'Goods Receipt & Match', path: '/store/goods-receipt', perm: 'stores.receive' },
       { label: 'Stock & Issues', path: '/store/stock', perm: 'site.record|stores.manage' },
+      { label: 'Material Issue Voucher', path: '/store/material-vouchers', perm: 'site.record|stores.manage' },
       { label: 'Material Used vs Costed', path: '/store/material-costing', perm: 'reports.view' },
     ],
   },

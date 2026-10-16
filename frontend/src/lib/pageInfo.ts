@@ -58,6 +58,7 @@ export const PAGE_INFO: Record<string, string> = {
   '/store/purchase-orders': 'Purchase orders to suppliers: what was ordered, at what rate, what has arrived and what is billed.',
   '/store/eway': 'E-way bills for goods moving between places, with their validity so a load is never on the road without one.',
   '/store/goods-receipt': 'Record what actually arrives against a purchase order and match it to the order and the supplier\'s bill.',
+  '/store/material-vouchers': "The store's Material Issue Voucher, as on the printed form: project, who indented it, who issued it and for what, and each item issued and returned. Every voucher is kept in Sl. No. order, to print as a PDF or download as an Excel register.",
   '/store/stock': 'Stock on hand at each store, receipts, and issues to site. Issue material to a project and the balance falls.',
   '/store/material-costing': 'Material used on site against what was costed, so overuse and wastage show up early.',
 

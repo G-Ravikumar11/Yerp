@@ -1,7 +1,9 @@
 import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query'
 import { ApiError } from './api'
+import { codeLine, newRef } from './errorCodes'
 import { useOffline } from '@/stores/offline'
 import { toast } from '@/stores/toast'
+import { pageFor, useErrorPage } from '@/stores/errorPage'
 
 interface Options<TVars, TRes> {
   /** Lists to refresh once it has worked. Prefix match: ['orders'] refreshes ['orders', 12] too. */
@@ -37,8 +39,22 @@ export function useAction<TVars = void, TRes extends object | void = { message?:
       await onSuccess?.(r, vars)
     },
     onError: (err, vars) => {
-      toast.error(err instanceof ApiError ? err.message : 'Something went wrong. Try again.')
+      // A failure the person cannot fix by changing what they typed gets the whole error page; the screen and
+      // whatever was typed stay underneath it. A mistake in the form keeps its short message.
+      const page = pageFor(err)
+      if (page) useErrorPage.getState().show(page)
+      else toast.error(err instanceof ApiError ? err.message : failureMessage(err))
       onError?.(err, vars)
     },
   })
+}
+
+/** What to say when a call failed before the server could answer: no connection (YE-NET), or a fault here (YE-APP). */
+export function failureMessage(err: unknown) {
+  const offline = err instanceof TypeError || (typeof navigator !== 'undefined' && navigator.onLine === false)
+  const ref = newRef()
+  if (!offline) console.error(`YE-APP ref=${ref}`, err)
+  return offline
+    ? `Could not reach the server. Check the connection and try again. (${codeLine('YE-NET')})`
+    : `Something went wrong. Try again. (${codeLine('YE-APP', ref)})`
 }

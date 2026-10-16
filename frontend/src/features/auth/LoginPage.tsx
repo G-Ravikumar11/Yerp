@@ -4,6 +4,7 @@ import { Capacitor } from '@capacitor/core'
 import { Eye, EyeOff } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { AuthLayout, Notice, nextTarget } from './AuthLayout'
+import { codeLine } from '@/lib/errorCodes'
 import { appUrl } from '@/lib/paths'
 
 const ERRORS: Record<string, string> = {
@@ -93,10 +94,10 @@ export default function LoginPage() {
       if (staff) return go(nextTarget(appUrl()))
       const refusal = other as ApiError | null
       setError(
-        unreachable ? 'Could not reach the server. Check the connection and try again.'
-          : refusal && refusal.status >= 500 ? 'The server had a problem. Please try again in a moment.'
+        unreachable ? `Could not reach the server. Check the connection and try again. (${codeLine('YE-NET')})`
+          : refusal && refusal.status >= 500 ? `The server had a problem. Please try again in a moment. (${codeLine(refusal.code, refusal.ref)})`
           : refusal ? refusal.message
-          : 'That email and password did not match an account.')
+          : `That email and password did not match an account. (${codeLine('YE-AUTH-01')})`)
     } finally {
       setBusy(false)
     }

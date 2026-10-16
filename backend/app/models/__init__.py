@@ -170,6 +170,8 @@ from app.models.recruitment import (
     DBDocumentRequirement,
     DBDocumentRequest,
 )
+from app.models.error_log import DBErrorLog  # noqa: F401
+from app.models.material_voucher import DBMaterialVoucher  # noqa: F401
 from app.models.safety import (
     DBEquipmentCheck,
     DBSafetyIncident,
