@@ -113,6 +113,8 @@ class DBWorkerScreening(Base):
     education = Column(Text, default="[]")                      # [{exam, year, school}]
     experience = Column(Text, default="[]")                     # [{organization, project_site, category, period, salary}]
 
+    pan = Column(String, default="")                             # ABCDE1234F
+    aadhaar = Column(String, default="")                         # 12 digits; shown masked, only the last four
     certificates_verified = Column(Boolean, default=False)
     trial_briefed = Column(Boolean, default=False)              # seen and briefed the site's EHS rules
     safety_officer_name = Column(String, default="")

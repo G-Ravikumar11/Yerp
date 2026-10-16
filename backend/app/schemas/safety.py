@@ -78,6 +78,8 @@ class WorkerIn(BaseModel):
     blood_group: Optional[str] = ""
     education: Optional[list] = None
     experience: Optional[list] = None
+    pan: Optional[str] = ""
+    aadhaar: Optional[str] = ""
     certificates_verified: Optional[bool] = False
     trial_briefed: Optional[bool] = False
     safety_officer_name: Optional[str] = ""

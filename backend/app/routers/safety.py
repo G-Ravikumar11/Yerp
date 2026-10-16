@@ -345,10 +345,22 @@ def _rows(text):
         return []
 
 
+# Files on a worker that are papers, not the face: never picked as the photo.
+WORKER_PAPERS = ("Medical certificate", "PAN card", "Aadhaar card")
+_PAN = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
+
+
+def _mask_aadhaar(a):
+    return "XXXX XXXX %s" % a[-4:] if a else ""
+
+
 def _worker_dict(w, files):
     mine = [f for f in files if f.attached_id == w.id]
     photo = next((f for f in mine if (f.caption or "") == "Photo"), None) or next(
-        (f for f in mine if (f.content_type or "").startswith("image/") and (f.caption or "") != "Medical certificate"), None)
+        (f for f in mine if (f.content_type or "").startswith("image/") and (f.caption or "") not in WORKER_PAPERS), None)
+    papers = lambda caption: [{"id": f.id, "name": f.name or "", "url": "/api/files/%d" % f.id,
+                               "image": (f.content_type or "").startswith("image/")}
+                              for f in mine if (f.caption or "") == caption]
     medical = [f for f in mine if (f.caption or "") == "Medical certificate"]
     return {"id": w.id, "job_id": w.job_id, "number": w.number or "", "name": w.name or "", "age": w.age or 0,
             "address": w.address or "", "trade": w.trade or "", "screened_on": w.screened_on or "",
@@ -365,6 +377,9 @@ def _worker_dict(w, files):
             "education": _rows(w.education), "experience": _rows(w.experience),
             "certificates_verified": bool(w.certificates_verified), "trial_briefed": bool(w.trial_briefed),
             "safety_officer_name": w.safety_officer_name or "",
+            # Aadhaar is never sent whole: the last four digits are enough to tell two cards apart.
+            "pan": w.pan or "", "aadhaar_masked": _mask_aadhaar(w.aadhaar or ""),
+            "pan_card": papers("PAN card"), "aadhaar_card": papers("Aadhaar card"),
             "photo_url": ("/api/files/%d/thumb" % photo.id) if photo else "",
             "photo_full_url": ("/api/files/%d" % photo.id) if photo else "",
             "medical": [{"id": f.id, "name": f.name or "", "url": "/api/files/%d" % f.id} for f in medical]}
@@ -439,6 +454,21 @@ def worker_screen(body: WorkerIn, request: Request, db: Session = Depends(get_db
         raise HTTPException(400, "Sex: " + ", ".join(WORKER_SEX))
     if body.marital_status and body.marital_status not in WORKER_MARITAL_STATUS:
         raise HTTPException(400, "Marital status: " + ", ".join(WORKER_MARITAL_STATUS))
+    pan = re.sub(r"\s", "", body.pan or "").upper()
+    aadhaar = re.sub(r"[\s-]", "", body.aadhaar or "")
+    if pan and not _PAN.match(pan):
+        raise HTTPException(400, "The PAN is 5 letters, 4 digits and a letter, like ABCDE1234F.")
+    if aadhaar and not re.fullmatch(r"[2-9]\d{11}", aadhaar):
+        raise HTTPException(400, "The Aadhaar number is 12 digits and does not start with 0 or 1.")
+    # The same person screened twice on one site is a double count on the diary and the muster.
+    for field, value, what in (("aadhaar", aadhaar, "Aadhaar"), ("pan", pan, "PAN")):
+        if not value:
+            continue
+        twin = db.query(models.DBWorkerScreening).filter(
+            models.DBWorkerScreening.client_id == client.id, models.DBWorkerScreening.job_id == job.id,
+            getattr(models.DBWorkerScreening, field) == value).first()
+        if twin:
+            raise HTTPException(409, "This %s is already screened on this site: %s, %s." % (what, twin.number, twin.name))
     w = models.DBWorkerScreening(
         client_id=client.id, job_id=job.id, number=next_number(db, models.DBWorkerScreening, client.id, "WKR"),
         name=name[:120], age=int(body.age), address=(body.address or "").strip()[:500], trade=body.trade,
@@ -457,7 +487,7 @@ def worker_screen(body: WorkerIn, request: Request, db: Session = Depends(get_db
         blood_group=(body.blood_group or "").strip()[:10],
         education=json.dumps(_edu_rows(body.education)), experience=json.dumps(_exp_rows(body.experience)),
         certificates_verified=bool(body.certificates_verified), trial_briefed=bool(body.trial_briefed),
-        safety_officer_name=(body.safety_officer_name or "").strip()[:120])
+        safety_officer_name=(body.safety_officer_name or "").strip()[:120], pan=pan, aadhaar=aadhaar)
     db.add(w)
     db.commit()
     return {"worker": _worker_dict(w, [])}

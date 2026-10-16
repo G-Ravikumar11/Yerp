@@ -1605,6 +1605,8 @@ def ensure_columns():
                     ("worker_screenings", "certificates_verified", "BOOLEAN DEFAULT FALSE"),
                     ("worker_screenings", "trial_briefed", "BOOLEAN DEFAULT FALSE"),
                     ("worker_screenings", "safety_officer_name", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "pan", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "aadhaar", "TEXT DEFAULT ''"),
                     ("boq_lines", "rate_only", "BOOLEAN DEFAULT FALSE"),
                     ("sub_bills", "entry_mode", "TEXT DEFAULT ''"),
                     ("sub_bills", "scan_file_id", "INTEGER"),
@@ -1946,6 +1948,8 @@ def migrate_sqlite():
             add_col("worker_screenings", "certificates_verified", "BOOLEAN DEFAULT 0")
             add_col("worker_screenings", "trial_briefed", "BOOLEAN DEFAULT 0")
             add_col("worker_screenings", "safety_officer_name", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "pan", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "aadhaar", "TEXT DEFAULT ''")
 
             # Create approval_chains table
             conn.execute(text("""

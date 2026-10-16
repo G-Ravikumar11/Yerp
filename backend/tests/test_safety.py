@@ -242,3 +242,53 @@ def test_another_company_sees_nothing_of_this_sites_check(tenant, second_tenant)
     tenant.post("/api/workers", json={"job_id": j["id"], "name": "Ravi Kumar", "age": 30, "trade": "Mason"})
     items = {x["key"]: x for x in second_tenant.get("/api/safety/hse-check").json()["items"]}
     assert items["screened"]["count"] == 0 and items["briefed"]["count"] == 0
+
+
+# --- PAN and Aadhaar on a worker, with photos of the cards ----------------------------------------------------
+
+def screen_with_ids(tenant, j, **ids):
+    body = {"job_id": j["id"], "name": "Ravi Kumar", "age": 30, "trade": "Mason"}
+    body.update(ids)
+    return tenant.post("/api/workers", json=body)
+
+
+def test_pan_and_aadhaar_are_kept_and_aadhaar_never_sent_whole(tenant):
+    j = job(tenant)
+    res = screen_with_ids(tenant, j, pan="abcde1234f", aadhaar="2345 6789 0123")
+    assert res.status_code == 200, res.text
+    w = res.json()["worker"]
+    assert w["pan"] == "ABCDE1234F"
+    assert w["aadhaar_masked"] == "XXXX XXXX 0123"
+    listed = tenant.get("/api/workers?job_id=%d" % j["id"]).text
+    assert "234567890123" not in listed and "2345 6789 0123" not in listed
+
+
+def test_badly_formed_numbers_are_refused_in_words(tenant):
+    j = job(tenant)
+    assert "ABCDE1234F" in screen_with_ids(tenant, j, pan="ABC1234567").json()["detail"]
+    assert "0 or 1" in screen_with_ids(tenant, j, aadhaar="123456789012").json()["detail"]
+    assert screen_with_ids(tenant, j, aadhaar="23456789").status_code == 400
+
+
+def test_the_same_aadhaar_or_pan_cannot_be_screened_twice_on_one_site(tenant):
+    j = job(tenant)
+    first = screen_with_ids(tenant, j, aadhaar="234567890123", pan="ABCDE1234F").json()["worker"]
+    again = screen_with_ids(tenant, j, aadhaar="2345 6789 0123")
+    assert again.status_code == 409 and first["number"] in again.json()["detail"]
+    assert screen_with_ids(tenant, j, pan="abcde1234f").status_code == 409
+    other_site = tenant.post("/api/jobs", json={"name": "Second site", "customer_name": "Arabtec"}).json()
+    assert screen_with_ids(tenant, other_site, aadhaar="234567890123").status_code == 200   # moved to another site
+
+
+def test_card_photos_are_listed_and_never_taken_for_the_face(tenant):
+    j = job(tenant)
+    w = screen_with_ids(tenant, j, pan="ABCDE1234F").json()["worker"]
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+    for caption in ("PAN card", "Aadhaar card", "Aadhaar card"):
+        up = tenant.post("/api/files", data={"attached_type": "worker", "attached_id": str(w["id"]), "caption": caption,
+                                             "kind": "document"}, files={"file": ("card.png", png, "image/png")})
+        assert up.status_code == 200, up.text
+    listed = tenant.get("/api/workers?job_id=%d" % j["id"]).json()["workers"][0]
+    assert len(listed["pan_card"]) == 1 and len(listed["aadhaar_card"]) == 2
+    assert listed["pan_card"][0]["image"] is True
+    assert listed["photo_url"] == ""                    # a card is not the worker's face
