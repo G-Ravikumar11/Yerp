@@ -331,3 +331,58 @@ def test_the_workers_own_contact_number_is_kept_as_ten_digits(tenant):
     bad = screen_with_ids(tenant, j, phone="12345 67890")
     assert bad.status_code == 400 and "10-digit mobile" in bad.json()["detail"]
     assert screen_with_ids(tenant, j, phone="98765").status_code == 400
+
+
+def test_a_workers_picture_addresses_carry_when_the_file_was_uploaded(tenant):
+    """A browser keeps a picture a day by its address: a file number used again must not bring back the old one."""
+    j = job(tenant)
+    w = screen_with_ids(tenant, j).json()["worker"]
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+    for caption in ("Photo", "PAN card"):
+        tenant.post("/api/files", data={"attached_type": "worker", "attached_id": str(w["id"]), "caption": caption,
+                                        "kind": "photo"}, files={"file": ("x.png", png, "image/png")})
+    listed = tenant.get("/api/workers?job_id=%d" % j["id"]).json()["workers"][0]
+    assert "/thumb?v=" in listed["photo_url"] and "?v=" in listed["photo_full_url"]
+    assert "/thumb?v=" in listed["pan_card"][0]["thumb_url"]
+    assert tenant.get(listed["photo_url"]).status_code == 200
+
+
+# --- the photo of the worker's signature --------------------------------------------------------------------------------------
+
+def _png_data_uri():
+    import base64
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGBA", (120, 40), (0, 0, 0, 0)).save(buf, "PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def test_a_worker_signs_and_the_signature_is_served_as_a_picture(tenant):
+    j = job(tenant)
+    w = screen_with_ids(tenant, j, signature=_png_data_uri()).json()["worker"]
+    assert w["signature_url"].startswith("/api/workers/%d/signature.png?v=" % w["id"]) and w["signed_at"]
+    listed = tenant.get("/api/workers?job_id=%d" % j["id"])
+    assert "base64" not in listed.text                    # the list names where to fetch it, not the picture itself
+    pic = tenant.get(w["signature_url"])
+    assert pic.status_code == 200 and pic.headers["content-type"] == "image/png" and pic.content[:4] == b"\x89PNG"
+    assert tenant.get("/api/workers/%d/document.pdf" % w["id"]).status_code in (200, 503)
+
+
+def test_a_worker_who_has_not_signed_has_no_signature(tenant):
+    j = job(tenant)
+    w = screen_with_ids(tenant, j).json()["worker"]
+    assert w["signature_url"] == "" and w["signed_at"] == ""
+    assert tenant.get("/api/workers/%d/signature.png" % w["id"]).status_code == 404
+
+
+def test_anything_but_a_png_signature_is_refused(tenant):
+    j = job(tenant)
+    bad = screen_with_ids(tenant, j, signature="data:text/html;base64,PHNjcmlwdD4=")
+    assert bad.status_code == 400 and "Upload it again" in bad.json()["detail"]
+
+
+def test_another_company_cannot_see_the_signature(tenant, second_tenant):
+    j = job(tenant)
+    w = screen_with_ids(tenant, j, signature=_png_data_uri()).json()["worker"]
+    assert second_tenant.get("/api/workers/%d/signature.png" % w["id"]).status_code == 404

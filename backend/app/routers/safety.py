@@ -1,10 +1,12 @@
 """The safety endpoints."""
 import base64
+import io
 import json
 import re
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.documents import form_pdf
@@ -350,17 +352,29 @@ def _rows(text):
 # Files on a worker that are papers, not the face: never picked as the photo.
 WORKER_PAPERS = ("Medical certificate", "PAN card", "Aadhaar card")
 _PAN = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
+_SIGNATURE = re.compile(r"^data:image/png;base64,[A-Za-z0-9+/=]+$")
 
 
 def _mask_aadhaar(a):
     return "XXXX XXXX %s" % a[-4:] if a else ""
 
 
+def _worker_photo(mine):
+    return next((f for f in mine if (f.caption or "") == "Photo"), None) or next(
+        (f for f in mine if (f.content_type or "").startswith("image/") and (f.caption or "") not in WORKER_PAPERS), None)
+
+
+def _file_url(f, thumb=False):
+    """A file's address with when it was uploaded on it. A browser keeps a picture for a day by its address, and a
+    database that hands a deleted file's number to the next one would otherwise show the old picture in its place."""
+    stamp = re.sub(r"\D", "", getattr(f, "created_at", "") or "")
+    return "/api/files/%d%s%s" % (f.id, "/thumb" if thumb else "", "?v=" + stamp if stamp else "")
+
+
 def _worker_dict(w, files):
     mine = [f for f in files if f.attached_id == w.id]
-    photo = next((f for f in mine if (f.caption or "") == "Photo"), None) or next(
-        (f for f in mine if (f.content_type or "").startswith("image/") and (f.caption or "") not in WORKER_PAPERS), None)
-    papers = lambda caption: [{"id": f.id, "name": f.name or "", "url": "/api/files/%d" % f.id,
+    photo = _worker_photo(mine)
+    papers = lambda caption: [{"id": f.id, "name": f.name or "", "url": _file_url(f), "thumb_url": _file_url(f, True),
                                "image": (f.content_type or "").startswith("image/")}
                               for f in mine if (f.caption or "") == caption]
     medical = [f for f in mine if (f.caption or "") == "Medical certificate"]
@@ -382,9 +396,13 @@ def _worker_dict(w, files):
             # Aadhaar is never sent whole: the last four digits are enough to tell two cards apart.
             "pan": w.pan or "", "aadhaar_masked": _mask_aadhaar(w.aadhaar or ""),
             "pan_card": papers("PAN card"), "aadhaar_card": papers("Aadhaar card"),
-            "photo_url": ("/api/files/%d/thumb" % photo.id) if photo else "",
-            "photo_full_url": ("/api/files/%d" % photo.id) if photo else "",
-            "medical": [{"id": f.id, "name": f.name or "", "url": "/api/files/%d" % f.id} for f in medical]}
+            # The picture is fetched on its own: a list of a few hundred workers should not carry every signature.
+            "signed_at": w.signed_at or "" if w.signature else "",
+            "signature_url": ("/api/workers/%d/signature.png?v=%s" % (w.id, re.sub(r"\D", "", w.signed_at or "")))
+                             if w.signature else "",
+            "photo_url": _file_url(photo, True) if photo else "",
+            "photo_full_url": _file_url(photo) if photo else "",
+            "medical": [{"id": f.id, "name": f.name or "", "url": _file_url(f)} for f in medical]}
 
 
 @router.get("/api/workers")
@@ -396,7 +414,7 @@ def worker_list(request: Request, job_id: int = 0, db: Session = Depends(get_db)
         q = q.filter(models.DBWorkerScreening.job_id == job_id)
     rows = q.order_by(models.DBWorkerScreening.id.asc()).all()
     files = db.query(models.DBFile.id, models.DBFile.attached_id, models.DBFile.caption, models.DBFile.name,
-                     models.DBFile.content_type).filter(
+                     models.DBFile.content_type, models.DBFile.created_at).filter(
         models.DBFile.client_id == client.id, models.DBFile.attached_type == "worker",
         models.DBFile.attached_id.in_([w.id for w in rows] or [0])).order_by(models.DBFile.id.desc()).all()
     workers = [_worker_dict(w, files) for w in rows]
@@ -466,6 +484,9 @@ def worker_screen(body: WorkerIn, request: Request, db: Session = Depends(get_db
         raise HTTPException(400, "The PAN is 5 letters, 4 digits and a letter, like ABCDE1234F.")
     if aadhaar and not re.fullmatch(r"[2-9]\d{11}", aadhaar):
         raise HTTPException(400, "The Aadhaar number is 12 digits and does not start with 0 or 1.")
+    signature = (body.signature or "").strip()
+    if signature and (not _SIGNATURE.match(signature) or len(signature) > 400_000):
+        raise HTTPException(400, "The signature did not come through as a picture. Upload it again.")
     # The same person screened twice on one site is a double count on the diary and the muster.
     for field, value, what in (("aadhaar", aadhaar, "Aadhaar"), ("pan", pan, "PAN")):
         if not value:
@@ -493,7 +514,8 @@ def worker_screen(body: WorkerIn, request: Request, db: Session = Depends(get_db
         blood_group=(body.blood_group or "").strip()[:10],
         education=json.dumps(_edu_rows(body.education)), experience=json.dumps(_exp_rows(body.experience)),
         certificates_verified=bool(body.certificates_verified), trial_briefed=bool(body.trial_briefed),
-        safety_officer_name=(body.safety_officer_name or "").strip()[:120], pan=pan, aadhaar=aadhaar)
+        safety_officer_name=(body.safety_officer_name or "").strip()[:120], pan=pan, aadhaar=aadhaar,
+        signature=signature, signed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S") if signature else "")
     db.add(w)
     db.commit()
     return {"worker": _worker_dict(w, [])}
@@ -521,7 +543,7 @@ def worker_pdf(wid: int, request: Request, db: Session = Depends(get_db)):
     files = db.query(models.DBFile).filter(models.DBFile.client_id == client.id, models.DBFile.attached_type == "worker",
                                            models.DBFile.attached_id == w.id).order_by(models.DBFile.id.desc()).all()
     d = _worker_dict(w, files)
-    photo = next((f for f in files if f.id and d["photo_full_url"] == "/api/files/%d" % f.id), None)
+    photo = _worker_photo(files)
     project, _ = _job_line(db, w.job_id)
     when = form_pdf.date_text
     dash = lambda v: str(v) if v not in (None, "", 0) else "-"  # noqa: E731
@@ -568,12 +590,24 @@ def worker_pdf(wid: int, request: Request, db: Session = Depends(get_db)):
             ("Trial report: seen and briefed the EHS rules of the site", "Yes" if d["trial_briefed"] else "No"),
             ("Safety officer", dash(d["safety_officer_name"]))]},
     ]
-    sig = [("Signature / Left Hand Thumb impression of the worker", d["name"]), ("Signature of the Contractor", d["contractor_name"]),
+    sig = [("Signature / Left Hand Thumb impression of the worker", d["name"], w.signature or ""), ("Signature of the Contractor", d["contractor_name"]),
            ("Site in charge / Site Engineer", ""), ("Safety Officer", d["safety_officer_name"])]
     doc = _field_doc(db, client, "SCREENING OF WORKER",
                      [("Worker ID No", d["number"]), ("Date", when(d["screened_on"]) or "-"), ("Project", project or "-")],
                      blocks, sig, d["number"])
     return form_pdf_response(doc, "%s %s" % (d["number"], d["name"]))
+
+
+@router.get("/api/workers/{wid}/signature.png")
+def worker_signature(wid: int, request: Request, db: Session = Depends(get_db)):
+    """The worker's signature, from the photo of it that was uploaded."""
+    client = require_erp_read(request, db)
+    w = db.query(models.DBWorkerScreening).filter(models.DBWorkerScreening.id == wid,
+                                                  models.DBWorkerScreening.client_id == client.id).first()
+    if not w or not w.signature:
+        raise HTTPException(404, "No signature")
+    raw = base64.b64decode(w.signature.partition(",")[2])
+    return StreamingResponse(io.BytesIO(raw), media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
 
 
 @router.delete("/api/workers/{wid}")

@@ -81,6 +81,7 @@ class WorkerIn(BaseModel):
     experience: Optional[list] = None
     pan: Optional[str] = ""
     aadhaar: Optional[str] = ""
+    signature: Optional[str] = ""
     certificates_verified: Optional[bool] = False
     trial_briefed: Optional[bool] = False
     safety_officer_name: Optional[str] = ""

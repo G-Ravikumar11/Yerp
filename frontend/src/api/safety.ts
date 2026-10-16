@@ -43,7 +43,7 @@ export const closePermit = (id: number, note: string) => post<{ permit: { number
 export const workerKeys = { all: ['workers'] as const }
 export interface EducationRow { exam: string; year: string; school: string }
 export interface ExperienceRow { organization: string; project_site: string; category: string; period: string; salary: string }
-export interface WorkerPaper { id: number; name: string; url: string; image: boolean }
+export interface WorkerPaper { id: number; name: string; url: string; thumb_url: string; image: boolean }
 export interface Worker {
   id: number
   job_id: number
@@ -82,6 +82,9 @@ export interface Worker {
   aadhaar_masked: string
   pan_card: WorkerPaper[]
   aadhaar_card: WorkerPaper[]
+  /** The photo of the worker's signature, as a picture to fetch; empty when none was uploaded. */
+  signature_url: string
+  signed_at: string
   photo_url: string
   photo_full_url: string
   medical: { id: number; name: string; url: string }[]
@@ -96,7 +99,7 @@ export interface WorkerInput {
   health_problem?: string; weight_kg?: number; height_cm?: number; blood_group?: string
   education?: EducationRow[]; experience?: ExperienceRow[]
   certificates_verified?: boolean; trial_briefed?: boolean; safety_officer_name?: string
-  pan?: string; aadhaar?: string
+  pan?: string; aadhaar?: string; signature?: string
 }
 export const screenWorker = (b: WorkerInput) => post<{ worker: Worker }>('/api/workers', b)
 export const removeWorker = (id: number) => del<{ message: string }>(`/api/workers/${id}`)

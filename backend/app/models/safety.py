@@ -116,6 +116,8 @@ class DBWorkerScreening(Base):
 
     pan = Column(String, default="")                             # ABCDE1234F
     aadhaar = Column(String, default="")                         # 12 digits; shown masked, only the last four
+    signature = Column(Text, default="")                         # the photo of the worker's signature, a PNG data: URI
+    signed_at = Column(String, default="")
     certificates_verified = Column(Boolean, default=False)
     trial_briefed = Column(Boolean, default=False)              # seen and briefed the site's EHS rules
     safety_officer_name = Column(String, default="")
