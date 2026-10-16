@@ -100,6 +100,7 @@ class DBWorkerScreening(Base):
     mother_tongue = Column(String, default="")
     other_languages = Column(String, default="")
     emergency_contact = Column(String, default="")
+    phone = Column(String, default="")                           # the worker's own mobile, 10 digits
     identification_mark = Column(String, default="")
 
     vision_normal = Column(Boolean, default=True)
@@ -113,6 +114,10 @@ class DBWorkerScreening(Base):
     education = Column(Text, default="[]")                      # [{exam, year, school}]
     experience = Column(Text, default="[]")                     # [{organization, project_site, category, period, salary}]
 
+    pan = Column(String, default="")                             # ABCDE1234F
+    aadhaar = Column(String, default="")                         # 12 digits; shown masked, only the last four
+    signature = Column(Text, default="")                         # the photo of the worker's signature, a PNG data: URI
+    signed_at = Column(String, default="")
     certificates_verified = Column(Boolean, default=False)
     trial_briefed = Column(Boolean, default=False)              # seen and briefed the site's EHS rules
     safety_officer_name = Column(String, default="")

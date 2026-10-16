@@ -68,6 +68,7 @@ class WorkerIn(BaseModel):
     mother_tongue: Optional[str] = ""
     other_languages: Optional[str] = ""
     emergency_contact: Optional[str] = ""
+    phone: Optional[str] = ""
     identification_mark: Optional[str] = ""
     vision_normal: Optional[bool] = True
     vision_problem: Optional[str] = ""
@@ -78,6 +79,9 @@ class WorkerIn(BaseModel):
     blood_group: Optional[str] = ""
     education: Optional[list] = None
     experience: Optional[list] = None
+    pan: Optional[str] = ""
+    aadhaar: Optional[str] = ""
+    signature: Optional[str] = ""
     certificates_verified: Optional[bool] = False
     trial_briefed: Optional[bool] = False
     safety_officer_name: Optional[str] = ""

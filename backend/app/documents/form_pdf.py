@@ -182,6 +182,15 @@ def _pairs(block, st):
         half = (_W() - 60 * mm) / 2.0
         return _box(data, [30 * mm, half, 30 * mm, half])
     lw = (block.get("label_width") or 42) * mm
+    if "photo" in block:
+        # The person's details with their photo in a box down the right, as a screening form has it. Without a
+        # picture the box still prints, marked "Photo", for one to be pasted on.
+        pw, ph = 38 * mm, 46 * mm
+        pic = _picture(block.get("photo"), pw - 6 * mm, ph - 6 * mm) or Paragraph("Photo", st["centre"])
+        data = [[Paragraph(_esc(k) + " :", st["label"]), Paragraph(_br(v), st["body"]), pic if i == 0 else ""]
+                for i, (k, v) in enumerate(rows)] or [["", "", pic]]
+        return _box(data, [lw, _W() - lw - pw, pw],
+                    [("SPAN", (2, 0), (2, -1)), ("VALIGN", (2, 0), (2, -1), "MIDDLE"), ("ALIGN", (2, 0), (2, -1), "CENTER")])
     if block.get("aside"):
         # Label and value on the left, the right-hand column left open - the
         # contact rows under the party box, as the order form rules them.

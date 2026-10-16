@@ -1,17 +1,20 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Eye, FileText, Trash2, UserPlus } from 'lucide-react'
+import { Camera, Download, Eye, FileText, Trash2, UserPlus, X } from 'lucide-react'
+import { takePhoto } from '@/lib/mobile'
 import { toast } from '@/stores/toast'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { ProjectPicker } from '@/components/data/ProjectPicker'
 import { Badge, Button, ConfirmDialog, Field, Input, Modal, Select, Stat, StatGrid, Textarea } from '@/components/ui'
-import { removeWorker, screenWorker, useWorkers, workerKeys, type EducationRow, type ExperienceRow, type Worker, type WorkerInput } from '@/api/safety'
+import { removeWorker, screenWorker, useWorkers, workerKeys, type EducationRow, type ExperienceRow, type Worker, type WorkerInput, type WorkerPaper } from '@/api/safety'
 import { uploadFiles } from '@/api/files'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { formatDate, today } from '@/lib/format'
 import { apiUrl } from '@/lib/api'
 
+/** The worker's screening, filled in on the paper form, as a PDF. */
+const workerPdf = (id: number) => apiUrl(`/api/workers/${id}/document.pdf`)
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join('') || '?'
 
 /** The Workers tab: every worker screened before starting on site - who they are, their trade, photo and medical certificate. */
@@ -69,10 +72,11 @@ export function WorkersTab() {
       id: 'actions',
       header: '',
       align: 'right',
-      width: can('site.signoff') ? '6.5rem' : '3.5rem',
+      width: can('site.signoff') ? '9.5rem' : '6.5rem',
       cell: (w) => (
         <div className="flex items-center justify-end gap-1">
           <Button size="icon" variant="ghost" aria-label={`View ${w.name}`} onClick={() => setViewing(w)}><Eye /></Button>
+          <Button size="icon" variant="ghost" asChild><a href={workerPdf(w.id)} target="_blank" rel="noopener" download aria-label={`Download ${w.name}'s screening as PDF`} title="Download PDF"><Download /></a></Button>
           {can('site.signoff') && <Button size="icon" variant="ghost" aria-label={`Remove ${w.name}`} onClick={() => setRemoving(w)}><Trash2 /></Button>}
         </div>
       ),
@@ -134,11 +138,27 @@ function ScreeningForm({ job, trades, minAge, sexes, maritalStatuses, onClose }:
   const [f, setF] = useState({
     name: '', age: '', address: '', trade: trades[0] ?? '', screened_on: today(),
     contractor_name: '', father_name: '', dob: '', sex: '', marital_status: '', children: '0',
-    mother_tongue: '', other_languages: '', emergency_contact: '', identification_mark: '',
+    mother_tongue: '', other_languages: '', emergency_contact: '', phone: '', identification_mark: '',
     vision_normal: true, vision_problem: '', health_normal: true, health_problem: '',
     weight_kg: '', height_cm: '', blood_group: '',
     certificates_verified: false, trial_briefed: false, safety_officer_name: '',
+    pan: '', aadhaar: '',
   })
+  const [panCard, setPanCard] = useState<File[]>([])
+  const [aadhaarCard, setAadhaarCard] = useState<File[]>([])
+  const idWrong = {
+    pan: f.pan && !/^[A-Z]{5}\d{4}[A-Z]$/.test(f.pan) ? '5 letters, 4 digits and a letter, like ABCDE1234F.' : '',
+    aadhaar: f.aadhaar && !/^[2-9]\d{11}$/.test(f.aadhaar) ? '12 digits, not starting with 0 or 1.' : '',
+  }
+  // The mobile as the server keeps it: "+91 98765 43210" and "098765 43210" are both 9876543210.
+  const phoneDigits = f.phone.replace(/\D/g, '').replace(/^(91|0)(?=\d{10}$)/, '')
+  const phoneWrong = f.phone.trim() && !/^[6-9]\d{9}$/.test(phoneDigits) ? 'A 10-digit mobile number, starting with 6, 7, 8 or 9.' : ''
+  const phoneShown = phoneDigits.length >= 10 ? phoneWrong : ''
+  // Said in red only once the number is typed in full; while it is still being typed the hint is enough.
+  const idShown = {
+    pan: f.pan.length >= 10 ? idWrong.pan : '',
+    aadhaar: f.aadhaar.length >= 12 ? idWrong.aadhaar : '',
+  }
   const [education, setEducation] = useState<EducationRow[]>([blankEducation()])
   const [experience, setExperience] = useState<ExperienceRow[]>([blankExperience()])
   const [photo, setPhoto] = useState<File | null>(null)
@@ -147,7 +167,15 @@ function ScreeningForm({ job, trades, minAge, sexes, maritalStatuses, onClose }:
   const [error, setError] = useState('')
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((x) => ({ ...x, [k]: e.target.value }))
   const age = parseInt(f.age, 10)
-  const ready = f.name.trim() && age >= minAge && f.trade
+  const missing = [
+    !f.name.trim() && 'the name',
+    !(age >= minAge) && `the age (at least ${minAge})`,
+    !f.trade && 'the trade',
+    idWrong.pan && 'a correct PAN',
+    idWrong.aadhaar && 'a correct Aadhaar number',
+    phoneWrong && 'a correct contact number',
+  ].filter((x): x is string => !!x)
+  const ready = missing.length === 0
   const editEdu = (i: number, patch: Partial<EducationRow>) => setEducation((rows) => rows.map((r, j) => (j === i ? { ...r, ...patch } : r)))
   const editExp = (i: number, patch: Partial<ExperienceRow>) => setExperience((rows) => rows.map((r, j) => (j === i ? { ...r, ...patch } : r)))
 
@@ -160,22 +188,24 @@ function ScreeningForm({ job, trades, minAge, sexes, maritalStatuses, onClose }:
         contractor_name: f.contractor_name, father_name: f.father_name, dob: f.dob, sex: f.sex,
         marital_status: f.marital_status, children: parseInt(f.children, 10) || 0,
         mother_tongue: f.mother_tongue, other_languages: f.other_languages,
-        emergency_contact: f.emergency_contact, identification_mark: f.identification_mark,
+        emergency_contact: f.emergency_contact, phone: f.phone, identification_mark: f.identification_mark,
         vision_normal: f.vision_normal, vision_problem: f.vision_problem,
         health_normal: f.health_normal, health_problem: f.health_problem,
         weight_kg: Number(f.weight_kg) || 0, height_cm: Number(f.height_cm) || 0, blood_group: f.blood_group,
         education: education.filter((r) => r.exam.trim() || r.school.trim()),
         experience: experience.filter((r) => r.organization.trim() || r.project_site.trim()),
         certificates_verified: f.certificates_verified, trial_briefed: f.trial_briefed,
-        safety_officer_name: f.safety_officer_name,
+        safety_officer_name: f.safety_officer_name, pan: f.pan, aadhaar: f.aadhaar,
       }
       const { worker } = await screenWorker(body)
       const failed: string[] = []
       if (photo) failed.push(...(await uploadFiles([photo], 'worker', worker.id, { caption: 'Photo', kind: 'photo' })).failed)
+      if (panCard.length) failed.push(...(await uploadFiles(panCard, 'worker', worker.id, { caption: 'PAN card', kind: 'document' })).failed)
+      if (aadhaarCard.length) failed.push(...(await uploadFiles(aadhaarCard, 'worker', worker.id, { caption: 'Aadhaar card', kind: 'document' })).failed)
       if (medical.length) failed.push(...(await uploadFiles(medical, 'worker', worker.id, { caption: 'Medical certificate', kind: 'document' })).failed)
       await qc.invalidateQueries({ queryKey: workerKeys.all })
       if (failed.length) toast.error(`${worker.name} screened, but a file did not go up: ${failed[0]}`)
-      else toast.success(`${worker.name} screened as ${worker.trade.toLowerCase()}`)
+      else toast.withAction(`${worker.name} screened as ${worker.trade.toLowerCase()}`, 'Download PDF', () => window.open(workerPdf(worker.id), '_blank', 'noopener'))
       onClose()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Not saved. Try again.')
@@ -186,12 +216,38 @@ function ScreeningForm({ job, trades, minAge, sexes, maritalStatuses, onClose }:
 
   return (
     <div>
-      <h3 className="mb-2 text-sm font-semibold">Who they are</h3>
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Field label="Contractor / Sub-Contractor" htmlFor="wk-contractor" className="sm:col-span-3"><Input id="wk-contractor" value={f.contractor_name} onChange={set('contractor_name')} /></Field>
-        <Field label="Full name of the worker" htmlFor="wk-name" className="sm:col-span-2"><Input id="wk-name" value={f.name} autoFocus onChange={set('name')} /></Field>
-        <Field label="Father / Husband's name" htmlFor="wk-father"><Input id="wk-father" value={f.father_name} onChange={set('father_name')} /></Field>
-        <Field label="Permanent address" htmlFor="wk-addr" className="sm:col-span-3"><Textarea id="wk-addr" rows={2} value={f.address} onChange={set('address')} /></Field>
+      {/* Laid out as the paper form: Worker ID and date across the top, the person on the left, the photo top right. */}
+      <div className="grid gap-4 sm:grid-cols-[1fr_8.5rem]">
+        <div className="order-2 grid content-start gap-4 sm:order-1 sm:grid-cols-2">
+          <Field label="Worker ID No." htmlFor="wk-id" hint="Given when the screening is saved"><Input id="wk-id" value="" placeholder="WKR-...." disabled /></Field>
+          <Field label="Date" htmlFor="wk-on"><Input id="wk-on" type="date" value={f.screened_on} onChange={set('screened_on')} /></Field>
+          <Field label="Contractor / Sub-Contractor" htmlFor="wk-contractor" className="sm:col-span-2"><Input id="wk-contractor" value={f.contractor_name} onChange={set('contractor_name')} /></Field>
+          <Field label="Full name of the worker" htmlFor="wk-name"><Input id="wk-name" value={f.name} autoFocus onChange={set('name')} /></Field>
+          <Field label="Father / Husband's name" htmlFor="wk-father"><Input id="wk-father" value={f.father_name} onChange={set('father_name')} /></Field>
+          <Field label="Permanent address" htmlFor="wk-addr" className="sm:col-span-2"><Textarea id="wk-addr" rows={2} value={f.address} onChange={set('address')} /></Field>
+        </div>
+        <div className="order-1 sm:order-2"><PhotoBox file={photo} onFile={setPhoto} /></div>
+      </div>
+
+      <h3 className="mb-2 mt-5 text-sm font-semibold">ID details</h3>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="PAN" htmlFor="wk-pan" hint="Like ABCDE1234F" error={idShown.pan}>
+          <div className="flex gap-2">
+            <Input id="wk-pan" className="flex-1 uppercase" maxLength={10} placeholder="ABCDE1234F" aria-invalid={!!idShown.pan || undefined} value={f.pan} onChange={(e) => setF((x) => ({ ...x, pan: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) }))} />
+            <CardButton what="PAN card" files={panCard} onFiles={setPanCard} />
+          </div>
+          <CardFiles files={panCard} onFiles={setPanCard} />
+        </Field>
+        <Field label="Aadhaar" htmlFor="wk-aadhaar" hint="Only the last four digits are shown after saving" error={idShown.aadhaar}>
+          <div className="flex gap-2">
+            <Input id="wk-aadhaar" className="flex-1" inputMode="numeric" maxLength={14} placeholder="1234 5678 9012" aria-invalid={!!idShown.aadhaar || undefined} value={f.aadhaar.replace(/(\d{4})(?=\d)/g, '$1 ')} onChange={(e) => setF((x) => ({ ...x, aadhaar: e.target.value.replace(/\D/g, '').slice(0, 12) }))} />
+            <CardButton what="Aadhaar card" files={aadhaarCard} onFiles={setAadhaarCard} />
+          </div>
+          <CardFiles files={aadhaarCard} onFiles={setAadhaarCard} />
+        </Field>
+      </div>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-3">
         <Field label="Date of birth" htmlFor="wk-dob"><Input id="wk-dob" type="date" value={f.dob} onChange={set('dob')} /></Field>
         <Field label="Sex" htmlFor="wk-sex"><Select id="wk-sex" value={f.sex} placeholder="Choose..." onChange={set('sex')} options={sexes.map((s) => ({ value: s, label: s }))} /></Field>
         <Field label="Age" htmlFor="wk-age" hint={f.age && age < minAge ? `At least ${minAge}` : undefined}><Input id="wk-age" type="number" inputMode="numeric" min={minAge} max={75} value={f.age} onChange={set('age')} /></Field>
@@ -200,6 +256,7 @@ function ScreeningForm({ job, trades, minAge, sexes, maritalStatuses, onClose }:
         <Field label="Mother tongue" htmlFor="wk-tongue"><Input id="wk-tongue" value={f.mother_tongue} onChange={set('mother_tongue')} /></Field>
         <Field label="Other languages known" htmlFor="wk-lang"><Input id="wk-lang" value={f.other_languages} onChange={set('other_languages')} /></Field>
         <Field label="In case of emergency, contact" htmlFor="wk-emerg"><Input id="wk-emerg" value={f.emergency_contact} onChange={set('emergency_contact')} /></Field>
+        <Field label="Contact number" htmlFor="wk-phone" hint="The worker's own mobile" error={phoneShown}><Input id="wk-phone" type="tel" inputMode="tel" maxLength={16} placeholder="98765 43210" aria-invalid={!!phoneShown || undefined} value={f.phone} onChange={(e) => setF((x) => ({ ...x, phone: e.target.value.replace(/[^\d+ ]/g, '').slice(0, 16) }))} /></Field>
         <Field label="Any other identification mark" htmlFor="wk-mark" className="sm:col-span-3"><Input id="wk-mark" value={f.identification_mark} onChange={set('identification_mark')} /></Field>
       </div>
 
@@ -244,25 +301,98 @@ function ScreeningForm({ job, trades, minAge, sexes, maritalStatuses, onClose }:
       </div>
       <Button size="sm" variant="ghost" className="mt-1" onClick={() => setExperience([...experience, blankExperience()])}>Add a line</Button>
 
+      <h3 className="mb-2 mt-5 text-sm font-semibold">Declaration by the worker</h3>
+      <p className="rounded-lg border border-border p-3 text-[13px] text-muted-foreground">The above information given by me is correct to the best of my knowledge.</p>
+
       <h3 className="mb-2 mt-5 text-sm font-semibold">Verification</h3>
       <div className="grid gap-4 sm:grid-cols-3">
-        <Field label="Suitable for employment as (trade)" htmlFor="wk-trade" className="sm:col-span-2"><Select id="wk-trade" value={f.trade} onChange={set('trade')} options={trades.map((t) => ({ value: t, label: t }))} /></Field>
-        <Field label="Screened on" htmlFor="wk-on"><Input id="wk-on" type="date" value={f.screened_on} onChange={set('screened_on')} /></Field>
+        <Field label="Suitable for employment as (trade)" htmlFor="wk-trade" className="sm:col-span-3"><Select id="wk-trade" value={f.trade} onChange={set('trade')} options={trades.map((t) => ({ value: t, label: t }))} /></Field>
         <label className="flex items-center gap-1.5 text-sm"><input type="checkbox" checked={f.certificates_verified} onChange={(e) => setF((x) => ({ ...x, certificates_verified: e.target.checked }))} /> Certificates / details verified</label>
         <label className="flex items-center gap-1.5 text-sm sm:col-span-2"><input type="checkbox" checked={f.trial_briefed} onChange={(e) => setF((x) => ({ ...x, trial_briefed: e.target.checked }))} /> Seen and briefed the EHS rules of the site</label>
         <Field label="Safety officer" htmlFor="wk-safety" className="sm:col-span-3"><Input id="wk-safety" value={f.safety_officer_name} onChange={set('safety_officer_name')} /></Field>
-        <Field label="Picture" htmlFor="wk-photo" className="sm:col-span-3" hint="A clear photo of the face. On a phone this opens the camera.">
-          <Input id="wk-photo" type="file" accept="image/*" capture="user" onChange={(e) => setPhoto(e.target.files?.[0] ?? null)} />
-        </Field>
         <Field label="Medical certificate" htmlFor="wk-med" className="sm:col-span-3" hint="A photo or a PDF. More than one if there are several pages.">
           <Input id="wk-med" type="file" accept="image/*,application/pdf" multiple onChange={(e) => setMedical(Array.from(e.target.files ?? []))} />
         </Field>
       </div>
-      <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
-        {error && <p role="alert" className="mr-auto text-[13px] text-danger">{error}</p>}
+      {/* Held at the foot of the window: the form is long, and Save has to be in sight wherever the person has scrolled. */}
+      <div className="sticky -bottom-5 z-10 -mx-6 -mb-5 mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-border bg-popover px-6 py-3">
+        {error
+          ? <p role="alert" className="mr-auto text-[13px] text-danger">{error}</p>
+          : missing.length > 0 && <p className="mr-auto text-[13px] text-muted-foreground">To save, give {missing.join(', ')}.</p>}
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
         <Button loading={busy} disabled={!ready} onClick={() => void save()}>Save the screening</Button>
       </div>
+    </div>
+  )
+}
+
+/** The passport-size photo box at the top right of the paper form. Shows the picture as soon as it is taken. */
+function PhotoBox({ file, onFile }: { file: File | null; onFile: (f: File | null) => void }) {
+  const input = useRef<HTMLInputElement>(null)
+  const src = useMemo(() => (file ? URL.createObjectURL(file) : ''), [file])
+  useEffect(() => () => { if (src) URL.revokeObjectURL(src) }, [src])
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <button
+        type="button"
+        aria-label={file ? 'Change the photo' : 'Add a photo'}
+        onClick={() => void takePhoto(input.current, (files) => files[0] && onFile(files[0]))}
+        className="grid aspect-[3/4] w-32 place-items-center overflow-hidden rounded-lg border-2 border-dashed border-border bg-muted/40 text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+      >
+        {src ? <img src={src} alt="The worker's photo" className="size-full object-cover" /> : <span className="flex flex-col items-center gap-1 text-xs font-medium"><Camera className="size-6" />Photo</span>}
+      </button>
+      <input ref={input} id="wk-photo" type="file" accept="image/*" capture="user" className="sr-only" aria-label="Photo of the worker" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onFile(f) }} />
+      {file
+        ? <button type="button" className="text-xs text-muted-foreground hover:text-danger" onClick={() => onFile(null)}>Remove</button>
+        : <span className="text-center text-[11px] leading-tight text-subtle">A clear photo of the face. Opens the camera on a phone.</span>}
+    </div>
+  )
+}
+
+const CARD_SIDES = 2  // front and back
+
+/** Beside a card's number: take or choose a photo of the card, front and back. A PDF scan is taken too. */
+function CardButton({ what, files, onFiles }: { what: string; files: File[]; onFiles: (f: File[]) => void }) {
+  const input = useRef<HTMLInputElement>(null)
+  const full = files.length >= CARD_SIDES
+  const add = (more: File[]) => onFiles([...files, ...more].slice(0, CARD_SIDES))
+  return (
+    <>
+      <Button type="button" variant="outline" size="icon" disabled={full} title={full ? 'Front and back added' : files.length ? `Add the back of the ${what}` : `Photo of the ${what}`} aria-label={files.length ? `Add the back of the ${what}` : `Photo of the ${what}`} onClick={() => void takePhoto(input.current, add)}><Camera /></Button>
+      <input ref={input} type="file" accept="image/*,application/pdf" multiple className="sr-only" tabIndex={-1} aria-label={`File of the ${what}`} onChange={(e) => { const picked = Array.from(e.target.files ?? []); e.target.value = ''; if (picked.length) add(picked) }} />
+    </>
+  )
+}
+
+function CardFiles({ files, onFiles }: { files: File[]; onFiles: (f: File[]) => void }) {
+  if (!files.length) return null
+  return <div className="mt-1 flex flex-wrap gap-2">{files.map((file, i) => <CardThumb key={`${file.name}-${i}`} file={file} side={i === 0 ? 'Front' : 'Back'} onRemove={() => onFiles(files.filter((_, j) => j !== i))} />)}</div>
+}
+
+function CardThumb({ file, side, onRemove }: { file: File; side: string; onRemove: () => void }) {
+  const image = file.type.startsWith('image/')
+  const src = useMemo(() => (image ? URL.createObjectURL(file) : ''), [file, image])
+  useEffect(() => () => { if (src) URL.revokeObjectURL(src) }, [src])
+  return (
+    <span className="relative inline-flex flex-col items-center gap-0.5">
+      {image ? <img src={src} alt={`${side} of the card`} className="h-14 w-20 rounded-md object-cover ring-1 ring-border" /> : <span className="grid h-14 w-20 place-items-center rounded-md bg-muted text-muted-foreground ring-1 ring-border"><FileText className="size-5" /></span>}
+      <span className="text-[11px] text-muted-foreground">{side}</span>
+      <button type="button" aria-label={`Remove the ${side.toLowerCase()} of the card`} onClick={onRemove} className="absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full bg-foreground text-background"><X className="size-3" /></button>
+    </span>
+  )
+}
+
+/** A card photo kept on a worker, as a small picture that opens the full one. */
+function PaperLinks({ papers }: { papers: WorkerPaper[] }) {
+  if (!papers.length) return null
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-2">
+      {papers.map((p, i) => (
+        <a key={p.id} href={apiUrl(p.url)} target="_blank" rel="noopener" title={p.name} className="inline-flex flex-col items-center gap-0.5">
+          {p.image ? <img src={apiUrl(p.thumb_url)} alt={p.name} className="h-14 w-20 rounded-md object-cover ring-1 ring-border" loading="lazy" /> : <span className="grid h-14 w-20 place-items-center rounded-md bg-muted text-muted-foreground ring-1 ring-border"><FileText className="size-5" /></span>}
+          <span className="text-[11px] text-muted-foreground">{papers.length > 1 ? (i === 0 ? 'Front' : 'Back') : 'Open'}</span>
+        </a>
+      ))}
     </div>
   )
 }
@@ -276,13 +406,19 @@ function WorkerDetailModal({ worker: w, open, onClose }: { worker: Worker | null
   ) : null
   return (
     <Modal open={open} onOpenChange={(o) => !o && onClose()} title={w.name} description={`${w.number} - screened ${formatDate(w.screened_on)}${w.screened_by ? ` by ${w.screened_by}` : ''}`} size="xl">
-      <div className="flex flex-wrap items-start gap-4">
-        {w.photo_url ? (
-          <img src={apiUrl(w.photo_url)} alt={`${w.name}'s photo`} className="size-24 shrink-0 rounded-lg object-cover ring-1 ring-border" />
-        ) : (
-          <span className="grid size-24 shrink-0 place-items-center rounded-lg bg-muted text-lg font-semibold text-muted-foreground">{initials(w.name)}</span>
-        )}
-        <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-[1fr_8.5rem]">
+        <div className="order-1 sm:order-2">
+          {w.photo_url ? (
+            <a href={apiUrl(w.photo_full_url)} target="_blank" rel="noopener" title="Open the full photo" className="mx-auto block aspect-[3/4] w-32 overflow-hidden rounded-lg ring-1 ring-border">
+              <img src={apiUrl(w.photo_url)} alt={`${w.name}'s photo`} className="size-full object-cover" />
+            </a>
+          ) : (
+            <span className="mx-auto grid aspect-[3/4] w-32 place-items-center rounded-lg border-2 border-dashed border-border bg-muted/40 text-center text-xs text-muted-foreground">No photo<br />given</span>
+          )}
+        </div>
+        <div className="order-2 grid min-w-0 content-start gap-3 sm:order-1 sm:grid-cols-3">
+          {row('Worker ID No.', w.number)}
+          {row('Date', formatDate(w.screened_on))}
           {row('Contractor / Sub-Contractor', w.contractor_name)}
           {row("Father / Husband's name", w.father_name)}
           {row('Trade', w.trade)}
@@ -293,11 +429,22 @@ function WorkerDetailModal({ worker: w, open, onClose }: { worker: Worker | null
           {row('Number of children', w.children)}
           {row('Mother tongue', w.mother_tongue)}
           {row('Other languages known', w.other_languages)}
+          {row('Contact number', w.phone)}
           {row('In case of emergency, contact', w.emergency_contact)}
         </div>
       </div>
       {row('Permanent address', w.address) && <div className="mt-4">{row('Permanent address', w.address)}</div>}
       {row('Any other identification mark', w.identification_mark) && <div className="mt-2">{row('Any other identification mark', w.identification_mark)}</div>}
+
+      {(w.pan || w.aadhaar_masked || w.pan_card.length > 0 || w.aadhaar_card.length > 0) && (
+        <>
+          <h3 className="mb-2 mt-5 text-sm font-semibold">ID details</h3>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div><div className="text-xs text-muted-foreground">PAN</div><div className="font-mono text-sm">{w.pan || '-'}</div><PaperLinks papers={w.pan_card} /></div>
+            <div><div className="text-xs text-muted-foreground">Aadhaar</div><div className="tabular text-sm">{w.aadhaar_masked || '-'}</div><PaperLinks papers={w.aadhaar_card} /></div>
+          </div>
+        </>
+      )}
 
       <h3 className="mb-2 mt-5 text-sm font-semibold">Health and physical details</h3>
       <div className="grid gap-3 sm:grid-cols-3">
@@ -324,6 +471,9 @@ function WorkerDetailModal({ worker: w, open, onClose }: { worker: Worker | null
         </>
       )}
 
+      <h3 className="mb-2 mt-5 text-sm font-semibold">Declaration by the worker</h3>
+      <p className="text-sm text-muted-foreground">The above information given by me is correct to the best of my knowledge.</p>
+
       <h3 className="mb-2 mt-5 text-sm font-semibold">Verification</h3>
       <div className="grid gap-2 text-sm">
         <div className="flex items-center gap-2"><Badge tone={w.certificates_verified ? 'success' : 'neutral'}>{w.certificates_verified ? 'Verified' : 'Not verified'}</Badge> Certificates / details</div>
@@ -336,7 +486,10 @@ function WorkerDetailModal({ worker: w, open, onClose }: { worker: Worker | null
           <div className="flex flex-wrap gap-2">{w.medical.map((m) => <a key={m.id} href={apiUrl(m.url)} target="_blank" rel="noopener" className="inline-flex items-center gap-1 text-[13px] text-primary hover:underline"><FileText className="size-3.5" /> {m.name}</a>)}</div>
         </div>
       )}
-      <div className="mt-5 flex items-center justify-end border-t border-border pt-4"><Button variant="ghost" onClick={onClose}>Close</Button></div>
+      <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
+        <Button variant="outline" asChild><a href={workerPdf(w.id)} target="_blank" rel="noopener" download><Download /> Download PDF</a></Button>
+        <Button variant="ghost" onClick={onClose}>Close</Button>
+      </div>
     </Modal>
   )
 }
