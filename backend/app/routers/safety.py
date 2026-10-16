@@ -1,4 +1,5 @@
 """The safety endpoints."""
+import base64
 import json
 import re
 from datetime import date, datetime, timedelta
@@ -15,6 +16,7 @@ from app.constants.common import (INCIDENT_KINDS, INJURY_KINDS, PERMIT_PRECAUTIO
 from app.constants.quality import SERIOUS_KINDS
 from app.core.auth import require_erp_read, wo_actor
 from app.core.notifications import notify
+from app.core.files import file_bytes
 from app.core.serials import next_number
 from app.core.sheets import sheet_response
 from app.documents.forms import _field_doc, _job_line, _pre, form_pdf_response
@@ -368,7 +370,7 @@ def _worker_dict(w, files):
             "contractor_name": w.contractor_name or "", "father_name": w.father_name or "", "dob": w.dob or "",
             "sex": w.sex or "", "marital_status": w.marital_status or "", "children": w.children or 0,
             "mother_tongue": w.mother_tongue or "", "other_languages": w.other_languages or "",
-            "emergency_contact": w.emergency_contact or "", "identification_mark": w.identification_mark or "",
+            "emergency_contact": w.emergency_contact or "", "phone": w.phone or "", "identification_mark": w.identification_mark or "",
             "vision_normal": w.vision_normal if w.vision_normal is not None else True,
             "vision_problem": w.vision_problem or "",
             "health_normal": w.health_normal if w.health_normal is not None else True,
@@ -456,6 +458,10 @@ def worker_screen(body: WorkerIn, request: Request, db: Session = Depends(get_db
         raise HTTPException(400, "Marital status: " + ", ".join(WORKER_MARITAL_STATUS))
     pan = re.sub(r"\s", "", body.pan or "").upper()
     aadhaar = re.sub(r"[\s-]", "", body.aadhaar or "")
+    # A mobile as people write it - "+91 98765 43210", "098765-43210" - kept as its ten digits.
+    phone = re.sub(r"^(\+?91|0)(?=\d{10}$)", "", re.sub(r"[\s()-]", "", body.phone or ""))
+    if phone and not re.fullmatch(r"[6-9]\d{9}", phone):
+        raise HTTPException(400, "The contact number is a 10-digit mobile number, starting with 6, 7, 8 or 9.")
     if pan and not _PAN.match(pan):
         raise HTTPException(400, "The PAN is 5 letters, 4 digits and a letter, like ABCDE1234F.")
     if aadhaar and not re.fullmatch(r"[2-9]\d{11}", aadhaar):
@@ -477,7 +483,7 @@ def worker_screen(body: WorkerIn, request: Request, db: Session = Depends(get_db
         dob=(body.dob or "")[:10], sex=body.sex or "", marital_status=body.marital_status or "",
         children=max(0, int(body.children or 0)), mother_tongue=(body.mother_tongue or "").strip()[:60],
         other_languages=(body.other_languages or "").strip()[:160],
-        emergency_contact=(body.emergency_contact or "").strip()[:160],
+        emergency_contact=(body.emergency_contact or "").strip()[:160], phone=phone,
         identification_mark=(body.identification_mark or "").strip()[:200],
         vision_normal=body.vision_normal if body.vision_normal is not None else True,
         vision_problem=(body.vision_problem or "").strip()[:200] if not body.vision_normal else "",
@@ -491,6 +497,83 @@ def worker_screen(body: WorkerIn, request: Request, db: Session = Depends(get_db
     db.add(w)
     db.commit()
     return {"worker": _worker_dict(w, [])}
+
+
+def _photo_data_uri(db, f):
+    """The worker's photo, carried inside the PDF: the small copy is plenty for a 32 mm box."""
+    if not f:
+        return ""
+    raw = file_bytes(db, f, thumb=True) or file_bytes(db, f)
+    if not raw:
+        return ""
+    media = "image/jpeg" if f.thumb or (f.content_type or "") == "image/jpeg" else (f.content_type or "image/jpeg")
+    return "data:%s;base64,%s" % (media, base64.b64encode(raw).decode("ascii"))
+
+
+@router.get("/api/workers/{wid}/document.pdf")
+def worker_pdf(wid: int, request: Request, db: Session = Depends(get_db)):
+    """The worker's screening, filled in on the company's "Screening Of Worker" form, ready to print and sign."""
+    client = require_erp_read(request, db)
+    w = db.query(models.DBWorkerScreening).filter(models.DBWorkerScreening.id == wid,
+                                                  models.DBWorkerScreening.client_id == client.id).first()
+    if not w:
+        raise HTTPException(404, "Worker not found")
+    files = db.query(models.DBFile).filter(models.DBFile.client_id == client.id, models.DBFile.attached_type == "worker",
+                                           models.DBFile.attached_id == w.id).order_by(models.DBFile.id.desc()).all()
+    d = _worker_dict(w, files)
+    photo = next((f for f in files if f.id and d["photo_full_url"] == "/api/files/%d" % f.id), None)
+    project, _ = _job_line(db, w.job_id)
+    when = form_pdf.date_text
+    dash = lambda v: str(v) if v not in (None, "", 0) else "-"  # noqa: E731
+    person = [("Name of the Contractor / Sub-Contractor", dash(d["contractor_name"])),
+              ("Full name of the workman", dash(d["name"])),
+              ("Father / Husband's name", dash(d["father_name"])),
+              ("Permanent address", dash(d["address"])),
+              ("Date of birth", when(d["dob"]) or "-"), ("Sex", dash(d["sex"])), ("Age", "%s years" % d["age"] if d["age"] else "-"),
+              ("Marital status", dash(d["marital_status"])), ("Number of children", str(d["children"] or 0)),
+              ("Mother tongue", dash(d["mother_tongue"])), ("Other languages known", dash(d["other_languages"])),
+              ("Contact number", dash(d["phone"])),
+              ("In case of emergency, contact", dash(d["emergency_contact"])),
+              ("Any other identification mark", dash(d["identification_mark"])),
+              ("PAN", dash(d["pan"])), ("Aadhaar", dash(d["aadhaar_masked"]))]
+    health = [("Vision", "Normal" if d["vision_normal"] else "Not normal: %s" % (d["vision_problem"] or "-")),
+              ("Health", "Normal" if d["health_normal"] else "Not normal: %s" % (d["health_problem"] or "-")),
+              ("Weight", "%g kg" % d["weight_kg"] if d["weight_kg"] else "-"),
+              ("Height", "%g cm" % d["height_cm"] if d["height_cm"] else "-"),
+              ("Blood group", dash(d["blood_group"])), ("Medical certificate", "On file" if d["medical"] else "Not given")]
+    education = [[r["exam"], r["year"], r["school"]] for r in d["education"]] or [["", "", ""], ["", "", ""]]
+    experience = [[str(i), r["organization"], r["project_site"], r["category"], r["period"], r["salary"]]
+                  for i, r in enumerate(d["experience"], 1)] or [["", "", "", "", "", ""], ["", "", "", "", "", ""]]
+    blocks = [
+        {"type": "pairs", "label_width": 52, "photo": _photo_data_uri(db, photo), "rows": person},
+        {"type": "band", "text": "HEALTH"},
+        {"type": "pairs", "cols": 2, "rows": health},
+        {"type": "band", "text": "EDUCATION DETAILS"},
+        {"type": "table", "columns": [("Examination passed", 50, "L"), ("Year", 20, "C"), ("School / Board", 80, "L")],
+         "rows": education},
+        {"type": "band", "text": "PREVIOUS WORK EXPERIENCE"},
+        {"type": "table", "columns": [("Sl. No.", 12, "C"), ("Organization name", 38, "L"), ("Project site", 32, "L"),
+                                      ("Category", 24, "L"), ("Period", 22, "L"), ("Salary / Wage", 22, "R")],
+         "rows": experience},
+        {"type": "band", "text": "DECLARATION BY THE WORKER"},
+        {"type": "text", "text": "The above information given by me is correct to the best of my knowledge."},
+        {"type": "band", "text": "DECLARATION BY THE SUBCONTRACTOR / CONTRACTOR"},
+        {"type": "text", "text": "We declare that this employee will be working for us on this site. He / She shall follow "
+                                 "the entire site safety requirement. We take responsibility for his / her safety on the site."},
+        {"type": "band", "text": "SCREENING"},
+        {"type": "pairs", "label_width": 62, "rows": [
+            ("Certificates / details", "Verified" if d["certificates_verified"] else "Not verified"),
+            ("Suitable for employment as", dash(d["trade"])),
+            ("Screened by", dash(d["screened_by"])),
+            ("Trial report: seen and briefed the EHS rules of the site", "Yes" if d["trial_briefed"] else "No"),
+            ("Safety officer", dash(d["safety_officer_name"]))]},
+    ]
+    sig = [("Signature / Left Hand Thumb impression of the worker", d["name"]), ("Signature of the Contractor", d["contractor_name"]),
+           ("Site in charge / Site Engineer", ""), ("Safety Officer", d["safety_officer_name"])]
+    doc = _field_doc(db, client, "SCREENING OF WORKER",
+                     [("Worker ID No", d["number"]), ("Date", when(d["screened_on"]) or "-"), ("Project", project or "-")],
+                     blocks, sig, d["number"])
+    return form_pdf_response(doc, "%s %s" % (d["number"], d["name"]))
 
 
 @router.delete("/api/workers/{wid}")

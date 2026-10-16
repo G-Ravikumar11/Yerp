@@ -68,6 +68,7 @@ class WorkerIn(BaseModel):
     mother_tongue: Optional[str] = ""
     other_languages: Optional[str] = ""
     emergency_contact: Optional[str] = ""
+    phone: Optional[str] = ""
     identification_mark: Optional[str] = ""
     vision_normal: Optional[bool] = True
     vision_problem: Optional[str] = ""

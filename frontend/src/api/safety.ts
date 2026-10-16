@@ -63,6 +63,7 @@ export interface Worker {
   mother_tongue: string
   other_languages: string
   emergency_contact: string
+  phone: string
   identification_mark: string
   vision_normal: boolean
   vision_problem: string
@@ -90,7 +91,7 @@ export const useWorkers = (job: number) => useQuery({ queryKey: ['workers', job]
 export interface WorkerInput {
   job_id: number; name: string; age: number; address: string; trade: string; screened_on: string
   contractor_name?: string; father_name?: string; dob?: string; sex?: string; marital_status?: string
-  children?: number; mother_tongue?: string; other_languages?: string; emergency_contact?: string
+  children?: number; mother_tongue?: string; other_languages?: string; emergency_contact?: string; phone?: string
   identification_mark?: string; vision_normal?: boolean; vision_problem?: string; health_normal?: boolean
   health_problem?: string; weight_kg?: number; height_cm?: number; blood_group?: string
   education?: EducationRow[]; experience?: ExperienceRow[]

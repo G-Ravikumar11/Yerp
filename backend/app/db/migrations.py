@@ -1592,6 +1592,7 @@ def ensure_columns():
                     ("worker_screenings", "mother_tongue", "TEXT DEFAULT ''"),
                     ("worker_screenings", "other_languages", "TEXT DEFAULT ''"),
                     ("worker_screenings", "emergency_contact", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "phone", "TEXT DEFAULT ''"),
                     ("worker_screenings", "identification_mark", "TEXT DEFAULT ''"),
                     ("worker_screenings", "vision_normal", "BOOLEAN DEFAULT TRUE"),
                     ("worker_screenings", "vision_problem", "TEXT DEFAULT ''"),
@@ -1935,6 +1936,7 @@ def migrate_sqlite():
             add_col("worker_screenings", "mother_tongue", "TEXT DEFAULT ''")
             add_col("worker_screenings", "other_languages", "TEXT DEFAULT ''")
             add_col("worker_screenings", "emergency_contact", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "phone", "TEXT DEFAULT ''")
             add_col("worker_screenings", "identification_mark", "TEXT DEFAULT ''")
             add_col("worker_screenings", "vision_normal", "BOOLEAN DEFAULT 1")
             add_col("worker_screenings", "vision_problem", "TEXT DEFAULT ''")

@@ -100,6 +100,7 @@ class DBWorkerScreening(Base):
     mother_tongue = Column(String, default="")
     other_languages = Column(String, default="")
     emergency_contact = Column(String, default="")
+    phone = Column(String, default="")                           # the worker's own mobile, 10 digits
     identification_mark = Column(String, default="")
 
     vision_normal = Column(Boolean, default=True)

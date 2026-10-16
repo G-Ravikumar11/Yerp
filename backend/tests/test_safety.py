@@ -292,3 +292,42 @@ def test_card_photos_are_listed_and_never_taken_for_the_face(tenant):
     assert len(listed["pan_card"]) == 1 and len(listed["aadhaar_card"]) == 2
     assert listed["pan_card"][0]["image"] is True
     assert listed["photo_url"] == ""                    # a card is not the worker's face
+
+
+# --- the worker's screening as a PDF, on the paper form ------------------------------------------------------------
+
+def test_a_screened_worker_downloads_as_a_one_page_pdf(tenant):
+    j = job(tenant)
+    w = screen_with_ids(tenant, j, pan="ABCDE1234F", aadhaar="234567890123",
+                        education=[{"exam": "SSC", "year": "2010", "school": "ZPHS"}]).json()["worker"]
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+    tenant.post("/api/files", data={"attached_type": "worker", "attached_id": str(w["id"]), "caption": "Photo",
+                                    "kind": "photo"}, files={"file": ("face.png", png, "image/png")})
+    res = tenant.get("/api/workers/%d/document.pdf" % w["id"])
+    if res.status_code == 503:                    # the PDF library is not installed where the tests run
+        return
+    assert res.status_code == 200, res.text
+    assert res.headers["content-type"] == "application/pdf" and res.content[:5] == b"%PDF-"
+    assert w["number"].replace("-", "_") in res.headers["content-disposition"]
+
+
+def test_a_worker_with_nothing_but_the_basics_still_prints(tenant):
+    j = job(tenant)
+    w = screen_with_ids(tenant, j).json()["worker"]
+    assert tenant.get("/api/workers/%d/document.pdf" % w["id"]).status_code in (200, 503)
+
+
+def test_another_company_cannot_download_this_workers_pdf(tenant, second_tenant):
+    j = job(tenant)
+    w = screen_with_ids(tenant, j).json()["worker"]
+    assert second_tenant.get("/api/workers/%d/document.pdf" % w["id"]).status_code == 404
+
+
+def test_the_workers_own_contact_number_is_kept_as_ten_digits(tenant):
+    j = job(tenant)
+    w = screen_with_ids(tenant, j, phone="+91 98765 43210").json()["worker"]
+    assert w["phone"] == "9876543210"
+    assert screen_with_ids(tenant, j, phone="098765-43211").json()["worker"]["phone"] == "9876543211"
+    bad = screen_with_ids(tenant, j, phone="12345 67890")
+    assert bad.status_code == 400 and "10-digit mobile" in bad.json()["detail"]
+    assert screen_with_ids(tenant, j, phone="98765").status_code == 400
