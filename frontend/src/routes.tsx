@@ -58,6 +58,7 @@ export const SCREENS: Screen[] = [
   { path: '/projects/costs/:id', Component: lazy(() => import('@/features/projects/ProjectCostsPage')) },
   { path: '/projects/profit', Component: lazy(() => import('@/features/projects/ProjectProfitPage')) },
   { path: '/store/stock', Component: lazy(() => import('@/features/stock/StockPage')) },
+  { path: '/store/material-vouchers', Component: lazy(() => import('@/features/stock/MaterialVouchersPage')) },
   { path: '/store/material-costing', Component: lazy(() => import('@/features/stock/ConsumptionPage')) },
   { path: '/store/goods-receipt', Component: lazy(() => import('@/features/grn/GrnPage')) },
   { path: '/store/eway', Component: lazy(() => import('@/features/eway/EwayPage')) },

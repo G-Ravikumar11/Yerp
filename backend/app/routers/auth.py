@@ -119,9 +119,15 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
             return {"message": "Logged in", "is_onboarded": owner.is_onboarded,
                     "company_name": owner.company_name, "role": member.role}
         log_login(db, None, body.email, "client", "password", request, "failed")
+        # For the error log: a wrong password on a known account is filed under its company. An email that is no
+        # owner's or colleague's is not a failure here - the sign-in page tries the staff sign-in next.
+        request.state.error_who = email
+        request.state.error_client_id = client.id if client else (member.client_id if member else None)
+        request.state.error_skip = not client and not member
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not client.is_active:
         log_login(db, client.id, body.email, "client", "password", request, "disabled")
+        request.state.error_who, request.state.error_client_id = email, client.id
         raise HTTPException(status_code=403, detail="Account disabled")
     request.session.pop("employee_id", None)
     request.session.pop("employee_client_id", None)

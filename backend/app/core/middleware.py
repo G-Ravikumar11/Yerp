@@ -1,5 +1,6 @@
 """Request limits, idempotency, security headers and timing, in the order they wrap a request."""
 import asyncio
+import secrets
 import contextvars
 import json
 import os
@@ -130,7 +131,7 @@ class BodyLimitMiddleware:
         limit = body_limit_for(scope["path"])
         declared = dict(scope["headers"]).get(b"content-length", b"")
         if declared.isdigit() and int(declared) > limit:
-            await JSONResponse(status_code=413, content={"detail": "That is too large to send."})(scope, receive, send)
+            await JSONResponse(status_code=413, content={"detail": "That is too large to send.", "code": "YE-FILE-01", "ref": secrets.token_hex(4).upper()})(scope, receive, send)
             return
         seen = [0]
 

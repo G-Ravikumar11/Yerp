@@ -123,6 +123,8 @@ def employee_login(request: Request, body: dict = None, db: Session = Depends(ge
         raise HTTPException(status_code=400, detail="Email and password required")
     email = body["email"].strip().lower()
     emp = db.query(models.DBEmployee).filter(sqlfunc.lower(models.DBEmployee.email) == email).first()
+    request.state.error_who = email                  # for the error log, if this sign-in fails
+    request.state.error_client_id = emp.client_id if emp else None
     if not emp:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not emp.password_hash:

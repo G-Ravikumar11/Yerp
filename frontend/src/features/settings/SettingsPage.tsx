@@ -7,6 +7,7 @@ const DocumentsTab = lazy(() => import('./DocumentsTab'))
 const ApprovalsTab = lazy(() => import('./ApprovalsTab'))
 const AccessTab = lazy(() => import('./AccessTab'))
 const DataTab = lazy(() => import('./DataTab'))
+const ErrorLogTab = lazy(() => import('./ErrorLogTab'))
 
 const TABS = [
   { value: 'company', label: 'Company' },
@@ -14,6 +15,7 @@ const TABS = [
   { value: 'approvals', label: 'Approvals' },
   { value: 'access', label: 'People & access' },
   { value: 'data', label: 'Alerts & data' },
+  { value: 'errors', label: 'Error log' },
 ] as const
 type Tab = (typeof TABS)[number]['value']
 
@@ -30,6 +32,7 @@ export default function SettingsPage() {
         {tab === 'approvals' && <ApprovalsTab />}
         {tab === 'access' && <AccessTab />}
         {tab === 'data' && <DataTab />}
+        {tab === 'errors' && <ErrorLogTab />}
       </Suspense>
     </>
   )

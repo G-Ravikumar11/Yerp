@@ -8,9 +8,12 @@ import { useUI } from '@/stores/ui'
 import { Button, Skeleton } from '@/components/ui'
 import { CompanyNotice } from '@/components/company/CompanyNotice'
 import { PageErrorBoundary } from './PageErrorBoundary'
+import { ErrorPage } from '@/components/errors/ErrorPage'
+import { useErrorPage } from '@/stores/errorPage'
 import { Sidebar, SIDEBAR_COLLAPSED, SIDEBAR_WIDTH } from './Sidebar'
 import { Topbar } from './Topbar'
 import { appUrl } from '@/lib/paths'
+import { ApiError } from '@/lib/api'
 
 /**
  * The frame every screen sits in: rail, top bar, and a content area whose page
@@ -44,8 +47,16 @@ export function AppShell() {
     window.scrollTo({ top: 0 })
   }, [pathname])
 
+  // A failed save's error page belongs to the screen it happened on: going somewhere else closes it.
+  const shownError = useErrorPage((s) => s.shown)
+  const clearError = useErrorPage((s) => s.clear)
+  useEffect(() => {
+    clearError()
+  }, [pathname, clearError])
+
   return (
     <div className="relative isolate min-h-dvh">
+      {shownError && <ErrorPage overlay kind={shownError.kind} code={shownError.code} errorRef={shownError.ref} message={shownError.message} onBack={clearError} />}
       {/* Soft pastel washes behind every screen; the cards and the sidebar sit on top of it. */}
       <div aria-hidden className="app-backdrop pointer-events-none fixed inset-0 -z-10" />
       <a
@@ -71,12 +82,18 @@ export function AppShell() {
                 <Skeleton className="h-4 w-96 max-w-full" />
                 <Skeleton className="mt-6 h-64 w-full" />
               </div>
-            ) : isAnonymous || error ? (
+            ) : error ? (
+              // Who is signed in could not be asked: the server is down, busy or unreachable. The whole page says so.
+              <ErrorPage
+                kind={error instanceof ApiError ? (error.code.startsWith('YE-BUSY') ? 'busy' : 'server') : 'offline'}
+                code={error instanceof ApiError ? error.code : 'YE-NET'}
+                errorRef={error instanceof ApiError ? error.ref : undefined}
+                onRetry={() => window.location.reload()}
+              />
+            ) : isAnonymous ? (
               <div className="mx-auto max-w-md py-24 text-center">
-                <h1 className="text-2xl font-semibold">{error ? 'Could not reach the server' : 'Please sign in'}</h1>
-                <p className="mt-2 text-[15px] text-muted-foreground">
-                  {error ? 'Check the connection and try again.' : 'Your session has ended, or you have not signed in yet.'}
-                </p>
+                <h1 className="text-2xl font-semibold">Please sign in</h1>
+                <p className="mt-2 text-[15px] text-muted-foreground">Your session has ended, or you have not signed in yet.</p>
                 <Button asChild className="mt-6">
                   <a href={appUrl('login')}>Go to sign in</a>
                 </Button>

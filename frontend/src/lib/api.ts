@@ -1,11 +1,23 @@
 import { noteAnswer } from './freshness'
+import { codeFor, codeLine, showsCode } from './errorCodes'
 
-/** A failed call to the backend, carrying the message the server gave. */
+/**
+ * A failed call to the backend, carrying the message the server gave and its error code and reference.
+ * `message` is what screens show: the server's words, followed by "(Error YE-SRV-01 · ref 7F3A9C21)" for a failure
+ * (an input mistake shows its words alone). `detail` is the words without the code.
+ */
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
-    super(message)
+  code: string
+  ref: string
+  detail: string
+  constructor(status: number, message: string, code?: string, ref?: string) {
+    const c = code || codeFor(status)
+    super(showsCode(c) ? `${message} (${codeLine(c, ref)})` : message)
     this.status = status
+    this.code = c
+    this.ref = ref || ''
+    this.detail = message
   }
 }
 
@@ -71,7 +83,8 @@ export async function api<T = unknown>(path: string, { body, headers, quiet, ...
       // The session ended; the login page is still the current app's.
       window.dispatchEvent(new CustomEvent('yerp:unauthorised'))
     }
-    throw new ApiError(res.status, message)
+    const info = (data as { code?: unknown; ref?: unknown } | null) ?? {}
+    throw new ApiError(res.status, message, typeof info.code === 'string' ? info.code : undefined, typeof info.ref === 'string' ? info.ref : res.headers.get('X-Error-Ref') || undefined)
   }
   // A record is gone: every screen that kept a copy of a list must stop showing it (App.tsx).
   if (method === 'DELETE' || /\/bulk-delete$/.test(path)) window.dispatchEvent(new Event('yerp:deleted'))
