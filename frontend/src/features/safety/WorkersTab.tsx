@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Camera, Download, Eye, FileText, Trash2, Upload, UserPlus, X } from 'lucide-react'
-import { readPicture } from '@/components/data/PictureField'
+import { Camera, Download, Eye, FileText, Trash2, UserPlus, X } from 'lucide-react'
 import { takePhoto } from '@/lib/mobile'
 import { toast } from '@/stores/toast'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
@@ -147,13 +146,6 @@ function ScreeningForm({ job, trades, minAge, sexes, maritalStatuses, onClose }:
   })
   const [panCard, setPanCard] = useState<File[]>([])
   const [aadhaarCard, setAadhaarCard] = useState<File[]>([])
-  const [signature, setSignature] = useState('')
-  const signInput = useRef<HTMLInputElement>(null)
-  // The photo of the signature the worker sent, shrunk to a signature's size. Read here, so it is seen before saving.
-  const pickSignature = async (file?: File) => {
-    if (!file) return
-    try { setSignature(await cleanSignature(await readPicture(file, 1200, 800, false))) } catch (e) { toast.error(e instanceof Error ? e.message : 'That picture could not be read') }
-  }
   const idWrong = {
     pan: f.pan && !/^[A-Z]{5}\d{4}[A-Z]$/.test(f.pan) ? '5 letters, 4 digits and a letter, like ABCDE1234F.' : '',
     aadhaar: f.aadhaar && !/^[2-9]\d{11}$/.test(f.aadhaar) ? '12 digits, not starting with 0 or 1.' : '',
@@ -203,7 +195,7 @@ function ScreeningForm({ job, trades, minAge, sexes, maritalStatuses, onClose }:
         education: education.filter((r) => r.exam.trim() || r.school.trim()),
         experience: experience.filter((r) => r.organization.trim() || r.project_site.trim()),
         certificates_verified: f.certificates_verified, trial_briefed: f.trial_briefed,
-        safety_officer_name: f.safety_officer_name, pan: f.pan, aadhaar: f.aadhaar, signature,
+        safety_officer_name: f.safety_officer_name, pan: f.pan, aadhaar: f.aadhaar,
       }
       const { worker } = await screenWorker(body)
       const failed: string[] = []
@@ -310,24 +302,7 @@ function ScreeningForm({ job, trades, minAge, sexes, maritalStatuses, onClose }:
       <Button size="sm" variant="ghost" className="mt-1" onClick={() => setExperience([...experience, blankExperience()])}>Add a line</Button>
 
       <h3 className="mb-2 mt-5 text-sm font-semibold">Declaration by the worker</h3>
-      <div className="flex flex-wrap items-center gap-4 rounded-lg border border-border p-3">
-        <p className="min-w-56 flex-1 text-[13px] text-muted-foreground">The above information given by me is correct to the best of my knowledge.</p>
-        <input ref={signInput} type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" tabIndex={-1} aria-label="Photo of the worker's signature" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; void pickSignature(f) }} />
-        {signature ? (
-          <div className="flex items-center gap-3">
-            <span className="grid h-16 w-48 place-items-center rounded-md bg-white p-1 ring-1 ring-border"><img src={signature} alt="The worker's signature" className="max-h-full max-w-full" /></span>
-            <div className="flex flex-col gap-1">
-              <Button size="sm" variant="outline" onClick={() => signInput.current?.click()}><Upload /> Change</Button>
-              <Button size="sm" variant="ghost" onClick={() => setSignature('')}>Remove</Button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-col items-end gap-1">
-            <Button variant="outline" onClick={() => signInput.current?.click()}><Upload /> Upload signature</Button>
-            <span className="text-[11px] text-muted-foreground">The photo of the signature the worker sent</span>
-          </div>
-        )}
-      </div>
+      <p className="rounded-lg border border-border p-3 text-[13px] text-muted-foreground">The above information given by me is correct to the best of my knowledge.</p>
 
       <h3 className="mb-2 mt-5 text-sm font-semibold">Verification</h3>
       <div className="grid gap-4 sm:grid-cols-3">
@@ -372,89 +347,6 @@ function PhotoBox({ file, onFile }: { file: File | null; onFile: (f: File | null
         : <span className="text-center text-[11px] leading-tight text-subtle">A clear photo of the face. Opens the camera on a phone.</span>}
     </div>
   )
-}
-
-/** A phone photo of a signature on paper, made to look signed on the form: the paper made see-through - however grey
- * the light made it - and the picture cut close around the ink, so the signature is not a small mark on a grey patch. */
-function cleanSignature(src: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.onerror = () => reject(new Error('That picture could not be read'))
-    img.onload = () => {
-      const c = document.createElement('canvas')
-      c.width = img.width
-      c.height = img.height
-      const ctx = c.getContext('2d')
-      if (!ctx) return resolve(src)
-      ctx.drawImage(img, 0, 0)
-      const shot = ctx.getImageData(0, 0, c.width, c.height)
-      const d = shot.data
-      const lum = (i: number) => 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
-      // The paper's brightness piece by piece, not one figure for the whole photo: a phone photo is lit unevenly, and
-      // a shadowed corner of paper is darker than a pen line in the light. Each piece of a 16 x 16 grid takes the
-      // brightness most of it has (the pen line is thin), and the grid is then drawn up to full size, smoothly.
-      const cols = 16, rows = 16
-      const grid = document.createElement('canvas')
-      grid.width = cols
-      grid.height = rows
-      const g = grid.getContext('2d')
-      if (!g) return resolve(src)
-      const cells = g.createImageData(cols, rows)
-      for (let gy = 0; gy < rows; gy++) {
-        for (let gx = 0; gx < cols; gx++) {
-          const xs = Math.floor((gx * c.width) / cols), xe = Math.floor(((gx + 1) * c.width) / cols)
-          const ys = Math.floor((gy * c.height) / rows), ye = Math.floor(((gy + 1) * c.height) / rows)
-          const seen: number[] = []
-          for (let y = ys; y < ye; y += 2) for (let x = xs; x < xe; x += 2) seen.push(lum((y * c.width + x) * 4))
-          seen.sort((a, b) => a - b)
-          const v = seen.length ? seen[Math.floor(seen.length * 0.7)] : 255
-          const k = (gy * cols + gx) * 4
-          cells.data[k] = cells.data[k + 1] = cells.data[k + 2] = v
-          cells.data[k + 3] = 255
-        }
-      }
-      g.putImageData(cells, 0, 0)
-      const bgCanvas = document.createElement('canvas')
-      bgCanvas.width = c.width
-      bgCanvas.height = c.height
-      const bgCtx = bgCanvas.getContext('2d')
-      if (!bgCtx) return resolve(src)
-      bgCtx.imageSmoothingEnabled = true
-      bgCtx.drawImage(grid, 0, 0, c.width, c.height)
-      const bg = bgCtx.getImageData(0, 0, c.width, c.height).data
-      let x0 = c.width, y0 = c.height, x1 = -1, y1 = -1
-      for (let y = 0; y < c.height; y++) {
-        for (let x = 0; x < c.width; x++) {
-          const i = (y * c.width + x) * 4
-          const l = lum(i)
-          const ink = bg[i] - Math.max(35, bg[i] * 0.2)
-          if (l > ink) {
-            // Lighter than ink: paper, faded out - fully gone well clear of the ink, softly at its edge.
-            d[i + 3] = l > ink + 20 ? 0 : Math.round(255 * (1 - (l - ink) / 20))
-          }
-          if (d[i + 3] > 128) {
-            if (x < x0) x0 = x
-            if (x > x1) x1 = x
-            if (y < y0) y0 = y
-            if (y > y1) y1 = y
-          }
-        }
-      }
-      if (x1 < 0) return resolve(src)  // no ink found: keep the photo as it came
-      ctx.putImageData(shot, 0, 0)
-      const pad = 10
-      x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad)
-      x1 = Math.min(c.width - 1, x1 + pad); y1 = Math.min(c.height - 1, y1 + pad)
-      const w = x1 - x0 + 1, h = y1 - y0 + 1
-      const scale = Math.min(1, 600 / w, 240 / h)
-      const out = document.createElement('canvas')
-      out.width = Math.max(1, Math.round(w * scale))
-      out.height = Math.max(1, Math.round(h * scale))
-      out.getContext('2d')?.drawImage(c, x0, y0, w, h, 0, 0, out.width, out.height)
-      resolve(out.toDataURL('image/png'))
-    }
-    img.src = src
-  })
 }
 
 const CARD_SIDES = 2  // front and back
@@ -580,15 +472,7 @@ function WorkerDetailModal({ worker: w, open, onClose }: { worker: Worker | null
       )}
 
       <h3 className="mb-2 mt-5 text-sm font-semibold">Declaration by the worker</h3>
-      <div className="flex flex-wrap items-center gap-4 text-sm">
-        <span className="min-w-56 flex-1 text-muted-foreground">The above information given by me is correct to the best of my knowledge.</span>
-        {w.signature_url ? (
-          <span className="flex flex-col items-center gap-0.5">
-            <span className="grid h-16 w-48 place-items-center rounded-md bg-white p-1 ring-1 ring-border"><img src={apiUrl(w.signature_url)} alt={`${w.name}'s signature`} className="max-h-full max-w-full" /></span>
-            <span className="text-[11px] text-muted-foreground">Signature uploaded {formatDate(w.signed_at.slice(0, 10))}</span>
-          </span>
-        ) : <Badge tone="neutral">Not signed</Badge>}
-      </div>
+      <p className="text-sm text-muted-foreground">The above information given by me is correct to the best of my knowledge.</p>
 
       <h3 className="mb-2 mt-5 text-sm font-semibold">Verification</h3>
       <div className="grid gap-2 text-sm">
