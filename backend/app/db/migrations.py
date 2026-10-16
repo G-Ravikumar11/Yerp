@@ -23,6 +23,7 @@ ITEM_MASTER_COLUMNS = (
     ("erp_items", "remarks", "VARCHAR DEFAULT ''"), ("erp_items", "created_by_name", "VARCHAR DEFAULT ''"),
     ("erp_items", "updated_by_name", "VARCHAR DEFAULT ''"), ("erp_items", "updated_at", "VARCHAR DEFAULT ''"),
     ("boq_lines", "item_id", "INTEGER"),
+    ("erp_items", "source_boq_id", "INTEGER"), ("erp_items", "source_boq_key", "VARCHAR DEFAULT ''"),
 )
 
 SUBCONTRACT_CONTROL_COLUMNS = (

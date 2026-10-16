@@ -45,6 +45,9 @@ class DBItem(Base):
     # Below this, the store is running out. Zero means nobody set one, which
     # is not the same as "never reorder" - so it simply never warns.
     reorder_level = Column(Float, default=0.0)
+    # Where an item made from a BOQ line came from: that BOQ and the line's key. A reference only; nothing matches on it alone.
+    source_boq_id = Column(Integer, nullable=True)
+    source_boq_key = Column(String, default="")
     # What this code was last sold or bought at. Prices are not fixed on a
     # contract, so this is an offer rather than a rule: the next order opens
     # with it filled in and whoever is pricing can change it.
