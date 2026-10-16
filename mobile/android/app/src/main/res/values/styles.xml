@@ -13,6 +13,9 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!-- The window behind the page and the system bars: the app's own dark, so the gesture bar (and the side margin in
+             landscape) is not left a white strip when the phone itself is in light mode. -->
+        <item name="android:windowBackground">#0b0b0e</item>
     </style>
 
 
