@@ -13,6 +13,7 @@ from app.db import get_db
 from app.constants.approvals import PO_APPROVED, PO_AWAITING_APPROVAL, PO_REJECTED
 from app.constants.common import GRN_EDITABLE, PURCHASE_ORDER_STATUSES
 from app.core.audit import log_audit
+from app.core.queries import by_id, prime
 from app.core.auth import require_erp_read, require_items_access, session_employee, wo_actor
 from app.core.currency import amount_in_words, inr, money, tax_percent_of, unit_rate
 from app.core.dates import days_after
@@ -225,7 +226,7 @@ def grn_open_orders(request: Request, db: Session = Depends(get_db)):
                             for l in lines))
         if lines and pending <= 0:
             continue
-        job = db.query(models.DBJob).filter(models.DBJob.id == po.job_id).first()
+        job = by_id(db, models.DBJob, po.job_id)
         out.append({
             "id": po.id, "number": po.number or "",
             "supplier_name": po.supplier_name or "",

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app import models
 from app.core import passwords
+from app.core.queries import by_id, prime
 from app.db import get_db
 
 from app.constants.approvals import GONE_STATUSES
@@ -1194,9 +1195,10 @@ def get_team_presence(request: Request, db: Session = Depends(get_db)):
         return []
     today = datetime.now().strftime("%Y-%m-%d")
     team = db.query(models.DBEmployee).filter(models.DBEmployee.department_id == emp.department_id, or_(models.DBEmployee.status.is_(None), models.DBEmployee.status.notin_(GONE_STATUSES))).all()
+    present = {a.employee_id: a for a in db.query(models.DBAttendance).filter(models.DBAttendance.employee_id.in_([t.id for t in team]), models.DBAttendance.date == today).all()} if team else {}
     result = []
     for t in team:
-        att = db.query(models.DBAttendance).filter(models.DBAttendance.employee_id == t.id, models.DBAttendance.date == today).first()
+        att = present.get(t.id)
         is_online = att and att.clock_in and not att.clock_out
         result.append({
             "id": t.id, "name": f"{t.first_name} {t.last_name}", "job_title": t.job_title,
@@ -1308,9 +1310,10 @@ def get_pending_department_goals(request: Request, db: Session = Depends(get_db)
 def get_all_leave_requests(request: Request, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
     leaves = db.query(models.DBLeaveRequest).filter(models.DBLeaveRequest.client_id == client.id).order_by(models.DBLeaveRequest.created_at.desc()).all()
+    prime(db, models.DBEmployee, [l.employee_id for l in leaves])
     result = []
     for l in leaves:
-        emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == l.employee_id).first()
+        emp = by_id(db, models.DBEmployee, l.employee_id)
         result.append({
             "id": l.id, "employee_id": l.employee_id,
             "employee_name": f"{emp.first_name} {emp.last_name}" if emp else "",
