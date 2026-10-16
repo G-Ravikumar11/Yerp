@@ -297,13 +297,28 @@ def boq_check_typed_codes(db, client_id, lines):
         name = re.sub(r"\s+", " ", (l.description or "").split("\n")[0]).strip()[:200]
         db.add(models.DBItem(client_id=client_id, kind="FG", item_code=code, item_name=name,
                              description=(l.description or "").strip() or name, category=CATEGORY_BY_KIND["FG"], sub_category="FG",
-                             item_type="Purchased", units_of_measure=canonical_unit(l.uom) or "Nos"))
+                             item_type="Work", units_of_measure=canonical_unit(l.uom) or "Nos",
+                             source_boq_id=l.boq_id, source_boq_key=l.key))
     db.flush()
 
 
+def _same_work(item, line, name):
+    """Whether a master item is the very work a BOQ line describes. The name alone is not enough: two lines can open with
+    the same words and differ in grade, size or make further down, and then they are two items, not one. Spacing and
+    letter case are ignored in the comparison only; the stored text is never touched. A line with a unit also needs the
+    item to count in that unit."""
+    flat = lambda t: re.sub(r"\s+", " ", t or "").strip().lower()
+    text = flat(line.description)
+    if flat(item.description) != text and not (flat(item.item_name) == text and name.lower() == text):
+        return False
+    unit = canonical_unit(line.uom)
+    return not unit or not item.units_of_measure or item.units_of_measure == unit
+
+
 def boq_issue_codes(db, client_id, lines):
-    """Every priced line without an item code gets one: the code of the master item of the same name that no other
-    line of this BOQ uses, or a newly issued finished-goods code. Returns how many were given."""
+    """Every priced line without an item code gets one: the code of the master item that is the same work (name, full
+    description and unit) and that no other line of this BOQ uses, or a newly issued finished-goods code. Returns how many
+    were given."""
     in_use = {l.item_code for l in lines if l.item_code}
     by_name = {}
     for it in db.query(models.DBItem).filter(models.DBItem.client_id == client_id, models.DBItem.kind == "FG").all():
@@ -313,7 +328,9 @@ def boq_issue_codes(db, client_id, lines):
         if l.kind not in BOQ_PRICED or l.item_code:
             continue
         name = re.sub(r"\s+", " ", (l.description or "").split("\n")[0]).strip()[:200]
-        match = next((i for i in by_name.get(name.lower(), []) if i.item_code not in in_use), None)
+        same = [i for i in by_name.get(name.lower(), []) if i.item_code not in in_use and _same_work(i, l, name)]
+        # Of several items that are the same work, the one this very BOQ line made comes first.
+        match = next((i for i in same if i.source_boq_id == l.boq_id and i.source_boq_key == l.key), same[0] if same else None)
         if match is not None:
             l.item_code = match.item_code
             in_use.add(match.item_code)
@@ -325,7 +342,8 @@ def boq_issue_codes(db, client_id, lines):
         for (l, name), code in zip(todo, codes):
             item = models.DBItem(client_id=client_id, kind="FG", item_code=code, item_name=name,
                                  description=(l.description or "").strip() or name, category=CATEGORY_BY_KIND["FG"],
-                                 sub_category="FG", item_type="Purchased", units_of_measure=canonical_unit(l.uom) or "Nos")
+                                 sub_category="FG", item_type="Work", units_of_measure=canonical_unit(l.uom) or "Nos",
+                                 source_boq_id=l.boq_id, source_boq_key=l.key)
             db.add(item)
             by_name.setdefault(name.lower(), []).append(item)
             l.item_code = code
