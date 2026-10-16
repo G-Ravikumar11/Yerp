@@ -11,14 +11,18 @@ const at = (iso: string) => Math.round(new Date(iso + 'T00:00:00').getTime() / D
 const dmy = (iso?: string) => (iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '-')
 const stamp = () => new Date().toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 
-// A4 landscape is 297 x 210 mm. The 10 mm margin is padding on the report rather than the @page margin: a page margin is
+// A4 portrait is 210 x 297 mm. The 10 mm margin is padding on the report rather than the @page margin: a page margin is
 // where the browser prints its own date, title and address, so a zero page margin is what keeps those off the sheet.
 const MARGIN = 10
-const CONTENT_W = 297 - 2 * MARGIN
-const CONTENT_H = 210 - 2 * MARGIN
+const PAGE_W = 210
+const PAGE_H = 297
+const CONTENT_W = PAGE_W - 2 * MARGIN
+const CONTENT_H = PAGE_H - 2 * MARGIN
 const MM = 96 / 25.4
 /** Below this the writing is too small to read on one sheet; the report then runs to more pages, with its header repeated. */
-const MIN_SCALE = 0.55
+const MIN_SCALE = 0.8
+/** The report is already laid out to the full width of the sheet; enlarging it only squeezes the columns, so it is never enlarged. */
+const MAX_SCALE = 1
 
 /**
  * How the report looks. Scoped to the report, which is not on screen, so it can always be present. The layout of the sheet
@@ -27,7 +31,7 @@ const MIN_SCALE = 0.55
 const REPORT_CSS = `
 #chart-print-root { display: none; color: #111; background: #fff; font: 9.5pt/1.3 "Segoe UI", Arial, Helvetica, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 #chart-print-root * { box-sizing: border-box; }
-#chart-print-root .rp-sheet { padding: ${MARGIN}mm; width: 297mm; background: #fff; }
+#chart-print-root .rp-sheet { padding: ${MARGIN}mm; width: ${PAGE_W}mm; background: #fff; }
 #chart-print-root .rp-page { width: ${CONTENT_W}mm; }
 #chart-print-root .rp-head { display: flex; justify-content: space-between; align-items: center; gap: 12mm; padding-bottom: 3mm; border-bottom: 1.5pt solid #111; margin-bottom: 3mm; }
 #chart-print-root .rp-brand { display: flex; align-items: center; gap: 4mm; min-width: 0; }
@@ -37,7 +41,7 @@ const REPORT_CSS = `
 #chart-print-root .rp-title { text-align: right; flex: none; }
 #chart-print-root .rp-title h1 { margin: 0; font-size: 19pt; line-height: 1.1; letter-spacing: .02em; }
 #chart-print-root .rp-title p { margin: .8mm 0 0; font-size: 8pt; color: #444; }
-#chart-print-root .rp-meta { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.2mm 6mm; margin: 0 0 2.5mm; padding: 2mm 3mm; border: .75pt solid #999; }
+#chart-print-root .rp-meta { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.2mm 6mm; margin: 0 0 2.5mm; padding: 2mm 3mm; border: .75pt solid #999; }
 #chart-print-root .rp-meta dt { font-size: 7pt; text-transform: uppercase; letter-spacing: .05em; color: #555; }
 #chart-print-root .rp-meta dd { margin: 0; font-weight: 600; font-size: 9pt; overflow-wrap: anywhere; }
 #chart-print-root .rp-sum { display: flex; gap: 8mm; margin: 0 0 2mm; font-size: 8.5pt; }
@@ -55,6 +59,7 @@ const REPORT_CSS = `
 #chart-print-root .num { text-align: right; white-space: nowrap; }
 #chart-print-root .code { font-family: Consolas, monospace; font-size: 8pt; }
 #chart-print-root .late td { background: #fbeaea; }
+#chart-print-root td.st { overflow-wrap: normal; word-break: normal; }
 #chart-print-root .late .st { color: #a40000; font-weight: 700; }
 #chart-print-root .ms td:nth-child(2) { font-weight: 700; }
 #chart-print-root .small { font-size: 7pt; color: #555; line-height: 1.2; }
@@ -82,12 +87,12 @@ const REPORT_CSS = `
 
 /** Only while printing: the sheet, and the application out of the way. Under @media print, so nothing shows on screen. */
 const PAGE_CSS = `
-@page { size: A4 landscape; margin: 0; }
+@page { size: A4 portrait; margin: 0; }
 @media print {
   html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; height: auto !important; }
   body.printing-chart > *:not(#chart-print-root) { display: none !important; }
   body.printing-chart #chart-print-root { display: block !important; position: static !important; }
-  body.printing-chart #chart-print-root.single { height: 209mm; overflow: hidden; }
+  body.printing-chart #chart-print-root.single { height: ${PAGE_H - 1}mm; overflow: hidden; }
 }
 `
 
@@ -107,10 +112,10 @@ export function fitReport(): { scale: number; pages: number } {
   const root = document.getElementById('chart-print-root')
   const page = root?.querySelector<HTMLElement>('.rp-page')
   if (!root || !page) return { scale: 1, pages: 1 }
-  const measure = () => {
+  const measure = (scale = 1) => {
     root.style.cssText = 'display:block;position:absolute;left:-99999px;top:0;visibility:hidden;'
     page.style.zoom = ''
-    page.style.width = ''
+    page.style.width = scale === 1 ? '' : `${CONTENT_W / scale}mm`
     const h = page.scrollHeight
     root.style.cssText = ''
     return h
@@ -120,7 +125,14 @@ export function fitReport(): { scale: number; pages: number } {
   const room = CONTENT_H * MM * 0.985
   let h = measure()
   if (h > room) { page.classList.add('compact'); h = measure() }
-  let scale = Math.min(1, room / h)
+  let scale = Math.min(MAX_SCALE, room / h)
+  // Enlarged, the report is laid out narrower before it is zoomed, so rows wrap more: measure it that way, and settle.
+  for (let i = 0; scale > 1 && i < 5; i++) {
+    const again = measure(scale)
+    if (again * scale <= room) break
+    scale = Math.max(1, room / again)
+  }
+  if (scale > 1) scale = Math.max(1, scale * 0.99)
   let pages = 1
   if (scale < MIN_SCALE) {
     // Too much for one sheet at a size anyone could read: keep it legible, and let it run on with its header repeated.
@@ -137,10 +149,10 @@ export function fitReport(): { scale: number; pages: number } {
 
 /** The sheet, for a document that holds nothing but the report. */
 const SHEET_CSS = `
-@page { size: A4 landscape; margin: 0; }
+@page { size: A4 portrait; margin: 0; }
 html, body { margin: 0; padding: 0; background: #fff; }
 #chart-print-root { display: block !important; }
-#chart-print-root.single { height: 209mm; overflow: hidden; }
+#chart-print-root.single { height: ${PAGE_H - 1}mm; overflow: hidden; }
 `
 
 /** Every picture in a document loaded - a logo still arriving prints as a blank. */
@@ -148,8 +160,8 @@ const picturesIn = (doc: Document) => Promise.all([...doc.images].map((img) => (
 
 /**
  * Print the chart. The report is fitted to the sheet, then printed from a document of its own - a hidden frame holding the
- * report and the A4 landscape rule and nothing else. None of the application's own layout is in that document to be
- * printed or to stretch the page, so what the print dialog is given is one A4 landscape sheet, and Save as PDF gives the same.
+ * report and the A4 portrait rule and nothing else. None of the application's own layout is in that document to be
+ * printed or to stretch the page, so what the print dialog is given is one A4 portrait sheet, and Save as PDF gives the same.
  */
 export async function printChart(logo: string) {
   await loaded(logo)
@@ -162,7 +174,7 @@ export async function printChart(logo: string) {
   frame.title = 'Project Chart print'
   frame.setAttribute('aria-hidden', 'true')
   // Off the screen but laid out at the size of the sheet, so the browser measures it as it will print.
-  frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:297mm;height:210mm;border:0;visibility:hidden;'
+  frame.style.cssText = `position:fixed;left:-10000px;top:0;width:${PAGE_W}mm;height:${PAGE_H}mm;border:0;visibility:hidden;`
   document.body.appendChild(frame)
   const doc = frame.contentDocument
   const win = frame.contentWindow
@@ -221,7 +233,7 @@ export function PrintReport({ schedule, company }: { schedule: Schedule; company
   for (let n = t0; n <= t1; n++) if (n === t0 || new Date(n * DAY).getUTCDate() === 1) months.push({ n, label: new Date(n * DAY).toLocaleDateString('en-GB', { timeZone: 'UTC', month: 'short', year: '2-digit' }) })
   // A label that starts too near the right-hand edge would run past it: leave those off.
   const fitting = months.filter((m) => (m.n - t0) / span < 0.9)
-  const sparse = fitting.length > 12 ? fitting.filter((_, i) => i % Math.ceil(fitting.length / 12) === 0) : fitting
+  const sparse = fitting.length > 5 ? fitting.filter((_, i) => i % Math.ceil(fitting.length / 5) === 0) : fitting
   const days = (a: Activity) => (a.is_milestone ? '-' : String(at(a.planned_finish) - at(a.planned_start) + 1))
   const root = document.getElementById('chart-print-root') ?? Object.assign(document.createElement('div'), { id: 'chart-print-root' })
   if (!root.parentElement) document.body.appendChild(root)
@@ -248,7 +260,7 @@ export function PrintReport({ schedule, company }: { schedule: Schedule; company
         </dl>
         <p className="rp-sum"><span><b>{s.activities}</b> activities</span><span><b>{s.done}</b> completed</span><span><b>{s.overdue ?? 0}</b> overdue</span><span><b>{s.milestones_done ?? 0}</b> of <b>{s.milestones ?? 0}</b> milestones reached</span></p>
         <table>
-          <colgroup><col style={{ width: '6%' }} /><col style={{ width: '20%' }} /><col style={{ width: '11%' }} /><col style={{ width: '7.5%' }} /><col style={{ width: '7.5%' }} /><col style={{ width: '4.5%' }} /><col style={{ width: '6%' }} /><col style={{ width: '8%' }} /><col style={{ width: '29.5%' }} /></colgroup>
+          <colgroup><col style={{ width: '7%' }} /><col style={{ width: '20%' }} /><col style={{ width: '10%' }} /><col style={{ width: '9%' }} /><col style={{ width: '9%' }} /><col style={{ width: '5%' }} /><col style={{ width: '6.5%' }} /><col style={{ width: '11.5%' }} /><col style={{ width: '22%' }} /></colgroup>
           <thead>
             <tr className="rp-run"><th colSpan={9}>{company.logo_url && <img src={company.logo_url} alt="" />}{company.name} - Project Chart - {job ? `${job.number} ${job.name}` : ''}</th></tr>
             <tr>
