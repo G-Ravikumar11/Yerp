@@ -96,11 +96,6 @@ def _columns(ws):
     return None, None
 
 
-def sheets_with_a_programme(raw):
-    wb = _open(raw, data_only=True)
-    return [ws.title for ws in wb if _columns(ws)[0]]
-
-
 def _open(raw, data_only):
     try:
         return load_workbook(io.BytesIO(raw), data_only=data_only)

@@ -35,7 +35,7 @@ import { del, get as idbGet, set as idbSet } from 'idb-keyval'
 
 declare const __BUILD__: string
 
-export const persister = createAsyncStoragePersister({
+const persister = createAsyncStoragePersister({
   key: 'yerp-query-cache',
   throttleTime: 1500,
   storage: {

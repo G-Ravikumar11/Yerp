@@ -8,6 +8,7 @@ from app import models
 from app.db import get_db
 
 from app.core.auth import get_client_user, require_erp_read
+from app.core.queries import by_id, prime
 from app.core.dates import DEFAULT_WORKING_DAYS
 from app.services.holidays import custom_holidays
 from app.validators.common import clean_working_days
@@ -84,9 +85,10 @@ def get_attendance(request: Request, employee_id: int = 0, date: str = "", db: S
     if date:
         query = query.filter(models.DBAttendance.date == date)
     records = query.order_by(models.DBAttendance.date.desc(), models.DBAttendance.clock_in.desc()).limit(200).all()
+    prime(db, models.DBEmployee, [a.employee_id for a in records])
     result = []
     for a in records:
-        emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == a.employee_id).first()
+        emp = by_id(db, models.DBEmployee, a.employee_id)
         result.append({
             "id": a.id, "employee_id": a.employee_id,
             "employee_name": f"{emp.first_name} {emp.last_name}" if emp else "",
@@ -106,9 +108,10 @@ def get_today_attendance(request: Request, db: Session = Depends(get_db)):
         models.DBAttendance.client_id == client.id,
         models.DBAttendance.date == today,
     ).all()
+    prime(db, models.DBEmployee, [a.employee_id for a in records])
     result = []
     for a in records:
-        emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == a.employee_id).first()
+        emp = by_id(db, models.DBEmployee, a.employee_id)
         result.append({
             "id": a.id, "employee_id": a.employee_id,
             "employee_name": f"{emp.first_name} {emp.last_name}" if emp else "",
@@ -160,12 +163,13 @@ def get_live_attendance(request: Request, db: Session = Depends(get_db)):
         models.DBAttendance.date == today,
     ).all()
     record_map = {r.employee_id: r for r in today_records}
+    prime(db, models.DBDepartment, [e.department_id for e in all_active])
     result = []
     for emp in all_active:
         rec = record_map.get(emp.id)
         dept_name = ""
         if emp.department_id:
-            dept = db.query(models.DBDepartment).filter(models.DBDepartment.id == emp.department_id).first()
+            dept = by_id(db, models.DBDepartment, emp.department_id)
             dept_name = dept.name if dept else ""
         result.append({
             "id": emp.id, "employee_id": emp.employee_id,
@@ -292,9 +296,10 @@ def get_overtime_logs(request: Request, db: Session = Depends(get_db)):
     logs = db.query(models.DBOvertimeLog).filter(
         models.DBOvertimeLog.client_id == client.id
     ).order_by(models.DBOvertimeLog.created_at.desc()).limit(100).all()
+    prime(db, models.DBEmployee, [l.employee_id for l in logs])
     result = []
     for l in logs:
-        emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == l.employee_id).first()
+        emp = by_id(db, models.DBEmployee, l.employee_id)
         result.append({
             "id": l.id, "employee_id": l.employee_id,
             "employee_name": f"{emp.first_name} {emp.last_name}" if emp else "",

@@ -37,7 +37,7 @@ export const projectLabel = (p: Pick<Project, 'number' | 'name'>) => `${p.number
 export const projectKeys = { all: ['projects'] as const }
 export const JOB_STATUS: Record<string, string> = { quoting: 'Quoting', won: 'Won', in_progress: 'In progress', on_hold: 'On hold', complete: 'Complete', cancelled: 'Cancelled' }
 
-export interface Costing {
+interface Costing {
   quoted: number
   budget: number
   spent: number

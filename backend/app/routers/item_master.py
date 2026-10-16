@@ -9,6 +9,7 @@ from app import models
 from app.db import get_db
 
 from app.core.audit import log_audit
+from app.core.queries import by_id, prime
 from app.core.auth import require_erp_read, wo_actor
 from app.core.currency import unit_rate
 from app.core.sheets import read_sheet_rows, sheet_response
@@ -263,8 +264,8 @@ def item_sites(item_id: int, request: Request, db: Session = Depends(get_db)):
     rates = {r.job_id: r for r in db.query(models.DBSiteItemRate).filter(models.DBSiteItemRate.item_id == item.id).all()}
     out = []
     for line in current_lines_of_item(db, client.id, None, item.item_code):
-        boq = db.query(models.DBBoq).filter(models.DBBoq.id == line.boq_id).first()
-        job = db.query(models.DBJob).filter(models.DBJob.id == boq.job_id).first() if boq else None
+        boq = by_id(db, models.DBBoq, line.boq_id)
+        job = by_id(db, models.DBJob, boq.job_id) if boq else None
         if not job:
             continue
         rate = rates.get(job.id)

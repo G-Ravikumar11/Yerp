@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { api, get, post, put } from '@/lib/api'
 
-export type OrderStatus = 'DRAFT' | 'PROVISIONAL' | 'APPROVED' | 'EXECUTED' | 'AMENDED' | 'CANCELLED' | 'CLOSED'
-export type OrderAction = 'SUBMIT' | 'APPROVE' | 'REJECT' | 'EXECUTE' | 'AMEND' | 'CANCEL' | 'CLOSE'
+type OrderStatus = 'DRAFT' | 'PROVISIONAL' | 'APPROVED' | 'EXECUTED' | 'AMENDED' | 'CANCELLED' | 'CLOSED'
+type OrderAction = 'SUBMIT' | 'APPROVE' | 'REJECT' | 'EXECUTE' | 'AMEND' | 'CANCEL' | 'CLOSE'
 
 export interface OrderItem {
   id?: number
@@ -31,7 +31,7 @@ export interface OrderTerm {
   clause_text: string
 }
 
-export interface OrderHistory {
+interface OrderHistory {
   action: string
   actor: string
   from_status: string
@@ -66,7 +66,7 @@ export interface BudgetRow {
   confirmed_by?: string
 }
 
-export interface BillingHead {
+interface BillingHead {
   head: string
   rate: number | null
   amount: number
@@ -74,7 +74,7 @@ export interface BillingHead {
   note?: string
 }
 
-export interface BillingSchedule {
+interface BillingSchedule {
   rows: BillingHead[]
   intra_state: boolean
   place_of_supply: string
@@ -227,7 +227,7 @@ export function useOrder(id: number) {
 
 /* --- What the pickers need ------------------------------------------------ */
 
-export interface WorkType {
+interface WorkType {
   id: number
   code: string
   name: string

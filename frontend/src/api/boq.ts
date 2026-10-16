@@ -61,7 +61,7 @@ export interface BoqSummary {
   rate_only_items: number
 }
 
-export interface BoqRevision {
+interface BoqRevision {
   rev_no: number
   label: string
   note: string
@@ -180,7 +180,7 @@ export const pullBoqLines = (orderId: number, lines: { key: string; quantity: nu
 
 /* --- Variations to the BOQ -------------------------------------------------------------------- */
 
-export type VariationStatus = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'CANCELLED'
+type VariationStatus = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'CANCELLED'
 
 export interface VariationLine {
   id?: number

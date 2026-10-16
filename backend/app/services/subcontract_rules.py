@@ -537,5 +537,3 @@ def subcontract_attention(db, client_id, today=None):
     return items
 
 
-def now_text():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")

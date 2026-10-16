@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { del, get, post, put } from '@/lib/api'
 
-export type EstimateStatus = 'DRAFT' | 'SUBMITTED' | 'WON' | 'LOST' | 'WITHDRAWN'
+type EstimateStatus = 'DRAFT' | 'SUBMITTED' | 'WON' | 'LOST' | 'WITHDRAWN'
 export type RateKind = 'MATERIAL' | 'LABOUR' | 'PLANT' | 'OTHER'
 export const RATE_KINDS: RateKind[] = ['MATERIAL', 'LABOUR', 'PLANT', 'OTHER']
 

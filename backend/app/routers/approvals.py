@@ -14,6 +14,7 @@ from app.constants.approvals import (
     WO_OWNER_SIGNS_KEY,
 )
 from app.core.audit import log_audit
+from app.core.queries import by_id, prime
 from app.core.cache import cached_read
 from app.core.auth import get_client_user, session_person
 from app.core.currency import DEFAULT_CURRENCY, money
@@ -106,6 +107,7 @@ def get_pending_approvals(request: Request, db: Session = Depends(get_db)):
         models.DBApprovalChain.status == "pending",
     ).all()
 
+    prime(db, models.DBEmployee, [x for s in steps for x in (s.approver_id, s.employee_id)])
     result = []
     for s in steps:
         # Every kind of document on the chain, not only invoices and bills -
@@ -115,8 +117,8 @@ def get_pending_approvals(request: Request, db: Session = Depends(get_db)):
                 (doc.current_approval_step or 0) != s.step:
             continue
 
-        approver = db.query(models.DBEmployee).filter(models.DBEmployee.id == s.approver_id).first()
-        submitter = db.query(models.DBEmployee).filter(models.DBEmployee.id == s.employee_id).first()
+        approver = by_id(db, models.DBEmployee, s.approver_id)
+        submitter = by_id(db, models.DBEmployee, s.employee_id)
 
         # Get total chain length
         total_steps = db.query(models.DBApprovalChain).filter(

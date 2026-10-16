@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app import models
 from app.core import passwords
+from app.core.queries import by_id, prime
 from app.db import get_db
 
 from app.constants.hr import ONBOARDING_STAGES, ORG_DOMAIN_KEY
@@ -1165,11 +1166,12 @@ def get_org_chart(request: Request, db: Session = Depends(get_db)):
     ).all()
     departments = db.query(models.DBDepartment).filter(models.DBDepartment.client_id == client.id).all()
 
+    dept_by_id = {d.id: d for d in departments}
     emp_map = {}
     for e in employees:
         dept_name = ""
         if e.department_id:
-            dept = db.query(models.DBDepartment).filter(models.DBDepartment.id == e.department_id).first()
+            dept = dept_by_id.get(e.department_id)
             dept_name = dept.name if dept else ""
         emp_map[e.id] = {
             "id": e.id, "employee_id": e.employee_id,

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { get, post, put } from '@/lib/api'
 
-export interface PoLine {
+interface PoLine {
   id?: number
   item_code: string
   description: string

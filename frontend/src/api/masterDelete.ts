@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { del, get, post } from '@/lib/api'
+import { del, get } from '@/lib/api'
 
 /**
  * The kinds of record the Master can delete, each with what hangs off it. "project" is the whole project;
@@ -28,5 +28,3 @@ export const useMasterPreview = (kind: MasterKind, id: number, enabled: boolean)
   useQuery({ queryKey: ['master-preview', kind, id], queryFn: () => get<MasterPreview>(`${base(kind, id)}/delete-preview`), enabled: enabled && id > 0, gcTime: 0, staleTime: 0 })
 
 export const masterDelete = (kind: MasterKind, id: number) => del<{ message?: string }>(base(kind, id))
-export const masterBulkDelete = (kind: Exclude<MasterKind, 'project'>, ids: number[]) =>
-  post<{ deleted: number; gone: number; failed: { id: number; reason: string }[]; message?: string }>(`/api/master/${kind}/bulk-delete`, { ids })

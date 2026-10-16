@@ -3,7 +3,7 @@ import type { ProgrammeRowView } from '@/api/programme'
 /** The height of a row in the grid and in the chart beside it. */
 export const ROW_H = 32
 
-export type Kind = 'text' | 'number' | 'date' | null
+type Kind = 'text' | 'number' | 'date' | null
 export interface Col {
   id: 'wbs' | 'boq_ref' | 'name' | 'start' | 'end' | 'days' | 'uom' | 'quantity' | 'labour_required' | 'predecessors' | 'percent'
   label: string

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
 /** A new version of the phone app, offered in a box in the middle of the screen rather than a message at its edge. */
-export interface UpdateOffer {
+interface UpdateOffer {
   title: string
   message: string
   /** The button that takes the update ("Update"). */

@@ -54,7 +54,7 @@ export function cashFlow(entries: readonly LedgerEntry[], months = 12, today = n
   return out
 }
 
-export const AGE_BUCKETS = ['Not due', '0-30', '31-60', '61-90', '90+'] as const
+const AGE_BUCKETS = ['Not due', '0-30', '31-60', '61-90', '90+'] as const
 
 /** Owed to us and owed by us, side by side for each age. */
 export function ageing(receivable: Record<string, number> | undefined, payable: Record<string, number> | undefined) {

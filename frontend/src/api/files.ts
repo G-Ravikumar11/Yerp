@@ -38,7 +38,7 @@ export function fileSize(n: number | undefined) {
 }
 
 /** A photo made smaller before it goes up: at most `max` pixels on its long side, as a JPEG. A day's pictures then cost a few hundred kilobytes. */
-export function shrinkImage(file: File, max: number, quality: number): Promise<Blob | null> {
+function shrinkImage(file: File, max: number, quality: number): Promise<Blob | null> {
   return new Promise((resolve) => {
     if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return resolve(null)
     const img = new Image()

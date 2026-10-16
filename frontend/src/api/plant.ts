@@ -70,7 +70,6 @@ export const useMaintenance = (r: Range) => useQuery({ queryKey: ['equipment', '
 export const useProviders = () => useQuery({ queryKey: ['equipment', 'providers'], queryFn: () => get<{ providers: Provider[]; suppliers: { id: number; name: string }[] }>('/api/plant/rental-providers') })
 export const useRentals = (r: Range) => useQuery({ queryKey: ['equipment', 'rentals', r], queryFn: () => get<{ rentals: Rental[]; billing: string[]; summary: Record<string, number> }>(`/api/plant/rentals${qs(r)}`) })
 export const useExpenses = (r: Range) => useQuery({ queryKey: ['equipment', 'expenses', r], queryFn: () => get<{ expenses: Expense[]; categories: string[]; all_categories: string[]; by_category: Record<string, number>; total: number }>(`/api/plant/expenses${qs(r)}`) })
-export const usePlantSettings = () => useQuery({ queryKey: ['equipment', 'settings'], queryFn: () => get<{ regular_hours: number }>('/api/plant/settings') })
 
 type Msg = { message: string; id?: number }
 export const allocate = (b: Record<string, unknown>) => post<Msg>('/api/plant/allocations', b)

@@ -43,8 +43,6 @@ export interface Inward {
   supplies: InwardSupply[]
   summary: { taxable: number; tax: number; bills: number; missing_party_gstin: number }
 }
-
-export const gstKeys = { all: ['gst'] as const }
 const q = (from: string, to: string) => `?date_from=${encodeURIComponent(from)}&date_to=${encodeURIComponent(to)}`
 
 export const useGstSettings = () => useQuery({ queryKey: ['gst', 'settings'], queryFn: () => get<GstSettings>('/api/gst/settings') })

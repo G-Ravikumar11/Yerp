@@ -151,4 +151,3 @@ export const setProgress = (id: number, percent: number, qty_done?: number) =>
 export const addTask = (job: number, b: { text: string; date: string; activity_id: number | null }) => post<{ task: DayTask }>(`/api/jobs/${job}/schedule/tasks`, b)
 export const editTask = (id: number, b: { text?: string; date?: string; activity_id?: number | null; done?: boolean; percent?: number }) => put<{ task: DayTask }>(`/api/schedule/tasks/${id}`, b)
 export const deleteTask = (id: number) => del<{ ok: boolean }>(`/api/schedule/tasks/${id}`)
-export const drawFromOrder = (job: number, wo: number, start: string, finish: string) => post<Reply>(`/api/jobs/${job}/schedule/from-work-order/${wo}`, { start, finish })

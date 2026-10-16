@@ -25,7 +25,7 @@ export function CheckFormModal({ job, forms, open, onClose }: { job: number; for
 }
 
 /** The segmented Yes / No / N/A of one item. */
-export function AnswerButtons({ value, onChange, label }: { value: string; onChange: (v: string) => void; label: string }) {
+function AnswerButtons({ value, onChange, label }: { value: string; onChange: (v: string) => void; label: string }) {
   return (
     <div role="radiogroup" aria-label={label} className="inline-grid grid-cols-3 gap-0.5 rounded-full border border-border bg-card p-0.5 text-[12px]">
       {ANSWERS.map((a) => (

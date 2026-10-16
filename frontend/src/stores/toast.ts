@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
 export type ToastTone = 'success' | 'error' | 'info'
-export interface Toast {
+interface Toast {
   id: number
   tone: ToastTone
   message: string

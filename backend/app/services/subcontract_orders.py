@@ -242,17 +242,6 @@ def wo_involved_ids(db, client_id, emp_id):
         seen |= more
 
 
-def wo_visible_to(db, order, emp_id):
-    """Whether a member of staff may see this order.
-
-    Only the ones they have a hand in: they made it, sent it, or have it to sign (now or already).
-    Nobody sees the business's whole book but the owner.
-    """
-    if not emp_id:
-        return True
-    return order.id in wo_involved_ids(db, order.client_id, emp_id)
-
-
 def record_wo_action(db, client, order, actor_id, actor_name, action, was, comments=""):
     db.add(models.DBSubcontractApproval(
         order_id=order.id, client_id=client.id, actor_id=actor_id,
@@ -1737,11 +1726,6 @@ def run_bulk_delete(ids, delete_one, db):
     if failed:
         parts.append("%d refused" % len(failed))
     return {"ok": not failed, "deleted": done, "gone": gone, "failed": failed, "message": ", ".join(parts) + "."}
-
-
-def contractor_released(db, client_id, order_id=0):
-    return money(sum(r.amount or 0 for r in _live_releases(db, client_id, "contractor")
-                     if not order_id or r.sub_order_id == order_id))
 
 
 def wo_variations(db, wo, cutoff):

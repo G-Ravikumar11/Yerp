@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { get, post } from '@/lib/api'
 
 /** An invoice reference number the GST portal gave back, as recorded against a bill. */
-export interface Irn {
+interface Irn {
   id: number
   irn: string
   ack_no: string

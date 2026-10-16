@@ -5,7 +5,7 @@ export const grnKeys = { all: ['grn'] as const }
 
 export interface GrnRow { id: number; number: string; challan_number: string; supplier_name: string; purchase_order: string; project: string; received_on: string; accepted_value: number; rejected_value: number; status: string; actions: string[] }
 export interface GrnSummary { count: number; awaiting_posting: number; accepted_value: number; rejected_value: number }
-export interface GrnLine { id: number; item_code: string; description: string; uom: string; ordered_qty: number; previously_received: number; received_qty: number; rejected_qty: number; accepted_qty: number; rejection_reason: string; amount: number; rate?: number; price?: number }
+interface GrnLine { id: number; item_code: string; description: string; uom: string; ordered_qty: number; previously_received: number; received_qty: number; rejected_qty: number; accepted_qty: number; rejection_reason: string; amount: number; rate?: number; price?: number }
 export interface Grn extends GrnRow { vehicle_number: string; received_by_name: string; editable: boolean; lines: GrnLine[]; received_value: number }
 export interface OpenOrder { id: number; number: string; supplier_name: string; pending_value: number }
 export interface MatchRow { purchase_order_id: number; number: string; supplier_name: string; project: string; ordered_value: number; received_value: number; billed_value: number; bill_count: number; receipt_count: number; verdict: string; note: string }

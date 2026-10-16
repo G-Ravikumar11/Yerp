@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 
 /** notHeadOffice: left out for HO QS and HO Coordinator, whose front page is the HO portal. */
-export type NavItem = { label: string; path: string; perm?: string; notHeadOffice?: boolean }
+type NavItem = { label: string; path: string; perm?: string; notHeadOffice?: boolean }
 /** staffOnly: the screens of a member of staff's own work (timesheet, payslips), which the account holder has no use for. */
 /** perm: the right that puts the whole group in somebody's menu (a portal). Its items may ask for more on top. */
 export type NavGroup = { id: string; label: string; icon: LucideIcon; items: NavItem[]; staffOnly?: boolean; ownerOnly?: boolean; perm?: string }
@@ -26,7 +26,7 @@ export type NavEntry = { kind: 'link'; id: string; label: string; icon: LucideIc
  * things live - only what they look like. Every item gets a route; those not
  * yet ported render the migration placeholder.
  */
-export const NAV: NavEntry[] = [
+const NAV: NavEntry[] = [
   { kind: 'link', id: 'dashboard', label: 'Command Center', icon: LayoutDashboard, path: '/', ownerOnly: true },
   { kind: 'link', id: 'calendar', label: 'Calendar', icon: CalendarDays, path: '/calendar' },
   // Head office's front page: every site's vendors, work orders, BOQs and bills, and what waits on whom.

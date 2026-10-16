@@ -36,7 +36,6 @@ office laser and a site photocopier, and a photocopy of a photocopy is still
 legible, which is what happens to these.
 """
 import io
-import re
 import threading
 
 from app.documents.wo_pdf import (PDF_AVAILABLE, _IMPORT_ERROR, _draw_watermark, _logo, inr,  # noqa: F401
@@ -649,5 +648,3 @@ def date_text(value):
     return _date(value)
 
 
-def strip_tags(value):
-    return re.sub(r"<[^>]+>", "", str(value or ""))

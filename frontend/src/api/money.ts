@@ -16,9 +16,6 @@ export interface BankAccount {
   balance: number
 }
 
-/** Which way the money goes for each kind of document a payment can be against. */
-export type PayDoc = 'sub_bill' | 'supplier_bill' | 'ra_bill' | 'invoice' | string
-
 export const PAY_MODES = ['Bank transfer', 'Cheque', 'UPI', 'Cash', 'Adjustment']
 
 export function useOutstanding(docType: string, docId: number, enabled: boolean) {

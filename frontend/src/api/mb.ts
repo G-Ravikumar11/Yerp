@@ -69,18 +69,6 @@ export interface MbBook {
   summary: { ordered_value: number; measured_value: number; unbilled_value: number; held_value?: number; lines_over_measured: number }
 }
 
-/** What is sent to record a measurement. Dimensions, when given, are the measurement. */
-export interface MeasurementInput {
-  item_id: number
-  quantity?: number
-  dimensions?: Omit<MbDimension, 'quantity'>[]
-  multiplier?: number
-  measured_on?: string
-  mb_ref?: string
-  location?: string
-  remarks?: string
-}
-
 export const mbKeys = {
   all: ['mb'] as const,
   book: (orderId: number) => ['mb', orderId] as const,
@@ -111,7 +99,7 @@ export interface ImportDim {
 }
 
 /** What the sheet holds back on a group of its blocks, in its own words. */
-export interface ImportHold {
+interface ImportHold {
   group: number
   reason: string
   percent: number

@@ -30,7 +30,7 @@ export interface Employee {
   site_count?: number
 }
 
-export interface OnboardingItem {
+interface OnboardingItem {
   id: number
   title: string
   category: string
@@ -63,7 +63,7 @@ export interface Department {
   site_ids: number[]
 }
 
-export interface Permission {
+interface Permission {
   key: string
   group: string
   label: string
@@ -71,7 +71,7 @@ export interface Permission {
   only_role?: string
 }
 
-export interface PermissionRole {
+interface PermissionRole {
   code: string
   label: string
   rank: number
@@ -147,7 +147,6 @@ export const setEmployeeStatus = (id: number, to: 'onboard' | 'offboard' | 'term
 
 export type DepartmentInput = { name: string; description: string; color: string; icon: string; site_ids?: number[] }
 export const saveDepartment = (id: number | null, b: DepartmentInput) => (id ? put<Department>(`/api/departments/${id}`, b) : post<Department>('/api/departments', b))
-export const deleteDepartment = (id: number) => del<{ message: string }>(`/api/departments/${id}`)
 /**
  * Shows a department change straight away from what the server sent back, then refreshes the rest
  * quietly behind it. Waiting for every People list to reload first held each click open for

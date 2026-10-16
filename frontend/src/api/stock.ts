@@ -5,7 +5,7 @@ export const stockKeys = { all: ['stock'] as const }
 
 export interface StockRow { item_code: string; item_name: string; uom: string; received: number; issued: number; on_hand: number; rate: number; value: number; negative: boolean; below_level: boolean; reorder_level: number }
 export interface StockSummary { items_held: number; value_on_hand: number; below_reorder: number; negative_lines: number }
-export interface Movement { moved_on: string; kind: string; quantity: number; rate: number; balance: number; source_ref: string; remarks: string }
+interface Movement { moved_on: string; kind: string; quantity: number; rate: number; balance: number; source_ref: string; remarks: string }
 export interface Ledger { item_name: string; uom: string; on_hand: number; rate: number; value: number; movements: Movement[] }
 export interface Issue { id: number; number: string; work_order: string; purpose: string; issued_to: string; issued_on: string; total_value: number; status: string }
 export interface IssueSummary { notes: number; not_yet_posted: number; issued_value: number }

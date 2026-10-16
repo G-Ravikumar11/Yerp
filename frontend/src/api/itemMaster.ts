@@ -90,7 +90,7 @@ export const masterKeys = {
   sites: (id: number | null) => ['item-master', 'sites', id] as const,
 }
 
-export function queryString(f: object) {
+function queryString(f: object) {
   const p = new URLSearchParams()
   Object.entries(f).forEach(([k, v]) => v !== '' && v !== undefined && v !== null && p.set(k, String(v)))
   return p.toString()

@@ -2,7 +2,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app import models
@@ -421,6 +421,13 @@ def erp_build_bom(body: BomIn, request: Request, db: Session = Depends(get_db)):
             "message": "Budget saved for %s: %d line(s)." % (wo.number, len(allocations))}
 
 
+def _kind_counts(db, client_id):
+    """How many items of each kind, in one query rather than one per kind."""
+    found = dict(db.query(models.DBItem.kind, func.count(models.DBItem.id)).filter(
+        models.DBItem.client_id == client_id).group_by(models.DBItem.kind).all())
+    return {k: found.get(k, 0) for k in ITEM_KINDS}
+
+
 @router.get("/api/erp/items")
 def erp_list_items(request: Request, kind: str = "", q: str = "",
                    db: Session = Depends(get_db)):
@@ -440,12 +447,7 @@ def erp_list_items(request: Request, kind: str = "", q: str = "",
                    "item_tax_type": i.item_tax_type,
                    "last_rate": unit_rate(i.last_rate),
                    "reorder_level": money(i.reorder_level)} for i in items],
-        "counts": {
-            k: db.query(models.DBItem).filter(
-                models.DBItem.client_id == client.id,
-                models.DBItem.kind == k).count()
-            for k in ITEM_KINDS
-        },
+        "counts": _kind_counts(db, client.id),
     }
 
 

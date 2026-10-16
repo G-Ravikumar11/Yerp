@@ -684,11 +684,21 @@ def list_recruitment_forms(request: Request, db: Session = Depends(get_db)):
     forms = db.query(models.DBRecruitmentForm).filter(
         models.DBRecruitmentForm.client_id == client.id
     ).order_by(models.DBRecruitmentForm.created_at.desc()).all()
+    S = models.DBFormSubmission
+    tally = {}
+    if forms:
+        for form_id, stage, n in db.query(S.form_id, S.current_stage, sqlfunc.count(S.id)).filter(
+                S.form_id.in_([f.id for f in forms])).group_by(S.form_id, S.current_stage).all():
+            t = tally.setdefault(form_id, {"all": 0, "hired": 0, "pipeline": 0})
+            t["all"] += n
+            if stage == 'Hired':
+                t["hired"] += n
+            elif stage != 'Rejected':
+                t["pipeline"] += n
     result = []
     for f in forms:
-        sub_count = db.query(models.DBFormSubmission).filter(models.DBFormSubmission.form_id == f.id).count()
-        hired_count = db.query(models.DBFormSubmission).filter(models.DBFormSubmission.form_id == f.id, models.DBFormSubmission.current_stage == 'Hired').count()
-        pipeline_count = db.query(models.DBFormSubmission).filter(models.DBFormSubmission.form_id == f.id, models.DBFormSubmission.current_stage.notin_(['Hired', 'Rejected'])).count()
+        t = tally.get(f.id, {"all": 0, "hired": 0, "pipeline": 0})
+        sub_count, hired_count, pipeline_count = t["all"], t["hired"], t["pipeline"]
         result.append({
             "id": f.id, "title": f.title, "description": f.description,
             "fields": f.fields, "is_active": f.is_active,

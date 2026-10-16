@@ -103,7 +103,7 @@ const loaded = (src: string) => new Promise<void>((resolve) => {
 })
 
 /** Size the report to the sheet: measured as it will be laid out, then scaled so that all of it is on one A4 page. */
-export function fitReport(): { scale: number; pages: number } {
+function fitReport(): { scale: number; pages: number } {
   const root = document.getElementById('chart-print-root')
   const page = root?.querySelector<HTMLElement>('.rp-page')
   if (!root || !page) return { scale: 1, pages: 1 }

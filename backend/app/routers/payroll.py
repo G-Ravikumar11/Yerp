@@ -12,6 +12,7 @@ from app.db import get_db
 
 from app.constants.common import PAYROLL_EXCLUDED_STATUSES, PAYSLIP_META_FIELDS, PAYSLIP_PAY_INPUTS
 from app.core.audit import log_audit
+from app.core.queries import by_id, prime
 from app.core.auth import get_client_user, require_owner
 from app.core.currency import esc, money
 from app.core.dates import _parse_date
@@ -36,9 +37,10 @@ def get_payslips(request: Request, status: str = "", db: Session = Depends(get_d
     if status:
         query = query.filter(models.DBPayslip.status == status)
     payslips = query.order_by(models.DBPayslip.created_at.desc()).all()
+    prime(db, models.DBEmployee, [p.employee_id for p in payslips])
     result = []
     for p in payslips:
-        emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == p.employee_id).first()
+        emp = by_id(db, models.DBEmployee, p.employee_id)
         result.append({
             "id": p.id, "number": p.number,
             "employee_id": p.employee_id,
