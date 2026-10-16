@@ -1,12 +1,11 @@
 import { useState } from 'react'
-import { ArrowLeft, Columns2, Download, Link2, Plus, Sparkles, Trophy } from 'lucide-react'
+import { ArrowLeft, Columns2, Download, Link2, Plus, Trophy } from 'lucide-react'
 import { Badge, Button, Skeleton } from '@/components/ui'
 import { useStatement, type RfqSupplier, type Statement } from '@/api/rfq'
 import { compare, type Comparison } from '@/lib/rfqCompare'
 import { formatDate } from '@/lib/format'
 import { cn, formatINR } from '@/lib/utils'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
-import { Recommendation } from './AiQuotes'
 import type { AwardPreset } from './AwardModal'
 import { ComparisonDocModal } from './ComparisonDocModal'
 import { AttachQuotation, QuoteCheckModal } from './QuoteCheck'
@@ -33,7 +32,6 @@ export function StatementPanel({ id, onBack, onQuote, onAsk, onAward }: Props) {
   const q = useStatement(id)
   const d = q.data
   const [doc, setDoc] = useState(false)
-  const [ai, setAi] = useState(false)
   if (q.isPending || !d) return <Skeleton className="mt-6 h-64 w-full" />
   const c = compare(d, d.suppliers.map((s) => s.supplier_name))
   const open = d.rfq.status === 'OPEN'
@@ -78,8 +76,7 @@ export function StatementPanel({ id, onBack, onQuote, onAsk, onAward }: Props) {
         </div>
       ) : (
         <>
-          <Verdict d={d} c={c} open={open} onAward={onAward} onAi={() => setAi((x) => !x)} />
-          {ai && <div className="border-t border-border print:hidden"><Recommendation id={id} /></div>}
+          <Verdict d={d} c={c} open={open} onAward={onAward} />
           <Sheet d={d} c={c} open={open} onAward={(name) => onAward({ mode: 'one_supplier', supplier: name })} />
         </>
       )}
@@ -89,7 +86,7 @@ export function StatementPanel({ id, onBack, onQuote, onAsk, onAward }: Props) {
 }
 
 /** The answer, said once: the cheapest total, by how much, and the button to give them the order. */
-function Verdict({ d, c, open, onAward, onAi }: { d: Statement; c: Comparison; open: boolean; onAward: (p?: AwardPreset) => void; onAi: () => void }) {
+function Verdict({ d, c, open, onAward }: { d: Statement; c: Comparison; open: boolean; onAward: (p?: AwardPreset) => void }) {
   const { l1, split } = c
   const next = c.suppliers.find((s) => c.rank.get(s.supplier_name) === 'L2')
   const awards = [...split.winners].map(([rfq_line_id, supplier_name]) => ({ rfq_line_id, supplier_name }))
@@ -107,7 +104,6 @@ function Verdict({ d, c, open, onAward, onAi }: { d: Statement; c: Comparison; o
       </div>
       {open && (
         <div className="flex flex-wrap items-center gap-2 print:hidden">
-          <Button size="sm" variant="ghost" onClick={onAi}><Sparkles /> Check with AI</Button>
           {c.splitSaving > 0.5 || (!l1 && !split.uncovered.length) ? <Button size="sm" variant="outline" onClick={() => onAward({ mode: 'per_line', awards })}>Split by item</Button> : null}
           {l1 && <Button size="sm" onClick={() => onAward({ mode: 'one_supplier', supplier: l1.supplier_name })}>Award to {l1.supplier_name}</Button>}
         </div>
@@ -143,7 +139,7 @@ function Sheet({ d, c, open, onAward }: { d: Statement; c: Comparison; open: boo
                       {s.quote_ref && <span>No. {s.quote_ref}</span>}
                       {s.quote_date && <span>{formatDate(s.quote_date)}</span>}
                       {s.document
-                        ? <button type="button" onClick={() => setChecking(s)} className="inline-flex items-center gap-0.5 text-primary hover:underline" title={`Compare with ${s.document.name}`}><Columns2 className="size-3" />Check with their quote</button>
+                        ? <button type="button" onClick={() => setChecking(s)} className="inline-flex items-center gap-0.5 text-primary hover:underline" title={`Compare with ${s.document.name}`}><Columns2 className="size-3" />Compare with their quote</button>
                         : open && <span className="print:hidden"><AttachQuotation statement={d} supplier={s} /></span>}
                       {s.source === 'vendor' && <span title="Sent by the supplier through their link">via link</span>}
                     </div>
@@ -170,7 +166,7 @@ function Sheet({ d, c, open, onAward }: { d: Statement; c: Comparison; open: boo
                   return (
                     <td key={s.quote_id} className={cn(col, 'py-2.5 tabular', best && 'bg-success/[0.07]')}>
                       <div className={cn('font-medium', best && 'text-success')}>{formatINR(o.rate)} <span className="text-xs font-normal text-muted-foreground">/ {l.uom || 'unit'}</span></div>
-                      <div className="text-xs text-muted-foreground">{formatINR(o.amount)} + {o.tax_percent}% GST{o.remarks && ` · ${o.remarks}`}</div>
+                      <div className="text-xs text-muted-foreground">Amount {formatINR(o.amount)} · GST {o.tax_percent}%{o.remarks && ` · ${o.remarks}`}</div>
                     </td>
                   )
                 })}

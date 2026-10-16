@@ -11,6 +11,7 @@ from app import models
 from app.constants.approvals import GONE_STATUSES
 from app.constants.boq import BOQ_KINDS, BOQ_NOT_LIVE, BOQ_PRICED, BV_TRANSITIONS
 from app.core.currency import money, unit_rate
+from app.core.naming import short_name
 from app.core.permissions import employee_can
 from app.core.queries import by_id, chain_rows, forget_chain
 from app.core.units import canonical_unit
@@ -294,7 +295,7 @@ def boq_check_typed_codes(db, client_id, lines):
                 raise HTTPException(409, "Item code %s belongs to something that is not one of your finished goods. "
                                          "Leave the code blank to be given one." % code)
             continue
-        name = re.sub(r"\s+", " ", (l.description or "").split("\n")[0]).strip()[:200]
+        name = short_name(l.description, 120) or re.sub(r"\s+", " ", (l.description or "").split("\n")[0]).strip()[:200]
         db.add(models.DBItem(client_id=client_id, kind="FG", item_code=code, item_name=name,
                              description=(l.description or "").strip() or name, category=CATEGORY_BY_KIND["FG"], sub_category="FG",
                              item_type="Purchased", units_of_measure=canonical_unit(l.uom) or "Nos"))
@@ -312,7 +313,7 @@ def boq_issue_codes(db, client_id, lines):
     for l in lines:
         if l.kind not in BOQ_PRICED or l.item_code:
             continue
-        name = re.sub(r"\s+", " ", (l.description or "").split("\n")[0]).strip()[:200]
+        name = short_name(l.description, 120) or re.sub(r"\s+", " ", (l.description or "").split("\n")[0]).strip()[:200]
         match = next((i for i in by_name.get(name.lower(), []) if i.item_code not in in_use), None)
         if match is not None:
             l.item_code = match.item_code
