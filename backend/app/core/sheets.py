@@ -241,20 +241,6 @@ def looks_like_xlsx(raw: bytes) -> bool:
 _SHEET_CONTEXT = contextvars.ContextVar("sheet_context", default=None)
 
 
-def workbook_context(raw: bytes, sheet: str):
-    """The name of the sheet being read, and the others that were available."""
-    try:
-        book = open_workbook(raw)
-    except HTTPException:
-        return None
-    try:
-        names = list(book.sheetnames)
-        _, chosen = pick_sheet(book, sheet)
-        return {"sheet": chosen, "sheets": names}
-    finally:
-        book.close()
-
-
 def sheet_note() -> str:
     """A sentence naming the tab that was read, when there was a choice.
 
@@ -371,22 +357,12 @@ def read_xlsx_outline(raw: bytes, sheet: str = ""):
 
 
 def read_xlsx_table_and_context(raw: bytes, sheet: str = ""):
-    """The rows of one worksheet and the sheet context (see workbook_context), from a single opening of the file."""
+    """The rows of one worksheet and the sheet context, from a single opening of the file."""
     book = open_workbook(raw)
     try:
         worksheet, chosen = pick_sheet(book, sheet)
         table = [[cell_text(c) for c in row] for row in worksheet.iter_rows(values_only=True)]
         return table, {"sheet": chosen, "sheets": list(book.sheetnames)}
-    finally:
-        book.close()
-
-
-def read_xlsx_table(raw: bytes, sheet: str = ""):
-    """Rows from one worksheet, as strings."""
-    book = open_workbook(raw)
-    try:
-        worksheet, _ = pick_sheet(book, sheet)
-        return [[cell_text(c) for c in row] for row in worksheet.iter_rows(values_only=True)]
     finally:
         book.close()
 

@@ -8,9 +8,9 @@ export interface DraftActivity { line_id: number; name: string; weight: number; 
 export interface PlanDraft extends Off { work_order_id?: number | null; boq_id?: number | null; activities: DraftActivity[] }
 /** What a programme is drafted from: the project's BOQ, or one of its placed work orders. */
 export type DraftSource = { boq: true } | { work_order_id: number }
-export interface DayTaskIdea { text: string; activity_id: number | null; activity: string }
+interface DayTaskIdea { text: string; activity_id: number | null; activity: string }
 export interface DayIdeas extends Off { date: string; tasks: DayTaskIdea[] }
-export interface PlanFinding extends Flag { activity_id: number | null }
+interface PlanFinding extends Flag { activity_id: number | null }
 export interface PlanReview extends Off {
   summary: string
   findings: PlanFinding[]

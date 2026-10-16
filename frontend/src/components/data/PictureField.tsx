@@ -3,7 +3,7 @@ import { Button, Label } from '@/components/ui'
 import { toast } from '@/stores/toast'
 
 /** A picture chosen from the device, shrunk to fit, as a PNG data URL. White can be made see-through (a signature). */
-export function readPicture(file: File, maxW: number, maxH: number, clearWhite: boolean): Promise<string> {
+function readPicture(file: File, maxW: number, maxH: number, clearWhite: boolean): Promise<string> {
   return new Promise((resolve, reject) => {
     if (!/^image\/(png|jpe?g|gif|webp|bmp)$/i.test(file.type)) return reject(new Error('Choose a picture - PNG or JPEG'))
     const reader = new FileReader()

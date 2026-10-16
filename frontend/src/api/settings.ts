@@ -115,7 +115,7 @@ export interface PortalUser {
   invite_expires: string
   last_login: string
 }
-export interface PortalParty {
+interface PortalParty {
   id: number
   name: string
   email: string

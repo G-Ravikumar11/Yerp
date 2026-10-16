@@ -21,7 +21,7 @@ export interface Incident {
 }
 export interface Talk { id: number; held_on: string; topic: string; notes: string; conducted_by: string; attendees: number; attendee_names: string }
 export interface Permit { id: number; number: string; kind: string; location: string; valid_from: string; valid_to: string; receiver: string; status: string; expired: boolean }
-export interface SafetySummary { days_without_lti: number | null; incidents_this_month: number; near_misses: number; open: number; talks_this_week: number; active_permits: number; expired_open: number }
+interface SafetySummary { days_without_lti: number | null; incidents_this_month: number; near_misses: number; open: number; talks_this_week: number; active_permits: number; expired_open: number }
 export interface SafetyData { incidents: Incident[]; talks: Talk[]; permits: Permit[]; summary: SafetySummary; kinds: string[]; permit_kinds: Record<string, string[]> }
 
 export type HseGo = 'workers' | 'incidents' | 'talks' | 'permits'
@@ -95,7 +95,7 @@ export const removeWorker = (id: number) => del<{ message: string }>(`/api/worke
 
 // Equipment checks: the company's inspection checklists - portable grinder, breaking machine, hammer drill, fire
 // extinguisher and electrical board - each answered item by item, with photos, readings and sign-offs.
-export interface CheckFormItem { key: string; label: string; section?: string; bad_if_yes: boolean; optional: boolean }
+interface CheckFormItem { key: string; label: string; section?: string; bad_if_yes: boolean; optional: boolean }
 export interface CheckForm {
   key: string
   label: string
@@ -111,8 +111,8 @@ export interface CheckForm {
   signoffs: { role: string; label: string }[]
   review: { label: string; signoff_label: string } | null
 }
-export interface CheckPhoto { id: number; url: string; thumb_url: string }
-export interface CheckItem extends CheckFormItem { answer: string; remarks: string; photos: CheckPhoto[] }
+interface CheckPhoto { id: number; url: string; thumb_url: string }
+interface CheckItem extends CheckFormItem { answer: string; remarks: string; photos: CheckPhoto[] }
 export interface Check {
   id: number
   job_id: number
@@ -145,7 +145,7 @@ export interface Check {
   due_in_days: number | null
   due_state: '' | 'ok' | 'soon' | 'overdue'
 }
-export interface CheckSummary { total: number; equipment: number; failed: number; overdue: number; due_soon: number; awaiting_review: number }
+interface CheckSummary { total: number; equipment: number; failed: number; overdue: number; due_soon: number; awaiting_review: number }
 export interface CheckData { checks: Check[]; forms: CheckForm[]; summary: CheckSummary }
 export const useChecks = (job: number, form = '') => useQuery({
   queryKey: ['safety', 'checks', job, form],

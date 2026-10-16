@@ -28,10 +28,6 @@ def llm_configured() -> bool:
 LAST_ERROR = {"reason": ""}
 
 
-def llm_last_error() -> str:
-    return LAST_ERROR["reason"]
-
-
 def llm_chat(messages, temperature=0.3, max_tokens=1024):
     if not GROQ_API_KEY:
         LAST_ERROR["reason"] = "no_key"

@@ -6,7 +6,7 @@ import { formatDate, today } from '@/lib/format'
 import { MasterDeleteDialog } from '@/features/deleteorder/MasterDelete'
 import { useSession } from '@/lib/session'
 
-export const STATUSES = ['Not Started', 'In Progress', 'Completed', 'Delayed'] as const
+const STATUSES = ['Not Started', 'In Progress', 'Completed', 'Delayed'] as const
 
 export function ActivityModal({ job, activity, others, employees = [], teamScope = 'project', milestone = false, open, onClose }: { job: number; activity: Activity | null; others: Activity[]; employees?: Employee[]; teamScope?: string; milestone?: boolean; open: boolean; onClose: () => void }) {
   const isMilestone = activity ? activity.is_milestone : milestone

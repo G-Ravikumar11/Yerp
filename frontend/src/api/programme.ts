@@ -39,7 +39,7 @@ export interface ProgrammeRowView {
   baseline: { start: string | null; end: string | null; slip_days: number | null } | null
 }
 
-export interface ProgrammeLinkView {
+interface ProgrammeLinkView {
   successor: number
   predecessor: number
   kind: string
@@ -222,7 +222,7 @@ export const drawProgrammeFromBoq = (job: number, body: { picks: BoqPick[]; anch
   post<ProgrammeView & { warnings?: string[] }>(`${base(job)}/from-boq`, body)
 
 /** A row read from a schedule sheet, as the preview gives it and the confirm takes it back. */
-export interface ImportNode {
+interface ImportNode {
   key: number
   parent: number | null
   name: string

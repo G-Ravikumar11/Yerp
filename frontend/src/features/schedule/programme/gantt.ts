@@ -2,7 +2,7 @@ import { fromDay, toDay, type Calendar } from '@/lib/programme'
 
 /** How wide a day is drawn at each zoom. */
 export type Zoom = 'day' | 'week' | 'month'
-export const PX_PER_DAY: Record<Zoom, number> = { day: 26, week: 9, month: 3 }
+const PX_PER_DAY: Record<Zoom, number> = { day: 26, week: 9, month: 3 }
 
 export interface Scale {
   from: number

@@ -3,7 +3,7 @@ import { get, post } from '@/lib/api'
 import type { ApprovalItem } from './approvals'
 
 /** Who is looking at the HO portal, and which of head office's own work they may open. */
-export interface HoPerson {
+interface HoPerson {
   role: string
   role_label: string
   name: string
@@ -46,7 +46,7 @@ export interface HoOverview {
   drafts: HoDraft[]
 }
 
-export const hoKeys = { overview: ['head-office', 'overview'] as const }
+const hoKeys = { overview: ['head-office', 'overview'] as const }
 
 /** The HO portal's front page: every site at once. Kept fresh while it is open - it is a list to chase. */
 export const useHoOverview = () => useQuery({ queryKey: hoKeys.overview, queryFn: () => get<HoOverview>('/api/ho/overview'), refetchInterval: 60_000 })

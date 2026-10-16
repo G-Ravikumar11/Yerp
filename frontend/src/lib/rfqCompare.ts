@@ -1,9 +1,9 @@
 import type { RfqLine, RfqSupplier, Statement } from '@/api/rfq'
 
 /** More columns than this and a buyer stops reading across and starts scrolling. */
-export const MAX_COMPARE = 6
+const MAX_COMPARE = 6
 /** A rate this far over the lowest in its row is worth a second look. */
-export const OUTLIER_OVER = 0.25
+const OUTLIER_OVER = 0.25
 
 const key = (name: string) => name.trim().toLowerCase()
 
@@ -15,10 +15,6 @@ export function byLanded(sups: RfqSupplier[]): RfqSupplier[] {
 /** Everybody when there are six or fewer; otherwise the six cheapest landed. */
 export function defaultCompare(sups: RfqSupplier[]): string[] {
   return byLanded(sups).slice(0, MAX_COMPARE).map((s) => s.supplier_name)
-}
-
-export function topLanded(sups: RfqSupplier[], n: number): string[] {
-  return byLanded(sups).slice(0, n).map((s) => s.supplier_name)
 }
 
 /** Shortest lead time first; a quote that gave no delivery days goes last, and ties go to the cheaper landed. */
@@ -46,8 +42,6 @@ export function parseCompare(raw: string | null, names: string[]): string[] {
   }
   return out.slice(0, MAX_COMPARE)
 }
-
-export const formatCompare = (names: string[]) => names.join(',')
 
 export type Toggle = { ok: true; next: string[] } | { ok: false; reason: 'max' | 'min' }
 

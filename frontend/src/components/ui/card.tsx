@@ -10,19 +10,6 @@ export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElemen
   )
 }
 
-/** A card that answers the pointer - for tiles that are links. */
-export function CardInteractive({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return (
-    <Card
-      className={cn(
-        'transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lift',
-        className,
-      )}
-      {...props}
-    />
-  )
-}
-
 export function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn('flex flex-col gap-1 p-5 pb-3', className)} {...props} />
 }
@@ -37,8 +24,4 @@ export function CardDescription({ className, ...props }: React.HTMLAttributes<HT
 
 export function CardContent({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn('p-5 pt-2', className)} {...props} />
-}
-
-export function CardFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn('flex items-center gap-2 border-t border-border p-4', className)} {...props} />
 }

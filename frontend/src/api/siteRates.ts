@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { get, post, put } from '@/lib/api'
+import { get, post } from '@/lib/api'
 import type { MasterItem } from '@/api/itemMaster'
 
 export type PriceStatus = 'Pending' | 'Draft' | 'Finalized' | 'Changed'
@@ -42,7 +42,7 @@ export interface PriceRow {
   updated_at: string
 }
 
-export interface PriceSummary {
+interface PriceSummary {
   lines: number
   mapped: number
   unmapped: number
@@ -98,9 +98,6 @@ interface Reply {
   summary: PriceSummary
   message: string
 }
-
-export const saveRate = (siteId: number, itemId: number, rate: number | null, remarks: string, version: number) =>
-  put<Reply>(`/api/sites/${siteId}/item-prices/${itemId}`, { rate, remarks, version })
 
 export const bulkSave = (siteId: number, rates: { item_id: number; rate: number | null; version: number }[], remarks: string) =>
   post<Reply>(`/api/sites/${siteId}/item-prices/bulk`, { rates: rates.map((r) => ({ ...r, remarks })) })

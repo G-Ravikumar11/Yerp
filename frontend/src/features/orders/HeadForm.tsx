@@ -1,7 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, Field, Input, NumField, Select, Textarea } from '@/components/ui'
 import { departmentsForSite, useBusinessUnits, useContractors, useOrderVocabulary, type Order, type OrderHead } from '@/api/orders'
 
-export const BILLING_CYCLES = ['Monthly', 'Fortnightly', 'On milestone', 'On completion']
+const BILLING_CYCLES = ['Monthly', 'Fortnightly', 'On milestone', 'On completion']
 
 export function headFrom(o: Order): OrderHead {
   return {

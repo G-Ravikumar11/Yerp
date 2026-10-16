@@ -162,10 +162,6 @@ def codes_in_use(db, codes) -> set:
     return found
 
 
-def code_is_free(db, code) -> bool:
-    return normalise_code(code) not in codes_in_use(db, [code])
-
-
 def issue_item_code(db, taken=None) -> str:
     """The next unused code.
 

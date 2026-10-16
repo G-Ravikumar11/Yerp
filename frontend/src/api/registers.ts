@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { get } from '@/lib/api'
 
-export interface TdsRow {
+interface TdsRow {
   date: string
   year: string
   quarter: string

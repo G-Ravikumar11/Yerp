@@ -1,13 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
 import { del, get, post } from '@/lib/api'
 
-export interface DocState {
+interface DocState {
   kind: string
   label: string
   state: 'valid' | 'expiring' | 'expired' | 'missing'
 }
 
-export interface Score {
+interface Score {
   count: number
   quality: number | null
   speed: number | null
@@ -33,7 +33,7 @@ export interface ComplianceHome {
   rating_fields: string[]
 }
 
-export interface ComplianceDoc {
+interface ComplianceDoc {
   id: number
   kind: string
   kind_label: string

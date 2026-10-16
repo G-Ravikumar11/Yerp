@@ -14,7 +14,7 @@ export interface FilterOptions<T> {
   facets?: Record<string, { label: string; get: (row: T) => string }>
 }
 
-export interface Facet {
+interface Facet {
   key: string
   label: string
   value: string

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, ChevronLeft, ChevronRight, Paperclip, Search, X } from 'lucide-react'
-import { Badge, Button, Input, Select, Skeleton } from '@/components/ui'
+import { Button, Input, Select, Skeleton } from '@/components/ui'
 import { type HistoryLine, type ListQuery } from '@/api/quality'
 import { formatDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -12,7 +12,7 @@ export const ncrTone = (status: string, overdue: boolean): Tone => (status === '
 export const cubeTone = (s: string): Tone =>
   s === 'below grade' || s === 'rejected' ? 'danger' : s === 'accepted' ? 'success' : s === 'accepted with conditions' ? 'warning' : s === 'for engineering review' || s === 'criteria not set' ? 'info' : 'neutral'
 
-export const LABEL_ACTION: Record<string, string> = {
+const LABEL_ACTION: Record<string, string> = {
   'qc.inspection.created': 'Started', 'qc.inspection.edited': 'Edited', 'qc.inspection.submitted': 'Submitted for approval',
   'qc.inspection.returned': 'Returned to the inspector', 'qc.inspection.passed': 'Approved - passed', 'qc.inspection.failed': 'Approved - failed',
   'qc.inspection.reinspection_requested': 'Reinspection requested', 'qc.cube.registered': 'Sample registered', 'qc.cube.result': 'Result recorded',
@@ -128,4 +128,4 @@ export const Fact = ({ label, children }: { label: string; children: React.React
   <div className="min-w-0"><dt className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</dt><dd className="mt-0.5 break-words text-[13.5px]">{children || '-'}</dd></div>
 )
 
-export { Badge }
+

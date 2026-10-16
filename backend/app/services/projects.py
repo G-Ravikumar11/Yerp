@@ -204,13 +204,6 @@ def job_to_dict(db, job, costing=False):
     return row
 
 
-def project_retention(db, client_id, job_id, fallback=5.0):
-    """The retention a project's bills are drawn at: the project's own percentage when it has one set, else the usual 5%.
-    A bill that is given a percentage on the screen uses that instead."""
-    job = db.query(models.DBJob).filter(models.DBJob.id == job_id, models.DBJob.client_id == client_id).first() if job_id else None
-    return float(job.retention_percent) if job is not None and (job.retention_percent or 0) > 0 else fallback
-
-
 def project_money_moved(db, client_id, job):
     """What real money has been recorded against a project, in words, or nothing if none has.
 

@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { get, post, put } from '@/lib/api'
 
-export type BillStatus = 'DRAFT' | 'SUBMITTED' | 'CERTIFIED' | 'PAID' | 'CANCELLED'
-export type BillAction = 'SUBMIT' | 'CERTIFY' | 'REJECT' | 'PAY' | 'CANCEL'
+type BillStatus = 'DRAFT' | 'SUBMITTED' | 'CERTIFIED' | 'PAID' | 'CANCELLED'
+type BillAction = 'SUBMIT' | 'CERTIFY' | 'REJECT' | 'PAY' | 'CANCEL'
 
 export interface BillLine {
   id: number
@@ -19,7 +19,7 @@ export interface BillLine {
   upto_date_amount: number
 }
 
-export interface BillStep {
+interface BillStep {
   step: number
   name: string
   owner: boolean

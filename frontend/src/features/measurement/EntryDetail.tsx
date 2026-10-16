@@ -8,7 +8,7 @@ import { lineQty } from './SheetView'
 const num = (v: number | null | undefined) => (v === null || v === undefined ? '' : formatQty(v))
 
 /** What the lines of an entry come to for one block, as the sheet adds them up. */
-export const entryOneBlock = (e: MbEntry) => e.dimensions.reduce((n, d) => n + (lineQty(d) ?? 0), 0)
+const entryOneBlock = (e: MbEntry) => e.dimensions.reduce((n, d) => n + (lineQty(d) ?? 0), 0)
 
 /** A short reading of an entry's working: "3 × 5 × 2.5  − 1 × 2  × 2 blocks". */
 export function calcSummary(e: MbEntry): string {

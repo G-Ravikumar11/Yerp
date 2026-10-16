@@ -9,7 +9,7 @@ const below100 = (n: number) => (n < 20 ? ONES[n] : TENS[Math.floor(n / 10)] + (
 const below1000 = (n: number) => (n >= 100 ? ONES[Math.floor(n / 100)] + ' Hundred' + (n % 100 ? ' ' + below100(n % 100) : '') : below100(n))
 
 /** Rupees in words the Indian way (thousand, lakh, crore): 61800 is "Rupees Sixty One Thousand Eight Hundred Only". */
-export function rupeesInWords(value: number): string {
+function rupeesInWords(value: number): string {
   let n = Math.round(Math.abs(value || 0))
   if (n === 0) return 'Rupees Zero Only'
   const parts: string[] = []

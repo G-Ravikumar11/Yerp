@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 export type CellValue = string | number | boolean | null | undefined
-export type ColumnType = 'text' | 'number' | 'select' | 'date' | 'checkbox'
+type ColumnType = 'text' | 'number' | 'select' | 'date' | 'checkbox'
 export type Option = string | { value: string; label: string }
 
 /**
@@ -68,7 +68,7 @@ export interface Range {
   c1: number
 }
 
-export type ChangeKind = 'edit' | 'paste' | 'clear' | 'fill' | 'cut' | 'insert' | 'delete' | 'undo' | 'redo'
+type ChangeKind = 'edit' | 'paste' | 'clear' | 'fill' | 'cut' | 'insert' | 'delete' | 'undo' | 'redo'
 
 export interface ChangeInfo {
   kind: ChangeKind
@@ -76,7 +76,7 @@ export interface ChangeInfo {
   range?: Range
 }
 
-export interface GridHandle {
+interface GridHandle {
   focus: () => void
   undo: () => void
   redo: () => void

@@ -7,8 +7,8 @@
  * can move it.
  */
 
-export type LinkKind = 'FS' | 'SS' | 'FF' | 'SF'
-export const LINK_KINDS: LinkKind[] = ['FS', 'SS', 'FF', 'SF']
+type LinkKind = 'FS' | 'SS' | 'FF' | 'SF'
+const LINK_KINDS: LinkKind[] = ['FS', 'SS', 'FF', 'SF']
 
 export interface CalendarSpec {
   calendar_days?: boolean
@@ -44,7 +44,7 @@ export interface ProgrammeLink {
   lag?: number
 }
 
-export interface Planned {
+interface Planned {
   start: string | null
   end: string | null
   days: number | null
@@ -139,7 +139,7 @@ interface Work {
 }
 
 /** How many working days a leaf takes, before its dates are known. */
-export function leafDays(r: ProgrammeRow): number | null {
+function leafDays(r: ProgrammeRow): number | null {
   if (r.milestone) return 0
   const q = r.quantity ?? 0
   const o = r.output_per_day ?? 0
@@ -424,11 +424,6 @@ export function plannedPercent(prog: Programme, cal: Calendar, asOf: string, bas
   const top = prog.order.filter((i) => prog.rows.get(i)!.level === 0)
   pct.set('project', top.length ? weighted(top.map((i) => prog.rows.get(i)!), top.map((i) => pct.get(i)!)) : 0)
   return pct
-}
-
-export function projectPercent(prog: Programme) {
-  const top = prog.order.filter((i) => prog.rows.get(i)!.level === 0).map((i) => prog.rows.get(i)!)
-  return top.length ? weighted(top, top.map((t) => t.percent)) : 0
 }
 
 /* --- predecessors written as text: "1.1.2FS+1, 1.1.3SS+2" ---------------------------------------------------------- */

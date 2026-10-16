@@ -31,7 +31,7 @@ interface OfflineState {
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 
 /** A failure that means "no connection" rather than "the server said no". */
-export function isNetworkFailure(e: unknown) {
+function isNetworkFailure(e: unknown) {
   return !(e instanceof ApiError) || e.status >= 500 || e.status === 408 || e.status === 429
 }
 
