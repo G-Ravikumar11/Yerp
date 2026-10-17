@@ -1,15 +1,16 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Plus } from 'lucide-react'
+import { FileSpreadsheet, Plus } from 'lucide-react'
 import { Link, Route, Routes, useNavigate } from 'react-router-dom'
 import { Badge, Button, Card, Input, Select, SkeletonRows, Tabs } from '@/components/ui'
+import { apiUrl } from '@/lib/api'
 import { useSession } from '@/lib/session'
 import { storeGet, storePerm, useStoreMeta } from '@/api/store'
 import { DocStatusBadge } from '../shared'
 import { StoreShell } from '../StoreShell'
 import { AdjustmentForm, CountStart, ScrapForm, TransferForm } from './Forms'
 import { AdjustmentView, CountView, ScrapView, TransferView } from './Views'
-import { money, type Transfer } from './types'
+import { money, num, type ReorderRow, type Transfer } from './types'
 
 /** Store > Control: transfers (with stock in transit), stock counts, adjustments and scrap. */
 export default function ControlIndex() {
@@ -33,7 +34,7 @@ export default function ControlIndex() {
   )
 }
 
-type Tab = 'transfers' | 'transit' | 'counts' | 'adjustments' | 'scrap'
+type Tab = 'transfers' | 'transit' | 'counts' | 'adjustments' | 'scrap' | 'reorder'
 const LABEL: Record<string, string> = { transfers: 'New transfer', counts: 'Start a count', adjustments: 'New adjustment', scrap: 'New scrap note' }
 interface Row { id: number; number: string; status: never; store_code: string; to_store_code?: string; trf_date?: string; count_date?: string; adj_date?: string; scrap_date?: string; kind?: string; reason?: string; transit?: string; total_value?: string; book_value?: string; realised_value?: string; variance_value?: string | null; counted_count?: number; line_count: number; inter_project?: boolean }
 
@@ -44,10 +45,10 @@ function Lists() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Tabs label="Control" value={tab} onChange={setTab} items={[{ value: 'transfers', label: 'Transfers' }, { value: 'transit', label: 'In transit' }, { value: 'counts', label: 'Stock counts' }, { value: 'adjustments', label: 'Adjustments' }, { value: 'scrap', label: 'Scrap' }]} />
-        {can(storePerm('control', 'create')) && tab !== 'transit' && <Button onClick={() => nav(`${tab}/new`)}><Plus /> {LABEL[tab]}</Button>}
+        <Tabs label="Control" value={tab} onChange={setTab} items={[{ value: 'transfers', label: 'Transfers' }, { value: 'transit', label: 'In transit' }, { value: 'counts', label: 'Stock counts' }, { value: 'adjustments', label: 'Adjustments' }, { value: 'scrap', label: 'Scrap' }, { value: 'reorder', label: 'Reorder alerts' }]} />
+        {can(storePerm('control', 'create')) && tab !== 'transit' && tab !== 'reorder' && <Button onClick={() => nav(`${tab}/new`)}><Plus /> {LABEL[tab]}</Button>}
       </div>
-      {tab === 'transit' ? <Transit /> : <Docs kind={tab} />}
+      {tab === 'transit' ? <Transit /> : tab === 'reorder' ? <Reorder /> : <Docs kind={tab} />}
     </div>
   )
 }
@@ -96,5 +97,35 @@ function Transit() {
         </tbody>
       </table>
     </Card>
+  )
+}
+
+function Reorder() {
+  const res = useQuery({ queryKey: ['store', 'control', 'reorder'], queryFn: () => storeGet<{ rows: ReorderRow[] }>('control', '/reorder-alerts') })
+  const rows = res.data?.rows ?? []
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="max-w-2xl text-sm text-muted-foreground">Items at or below their reorder level. Suggested quantity = maximum − (on hand + still to arrive on purchase orders). This is a list to export: nothing is ordered from here.</p>
+        <a href={apiUrl('/api/store/control/reorder-alerts?format=xlsx')}><Button variant="outline" size="sm"><FileSpreadsheet /> Export to Excel</Button></a>
+      </div>
+      {res.isLoading ? <SkeletonRows rows={5} cols={6} /> : (
+        <Card className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="border-b border-border text-left text-xs uppercase text-muted-foreground"><th className="p-3">Store</th><th className="p-3">Item</th><th className="p-3 text-right">On hand</th><th className="p-3 text-right">Reorder level</th><th className="p-3 text-right">Maximum</th><th className="p-3 text-right">On order</th><th className="p-3 text-right">Suggested</th></tr></thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={`${r.store_id}-${r.item_id}`} className="border-b border-border last:border-0">
+                  <td className="p-3 font-mono">{r.store_code}</td><td className="p-3"><span className="font-mono text-xs text-muted-foreground">{r.item_code}</span> {r.item_name} {r.below_min && <Badge tone="danger">Below minimum</Badge>}</td>
+                  <td className="p-3 text-right">{num(r.on_hand)} {r.uom}</td><td className="p-3 text-right">{num(r.reorder_level)}</td><td className="p-3 text-right">{r.max_qty === '0.000' ? '—' : num(r.max_qty)}</td>
+                  <td className="p-3 text-right">{num(r.pending_po)}</td><td className="p-3 text-right font-medium">{r.suggested === '' ? 'set a maximum' : num(r.suggested)}</td>
+                </tr>
+              ))}
+              {rows.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-muted-foreground">Nothing is at or below its reorder level.</td></tr>}
+            </tbody>
+          </table>
+        </Card>
+      )}
+    </div>
   )
 }

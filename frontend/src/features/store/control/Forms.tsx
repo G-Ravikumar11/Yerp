@@ -6,9 +6,10 @@ import { Button, Card, Input, Select } from '@/components/ui'
 import { toast } from '@/stores/toast'
 import { storeGet, storePost, storePut, useStoreMeta, type StoreItemOption } from '@/api/store'
 import { ItemPicker, StorePicker, UomQtyInput } from '../shared'
-import { errText, num, type Adjustment, type Count, type Scrap, type Transfer, type WriteoffReq } from './types'
+import { useControlMeta } from './DocShell'
+import { errText, label, num, type Adjustment, type Count, type Scrap, type Transfer, type WriteoffReq } from './types'
 
-interface Row { key: number; item: StoreItemOption | null; qty: string; uom: string; direction: 'IN' | 'OUT'; rate: string; realised: string; writeoff?: number }
+interface Row { key: number; item: StoreItemOption | null; qty: string; uom: string; direction: 'IN' | 'OUT'; rate: string; realised: string; klass?: string; writeoff?: number }
 let k = 1
 const blank = (): Row => ({ key: k++, item: null, qty: '', uom: '', direction: 'OUT', rate: '', realised: '' })
 const asItem = (l: { item_id: number; item_code: string; item_name: string }): StoreItemOption => ({ id: l.item_id, code: l.item_code, name: l.item_name, base_uom: '', uoms: [], category: null })
@@ -25,11 +26,12 @@ function useSaver<T extends { id: number; number: string }>(kind: string, route:
 }
 
 function Lines({ rows, setRows, mode }: { rows: Row[]; setRows: (f: (r: Row[]) => Row[]) => void; mode: 'plain' | 'adjust' | 'scrap' }) {
+  const cmeta = useControlMeta()
   const set = (key: number, patch: Partial<Row>) => setRows((r) => r.map((x) => (x.key === key ? { ...x, ...patch } : x)))
   return (
     <Card className="overflow-x-auto p-5">
       <table className="w-full min-w-[620px] text-sm">
-        <thead><tr className="text-left text-xs uppercase text-muted-foreground"><th className="pb-2 pr-3">Item</th>{mode === 'adjust' && <th className="pb-2 pr-3">In / out</th>}<th className="pb-2 pr-3">Quantity</th>{mode === 'adjust' && <th className="pb-2 pr-3">Rate (stock in)</th>}{mode === 'scrap' && <th className="pb-2 pr-3">Realised ₹</th>}<th /></tr></thead>
+        <thead><tr className="text-left text-xs uppercase text-muted-foreground"><th className="pb-2 pr-3">Item</th>{mode === 'adjust' && <th className="pb-2 pr-3">In / out</th>}<th className="pb-2 pr-3">Quantity</th>{mode === 'adjust' && <th className="pb-2 pr-3">Rate (stock in)</th>}{mode === 'scrap' && <><th className="pb-2 pr-3">Class</th><th className="pb-2 pr-3">Realised ₹</th></>}<th /></tr></thead>
         <tbody>
           {rows.map((r) => (
             <tr key={r.key} className="align-top">
@@ -37,7 +39,7 @@ function Lines({ rows, setRows, mode }: { rows: Row[]; setRows: (f: (r: Row[]) =
               {mode === 'adjust' && <td className="w-28 py-1 pr-3"><Select value={r.direction} disabled={!!r.writeoff} options={[{ value: 'IN', label: 'In' }, { value: 'OUT', label: 'Out' }]} onChange={(e) => set(r.key, { direction: e.target.value as 'IN' | 'OUT' })} /></td>}
               <td className="py-1 pr-3">{r.writeoff ? num(r.qty) : <UomQtyInput itemId={r.item?.id ?? null} value={{ qty: r.qty, uom: r.uom }} onChange={(v) => set(r.key, v)} disabled={!r.item} />}</td>
               {mode === 'adjust' && <td className="w-32 py-1 pr-3"><Input inputMode="decimal" disabled={r.direction !== 'IN'} placeholder="average" value={r.rate} onChange={(e) => set(r.key, { rate: e.target.value })} /></td>}
-              {mode === 'scrap' && <td className="w-32 py-1 pr-3"><Input inputMode="decimal" value={r.realised} onChange={(e) => set(r.key, { realised: e.target.value })} /></td>}
+              {mode === 'scrap' && <><td className="w-44 py-1 pr-3"><Select value={r.klass ?? 'OTHER'} options={(cmeta.data?.scrap_classes ?? ['OTHER']).map((c) => ({ value: c, label: label(c) }))} onChange={(e) => set(r.key, { klass: e.target.value })} /></td><td className="w-32 py-1 pr-3"><Input inputMode="decimal" value={r.realised} onChange={(e) => set(r.key, { realised: e.target.value })} /></td></>}
               <td className="py-1">{!r.writeoff && <Button variant="ghost" size="icon-sm" aria-label="Remove line" onClick={() => setRows((x) => x.filter((y) => y.key !== r.key))}><Trash2 /></Button>}</td>
             </tr>
           ))}
@@ -58,23 +60,29 @@ export function TransferForm() {
   const [from, setFrom] = useState<number | null>(null)
   const [to, setTo] = useState<number | null>(null)
   const [vehicle, setVehicle] = useState('')
+  const [driver, setDriver] = useState('')
+  const [challan, setChallan] = useState('')
+  const [challanDate, setChallanDate] = useState('')
   const [remarks, setRemarks] = useState('')
   const [rows, setRows] = useState<Row[]>([blank()])
   const existing = useQuery({ queryKey: ['store', 'control', 'transfers', id], enabled: !!id, queryFn: () => storeGet<Transfer>('control', `/transfers/${id}`) })
   useEffect(() => {
     const t = existing.data
     if (!t) return
-    setFrom(t.store_id); setTo(t.to_store_id); setVehicle(t.vehicle_no); setRemarks(t.remarks)
+    setFrom(t.store_id); setTo(t.to_store_id); setVehicle(t.vehicle_no); setDriver(t.driver_name); setChallan(t.challan_no); setChallanDate(t.challan_date ?? ''); setRemarks(t.remarks)
     setRows((t.lines ?? []).map((l) => ({ ...blank(), item: asItem(l), qty: l.qty })))
   }, [existing.data])
-  const save = useSaver<Transfer>('transfers', 'transfers', () => ({ store_id: from, to_store_id: to, vehicle_no: vehicle, remarks, lines: rows.filter((r) => r.item && r.qty.trim()).map((r) => ({ item_id: r.item!.id, qty: r.qty, uom: r.uom || undefined })) }), id)
+  const save = useSaver<Transfer>('transfers', 'transfers', () => ({ store_id: from, to_store_id: to, vehicle_no: vehicle, driver_name: driver, challan_no: challan, challan_date: challanDate || null, remarks, lines: rows.filter((r) => r.item && r.qty.trim()).map((r) => ({ item_id: r.item!.id, qty: r.qty, uom: r.uom || undefined })) }), id)
   return (
     <div className="space-y-6">
       <Card className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
         <label className="text-sm">From store<StorePicker value={from} onChange={(s) => setFrom(s)} disabled={!!id} /></label>
         <label className="text-sm">To store<StorePicker value={to} onChange={(s) => setTo(s)} excludeId={from ?? undefined} /></label>
         <label className="text-sm">Vehicle no.<Input value={vehicle} onChange={(e) => setVehicle(e.target.value)} /></label>
-        <label className="text-sm">Remarks<Input value={remarks} onChange={(e) => setRemarks(e.target.value)} /></label>
+        <label className="text-sm">Driver<Input value={driver} onChange={(e) => setDriver(e.target.value)} /></label>
+        <label className="text-sm">Challan no.<Input value={challan} onChange={(e) => setChallan(e.target.value)} /></label>
+        <label className="text-sm">Challan date<Input type="date" value={challanDate} onChange={(e) => setChallanDate(e.target.value)} /></label>
+        <label className="text-sm lg:col-span-2">Remarks<Input value={remarks} onChange={(e) => setRemarks(e.target.value)} /></label>
       </Card>
       <Lines rows={rows} setRows={setRows} mode="plain" />
       <p className="text-xs text-muted-foreground">Stock leaves the sending store when the transfer is posted and stays in transit until the receiving store confirms it.</p>
@@ -90,8 +98,12 @@ export function CountStart() {
   const [remarks, setRemarks] = useState('')
   const [picked, setPicked] = useState<StoreItemOption[]>([])
   const [item, setItem] = useState<StoreItemOption | null>(null)
+  const [cats, setCats] = useState<string[]>([])
+  const [binId, setBinId] = useState('')
+  const meta = useStoreMeta()
+  const bins = useQuery({ queryKey: ['store', 'masters', 'bins', store], enabled: !!store, queryFn: () => storeGet<{ bins: { id: number; code: string }[] }>('masters', `/stores/${store}/bins`).catch(() => ({ bins: [] })) })
   const save = useMutation({
-    mutationFn: () => storePost<Count>('control', '/counts', { store_id: store, remarks, item_ids: picked.length ? picked.map((i) => i.id) : undefined }),
+    mutationFn: () => storePost<Count>('control', '/counts', { store_id: store, remarks, categories: cats.length ? cats : undefined, bin_id: binId ? Number(binId) : undefined, item_ids: picked.length ? picked.map((i) => i.id) : undefined }),
     onSuccess: (c) => { toast.success(`${c.number} started; ${c.store_code} is frozen`); qc.invalidateQueries({ queryKey: ['store'] }); nav(`${ITEMS}/counts/${c.id}`) },
     onError: (e) => toast.error(errText(e)),
   })
@@ -100,6 +112,11 @@ export function CountStart() {
       <Card className="grid gap-4 p-5 sm:grid-cols-2">
         <label className="text-sm">Store to count<StorePicker value={store} onChange={(s) => setStore(s)} /></label>
         <label className="text-sm">Remarks<Input value={remarks} onChange={(e) => setRemarks(e.target.value)} /></label>
+        <div className="text-sm">
+          <p className="mb-1">Limit to categories <span className="text-muted-foreground">(none = all)</span></p>
+          <div className="flex flex-wrap gap-3">{(meta.data?.item_categories ?? []).map((c) => <label key={c} className="flex items-center gap-1.5"><input type="checkbox" checked={cats.includes(c)} onChange={() => setCats(cats.includes(c) ? cats.filter((x) => x !== c) : [...cats, c])} />{c.toLowerCase()}</label>)}</div>
+        </div>
+        <label className="text-sm">Bin / section being counted<Select value={binId} placeholder="Whole store" options={(bins.data?.bins ?? []).map((b) => ({ value: b.id, label: b.code }))} onChange={(e) => setBinId(e.target.value)} /></label>
         <div className="sm:col-span-2">
           <p className="mb-1 text-sm">Count only these items <span className="text-muted-foreground">(leave empty to count everything the store holds)</span></p>
           <div className="mb-2 flex flex-wrap gap-2">{picked.map((i) => <Button key={i.id} variant="soft" size="sm" onClick={() => setPicked(picked.filter((p) => p.id !== i.id))}>{i.name} ×</Button>)}</div>
@@ -119,18 +136,21 @@ export function AdjustmentForm() {
   const [store, setStore] = useState<number | null>(null)
   const [kind, setKind] = useState<'STOCK' | 'WASTAGE' | 'WRITEOFF'>('STOCK')
   const [reason, setReason] = useState('')
+  const [code, setCode] = useState('')
+  const [attachment, setAttachment] = useState('')
   const [head, setHead] = useState('')
   const [rows, setRows] = useState<Row[]>([blank()])
+  const cmeta = useControlMeta()
   const existing = useQuery({ queryKey: ['store', 'control', 'adjustments', id], enabled: !!id, queryFn: () => storeGet<Adjustment>('control', `/adjustments/${id}`) })
   const requests = useQuery({ queryKey: ['store', 'control', 'writeoff-requests', store], enabled: kind === 'WRITEOFF' && !!store, queryFn: () => storeGet<{ rows: WriteoffReq[] }>('control', `/writeoff-requests?store_id=${store}`) })
   useEffect(() => {
     const a = existing.data
     if (!a) return
-    setStore(a.store_id); setKind(a.kind); setReason(a.reason); setHead(a.cost_head ?? '')
+    setStore(a.store_id); setKind(a.kind); setReason(a.reason); setCode(a.reason_code); setAttachment(a.attachment_ref); setHead(a.cost_head ?? '')
     setRows((a.lines ?? []).map((l) => ({ ...blank(), item: asItem(l), qty: l.qty, direction: l.direction, rate: l.direction === 'IN' && Number(l.rate) ? l.rate : '', writeoff: l.writeoff_request_id ?? undefined })))
   }, [existing.data])
   const save = useSaver<Adjustment>('adjustments', 'adjustments', () => ({
-    store_id: store, kind, reason, cost_head: kind === 'WASTAGE' ? head || null : null,
+    store_id: store, kind, reason, reason_code: code, attachment_ref: attachment, cost_head: kind === 'WASTAGE' ? head || null : null,
     lines: kind === 'WRITEOFF' ? rows.filter((r) => r.writeoff).map((r) => ({ writeoff_request_id: r.writeoff })) : rows.filter((r) => r.item && r.qty.trim()).map((r) => ({ item_id: r.item!.id, qty: r.qty, uom: r.uom || undefined, direction: r.direction, rate: r.direction === 'IN' && r.rate ? r.rate : undefined })),
   }), id)
   return (
@@ -138,7 +158,9 @@ export function AdjustmentForm() {
       <Card className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
         <label className="text-sm">Store<StorePicker value={store} onChange={(s) => { setStore(s); if (kind === 'WRITEOFF') setRows([]) }} disabled={!!id} /></label>
         <label className="text-sm">Kind<Select value={kind} disabled={!!id} options={[{ value: 'STOCK', label: 'Stock correction' }, { value: 'WASTAGE', label: 'Wastage (a cost)' }, { value: 'WRITEOFF', label: 'Write off lost material' }]} onChange={(e) => { setKind(e.target.value as typeof kind); setRows(e.target.value === 'WRITEOFF' ? [] : [blank()]) }} /></label>
-        <label className="text-sm lg:col-span-2">Reason<Input value={reason} onChange={(e) => setReason(e.target.value)} /></label>
+        <label className="text-sm">Reason code<Select value={code} placeholder="Choose" options={((kind === 'STOCK' ? cmeta.data?.adjustment_reasons : cmeta.data?.wastage_reasons) ?? []).map((c) => ({ value: c, label: label(c) }))} onChange={(e) => setCode(e.target.value)} /></label>
+        <label className="text-sm">Supporting paper (reference)<Input value={attachment} onChange={(e) => setAttachment(e.target.value)} placeholder="FIR no., survey note, photo id" /></label>
+        <label className="text-sm lg:col-span-2">Remark (what happened)<Input value={reason} onChange={(e) => setReason(e.target.value)} /></label>
         {kind === 'WASTAGE' && <label className="text-sm">Cost head<Select value={head} placeholder="Store's project" options={(meta.data?.cost_heads ?? []).map((c) => ({ value: c, label: c.replace(/_/g, ' ').toLowerCase() }))} onChange={(e) => setHead(e.target.value)} /></label>}
       </Card>
       {kind === 'WRITEOFF' ? (
@@ -156,7 +178,7 @@ export function AdjustmentForm() {
           })}
         </Card>
       ) : <Lines rows={rows} setRows={setRows} mode="adjust" />}
-      <FormButtons save={save} disabled={!store || !reason.trim()} back={() => nav(ITEMS)} />
+      <FormButtons save={save} disabled={!store || !reason.trim() || !code || !attachment.trim()} back={() => nav(ITEMS)} />
     </div>
   )
 }
@@ -166,21 +188,23 @@ export function ScrapForm() {
   const nav = useNavigate()
   const [store, setStore] = useState<number | null>(null)
   const [buyer, setBuyer] = useState('')
+  const [gate, setGate] = useState('')
   const [reason, setReason] = useState('')
   const [rows, setRows] = useState<Row[]>([blank()])
   const existing = useQuery({ queryKey: ['store', 'control', 'scrap', id], enabled: !!id, queryFn: () => storeGet<Scrap>('control', `/scrap/${id}`) })
   useEffect(() => {
     const s = existing.data
     if (!s) return
-    setStore(s.store_id); setBuyer(s.buyer); setReason(s.reason)
-    setRows((s.lines ?? []).map((l) => ({ ...blank(), item: asItem(l), qty: l.qty, realised: l.realised_value })))
+    setStore(s.store_id); setBuyer(s.buyer); setGate(s.gate_pass_no); setReason(s.reason)
+    setRows((s.lines ?? []).map((l) => ({ ...blank(), item: asItem(l), qty: l.qty, realised: l.realised_value, klass: l.scrap_class })))
   }, [existing.data])
-  const save = useSaver<Scrap>('scrap', 'scrap', () => ({ store_id: store, buyer, reason, lines: rows.filter((r) => r.item && r.qty.trim()).map((r) => ({ item_id: r.item!.id, qty: r.qty, uom: r.uom || undefined, realised_value: r.realised || '0' })) }), id)
+  const save = useSaver<Scrap>('scrap', 'scrap', () => ({ store_id: store, buyer, gate_pass_no: gate, reason, lines: rows.filter((r) => r.item && r.qty.trim()).map((r) => ({ item_id: r.item!.id, qty: r.qty, uom: r.uom || undefined, scrap_class: r.klass || 'OTHER', realised_value: r.realised || '0' })) }), id)
   return (
     <div className="space-y-6">
-      <Card className="grid gap-4 p-5 sm:grid-cols-3">
+      <Card className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
         <label className="text-sm">Store<StorePicker value={store} onChange={(s) => setStore(s)} disabled={!!id} /></label>
-        <label className="text-sm">Sold to<Input value={buyer} onChange={(e) => setBuyer(e.target.value)} /></label>
+        <label className="text-sm">Sold / disposed to<Input value={buyer} onChange={(e) => setBuyer(e.target.value)} /></label>
+        <label className="text-sm">Gate pass no.<Input value={gate} onChange={(e) => setGate(e.target.value)} /></label>
         <label className="text-sm">Why it is scrap<Input value={reason} onChange={(e) => setReason(e.target.value)} /></label>
       </Card>
       <Lines rows={rows} setRows={setRows} mode="scrap" />

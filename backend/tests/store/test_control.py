@@ -124,17 +124,64 @@ def test_transfer_goes_in_transit_then_is_received(account):
     assert pdf.status_code == 200 and pdf.content[:4] == b"%PDF"
 
 
-def test_short_receipt_returns_the_shortage_to_the_sender(account):
+def test_dispatch_details_and_a_transfer_cannot_be_received_twice(account):
     o = account["client"]
     w = seed(account)
-    t = trf(o, w)
+    t = trf(o, w, challan_no="CH-88", challan_date=str(date.today()), driver_name="Ramesh")
+    assert (t["challan_no"], t["driver_name"], t["vehicle_no"]) == ("CH-88", "Ramesh", "KA01")
+    assert o.put("%s/transfers/%d" % (C, t["id"]), json={"challan_no": "CH-89"}).json()["challan_no"] == "CH-89"
+    go(o, "transfers", t["id"], "submit", "approve", "post")
+    assert o.post("%s/transfers/%d/receive" % (C, t["id"]), json={}).status_code == 200
+    assert o.post("%s/transfers/%d/receive" % (C, t["id"]), json={}).status_code == 409
+    assert o.post("%s/transfers/%d/approve-loss" % (C, t["id"])).status_code == 409                          # nothing was lost
+    assert "CH-89" in o.get("%s/transfers/%d/pdf" % (C, t["id"])).text or o.get("%s/transfers/%d/pdf" % (C, t["id"])).content[:4] == b"%PDF"
+
+
+def test_loss_in_transit_needs_a_reason_and_becomes_wastage_when_approved(account):
+    o = account["client"]
+    w = seed(account)
+    t = trf(o, w, "100")
     go(o, "transfers", t["id"], "submit", "approve", "post")
     line = o.get("%s/transfers/%d" % (C, t["id"])).json()["lines"][0]["id"]
-    assert o.post("%s/transfers/%d/receive" % (C, t["id"]), json={"received": {str(line): "101"}}).status_code == 400
-    res = o.post("%s/transfers/%d/receive" % (C, t["id"]), json={"received": {str(line): "90"}}).json()
-    assert res["lines"][0]["received_qty"] == "90.000"
-    assert bal(w.b, w.cement)[0] == D("90") and bal(w.a, w.cement)[0] == D("910")                           # 10 never arrived: back at A
-    assert any("shortage" in x["note"] for x in res["log"])
+    url = "%s/transfers/%d/receive" % (C, t["id"])
+    assert o.post(url, json={"received": {str(line): "101"}}).status_code == 400                              # more than was sent
+    assert o.post(url, json={"received": {str(line): "90"}}).status_code == 400                               # a loss needs a reason
+    assert o.post(url, json={"received": {str(line): "90"}, "losses": {str(line): {"qty": "5", "reason": "BREAKAGE"}}}).status_code == 400   # 90 + 5 is not 100
+    assert o.post(url, json={"received": {str(line): "90"}, "losses": {str(line): {"reason": "MELTED"}}}).status_code == 400                   # not a known reason
+    res = o.post(url, json={"received": {str(line): "90"}, "losses": {str(line): {"reason": "BREAKAGE", "remarks": "dropped at the gate"}}}).json()
+    assert res["transit"] == "RECEIVED" and res["loss_status"] == "PENDING" and res["lines"][0]["loss_qty"] == "10.000" and res["lines"][0]["loss_reason"] == "BREAKAGE"
+    assert bal(w.b, w.cement)[0] == D("90") and bal(w.a, w.cement)[0] == D("900")                            # the 10 lost are in neither store yet
+    with database.SessionLocal() as s:
+        pend = get_in_transit(s)
+        assert len(pend) == 1 and (pend[0].qty, pend[0].value) == (D("10"), D("70.00"))                    # still on the register until approved
+    assert len(o.get(C + "/in-transit").json()["rows"]) == 1
+
+    done = o.post("%s/transfers/%d/approve-loss" % (C, t["id"])).json()
+    assert done["loss_status"] == "APPROVED" and bal(w.b, w.cement)[0] == D("90")                            # destination stock unchanged by the pass-through
+    with database.SessionLocal() as s:
+        assert get_in_transit(s) == []
+        rows = s.query(DBStoreStockLedger).filter(DBStoreStockLedger.ref_doc_type == "TRANSFER", DBStoreStockLedger.ref_doc_id == t["id"], DBStoreStockLedger.store_id == w.b).all()
+        waste = [r for r in rows if r.movement_type == "WASTAGE_OUT"]
+        assert len(waste) == 1 and waste[0].qty_out == D("10") and waste[0].value == D("70.00") and waste[0].project_id == w.jb
+    assert o.post("%s/transfers/%d/approve-loss" % (C, t["id"])).status_code == 409                          # once only
+    assert any("wastage" in x["note"] for x in o.get("%s/transfers/%d" % (C, t["id"])).json()["log"])
+
+
+def test_a_big_loss_needs_the_high_value_right(account, portal):
+    o = account["client"]
+    w = seed(account)
+    with database.SessionLocal() as s:
+        post_movement(s, movement_type=MovementType.OPENING_IN, store_id=w.a, item_id=w.steel, qty=D(5000), rate=D(62), txn_date=date.today(), project_id=None,
+                      ref_doc_type="OPENING", ref_doc_id=7, ref_line_id=None, user_id=None)
+        s.commit()
+    t = trf(o, w, "2000", item=w.steel)
+    go(o, "transfers", t["id"], "submit", "approve", "post")
+    line = o.get("%s/transfers/%d" % (C, t["id"])).json()["lines"][0]["id"]
+    o.post("%s/transfers/%d/receive" % (C, t["id"]), json={"received": {str(line): "0"}, "losses": {str(line): {"reason": "PILFERAGE"}}})      # the whole load, Rs 1,24,000
+    _login(account, portal, VIEW + ["store.control.approve"], [w.a, w.b])
+    assert portal.post("%s/transfers/%d/approve-loss" % (C, t["id"])).status_code == 403
+    _login(account, portal, VIEW + ["store.control.approve", "store.control.approve_high_value"], [w.a, w.b])
+    assert portal.post("%s/transfers/%d/approve-loss" % (C, t["id"])).status_code == 200
 
 
 def test_transfer_stock_checks_and_cancel(account):
@@ -253,21 +300,25 @@ def test_count_finding_unrecorded_item_and_no_difference(account):
 def test_adjustments_stock_wastage_and_high_value(account, portal):
     o = account["client"]
     w = seed(account)
-    base = {"store_id": w.a, "reason": "Damaged by rain", "lines": [{"item_id": w.cement, "direction": "OUT", "qty": "40"}]}
-    assert o.post(C + "/adjustments", json={**base, "reason": ""}).status_code == 400
+    base = {"store_id": w.a, "reason": "Damaged by rain", "reason_code": "LOST", "attachment_ref": "SURVEY-12", "lines": [{"item_id": w.cement, "direction": "OUT", "qty": "40"}]}
+    assert o.post(C + "/adjustments", json={**base, "reason": ""}).status_code == 400                      # the remark is mandatory
+    assert o.post(C + "/adjustments", json={**base, "reason_code": ""}).status_code == 400                  # so is the reason code ...
+    assert o.post(C + "/adjustments", json={**base, "reason_code": "MISPLACED"}).status_code == 400         # ... one of the known codes
+    assert o.post(C + "/adjustments", json={**base, "reason_code": "CEMENT_SET"}).status_code == 400        # a wastage code does not fit a stock correction
+    assert o.post(C + "/adjustments", json={**base, "attachment_ref": ""}).status_code == 400               # and the supporting paper
     a = o.post(C + "/adjustments", json=base).json()
     assert a["number"].startswith("ADJ/") and a["kind"] == "STOCK"
     done = go(o, "adjustments", a["id"], "submit", "approve", "post")
     assert done["total_value"] == "280.00" and bal(w.a, w.cement) == (D("960"), D("6720"))
-    up = o.post(C + "/adjustments", json={"store_id": w.a, "reason": "Found in yard", "lines": [{"item_id": w.cement, "direction": "IN", "qty": "10", "rate": "8"}]}).json()
+    up = o.post(C + "/adjustments", json={"store_id": w.a, "reason": "Found in yard", "reason_code": "FOUND", "attachment_ref": "PHOTO-3", "lines": [{"item_id": w.cement, "direction": "IN", "qty": "10", "rate": "8"}]}).json()
     go(o, "adjustments", up["id"], "submit", "approve", "post")
     assert bal(w.a, w.cement) == (D("970"), D("6800"))
     assert go(o, "adjustments", up["id"], "cancel")["status"] == "CANCELLED" and bal(w.a, w.cement)[0] == D("960")
 
-    assert o.post(C + "/adjustments", json={"store_id": w.a, "reason": "bad", "lines": [{"item_id": w.cement, "direction": "SIDEWAYS", "qty": "1"}]}).status_code == 400
+    assert o.post(C + "/adjustments", json={"store_id": w.a, "reason": "bad", "reason_code": "LOST", "attachment_ref": "X-1", "lines": [{"item_id": w.cement, "direction": "SIDEWAYS", "qty": "1"}]}).status_code == 400
     plain = o.post("/api/store/masters/stores", json={"code": "NP" + uuid.uuid4().hex[:3].upper(), "name": "No project"}).json()["id"]
-    assert o.post(C + "/adjustments", json={"store_id": plain, "kind": "WASTAGE", "reason": "spill", "lines": [{"item_id": w.cement, "qty": "1"}]}).status_code == 400   # charged to nothing
-    wa = o.post(C + "/adjustments", json={"store_id": w.a, "kind": "WASTAGE", "reason": "Spillage", "cost_head": "OVERHEAD", "lines": [{"item_id": w.cement, "qty": "5"}]}).json()
+    assert o.post(C + "/adjustments", json={"store_id": plain, "kind": "WASTAGE", "reason": "spill", "reason_code": "BREAKAGE", "attachment_ref": "X-2", "lines": [{"item_id": w.cement, "qty": "1"}]}).status_code == 400   # charged to nothing
+    wa = o.post(C + "/adjustments", json={"store_id": w.a, "kind": "WASTAGE", "reason": "Spillage", "reason_code": "CEMENT_SET", "attachment_ref": "WASTE-4", "cost_head": "OVERHEAD", "lines": [{"item_id": w.cement, "qty": "5"}]}).json()
     go(o, "adjustments", wa["id"], "submit", "approve", "post")
     with database.SessionLocal() as s:
         e = s.query(DBStoreStockLedger).filter(DBStoreStockLedger.ref_doc_type == "ADJUST", DBStoreStockLedger.ref_doc_id == wa["id"]).one()
@@ -277,7 +328,7 @@ def test_adjustments_stock_wastage_and_high_value(account, portal):
         post_movement(s, movement_type=MovementType.OPENING_IN, store_id=w.a, item_id=w.steel, qty=D(20000), rate=D(62), txn_date=date.today(), project_id=None,
                       ref_doc_type="OPENING", ref_doc_id=2, ref_line_id=None, user_id=None)
         s.commit()
-    hv = o.post(C + "/adjustments", json={"store_id": w.a, "reason": "Theft", "lines": [{"item_id": w.steel, "direction": "OUT", "qty": "5000"}]}).json()
+    hv = o.post(C + "/adjustments", json={"store_id": w.a, "reason": "Theft", "reason_code": "THEFT", "attachment_ref": "FIR-9", "lines": [{"item_id": w.steel, "direction": "OUT", "qty": "5000"}]}).json()
     go(o, "adjustments", hv["id"], "submit")
     _login(account, portal, VIEW + ["store.control.approve"], [w.a])
     assert portal.post("%s/adjustments/%d/approve" % (C, hv["id"])).status_code == 403
@@ -294,8 +345,8 @@ def test_writeoff_adjustment_closes_outward_requests(account):
         s.commit()
         rid = wr.id
     assert o.get(C + "/writeoff-requests").json()["rows"][0]["request_id"] == rid
-    assert o.post(C + "/adjustments", json={"store_id": w.a, "kind": "WRITEOFF", "reason": "Lost", "lines": [{"writeoff_request_id": 999999}]}).status_code == 400
-    a = o.post(C + "/adjustments", json={"store_id": w.a, "kind": "WRITEOFF", "reason": "Lost on site", "lines": [{"writeoff_request_id": rid}]}).json()
+    assert o.post(C + "/adjustments", json={"store_id": w.a, "kind": "WRITEOFF", "reason": "Lost", "reason_code": "PILFERAGE", "attachment_ref": "R-1", "lines": [{"writeoff_request_id": 999999}]}).status_code == 400
+    a = o.post(C + "/adjustments", json={"store_id": w.a, "kind": "WRITEOFF", "reason": "Lost on site", "reason_code": "PILFERAGE", "attachment_ref": "R-2", "lines": [{"writeoff_request_id": rid}]}).json()
     assert a["lines"][0]["qty"] == "3.000"
     before = bal(w.a, w.steel)
     done = go(o, "adjustments", a["id"], "submit", "approve", "post")
@@ -309,10 +360,16 @@ def test_scrap_records_book_value_and_realisation(account):
     o = account["client"]
     w = seed(account)
     assert o.post(C + "/scrap", json={"store_id": w.a, "lines": [{"item_id": w.steel, "qty": "10"}]}).status_code == 400          # a reason
-    s_ = o.post(C + "/scrap", json={"store_id": w.a, "buyer": "Kabadi Traders", "reason": "Cut-offs", "lines": [{"item_id": w.steel, "qty": "50", "realised_value": "1500"}]}).json()
-    assert s_["number"].startswith("SCR/") and s_["project_id"] == w.ja
+    assert o.post(C + "/scrap", json={"store_id": w.a, "reason": "x", "lines": [{"item_id": w.steel, "qty": "10", "scrap_class": "GOLD"}]}).status_code == 400   # a known class
+    s_ = o.post(C + "/scrap", json={"store_id": w.a, "reason": "Cut-offs", "lines": [{"item_id": w.steel, "qty": "50", "realised_value": "1500", "scrap_class": "STEEL_CUT_PIECES"}]}).json()
+    assert s_["number"].startswith("SCR/") and s_["project_id"] == w.ja and s_["lines"][0]["scrap_class"] == "STEEL_CUT_PIECES"
+    assert o.post("%s/scrap/%d/submit" % (C, s_["id"])).status_code == 400                                                         # no buyer yet
+    o.put("%s/scrap/%d" % (C, s_["id"]), json={"buyer": "Kabadi Traders"})
+    assert o.post("%s/scrap/%d/submit" % (C, s_["id"])).status_code == 400                                                         # no gate pass yet
+    o.put("%s/scrap/%d" % (C, s_["id"]), json={"gate_pass_no": "GP-2041"})
     done = go(o, "scrap", s_["id"], "submit", "approve", "post")
-    assert done["book_value"] == "3100.00" and done["realised_value"] == "1500.00" and bal(w.a, w.steel)[0] == D("450")
+    assert done["book_value"] == "3100.00" and done["realised_value"] == "1500.00" and done["difference"] == "-1600.00" and done["gate_pass_no"] == "GP-2041"
+    assert done["lines"][0]["difference"] == "-1600.00" and bal(w.a, w.steel)[0] == D("450")
     with database.SessionLocal() as s:
         rows = get_scrap_realisation(s, w.ja, date.today(), date.today())
         assert len(rows) == 1 and (rows[0].qty, rows[0].book_value, rows[0].realised_value) == (D("50"), D("3100.00"), D("1500.00"))
@@ -334,10 +391,113 @@ def test_lifecycle_rights_and_wrong_store(account, portal):
     assert o.post(C + "/transfers/%d/bogus" % t["id"]).status_code == 404
 
     _login(account, portal, VIEW + ["store.control.create"], [w.b])                                          # assigned to B only: A's documents are out of reach
-    assert portal.post(C + "/adjustments", json={"store_id": w.a, "reason": "x", "lines": [{"item_id": w.cement, "direction": "OUT", "qty": "1"}]}).status_code == 403
+    assert portal.post(C + "/adjustments", json={"store_id": w.a, "reason": "x", "reason_code": "LOST", "attachment_ref": "X", "lines": [{"item_id": w.cement, "direction": "OUT", "qty": "1"}]}).status_code == 403
     assert portal.post(C + "/counts", json={"store_id": w.a}).status_code == 403
     assert portal.post("%s/transfers/%d/cancel" % (C, t["id"]), json={"reason": "x"}).status_code == 403    # no cancel right
     assert portal.get(C + "/scrap").json()["total"] == 0
 
     _login(account, portal, ["store.inward.view"], [w.a])
     assert portal.get(C + "/transfers").status_code == 403
+
+
+def test_count_can_be_limited_to_a_category_and_a_bin(account):
+    o = account["client"]
+    w = seed(account)
+    with database.SessionLocal() as s:
+        s.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == w.steel).update({"category": "TOOL"})
+        s.commit()
+    assert o.post(C + "/counts", json={"store_id": w.a, "categories": ["WIDGETS"]}).status_code == 400
+    c = o.post(C + "/counts", json={"store_id": w.a, "categories": ["TOOL"]}).json()
+    assert [l["item_id"] for l in c["lines"]] == [w.steel] and c["categories"] == ["TOOL"]
+    go(o, "counts", c["id"], "cancel")
+    foreign = o.post("/api/store/masters/stores/%d/bins" % w.b, json={"code": "Z-1"}).json()["id"]
+    assert o.post(C + "/counts", json={"store_id": w.a, "bin_id": foreign}).status_code == 400                  # a bin of another store
+    mine = o.post("/api/store/masters/stores/%d/bins" % w.a, json={"code": "A-7"}).json()["id"]
+    c2 = o.post(C + "/counts", json={"store_id": w.a, "bin_id": mine, "item_ids": [w.cement]}).json()
+    assert c2["bin_code"] == "A-7" and len(c2["lines"]) == 1
+    assert o.post(C + "/counts", json={"store_id": w.a, "categories": ["CONSUMABLE"]}).status_code == 400    # the store is frozen by the count above
+
+
+def test_recount_keeps_the_first_count_and_returns_the_sheet_to_the_counters(account):
+    o = account["client"]
+    w = seed(account)
+    c = o.post(C + "/counts", json={"store_id": w.a}).json()
+    ids = {l["item_id"]: l["id"] for l in c["lines"]}
+    o.put("%s/counts/%d" % (C, c["id"]), json={"lines": [{"item_id": w.cement, "counted_qty": "700"}, {"item_id": w.steel, "counted_qty": "500"}]})
+    assert o.post("%s/counts/%d/recount" % (C, c["id"]), json={"line_ids": [ids[w.cement]], "reason": "far too low"}).status_code == 409        # not submitted yet
+    go(o, "counts", c["id"], "submit")
+    assert o.post("%s/counts/%d/recount" % (C, c["id"]), json={"line_ids": [], "reason": "x"}).status_code == 400
+    assert o.post("%s/counts/%d/recount" % (C, c["id"]), json={"line_ids": [ids[w.cement]]}).status_code == 400                               # a reason
+    assert o.post("%s/counts/%d/recount" % (C, c["id"]), json={"line_ids": [999999], "reason": "x"}).status_code == 400
+    back = o.post("%s/counts/%d/recount" % (C, c["id"]), json={"line_ids": [ids[w.cement]], "reason": "far too low"}).json()
+    assert back["status"] == "DRAFT" and back["recount_rounds"] == 1
+    cem = [l for l in back["lines"] if l["item_id"] == w.cement][0]
+    assert (cem["counted_qty"], cem["first_count_qty"], cem["recount"]) == (None, "700.000", True)
+    assert o.post("%s/counts/%d/submit" % (C, c["id"])).status_code == 400                                       # the recount is still to be done
+    o.put("%s/counts/%d" % (C, c["id"]), json={"lines": [{"item_id": w.cement, "counted_qty": "995"}]})
+    go(o, "counts", c["id"], "submit", "approve", "post")
+    assert bal(w.a, w.cement)[0] == D("995")                                                                     # the recount, not the first count, was posted
+    final = o.get("%s/counts/%d" % (C, c["id"])).json()
+    assert [l for l in final["lines"] if l["item_id"] == w.cement][0]["first_count_qty"] == "700.000" and final["lines"][0]["recount"] is False
+    var = o.get("%s/counts/%d/pdf" % (C, c["id"]), params={"form": "variance"})
+    assert var.status_code == 200 and var.content[:4] == b"%PDF"
+    assert o.get("%s/counts/%d/pdf" % (C, c["id"]), params={"form": "nope"}).status_code == 400
+
+
+def test_the_variance_statement_waits_for_approval_for_a_blind_counter(account, portal):
+    o = account["client"]
+    w = seed(account)
+    c = o.post(C + "/counts", json={"store_id": w.a}).json()
+    _login(account, portal, VIEW, [w.a])
+    assert portal.get("%s/counts/%d/pdf" % (C, c["id"]), params={"form": "variance"}).status_code == 403
+    assert portal.get("%s/counts/%d/pdf" % (C, c["id"])).status_code == 200                                        # the blind sheet is fine
+    _login(account, portal, VIEW + ["store.control.reveal_count"], [w.a])
+    assert portal.get("%s/counts/%d/pdf" % (C, c["id"]), params={"form": "variance"}).status_code == 200
+
+
+def test_write_off_note_and_voucher_forms_and_meta(account):
+    o = account["client"]
+    w = seed(account)
+    wa = o.post(C + "/adjustments", json={"store_id": w.a, "kind": "WASTAGE", "reason": "Rusted", "reason_code": "RUSTING", "attachment_ref": "W-1", "cost_head": "OVERHEAD",
+                                           "lines": [{"item_id": w.steel, "qty": "5"}]}).json()
+    assert wa["reason_code"] == "RUSTING" and wa["attachment_ref"] == "W-1"
+    for form in ("", "writeoff", "voucher"):
+        r = o.get("%s/adjustments/%d/pdf" % (C, wa["id"]), params={"form": form} if form else None)
+        assert r.status_code == 200 and r.content[:4] == b"%PDF", form
+    assert o.get("%s/adjustments/%d/pdf" % (C, wa["id"]), params={"form": "x"}).status_code == 400
+    meta = o.get(C + "/meta").json()
+    assert meta["adjustment_reasons"] == ["DATA_CORRECTION", "FOUND", "LOST", "THEFT", "CONVERSION"]
+    assert meta["wastage_reasons"] == ["CEMENT_SET", "BREAKAGE", "RUSTING", "EXPIRY", "PILFERAGE"]
+    assert meta["scrap_classes"] == ["STEEL_CUT_PIECES", "EMPTY_CEMENT_BAGS", "DAMAGED_SHUTTERING", "OTHER"]
+
+
+def test_reorder_alerts_subtract_what_is_already_on_order_and_export(account):
+    o = account["client"]
+    w = seed(account)
+    tag = uuid.uuid4().hex[:6]
+    with database.SessionLocal() as s:
+        s.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == w.cement).update({"reorder_level": 1200, "min_qty": 300, "max_qty": 5000})
+        po = models.DBPurchaseOrder(client_id=w.cid, job_id=None, number="PO-" + tag, supplier_name="Shree", status="Approved", issue_date=str(date.today()))
+        s.add(po)
+        s.flush()
+        cem = s.get(models.DBItem, w.cement)
+        s.add(models.DBPurchaseOrderLineItem(order_id=po.id, description="Cement", item_code=cem.item_code, uom="kg", qty=1500, price=7.0))
+        s.commit()
+        po_id = po.id
+    rows = o.get(C + "/reorder-alerts").json()["rows"]
+    assert len(rows) == 1 and rows[0]["item_id"] == w.cement and rows[0]["store_id"] == w.a
+    r = rows[0]
+    assert (r["on_hand"], r["pending_po"], r["suggested"], r["below_min"]) == ("1000.000", "1500.000", "2500.000", False)      # 5,000 - (1,000 + 1,500)
+    assert o.get(C + "/reorder-alerts", params={"store_id": w.b}).json()["rows"] == []                                              # the site holds none
+    x = o.get(C + "/reorder-alerts", params={"format": "xlsx"})
+    assert x.status_code == 200 and "spreadsheetml" in x.headers["content-type"]
+    from openpyxl import load_workbook
+    import io
+    ws = load_workbook(io.BytesIO(x.content)).active
+    assert [c.value for c in ws[4]][-1] == "Suggested order qty" and ws["J5"].value == 2500 and ws["I5"].value == 1500
+    assert o.get(C + "/reorder-alerts", params={"format": "docx"}).status_code == 400
+    with database.SessionLocal() as s:                                                                                               # nothing was ordered
+        assert s.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.client_id == w.cid).count() == 1
+        s.query(models.DBPurchaseOrderLineItem).filter(models.DBPurchaseOrderLineItem.order_id == po_id).delete()
+        s.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.id == po_id).delete()
+        s.commit()

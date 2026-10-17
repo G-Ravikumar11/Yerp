@@ -9,7 +9,7 @@ import { toast } from '@/stores/toast'
 import { storeGet, storePerm, storePost, type DocStatus } from '@/api/store'
 import { DocActionsBar, DocStatusBadge } from '../shared'
 import type { DocAction } from '../shared/DocActionsBar'
-import { errText, type LogRow } from './types'
+import { errText, type ControlMeta, type LogRow } from './types'
 
 export type Kind = 'transfers' | 'counts' | 'adjustments' | 'scrap'
 const when = (s: string | null) => (s ? new Date(s).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '')
@@ -44,7 +44,8 @@ export function useControlDoc<T extends { status: DocStatus }>(kind: Kind) {
 }
 
 /** Title, status, print link, the action bar and the history, around a document's own body. */
-export function DocShell({ kind, id, number, sub, status, extra, actions, children, cancelReason, log, busy, act, rights }: {
+export function DocShell({ kind, id, number, sub, status, extra, actions, children, cancelReason, log, busy, act, rights, prints }: {
+  prints?: { label: string; form: string }[]
   kind: Kind; id: number; number: string; sub: ReactNode; status: DocStatus; extra?: ReactNode; actions?: ReactNode; children: ReactNode; cancelReason: string; log: LogRow[]
   busy: DocAction | null; act: (a: DocAction, reason?: string) => Promise<void>; rights: Partial<Record<DocAction, boolean>>
 }) {
@@ -54,7 +55,9 @@ export function DocShell({ kind, id, number, sub, status, extra, actions, childr
         <div><h2 className="text-xl font-semibold">{number}</h2><div className="text-sm text-muted-foreground">{sub}</div></div>
         <div className="flex flex-wrap items-center gap-2">
           {extra}<DocStatusBadge status={status} />
-          <a href={apiUrl(`/api/store/control/${kind}/${id}/pdf`)} target="_blank" rel="noreferrer"><Button variant="outline" size="sm"><Printer /> Print</Button></a>
+          {(prints ?? [{ label: 'Print', form: '' }]).map((p) => (
+            <a key={p.form} href={apiUrl(`/api/store/control/${kind}/${id}/pdf${p.form ? `?form=${p.form}` : ''}`)} target="_blank" rel="noreferrer"><Button variant="outline" size="sm"><Printer /> {p.label}</Button></a>
+          ))}
         </div>
       </div>
       <DocActionsBar status={status} can={rights} busy={busy} onAction={act} />
@@ -65,5 +68,7 @@ export function DocShell({ kind, id, number, sub, status, extra, actions, childr
     </div>
   )
 }
+
+export const useControlMeta = () => useQuery({ queryKey: ['store', 'control', 'meta'], staleTime: 60 * 60_000, queryFn: () => storeGet<ControlMeta>('control', '/meta') })
 
 export function Loading() { return <SkeletonRows rows={6} cols={4} /> }

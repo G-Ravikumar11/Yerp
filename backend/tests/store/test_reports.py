@@ -229,7 +229,7 @@ def test_other_slices_reports(account):
     assert run(o, "returnables")["rows"] == []
     reorder = run(o, "reorder")
     assert [r["store"][:3] for r in reorder["rows"]] == ["SIT"]                                                        # the site holds 2,800 against a level of 3,000
-    sc = o.post("/api/store/control/scrap", json={"store_id": w.site, "reason": "Torn bags", "lines": [{"item_id": w.cement, "qty": "20", "realised_value": "40"}]}).json()
+    sc = o.post("/api/store/control/scrap", json={"store_id": w.site, "reason": "Torn bags", "buyer": "Kabadi", "gate_pass_no": "GP-1", "lines": [{"item_id": w.cement, "qty": "20", "realised_value": "40"}]}).json()
     step(o, "/api/store/control/scrap/%d" % sc["id"], "submit", "approve", "post")
     sr = run(o, "scrap", project_id=w.job)
     assert sr["totals"]["book"] == "140.00" and sr["totals"]["gain"] == "-100.00"

@@ -5,7 +5,7 @@ submit; approve; post; cancel. Extra rights: approve_high_value (inter-project a
 adjustments) and reveal_count (see the books during a count). Receiving a transfer needs store.control.post at the receiving store.
 """
 import re
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
@@ -17,8 +17,12 @@ from app.core.permissions import permissions_for
 from app.core.store_auth import store_actor, store_errors
 from app.db import get_db
 from app.documents import form_pdf
-from app.documents.store.control_forms import adjustment_form_spec, count_form_spec, scrap_form_spec, transfer_form_spec
-from app.models.store_control import DBStoreAdjustment, DBStoreCount, DBStoreScrap, DBStoreTransfer
+from app.documents.store.control_forms import (
+    adjustment_form_spec, count_form_spec, scrap_form_spec, transfer_form_spec, variance_form_spec, writeoff_form_spec,
+)
+from app.models.store_control import (
+    AdjustmentReason, DBStoreAdjustment, DBStoreCount, DBStoreScrap, DBStoreTransfer, ScrapClass, WastageReason,
+)
 from app.models.store_core import DBStore, DocStatus
 from app.routers.store_masters import accessible_store_ids
 from app.services import store_control as svc
@@ -34,6 +38,7 @@ class LineIn(BaseModel):
     item_id: Optional[int] = None
     qty: Optional[str] = None
     uom: Optional[str] = None
+    scrap_class: Optional[str] = None
     direction: Optional[str] = None
     rate: Optional[str] = None
     realised_value: Optional[str] = None
@@ -47,19 +52,36 @@ class TransferIn(BaseModel):
     to_store_id: Optional[int] = None
     trf_date: Optional[str] = None
     vehicle_no: Optional[str] = None
+    driver_name: Optional[str] = None
+    challan_no: Optional[str] = None
+    challan_date: Optional[str] = None
     remarks: Optional[str] = None
     lines: Optional[List[LineIn]] = None
 
 
+class LossIn(BaseModel):
+    qty: Optional[str] = None
+    reason: Optional[str] = None
+    remarks: Optional[str] = None
+
+
 class ReceiveIn(BaseModel):
     received: dict = {}
+    losses: Dict[str, LossIn] = {}
     remarks: str = ""
+
+
+class RecountIn(BaseModel):
+    line_ids: List[int]
+    reason: str = ""
 
 
 class CountIn(BaseModel):
     store_id: Optional[int] = None
     count_date: Optional[str] = None
     item_ids: Optional[List[int]] = None
+    categories: Optional[List[str]] = None
+    bin_id: Optional[int] = None
     remarks: Optional[str] = None
     lines: Optional[List[LineIn]] = None
 
@@ -69,6 +91,8 @@ class AdjustmentIn(BaseModel):
     adj_date: Optional[str] = None
     kind: Optional[str] = None
     reason: Optional[str] = None
+    reason_code: Optional[str] = None
+    attachment_ref: Optional[str] = None
     project_id: Optional[int] = None
     cost_head: Optional[str] = None
     lines: Optional[List[LineIn]] = None
@@ -79,6 +103,7 @@ class ScrapIn(BaseModel):
     scrap_date: Optional[str] = None
     project_id: Optional[int] = None
     buyer: Optional[str] = None
+    gate_pass_no: Optional[str] = None
     reason: Optional[str] = None
     lines: Optional[List[LineIn]] = None
 
@@ -179,6 +204,34 @@ def index(request: Request, db: Session = Depends(get_db)):
     return {"slice": "control", "items": []}
 
 
+@router.get("/meta")
+def meta(request: Request, db: Session = Depends(get_db)):
+    """The reason codes and classes the screens offer."""
+    store_actor(request, db, "store.control.view")
+    return {"adjustment_reasons": [e.value for e in AdjustmentReason], "wastage_reasons": [e.value for e in WastageReason], "scrap_classes": [e.value for e in ScrapClass],
+            "high_value_limit": str(svc.HIGH_VALUE_LIMIT)}
+
+
+@router.get("/reorder-alerts")
+def reorder_alerts(request: Request, store_id: int = 0, format: str = "json", db: Session = Depends(get_db)):
+    """Items at or below their reorder level per store, with suggested qty = max - (on hand + pending on purchase orders). Export only: nothing is ordered."""
+    actor = store_actor(request, db, "store.control.view")
+    if store_id:
+        assert_store_access(actor.user, store_id)
+        stores = [db.get(DBStore, store_id)]
+    else:
+        mine = accessible_store_ids(actor, db)
+        q = db.query(DBStore).filter(DBStore.client_id == actor.client.id, DBStore.is_active.is_(True))
+        stores = (q.filter(DBStore.id.in_(mine or [0])) if mine is not None else q).order_by(DBStore.code).all()
+    rows = svc.get_reorder_alerts(db, actor.client.id, stores)
+    if format == "json":
+        return {"rows": rows}
+    if format == "xlsx":
+        return Response(svc.reorder_xlsx(rows, actor.client.company_name or ""), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": 'attachment; filename="reorder_alerts.xlsx"'})
+    raise HTTPException(400, "format must be json or xlsx.")
+
+
 # ------------------------------------------------------------------------------------------------ transfers
 @router.get("/transfers")
 def list_transfers(request: Request, store_id: int = 0, status: str = "", q: str = "", from_date: str = "", to_date: str = "",
@@ -234,7 +287,16 @@ def receive_transfer(doc_id: int, request: Request, body: ReceiveIn = ReceiveIn(
     if t is None or t.client_id != actor.client.id:
         raise HTTPException(404, "Document not found")
     assert_store_access(actor.user, t.to_store_id)
-    _commit(db, lambda: svc.receive_transfer(db, actor, t, {int(k): v for k, v in body.received.items()}, body.remarks))
+    _commit(db, lambda: svc.receive_transfer(db, actor, t, {int(k): v for k, v in body.received.items()}, {int(k): v.model_dump(exclude_none=True) for k, v in body.losses.items()}, body.remarks))
+    return svc.transfer_dict(db, t)
+
+
+@router.post("/transfers/{doc_id}/approve-loss")
+def approve_transfer_loss(doc_id: int, request: Request, db: Session = Depends(get_db)):
+    """Approve the loss in transit reported at receipt: it is posted as wastage on the transfer document."""
+    actor = store_actor(request, db, "store.control.approve")
+    t = _doc(db, actor, DBStoreTransfer, doc_id)
+    _commit(db, lambda: svc.approve_transfer_loss(db, actor, t, can_high=_can(actor, "store.control.approve_high_value")))
     return svc.transfer_dict(db, t)
 
 
@@ -285,6 +347,15 @@ def enter_counts(doc_id: int, body: CountIn, request: Request, db: Session = Dep
     return svc.count_dict(db, c, reveal=_can(actor, "store.control.reveal_count"))
 
 
+@router.post("/counts/{doc_id}/recount")
+def recount(doc_id: int, body: RecountIn, request: Request, db: Session = Depends(get_db)):
+    """Send some lines of a submitted count back to be counted again."""
+    actor = store_actor(request, db, "store.control.approve")
+    c = _doc(db, actor, DBStoreCount, doc_id)
+    _commit(db, lambda: svc.request_recount(db, actor, c, body.line_ids, body.reason))
+    return svc.count_dict(db, c, reveal=_can(actor, "store.control.reveal_count"))
+
+
 @router.post("/counts/{doc_id}/{action}")
 def count_action(doc_id: int, action: str, request: Request, body: ActionIn = ActionIn(), db: Session = Depends(get_db)):
     actor, c = _act(request, db, action, DBStoreCount, doc_id)
@@ -293,9 +364,15 @@ def count_action(doc_id: int, action: str, request: Request, body: ActionIn = Ac
 
 
 @router.get("/counts/{doc_id}/pdf")
-def count_pdf(doc_id: int, request: Request, db: Session = Depends(get_db)):
+def count_pdf(doc_id: int, request: Request, form: str = "sheet", db: Session = Depends(get_db)):
+    """form=sheet (the count sheet, blind until approved) or form=variance (the variance statement, quantity and value)."""
     actor = store_actor(request, db, "store.control.view")
-    return _pdf(db, actor, _doc(db, actor, DBStoreCount, doc_id), count_form_spec)
+    c = _doc(db, actor, DBStoreCount, doc_id)
+    if form not in ("sheet", "variance"):
+        raise HTTPException(400, "form must be sheet or variance.")
+    if form == "variance" and c.status not in (DocStatus.APPROVED.value, DocStatus.POSTED.value) and not _can(actor, "store.control.reveal_count"):
+        raise HTTPException(403, "The variance statement is printed once the count is approved.")
+    return _pdf(db, actor, c, variance_form_spec if form == "variance" else count_form_spec)
 
 
 # ------------------------------------------------------------------------------------------------ adjustments
@@ -353,9 +430,14 @@ def adjustment_action(doc_id: int, action: str, request: Request, body: ActionIn
 
 
 @router.get("/adjustments/{doc_id}/pdf")
-def adjustment_pdf(doc_id: int, request: Request, db: Session = Depends(get_db)):
+def adjustment_pdf(doc_id: int, request: Request, form: str = "", db: Session = Depends(get_db)):
+    """The adjustment voucher; a wastage or write-off prints as a write-off note (or form=voucher / form=writeoff to choose)."""
     actor = store_actor(request, db, "store.control.view")
-    return _pdf(db, actor, _doc(db, actor, DBStoreAdjustment, doc_id), adjustment_form_spec)
+    a = _doc(db, actor, DBStoreAdjustment, doc_id)
+    if form not in ("", "voucher", "writeoff"):
+        raise HTTPException(400, "form must be voucher or writeoff.")
+    note = form == "writeoff" or (form == "" and a.kind in ("WASTAGE", "WRITEOFF"))
+    return _pdf(db, actor, a, writeoff_form_spec if note else adjustment_form_spec)
 
 
 # ------------------------------------------------------------------------------------------------ scrap

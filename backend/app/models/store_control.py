@@ -7,6 +7,7 @@ charged to a project or cost head, or the write-off of material lost on issue. S
 what it fetched recorded. All follow DRAFT -> SUBMITTED -> APPROVED -> POSTED or CANCELLED; every change is in store_control_log.
 `store_id` on each document is the store whose stock it moves (the sender, for a transfer).
 """
+import enum
 from datetime import date, datetime
 
 from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
@@ -15,6 +16,31 @@ from app.db.session import Base
 from app.models.store_core import QTY, RATE, VALUE, DocStatus
 
 REVISION = "store_005_control"
+
+
+class AdjustmentReason(str, enum.Enum):
+    """Why stock is corrected by hand (kind STOCK)."""
+    DATA_CORRECTION = "DATA_CORRECTION"
+    FOUND = "FOUND"
+    LOST = "LOST"
+    THEFT = "THEFT"
+    CONVERSION = "CONVERSION"
+
+
+class WastageReason(str, enum.Enum):
+    """Why material is written off (kinds WASTAGE and WRITEOFF) and why goods were lost in transit."""
+    CEMENT_SET = "CEMENT_SET"            # cement set / hardened
+    BREAKAGE = "BREAKAGE"
+    RUSTING = "RUSTING"
+    EXPIRY = "EXPIRY"
+    PILFERAGE = "PILFERAGE"
+
+
+class ScrapClass(str, enum.Enum):
+    STEEL_CUT_PIECES = "STEEL_CUT_PIECES"
+    EMPTY_CEMENT_BAGS = "EMPTY_CEMENT_BAGS"
+    DAMAGED_SHUTTERING = "DAMAGED_SHUTTERING"
+    OTHER = "OTHER"
 
 
 class _Doc:
@@ -39,7 +65,13 @@ class DBStoreTransfer(Base, _Doc):
     trf_date = Column(Date, nullable=False, default=date.today)
     inter_project = Column(Boolean, default=False)
     vehicle_no = Column(String, default="")
+    driver_name = Column(String, default="")
+    challan_no = Column(String, default="")
+    challan_date = Column(Date, nullable=True)
     remarks = Column(Text, default="")
+    loss_status = Column(String, default="")                      # "" none | PENDING (reported, not approved) | APPROVED (posted as wastage)
+    loss_approved_at = Column(DateTime, nullable=True)
+    loss_approved_by_name = Column(String, default="")
     received_at = Column(DateTime, nullable=True)                 # empty while the goods are in transit
     received_by_name = Column(String, default="")
     received_on = Column(Date, nullable=True)
@@ -55,6 +87,9 @@ class DBStoreTransferLine(Base):
     rate = Column(RATE, nullable=False, default=0)                # the average it left at; set when posted
     value = Column(VALUE, nullable=False, default=0)
     received_qty = Column(QTY, nullable=True)                     # filled when received
+    loss_qty = Column(QTY, nullable=False, default=0)             # lost or damaged in transit; received + loss = sent
+    loss_reason = Column(String, default="")                      # a WastageReason
+    loss_remarks = Column(String, default="")
     remarks = Column(String, default="")
 
 
@@ -67,6 +102,9 @@ class DBStoreCount(Base, _Doc):
     store_id = Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
     count_date = Column(Date, nullable=False, default=date.today)
     freeze_id = Column(Integer, ForeignKey("store_freeze.id"), nullable=True)      # the freeze this count took
+    categories = Column(String, default="")                       # comma list of item categories this count is limited to; empty = any
+    bin_id = Column(Integer, ForeignKey("store_bin.id"), nullable=True)           # the bin / section being counted (printed on the sheet)
+    recount_rounds = Column(Integer, default=0)
     remarks = Column(Text, default="")
 
 
@@ -80,6 +118,9 @@ class DBStoreCountLine(Base):
     system_value = Column(VALUE, nullable=False, default=0)
     avg_rate = Column(RATE, nullable=False, default=0)
     counted_qty = Column(QTY, nullable=True)
+    first_count_qty = Column(QTY, nullable=True)                  # kept when a line is recounted
+    recount = Column(Boolean, default=False)                      # asked to be counted again
+    recounts = Column(Integer, default=0)
     variance_qty = Column(QTY, nullable=False, default=0)         # counted - system, set on submit
     variance_value = Column(VALUE, nullable=False, default=0)     # signed
     remarks = Column(String, default="")
@@ -94,7 +135,9 @@ class DBStoreAdjustment(Base, _Doc):
     store_id = Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
     adj_date = Column(Date, nullable=False, default=date.today)
     kind = Column(String, nullable=False, default="STOCK")        # STOCK | WASTAGE | WRITEOFF
-    reason = Column(String, default="")
+    reason = Column(String, default="")                           # the mandatory remark
+    reason_code = Column(String, default="")                      # an AdjustmentReason (STOCK) or a WastageReason (WASTAGE, WRITEOFF)
+    attachment_ref = Column(String, default="")                   # reference of the supporting paper (police report, survey note, photo ...)
     project_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
     cost_head = Column(String, nullable=True)
     high_value = Column(Boolean, default=False)
@@ -124,6 +167,7 @@ class DBStoreScrap(Base, _Doc):
     scrap_date = Column(Date, nullable=False, default=date.today)
     project_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
     buyer = Column(String, default="")
+    gate_pass_no = Column(String, default="")
     reason = Column(String, default="")
 
 
@@ -134,6 +178,7 @@ class DBStoreScrapLine(Base):
     scrap_id = Column(Integer, ForeignKey("store_scrap.id"), nullable=False, index=True)
     item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
     qty = Column(QTY, nullable=False)
+    scrap_class = Column(String, default="OTHER")                 # a ScrapClass
     book_value = Column(VALUE, nullable=False, default=0)         # at the store average, set when posted
     realised_value = Column(VALUE, nullable=False, default=0)     # what it fetched
     remarks = Column(String, default="")
