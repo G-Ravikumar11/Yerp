@@ -42,6 +42,10 @@ def apply_to_balance(db, client_id, m):
         bal = models.DBStockBalance(client_id=client_id, item_code=m.item_code,
                                     item_name=m.item_name or "", uom=m.uom or "")
         db.add(bal)
+        # Sessions do not autoflush: without this a second movement of the same
+        # new item in one request (two receipt lines, a transfer's two legs)
+        # would not find this row and would insert a duplicate.
+        db.flush()
     if m.item_name and not bal.item_name:
         bal.item_name = m.item_name
     if m.uom and not bal.uom:
