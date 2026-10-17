@@ -9,7 +9,9 @@ from decimal import Decimal
 from app.documents import form_pdf
 from app.documents.letterhead import letterhead
 
-PAGE_WIDTH_MM = 269.0            # A4 landscape less the 14 mm margins
+PORTRAIT_MM = 182.0              # A4 portrait less the margins
+LANDSCAPE_MM = 269.0             # A4 landscape, kept for reports too wide to read upright
+WIDE_COLUMNS = 9
 
 
 def _n(x, places=3):
@@ -74,13 +76,15 @@ def shown(columns, rows):
 
 def report_pdf_spec(db, client, report, data, filters=""):
     title, subtitle, columns, rows, totals = flatten(report, data)
+    landscape = len(columns) >= WIDE_COLUMNS
+    page_width = LANDSCAPE_MM if landscape else PORTRAIT_MM
     total_weight = sum(c["weight"] for c in columns)
-    table_cols = [(c["title"], round(PAGE_WIDTH_MM * c["weight"] / total_weight, 1), c["align"]) for c in columns]
+    table_cols = [(c["title"], round(page_width * c["weight"] / total_weight, 1), c["align"]) for c in columns]
     company = letterhead(db, client)
     blocks = [{"type": "header", "company": company, "title": title.upper(), "facts": [("Printed", datetime.now().strftime("%d/%m/%Y %H:%M"))]},
               {"type": "pairs", "cols": 1, "rows": [("Report", subtitle), *([("Filters", filters)] if filters else [])]},
               {"type": "table", "columns": table_cols, "rows": shown(columns, rows), "totals": [(label, value, True) for label, value in totals]}]
-    return {"title": title, "author": company["name"], "landscape": True, "blocks": blocks, "footer": "%s  |  %s" % (title, company["name"])}
+    return {"title": title, "author": company["name"], "landscape": landscape, "blocks": blocks, "footer": "%s  |  %s" % (title, company["name"])}
 
 
 def list_forms() -> list:
