@@ -494,9 +494,17 @@ def test_scrap_can_deal_with_an_outward_write_off_request(account, monkeypatch):
     assert tenant.post(API + "/scrap", json=scrap_body(w, lines=[{**line, "qty": "7"}])).status_code == 400        # more than the request
     s = make_scrap(tenant, w, lines=[line])
     move(tenant, "scrap", s["id"], "submit", "approve", "post")
-    assert closed == [(41, "SCRAP", s["id"], None)] and balance(w, w.central, "plate")[0] == D("94.000")
+    assert closed == [(41, "SCRAP", s["id"], None)]
+    assert balance(w, w.central, "plate")[0] == D("100.000")                          # no stock moved: the lost tools left the store when they were issued
+    with database.SessionLocal() as sess:
+        assert sess.query(DBStoreStockLedger).filter(DBStoreStockLedger.ref_doc_type == "SCRAP", DBStoreStockLedger.ref_doc_id == s["id"]).count() == 0
     res = tenant.post("%s/scrap/%d/cancel" % (API, s["id"]), json={"reason": "my mistake"})
     assert res.status_code == 409 and "cannot be reopened" in res.json()["detail"]
+    # it can sit beside a line that does write stock off, and only that line moves it
+    mixed = make_scrap(tenant, w, lines=[line, {"item_id": w.item["cement"], "qty": "10", "uom": "kg", "disposal": "WASTAGE", "reason": "spilt"}])
+    move(tenant, "scrap", mixed["id"], "submit", "approve", "post")
+    assert balance(w, w.central, "cement")[0] == D("4990.000") and balance(w, w.central, "plate")[0] == D("100.000")
+    assert closed[-1] == (41, "SCRAP", mixed["id"], None) and len(closed) == 2
 
 
 # --- rights, tenancy, pickers, printing -------------------------------------------------------------------------------------------

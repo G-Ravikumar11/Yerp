@@ -160,7 +160,7 @@ export function ScrapForm({ doc }: { doc?: Doc }) {
                   <label className="flex items-center gap-2 text-sm">Charged to <Select aria-label="Cost head" className="h-9" value={r.head} placeholder="No cost head" onChange={(e) => upd(r.key, { head: e.target.value })} options={(meta.data?.cost_heads ?? []).map((h) => ({ value: h, label: headLabel(h) }))} /></label>
                 )}
                 {r.item && (requests.data ?? []).some((w) => w.item_id === r.item?.id) && (
-                  <label className="flex items-center gap-2 text-sm">Deals with write-off request
+                  <label className="flex items-center gap-2 text-sm" title="It left the store when it was issued, so no stock moves: the line only closes the request.">Deals with write-off request
                     <Select aria-label="Write-off request" className="h-9" value={r.request || ''} placeholder="None" onChange={(e) => upd(r.key, { request: Number(e.target.value) || 0 })}
                       options={(requests.data ?? []).filter((w) => w.item_id === r.item?.id).map((w) => ({ value: w.id, label: `#${w.id} - ${num(w.qty)} - ${w.reason}` }))} />
                   </label>

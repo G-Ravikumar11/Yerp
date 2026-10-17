@@ -428,25 +428,29 @@ def scrap_lines(db, doc):
 
 
 def scrap_value(db, doc) -> Decimal:
-    return sum((avg_value(db, doc.store_id, l.item_id, Decimal(str(l.qty))) for l in scrap_lines(db, doc)), ZERO)
+    """What the document writes off at average rates; lines that only deal with a write-off request move no stock and are not counted."""
+    return sum((avg_value(db, doc.store_id, l.item_id, Decimal(str(l.qty))) for l in scrap_lines(db, doc) if not l.writeoff_request_id), ZERO)
 
 
 def scrap_check_submit(db, actor, doc):
-    check_stock(db, doc.store_id, [(l.item_id, l.qty) for l in scrap_lines(db, doc)])
+    check_stock(db, doc.store_id, [(l.item_id, l.qty) for l in scrap_lines(db, doc) if not l.writeoff_request_id])
 
 
 def scrap_post(db, actor, doc):
+    """Each line writes stock off at the average rate. A line that deals with an outward write-off request moves no stock: the tool or material it
+    names was lost after it was issued, so it left the store at the issue; the line only records who dealt with it and closes the request."""
     for l in scrap_lines(db, doc):
+        if l.writeoff_request_id:
+            store_outward.close_writeoff_request(db, l.writeoff_request_id, SCRAP, doc.id, actor.user_id)
+            continue
         post_movement(db, movement_type=MovementType.SCRAP_OUT if l.disposal == "SCRAP" else MovementType.WASTAGE_OUT, store_id=doc.store_id, item_id=l.item_id, qty=l.qty, rate=None,
                       txn_date=doc.scrap_date, project_id=doc.project_id, cost_head=l.cost_head, ref_doc_type=SCRAP, ref_doc_id=doc.id, ref_line_id=l.id, user_id=actor.user_id,
                       remarks="%s: %s" % (doc.number, l.reason))
-        if l.writeoff_request_id:
-            store_outward.close_writeoff_request(db, l.writeoff_request_id, SCRAP, doc.id, actor.user_id)
 
 
 def scrap_check_cancel(db, doc):
     if doc.status == DocStatus.POSTED.value and any(l.writeoff_request_id for l in scrap_lines(db, doc)):
-        raise HTTPException(409, "This document dealt with a write-off request, which cannot be reopened. Leave it, and correct the stock with a count.")
+        raise HTTPException(409, "This document dealt with a write-off request, which cannot be reopened, so it cannot be cancelled.")
 
 
 # --- the lifecycle ----------------------------------------------------------------------------------------------------------
@@ -464,13 +468,17 @@ def _count_has_adjustments(db, doc):
     return any(count_variance(l) != 0 for l in count_lines(db, doc))
 
 
+def _scrap_moved_stock(db, doc):
+    return any(not l.writeoff_request_id for l in scrap_lines(db, doc))
+
+
 KINDS = {
     "transfer": Kind("transfer", TRANSFER, "Transfer", DBStoreTransfer, DBStoreTransferLine, "transfer_id", "transfer_date", lambda db, d: len(transfer_lines(db, d)), transfer_post,
                      transfer_check_submit, None, None, transfer_value),
     "count": Kind("count", COUNT, "Stock count", DBStoreCount, DBStoreCountLine, "count_id", "count_date", lambda db, d: len(count_lines(db, d)), count_post, count_check_submit,
                   count_check_cancel, _count_has_adjustments, lambda db, d: count_total_variance_value(count_lines(db, d))),
     "scrap": Kind("scrap", SCRAP, "Wastage and scrap", DBStoreScrap, DBStoreScrapLine, "scrap_id", "scrap_date", lambda db, d: len(scrap_lines(db, d)), scrap_post, scrap_check_submit,
-                  scrap_check_cancel, None, scrap_value),
+                  scrap_check_cancel, _scrap_moved_stock, scrap_value),
 }
 
 
