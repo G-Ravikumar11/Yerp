@@ -55,6 +55,7 @@ export const PAGE_INFO: Record<string, string> = {
 
   '/store/items': 'The Item Master: every material and consumable with its unit, code and rate. Orders, stock and costing all use this list.',
   '/store/enquiries': 'Send an enquiry to several suppliers and compare their quotes side by side before ordering.',
+  '/store/enquiries/:id': 'One enquiry: the items asked for, the suppliers asked and their quotes side by side, and the award that makes the purchase orders.',
   '/store/purchase-orders': 'Purchase orders to suppliers: what was ordered, at what rate, what has arrived and what is billed.',
   '/store/eway': 'E-way bills for goods moving between places, with their validity so a load is never on the road without one.',
   '/store/goods-receipt': 'Record what actually arrives against a purchase order and match it to the order and the supplier\'s bill.',
