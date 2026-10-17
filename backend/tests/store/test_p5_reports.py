@@ -245,16 +245,11 @@ def test_movement_opens_moves_and_closes_to_the_valuation(account):
 def test_consumption_groups_by_every_dimension_and_leaves_transfers_out(account):
     tenant = account["client"]
     w = world(account)
-    for group, expect in (("project", {"%s": "11650.00"}), ("cost_head", {"BOQ work": "4550.00", "Safety": "6200.00", "Overhead": "280.00", "Not charged": "620.00"}),
-                          ("item", {"RP-CEMENT": "4830.00", "RP-STEEL": "6820.00"})):
-        got = get(tenant, "consumption", group_by=group)
-        assert got["total_value"] == "11650.00", group
-        names = {g["name"]: g["value"] for g in got["groups"]}
-        for key, value in expect.items():
-            hit = [v for n, v in names.items() if key.replace("%s", "Tower") in n or key in n or (key == "Not charged" and n == "Cost head")]
-            assert hit or group == "cost_head", (group, key, names)
-    heads = {g["name"] for g in get(tenant, "consumption", group_by="cost_head")["groups"]}
-    assert {"Safety", "Overhead"} <= heads
+    assert get(tenant, "consumption", group_by="project")["total_value"] == "11650.00"
+    items = {g["name"].split(" - ")[1]: g["value"] for g in get(tenant, "consumption", group_by="item")["groups"]}
+    assert items == {"TMT 12mm": "6820.00", "Cement OPC": "4830.00"}
+    heads = {g["name"]: g["value"] for g in get(tenant, "consumption", group_by="cost_head")["groups"]}
+    assert heads == {"BOQ work": "5170.00", "Safety": "6200.00", "Overhead": "280.00"}              # the BOQ items and the scrap that names no head
     boq = get(tenant, "consumption", group_by="boq_item")
     assert [(g["name"].split(" ")[0], g["value"]) for g in boq["groups"] if g["name"][0].isdigit()] == [("1", "3150.00"), ("2", "1400.00")] or len(boq["groups"]) >= 2
     wo = {g["name"]: g["value"] for g in get(tenant, "consumption", group_by="work_order")["groups"]}

@@ -206,7 +206,7 @@ def consumption(db, client_id, store_ids, project_id=0, start=None, end=None, gr
         if group_by == "project":
             return (p, "%s - %s" % (jobs[p].number, jobs[p].name) if p in jobs else str(p))
         if group_by == "cost_head":
-            return (head or "BOQ WORK", (head or "BOQ work").replace("_", " ").title())
+            return (head or "BOQ WORK", head.replace("_", " ").title() if head else "BOQ work")
         if group_by == "work_order":
             return (wo or 0, wos[wo].number if wo in wos else "No work order")
         if group_by == "boq_item":

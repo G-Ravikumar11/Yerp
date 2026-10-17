@@ -138,10 +138,10 @@ def test_the_whole_store_module_agrees_with_itself(account):
                 assert qty == (bal.qty if bal else 0) and value == (bal.value if bal else 0), (store, item)
                 assert all(r.running_qty >= 0 for r in rows)
 
-    # cement: 5000 - 1000 issued + 100 back - 500 transferred = 4100 at the central store; the site got 500 and the count found 490
+    # cement: 5000 - 1000 issued + 100 back - 500 transferred = 3600 at the central store; the site got 500 and the count found 490
     # tools: 50 - 10 issued + 6 back = 46: the 3 that were lost left at the issue, so writing them off moves no stock
     enquiry = {(r["store_code"], r["item_name"]): r["qty"] for r in ok(t.get("/api/store/enquiry/balances"))["items"]}
-    assert enquiry[(central["code"], "Cement OPC")] == "4100.000" and enquiry[(site["code"], "Cement OPC")] == "490.000" and enquiry[(central["code"], "Shuttering Plate")] == "46.000"
+    assert enquiry[(central["code"], "Cement OPC")] == "3600.000" and enquiry[(site["code"], "Cement OPC")] == "490.000" and enquiry[(central["code"], "Shuttering Plate")] == "46.000"
     valuation = ok(t.get("/api/store/reports/valuation"))
     assert {(r["store_code"], r["item_name"]): r["qty"] for r in valuation["rows"]} == enquiry
     assert valuation["total_value"] == str(sum((D(r["value"]) for r in valuation["rows"]), D(0)).quantize(D("0.01")))
