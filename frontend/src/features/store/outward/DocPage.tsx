@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, CornerDownLeft, Pencil, Printer, Trash2 } from 'lucide-react'
+import { ArrowLeft, CornerDownLeft, DoorOpen, Pencil, Printer, Trash2 } from 'lucide-react'
 import { Badge, Button, ConfirmDialog, Skeleton } from '@/components/ui'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { useSession } from '@/lib/session'
@@ -37,13 +37,14 @@ export default function DocPage() {
       ? ([
           { id: 'qty', header: 'Issued', align: 'right', width: '9rem', cell: (l) => <div>{num(l.entry_qty)} {l.entry_uom}{l.entry_uom !== l.base_uom && <div className="text-xs text-muted-foreground">= {num(l.qty)} {l.base_uom}</div>}</div> },
           { id: 'cost', header: 'Charged to', cell: (l) => l.boq_item || headLabel(l.cost_head) || '-' },
-          ...(doc.issue_type === 'SUBCONTRACTOR' ? ([{ id: 'rec', header: 'Recovery', align: 'right', width: '8rem', cell: (l) => (l.chargeable ? `${num(l.recovery_rate)}/${l.base_uom}` : 'Not charged') }] as TableColumn<Line>[]) : []),
+          ...(doc.issue_type === 'SUBCONTRACTOR' ? ([{ id: 'rec', header: 'Recovery', align: 'right', width: '13rem', cell: (l) => (l.chargeable ? `${l.resolved_rate ? num(l.resolved_rate) : '-'}/${l.base_uom} ${l.recovery_basis === 'CONTRACT_RATE' ? 'contract' : 'avg cost'}${Number(l.handling_pct) ? ` + ${num(l.handling_pct)}%` : ''}` : 'Free of cost') }] as TableColumn<Line>[]) : []),
           { id: 'due', header: 'Back by', width: '8rem', hideBelow: 'md', cell: (l) => (l.returnable ? (l.expected_return_date ? dmy(l.expected_return_date) : <Badge>Returnable</Badge>) : '-') },
           ...(doc.status === 'POSTED' ? ([{ id: 'out', header: 'Still out', align: 'right', width: '8rem', cell: (l) => (l.outstanding === null ? '' : `${num(l.outstanding)} ${l.base_uom}`) }] as TableColumn<Line>[]) : []),
         ] as TableColumn<Line>[])
       : ([
           { id: 'back', header: 'Came back', align: 'right', width: '9rem', cell: (l) => `${num(l.qty_returned)} ${l.base_uom}` },
           { id: 'lost', header: 'Lost / damaged', align: 'right', width: '9rem', cell: (l) => (Number(l.qty_lost) ? <span className="text-danger">{num(l.qty_lost)} {l.base_uom}</span> : '-') },
+          { id: 'cond', header: 'Condition', width: '11rem', cell: (l) => (l.condition === 'DAMAGED' ? <Badge tone="warning">Damaged - bin {l.bin || '?'}</Badge> : 'Good') },
           { id: 'why', header: 'Reason', cell: (l) => l.reason || '-' },
         ] as TableColumn<Line>[])),
   ]
@@ -51,7 +52,9 @@ export default function DocPage() {
     ['Store', `${doc.store_code} - ${doc.store_name}`],
     ['Date', dmy(doc.date)],
     ...(isIssue
-      ? ([['Type', doc.issue_type === 'SUBCONTRACTOR' ? 'Issued to a subcontractor' : 'Site use'], ['Project', doc.project || '-'], ['Work order', doc.work_order || '-'], ['Issued to', doc.holder_name || '-'], ['Purpose', doc.purpose || '-']] as [string, string][])
+      ? ([['Type', doc.issue_type === 'SUBCONTRACTOR' ? 'Issued to a subcontractor' : 'Site use'], ['Project', doc.project || '-'], ['Work order', doc.work_order || '-'], ['Indent', doc.indent_number || (doc.direct ? 'Direct issue' : '-')],
+          ...(doc.issue_type === 'SUBCONTRACTOR' ? ([['Subcontractor', doc.holder_name || '-'], ['Subcontract work order', doc.subcontract_order || '-']] as [string, string][]) : []),
+          ['Received by', doc.received_by_name ? `${doc.received_by_name} (${(doc.received_by_type ?? '').toLowerCase()})` : doc.holder_name || '-'], ['Purpose', doc.purpose || '-']] as [string, string][])
       : ([['Against issue', doc.issue_number || '-'], ['Held by', doc.holder_name || '-']] as [string, string][])),
     ['Remarks', doc.remarks || '-'],
     ['Made by', `${doc.created_by || '-'}${doc.created_at ? ' on ' + dmy(doc.created_at) : ''}`],
@@ -67,6 +70,7 @@ export default function DocPage() {
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" asChild><a href={`/api/store/outward/${kind.key}/${doc.id}/print`} target="_blank" rel="noreferrer"><Printer /> Print</a></Button>
           {isIssue && doc.status === 'POSTED' && can(storePerm('outward', 'create')) && <Button variant="outline" onClick={() => nav(`/store/hub/outward/returns/new?issue=${doc.id}`)}><CornerDownLeft /> Return material</Button>}
+          {isIssue && doc.status === 'POSTED' && can(storePerm('outward', 'create')) && <Button variant="outline" onClick={() => nav(`/store/hub/outward/gate-pass/new?issue=${doc.id}`)}><DoorOpen /> Gate pass</Button>}
           {doc.status === 'DRAFT' && can(storePerm('outward', 'create')) && (
             <>
               <Button variant="outline" onClick={() => nav(`/store/hub/outward/${kind.key}/${doc.id}/edit`)}><Pencil /> Edit</Button>
@@ -81,6 +85,8 @@ export default function DocPage() {
           />
         </div>
       </div>
+      {(doc.warnings ?? []).map((w) => <p key={w} role="status" className="mb-3 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">Over the norm: {w}</p>)}
+      {(doc.gate_passes ?? []).length > 0 && <p className="mb-3 text-sm text-muted-foreground">Gate passes: {(doc.gate_passes ?? []).map((g) => <Link key={g.id} className="mr-3 font-mono text-primary hover:underline" to={`/store/hub/outward/gate-pass/${g.id}`}>{g.number} ({g.status.toLowerCase()})</Link>)}</p>}
       {doc.status === 'CANCELLED' && <p role="status" className="mb-4 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">Cancelled{doc.cancel_reason ? `: ${doc.cancel_reason}` : ''}.</p>}
       <dl className="mb-5 grid gap-x-6 gap-y-2 rounded-xl border border-border bg-card p-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
         {facts.map(([k, v]) => <div key={k}><dt className="text-xs uppercase tracking-wide text-muted-foreground">{k}</dt><dd className="font-medium">{v}</dd></div>)}

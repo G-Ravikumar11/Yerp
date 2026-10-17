@@ -5,6 +5,9 @@ import { Badge, Button, Field, Input, Select } from '@/components/ui'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { useProjects, projectLabel } from '@/api/projects'
 import { StorePicker } from '../shared'
+import { useSession } from '@/lib/session'
+import { storePerm } from '@/api/store'
+import { CloseReturnableModal } from './Closing'
 import { dmy, money, num, qs, useRecovery, useReturnables, useSubcontractors, useWriteoffs, type Recovery, type Returnable, type Writeoff } from './api'
 
 /** What is still out: returnable items and tools issued and not yet back, who holds them and how late they are. */
@@ -12,6 +15,8 @@ export function ReturnablesPage() {
   const projects = useProjects()
   const [f, setF] = useState({ project_id: 0, store_id: 0, overdue_only: false })
   const q = useReturnables(f)
+  const { can } = useSession()
+  const [closing, setClosing] = useState<{ row: Returnable; mode: 'convert' | 'writeoff' } | null>(null)
   const columns: TableColumn<Returnable>[] = [
     { id: 'item', header: 'Item', cell: (r) => <div><div className="font-medium">{r.item_name}</div><div className="font-mono text-xs text-muted-foreground">{r.item_code}</div></div> },
     { id: 'qty', header: 'Out', align: 'right', width: '6rem', sort: (r) => Number(r.qty_outstanding), cell: (r) => num(r.qty_outstanding) },
@@ -19,6 +24,12 @@ export function ReturnablesPage() {
     { id: 'iss', header: 'Issue', width: '14rem', hideBelow: 'md', cell: (r) => <Link className="font-mono text-[13px] text-primary hover:underline" to={`/store/hub/outward/issue/${r.issue_id}`}>{r.issue_number}</Link> },
     { id: 'due', header: 'Back by', width: '8rem', sort: (r) => r.expected_return_date, cell: (r) => (r.expected_return_date ? dmy(r.expected_return_date) : '-') },
     { id: 'late', header: '', width: '8rem', sort: (r) => r.overdue_days, cell: (r) => (r.overdue_days > 0 ? <Badge tone="danger" dot>{r.overdue_days} days late</Badge> : null) },
+    { id: 'act', header: '', width: '13rem', cell: (r) => (
+      <span className="flex justify-end gap-1">
+        {can(storePerm('outward', 'approve')) && <Button size="sm" variant="outline" onClick={() => setClosing({ row: r, mode: 'convert' })}>Charge</Button>}
+        {can(storePerm('outward', 'create')) && <Button size="sm" variant="outline" onClick={() => setClosing({ row: r, mode: 'writeoff' })}>Write off</Button>}
+      </span>
+    ) },
   ]
   return (
     <div>
@@ -30,6 +41,7 @@ export function ReturnablesPage() {
       </div>
       {q.data && <p className="mb-3 text-sm text-muted-foreground" role="status">{q.data.total} line{q.data.total === 1 ? '' : 's'} still out{q.data.overdue > 0 && <> - <span className="text-danger">{q.data.overdue} overdue</span></>}</p>}
       {q.isError ? <p role="alert" className="text-sm text-danger">Could not load the returnables.</p> : <DataTable label="Returnables still out" rows={q.data?.items ?? []} loading={q.isPending} columns={columns} rowKey={(r) => r.issue_line_id} empty="Nothing returnable is out." />}
+      {closing && <CloseReturnableModal row={closing.row} mode={closing.mode} onClose={() => setClosing(null)} />}
     </div>
   )
 }
