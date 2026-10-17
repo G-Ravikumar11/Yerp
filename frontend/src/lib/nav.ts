@@ -14,6 +14,9 @@ import {
   Wallet,
 } from 'lucide-react'
 
+/** Any of the Store module's six parts opens its hub. */
+const STORE_ANY = ['masters', 'enquiry', 'inward', 'outward', 'control', 'reports'].map((s) => `store.${s}.view`).join('|')
+
 /** notHeadOffice: left out for HO QS and HO Coordinator, whose front page is the HO portal. */
 type NavItem = { label: string; path: string; perm?: string; notHeadOffice?: boolean }
 /** staffOnly: the screens of a member of staff's own work (timesheet, payslips), which the account holder has no use for. */
@@ -119,6 +122,7 @@ const NAV: NavEntry[] = [
       { label: 'Stock & Issues', path: '/store/stock', perm: 'site.record|stores.manage' },
       { label: 'Material Issue Voucher', path: '/store/material-vouchers', perm: 'site.record|stores.manage' },
       { label: 'Material Used vs Costed', path: '/store/material-costing', perm: 'reports.view' },
+      { label: 'Store Hub', path: '/store/hub', perm: STORE_ANY },
     ],
   },
   {

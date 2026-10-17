@@ -59,6 +59,13 @@ export const PAGE_INFO: Record<string, string> = {
   '/store/eway': 'E-way bills for goods moving between places, with their validity so a load is never on the road without one.',
   '/store/goods-receipt': 'Record what actually arrives against a purchase order and match it to the order and the supplier\'s bill.',
   '/store/material-vouchers': "The store's Material Issue Voucher, as on the printed form: project, who indented it, who issued it and for what, and each item issued and returned. Every voucher is kept in Sl. No. order, to print as a PDF or download as an Excel register.",
+  '/store/hub': 'The Store module: stock held at each store and everything that moves it. Open a part below.',
+  '/store/hub/masters/*': 'Stores, bins, who works where, item stock settings and unit conversions.',
+  '/store/hub/enquiry/*': 'What each store holds, and the movements behind every balance.',
+  '/store/hub/inward/*': 'Goods received against purchase orders, quality checks and returns to suppliers.',
+  '/store/hub/outward/*': 'Issues to site and to subcontractors, returnable tools and write-offs.',
+  '/store/hub/control/*': 'Transfers between stores, stock counts, adjustments and scrap.',
+  '/store/hub/reports/*': 'Stock, consumption and material cost reports.',
   '/store/stock': 'Stock on hand at each store, receipts, and issues to site. Issue material to a project and the balance falls.',
   '/store/material-costing': 'Material used on site against what was costed, so overuse and wastage show up early.',
 
@@ -83,6 +90,9 @@ export const PAGE_INFO: Record<string, string> = {
 export function infoFor(pathname: string): string {
   const clean = pathname.replace(/\/+$/, '') || '/'
   if (PAGE_INFO[clean]) return PAGE_INFO[clean]!
+  // A screen with sub-pages of its own, registered as "/store/hub/inward/*": every address beneath it reads as it does.
+  const wide = Object.keys(PAGE_INFO).find((k) => k.endsWith('/*') && (clean + '/').startsWith(k.slice(0, -1)))
+  if (wide) return PAGE_INFO[wide]!
   const parts = clean.split('/')
   let best = ''
   let bestLiterals = -1

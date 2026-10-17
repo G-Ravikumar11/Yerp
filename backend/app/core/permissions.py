@@ -134,6 +134,20 @@ PORTAL_PERMISSIONS = [
     {"key": "ho.view_all", "group": "Head office",
      "label": "HO portal (all sites)"},
 ]
+
+# THE STORE MODULE: store.<slice>.<action>. The six slices and five actions are every combination, so a new screen
+# never has to add a right; the four extras are the ones worth deciding on their own and are never part of a card.
+STORE_SLICES = ("masters", "enquiry", "inward", "outward", "control", "reports")
+STORE_ACTIONS = ("view", "create", "approve", "post", "cancel")
+STORE_EXTRAS = [
+    {"key": "store.outward.direct_issue", "group": "Store module", "label": "Issue material without a requisition"},
+    {"key": "store.control.reveal_count", "group": "Store module", "label": "See system quantity during a stock count"},
+    {"key": "store.control.approve_high_value", "group": "Store module", "label": "Approve high-value adjustments and transfers"},
+    {"key": "store.admin", "group": "Store module", "label": "Store administrator (every store, every right)"},
+]
+STORE_KEYS = [f"store.{sl}.{act}" for sl in STORE_SLICES for act in STORE_ACTIONS]
+PORTAL_PERMISSIONS += [{"key": k, "group": "Store module", "label": "Store %s: %s" % (k.split(".")[1], k.split(".")[2])}
+                       for k in STORE_KEYS] + STORE_EXTRAS
 PERMISSION_KEYS = {p["key"] for p in PORTAL_PERMISSIONS}
 
 # The rights only HO QS (and the Master) can hold, whatever else is ticked.
@@ -333,7 +347,9 @@ PORTALS = [
      "read": ["subcontractors.view"], "write": ["workorders.manage", "subcontracts.approve"]},
     {"code": "store", "label": "Store & Supplies",
      "blurb": "Items, enquiries, purchase orders, goods received and stock.",
-     "read": ["store.view"], "write": ["items.manage", "purchase.manage", "stores.manage", "stores.receive"]},
+     "read": ["store.view"] + [k for k in STORE_KEYS if k.endswith(".view")],
+     "write": ["items.manage", "purchase.manage", "stores.manage", "stores.receive"]
+              + [k for k in STORE_KEYS if not k.endswith(".view")]},
     {"code": "money", "label": "Money Portal",
      "blurb": "Supplier bills, payments, GST, assets and the registers.",
      "read": ["money.view", "bills.view_all"], "write": ["bills.pay", "invoices.manage", "accounts.manage"]},

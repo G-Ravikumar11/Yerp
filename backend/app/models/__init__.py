@@ -193,6 +193,18 @@ from app.models.stores import (
     DBStockIssueLine,
     DBStockBalance,
 )
+from app.models.store_core import (
+    DBStore,
+    DBStoreBin,
+    DBStoreUserAssignment,
+    DBStoreItemSettings,
+    DBStoreUomConversion,
+    DBStoreFreeze,
+    DBStoreDocSequence,
+    DBStoreStockLedger,
+    DBStoreStockBalance,
+)
+from app.models import store_inward, store_outward, store_control, store_reports  # noqa: F401  (the Store slices' own tables)
 from app.models.subcontracts import (
     DBBusinessUnit,
     DBWorkType,

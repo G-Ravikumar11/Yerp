@@ -58,6 +58,7 @@ from app.documents import (
     letterhead,
     pdf_twins,
 )
+from app.documents.store import control_forms, inward_forms, outward_forms, report_forms
 from app.schemas import (
     access,
     approvals,
@@ -84,6 +85,7 @@ from app.schemas import (
     safety,
     settings,
     stores,
+    store_contracts,
     subcontract_billing,
     subcontract_orders,
     superadmin,
@@ -117,6 +119,13 @@ from app.services import (
     safety,
     settings,
     stores,
+    stock_ledger,
+    store_inward,
+    store_outward,
+    store_control,
+    store_reports,
+    store_integration,
+    store_numbering,
     subcontract_billing,
     subcontract_orders,
     wallet_ai,
@@ -173,6 +182,13 @@ from app.routers import (
     holiday_calendar,
     error_log,
     material_vouchers,
+    store_lookup,
+    store_masters,
+    store_enquiry,
+    store_inward,
+    store_outward,
+    store_control,
+    store_reports,
 )
 
 for _module in (
@@ -222,6 +238,13 @@ for _module in (
     holiday_calendar,
     error_log,
     material_vouchers,
+    store_lookup,
+    store_masters,
+    store_enquiry,
+    store_inward,
+    store_outward,
+    store_control,
+    store_reports,
 ):
     app.include_router(_module.router)
 
