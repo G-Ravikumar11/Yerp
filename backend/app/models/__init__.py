@@ -129,6 +129,14 @@ from app.models.procurement import (
     DBRfqQuoteLine,
     DBRfqInvite,
 )
+from app.models.invoice_tracker import (
+    DBTrackerInvoice,
+    DBTrackerBlock,
+    DBTrackerNote,
+    DBTrackerCharge,
+    DBTrackerInvoiceNote,
+    DBTrackerWorkingRate,
+)
 from app.models.projects import (
     DBJob,
     DBSiteDiary,

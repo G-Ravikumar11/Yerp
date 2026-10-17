@@ -68,6 +68,7 @@ export const PAGE_INFO: Record<string, string> = {
   '/store/hub/control/*': 'Transfers between stores, stock counts, adjustments and scrap.',
   '/store/hub/reports/*': 'Stock, consumption and material cost reports.',
   '/store/stock': 'Stock on hand at each store, receipts, and issues to site. Issue material to a project and the balance falls.',
+  '/store/invoice-tracker': 'Purchases by trade and supplier invoice, with each bill checked against what was received, plus a ready-mix register by lorry and block.',
   '/store/material-costing': 'Material used on site against what was costed, so overuse and wastage show up early.',
 
   '/money/ledgers': 'Payments and ledgers: what has been paid to or received from each party, and the running balance.',
