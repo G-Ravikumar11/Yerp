@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Badge, Card, Input, Select, SkeletonRows, Tabs } from '@/components/ui'
 import { storeGet, useStoreMeta, useStoreOptions } from '@/api/store'
@@ -27,7 +28,8 @@ export default function EnquiryIndex() {
 }
 
 function Stock({ storeId }: { storeId: string }) {
-  const [q, setQ] = useState('')
+  const [params] = useSearchParams()
+  const [q, setQ] = useState(params.get('q') ?? '')
   const [low, setLow] = useState(false)
   const res = useQuery({
     queryKey: ['store', 'enquiry', 'stock', storeId, q, low],
