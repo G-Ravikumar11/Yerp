@@ -113,6 +113,17 @@ def labour_cost_for_job(db, client_id, job_id):
     return money(cost), round(hours, 2)
 
 
+def _store_material(db, client_id, job_id):
+    """What the Store module has issued to a job, net of what came back. One query for the whole board when jobs are costed together."""
+    from app.services.store_integration import project_store_material, store_material_by_project
+    pre = db.info.get("by_job")
+    if pre is not None:
+        if "store_material" not in pre:
+            pre["store_material"] = store_material_by_project(db, client_id)
+        return float(pre["store_material"].get(job_id, 0))
+    return float(project_store_material(db, job_id))
+
+
 def job_costing(db, client_id, job):
     """Quoted, spent - and what is left of the budget."""
     bills = on_job(db, models.DBBill, client_id, job.id)
@@ -165,6 +176,8 @@ def job_costing(db, client_id, job):
         "labour_cost": labour,
         "labour_hours": hours,
         "total_cost": total_cost,
+        # Material issued from the stores to this job. Shown beside the bills, not added to them: the stock was bought on a bill already.
+        "store_material": money(_store_material(db, client_id, job.id)),
         # Budget column: what has been used so far and what is left of it.
         "used": total_cost,
         "remaining": money(budget - total_cost) if budget else 0.0,
