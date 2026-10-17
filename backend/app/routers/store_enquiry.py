@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models
@@ -117,6 +118,24 @@ def ledger(request: Request, store_id: int = 0, item_id: int = 0, movement_type:
         "running_qty": str(e.running_qty), "running_value": str(e.running_value), "avg_rate": str(e.avg_rate),
         "project_id": e.project_id, "ref_doc_type": e.ref_doc_type, "ref_doc_id": e.ref_doc_id, "reversal_of_id": e.reversal_of_id,
         "remarks": e.remarks or "", "created_at": e.created_at.isoformat() if e.created_at else None} for e, item in rows]}
+
+
+@router.get("/quick")
+def quick_find(request: Request, q: str = "", limit: int = 8, db: Session = Depends(get_db)):
+    """Type-ahead for the Store home page: a few matching items with the quantity held across the person's stores. One grouped query."""
+    actor = store_actor(request, db, "store.enquiry.view")
+    term = (q or "").strip().replace("%", "").replace("_", "")
+    if len(term) < 2:
+        return {"rows": []}
+    like = "%" + term + "%"
+    ids = [s.id for s in _visible_stores(actor, db, 0)] or [0]
+    held = (db.query(DBStoreStockBalance.item_id.label("item_id"), func.sum(DBStoreStockBalance.qty).label("qty"), func.count(DBStoreStockBalance.store_id).label("stores"))
+            .filter(DBStoreStockBalance.store_id.in_(ids), DBStoreStockBalance.qty > 0).group_by(DBStoreStockBalance.item_id).subquery())
+    rows = (db.query(models.DBItem.id, models.DBItem.item_code, models.DBItem.item_name, models.DBItem.units_of_measure, held.c.qty, held.c.stores)
+            .outerjoin(held, held.c.item_id == models.DBItem.id)
+            .filter(models.DBItem.client_id == actor.client.id, models.DBItem.item_code.ilike(like) | models.DBItem.item_name.ilike(like))
+            .order_by(held.c.qty.is_(None), models.DBItem.item_name).limit(max(1, min(limit, 20))).all())
+    return {"rows": [{"item_id": r[0], "item_code": r[1], "item_name": r[2], "uom": r[3] or "", "qty": str(r[4] or 0), "stores": int(r[5] or 0)} for r in rows]}
 
 
 @router.get("/items/{item_id}")

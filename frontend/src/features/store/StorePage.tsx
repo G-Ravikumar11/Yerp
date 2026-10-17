@@ -1,7 +1,9 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowDownToLine, ArrowUpFromLine, ClipboardCheck, FileBarChart, Repeat, Search, Undo2 } from 'lucide-react'
 import { Button, Card, Input } from '@/components/ui'
+import { get } from '@/lib/api'
 import { useSession } from '@/lib/session'
 import { storePerm } from '@/api/store'
 import { SLICES, StoreShell } from './StoreShell'
@@ -20,19 +22,11 @@ const TASKS = [
 /** The Store front page: find stock, do the common jobs in one click, or open any part this person may use. */
 export default function StorePage() {
   const { can } = useSession()
-  const nav = useNavigate()
-  const [q, setQ] = useState('')
   const tasks = TASKS.filter((t) => can(t.perm))
-  const find = (e: FormEvent) => { e.preventDefault(); nav(`/store/hub/enquiry?q=${encodeURIComponent(q.trim())}`) }
   return (
     <StoreShell slice={null}>
       <div className="space-y-8">
-        {can(storePerm('enquiry')) && (
-          <form onSubmit={find} className="flex max-w-xl gap-2">
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find an item - type its name or code" aria-label="Find an item" />
-            <Button type="submit"><Search /> Check stock</Button>
-          </form>
-        )}
+        <QuickFind allowed={can(storePerm('enquiry'))} />
         {tasks.length > 0 && (
           <section>
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Do something</h2>
@@ -64,5 +58,42 @@ export default function StorePage() {
         {SLICES.every((s) => !can(storePerm(s.slice))) && <p className="text-sm text-muted-foreground">You have no Store access yet. Ask your administrator to give you a Store role.</p>}
       </div>
     </StoreShell>
+  )
+}
+
+interface Hit { item_id: number; item_code: string; item_name: string; uom: string; qty: string; stores: number }
+
+/** Type-ahead stock lookup: results appear under the box as you type (after a short pause), so there is no waiting on a full page. */
+function QuickFind({ allowed }: { allowed: boolean }) {
+  const nav = useNavigate()
+  const [q, setQ] = useState('')
+  const [term, setTerm] = useState('')
+  useEffect(() => { const t = setTimeout(() => setTerm(q.trim()), 200); return () => clearTimeout(t) }, [q])
+  const res = useQuery({
+    queryKey: ['store', 'enquiry', 'quick', term], enabled: allowed && term.length >= 2, staleTime: 30_000, placeholderData: (prev) => prev,
+    queryFn: () => get<{ rows: Hit[] }>(`/api/store/enquiry/quick?q=${encodeURIComponent(term)}`),
+  })
+  const open = (text: string) => nav(`/store/hub/enquiry?q=${encodeURIComponent(text)}`)
+  const submit = (e: FormEvent) => { e.preventDefault(); if (q.trim()) open(q.trim()) }
+  const hits = term.length >= 2 ? res.data?.rows ?? [] : []
+  return (
+    <div className="max-w-2xl">
+      <form onSubmit={submit} className="flex gap-2">
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find an item - type its name or code" aria-label="Find an item" autoComplete="off" disabled={!allowed} />
+        <Button type="submit" disabled={!allowed || !q.trim()}><Search /> Check stock</Button>
+      </form>
+      {!allowed && <p className="mt-1 text-xs text-muted-foreground">Stock enquiry is not enabled for your account.</p>}
+      {allowed && term.length >= 2 && (
+        <Card className="mt-2 overflow-hidden">
+          {hits.map((h) => (
+            <button key={h.item_id} type="button" onClick={() => open(h.item_code)} className="flex w-full items-center justify-between gap-3 border-b border-border px-4 py-2 text-left text-sm last:border-0 hover:bg-accent">
+              <span><span className="font-mono text-xs text-muted-foreground">{h.item_code}</span> {h.item_name}</span>
+              <span className={Number(h.qty) > 0 ? 'font-medium' : 'text-muted-foreground'}>{Number(h.qty) > 0 ? `${Number(h.qty).toLocaleString('en-IN', { maximumFractionDigits: 3 })} ${h.uom} in ${h.stores} store${h.stores === 1 ? '' : 's'}` : 'Out of stock'}</span>
+            </button>
+          ))}
+          {hits.length === 0 && <div className="px-4 py-3 text-sm text-muted-foreground">{res.isFetching ? 'Searching...' : 'No matching item.'}</div>}
+        </Card>
+      )}
+    </div>
   )
 }

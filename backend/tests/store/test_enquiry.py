@@ -117,3 +117,14 @@ def test_rights_and_store_access(account, portal):
     assert portal.post("%s/stores/%d/freeze" % (M, mine["id"]), json={"reason": "x"}).status_code == 403
     assert portal.put("%s/items/%d/settings" % (M, item), json={}).status_code == 403
     assert portal.delete("%s/uoms/1" % M).status_code == 403
+
+
+def test_quick_find_groups_stock_across_stores(account):
+    o = account["client"]
+    s1, s2 = _store(o), _store(o, "YD1", type="YARD")
+    item = _item(_owner_id(account), name="Zinc Quickfind Plate")
+    _post(s1["id"], item, MovementType.GRN_IN, "10", "5", doc=1)
+    _post(s2["id"], item, MovementType.GRN_IN, "5", "5", doc=2)
+    assert o.get(E + "/quick", params={"q": "z"}).json()["rows"] == []                 # too short to search
+    rows = o.get(E + "/quick", params={"q": "quickfind"}).json()["rows"]
+    assert len(rows) == 1 and rows[0]["item_id"] == item and rows[0]["qty"] == "15.000" and rows[0]["stores"] == 2
