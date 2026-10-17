@@ -1,12 +1,24 @@
+import { NavLink, Route, Routes } from 'react-router-dom'
+import { cn } from '@/lib/utils'
 import { StoreShell } from '../StoreShell'
+import ItemSettingsPage from './ItemSettingsPage'
+import StoresPage from './StoresPage'
 
-/** Store > Masters. Owned by P1: replace the body, keep the shell. Routes under /store/hub/masters/* land here, so
- * add your own sub-routes with <Routes> inside this component rather than in src/routes.tsx. */
+const tab = ({ isActive }: { isActive: boolean }) =>
+  cn('rounded-lg px-3.5 py-1.5 text-[13px] font-medium', isActive ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground')
+
+/** Store > Masters: the stores, and how each stock item is treated. Routes under /store/hub/masters/* land here. */
 export default function MastersIndex() {
-  // TODO(P1)
   return (
     <StoreShell slice="masters">
-      <p className="text-sm text-muted-foreground">Nothing here yet.</p>
+      <nav aria-label="Masters" className="mb-4 flex w-fit gap-1 rounded-xl bg-muted p-1">
+        <NavLink to="/store/hub/masters" end className={tab}>Stores</NavLink>
+        <NavLink to="/store/hub/masters/items" className={tab}>Item settings</NavLink>
+      </nav>
+      <Routes>
+        <Route index element={<StoresPage />} />
+        <Route path="items" element={<ItemSettingsPage />} />
+      </Routes>
     </StoreShell>
   )
 }

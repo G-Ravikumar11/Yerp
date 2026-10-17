@@ -1,12 +1,16 @@
+import { Route, Routes } from 'react-router-dom'
 import { StoreShell } from '../StoreShell'
+import StockCardPage from './StockCardPage'
+import StockPositionPage from './StockPositionPage'
 
-/** Store > Enquiry. Owned by P1: replace the body, keep the shell. Routes under /store/hub/enquiry/* land here, so
- * add your own sub-routes with <Routes> inside this component rather than in src/routes.tsx. */
+/** Store > Stock enquiry: the position, and an item's stock card. Routes under /store/hub/enquiry/* land here. */
 export default function EnquiryIndex() {
-  // TODO(P1)
   return (
     <StoreShell slice="enquiry">
-      <p className="text-sm text-muted-foreground">Nothing here yet.</p>
+      <Routes>
+        <Route index element={<StockPositionPage />} />
+        <Route path="card" element={<StockCardPage />} />
+      </Routes>
     </StoreShell>
   )
 }
