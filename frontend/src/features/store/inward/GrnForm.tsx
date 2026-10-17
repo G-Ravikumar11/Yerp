@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Trash2 } from 'lucide-react'
 import { Button, Field, Input, Select, Textarea } from '@/components/ui'
@@ -52,7 +52,12 @@ export default function GrnForm({ doc }: { doc?: Doc }) {
     setRows(p ? p.lines.map((l) => ({ ...blank(), po_line_id: l.po_line_id, item: { id: l.item_id, code: l.item_code, name: l.item_name, base_uom: l.base_uom, uoms: [], category: null }, label: l.description || l.item_name,
       hint: `Ordered ${num(l.po_qty)} ${l.po_uom} at ${money(l.price)}; ${num(l.pending)} ${l.base_uom} still to come`, qty: { qty: '', uom: l.po_uom }, rate: l.price })) : [])
   }
-  useEffect(() => { if (doc && po && !rows.some((r) => r.hint)) setRows((rs) => rs.map((r) => { const l = po.lines.find((x) => x.po_line_id === r.po_line_id); return l ? { ...r, hint: `Ordered ${num(l.po_qty)} ${l.po_uom}; ${num(l.pending)} ${l.base_uom} still to come` } : r })) }, [doc, po]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Editing a draft: the order line's figures come from the order, looked up as it is drawn.
+  const hintOf = (r: Row) => {
+    if (r.hint) return r.hint
+    const l = po?.lines.find((x) => x.po_line_id === r.po_line_id)
+    return l ? `Ordered ${num(l.po_qty)} ${l.po_uom}; ${num(l.pending)} ${l.base_uom} still to come` : ''
+  }
   const upd = (key: number, patch: Partial<Row>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)))
 
   const filled = rows.filter((r) => r.qty.qty.trim() && Number(r.qty.qty) > 0)
@@ -91,7 +96,7 @@ export default function GrnForm({ doc }: { doc?: Doc }) {
           {rows.map((r) => (
             <div key={r.key} className="grid gap-3 rounded-lg border border-border p-3 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1.2fr)_8rem_8rem_minmax(0,1fr)_auto]">
               <div>
-                {r.po_line_id || doc ? <><div className="text-sm font-medium">{r.label || r.item?.name}</div><div className="text-xs text-muted-foreground">{r.hint}</div></> : <ItemPicker value={r.item} onChange={(item) => upd(r.key, { item, qty: { qty: '', uom: item?.base_uom ?? '' } })} />}
+                {r.po_line_id || doc ? <><div className="text-sm font-medium">{r.label || r.item?.name}</div><div className="text-xs text-muted-foreground">{hintOf(r)}</div></> : <ItemPicker value={r.item} onChange={(item) => upd(r.key, { item, qty: { qty: '', uom: item?.base_uom ?? '' } })} />}
               </div>
               <UomQtyInput itemId={r.item?.id ?? null} value={r.qty} onChange={(qty) => upd(r.key, { qty })} />
               <Input aria-label="Rate per unit" inputMode="decimal" placeholder={`Rate / ${r.qty.uom || 'unit'}`} className="text-right" value={r.rate} onChange={(e) => upd(r.key, { rate: e.target.value })} />
