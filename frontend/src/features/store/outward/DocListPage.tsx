@@ -23,8 +23,8 @@ export default function DocListPage({ kind, label, plural }: { kind: OutwardKind
     ...(kind === 'issue'
       ? ([
           { id: 'proj', header: 'Project', hideBelow: 'sm', cell: (d) => d.project || '-' },
-          { id: 'to', header: 'Issued to', hideBelow: 'md', cell: (d) => d.holder_name || 'Site use' },
-          { id: 'type', header: 'Type', width: '9rem', hideBelow: 'lg', cell: (d) => <span className="flex gap-1"><Badge>{d.issue_type === 'SUBCONTRACTOR' ? 'Subcontractor' : 'Site'}</Badge>{d.direct && <Badge tone="warning">Direct</Badge>}</span> },
+          { id: 'to', header: 'Received by', hideBelow: 'md', cell: (d) => d.received_by_name || d.holder_name || '-' },
+          { id: 'type', header: 'Type', width: '9rem', hideBelow: 'lg', cell: (d) => <span className="flex gap-1"><Badge>{d.issue_type === 'SUBCONTRACTOR' ? 'Subcontractor' : 'Site'}</Badge>{d.indent_number ? <Badge tone="info">{d.indent_number.split('/').pop()}</Badge> : d.direct && <Badge tone="warning">Direct</Badge>}</span> },
         ] as TableColumn<Doc>[])
       : ([{ id: 'iss', header: 'Against issue', width: '13rem', hideBelow: 'sm', cell: (d) => d.issue_number || '-' }, { id: 'to', header: 'Held by', hideBelow: 'md', cell: (d) => d.holder_name || '-' }] as TableColumn<Doc>[])),
     { id: 'lines', header: 'Lines', align: 'right', width: '4rem', hideBelow: 'lg', cell: (d) => d.line_count },
