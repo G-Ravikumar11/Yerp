@@ -49,13 +49,15 @@ UNIT_ALIASES = {
     "meter": "Meters", "metre": "Meters", "mtr": "Meters", "m": "Meters",
     "no": "Nos", "each": "Nos", "ea": "Nos", "pcs": "Nos", "piece": "Nos",
     "pieces": "Nos", "unit": "Nos", "number": "Nos",
-    "kg": "Kgs", "kilogram": "Kgs", "kgs": "Kgs",
+    "kg": "Kgs", "kilogram": "Kgs", "kilograms": "Kgs", "kgs": "Kgs", "kilo": "Kgs", "kilos": "Kgs",
     "ton": "MT", "tonne": "MT", "tonnes": "MT", "mt": "MT", "metricton": "MT",
     "bag": "Bags", "qtl": "Quintal", "quintals": "Quintal",
     "ltr": "Litres", "litre": "Litres", "liter": "Litres", "l": "Litres",
     "hour": "Hours", "hr": "Hours", "hrs": "Hours",
     "day": "Days", "month": "Months", "set": "Sets",
     "lumpsum": "Lot", "ls": "Lot", "ls.": "Lot",
+    # A charge made once a month - site hire, a watchman - is counted in months.
+    "lumpsumpermonth": "Months", "permonth": "Months",
     "cubicfeet": "cft", "cuft": "cft", "squarefeet": "sqft", "sft": "sqft",
     "kiloliter": "KL", "kilolitre": "KL",
 }

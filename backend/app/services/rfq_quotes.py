@@ -124,6 +124,12 @@ def statement_for_screen(db, client_id, rfq, base=""):
     invites = invites_of(db, rfq.id)
     inv_docs = documents_of(db, client_id, "rfq_invite", [i.id for i in invites if i.document_id])
     st["invites"] = [dict(invite_dict(i, base), document=inv_docs.get(i.id)) for i in invites]
+    # The purchase orders the award made, so the enquiry says where its items went.
+    po_ids = {r["po_id"] for r in st["lines"] if r["po_id"]}
+    st["orders"] = [{"id": o.id, "number": o.number, "supplier_name": o.supplier_name or "", "total": money(o.total),
+                     "status": o.status or ""}
+                    for o in db.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.client_id == client_id,
+                                                                     models.DBPurchaseOrder.id.in_(po_ids)).order_by(models.DBPurchaseOrder.id).all()] if po_ids else []
     return st
 
 

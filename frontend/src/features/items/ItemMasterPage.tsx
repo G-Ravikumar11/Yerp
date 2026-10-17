@@ -1,31 +1,38 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, Copy, Download, Eye, FileUp, ListTree, Pencil, Plus, Power, Search, SlidersHorizontal, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Download, FileUp, ListTree, Pencil, Plus, Power, Search, SlidersHorizontal, X } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { Badge, Button, Card, ConfirmDialog, Field, Input, Modal, Select, Skeleton } from '@/components/ui'
-import { bulkCategory, bulkStatus, exportUrl, fetchItem, masterKeys, setItemActive, useCategories, useMasterItems, useWhereUsed, type ItemFilters, type MasterItem } from '@/api/itemMaster'
+import { Badge, Button, Card, ConfirmDialog, Field, Input, Select, Skeleton, Tabs } from '@/components/ui'
+import { bulkStatus, exportUrl, fetchItem, masterKeys, setItemActive, useCategories, useItemGaps, useMasterItems, useWhereUsed, type Gap, type ItemFilters, type MasterItem } from '@/api/itemMaster'
 import { itemKeys, useItemVocabulary } from '@/api/items'
 import { useSites } from '@/api/siteRates'
 import { useAction } from '@/lib/mutate'
 import { useDebounced } from '@/lib/hooks'
 import { ApiError } from '@/lib/api'
 import { useSession } from '@/lib/session'
-import { formatINR } from '@/lib/utils'
+import { cn, formatINR } from '@/lib/utils'
 import { toast } from '@/stores/toast'
+import { BulkEditModal } from './BulkEditModal'
 import { CategoriesModal } from './CategoriesModal'
 import { ImportItemsModal } from './ImportItemsModal'
 import { ItemDetailModal, UsageList } from './ItemDetailModal'
 import { ItemFormModal, type FormMode } from './ItemFormModal'
-import { NO_CATEGORY, buildChips, clearAll, clearFilter, isFiltered, loadFilters, purchaseRateOf, saveFilters, stockLabel } from './itemLogic'
+import { GAP_LABEL, NO_CATEGORY, buildChips, gapPhrase, clearAll, clearFilter, isFiltered, loadFilters, purchaseRateOf, saveFilters, stockLabel } from './itemLogic'
 
-const COLUMNS: { id: string; label: string; sort?: string; right?: boolean }[] = [
-  { id: 'code', label: 'Code', sort: 'code' },
+// Fixed widths, so a long name is cut with an ellipsis instead of pushing the row off the screen. The name takes the rest.
+const COLUMNS: { id: string; label: string; sort?: string; right?: boolean; hide?: string; width?: string }[] = [
+  { id: 'code', label: 'Code', sort: 'code', width: 'w-24' },
   { id: 'name', label: 'Item', sort: 'name' },
-  { id: 'cat', label: 'Category', sort: 'category' },
-  { id: 'uom', label: 'Unit', sort: 'uom' },
-  { id: 'rate', label: 'Purchase rate', sort: 'rate', right: true },
-  { id: 'stock', label: 'In stock', right: true },
-  { id: 'status', label: 'Status', sort: 'status' },
+  { id: 'cat', label: 'Category', sort: 'category', hide: 'max-lg:hidden', width: 'w-36' },
+  { id: 'uom', label: 'Unit', sort: 'uom', width: 'w-16' },
+  { id: 'gst', label: 'GST', hide: 'max-xl:hidden', width: 'w-14' },
+  { id: 'rate', label: 'Purchase rate', sort: 'rate', right: true, width: 'w-32' },
+  { id: 'stock', label: 'In stock', right: true, hide: 'max-2xl:hidden', width: 'w-28' },
+  { id: 'status', label: 'Status', sort: 'status', width: 'w-[5.5rem]' },
 ]
+const GAPS: Gap[] = ['category', 'gst', 'hsn', 'rate', 'make']
+
+/** A dash for a detail nobody has filled in yet: the gap is plain to see without a sentence in every row. */
+const Missing = () => <span className="text-subtle" aria-label="Not filled in">-</span>
 
 /** The item master: every material and BOQ work item once, with the codes that follow it through orders, BOQs and bills. */
 export default function ItemMasterPage() {
@@ -39,6 +46,7 @@ export default function ItemMasterPage() {
   useEffect(() => saveFilters(who, f), [who, f])
   const query = { ...f, q: useDebounced(f.q) }
   const list = useMasterItems(query)
+  const gaps = useItemGaps({ status: f.status === 'inactive' ? 'inactive' : 'active', kind: f.kind })
   const [showFilters, setShowFilters] = useState(false)
   const [picked, setPicked] = useState<Set<number>>(new Set())
   const [form, setForm] = useState<{ item: MasterItem | null; mode: FormMode | null }>({ item: null, mode: null })
@@ -48,7 +56,7 @@ export default function ItemMasterPage() {
   const [toggling, setToggling] = useState<MasterItem | null>(null)
   const [bulkNote, setBulkNote] = useState('')
   const [bulkOff, setBulkOff] = useState(false)
-  const [moving, setMoving] = useState(false)
+  const [editingMany, setEditingMany] = useState(false)
 
   // What was ticked belongs to the list that was on screen: a different page or filter is a different list.
   const change = (patch: Partial<ItemFilters>) => {
@@ -65,6 +73,7 @@ export default function ItemMasterPage() {
 
   const rows = list.data?.items ?? []
   const total = list.data?.total ?? 0
+  const counts = list.data?.counts
   const pages = Math.max(1, Math.ceil(total / f.page_size))
   const subs = cats.data?.find((c) => c.name === f.category)?.subcategories ?? []
   const allPicked = rows.length > 0 && rows.every((r) => picked.has(r.id))
@@ -92,29 +101,26 @@ export default function ItemMasterPage() {
     },
   })
 
-  const actions = (r: MasterItem) => (
-    <div className="flex justify-end gap-1">
-      <Button size="icon-sm" variant="ghost" aria-label={`View ${r.item_name}`} onClick={() => setDetail(r)}><Eye /></Button>
-      {manage && (
-        <>
-          <Button size="icon-sm" variant="ghost" aria-label={`Edit ${r.item_name}`} onClick={() => setForm({ item: r, mode: 'edit' })}><Pencil /></Button>
-          <Button size="icon-sm" variant="ghost" aria-label={`Copy ${r.item_name} as a new item`} onClick={() => setForm({ item: r, mode: 'duplicate' })}><Copy /></Button>
-          <Button size="icon-sm" variant="ghost" aria-label={`${r.is_active ? 'Deactivate' : 'Activate'} ${r.item_name}`} onClick={() => setToggling(r)}><Power /></Button>
-        </>
-      )}
-    </div>
-  )
+  const actions = (r: MasterItem) =>
+    manage ? (
+      <div className="flex justify-end gap-0.5">
+        <Button size="icon-sm" variant="ghost" aria-label={`Edit ${r.item_name}`} title="Edit" onClick={() => setForm({ item: r, mode: 'edit' })}><Pencil /></Button>
+        <Button size="icon-sm" variant="ghost" aria-label={`${r.is_active ? 'Deactivate' : 'Activate'} ${r.item_name}`} title={r.is_active ? 'Deactivate' : 'Activate'} onClick={() => setToggling(r)}><Power /></Button>
+      </div>
+    ) : null
+  const sub = (r: MasterItem) => [r.specification, r.make].filter(Boolean).join(' · ')
+  const anyGap = !!gaps.data && GAPS.some((g) => gaps.data![g] > 0)
 
   return (
     <>
       <PageHeader
         eyebrow="Store"
         title="Item Master"
-        description="Every material and BOQ work item, listed once. Each has one code that follows it through BOQs, orders, measurements and bills. Rates for a site are set under Site Item Pricing."
+        description="Every material and work item, listed once. Each code follows its item through BOQs, orders, measurements and bills. Rates for a site are set under Site Item Pricing."
         actions={
           <>
             <Button variant="outline" asChild>
-              <a href={exportUrl(query)}><Download /> Export to Excel</a>
+              <a href={exportUrl(query)}><Download /> Export</a>
             </Button>
             {manage && (
               <>
@@ -127,13 +133,45 @@ export default function ItemMasterPage() {
         }
       />
 
+      <div className="mb-4 w-fit max-w-full">
+        <Tabs label="Show" value={f.kind || 'all'} onChange={(v) => change({ kind: v === 'all' ? '' : v })} items={[
+          { value: 'all', label: 'All items', count: counts ? counts.RM + counts.FG : undefined },
+          { value: 'RM', label: 'Materials', count: counts?.RM },
+          { value: 'FG', label: 'Work items', count: counts?.FG },
+        ]} />
+      </div>
+
+      {manage && anyGap && f.status !== 'inactive' && (
+        <section aria-label="Details still missing" className="mb-4 rounded-xl border border-border bg-card px-4 py-3">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <p className="text-sm font-medium">Details still missing</p>
+            <div className="flex flex-wrap gap-1.5">
+              {GAPS.filter((g) => gaps.data![g] > 0).map((g) => {
+                const on = f.missing === g
+                return (
+                  <button key={g} type="button" aria-pressed={on} onClick={() => change({ missing: on ? '' : g })}
+                    className={cn('inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset transition-colors',
+                      on ? 'bg-primary text-primary-foreground ring-primary' : 'bg-warning-soft text-warning ring-warning/30 hover:bg-warning/20')}>
+                    {GAP_LABEL[g]} <span className="tabular opacity-80">{new Intl.NumberFormat('en-IN').format(gaps.data![g])}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            {f.missing ? `Showing the items with ${gapPhrase(f.missing)}. Tick them (or every one on the page) and press Edit selected to fill it in for all of them at once.` : 'Pick one to list those items, then tick them and fill the detail in for all of them at once.'}
+          </p>
+        </section>
+      )}
+
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="min-w-[14rem] flex-1 sm:max-w-md">
-          <Input type="search" aria-label="Search items" placeholder="Search by code, name or grade" value={f.q} onChange={(e) => change({ q: e.target.value })} leading={<Search />} />
+          <Input type="search" aria-label="Search items" placeholder="Search by code, name, grade or make" value={f.q} onChange={(e) => change({ q: e.target.value })} leading={<Search />} />
         </div>
         <Button variant="outline" aria-expanded={showFilters} onClick={() => setShowFilters((v) => !v)}>
           <SlidersHorizontal /> Filters{chips.length > 0 && <Badge tone="ember" className="ml-1">{chips.length}</Badge>}
         </Button>
+        <span className="tabular ml-auto text-xs text-muted-foreground">{new Intl.NumberFormat('en-IN').format(total)} {total === 1 ? 'item' : 'items'}</span>
       </div>
 
       {showFilters && (
@@ -147,11 +185,14 @@ export default function ItemMasterPage() {
           <Field label="Type" htmlFor="f-type">
             <Select id="f-type" value={f.item_type} placeholder="Any type" onChange={(e) => change({ item_type: e.target.value })} options={(vocab.data?.boq_item_types ?? []).map((v) => ({ value: v, label: v }))} />
           </Field>
-          <Field label="Unit" htmlFor="f-uom" hint="How the item is counted: bags, cum, kg, nos.">
+          <Field label="Unit" htmlFor="f-uom">
             <Select id="f-uom" value={f.uom} placeholder="Any unit" onChange={(e) => change({ uom: e.target.value })} options={(vocab.data?.units ?? []).map((v) => ({ value: v, label: v }))} />
           </Field>
           <Field label="Show" htmlFor="f-status">
             <Select id="f-status" value={f.status} onChange={(e) => change({ status: e.target.value })} options={[{ value: 'active', label: 'Active items' }, { value: 'inactive', label: 'Inactive items' }, { value: 'all', label: 'Active and inactive' }]} />
+          </Field>
+          <Field label="Missing" htmlFor="f-missing">
+            <Select id="f-missing" value={f.missing} placeholder="Anything" onChange={(e) => change({ missing: e.target.value as Gap | '' })} options={GAPS.map((g) => ({ value: g, label: GAP_LABEL[g] }))} />
           </Field>
           {(sites.data?.length ?? 0) > 0 && (
             <Field label="Used at site" htmlFor="f-site">
@@ -173,13 +214,13 @@ export default function ItemMasterPage() {
       )}
 
       {picked.size > 0 && (
-        <div role="region" aria-label="Selected items" className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border bg-primary-soft px-3 py-2 text-sm">
+        <div role="region" aria-label="Selected items" className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary-soft px-3 py-2 text-sm">
           <strong>{picked.size} selected</strong>
           {manage && (
             <>
+              <Button size="sm" onClick={() => setEditingMany(true)}><Pencil /> Edit selected</Button>
               <Button size="sm" variant="outline" loading={bulkToggle.isPending && bulkToggle.variables?.on === true} onClick={() => bulkToggle.mutate({ on: true, confirm: true })}>Activate</Button>
               <Button size="sm" variant="outline" onClick={() => setBulkOff(true)}>Deactivate</Button>
-              <Button size="sm" variant="outline" onClick={() => setMoving(true)}>Change category</Button>
             </>
           )}
           <Button size="sm" variant="outline" asChild><a href={exportUrl(query, ids)}><Download /> Export selected</a></Button>
@@ -196,12 +237,12 @@ export default function ItemMasterPage() {
           <Button className="mt-3" variant="outline" onClick={() => list.refetch()}>Try again</Button>
         </div>
       ) : rows.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-10 text-center">
-          {filtered ? (
+        <div className="rounded-xl border border-dashed p-10 text-center">
+          {filtered || f.kind ? (
             <>
-              <p className="font-medium">No items match these filters.</p>
-              <p className="mt-1 text-sm text-muted-foreground">Try a different search, or take the filters off.</p>
-              <Button className="mt-4" variant="outline" onClick={() => { setPicked(new Set()); setF((s) => clearAll({ ...s, q: '' })) }}>Clear search and filters</Button>
+              <p className="font-medium">No items match.</p>
+              <p className="mt-1 text-sm text-muted-foreground">{f.missing ? `No item here has ${gapPhrase(f.missing)}: nothing left to fill in.` : 'Try a different search, or take the filters off.'}</p>
+              <Button className="mt-4" variant="outline" onClick={() => { setPicked(new Set()); setF((s) => ({ ...clearAll({ ...s, q: '' }), kind: '' })) }}>Show every item</Button>
             </>
           ) : (
             <>
@@ -218,66 +259,74 @@ export default function ItemMasterPage() {
         </div>
       ) : (
         <>
-          <div className="hidden overflow-x-auto rounded-lg border md:block">
-            <table className="w-full text-sm" aria-label="Items">
-              <thead className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <tr>
-                  {manage && (
-                    <th className="w-10 px-3 py-2">
-                      <input type="checkbox" aria-label="Select all items on this page" checked={allPicked} onChange={() => setPicked(allPicked ? new Set() : new Set(rows.map((r) => r.id)))} />
-                    </th>
-                  )}
-                  {COLUMNS.map((c) => (
-                    <th key={c.id} className={`px-3 py-2 ${c.right ? 'text-right' : ''}`} aria-sort={f.sort === c.sort ? (f.direction === 'asc' ? 'ascending' : 'descending') : undefined}>
-                      {c.sort ? (
-                        <button type="button" className="inline-flex items-center gap-1 uppercase" onClick={() => change({ sort: c.sort!, direction: f.sort === c.sort && f.direction === 'asc' ? 'desc' : 'asc' })}>
-                          {c.label}{f.sort === c.sort && (f.direction === 'asc' ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />)}
-                        </button>
-                      ) : c.label}
-                    </th>
-                  ))}
-                  <th className="px-3 py-2 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {rows.map((r) => (
-                  <tr key={r.id} className={r.is_active ? '' : 'bg-muted/20 text-muted-foreground'}>
-                    {manage && <td className="px-3 py-2"><input type="checkbox" aria-label={`Select ${r.item_name}`} checked={picked.has(r.id)} onChange={() => flip(r.id)} /></td>}
-                    <td className="px-3 py-2 font-mono text-[13px]">{r.item_code}</td>
-                    <td className="max-w-sm px-3 py-2">
-                      <button type="button" className="block max-w-full truncate text-left font-medium hover:underline" onClick={() => setDetail(r)}>{r.item_name}</button>
-                      {r.specification && <div className="truncate text-xs text-muted-foreground">{r.specification}</div>}
-                    </td>
-                    <td className="px-3 py-2">{r.item_category || <span className="text-muted-foreground">Not set yet</span>}</td>
-                    <td className="px-3 py-2">{r.units_of_measure}</td>
-                    <td className="px-3 py-2 text-right tabular-nums"><Rate item={r} /></td>
-                    <td className="px-3 py-2 text-right tabular-nums">{stockLabel(r.kind, r.stock, r.units_of_measure)}</td>
-                    <td className="px-3 py-2"><Badge tone={r.is_active ? 'success' : 'neutral'}>{r.is_active ? 'Active' : 'Inactive'}</Badge></td>
-                    <td className="px-3 py-2">{actions(r)}</td>
+          <div className="hidden overflow-hidden rounded-xl border border-border bg-card md:block">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[46rem] table-fixed text-[13.5px]" aria-label="Items">
+                <thead className="bg-surface text-left">
+                  <tr>
+                    {manage && (
+                      <th className="w-10 border-b border-border px-4 py-2.5">
+                        <input type="checkbox" aria-label="Select all items on this page" checked={allPicked} onChange={() => setPicked(allPicked ? new Set() : new Set(rows.map((r) => r.id)))} />
+                      </th>
+                    )}
+                    {COLUMNS.map((c) => (
+                      <th key={c.id} className={cn('whitespace-nowrap border-b border-border px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground', c.right && 'text-right', c.hide, c.width)} aria-sort={f.sort === c.sort ? (f.direction === 'asc' ? 'ascending' : 'descending') : undefined}>
+                        {c.sort ? (
+                          <button type="button" className={cn('inline-flex items-center gap-1 uppercase transition-colors hover:text-foreground', f.sort === c.sort && 'text-foreground')} onClick={() => change({ sort: c.sort!, direction: f.sort === c.sort && f.direction === 'asc' ? 'desc' : 'asc' })}>
+                            {c.label}{f.sort === c.sort && (f.direction === 'asc' ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />)}
+                          </button>
+                        ) : c.label}
+                      </th>
+                    ))}
+                    {manage && <th className="w-20 border-b border-border px-3 py-2.5"><span className="sr-only">Actions</span></th>}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.id} className={cn('border-b border-border transition-colors last:border-b-0 hover:bg-accent/60', !r.is_active && 'text-muted-foreground', picked.has(r.id) && 'bg-primary-soft/60')}>
+                      {manage && <td className="px-4 py-2.5"><input type="checkbox" aria-label={`Select ${r.item_name}`} checked={picked.has(r.id)} onChange={() => flip(r.id)} /></td>}
+                      <td className="truncate px-3 py-2.5">
+                        <div className="truncate font-mono text-[13px]" title={r.item_code}>{r.item_code}</div>
+                        <div className="text-[11px] text-muted-foreground">{r.kind === 'RM' ? 'Material' : 'Work item'}</div>
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <button type="button" className="block max-w-full truncate text-left font-medium hover:text-primary hover:underline" title={r.item_name} onClick={() => setDetail(r)}>{r.item_name}</button>
+                        {sub(r) && <div className="truncate text-xs text-muted-foreground" title={sub(r)}>{sub(r)}</div>}
+                      </td>
+                      <td className="px-3 py-2.5 max-lg:hidden">
+                        {r.item_category ? <div className="truncate" title={[r.item_category, r.item_subcategory].filter(Boolean).join(' › ')}>{r.item_category}{r.item_subcategory && <span className="text-muted-foreground"> › {r.item_subcategory}</span>}</div> : <Missing />}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2.5">{r.units_of_measure}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 tabular max-xl:hidden">{r.item_tax_type || <Missing />}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-right tabular"><Rate item={r} /></td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-right tabular max-2xl:hidden">{r.kind === 'RM' || r.stock !== null ? stockLabel(r.kind, r.stock, r.units_of_measure) : <Missing />}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5"><Badge tone={r.is_active ? 'success' : 'neutral'}>{r.is_active ? 'Active' : 'Inactive'}</Badge></td>
+                      {manage && <td className="px-3 py-2">{actions(r)}</td>}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <ul className="grid gap-3 md:hidden" aria-label="Items">
             {rows.map((r) => (
-              <li key={r.id} className={`rounded-lg border p-3 ${r.is_active ? '' : 'bg-muted/20 text-muted-foreground'}`}>
+              <li key={r.id} className={cn('rounded-xl border border-border bg-card p-3', !r.is_active && 'text-muted-foreground')}>
                 <div className="flex items-start gap-3">
                   {manage && <input className="mt-1" type="checkbox" aria-label={`Select ${r.item_name}`} checked={picked.has(r.id)} onChange={() => flip(r.id)} />}
                   <div className="min-w-0 flex-1">
                     <button type="button" className="block text-left font-medium" onClick={() => setDetail(r)}>{r.item_name}</button>
-                    <div className="font-mono text-xs text-muted-foreground">{r.item_code}{r.specification ? ` · ${r.specification}` : ''}</div>
+                    <div className="truncate font-mono text-xs text-muted-foreground">{r.item_code} · {r.kind === 'RM' ? 'Material' : 'Work item'}{sub(r) ? ` · ${sub(r)}` : ''}</div>
                   </div>
                   <Badge tone={r.is_active ? 'success' : 'neutral'}>{r.is_active ? 'Active' : 'Inactive'}</Badge>
                 </div>
                 <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
-                  <div><dt className="text-xs text-muted-foreground">Category</dt><dd>{r.item_category || <span className="text-muted-foreground">Not set yet</span>}</dd></div>
-                  <div><dt className="text-xs text-muted-foreground">Unit</dt><dd>{r.units_of_measure}</dd></div>
+                  <div><dt className="text-xs text-muted-foreground">Category</dt><dd>{r.item_category || <Missing />}</dd></div>
+                  <div><dt className="text-xs text-muted-foreground">Unit · GST</dt><dd>{r.units_of_measure} · {r.item_tax_type || <Missing />}</dd></div>
                   <div><dt className="text-xs text-muted-foreground">Purchase rate</dt><dd><Rate item={r} /></dd></div>
-                  <div><dt className="text-xs text-muted-foreground">In stock</dt><dd>{stockLabel(r.kind, r.stock, r.units_of_measure)}</dd></div>
+                  <div><dt className="text-xs text-muted-foreground">In stock</dt><dd>{r.kind === 'RM' || r.stock !== null ? stockLabel(r.kind, r.stock, r.units_of_measure) : <Missing />}</dd></div>
                 </dl>
-                <div className="mt-2">{actions(r)}</div>
+                {manage && <div className="mt-2">{actions(r)}</div>}
               </li>
             ))}
           </ul>
@@ -286,11 +335,11 @@ export default function ItemMasterPage() {
 
       {rows.length > 0 && (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
-          <span>{total} item{total === 1 ? '' : 's'}</span>
+          <span className="tabular">{(f.page - 1) * f.page_size + 1}-{Math.min(total, f.page * f.page_size)} of {new Intl.NumberFormat('en-IN').format(total)}</span>
           <div className="flex items-center gap-2">
-            <Select aria-label="Items per page" value={f.page_size} onChange={(e) => change({ page_size: Number(e.target.value) })} options={[10, 25, 50, 100].map((n) => ({ value: n, label: `${n} per page` }))} />
+            <Select aria-label="Items per page" value={f.page_size} onChange={(e) => change({ page_size: Number(e.target.value) })} options={[10, 25, 50, 100, 200].map((n) => ({ value: n, label: `${n} per page` }))} />
             <Button size="sm" variant="outline" disabled={f.page <= 1} onClick={() => go(f.page - 1)}>Previous</Button>
-            <span>Page {f.page} of {pages}</span>
+            <span className="tabular">Page {f.page} of {pages}</span>
             <Button size="sm" variant="outline" disabled={f.page >= pages} onClick={() => go(f.page + 1)}>Next</Button>
           </div>
         </div>
@@ -302,7 +351,7 @@ export default function ItemMasterPage() {
         onCopy={(i) => { setDetail(null); setForm({ item: i, mode: 'duplicate' }) }} onToggle={(i) => setToggling(i)} />
       <ImportItemsModal open={importing} onOpenChange={setImporting} vocab={vocab.data} />
       <CategoriesModal open={managing} onOpenChange={setManaging} />
-      <MoveCategory open={moving} onOpenChange={setMoving} ids={ids} onDone={() => setPicked(new Set())} />
+      <BulkEditModal open={editingMany} onOpenChange={setEditingMany} ids={ids} focus={f.missing} vocab={vocab.data} onDone={() => setPicked(new Set())} />
       <ConfirmDialog
         open={!!toggling}
         onOpenChange={(o) => !o && setToggling(null)}
@@ -337,29 +386,11 @@ export default function ItemMasterPage() {
 /** The purchase rate, or the last rate the item was bought or sold at (said so), or a dash. */
 function Rate({ item }: { item: MasterItem }) {
   const rate = purchaseRateOf(item)
-  if (!rate) return <span className="text-muted-foreground">-</span>
+  if (!rate) return <Missing />
   return (
     <span>
       {formatINR(rate.value)}
       {rate.lastUsed && <span className="block text-[11px] text-muted-foreground">last rate used</span>}
     </span>
-  )
-}
-
-/** Move the ticked items to another category in one go. */
-function MoveCategory({ open, onOpenChange, ids, onDone }: { open: boolean; onOpenChange: (o: boolean) => void; ids: number[]; onDone: () => void }) {
-  const cats = useCategories()
-  const [cat, setCat] = useState('')
-  const [sub, setSub] = useState('')
-  const subs = cats.data?.find((c) => c.name === cat)?.subcategories ?? []
-  const move = useAction(() => bulkCategory(ids, cat, sub), { invalidate: [masterKeys.all, itemKeys.all], onSuccess: () => { onDone(); onOpenChange(false) } })
-  return (
-    <Modal open={open} onOpenChange={onOpenChange} title={`Change category of ${ids.length} item${ids.length === 1 ? '' : 's'}`} size="sm"
-      footer={<><Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button><Button loading={move.isPending} onClick={() => move.mutate()}>Move</Button></>}>
-      <div className="grid gap-3">
-        <Field label="New category" htmlFor="mv-cat"><Select id="mv-cat" value={cat} placeholder="No category" onChange={(e) => { setCat(e.target.value); setSub('') }} options={(cats.data ?? []).map((c) => ({ value: c.name, label: c.name }))} /></Field>
-        <Field label="New subcategory" htmlFor="mv-sub"><Select id="mv-sub" value={sub} disabled={!subs.length} placeholder={subs.length ? 'No subcategory' : 'None set up'} onChange={(e) => setSub(e.target.value)} options={subs.map((s) => ({ value: s.name, label: s.name }))} /></Field>
-      </div>
-    </Modal>
   )
 }

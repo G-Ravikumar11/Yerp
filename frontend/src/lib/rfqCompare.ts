@@ -1,58 +1,10 @@
-import type { RfqLine, RfqSupplier, Statement } from '@/api/rfq'
-
-/** More columns than this and a buyer stops reading across and starts scrolling. */
-const MAX_COMPARE = 6
-/** A rate this far over the lowest in its row is worth a second look. */
-const OUTLIER_OVER = 0.25
+import type { RfqInvite, RfqLine, RfqRow, RfqSupplier, Statement } from '@/api/rfq'
 
 const key = (name: string) => name.trim().toLowerCase()
 
 /** Cheapest landed first among those who quoted every line, then the part-quotes, most lines first. */
 export function byLanded(sups: RfqSupplier[]): RfqSupplier[] {
   return [...sups].sort((a, b) => Number(b.complete) - Number(a.complete) || (a.complete ? 0 : b.lines_quoted - a.lines_quoted) || a.landed - b.landed)
-}
-
-/** Everybody when there are six or fewer; otherwise the six cheapest landed. */
-export function defaultCompare(sups: RfqSupplier[]): string[] {
-  return byLanded(sups).slice(0, MAX_COMPARE).map((s) => s.supplier_name)
-}
-
-/** Shortest lead time first; a quote that gave no delivery days goes last, and ties go to the cheaper landed. */
-export function fastest(sups: RfqSupplier[], n = 3): string[] {
-  const days = (s: RfqSupplier) => s.delivery_days || Number.POSITIVE_INFINITY
-  return [...sups].sort((a, b) => days(a) - days(b) || a.landed - b.landed).slice(0, n).map((s) => s.supplier_name)
-}
-
-/**
- * `compare=A,B,C` back into the suppliers' own names. A name may itself hold a comma ("Sharma, Pune"), so the
- * longest run of pieces that makes a known name wins. Unknown names are dropped, repeats ignored, six at most.
- */
-export function parseCompare(raw: string | null, names: string[]): string[] {
-  if (!raw) return []
-  const known = new Map(names.map((n) => [key(n), n]))
-  const parts = raw.split(',')
-  const out: string[] = []
-  for (let i = 0; i < parts.length; ) {
-    let j = parts.length
-    for (; j > i; j--) if (known.has(key(parts.slice(i, j).join(',')))) break
-    if (j === i) { i++; continue }
-    const name = known.get(key(parts.slice(i, j).join(',')))!
-    if (!out.includes(name)) out.push(name)
-    i = j
-  }
-  return out.slice(0, MAX_COMPARE)
-}
-
-export type Toggle = { ok: true; next: string[] } | { ok: false; reason: 'max' | 'min' }
-
-/** Add or take away one supplier, keeping between two (when there are two to compare) and six. */
-export function toggleVendor(selected: string[], name: string, available: number): Toggle {
-  if (selected.includes(name)) {
-    if (selected.length <= Math.min(2, available)) return { ok: false, reason: 'min' }
-    return { ok: true, next: selected.filter((n) => n !== name) }
-  }
-  if (selected.length >= MAX_COMPARE) return { ok: false, reason: 'max' }
-  return { ok: true, next: [...selected, name] }
 }
 
 export interface Comparison {
@@ -99,11 +51,66 @@ export function compare(d: Statement, selected: string[]): Comparison {
   }
 }
 
-/** best: the lowest in its row among those compared. high: more than 25% over it. */
-export function cellTone(rate: number, low: number | undefined): 'best' | 'high' | '' {
-  if (low === undefined) return ''
-  if (rate <= low + 0.0001) return 'best'
-  return low > 0 && rate > low * (1 + OUTLIER_OVER) ? 'high' : ''
+/** One purchase order an award would make: who, how many items, and what it comes to with GST and transport. */
+export interface PlannedOrder { supplier_name: string; items: number; basic: number; tax: number; freight: number; total: number }
+
+const round2 = (n: number) => Math.round(n * 100) / 100
+
+/**
+ * The draft orders an award makes, worked out the way the server makes them: one per supplier, at the rates
+ * quoted, and a supplier's transport charge carried in proportion to the share of his quote he is given.
+ */
+export function plannedOrders(d: Statement, choice: Map<number, string>): PlannedOrder[] {
+  const quotes = new Map(d.suppliers.map((s) => [key(s.supplier_name), s]))
+  const by = new Map<string, PlannedOrder>()
+  for (const l of d.lines) {
+    const name = choice.get(l.rfq_line_id)
+    const o = name ? l.offers.find((x) => key(x.supplier_name) === key(name)) : undefined
+    if (!o) continue
+    const p = by.get(key(o.supplier_name)) ?? { supplier_name: o.supplier_name, items: 0, basic: 0, tax: 0, freight: 0, total: 0 }
+    p.items += 1
+    p.basic += o.amount
+    p.tax += (o.amount * (o.tax_percent || 0)) / 100
+    by.set(key(o.supplier_name), p)
+  }
+  return [...by.values()].map((p) => {
+    const q = quotes.get(key(p.supplier_name))
+    const freight = q && q.basic ? q.freight * (p.basic / q.basic) : 0
+    return { ...p, basic: round2(p.basic), tax: round2(p.tax), freight: round2(freight), total: round2(p.basic + p.tax + freight) }
+  })
+}
+
+/** Every line to one supplier. */
+export const allTo = (d: Statement, supplier: string) => new Map(d.lines.map((l) => [l.rfq_line_id, supplier]))
+
+/** Lines that would go to somebody other than the lowest quote for them: these need a reason on the file. */
+export function passedOver(d: Statement, choice: Map<number, string>): RfqLine[] {
+  return d.lines.filter((l) => {
+    const o = l.offers.find((x) => key(x.supplier_name) === key(choice.get(l.rfq_line_id) ?? ''))
+    return !!o && o.rate > l.lowest_rate + 0.0001
+  })
+}
+
+/** A supplier on this enquiry: asked through a link, quoted, or both. */
+export interface SupplierRow { name: string; quote: RfqSupplier | null; invite: RfqInvite | null }
+
+/** Everyone on the enquiry once: those who quoted, cheapest first, then those still to answer, in the order asked. */
+export function supplierRows(d: Statement): SupplierRow[] {
+  const invites = new Map((d.invites ?? []).map((i) => [key(i.supplier_name), i]))
+  const quoted = byLanded(d.suppliers).map((q) => ({ name: q.supplier_name, quote: q, invite: invites.get(key(q.supplier_name)) ?? null }))
+  const seen = new Set(quoted.map((r) => key(r.name)))
+  return [...quoted, ...(d.invites ?? []).filter((i) => !seen.has(key(i.supplier_name))).map((i) => ({ name: i.supplier_name, quote: null, invite: i }))]
+}
+
+export type StageKey = 'ask' | 'waiting' | 'compare' | 'awarded' | 'cancelled'
+
+/** Where an enquiry has got, in a word or two, and what it waits on. */
+export function stage(r: Pick<RfqRow, 'status' | 'quotes'> & { asked?: number }): { key: StageKey; label: string; tone: 'neutral' | 'warning' | 'info' | 'success' | 'ember' } {
+  if (r.status === 'AWARDED') return { key: 'awarded', label: 'Awarded', tone: 'success' }
+  if (r.status !== 'OPEN') return { key: 'cancelled', label: 'Cancelled', tone: 'neutral' }
+  if (r.quotes > 0) return { key: 'compare', label: 'Ready to compare', tone: 'ember' }
+  if ((r.asked ?? 0) > 0) return { key: 'waiting', label: 'Waiting for quotes', tone: 'info' }
+  return { key: 'ask', label: 'Ask suppliers', tone: 'warning' }
 }
 
 export type DocFormat = 'pdf' | 'xlsx'

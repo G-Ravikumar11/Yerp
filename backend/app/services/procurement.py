@@ -504,6 +504,12 @@ def comparative_statement(db, rfq):
                                if low and low["rate"] else 0.0),
             "awarded_supplier": l.awarded_supplier or "", "awarded_rate": unit_rate(l.awarded_rate),
             "po_id": l.po_id})
+    # The order each awarded line went on, by number: what the buyer looks for next.
+    po_ids = {r["po_id"] for r in rows if r["po_id"]}
+    numbers = dict(db.query(models.DBPurchaseOrder.id, models.DBPurchaseOrder.number).filter(
+        models.DBPurchaseOrder.id.in_(po_ids)).all()) if po_ids else {}
+    for r in rows:
+        r["po_number"] = numbers.get(r["po_id"], "")
     complete = [s for s in suppliers if s["complete"]]
     best = min(complete, key=lambda s: s["landed"]) if complete else None
     per_line_total = money(sum(r["lowest_rate"] * r["qty"] for r in rows))
@@ -562,10 +568,83 @@ def rfq_dict(db, r):
             "quotes": db.query(models.DBRfqQuote).filter(models.DBRfqQuote.rfq_id == r.id).count()}
 
 
-def _make_rfq(db, client, actor_name, title, job_id, needed_by, notes, lines, work_order_id=None):
-    lines = [l for l in lines if (l["description"] or "").strip() and (l["qty"] or 0) > 0]
+def rfq_list_rows(db, client_id, rfqs):
+    """The enquiries for the list, each with how far it has got: suppliers asked and answered, and the best full
+    quote so far (landed at site, worked out exactly as the comparative statement does). A handful of queries for
+    the whole list, not several per enquiry."""
+    ids = [r.id for r in rfqs]
+    if not ids:
+        return []
+    job_ids = {r.job_id for r in rfqs if r.job_id}
+    jobs = {j.id: ("%s %s" % (j.number, j.name)).strip() for j in db.query(models.DBJob).filter(
+        models.DBJob.client_id == client_id, models.DBJob.id.in_(job_ids)).all()} if job_ids else {}
+    lines = {}
+    for l in db.query(models.DBRfqLine.id, models.DBRfqLine.rfq_id, models.DBRfqLine.qty,
+                      models.DBRfqLine.awarded_supplier, models.DBRfqLine.po_id).filter(models.DBRfqLine.rfq_id.in_(ids)).all():
+        lines.setdefault(l.rfq_id, []).append(l)
+    quotes = {}
+    for q in db.query(models.DBRfqQuote).filter(models.DBRfqQuote.rfq_id.in_(ids)).all():
+        quotes.setdefault(q.rfq_id, []).append(q)
+    rates = {}
+    quote_ids = [q.id for qs in quotes.values() for q in qs]
+    if quote_ids:
+        for ql in db.query(models.DBRfqQuoteLine.quote_id, models.DBRfqQuoteLine.rfq_line_id, models.DBRfqQuoteLine.rate,
+                           models.DBRfqQuoteLine.tax_percent).filter(models.DBRfqQuoteLine.quote_id.in_(quote_ids)).all():
+            rates[(ql.quote_id, ql.rfq_line_id)] = ql
+    asked = {}
+    for inv in db.query(models.DBRfqInvite.rfq_id, models.DBRfqInvite.quote_id, models.DBRfqInvite.document_id).filter(
+            models.DBRfqInvite.rfq_id.in_(ids)).all():
+        a = asked.setdefault(inv.rfq_id, {"asked": 0, "waiting": 0})
+        a["asked"] += 1
+        if not inv.quote_id:
+            a["waiting"] += 1
+    out = []
+    for r in rfqs:
+        mine = lines.get(r.id, [])
+        best = None
+        for q in quotes.get(r.id, []):
+            basic = tax = 0.0
+            quoted = 0
+            for l in mine:
+                ql = rates.get((q.id, l.id))
+                if ql and ql.rate > 0:
+                    amt = (l.qty or 0) * ql.rate
+                    basic += amt
+                    tax += amt * (ql.tax_percent or 0) / 100.0
+                    quoted += 1
+            landed = money(basic + tax + (q.freight or 0))
+            if mine and quoted == len(mine) and (best is None or landed < best["landed"]):
+                best = {"supplier_name": q.supplier_name, "landed": landed}
+        awarded = sorted({l.awarded_supplier for l in mine if l.awarded_supplier})
+        a = asked.get(r.id, {"asked": 0, "waiting": 0})
+        out.append({"id": r.id, "number": r.number, "title": r.title or "", "job_id": r.job_id,
+                    "project": jobs.get(r.job_id, ""), "work_order_id": r.work_order_id, "needed_by": r.needed_by or "",
+                    "status": r.status, "notes": r.notes or "", "award_reason": r.award_reason or "",
+                    "created_by_name": r.created_by_name or "", "awarded_at": r.awarded_at or "",
+                    "created_at": r.created_at or "", "lines": len(mine), "quotes": len(quotes.get(r.id, [])),
+                    "asked": a["asked"], "waiting": a["waiting"], "best": best, "awarded_to": awarded,
+                    "orders": len({l.po_id for l in mine if l.po_id})})
+    return out
+
+
+def rfq_line_rows(lines):
+    """Lines as sent: those with something named and a quantity, at most two hundred."""
+    lines = [l for l in lines if (l.get("description") or "").strip() and (l.get("qty") or 0) > 0]
     if not lines:
-        raise HTTPException(400, "An enquiry needs at least one line with a quantity.")
+        raise HTTPException(400, "An enquiry needs at least one item with a quantity.")
+    return lines[:200]
+
+
+def add_rfq_lines(db, rfq_id, lines):
+    for i, l in enumerate(lines):
+        db.add(models.DBRfqLine(rfq_id=rfq_id, item_code=(l.get("item_code") or "").strip(),
+                                description=l["description"].strip(),
+                                uom=canonical_unit(l.get("uom")) or (l.get("uom") or ""),
+                                qty=money(l["qty"]), display_order=i))
+
+
+def _make_rfq(db, client, actor_name, title, job_id, needed_by, notes, lines, work_order_id=None):
+    lines = rfq_line_rows(lines)
     if job_id:
         job_or_404(db, client.id, job_id)
     r = models.DBRfq(client_id=client.id, number=next_rfq_number(db, client.id),
@@ -574,11 +653,7 @@ def _make_rfq(db, client, actor_name, title, job_id, needed_by, notes, lines, wo
                      status="OPEN", created_by_name=actor_name)
     db.add(r)
     db.flush()
-    for i, l in enumerate(lines[:200]):
-        db.add(models.DBRfqLine(rfq_id=r.id, item_code=(l.get("item_code") or "").strip(),
-                                description=l["description"].strip(),
-                                uom=canonical_unit(l.get("uom")) or (l.get("uom") or ""),
-                                qty=money(l["qty"]), display_order=i))
+    add_rfq_lines(db, r.id, lines)
     return r
 
 

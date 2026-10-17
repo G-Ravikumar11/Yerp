@@ -1,4 +1,4 @@
-import type { ItemFilters } from '@/api/itemMaster'
+import type { Gap, ItemFilters } from '@/api/itemMaster'
 
 /** What the list shows when nobody has chosen anything: active items only, by code. */
 export const DEFAULT_FILTERS: ItemFilters = {
@@ -9,6 +9,8 @@ export const DEFAULT_FILTERS: ItemFilters = {
   uom: '',
   status: 'active',
   site_id: '',
+  kind: '',
+  missing: '',
   sort: 'code',
   direction: 'asc',
   page: 1,
@@ -22,7 +24,12 @@ export interface Chip {
 
 const STATUS_LABEL: Record<string, string> = { active: 'Active items', inactive: 'Inactive items', all: 'Active and inactive' }
 
-/** One removable chip for every filter that is not at its default. The search box is not a chip: it is already on screen. */
+/** Each gap in words, as a person would say what is missing. */
+export const GAP_LABEL: Record<Gap, string> = { category: 'No category', gst: 'No GST rate', hsn: 'No HSN / SAC code', rate: 'No purchase rate', make: 'No make' }
+/** The same, inside a sentence: "the items with no GST rate". */
+export const gapPhrase = (g: Gap) => GAP_LABEL[g].charAt(0).toLowerCase() + GAP_LABEL[g].slice(1)
+
+/** One removable chip for every filter that is not at its default. The search box and the kind are not chips: they are already on screen. */
 export function buildChips(f: ItemFilters, siteName: (id: string) => string = (id) => id): Chip[] {
   const chips: Chip[] = []
   if (f.category) chips.push({ key: 'category', label: f.category === NO_CATEGORY ? 'No category yet' : `Category: ${f.category}` })
@@ -31,6 +38,7 @@ export function buildChips(f: ItemFilters, siteName: (id: string) => string = (i
   if (f.uom) chips.push({ key: 'uom', label: `Unit: ${f.uom}` })
   if (f.status !== DEFAULT_FILTERS.status) chips.push({ key: 'status', label: STATUS_LABEL[f.status] ?? f.status })
   if (f.site_id) chips.push({ key: 'site_id', label: `Site: ${siteName(f.site_id)}` })
+  if (f.missing) chips.push({ key: 'missing', label: GAP_LABEL[f.missing] })
   return chips
 }
 
@@ -41,9 +49,9 @@ export function clearFilter(f: ItemFilters, key: keyof ItemFilters): ItemFilters
   return next
 }
 
-/** Everything back to the default, but the way the list is sorted and paged is how the person likes it, not a filter. */
+/** Everything back to the default, but the way the list is sorted and paged, and which kind is shown, is how the person likes it, not a filter. */
 export function clearAll(f: ItemFilters): ItemFilters {
-  return { ...DEFAULT_FILTERS, sort: f.sort, direction: f.direction, page_size: f.page_size }
+  return { ...DEFAULT_FILTERS, sort: f.sort, direction: f.direction, page_size: f.page_size, kind: f.kind }
 }
 
 /** True when anything narrows the list, search included: the difference between "no items yet" and "nothing matches". */
@@ -126,6 +134,8 @@ export interface ItemForm {
   description: string
   remarks: string
   is_active: boolean
+  make: string
+  segment: string
 }
 
 export type ItemErrors = Partial<Record<keyof ItemForm, string>>

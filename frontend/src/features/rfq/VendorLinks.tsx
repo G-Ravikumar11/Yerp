@@ -1,19 +1,10 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Check, Copy, ExternalLink, FileText, Link2, Mail, MessageCircle, Trash2, UserPlus } from 'lucide-react'
-import { Badge, Button, Field, Input, Modal } from '@/components/ui'
-import { emailLink, inviteSupplier, inviteUrl, rfqKeys, useSupplierNames, whatsappLink, withdrawInvite, type RfqInvite, type Statement } from '@/api/rfq'
+import { Check, Copy, Link2, Mail, MessageCircle, UserPlus } from 'lucide-react'
+import { Button, Field, Input, Modal } from '@/components/ui'
+import { emailLink, inviteSupplier, inviteUrl, rfqKeys, useSupplierNames, whatsappLink, type RfqInvite, type Statement } from '@/api/rfq'
 import { ApiError } from '@/lib/api'
-import { formatDate } from '@/lib/format'
 import { useSession } from '@/lib/session'
-import { toast } from '@/stores/toast'
-
-const STATUS: Record<RfqInvite['status'], { label: string; tone: 'neutral' | 'info' | 'success' | 'warning' }> = {
-  sent: { label: 'Link sent, not opened', tone: 'neutral' },
-  opened: { label: 'Opened, no quote yet', tone: 'info' },
-  quoted: { label: 'Quote received', tone: 'success' },
-  document: { label: 'Sent a file: add the rates', tone: 'warning' },
-}
 
 /** Send the link: WhatsApp or email with the message written, or copy it. Nothing is sent until the buyer sends it. */
 function SendButtons({ inv, statement }: { inv: RfqInvite; statement: Statement }) {
@@ -105,46 +96,19 @@ function AskForm({ statement, onClose }: { statement: Statement; onClose: () => 
   )
 }
 
-/** Who has been asked through a link, and how far each has got: sent, opened, quoted, or sent a file to be read. */
-export function SupplierLinks({ statement, onAddFromFile }: { statement: Statement; onAddFromFile: (supplier: string) => void }) {
-  const qc = useQueryClient()
-  const invites = statement.invites ?? []
-  const [open, setOpen] = useState<number | null>(null)
-  if (!invites.length) return null
-  const withdraw = async (inv: RfqInvite) => {
-    try {
-      const out = await withdrawInvite(statement.rfq.id, inv.id)
-      toast.success(out.message)
-      await qc.invalidateQueries({ queryKey: rfqKeys.all })
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : 'Could not take the link back.')
-    }
-  }
+/** A link already made, to send again: WhatsApp or email with the message written, or copied. */
+export function SendLinkModal({ invite, statement, onClose }: { invite: RfqInvite | null; statement: Statement; onClose: () => void }) {
   return (
-    <div className="border-t border-border px-5 py-3">
-      <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Asked by link</h3>
-      <ul className="grid gap-2">
-        {invites.map((inv) => {
-          const s = STATUS[inv.status]
-          return (
-            <li key={inv.id} className="rounded-lg bg-surface/60 px-3 py-2 text-sm">
-              <div className="flex flex-wrap items-center gap-2">
-                <strong className="mr-1">{inv.supplier_name}</strong>
-                <Badge tone={s.tone} dot>{s.label}</Badge>
-                {inv.submitted_at && <span className="text-xs text-muted-foreground">sent {formatDate(inv.submitted_at.slice(0, 10))}</span>}
-                <div className="ml-auto flex flex-wrap gap-1.5">
-                  {inv.document && <Button size="sm" variant="outline" asChild><a href={`/api/files/${inv.document.id}`} target="_blank" rel="noopener"><FileText /> Their file</a></Button>}
-                  {inv.status === 'document' && <Button size="sm" onClick={() => onAddFromFile(inv.supplier_name)}>Add the rates</Button>}
-                  {statement.rfq.status === 'OPEN' && inv.status !== 'quoted' && <Button size="sm" variant="ghost" onClick={() => setOpen(open === inv.id ? null : inv.id)}><ExternalLink /> Send again</Button>}
-                  {statement.rfq.status === 'OPEN' && <Button size="icon-sm" variant="ghost" aria-label={`Take back the link for ${inv.supplier_name}`} title="Take the link back: it stops working" onClick={() => void withdraw(inv)}><Trash2 /></Button>}
-                </div>
-              </div>
-              {inv.message && <p className="mt-1 text-[13px] text-muted-foreground">"{inv.message}"</p>}
-              {open === inv.id && <div className="mt-2"><SendButtons inv={inv} statement={statement} /></div>}
-            </li>
-          )
-        })}
-      </ul>
-    </div>
+    <Modal open={!!invite} onOpenChange={(o) => !o && onClose()} title={invite ? `Send the link to ${invite.supplier_name}` : ''}
+      description="It opens the items and quantities of this enquiry, and nothing else. Nothing is sent until you send it.">
+      {invite && (
+        <div className="grid gap-4">
+          <p className="break-all rounded-lg bg-surface px-3 py-2 font-mono text-xs text-muted-foreground">{inviteUrl(invite)}</p>
+          <SendButtons inv={invite} statement={statement} />
+          {!invite.phone && <p className="text-xs text-muted-foreground">No phone number saved: WhatsApp will ask you to choose the chat.</p>}
+          <div className="flex justify-end border-t border-border pt-4"><Button onClick={onClose}>Done</Button></div>
+        </div>
+      )}
+    </Modal>
   )
 }

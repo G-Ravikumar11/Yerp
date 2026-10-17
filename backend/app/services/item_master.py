@@ -14,6 +14,30 @@ from app.core.units import BOQ_ITEM_TYPES, CATEGORY_BY_KIND, ITEM_KINDS, UNITS_O
 from app.services.boq import BOQ_ITEM_CODE
 from app.services.items import issue_item_code
 
+# What an item can be missing, and how to find the items missing it. A work item is not bought, so it is never
+# counted as missing a purchase rate or a make.
+GAPS = ("category", "gst", "hsn", "rate", "make")
+
+
+def _blank(column):
+    return or_(column == "", column.is_(None))
+
+
+def gap_filter(query, gap):
+    if gap == "category":
+        return query.filter(_blank(models.DBItem.item_category))
+    if gap == "gst":
+        return query.filter(_blank(models.DBItem.item_tax_type))
+    if gap == "hsn":
+        return query.filter(_blank(models.DBItem.hsn_code))
+    if gap == "rate":
+        return query.filter(models.DBItem.kind == "RM", or_(models.DBItem.purchase_rate.is_(None), models.DBItem.purchase_rate <= 0),
+                            or_(models.DBItem.last_rate.is_(None), models.DBItem.last_rate <= 0))
+    if gap == "make":
+        return query.filter(models.DBItem.kind == "RM", _blank(models.DBItem.make))
+    return query
+
+
 # Offered the first time a business opens the item master; after that the business keeps its own list.
 DEFAULT_CATEGORIES = (
     "Cement", "Steel & Reinforcement", "Sand & Aggregate", "Bricks & Blocks", "Concrete (PCC / RCC)", "Excavation & Earthwork",
@@ -101,10 +125,13 @@ def _fields(db, client_id, body):
     if itype not in BOQ_ITEM_TYPES:
         raise HTTPException(400, "Type must be one of: " + ", ".join(BOQ_ITEM_TYPES))
     category, subcategory = check_category(db, client_id, body.item_category, body.item_subcategory)
-    out = {"item_name": name[:200], "description": (body.description or "").strip() or name, "units_of_measure": unit,
+    # A name pasted from a long schedule is cut at a word, never through one; the whole text stays as the description.
+    short = name if len(name) <= 200 else name[:200].rsplit(" ", 1)[0].rstrip(" ,.-/")
+    out = {"item_name": short, "description": (body.description or "").strip() or name, "units_of_measure": unit,
            "item_type": itype, "item_category": category, "item_subcategory": subcategory,
            "specification": (body.specification or "").strip()[:120], "hsn_code": (body.hsn_code or "").strip()[:20],
-           "preferred_supplier": (body.preferred_supplier or "").strip()[:120], "remarks": (body.remarks or "").strip()}
+           "preferred_supplier": (body.preferred_supplier or "").strip()[:120], "remarks": (body.remarks or "").strip(),
+           "make": re.sub(r"\s+", " ", body.make or "").strip()[:80], "segment": re.sub(r"\s+", " ", body.segment or "").strip()[:80]}
     for field, label in (("purchase_rate", "Purchase rate"), ("selling_rate", "Selling rate")):
         value = check_rate(getattr(body, field), label)
         if value is not None:
@@ -197,12 +224,79 @@ def create_master_item(db, client_id, body, who, taken=None):
     return item
 
 
+def set_kind(item, kind):
+    """Material or work item. Imported items often came in as the wrong one, and then could not be picked where they
+    belong: a material on a purchase order, a work item on a BOQ. The code and everything that uses it stay as they are."""
+    kind = (kind or "").upper()
+    if kind not in ITEM_KINDS:
+        raise HTTPException(400, "kind must be RM or FG")
+    item.kind, item.category, item.sub_category = kind, CATEGORY_BY_KIND[kind], kind
+
+
 def update_master_item(db, item, body, who):
     """Change an item's details. Its code is never changed here: orders, BOQ lines and bills point at it."""
+    # Material or work item changes only when asked for in so many words, and only while nothing uses the item yet.
+    turning = "kind" in body.model_fields_set and (body.kind or "").upper() != item.kind
+    if turning:
+        refuse_kind_change_in_use(db, item.client_id, [item])
     for key, value in _fields(db, item.client_id, body).items():
         setattr(item, key, value)
+    if turning:
+        set_kind(item, body.kind)
     item.updated_by_name, item.updated_at = who, now()
     return item
+
+
+def refuse_kind_change_in_use(db, client_id, items):
+    """Once a BOQ, order or the store carries an item, what it is stays: those documents were made for that kind."""
+    from app.services.item_usage import used_codes
+    busy = used_codes(db, client_id, [i.item_code for i in items])
+    if not busy:
+        return
+    if len(items) == 1:
+        raise HTTPException(409, "'%s' is already used on a BOQ, an order or in the store, so whether it is a material or a "
+                                 "work item cannot change now." % items[0].item_name)
+    raise HTTPException(409, "%d of these items are already used on BOQs, orders or in the store, so whether they are materials "
+                             "or work items cannot change now. Untick them and try again." % len(busy))
+
+
+def bulk_update(db, client_id, items, body, who):
+    """The same change on several items: only the fields given are touched, each checked as a single edit would be.
+    All or none - a refusal comes before anything is changed."""
+    out = {}
+    if body.kind is not None:
+        if body.kind.upper() not in ITEM_KINDS:
+            raise HTTPException(400, "kind must be RM or FG")
+        out["kind"] = body.kind.upper()
+    if body.item_category is not None or body.item_subcategory is not None:
+        out["item_category"], out["item_subcategory"] = check_category(db, client_id, body.item_category, body.item_subcategory)
+    if body.item_type is not None:
+        if body.item_type not in BOQ_ITEM_TYPES:
+            raise HTTPException(400, "Type must be one of: " + ", ".join(BOQ_ITEM_TYPES))
+        out["item_type"] = body.item_type
+    if body.units_of_measure is not None:
+        unit = canonical_unit(body.units_of_measure, default="")
+        if not unit:
+            raise HTTPException(400, "%s is not a unit this app knows. Use one of: %s" % (body.units_of_measure, ", ".join(UNITS_OF_MEASURE)))
+        out["units_of_measure"] = unit
+    if body.gst_percent is not None:
+        out["item_tax_type"] = gst_text(body.gst_percent)
+    if body.hsn_code is not None:
+        out["hsn_code"] = body.hsn_code.strip()[:20]
+    if body.make is not None:
+        out["make"] = re.sub(r"\s+", " ", body.make).strip()[:80]
+    if not out:
+        raise HTTPException(422, "Choose at least one thing to change.")
+    if "kind" in out:
+        refuse_kind_change_in_use(db, client_id, [i for i in items if i.kind != out["kind"]])
+    for item in items:
+        for key, value in out.items():
+            if key == "kind":
+                set_kind(item, value)
+            else:
+                setattr(item, key, value)
+        item.updated_by_name, item.updated_at = who, now()
+    return out
 
 
 def default_rate(item):
@@ -242,6 +336,7 @@ def item_dict(item, site_count=0, stock=None):
             "default_rate": default_rate(item), "hsn_code": item.hsn_code or "", "item_tax_type": item.item_tax_type or "",
             "preferred_supplier": item.preferred_supplier or "", "reorder_level": money(item.reorder_level),
             "remarks": item.remarks or "", "is_active": item.is_active is not False, "sites": site_count,
+            "make": item.make or "", "segment": item.segment or "",
             "stock": money(stock) if stock is not None else None,        # None: the store holds no record of it
             "created_by": item.created_by_name or "", "updated_by": item.updated_by_name or "",
             "created_at": item.created_at or "", "updated_at": item.updated_at or ""}

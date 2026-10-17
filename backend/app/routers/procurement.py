@@ -30,6 +30,7 @@ from app.services.crm import norm_name, supplier_dict
 from app.services.procurement import (
     _apply_supplier,
     _make_rfq,
+    add_rfq_lines,
     _rfq_lines,
     apply_order_fields,
     billed_against_po,
@@ -47,9 +48,13 @@ from app.services.procurement import (
     purchase_order_to_dict,
     recost_grn,
     rfq_dict,
+    rfq_line_rows,
+    rfq_list_rows,
     rfq_or_404,
     supplier_payment_days,
 )
+from app.core.units import canonical_unit
+from app.services.projects import job_or_404
 from app.services.stores import material_required
 from app.services.subcontract_orders import work_order_or_404
 
@@ -745,11 +750,12 @@ def adopt_suppliers(request: Request, body: dict = None, db: Session = Depends(g
 @router.get("/api/rfqs")
 def list_rfqs(request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
-    rows = [rfq_dict(db, r) for r in db.query(models.DBRfq).filter(
-        models.DBRfq.client_id == client.id).order_by(models.DBRfq.id.desc()).limit(300).all()]
+    rows = rfq_list_rows(db, client.id, db.query(models.DBRfq).filter(
+        models.DBRfq.client_id == client.id).order_by(models.DBRfq.id.desc()).limit(300).all())
     return {"rfqs": rows, "summary": {
         "open": len([r for r in rows if r["status"] == "OPEN"]),
         "awarded": len([r for r in rows if r["status"] == "AWARDED"]),
+        "cancelled": len([r for r in rows if r["status"] == "CANCELLED"]),
         "waiting_for_quotes": len([r for r in rows if r["status"] == "OPEN" and r["quotes"] < 3])}}
 
 
@@ -781,6 +787,38 @@ def rfq_from_work_order(wo_id: int, request: Request, db: Session = Depends(get_
     return {"ok": True, "rfq": rfq_dict(db, r),
             "message": "%s opened for %d item%s %s still needs."
                        % (r.number, len(rows), "" if len(rows) == 1 else "s", wo.number)}
+
+
+@router.put("/api/rfqs/{rfq_id}")
+def edit_rfq(rfq_id: int, body: RfqIn, request: Request, db: Session = Depends(get_db)):
+    """Put right what the enquiry says. Its items can change only until the first quote is in: after that a supplier
+    has priced exactly these lines, and changing them under him would make his quote say something it did not."""
+    client, _, actor_name = wo_actor(request, db, "purchase.manage")
+    r = rfq_or_404(db, client.id, rfq_id)
+    if r.status != "OPEN":
+        raise HTTPException(409, "%s is %s and can no longer be changed." % (r.number, r.status.lower()))
+    if not (body.title or "").strip():
+        raise HTTPException(400, "Say what is being bought - \"Cement for Block A raft\".")
+    if body.job_id:
+        job_or_404(db, client.id, body.job_id)
+    lines = rfq_line_rows([l.dict() for l in body.lines])
+    old = _rfq_lines(db, r.id)
+    same = [(l.item_code or "", l.description, l.uom or "", money(l.qty)) for l in old] == [
+        ((l.get("item_code") or "").strip(), l["description"].strip(), canonical_unit(l.get("uom")) or (l.get("uom") or ""),
+         money(l["qty"])) for l in lines]
+    if not same:
+        if db.query(models.DBRfqQuote.id).filter(models.DBRfqQuote.rfq_id == r.id).first():
+            raise HTTPException(409, "Quotes are already in for these items, so they cannot be changed. Cancel this "
+                                     "enquiry and open a new one if what is needed has changed.")
+        for l in old:
+            db.delete(l)
+        db.flush()
+        add_rfq_lines(db, r.id, lines)
+    r.title, r.job_id = body.title.strip(), body.job_id
+    r.needed_by, r.notes = (body.needed_by or "").strip(), (body.notes or "").strip()
+    log_audit(db, client.id, "rfq_edited", "rfq", r.id, r.number, actor_name, request)
+    db.commit()
+    return {"ok": True, "rfq": rfq_dict(db, r), "message": "%s saved." % r.number}
 
 
 @router.get("/api/rfqs/{rfq_id}")

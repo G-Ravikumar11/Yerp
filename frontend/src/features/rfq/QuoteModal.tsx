@@ -1,8 +1,8 @@
 import { useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { FileUp, Loader2, ScanText, X } from 'lucide-react'
+import { FileText, FileUp, Loader2, ScanText, X } from 'lucide-react'
 import { Badge, Button, Field, Input, Modal, NumField } from '@/components/ui'
-import { keepQuoteDocument, QUOTE_FILES, recordQuote, rfqKeys, useSupplierNames, type Statement } from '@/api/rfq'
+import { keepQuoteDocument, QUOTE_FILES, recordQuote, rfqKeys, useSupplierNames, type RfqSupplier, type Statement } from '@/api/rfq'
 import { readQuote, type ReadQuote } from '@/api/aiPurchasing'
 import { ApiError } from '@/lib/api'
 import { today } from '@/lib/format'
@@ -13,16 +13,16 @@ import { toast } from '@/stores/toast'
  * style) and its rates are read into the form; check them, fix anything, save. His file is kept with the quote.
  * Without a file, the rates are simply typed in.
  */
-export function QuoteModal({ statement, open, onClose, supplier = '' }: { statement: Statement | null; open: boolean; onClose: () => void; supplier?: string }) {
+export function QuoteModal({ statement, open, onClose, supplier = '', existing = null }: { statement: Statement | null; open: boolean; onClose: () => void; supplier?: string; existing?: RfqSupplier | null }) {
   return (
-    <Modal open={open && !!statement} onOpenChange={(o) => !o && onClose()} size="lg" title={statement ? `Add a quote - ${statement.rfq.number}` : ''}
-      description="Choose the supplier's quotation and its rates are filled in for you to check, or type them. Items a supplier did not price are shown as not quoted.">
-      {open && statement && <Form statement={statement} supplier={supplier} onClose={onClose} />}
+    <Modal open={open && !!statement} onOpenChange={(o) => !o && onClose()} size="lg" title={existing ? `${existing.supplier_name}'s quote` : supplier ? `Enter ${supplier}'s rates` : 'Enter a quote'}
+      description={existing ? 'Change what they quoted. Saving replaces their last quote: a revised quote is the same supplier changing their mind.' : "Choose the supplier's quotation and its rates are filled in for you to check, or type them. Leave an item at 0 if they did not price it."}>
+      {open && statement && <Form key={existing?.quote_id ?? supplier} statement={statement} supplier={existing?.supplier_name ?? supplier} existing={existing} onClose={onClose} />}
     </Modal>
   )
 }
 
-function Form({ statement, supplier, onClose }: { statement: Statement; supplier: string; onClose: () => void }) {
+function Form({ statement, supplier, existing, onClose }: { statement: Statement; supplier: string; existing: RfqSupplier | null; onClose: () => void }) {
   const qc = useQueryClient()
   const names = useSupplierNames()
   const fileRef = useRef<HTMLInputElement>(null)
@@ -31,10 +31,14 @@ function Form({ statement, supplier, onClose }: { statement: Statement; supplier
   const [read, setRead] = useState<ReadQuote | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [f, setF] = useState({ supplier_name: supplier, quote_ref: '', quote_date: today(), payment_terms: '', valid_until: '' })
-  const [freight, setFreight] = useState(0)
-  const [days, setDays] = useState(0)
-  const [rates, setRates] = useState(() => statement.lines.map(() => ({ rate: 0, tax: 18 })))
+  const [f, setF] = useState({ supplier_name: supplier, quote_ref: existing?.quote_ref ?? '', quote_date: existing?.quote_date || today(), payment_terms: existing?.payment_terms ?? '', valid_until: existing?.valid_until ?? '' })
+  const [freight, setFreight] = useState(existing?.freight ?? 0)
+  const [days, setDays] = useState(existing?.delivery_days ?? 0)
+  // Editing starts from what they quoted; a new quote from nothing, at the usual 18% GST.
+  const [rates, setRates] = useState(() => statement.lines.map((l) => {
+    const o = existing ? l.offers.find((x) => x.supplier_name.trim().toLowerCase() === existing.supplier_name.trim().toLowerCase()) : undefined
+    return { rate: o?.rate ?? 0, tax: o?.tax_percent ?? 18 }
+  }))
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((x) => ({ ...x, [k]: e.target.value }))
   const edit = (i: number, patch: Partial<{ rate: number; tax: number }>) => setRates((r) => r.map((x, j) => (j === i ? { ...x, ...patch } : x)))
 
@@ -71,7 +75,7 @@ function Form({ statement, supplier, onClose }: { statement: Statement; supplier
     setBusy(true)
     setError('')
     try {
-      const out = await recordQuote(statement.rfq.id, { ...f, freight, delivery_days: days, lines: statement.lines.map((l, i) => ({ rfq_line_id: l.rfq_line_id, rate: rates[i].rate, tax_percent: rates[i].tax })) })
+      const out = await recordQuote(statement.rfq.id, { ...f, notes: existing?.notes ?? '', freight, delivery_days: days, lines: statement.lines.map((l, i) => ({ rfq_line_id: l.rfq_line_id, rate: rates[i].rate, tax_percent: rates[i].tax })) })
       if (file && out.quote_id) {
         try { await keepQuoteDocument(statement.rfq.id, out.quote_id, file) } catch { toast.info('The quote is saved, but its file could not be kept. Add it again from the comparison.') }
       }
@@ -85,9 +89,18 @@ function Form({ statement, supplier, onClose }: { statement: Statement; supplier
     }
   }
   const priced = rates.filter((r) => r.rate > 0).length
+  // The file the supplier sent through their link without typing rates: open it beside this form to read them off.
+  const sent = supplier ? (statement.invites ?? []).find((i) => i.document && i.supplier_name.trim().toLowerCase() === supplier.trim().toLowerCase())?.document : null
 
   return (
     <div className="grid gap-4">
+      {sent && (
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-warning-soft px-3 py-2 text-[13px]">
+          <FileText className="size-4 text-warning" /> {supplier} sent their quotation through the link:
+          <a className="font-medium text-primary hover:underline" href={`/api/files/${sent.id}`} target="_blank" rel="noopener">{sent.name}</a>
+          <span className="text-muted-foreground">Open it and enter the rates below.</span>
+        </p>
+      )}
       {/* 1. his quotation */}
       <div className="rounded-lg border border-dashed border-border bg-surface/50 p-4">
         <div className="flex flex-wrap items-center gap-3">
@@ -104,13 +117,14 @@ function Form({ statement, supplier, onClose }: { statement: Statement; supplier
 
       {/* 2. who and on what terms */}
       <div className="grid gap-4 sm:grid-cols-4">
-        <Field label="Supplier" htmlFor="rq-sup" className="sm:col-span-2"><Input id="rq-sup" list="rq-names" value={f.supplier_name} onChange={set('supplier_name')} placeholder="Who sent this quote" /></Field>
+        <Field label="Supplier" htmlFor="rq-sup" className="sm:col-span-2"><Input id="rq-sup" list="rq-names" value={f.supplier_name} onChange={set('supplier_name')} placeholder="Who sent this quote" disabled={!!existing} autoFocus={!supplier} /></Field>
         <datalist id="rq-names">{(names.data ?? []).map((n) => <option key={n.name} value={n.name} />)}</datalist>
         <Field label="Their quote no." htmlFor="rq-ref"><Input id="rq-ref" value={f.quote_ref} onChange={set('quote_ref')} /></Field>
         <Field label="Quote date" htmlFor="rq-date"><Input id="rq-date" type="date" value={f.quote_date} onChange={set('quote_date')} /></Field>
         <Field label="Payment terms" htmlFor="rq-terms" className="sm:col-span-2"><Input id="rq-terms" value={f.payment_terms} onChange={set('payment_terms')} placeholder="30 days from delivery" /></Field>
         <Field label="Transport to site (Rs)" htmlFor="rq-freight" hint="Lump sum, if charged"><NumField id="rq-freight" value={freight} onValue={setFreight} /></Field>
         <Field label="Delivery in (days)" htmlFor="rq-days"><NumField id="rq-days" value={days} onValue={setDays} /></Field>
+        <Field label="Quote valid till" htmlFor="rq-valid" className="sm:col-span-2"><Input id="rq-valid" type="date" value={f.valid_until} onChange={set('valid_until')} /></Field>
       </div>
 
       {/* 3. his rates */}
@@ -130,7 +144,7 @@ function Form({ statement, supplier, onClose }: { statement: Statement; supplier
       <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
         {error ? <p role="alert" className="mr-auto text-[13px] text-danger">{error}</p> : <p className="mr-auto text-xs text-muted-foreground">{priced} of {statement.lines.length} items priced. Leave an item at 0 if they did not quote it.</p>}
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button loading={busy} disabled={!f.supplier_name.trim() || priced === 0 || reading} onClick={() => void save()}>Save the quote</Button>
+        <Button loading={busy} disabled={!f.supplier_name.trim() || priced === 0 || reading} onClick={() => void save()}>{existing ? 'Save changes' : 'Save the quote'}</Button>
       </div>
     </div>
   )

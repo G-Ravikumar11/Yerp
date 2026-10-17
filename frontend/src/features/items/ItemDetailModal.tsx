@@ -75,12 +75,14 @@ export function ItemDetailModal({ item, manage, onClose, onEdit, onCopy, onToggl
               <Row label="Category">{[i.item_category, i.item_subcategory].filter(Boolean).join(' › ') || 'Not set yet. Edit the item to file it.'}</Row>
               <Row label="Unit">{i.units_of_measure}</Row>
               <Row label="Grade or specification">{i.specification}</Row>
+              <Row label="Make">{i.make}</Row>
               <Row label="Description">{i.description !== i.item_name ? i.description : ''}</Row>
               <Row label="Usual purchase rate">{(() => { const r = purchaseRateOf(i); return r ? `${formatINR(r.value)}${r.lastUsed ? ' (the last rate it was bought or sold at)' : ''}` : '' })()}</Row>
               <Row label="Usual selling rate">{i.selling_rate ? formatINR(i.selling_rate) : ''}</Row>
               <Row label="GST (tax) rate">{i.item_tax_type}</Row>
               <Row label="HSN / SAC code">{i.hsn_code}</Row>
               <Row label="Usual supplier">{i.preferred_supplier}</Row>
+              <Row label="Segment">{i.segment}</Row>
               <Row label="Remarks">{i.remarks}</Row>
             </dl>
           </section>

@@ -239,7 +239,7 @@ def vendor_quote_send(token: str, request: Request, quote: str = Form("{}"), fil
     db.commit()
     notify(db, inv.client_id, "quote_received", "%s sent a %s for %s" % (inv.supplier_name, what[0], rfq.number),
            "%s - %s%s" % (rfq.number, rfq.title or "", (". Message: " + inv.message) if inv.message else ""),
-           view="store/enquiries?id=%d" % rfq.id, ref_type="rfq", ref_id=rfq.id)
+           view="store/enquiries/%d" % rfq.id, ref_type="rfq", ref_id=rfq.id)
     return {"ok": True, "message": "Thank you. Your %s has reached %s. You can change it here until they decide." % (
         what[0], (client.company_name if client else "") or "the company")}
 

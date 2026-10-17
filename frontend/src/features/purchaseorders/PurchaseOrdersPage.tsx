@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { FileText, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
@@ -21,6 +22,7 @@ export default function PurchaseOrdersPage() {
   const { can, user } = useSession()
   const staff = user?.type === 'employee'
   const q = usePurchaseOrders(staff)
+  const [searchParams] = useSearchParams()
   const [editing, setEditing] = useState<PurchaseOrder | null>(null)
   const [creating, setCreating] = useState(false)
   const [approving, setApproving] = useState<PurchaseOrder | null>(null)
@@ -30,7 +32,7 @@ export default function PurchaseOrdersPage() {
   const resend = useAction((o: PurchaseOrder) => resendPo(o.id), { invalidate: [poKeys.all], success: 'Sent for approval' })
 
   const rows = q.data ?? []
-  const filters = useListFilters(rows, { search: (o) => [o.number, o.supplier_name, o.job_name, o.status, o.reference].join(' '), status: (o) => o.status, date: (o) => o.issue_date })
+  const filters = useListFilters(rows, { search: (o) => [o.number, o.supplier_name, o.job_name, o.status, o.reference].join(' '), status: (o) => o.status, date: (o) => o.issue_date, initialQ: searchParams.get('q') ?? '' })
   const master = suppliers.data?.suppliers.find((s) => s.name === supplierOf) ?? null
 
   const columns: TableColumn<PurchaseOrder>[] = [

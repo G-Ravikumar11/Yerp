@@ -73,6 +73,8 @@ function Form({ item, mode, carry, vocab, onClose, onOpenItem, onAnother }: {
     description: base && base.description !== base.item_name ? base.description : '',
     remarks: base?.remarks ?? '',
     is_active: base?.is_active ?? true,
+    make: base?.make ?? '',
+    segment: base?.segment ?? '',
   })
   const set = <K extends keyof ItemForm>(k: K, v: ItemForm[K]) => setF((s) => ({ ...s, [k]: v }))
   const field = (k: keyof ItemForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => set(k, e.target.value as never)
@@ -81,7 +83,7 @@ function Form({ item, mode, carry, vocab, onClose, onOpenItem, onAnother }: {
   const errors: ItemErrors = validateItem(f, units)
   const show = (k: keyof ItemForm) => (submitted || touched.has(k) ? errors[k] : undefined)
   const blur = (k: keyof ItemForm) => () => setTouched((t) => new Set(t).add(k))
-  const hasMore = !!(f.hsn_code || f.preferred_supplier || f.reorder_level || f.description || f.remarks || (editing && base && f.item_type !== defaultTypeFor(base.kind)))
+  const hasMore = !!(f.hsn_code || f.preferred_supplier || f.reorder_level || f.description || f.remarks || f.segment || (editing && base && f.item_type !== defaultTypeFor(base.kind)))
   const [more, setMore] = useState(hasMore)
   const nameRef = useRef<HTMLInputElement>(null)
 
@@ -126,6 +128,8 @@ function Form({ item, mode, carry, vocab, onClose, onOpenItem, onAnother }: {
     reorder_level: num(f.reorder_level),
     remarks: f.remarks,
     is_active: f.is_active,
+    make: f.make,
+    segment: f.segment,
   })
   const save = useAction((_again: boolean) => (editing && item ? updateMasterItem(item.id, body()) : createMasterItem(body())), {
     invalidate: [masterKeys.all, itemKeys.all],
@@ -152,21 +156,19 @@ function Form({ item, mode, carry, vocab, onClose, onOpenItem, onAnother }: {
   return (
     <form id="item-form" noValidate className="grid gap-6" onSubmit={(e) => { e.preventDefault(); submit(false) }}>
       <Section title="Basics">
-        {!editing && (
-          <div className="sm:col-span-2" role="radiogroup" aria-label="What is it?">
-            <span className="mb-1.5 block text-sm font-medium">What is it?</span>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {([['RM', 'Material', 'Bought and kept in the store: cement, steel, sand.'], ['FG', 'Work item', 'Used on BOQ lines and work orders: PCC, plastering, shuttering.']] as const).map(([k, label, hint]) => (
-                <button key={k} type="button" role="radio" aria-checked={f.kind === k}
-                  className={`rounded-lg border p-3 text-left text-sm ${f.kind === k ? 'border-primary bg-primary-soft' : 'hover:bg-muted/50'}`}
-                  onClick={() => setF((s) => ({ ...s, kind: k, item_type: s.item_type === defaultTypeFor(s.kind) ? defaultTypeFor(k) : s.item_type }))}>
-                  <span className="block font-medium">{label}</span>
-                  <span className="text-xs text-muted-foreground">{hint}</span>
-                </button>
-              ))}
-            </div>
+        <div className="sm:col-span-2" role="radiogroup" aria-label="What is it?">
+          <span className="mb-1.5 block text-sm font-medium">What is it?{editing && <span className="ml-2 text-xs font-normal text-muted-foreground">Can change only while nothing uses the item yet.</span>}</span>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {([['RM', 'Material', 'Bought and kept in the store: cement, steel, sand.'], ['FG', 'Work item', 'Used on BOQ lines and work orders: PCC, plastering, shuttering.']] as const).map(([k, label, hint]) => (
+              <button key={k} type="button" role="radio" aria-checked={f.kind === k}
+                className={`rounded-lg border p-3 text-left text-sm ${f.kind === k ? 'border-primary bg-primary-soft' : 'hover:bg-muted/50'}`}
+                onClick={() => setF((s) => ({ ...s, kind: k, item_type: s.item_type === defaultTypeFor(s.kind) ? defaultTypeFor(k) : s.item_type }))}>
+                <span className="block font-medium">{label}</span>
+                <span className="text-xs text-muted-foreground">{hint}</span>
+              </button>
+            ))}
           </div>
-        )}
+        </div>
         <Field label="Item name (required)" htmlFor="im-name" error={show('item_name')} className="sm:col-span-2">
           <Input id="im-name" ref={nameRef} value={f.item_name} onChange={field('item_name')} onBlur={blur('item_name')} autoFocus
             placeholder="Cement - OPC 53 grade" aria-invalid={!!show('item_name') || undefined} />
@@ -203,8 +205,11 @@ function Form({ item, mode, carry, vocab, onClose, onOpenItem, onAnother }: {
           <Select id="im-sub" value={f.item_subcategory} disabled={!subs.length} placeholder={subs.length ? 'No subcategory' : 'None set up for this category'} onChange={field('item_subcategory')}
             options={subs.map((s) => ({ value: s.name, label: s.name }))} />
         </Field>
-        <Field label="Grade or specification" htmlFor="im-spec" className="sm:col-span-2">
+        <Field label="Grade or specification" htmlFor="im-spec">
           <Input id="im-spec" value={f.specification} onChange={field('specification')} placeholder="OPC 53 grade, 50 kg bag · M25 · Fe550D" />
+        </Field>
+        <Field label="Make" htmlFor="im-make" hint={f.kind === 'RM' ? 'The brand: UltraTech, Tata Tiscon, Finolex.' : 'Optional for a work item.'}>
+          <Input id="im-make" value={f.make} onChange={field('make')} placeholder="UltraTech" />
         </Field>
       </Section>
 
@@ -222,7 +227,7 @@ function Form({ item, mode, carry, vocab, onClose, onOpenItem, onAnother }: {
 
       <div>
         <button type="button" className="flex items-center gap-1 text-sm font-medium text-primary" aria-expanded={more} onClick={() => setMore((m) => !m)}>
-          {more ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />} More details (supplier, stock level, notes)
+          {more ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />} More details (HSN, supplier, stock level, segment, notes)
         </button>
       </div>
       {more && (
@@ -238,6 +243,9 @@ function Form({ item, mode, carry, vocab, onClose, onOpenItem, onAnother }: {
             <Field label="Item type" htmlFor="im-type">
               <Select id="im-type" value={f.item_type} onChange={field('item_type')} options={(vocab?.boq_item_types ?? [f.item_type]).map((v) => ({ value: v, label: v }))} />
             </Field>
+            <Field label="Segment" htmlFor="im-seg" hint="The company or division it belongs to, if you keep items apart that way.">
+              <Input id="im-seg" value={f.segment} onChange={field('segment')} placeholder="YPPL" />
+            </Field>
           </Section>
           <Section title="Notes">
             <Field label="Description" htmlFor="im-desc" className="sm:col-span-2" hint="If left blank, the name is used.">
@@ -249,7 +257,7 @@ function Form({ item, mode, carry, vocab, onClose, onOpenItem, onAnother }: {
       )}
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={f.is_active} onChange={(e) => set('is_active', e.target.checked)} /> Active (can be put on new BOQ lines and orders)</label>
 
-      <div className="sticky bottom-0 -mx-6 -mb-4 flex flex-wrap justify-end gap-2 border-t bg-popover px-6 py-3">
+      <div className="sticky -bottom-5 z-10 -mx-6 -mb-5 flex flex-wrap justify-end gap-2 border-t border-border bg-popover px-6 py-3.5">
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
         {!editing && <Button type="button" variant="outline" loading={save.isPending && save.variables === true} disabled={save.isPending} onClick={() => submit(true)}>Save and add another</Button>}
         <Button type="submit" loading={save.isPending && save.variables !== true} disabled={save.isPending}>{editing ? 'Save changes' : 'Save item'}</Button>

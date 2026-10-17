@@ -22,6 +22,8 @@ class MasterItemIn(BaseModel):
     reorder_level: Optional[float] = None
     remarks: Optional[str] = ""
     is_active: Optional[bool] = True
+    make: Optional[str] = ""                   # the brand: UltraTech, Tata Tiscon, Finolex
+    segment: Optional[str] = ""                # the company or division the item belongs to, as the old ERP kept it
 
 
 class StatusIn(BaseModel):
@@ -33,6 +35,19 @@ class BulkStatusIn(BaseModel):
     ids: List[int]
     is_active: bool
     confirm: bool = False
+
+
+class BulkUpdateIn(BaseModel):
+    """Several items changed together. A field left out (None) is left as it is on every item."""
+    ids: List[int]
+    kind: Optional[str] = None
+    item_category: Optional[str] = None
+    item_subcategory: Optional[str] = None
+    item_type: Optional[str] = None
+    units_of_measure: Optional[str] = None
+    gst_percent: Optional[float] = None
+    hsn_code: Optional[str] = None
+    make: Optional[str] = None
 
 
 class BulkCategoryIn(BaseModel):

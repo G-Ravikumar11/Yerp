@@ -13,7 +13,7 @@ from app.core.queries import by_id, prime
 from app.core.auth import require_erp_read, wo_actor
 from app.core.currency import unit_rate
 from app.core.sheets import read_sheet_rows, sheet_response
-from app.schemas.item_master import BulkCategoryIn, BulkStatusIn, CategoryIn, CategoryPatch, ImportRowsIn, MasterItemIn, MergeIn, StatusIn
+from app.schemas.item_master import BulkCategoryIn, BulkStatusIn, BulkUpdateIn, CategoryIn, CategoryPatch, ImportRowsIn, MasterItemIn, MergeIn, StatusIn
 from app.services import item_master as im
 from app.services import item_import, item_usage
 from app.services.site_rates import current_lines_of_item
@@ -33,12 +33,17 @@ def _item(db, client_id, item_id):
     return item
 
 
-def _filtered(db, client_id, q, category, subcategory, item_type, uom, status, kind, site_id):
+def _filtered(db, client_id, q, category, subcategory, item_type, uom, status, kind, site_id, missing=""):
     query = db.query(models.DBItem).filter(models.DBItem.client_id == client_id)
     if q:
         like = "%" + q.strip() + "%"
         query = query.filter(or_(models.DBItem.item_code.ilike(like), models.DBItem.item_name.ilike(like),
-                                 models.DBItem.description.ilike(like), models.DBItem.specification.ilike(like)))
+                                 models.DBItem.description.ilike(like), models.DBItem.specification.ilike(like),
+                                 models.DBItem.make.ilike(like)))
+    if missing:
+        if missing not in im.GAPS:
+            raise HTTPException(422, "missing must be one of: " + ", ".join(im.GAPS))
+        query = im.gap_filter(query, missing)
     if category == NO_CATEGORY:
         query = query.filter(or_(models.DBItem.item_category == "", models.DBItem.item_category.is_(None)))
         category = ""
@@ -59,10 +64,13 @@ def _filtered(db, client_id, q, category, subcategory, item_type, uom, status, k
 @router.get("/api/items")
 def items_list(request: Request, q: str = "", category: str = "", subcategory: str = "", item_type: str = "", uom: str = "",
                status: str = "all", kind: str = "", site_id: Optional[int] = None, sort: str = "code", direction: str = "asc",
-               page: int = 1, page_size: int = 25, db: Session = Depends(get_db)):
+               page: int = 1, page_size: int = 25, missing: str = "", db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
-    query = _filtered(db, client.id, q, category, subcategory, item_type, uom, status, kind, site_id)
+    query = _filtered(db, client.id, q, category, subcategory, item_type, uom, status, kind, site_id, missing)
     total = query.count()
+    # How many of each kind the same filters find, for the Materials / Work items tabs.
+    counts = dict(_filtered(db, client.id, q, category, subcategory, item_type, uom, status, "", site_id, missing)
+                  .with_entities(models.DBItem.kind, func.count(models.DBItem.id)).group_by(models.DBItem.kind).all())
     column = SORTS.get(sort, models.DBItem.item_code)
     order = column.desc() if direction == "desc" else column.asc()
     page_size = max(1, min(page_size, 200))
@@ -70,7 +78,16 @@ def items_list(request: Request, q: str = "", category: str = "", subcategory: s
     codes = [r.item_code for r in rows]
     used, stock = im.sites_using(db, client.id, codes), im.stock_of(db, client.id, codes)
     return {"items": [im.item_dict(r, len(used.get(r.item_code, ())), stock.get(r.item_code)) for r in rows], "total": total,
-            "page": max(1, page), "page_size": page_size}
+            "page": max(1, page), "page_size": page_size, "counts": {"RM": counts.get("RM", 0), "FG": counts.get("FG", 0)}}
+
+
+@router.get("/api/items/gaps")
+def items_gaps(request: Request, status: str = "active", kind: str = "", db: Session = Depends(get_db)):
+    """How many items are missing each detail: what the master still needs filling in before its codes can carry
+    tax and rates onto orders and bills."""
+    client = require_erp_read(request, db)
+    base = _filtered(db, client.id, "", "", "", "", "", status, kind, None)
+    return {"total": base.count(), **{gap: im.gap_filter(base, gap).count() for gap in im.GAPS}}
 
 
 def _owned(db, client_id, ids):
@@ -100,6 +117,18 @@ def items_bulk_status(body: BulkStatusIn, request: Request, db: Session = Depend
     log_audit(db, client.id, "items_activated" if body.is_active else "items_deactivated", "item", None, "", "%d items" % len(items), request)
     db.commit()
     return {"changed": len(items), "message": "%d item%s %s." % (len(items), "" if len(items) == 1 else "s", "activated" if body.is_active else "deactivated")}
+
+
+@router.post("/api/items/bulk-update")
+def items_bulk_update(body: BulkUpdateIn, request: Request, db: Session = Depends(get_db)):
+    """Fill in or change the same details on several items together - their category, GST, HSN, make, unit or kind.
+    Only the details sent are changed. All or none."""
+    client, _, who = wo_actor(request, db, "items.manage")
+    items = _owned(db, client.id, body.ids)
+    changed = im.bulk_update(db, client.id, items, body, who)
+    log_audit(db, client.id, "items_bulk_updated", "item", None, ", ".join(sorted(changed)), "%d items" % len(items), request)
+    db.commit()
+    return {"changed": len(items), "message": "%d item%s updated." % (len(items), "" if len(items) == 1 else "s")}
 
 
 @router.post("/api/items/bulk-category")
@@ -181,19 +210,21 @@ def item_similar(request: Request, name: str = "", code: str = "", exclude_id: O
 
 @router.get("/api/items/export.xlsx")
 def items_export(request: Request, q: str = "", category: str = "", subcategory: str = "", item_type: str = "", uom: str = "",
-                 status: str = "all", kind: str = "", site_id: Optional[int] = None, ids: str = "", db: Session = Depends(get_db)):
+                 status: str = "all", kind: str = "", site_id: Optional[int] = None, ids: str = "", missing: str = "",
+                 db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
-    query = _filtered(db, client.id, q, category, subcategory, item_type, uom, status, kind, site_id)
+    query = _filtered(db, client.id, q, category, subcategory, item_type, uom, status, kind, site_id, missing)
     picked = [int(i) for i in ids.split(",") if i.strip().isdigit()]
     if picked:
         query = query.filter(models.DBItem.id.in_(picked))          # the rows ticked on screen, when some are
     rows = query.order_by(models.DBItem.item_code).all()
     used = im.sites_using(db, client.id, [r.item_code for r in rows])
-    headers = ["Item Code", "Item Name", "Description", "Category", "Subcategory", "Item Type", "UOM", "Specification",
-               "Default Purchase Rate", "Default Selling Rate", "HSN/SAC", "GST", "Sites Using", "Status"]
-    body = [[r.item_code, r.item_name, r.description or "", r.item_category or "", r.item_subcategory or "", r.item_type or "",
-             r.units_of_measure or "", r.specification or "", unit_rate(r.purchase_rate), unit_rate(r.selling_rate), r.hsn_code or "",
-             r.item_tax_type or "", len(used.get(r.item_code, ())), "Active" if r.is_active is not False else "Inactive"] for r in rows]
+    headers = ["Item Code", "Item Name", "What is it?", "Description", "Category", "Subcategory", "Item Type", "UOM", "Specification",
+               "Make", "Segment", "Default Purchase Rate", "Default Selling Rate", "HSN/SAC", "GST", "Sites Using", "Status"]
+    body = [[r.item_code, r.item_name, "Material" if r.kind == "RM" else "Work item", r.description or "", r.item_category or "",
+             r.item_subcategory or "", r.item_type or "", r.units_of_measure or "", r.specification or "", r.make or "", r.segment or "",
+             unit_rate(r.purchase_rate), unit_rate(r.selling_rate), r.hsn_code or "", r.item_tax_type or "",
+             len(used.get(r.item_code, ())), "Active" if r.is_active is not False else "Inactive"] for r in rows]
     return sheet_response(headers, body, "item_master.xlsx")
 
 

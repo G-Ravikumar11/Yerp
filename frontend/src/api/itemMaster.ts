@@ -24,6 +24,10 @@ export interface MasterItem {
   reorder_level: number
   remarks: string
   is_active: boolean
+  /** The brand: UltraTech, Tata Tiscon, Finolex. */
+  make: string
+  /** The company or division the item belongs to, as the old ERP's sheet has it. */
+  segment: string
   sites: number
   /** The store's running total for the item, or null when none is kept. */
   stock: number | null
@@ -51,7 +55,12 @@ export interface MasterItemInput {
   reorder_level?: number | null
   remarks?: string
   is_active?: boolean
+  make?: string
+  segment?: string
 }
+
+/** What an item can be missing: the master's gaps. */
+export type Gap = 'category' | 'gst' | 'hsn' | 'rate' | 'make'
 
 export interface ItemFilters {
   q: string
@@ -61,6 +70,10 @@ export interface ItemFilters {
   uom: string
   status: string
   site_id: string
+  /** RM (materials), FG (work items), or '' for both. */
+  kind: string
+  /** Only the items missing this detail. */
+  missing: Gap | ''
   sort: string
   direction: 'asc' | 'desc'
   page: number
@@ -72,6 +85,8 @@ export interface ItemPage {
   total: number
   page: number
   page_size: number
+  /** How many materials and work items the same filters find. */
+  counts: { RM: number; FG: number }
 }
 
 export interface Category {
@@ -98,6 +113,11 @@ function queryString(f: object) {
 
 export function useMasterItems(f: ItemFilters) {
   return useQuery({ queryKey: masterKeys.list(f), queryFn: () => get<ItemPage>(`/api/items?${queryString(f)}`), placeholderData: (prev) => prev })
+}
+
+/** How many items are missing each detail. */
+export function useItemGaps(f: Pick<ItemFilters, 'status' | 'kind'>) {
+  return useQuery({ queryKey: ['item-master', 'gaps', f.status, f.kind], queryFn: () => get<Record<Gap, number> & { total: number }>(`/api/items/gaps?${queryString({ status: f.status, kind: f.kind })}`) })
 }
 
 export function useCategories() {
@@ -155,8 +175,9 @@ export const patchCategory = (id: number, body: { name?: string; is_active?: boo
 export const exportUrl = (f: Partial<ItemFilters>, ids: number[] = []) =>
   `/api/items/export.xlsx?${queryString({ ...f, page: undefined, page_size: undefined, sort: undefined, direction: undefined, ids: ids.join(',') })}`
 export const bulkStatus = (ids: number[], is_active: boolean, confirm = false) => post<{ changed: number; message: string }>('/api/items/bulk-status', { ids, is_active, confirm })
-export const bulkCategory = (ids: number[], item_category: string, item_subcategory: string) =>
-  post<{ changed: number; message: string }>('/api/items/bulk-category', { ids, item_category, item_subcategory })
+/** The details to change on every item ticked; anything left out stays as it is on each. */
+export interface BulkChange { kind?: 'RM' | 'FG'; item_category?: string; item_subcategory?: string; item_type?: string; units_of_measure?: string; gst_percent?: number; hsn_code?: string; make?: string }
+export const bulkUpdate = (ids: number[], change: BulkChange) => post<{ changed: number; message: string }>('/api/items/bulk-update', { ids, ...change })
 
 export const mergeCategory = (id: number, into_id: number) => post<{ moved: number; message: string }>(`/api/item-categories/${id}/merge`, { into_id })
 export const deleteCategory = (id: number) => api<{ message: string }>(`/api/item-categories/${id}`, { method: 'DELETE' })

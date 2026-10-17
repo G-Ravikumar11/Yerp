@@ -55,5 +55,6 @@ def test_a_material_and_a_work_item_are_both_made_from_the_same_form(tenant):
     work = tenant.post("/api/items", json={"item_name": "PCC M15", "units_of_measure": "cum", "kind": "FG", "item_type": "Work"}).json()["item"]
     assert (material["kind"], work["kind"]) == ("RM", "FG")
     assert tenant.post("/api/items", json={"item_name": "Odd", "units_of_measure": "cum", "kind": "XX"}).status_code == 400
-    edited = tenant.put("/api/items/%d" % material["id"], json={"item_name": "River sand (Zone II)", "units_of_measure": "cum", "kind": "FG"}).json()["item"]
-    assert edited["kind"] == "RM", "what an item is cannot be changed once it has been made"
+    # An edit that does not say what the item is leaves it as it was.
+    edited = tenant.put("/api/items/%d" % material["id"], json={"item_name": "River sand (Zone II)", "units_of_measure": "cum"}).json()["item"]
+    assert edited["kind"] == "RM"

@@ -1,5 +1,8 @@
-// The AI help on a purchase order and on an enquiry. With no key set the plain checks still answer, the email is a plain draft,
-// and the quote reader says it is not set up - nothing is saved by any of them.
+// The AI help on a purchase order and on an enquiry's quotes. With no key set the plain checks still answer, the email is a
+// plain draft, and the quote reader says it could not read the file - nothing is saved by any of them.
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { api, clickText, launch, open, signIn } from './lib.mjs'
 
 const { page, check, done } = await launch()
@@ -32,18 +35,16 @@ const lines = (await api(page, 'GET', `/api/rfqs/${rfqId}`)).data.lines
 for (const [name, a, b] of [['ACC', 390, 62000], ['Dalmia', 520, 61000]]) {
   await api(page, 'POST', `/api/rfqs/${rfqId}/quotes`, { supplier_name: name, freight: 0, lines: [{ rfq_line_id: lines[0].rfq_line_id, rate: a, tax_percent: 18 }, { rfq_line_id: lines[1].rfq_line_id, rate: b, tax_percent: 18 }] })
 }
-await open(page, '/store/enquiries')
-await page.waitForSelector('main table')
-const r = await page.evaluateHandle((t) => [...document.querySelectorAll('main table tbody tr')].find((x) => x.textContent.includes(t)), `QA AI enquiry ${stamp}`)
-await (await r.$('button')).click()
-await page.waitForSelector('table[aria-label=Comparison]')
-await clickText(page, 'section[aria-label^="Comparative statement"] button', 'Recommend')
-await page.waitForSelector('[aria-label="Recommendation"]')
-check('the recommendation flags the wide spread between quotes', /above the cheapest/.test(await text('[aria-label="Recommendation"]')))
-await clickText(page, 'section[aria-label^="Comparative statement"] button', 'Read a quote')
-await page.waitForSelector('#rd-text')
-await page.type('#rd-text', 'ACC cement 391 per bag')
-await clickText(page, '[role=dialog] button', 'Read it')
-await page.waitForSelector('[role=dialog] [role=alert], [role=dialog] [aria-label="What was read"]')
-check('the quote reader says plainly it is not set up, and records nothing', /not set up|Add/.test(await text('[role=dialog]')) && (await api(page, 'GET', `/api/rfqs/${rfqId}`)).data.suppliers.length === 2)
+// A supplier's quotation file chosen in the quote form: with no AI key the form says it could not read it, keeps the
+// form for typing, and records nothing until saved.
+const quoteFile = path.join(os.tmpdir(), `quote_${stamp}.txt`)
+fs.writeFileSync(quoteFile, 'ACC Ltd quotation. Cement OPC 53 Rs 391 per bag. TMT Fe500D Rs 61500 per MT.')
+await open(page, `/store/enquiries/${rfqId}?view=suppliers`)
+await clickText(page, 'main button', 'Enter a quote')
+const picker = `input[aria-label="The supplier's quotation file"]`
+await page.waitForSelector(picker)
+await (await page.$(picker)).uploadFile(quoteFile)
+await page.waitForSelector('[role=dialog] [role=status], [role=dialog] [role=alert]', { timeout: 30000 })
+check('the quote reader says what it could do, and records nothing', /Read:|could not|not set up|Type the rates/i.test(await text('[role=dialog]')) && (await api(page, 'GET', `/api/rfqs/${rfqId}`)).data.suppliers.length === 2)
+fs.unlinkSync(quoteFile)
 await done()

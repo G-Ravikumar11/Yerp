@@ -6,6 +6,7 @@ from sqlalchemy import func
 
 from app import models
 from app.core.currency import unit_rate
+from app.core.sheets import HINT_PHRASES
 from app.core.units import BOQ_ITEM_TYPES, UNITS_OF_MEASURE, canonical_unit
 from app.schemas.item_master import MasterItemIn
 from app.services import item_master as im
@@ -15,10 +16,12 @@ MAX_ROWS = 5000
 # The columns of the template, in order, and the names a sheet might use for each. Matched by name, so a sheet may
 # reorder them, leave some out or call them what its own desk calls them.
 TEMPLATE_HEADERS = ["Item code", "Item name", "What is it?", "Category", "Subcategory", "Unit", "Grade or specification", "Usual purchase rate",
-                    "Usual selling rate", "GST %", "HSN / SAC", "Item type", "Usual supplier", "Minimum stock", "Description", "Remarks"]
+                    "Usual selling rate", "GST %", "HSN / SAC", "Item type", "Usual supplier", "Minimum stock", "Description", "Remarks",
+                    "Make", "Segment"]
 TEMPLATE_SAMPLE = [
-    ["", "Cement - OPC 53 grade", "Material", "Cement", "", "Bags", "OPC 53 grade, 50 kg bag", 415, "", 18, "2523", "Purchased", "", 200, "", ""],
-    ["PCC-M15", "PCC M15 in foundation", "Work item", "Concrete (PCC / RCC)", "", "cum", "M15", "", "", 18, "", "Work", "", "", "", ""],
+    ["", "Cement - OPC 53 grade", "Material", "Cement", "", "Bags", "OPC 53 grade, 50 kg bag", 415, "", 18, "2523", "Purchased", "", 200, "", "",
+     "UltraTech", ""],
+    ["PCC-M15", "PCC M15 in foundation", "Work item", "Concrete (PCC / RCC)", "", "cum", "M15", "", "", 18, "", "Work", "", "", "", "", "", ""],
 ]
 ALIASES = {
     "item_code": ["itemcode", "code", "materialcode", "sku", "erpcode", "itemno", "productcode"],
@@ -30,19 +33,29 @@ ALIASES = {
     "specification": ["gradeorspecification", "specification", "grade", "materialgrade", "spec"],
     "purchase_rate": ["usualpurchaserate", "purchaserate", "buyingrate", "purchaseprice", "costrate", "cost"],
     "selling_rate": ["usualsellingrate", "sellingrate", "salesrate", "saleprice", "rate", "price"],
-    "gst_percent": ["gst", "gstrate", "gstpercent", "taxrate", "tax", "taxpercent"],
+    "gst_percent": ["gst", "gstrate", "gstpercent", "taxrate", "tax", "taxpercent", "itemtaxtype", "taxtype", "itemtax"],
     "hsn_code": ["hsnsac", "hsn", "hsncode", "sac"],
     "item_type": ["itemtype", "type"],
     "preferred_supplier": ["usualsupplier", "preferredsupplier", "supplier", "vendor"],
     "reorder_level": ["minimumstock", "minimumstocklevel", "minstock", "reorderlevel", "reorder"],
     "description": ["description", "desc", "longdescription", "details"],
     "remarks": ["remarks", "notes", "note", "comments"],
+    "make": ["make", "brand", "makebrand", "brandname", "manufacturer"],
+    "segment": ["segment", "division", "businesssegment", "businessunit"],
 }
 FIELDS = list(ALIASES)
 # What a sheet row, once read, is compared and saved as, field by field.
 COMPARE = {"item_name": "item_name", "description": "description", "units_of_measure": "units_of_measure", "item_category": "item_category",
            "item_subcategory": "item_subcategory", "item_type": "item_type", "specification": "specification", "hsn_code": "hsn_code",
-           "preferred_supplier": "preferred_supplier", "remarks": "remarks"}
+           "preferred_supplier": "preferred_supplier", "remarks": "remarks", "make": "make", "segment": "segment"}
+# The old ERP's item list says what an item is in its Category column (RAW MATERIAL / FINISHED GOOD) and again in
+# Sub Category (RM / FG). That is this master's "What is it?", not a category of work: read it as that.
+KIND_WORDS = {"raw material": "RM", "raw materials": "RM", "rm": "RM", "material": "RM", "materials": "RM",
+              "finished good": "FG", "finished goods": "FG", "fg": "FG"}
+# Cells a template leaves holding its own prompt ("Make List", "Please Select Option From Dropdown"): nothing was chosen.
+PLACEHOLDERS = {"make list", "select", "-select-", "--select--", "na", "n/a", "none", "nil"}
+PROMPTED = ("kind", "item_category", "item_subcategory", "units_of_measure", "item_type", "gst_percent", "hsn_code", "make", "segment",
+            "preferred_supplier")
 
 
 def _money(text, label, problems):
@@ -77,6 +90,19 @@ def clean_values(db, client_id, raw, categories):
     v = {k: re.sub(r"\s+", " ", str(raw.get(k) or "")).strip() for k in FIELDS}
     v["description"] = str(raw.get("description") or "").strip()          # a description keeps its own line breaks
     v["remarks"] = str(raw.get("remarks") or "").strip()
+    for field in PROMPTED:
+        if v[field].lower() in PLACEHOLDERS or HINT_PHRASES.search(v[field]):
+            v[field] = ""
+    # The old ERP's "RAW MATERIAL / RM" in the category columns is what the item is, unless the business really has a
+    # category by that name.
+    said = ""
+    for field in ("item_category", "item_subcategory"):
+        word = v[field].lower()
+        if word in KIND_WORDS and not (field == "item_category" and word in categories):
+            said = said or KIND_WORDS[word]
+            v[field] = ""
+    if said and not v["kind"]:
+        v["kind"] = "Material" if said == "RM" else "Work item"
     v["item_code"] = v["item_code"].upper()
     if v["item_code"] and " " in v["item_code"]:
         problems.append("The code has a space in it. Use letters, numbers and - _ / . only.")
@@ -269,7 +295,8 @@ def new_item_body(v):
                         item_category=v["item_category"], item_subcategory=v["item_subcategory"], item_type=v["item_type"],
                         units_of_measure=v["units_of_measure"], specification=v["specification"], purchase_rate=num(v["purchase_rate"]),
                         selling_rate=num(v["selling_rate"]), hsn_code=v["hsn_code"], gst_percent=num(v["gst_percent"]),
-                        preferred_supplier=v["preferred_supplier"], reorder_level=num(v["reorder_level"]), remarks=v["remarks"])
+                        preferred_supplier=v["preferred_supplier"], reorder_level=num(v["reorder_level"]), remarks=v["remarks"],
+                        make=v["make"], segment=v["segment"])
 
 
 def commit(db, client_id, entries, who):

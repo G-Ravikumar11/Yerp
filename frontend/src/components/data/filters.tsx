@@ -12,6 +12,8 @@ export interface FilterOptions<T> {
   date?: (row: T) => string
   /** Further things to narrow by - the project, the contractor, the trade - each a drop-down of what the list holds. */
   facets?: Record<string, { label: string; get: (row: T) => string }>
+  /** What the search box starts with: a link from another screen that names the record ("?q=PO-0004"). */
+  initialQ?: string
 }
 
 interface Facet {
@@ -46,7 +48,7 @@ export interface ListFilters<T> {
  * the app narrows the same way, so a person learns it once.
  */
 export function useListFilters<T>(rows: readonly T[] | undefined, opts: FilterOptions<T>): ListFilters<T> {
-  const [q, setQ] = useState('')
+  const [q, setQ] = useState(opts.initialQ ?? '')
   const [status, setStatus] = useState('')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')

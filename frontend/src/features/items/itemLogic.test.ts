@@ -75,10 +75,23 @@ describe('items with no category', () => {
   })
 })
 
+describe('the gaps in the master', () => {
+  it('show as a chip that takes the filter off', () => {
+    const f = { ...DEFAULT_FILTERS, missing: 'gst' as const }
+    expect(buildChips(f).map((c) => c.label)).toEqual(['No GST rate'])
+    expect(clearFilter(f, 'missing').missing).toBe('')
+  })
+  it('are cleared with the rest, but the kind on show stays', () => {
+    expect(clearAll({ ...DEFAULT_FILTERS, kind: 'RM', missing: 'hsn', category: 'Cement' })).toEqual({ ...DEFAULT_FILTERS, kind: 'RM' })
+    expect(buildChips({ ...DEFAULT_FILTERS, kind: 'RM' })).toEqual([])
+  })
+})
+
 const UNITS = ['cum', 'sqm', 'rmt', 'cft', 'sqft', 'Nos', 'Sets', 'MT', 'Quintal', 'Kgs', 'Bags', 'Brass', 'Litres', 'KL', 'Hours', 'Days', 'Months', 'Meters', 'Lot', 'Job']
 const blank: ItemForm = {
   item_code: '', item_name: 'Cement - OPC 53 grade', kind: 'RM', units_of_measure: 'Bags', item_category: '', item_subcategory: '', specification: '',
   purchase_rate: '', selling_rate: '', gst_percent: '', hsn_code: '', item_type: 'Purchased', preferred_supplier: '', reorder_level: '', description: '', remarks: '', is_active: true,
+  make: '', segment: '',
 }
 
 describe('validating the item form', () => {

@@ -30,7 +30,7 @@ export function AttachQuotation({ statement, supplier }: { statement: Statement;
   return (
     <>
       <input ref={ref} type="file" hidden accept={QUOTE_FILES} aria-label={`${supplier.supplier_name}'s quotation`} onChange={(e) => { void put(e.target.files?.[0] ?? null); e.target.value = '' }} />
-      <button type="button" disabled={busy} onClick={() => ref.current?.click()} className="inline-flex items-center gap-0.5 text-primary hover:underline disabled:opacity-50"><Paperclip className="size-3" />{busy ? 'Attaching...' : 'Attach their quote'}</button>
+      <button type="button" disabled={busy} onClick={() => ref.current?.click()} className="inline-flex items-center gap-1 text-muted-foreground transition-colors hover:text-primary disabled:opacity-50" title="Keep the supplier's own quotation file with this quote"><Paperclip className="size-3.5" />{busy ? 'Attaching...' : 'Attach file'}</button>
     </>
   )
 }

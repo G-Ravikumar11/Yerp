@@ -70,6 +70,7 @@ export const SCREENS: Screen[] = [
   { path: '/store/goods-receipt', Component: lazy(() => import('@/features/grn/GrnPage')) },
   { path: '/store/eway', Component: lazy(() => import('@/features/eway/EwayPage')) },
   { path: '/store/enquiries', Component: lazy(() => import('@/features/rfq/RfqPage')) },
+  { path: '/store/enquiries/:id', Component: lazy(() => import('@/features/rfq/EnquiryPage')) },
   { path: '/projects/diary', Component: lazy(() => import('@/features/diary/DiaryPage')) },
   { path: '/people/attendance', Component: lazy(() => import('@/features/attendance/AttendancePage')) },
   { path: '/people/leave', Component: lazy(() => import('@/features/leave/LeavePage')) },

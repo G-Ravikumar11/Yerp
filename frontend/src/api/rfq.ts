@@ -1,15 +1,20 @@
 import { useQuery } from '@tanstack/react-query'
-import { api, get, post } from '@/lib/api'
+import { api, get, post, put } from '@/lib/api'
 
 export const rfqKeys = { all: ['rfq'] as const }
 
-export interface Rfq { id: number; number: string; title: string; project: string; lines: number; quotes: number; needed_by: string; status: string; award_reason?: string }
+export interface Rfq {
+  id: number; number: string; title: string; project: string; job_id: number | null; lines: number; quotes: number; needed_by: string; status: string
+  notes?: string; award_reason?: string; created_by_name?: string; created_at?: string; awarded_at?: string; work_order_id?: number | null
+}
+/** A row of the list: how far the enquiry has got - suppliers asked, still to answer, and the best full quote so far. */
+export interface RfqRow extends Rfq { asked: number; waiting: number; best: { supplier_name: string; landed: number } | null; awarded_to: string[]; orders: number }
 interface Offer { supplier_name: string; rate: number; amount: number; tax_percent: number; remarks?: string }
-export interface RfqLine { rfq_line_id: number; description: string; item_code: string; uom: string; qty: number; spread_percent: number; awarded_supplier: string; lowest: string; lowest_rate: number; offers: Offer[] }
+export interface RfqLine { rfq_line_id: number; description: string; item_code: string; uom: string; qty: number; spread_percent: number; awarded_supplier: string; awarded_rate: number; po_id: number | null; po_number: string; lowest: string; lowest_rate: number; offers: Offer[] }
 interface QuoteDocument { id: number; name: string; size: number }
 export interface RfqSupplier {
   quote_id: number; supplier_name: string; quote_ref: string; quote_date: string; rank?: string; is_l1: boolean; basic: number; tax: number; freight: number; landed: number
-  delivery_days: number; payment_terms: string; complete: boolean; lines_quoted: number
+  delivery_days: number; payment_terms: string; valid_until: string; notes: string; complete: boolean; lines_quoted: number
   /** "vendor" when the supplier sent it through his own link; else the buyer typed it. */
   source?: string
   /** The supplier's own quotation file, as he sent it. */
@@ -21,13 +26,22 @@ export interface RfqInvite {
   opened_at: string; submitted_at: string; quote_id: number | null; document_id: number | null; message: string; link: string; created_at: string
   document?: QuoteDocument | null
 }
-export interface Statement { rfq: Rfq; lines: RfqLine[]; suppliers: RfqSupplier[]; l1: string; l1_landed: number; saving_vs_l2: number; lowest_per_line_basic: number; invites?: RfqInvite[] }
+/** A purchase order the award made. */
+export interface RfqOrder { id: number; number: string; supplier_name: string; total: number; status: string }
+export interface Statement { rfq: Rfq; lines: RfqLine[]; suppliers: RfqSupplier[]; l1: string; l1_landed: number; saving_vs_l2: number; lowest_per_line_basic: number; invites?: RfqInvite[]; orders?: RfqOrder[] }
 
-export const useRfqs = () => useQuery({ queryKey: ['rfq', 'list'], queryFn: () => get<{ rfqs: Rfq[]; summary: { open: number; waiting_for_quotes: number; awarded: number } }>('/api/rfqs') })
-export const useStatement = (id: number | null) => useQuery({ queryKey: ['rfq', 'one', id], enabled: !!id, queryFn: () => get<Statement>(`/api/rfqs/${id}/statement`) })
+// Quotes come in from outside - a supplier answering through their link - so an enquiry is asked for afresh every time
+// it is opened or come back to, never shown from what the screen saw a minute ago.
+const fresh = { staleTime: 0, refetchOnWindowFocus: true } as const
+export const useRfqs = () => useQuery({ ...fresh, queryKey: ['rfq', 'list'], queryFn: () => get<{ rfqs: RfqRow[]; summary: { open: number; waiting_for_quotes: number; awarded: number; cancelled: number } }>('/api/rfqs') })
+export const useStatement = (id: number | null) => useQuery({ ...fresh, queryKey: ['rfq', 'one', id], enabled: !!id, queryFn: () => get<Statement>(`/api/rfqs/${id}/statement`) })
 export const useSupplierNames = () => useQuery({ queryKey: ['rfq', 'suppliers'], staleTime: 5 * 60_000, queryFn: async () => ((await get<{ suppliers: { name: string; phone?: string; email?: string }[] }>('/api/suppliers')).suppliers ?? []) })
 
-export const openRfq = (b: { title: string; job_id: number | null; needed_by: string; lines: { item_code: string; description: string; uom: string; qty: number }[] }) => post<{ rfq: { id: number }; message: string }>('/api/rfqs', b)
+export interface RfqInput { title: string; job_id: number | null; needed_by: string; notes?: string; lines: { item_code: string; description: string; uom: string; qty: number }[] }
+export const openRfq = (b: RfqInput) => post<{ rfq: { id: number }; message: string }>('/api/rfqs', b)
+/** Correct an open enquiry. Its items can change only until the first quote is in. */
+export const editRfq = (id: number, b: RfqInput) => put<{ rfq: Rfq; message: string }>(`/api/rfqs/${id}`, b)
+export const cancelRfq = (id: number, reason: string) => post<{ message: string }>(`/api/rfqs/${id}/cancel`, { reason })
 export const openRfqFromOrder = (wo: number) => post<{ rfq: { id: number }; message: string }>(`/api/rfqs/from-work-order/${wo}`)
 export const recordQuote = (id: number, b: Record<string, unknown>) => post<{ message: string; quote_id: number }>(`/api/rfqs/${id}/quotes`, b)
 export const awardRfq = (id: number, b: { mode: string; supplier_name: string; reason: string; awards?: { rfq_line_id: number; supplier_name: string }[] }) => post<{ message: string }>(`/api/rfqs/${id}/award`, b)
