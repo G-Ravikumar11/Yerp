@@ -10,6 +10,7 @@ import { ReceiptModal } from './ReceiptModal'
 import { ReceiveModal } from './ReceiveModal'
 import { FilterBar, useListFilters } from '@/components/data/filters'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
+import { StoreReceiveNotice } from '@/features/store/reports/integration'
 
 const tone = (s: string) => (s === 'POSTED' ? 'success' : s === 'CANCELLED' ? 'danger' : 'neutral') as 'success' | 'danger' | 'neutral'
 
@@ -48,6 +49,7 @@ export default function GrnPage() {
   return (
     <>
       <PageHeader eyebrow="Store" title="Goods Receipt & Match" description="What actually arrived at the gate, and whether the order, the delivery and the bill agree." actions={<Button onClick={() => setReceiving(true)}><PackagePlus /> Receive a delivery</Button>} />
+      <StoreReceiveNotice />
       <StatGrid className="lg:grid-cols-4 xl:grid-cols-4">
         <Stat label="Receipts" value={s?.count ?? 0} loading={q.isPending} />
         <Stat label="Not yet posted" value={s?.awaiting_posting ?? 0} loading={q.isPending} />

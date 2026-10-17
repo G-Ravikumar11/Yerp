@@ -305,6 +305,13 @@ def grn_apply(db, client_id, grn, action, request=None, actor_name="", comments=
     if action not in allowed:
         raise HTTPException(
             409, "A %s receipt cannot be %s." % (state.lower(), past_tense(action)))
+    if action == "POST":
+        # Store module (P5 hook): once a company keeps stock in the Store module, goods are received there (Store >
+        # Inward), and this older receipt no longer books stock - or one delivery would be counted in both ledgers.
+        from app.services.store_integration import legacy_receipt_blocked
+        if legacy_receipt_blocked(db, client_id):
+            raise HTTPException(409, "Goods are now received in Store > Inward > New GRN, which books them into the "
+                                     "store's stock. This older receipt cannot post stock any more.")
     grn.status = allowed[action]
     if action == "POST":
         grn.posted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

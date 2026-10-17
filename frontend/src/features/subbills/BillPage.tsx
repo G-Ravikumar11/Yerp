@@ -15,6 +15,7 @@ import { useSession } from '@/lib/session'
 import { ApiError } from '@/lib/api'
 import { formatDate, formatQty } from '@/lib/format'
 import { cn, formatINR } from '@/lib/utils'
+import { SubBillRecoveryPanel } from '@/features/store/reports/integration'
 
 export default function BillPage() {
   const { id } = useParams()
@@ -267,6 +268,9 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
               />
             </div>
           )}
+
+          {/* Store module (P5): material recovery due - read-only; the deductions below are still typed by hand. */}
+          <SubBillRecoveryPanel billId={bill.id} />
 
           <Card>
             <CardHeader>

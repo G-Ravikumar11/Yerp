@@ -13,6 +13,7 @@ import { formatDate } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { OrderFormModal } from './OrderFormModal'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
+import { PoReceiptsButton } from '@/features/store/reports/integration'
 
 const tone = (o: PurchaseOrder) => (o.approval_status === 'pending' ? 'warning' : o.status === 'Approved' || o.status === 'Received' ? 'success' : o.status === 'Rejected' ? 'danger' : 'neutral') as 'warning' | 'success' | 'danger' | 'neutral'
 
@@ -52,6 +53,7 @@ export default function PurchaseOrdersPage() {
           {staff && (o.approval_status === 'rejected' || o.approval_status === 'none') && <Button size="sm" loading={resend.isPending && resend.variables?.id === o.id} onClick={() => resend.mutate(o)}>Send again</Button>}
           {!staff && <Button size="sm" variant="outline" asChild><a href={`/api/purchase-orders/${o.id}/document.pdf`} target="_blank" rel="noopener" title="The order in the ruled form it is signed on"><FileText /> PDF</a></Button>}
           {!staff && <a className="text-xs text-primary underline-offset-2 hover:underline" href={`/api/purchase-orders/${o.id}/export.xlsx`}>Excel</a>}
+          {!staff && o.status === 'Approved' && <PoReceiptsButton poId={o.id} number={o.number} />}
           {!staff && can('purchase.manage') && <button type="button" className="text-xs text-primary underline-offset-2 hover:underline" onClick={() => setSupplierOf(o.supplier_name)} title="The supplier's PAN, GSTIN, address and contact, as they print on the order">Supplier</button>}
         </div>
       ),

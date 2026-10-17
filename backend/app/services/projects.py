@@ -18,6 +18,7 @@ from app.core.dates import _days_until, ageing_bucket
 from app.core.permissions import employee_can
 from app.core.queries import by_id, on_job
 from app.services.assets import asset_service_state, equipment_cost_by_job
+from app.services import store_integration
 from app.services.stores import stock_balances, stocked_share_of_bills
 
 
@@ -555,10 +556,13 @@ def preload_pnl_for_job(db, client_id, job_id):
             models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all()),
         "bills": one(db.query(models.DBBill).filter(
             models.DBBill.client_id == client_id, models.DBBill.job_id == job_id).all()),
-        "moves": one(db.query(models.DBStockMovement).filter(
+        # Store module (P5 hook): the old ledger counts only up to the Store module's first entry, and the Store
+        # module's own material cost is added in project_pnl - so the same material is never charged twice.
+        "moves": one(store_integration.legacy_moves_before_cutover(db, client_id, db.query(models.DBStockMovement).filter(
             models.DBStockMovement.client_id == client_id,
             models.DBStockMovement.job_id == job_id,
-            models.DBStockMovement.kind.in_(("ISSUE", "RETURN"))).all()),
+            models.DBStockMovement.kind.in_(("ISSUE", "RETURN"))).all())),
+        "store_material": store_integration.project_material_cost_by_job(db, client_id, job_id),
         "diaries": one(db.query(models.DBSiteDiary).filter(
             models.DBSiteDiary.client_id == client_id, models.DBSiteDiary.job_id == job_id).all()),
         "pos": one(db.query(models.DBPurchaseOrder).filter(
@@ -570,7 +574,7 @@ def preload_pnl_for_job(db, client_id, job_id):
         "released": one([r for r in _live_releases(db, client_id, "client") if r.job_id == job_id]),
         "equipment": {job_id: equipment_cost_by_job(db, client_id).get(job_id, 0.0)},
         "recovered": material_recovered_by_job(db, client_id, job_id),
-        "stocked": stocked_share_of_bills(db, client_id),
+        "stocked": store_integration.merge_stocked(stocked_share_of_bills(db, client_id), store_integration.store_stocked_share(db, client_id)),
         "attendance": one(db.query(models.DBAttendance).filter(
             models.DBAttendance.client_id == client_id, models.DBAttendance.job_id == job_id).all()),
         "subs": one(db.query(models.DBSubcontractOrder).filter(
@@ -613,9 +617,11 @@ def preload_pnl(db, client_id):
             models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all()),
         "bills": by_job(db.query(models.DBBill).filter(
             models.DBBill.client_id == client_id).all()),
-        "moves": by_job(db.query(models.DBStockMovement).filter(
+        # Store module (P5 hook): as in preload_pnl_for_job.
+        "moves": by_job(store_integration.legacy_moves_before_cutover(db, client_id, db.query(models.DBStockMovement).filter(
             models.DBStockMovement.client_id == client_id,
-            models.DBStockMovement.kind.in_(("ISSUE", "RETURN"))).all()),
+            models.DBStockMovement.kind.in_(("ISSUE", "RETURN"))).all())),
+        "store_material": store_integration.project_material_cost_by_job(db, client_id),
         "diaries": by_job(db.query(models.DBSiteDiary).filter(
             models.DBSiteDiary.client_id == client_id).all()),
         "pos": by_job(db.query(models.DBPurchaseOrder).filter(
@@ -626,7 +632,7 @@ def preload_pnl(db, client_id):
         "released": by_job(_live_releases(db, client_id, "client")),
         "equipment": equipment_cost_by_job(db, client_id),
         "recovered": material_recovered_by_job(db, client_id),
-        "stocked": stocked_share_of_bills(db, client_id),
+        "stocked": store_integration.merge_stocked(stocked_share_of_bills(db, client_id), store_integration.store_stocked_share(db, client_id)),
         "attendance": by_job(db.query(models.DBAttendance).filter(
             models.DBAttendance.client_id == client_id).all()),
         "subs": by_job(db.query(models.DBSubcontractOrder).filter(
@@ -676,6 +682,10 @@ def project_pnl(db, client_id, job, pre=None):
     # and returns positive, so the negated sum is what the site consumed and a
     # cancelled issue costs nothing.
     material = money(-sum(m.value or 0 for m in pre["moves"].get(job.id, [])))
+    # Store module (P5 hook): material issued, returned, written off or lost through the Store module's ledger
+    # (store_integration.get_project_material_cost), on top of the old ledger before the Store module started.
+    store_material = money((pre.get("store_material") or {}).get(job.id, 0.0))
+    material = money(material + store_material)
 
     diaries = pre["diaries"].get(job.id, [])
     labour = money(sum(d.labour_cost or 0 for d in diaries))
@@ -728,6 +738,7 @@ def project_pnl(db, client_id, job, pre=None):
             "supplier_bills": bill_cost,
             "subcontractors": subcontract,
             "material_from_store": material,
+            "material_from_store_module": store_material,
             "labour": labour,
             "plant": plant,
             "equipment": equipment,

@@ -14,6 +14,7 @@ import { IssueModal } from './IssueModal'
 import { LedgerModal } from './LedgerModal'
 import { TransferModal } from './TransferModal'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
+import { LegacyHandover } from '@/features/store/reports/integration'
 
 /** What is in the store, what went to site, and what it cost. The store's balance is the sum of its movements. */
 export default function StockPage() {
@@ -67,6 +68,7 @@ export default function StockPage() {
   ]
   return (
     <>
+      <LegacyHandover />
       <PageHeader eyebrow="Store" title="Stock & Issues" description="What is in the store, what went to site, and what it cost." actions={<><Button onClick={() => setIssuing(true)}><Send /> Issue to site</Button><Button variant="outline" onClick={() => setSending(true)}>Send to another site</Button><Button variant="outline" asChild><a href="/api/stock.xlsx"><FileSpreadsheet /> Download</a></Button></>} />
       <StatGrid className="lg:grid-cols-4 xl:grid-cols-4">
         <Stat label="Items held" value={s?.items_held ?? 0} loading={stock.isPending} />

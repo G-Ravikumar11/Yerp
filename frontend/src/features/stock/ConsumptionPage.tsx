@@ -5,6 +5,7 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, Select, Stat, StatGrid } from '@/components/ui'
 import { useConsumption, usePlacedOrders, type Consumption } from '@/api/stock'
 import { formatINR } from '@/lib/utils'
+import { LegacyHandover } from '@/features/store/reports/integration'
 
 type Line = Consumption['lines'][number]
 
@@ -25,6 +26,7 @@ export default function ConsumptionPage() {
   ]
   return (
     <>
+      <LegacyHandover to="/store/hub/reports/run" />
       <PageHeader eyebrow="Store" title="Material Used vs Costed" description="What the contract was priced on, against what the site actually drew." actions={<Button variant="outline" onClick={() => window.print()}><Printer /> Print</Button>} />
       <div className="mb-6 max-w-md"><Select aria-label="Work order" value={wo || ''} disabled={orders.isPending} placeholder={orders.isPending ? 'Loading...' : orders.data?.length ? undefined : 'No placed orders yet'} onChange={(e) => setPick(Number(e.target.value))} options={(orders.data ?? []).map((w) => ({ value: w.id, label: `${w.number} - ${w.job_name}` }))} /></div>
       <StatGrid>
