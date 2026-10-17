@@ -441,6 +441,19 @@ def test_a_direct_issue_does_everything_in_one_step_and_needs_its_own_right(acco
     assert balance(w, w.central, "cement")[0] == D("4500.000")
 
 
+def test_a_member_of_staff_with_the_direct_issue_right_can_issue_in_one_step(account, portal):
+    w = world(account)
+    staff(account, portal, ["store.outward.direct_issue"], [w.central])                       # that one right alone: no view, create or post
+    res = portal.post(API + "/issue/direct", json=issue_body(w))
+    assert res.status_code == 200, res.text
+    d = res.json()
+    assert d["status"] == "POSTED" and d["direct"] is True and d["history"][0]["by"]
+    assert balance(w, w.central, "cement")[0] == D("4500.000")
+    assert portal.get(API + "/issue").status_code == 403                                      # it does not let them read the lists
+    other = staff(account, portal, ["store.outward.direct_issue"], [])                         # no store assigned: wrong-store access
+    assert portal.post(API + "/issue/direct", json=issue_body(w)).status_code == 403 and other["id"]
+
+
 def test_a_direct_issue_that_cannot_move_stock_leaves_nothing_behind(account):
     tenant = account["client"]
     w = world(account)
