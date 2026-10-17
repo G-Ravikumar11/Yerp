@@ -190,6 +190,9 @@ def purchase_order_to_dict(db, o, include_chain=False, pre=None):
     } for l in lines]
     if include_chain:
         row["chain"] = get_approval_chain_history("purchase_order", o.id, db)
+        # What the Store module has received into stock against each line, in the item's base unit (posted receipts only).
+        from app.services.store_integration import po_receipt_for_order
+        row["store_receipt"] = po_receipt_for_order(db, o.id)
     return row
 
 

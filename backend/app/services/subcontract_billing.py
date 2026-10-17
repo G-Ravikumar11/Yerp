@@ -342,6 +342,10 @@ def sub_bill_dict(db, bill, detail=False, credits=None):
         row["site"] = job.site_address if job else ""
         row["place_of_supply_name"] = GST_STATES.get(bill.place_of_supply or "", "")
         row["amount_in_words"] = amount_in_words(bill.net_payable)
+        if bill.contractor_id:
+            # Material the Store module issued to this contractor that is chargeable and not yet back: what is still to be recovered from their bills.
+            from app.services.store_integration import subcon_material_to_recover
+            row["store_material_to_recover"] = money(float(subcon_material_to_recover(db, bill.contractor_id)))
         row["material_recovered"] = money(sum(r.amount or 0 for r in db.query(models.DBMaterialRecovery).filter(
             models.DBMaterialRecovery.client_id == bill.client_id,
             models.DBMaterialRecovery.sub_bill_id == bill.id).all()))
