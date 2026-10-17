@@ -1,5 +1,7 @@
 # P4 - Control (transfers, stock counts, adjustments, scrap)
 
+Migration `store_005_control`: `REVISION` in the slice's model file. This repo has no Alembic, so the name only labels the change.
+
 Backend: `models/store_control.py`, `services/store_control.py`, `routers/store_control.py`, `documents/store/control_forms.py`.
 Frontend: `features/store/control/`. Tests: `backend/tests/store/test_control.py`.
 Tables (via `create_all`): `store_transfer(_line)`, `store_count(_line)`, `store_adjustment(_line)`, `store_scrap(_line)`, `store_control_log`.

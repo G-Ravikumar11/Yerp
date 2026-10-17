@@ -260,17 +260,40 @@ def subcon_material(ctx):
 
 
 # ------------------------------------------------------------------------------------------------ other slices' data
+def _ledger_refs(ctx, ref_type, movement_types):
+    """Document id -> (store id, date, number) for the posted documents of one kind, read from the shared ledger (the document's own remarks name its number)."""
+    refs = {}
+    for e in ctx.db.query(DBStoreStockLedger).filter(DBStoreStockLedger.store_id.in_(ctx.store_ids or [0]), DBStoreStockLedger.ref_doc_type == ref_type,
+                                                    DBStoreStockLedger.movement_type.in_(movement_types), DBStoreStockLedger.reversal_of_id.is_(None)).all():
+        words = (e.remarks or "").split()
+        refs.setdefault(e.ref_doc_id, (e.store_id, e.txn_date, words[1].rstrip(":") if len(words) > 1 else "%s-%s" % (ref_type, e.ref_doc_id)))
+    return refs
+
+
+def _holder_name(ctx, holder_type, holder_id):
+    if holder_type == "EMPLOYEE" and holder_id:
+        e = ctx.db.get(models.DBEmployee, holder_id)
+        return ("%s %s" % (e.first_name, e.last_name)).strip() if e else ""
+    if holder_type == "SUBCONTRACTOR" and holder_id:
+        c = ctx.db.get(models.DBContractor, holder_id)
+        return (c.company_name or "") if c else ""
+    return holder_type.title()
+
+
 def returnables(ctx):
-    """Returnable items still out, who holds them and how late they are."""
-    from app.models.store_outward import DBStoreIssue, DBStoreIssueLine
+    """Returnable items still out, who holds them and how late they are (the outward slice's public function; the store comes from the ledger)."""
+    issue_of = {}
+    for e in ctx.db.query(DBStoreStockLedger).filter(DBStoreStockLedger.store_id.in_(ctx.store_ids or [0]), DBStoreStockLedger.ref_doc_type == "ISSUE",
+                                                    DBStoreStockLedger.reversal_of_id.is_(None)).all():
+        words = (e.remarks or "").split()
+        issue_of[e.ref_line_id] = (e.store_id, words[1] if len(words) > 1 else "ISSUE-%s" % e.ref_doc_id)
     rows = []
     for r in store_outward.get_outstanding_returnables(ctx.db, project_id=ctx.int_param("project_id") or None):
-        line = ctx.db.get(DBStoreIssueLine, r.issue_line_id)
-        issue = ctx.db.get(DBStoreIssue, line.issue_id)
-        if issue.store_id not in ctx.store:
-            continue
+        if r.issue_line_id not in issue_of:
+            continue                                                         # another company's, or a store this person cannot reach
+        sid, number = issue_of[r.issue_line_id]
         name, _ = ctx.label(r.item_id)
-        rows.append({"store": ctx.store[issue.store_id].code, "issue": issue.number, "item": name, "holder": issue.holder_name or r.holder_type, "qty": _s(r.qty_outstanding, _Q3),
+        rows.append({"store": ctx.store[sid].code, "issue": number, "item": name, "holder": _holder_name(ctx, r.holder_type, r.holder_id), "qty": _s(r.qty_outstanding, _Q3),
                      "due": r.expected_return_date.isoformat() if r.expected_return_date else "", "late": str(r.overdue_days) if r.overdue_days else ""})
     return ("Returnables outstanding", [col("store", "Store"), col("issue", "Issue"), col("item", "Item"), col("holder", "Held by"), _qcol("qty", "Still out"), col("due", "Due", "C"),
                                         _qcol("late", "Days late")], rows, {})
@@ -305,15 +328,15 @@ def count_variances(ctx):
 
 
 def scrap(ctx):
-    """Scrap taken out for a project: book value against what it fetched."""
+    """Scrap taken out for a project: book value against what it fetched (the control slice's public function; number, date and store come from the ledger)."""
+    refs = _ledger_refs(ctx, "SCRAP", (MovementType.SCRAP_OUT.value,))
     rows, book, got = [], ZERO, ZERO
     for l in store_control.get_scrap_realisation(ctx.db, ctx.int_param("project_id") or None, _d(ctx.params.get("from"), "From date"), _d(ctx.params.get("to"), "To date")):
-        from app.models.store_control import DBStoreScrap
-        doc = ctx.db.get(DBStoreScrap, l.scrap_doc_id)
-        if doc.store_id not in ctx.store:
+        if l.scrap_doc_id not in refs:
             continue
+        _sid, day, number = refs[l.scrap_doc_id]
         name, _ = ctx.label(l.item_id)
-        rows.append({"scrap": doc.number, "date": doc.scrap_date.isoformat(), "item": name, "qty": _s(l.qty, _Q3), "book": _s(l.book_value), "got": _s(l.realised_value), "gain": _s(l.realised_value - l.book_value)})
+        rows.append({"scrap": number, "date": day.isoformat(), "item": name, "qty": _s(l.qty, _Q3), "book": _s(l.book_value), "got": _s(l.realised_value), "gain": _s(l.realised_value - l.book_value)})
         book, got = book + l.book_value, got + l.realised_value
     return ("Scrap realisation", [col("scrap", "Scrap note"), col("date", "Date", "C"), col("item", "Item"), _qcol("qty", "Quantity"), _mcol("book", "Book value"), _mcol("got", "Realised"), _mcol("gain", "Gain / (loss)")],
             rows, {"item": "Total", "book": _s(book), "got": _s(got), "gain": _s(got - book)})

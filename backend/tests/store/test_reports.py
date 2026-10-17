@@ -373,3 +373,29 @@ def test_rights_and_store_scoping(account, portal):
 
     _login(account, portal, ["store.inward.view"], [w.site])
     assert portal.get(R + "/catalog").status_code == 403 and portal.get(R + "/run/reorder").status_code == 403
+
+
+def test_every_store_route_refuses_anonymous_and_unauthorised_callers(account, portal):
+    """No /api/store route answers someone who is not signed in, or staff with no store right at all."""
+    from fastapi.routing import APIRoute
+    import main
+    from fastapi.testclient import TestClient
+    routes = [r for r in main.app.routes if isinstance(r, APIRoute) and r.path.startswith("/api/store/")]
+    assert len(routes) > 100
+    email = "norights-%s@example.com" % uuid.uuid4().hex[:8]
+    emp = make_employee(account["client"], email=email, password="Crew1234", permission_role="staff", status="active")
+    with database.SessionLocal() as s:
+        s.get(models.DBEmployee, emp["id"]).extra_permissions = "self.service"
+        s.commit()
+    assert portal.post("/api/employee/auth/login", json={"email": email, "password": "Crew1234"}).status_code == 200
+    with TestClient(main.app) as anon:
+        for r in routes:
+            path = r.path.replace("{code}", "stock-valuation").replace("{action}", "post")
+            for name in r.param_convertors if hasattr(r, "param_convertors") else []:
+                path = path.replace("{%s}" % name, "1")
+            import re
+            path = re.sub(r"\{[^}]+\}", "1", path)
+            for method in sorted(r.methods - {"HEAD", "OPTIONS"}):
+                for who, client in (("anonymous", anon), ("no store rights", portal)):
+                    res = client.request(method, path, json={})
+                    assert res.status_code in (401, 403, 422), (who, method, r.path, res.status_code)      # 422: the body is checked before the caller is, but nothing ran

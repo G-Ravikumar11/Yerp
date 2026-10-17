@@ -1,5 +1,7 @@
 # P3 - Outward (requisitions, issues, returns, write-off requests)
 
+Migration `store_004_outward`: `REVISION` in the slice's model file. This repo has no Alembic, so the name only labels the change.
+
 Backend: `models/store_outward.py`, `services/store_outward.py`, `routers/store_outward.py`, `documents/store/outward_forms.py`.
 Frontend: `features/store/outward/`. Tests: `backend/tests/store/test_outward.py`.
 Tables (via `create_all`): `store_requisition(_line)`, `store_issue(_line)`, `store_issue_return(_line)`, `store_writeoff_request`, `store_outward_log`.

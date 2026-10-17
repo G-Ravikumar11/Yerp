@@ -14,6 +14,8 @@ from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Index, Integ
 from app.db.session import Base
 from app.models.store_core import QTY, RATE, VALUE, DocStatus
 
+REVISION = "store_005_control"
+
 
 class _Doc:
     """Columns every control document shares."""

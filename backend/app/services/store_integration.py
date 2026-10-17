@@ -12,8 +12,7 @@ from typing import List
 from sqlalchemy import func
 
 from app import models
-from app.models.store_core import DBStoreItemSettings, DBStoreStockLedger, DocStatus, MovementType
-from app.models.store_outward import DBStoreIssue, DBStoreIssueLine
+from app.models.store_core import DBStore, DBStoreItemSettings, DBStoreStockLedger, MovementType
 from app.models.store_reports import DBStoreRecoveryLink
 from app.schemas.store_contracts import MaterialCostLine
 from app.services import store_outward
@@ -60,19 +59,34 @@ def _order_for(db, client_id, contractor_id, job_id):
     return next((o for o in rows if (o.status or "").upper() not in _DEAD_ORDER), None)
 
 
+def _issue_facts(db, store_ids):
+    """For each subcontractor issue line posted from these stores: (issue id, issue number, project id, subcontractor id), read from the shared ledger."""
+    out = {}
+    for e in db.query(DBStoreStockLedger).filter(DBStoreStockLedger.store_id.in_(store_ids or [0]), DBStoreStockLedger.movement_type == MovementType.SUBCON_ISSUE_OUT.value,
+                                                 DBStoreStockLedger.reversal_of_id.is_(None)).all():
+        number = (e.remarks or "")[len("Issue "):] if (e.remarks or "").startswith("Issue ") else "ISSUE-%s" % e.ref_doc_id
+        out[e.ref_line_id] = (e.ref_doc_id, number, e.project_id, e.subcontractor_id)
+    return out
+
+
 def sync_subcon_recoveries(db, client_id) -> dict:
-    """Bring material_recoveries in line with the store's chargeable subcontractor issues. The caller commits."""
+    """Bring material_recoveries in line with the store's chargeable subcontractor issues. The caller commits.
+
+    Reads the outward slice only through get_subcon_issues (posted issues, with what came back) and the shared ledger."""
     created = updated = withdrawn = 0
     skipped = []
-    issues = db.query(DBStoreIssue).filter(DBStoreIssue.client_id == client_id, DBStoreIssue.issue_type == "SUBCONTRACTOR").all()
-    for issue in issues:
-        lines = db.query(DBStoreIssueLine).filter(DBStoreIssueLine.issue_id == issue.id, DBStoreIssueLine.chargeable.is_(True)).all()
-        live = issue.status == DocStatus.POSTED.value
-        for l in lines:
-            link = db.query(DBStoreRecoveryLink).filter(DBStoreRecoveryLink.issue_line_id == l.id).first()
+    stores = [i for (i,) in db.query(DBStore.id).filter(DBStore.client_id == client_id).all()]
+    facts = _issue_facts(db, stores)
+    live = set()
+    for sub_id in sorted({f[3] for f in facts.values() if f[3]}):
+        for l in store_outward.get_subcon_issues(db, sub_id, date.today()):
+            if not l.chargeable or l.issue_line_id not in facts:
+                continue
+            live.add(l.issue_line_id)
+            _issue_id, number, project_id, _sub = facts[l.issue_line_id]
+            net = l.qty_issued - l.qty_returned
+            link = db.query(DBStoreRecoveryLink).filter(DBStoreRecoveryLink.issue_line_id == l.issue_line_id).first()
             rec = db.get(models.DBMaterialRecovery, link.recovery_id) if link else None
-            back, _lost = store_outward._gone_from_issue_line(db, l.id, posted_only=True)
-            net = (l.qty - back) if live else ZERO
             if rec is not None and rec.sub_bill_id:
                 continue                                                  # a bill has taken it; leave it as billed
             if net <= 0:
@@ -82,25 +96,37 @@ def sync_subcon_recoveries(db, client_id) -> dict:
                     db.delete(rec)
                     withdrawn += 1
                 continue
-            rate = l.recovery_rate or l.rate or ZERO
+            rate = l.recovery_rate or ZERO
             amount = (net * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             if rec is not None:
                 if abs(float(net) - (rec.quantity or 0)) > 1e-9 or abs(float(amount) - (rec.amount or 0)) > 1e-9:
                     rec.quantity, rec.rate, rec.amount = float(net), float(rate), float(amount)
                     updated += 1
                 continue
-            order = _order_for(db, client_id, issue.subcontractor_id, issue.project_id)
+            order = _order_for(db, client_id, sub_id, project_id)
             if order is None:
-                skipped.append({"issue": issue.number, "reason": "No active subcontract order for this subcontractor on the project."})
+                skipped.append({"issue": number, "reason": "No active subcontract order for this subcontractor on the project."})
                 continue
             item = db.get(models.DBItem, l.item_id)
             st = db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == l.item_id).first()
-            rec = models.DBMaterialRecovery(client_id=client_id, order_id=order.id, job_id=issue.project_id, issue_number=issue.number, item_code=item.item_code,
-                                            item_name=item.item_name, uom=(st.base_uom if st else item.units_of_measure) or "", quantity=float(net), rate=float(rate),
-                                            amount=float(amount), issued_on=issue.issue_date.isoformat())
+            rec = models.DBMaterialRecovery(client_id=client_id, order_id=order.id, job_id=project_id, issue_number=number, item_code=item.item_code, item_name=item.item_name,
+                                            uom=(st.base_uom if st else item.units_of_measure) or "", quantity=float(net), rate=float(rate), amount=float(amount),
+                                            issued_on=l.issue_date.isoformat())
             db.add(rec)
             db.flush()
-            db.add(DBStoreRecoveryLink(client_id=client_id, issue_line_id=l.id, recovery_id=rec.id))
+            db.add(DBStoreRecoveryLink(client_id=client_id, issue_line_id=l.issue_line_id, recovery_id=rec.id))
             created += 1
+    # issues that are no longer posted (cancelled) give their unbilled recovery back
+    for link in db.query(DBStoreRecoveryLink).filter(DBStoreRecoveryLink.client_id == client_id).all():
+        if link.issue_line_id in live:
+            continue
+        rec = db.get(models.DBMaterialRecovery, link.recovery_id)
+        if rec is not None and rec.sub_bill_id:
+            continue
+        db.delete(link)
+        db.flush()
+        if rec is not None:
+            db.delete(rec)
+        withdrawn += 1
     db.flush()
     return {"created": created, "updated": updated, "withdrawn": withdrawn, "skipped": skipped}

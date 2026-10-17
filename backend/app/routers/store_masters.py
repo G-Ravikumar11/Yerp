@@ -21,6 +21,8 @@ from app.models.store_core import (
 )
 from app.services.stock_ledger import assert_store_access, freeze_store, unfreeze_store
 
+REVISION = "store_002_foundation"      # this slice adds no tables; the name labels the change (the repo has no Alembic)
+
 router = APIRouter(prefix="/api/store/masters", tags=["store-masters"])
 
 D = Decimal

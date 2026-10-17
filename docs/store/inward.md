@@ -1,5 +1,7 @@
 # P2 - Inward (GRN, quality check, returns to supplier)
 
+Migration `store_003_inward`: `REVISION` in the slice's model file. This repo has no Alembic, so the name only labels the change.
+
 Backend: `models/store_inward.py`, `services/store_inward.py`, `routers/store_inward.py`, `documents/store/inward_forms.py`.
 Frontend: `features/store/inward/`. Tests: `backend/tests/store/test_inward.py`.
 Tables (made by `create_all`): `store_grn`, `store_grn_line`, `store_purchase_return`, `store_purchase_return_line`, `store_inward_log`.

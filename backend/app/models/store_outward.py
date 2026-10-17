@@ -12,6 +12,8 @@ from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Index, Integ
 from app.db.session import Base
 from app.models.store_core import QTY, RATE, VALUE, DocStatus
 
+REVISION = "store_004_outward"
+
 
 class DBStoreRequisition(Base):
     __tablename__ = "store_requisition"
