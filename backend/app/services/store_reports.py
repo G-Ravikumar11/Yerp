@@ -1,444 +1,311 @@
-"""Store module - reports slice. Owned by P5.
+"""Store module - reports slice: stock valuation, stock movement, material consumption, norms against actual use, slow-moving stock and
+reorder. Owned by P5.
 
-Every report is a function that returns the same plain table, so one screen, one Excel writer and one PDF writer serve them all:
-
-    {"code", "title", "params": {...}, "columns": [{"key", "label", "align", "kind"}], "rows": [{key: value}], "totals": {key: value}}
-
-Numbers travel as strings. Stock reports read the ledger (net of reversals, which are rows in the opposite direction); reports
-that belong to another slice call that slice's function and never read its tables.
+Every report reads the stock ledger (and the balances kept from it) and nothing else, so what a report says always adds up to the stock the
+stores hold. A reversal is a ledger row of the same movement type in the opposite column, so summing signed quantities and values nets it with
+the original: nothing is filtered out. Quantities are in each item's base unit.
 """
-import io
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
 from fastapi import HTTPException
+from sqlalchemy import case, func
 
 from app import models
-from app.models.store_core import DBStore, DBStoreItemSettings, DBStoreStockBalance, DBStoreStockLedger, MovementType
-from app.models.store_reports import DBStoreConsumptionNorm
-from app.services import store_control, store_inward, store_integration, store_outward
+from app.models.store_core import (
+    DBStore, DBStoreItemSettings, DBStoreStockBalance, DBStoreStockLedger, MovementType,
+)
+from app.models.store_reports import DBStoreMaterialNorm
+from app.services import store_integration
 
 ZERO = Decimal("0")
-_Q3, _V2, _R4 = Decimal("0.001"), Decimal("0.01"), Decimal("0.0001")
+_Q, _V, _R = Decimal("0.001"), Decimal("0.01"), Decimal("0.0001")
 
+# The movement buckets of the movement report: each shows its net (in less out) quantity and value.
+BUCKETS = (
+    ("receipts", "Receipts", (MovementType.GRN_IN, MovementType.CLIENT_SUPPLY_IN, MovementType.OPENING_IN)),
+    ("returns_to_supplier", "Returned to supplier", (MovementType.PURCHASE_RETURN_OUT,)),
+    ("issues", "Issues (net of returns)", (MovementType.ISSUE_OUT, MovementType.ISSUE_RETURN_IN, MovementType.SUBCON_ISSUE_OUT, MovementType.SUBCON_RETURN_IN)),
+    ("transfers", "Transfers", (MovementType.TRANSFER_IN, MovementType.TRANSFER_OUT)),
+    ("adjustments", "Adjustments, wastage and scrap", (MovementType.ADJUST_IN, MovementType.ADJUST_OUT, MovementType.WASTAGE_OUT, MovementType.SCRAP_OUT)),
+)
+CATEGORY_NONE = "UNSET"
+
+
+def q3(x) -> Decimal:
+    return Decimal(str(x or 0)).quantize(_Q, rounding=ROUND_HALF_UP)
+
+
+def v2(x) -> Decimal:
+    return Decimal(str(x or 0)).quantize(_V, rounding=ROUND_HALF_UP)
+
+
+def r4(x) -> Decimal:
+    return Decimal(str(x or 0)).quantize(_R, rounding=ROUND_HALF_UP)
+
+
+def parse_day(raw, what, *, required=False, allow_future=True) -> Optional[date]:
+    if raw in (None, ""):
+        if required:
+            raise HTTPException(400, "Give the %s." % what)
+        return None
+    try:
+        out = datetime.strptime(str(raw).strip()[:10], "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(400, "%s is not a date (use YYYY-MM-DD)." % what) from None
+    if out.year < 2000 or out.year > 2100:
+        raise HTTPException(400, "%s is not a sensible date." % what)
+    if not allow_future and out > date.today():
+        raise HTTPException(400, "%s cannot be in the future." % what)
+    return out
+
+
+def _signed_qty():
+    return DBStoreStockLedger.qty_in - DBStoreStockLedger.qty_out
+
+
+def _signed_value():
+    return case((DBStoreStockLedger.qty_in > 0, DBStoreStockLedger.value), else_=-DBStoreStockLedger.value)
+
+
+def _stores(db, client_id, store_ids):
+    q = db.query(DBStore).filter(DBStore.client_id == client_id)
+    if store_ids is not None:
+        q = q.filter(DBStore.id.in_(list(store_ids) or [0]))
+    return {s.id: s for s in q.all()}
+
+
+def _items(db, ids):
+    return {i.id: i for i in db.query(models.DBItem).filter(models.DBItem.id.in_(list(ids) or [0])).all()}
+
+
+def _settings(db, ids):
+    return {s.item_id: s for s in db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id.in_(list(ids) or [0])).all()}
+
+
+def _like(term):
+    return "%" + term.replace("%", "").replace("_", "") + "%"
+
+
+def _item_filter(query, term, item_col):
+    if term:
+        like = _like(term)
+        query = query.join(models.DBItem, models.DBItem.id == item_col).filter(models.DBItem.item_code.ilike(like) | models.DBItem.item_name.ilike(like))
+    return query
+
+
+# --- valuation -------------------------------------------------------------------------------------------------------------
+
+def valuation(db, client_id, store_ids=None, as_on=None, category="", q="", include_zero=False):
+    """What each store holds of each item and what it is worth: today from the balances, or on a past date from the ledger up to it."""
+    stores = _stores(db, client_id, store_ids)
+    if not stores:
+        return {"as_on": (as_on or date.today()).isoformat(), "rows": [], "total_qty_rows": 0, "total_value": ZERO, "by_category": []}
+    today = date.today()
+    if as_on is None or as_on >= today:
+        query = db.query(DBStoreStockBalance.store_id, DBStoreStockBalance.item_id, DBStoreStockBalance.qty, DBStoreStockBalance.value).filter(DBStoreStockBalance.store_id.in_(list(stores)))
+        if not include_zero:
+            query = query.filter(DBStoreStockBalance.qty > 0)
+        query = _item_filter(query, (q or "").strip(), DBStoreStockBalance.item_id)
+        data = [(s, i, Decimal(str(qty or 0)), Decimal(str(val or 0))) for s, i, qty, val in query.all()]
+    else:
+        query = (db.query(DBStoreStockLedger.store_id, DBStoreStockLedger.item_id, func.sum(_signed_qty()), func.sum(_signed_value()))
+                 .filter(DBStoreStockLedger.store_id.in_(list(stores)), DBStoreStockLedger.txn_date <= as_on))
+        query = _item_filter(query, (q or "").strip(), DBStoreStockLedger.item_id)
+        data = [(s, i, Decimal(str(qty or 0)), Decimal(str(val or 0))) for s, i, qty, val in query.group_by(DBStoreStockLedger.store_id, DBStoreStockLedger.item_id).all()]
+        if not include_zero:
+            data = [d for d in data if d[2] > 0]
+    items, settings = _items(db, [d[1] for d in data]), _settings(db, [d[1] for d in data])
+    rows = []
+    for sid, iid, qty, val in data:
+        cat = settings[iid].category if iid in settings else CATEGORY_NONE
+        if category and cat != category.strip().upper():
+            continue
+        rows.append({"store_id": sid, "store_code": stores[sid].code, "store_name": stores[sid].name, "item_id": iid, "item_code": items[iid].item_code, "item_name": items[iid].item_name,
+                     "category": cat, "base_uom": (settings[iid].base_uom if iid in settings else items[iid].units_of_measure) or "", "qty": q3(qty), "avg_rate": r4(val / qty) if qty > 0 else ZERO,
+                     "value": v2(val)})
+    rows.sort(key=lambda r: (r["store_code"], r["item_name"]))
+    cats = {}
+    for r in rows:
+        c = cats.setdefault(r["category"], {"category": r["category"], "lines": 0, "value": ZERO})
+        c["lines"] += 1
+        c["value"] += r["value"]
+    return {"as_on": (as_on or today).isoformat(), "rows": rows, "total_value": sum((r["value"] for r in rows), ZERO), "by_category": sorted(cats.values(), key=lambda c: c["category"])}
+
+
+# --- movement --------------------------------------------------------------------------------------------------------------
+
+def movement(db, client_id, store_ids, start: date, end: date, q=""):
+    """Opening, what moved in each bucket, and closing, for every (store, item) that had stock or movement in the period."""
+    if end < start:
+        raise HTTPException(400, "The last day cannot be before the first.")
+    stores = _stores(db, client_id, store_ids)
+    if not stores:
+        return {"from": start.isoformat(), "to": end.isoformat(), "buckets": [{"key": k, "label": l} for k, l, _t in BUCKETS], "rows": [], "totals": {}}
+    sid_list = list(stores)
+    opening = (db.query(DBStoreStockLedger.store_id, DBStoreStockLedger.item_id, func.sum(_signed_qty()), func.sum(_signed_value()))
+               .filter(DBStoreStockLedger.store_id.in_(sid_list), DBStoreStockLedger.txn_date < start))
+    opening = _item_filter(opening, (q or "").strip(), DBStoreStockLedger.item_id).group_by(DBStoreStockLedger.store_id, DBStoreStockLedger.item_id).all()
+    period = (db.query(DBStoreStockLedger.store_id, DBStoreStockLedger.item_id, DBStoreStockLedger.movement_type, func.sum(_signed_qty()), func.sum(_signed_value()))
+              .filter(DBStoreStockLedger.store_id.in_(sid_list), DBStoreStockLedger.txn_date >= start, DBStoreStockLedger.txn_date <= end))
+    period = _item_filter(period, (q or "").strip(), DBStoreStockLedger.item_id).group_by(DBStoreStockLedger.store_id, DBStoreStockLedger.item_id, DBStoreStockLedger.movement_type).all()
+    bucket_of = {t.value: key for key, _l, types in BUCKETS for t in types}
+    table = {}
+    for sid, iid, qty, val in opening:
+        row = table.setdefault((sid, iid), _blank_row())
+        row["opening_qty"], row["opening_value"] = Decimal(str(qty or 0)), Decimal(str(val or 0))
+    for sid, iid, mtype, qty, val in period:
+        row = table.setdefault((sid, iid), _blank_row())
+        b = bucket_of.get(mtype, "adjustments")
+        row[b + "_qty"] += Decimal(str(qty or 0))
+        row[b + "_value"] += Decimal(str(val or 0))
+    items = _items(db, [i for _s, i in table])
+    rows = []
+    for (sid, iid), r in table.items():
+        r["closing_qty"] = r["opening_qty"] + sum((r[k + "_qty"] for k, _l, _t in BUCKETS), ZERO)
+        r["closing_value"] = r["opening_value"] + sum((r[k + "_value"] for k, _l, _t in BUCKETS), ZERO)
+        if r["opening_qty"] == 0 and r["closing_qty"] == 0 and all(r[k + "_qty"] == 0 and r[k + "_value"] == 0 for k, _l, _t in BUCKETS):
+            continue
+        out = {"store_id": sid, "store_code": stores[sid].code, "item_id": iid, "item_code": items[iid].item_code, "item_name": items[iid].item_name}
+        for k, v in r.items():
+            out[k] = q3(v) if k.endswith("_qty") else v2(v)
+        rows.append(out)
+    rows.sort(key=lambda r: (r["store_code"], r["item_name"]))
+    totals = {}
+    for key in ["opening", *[k for k, _l, _t in BUCKETS], "closing"]:
+        totals[key + "_value"] = sum((r[key + "_value"] for r in rows), ZERO)
+    return {"from": start.isoformat(), "to": end.isoformat(), "buckets": [{"key": k, "label": l} for k, l, _t in BUCKETS], "rows": rows, "totals": totals}
+
+
+def _blank_row():
+    row = {"opening_qty": ZERO, "opening_value": ZERO}
+    for k, _l, _t in BUCKETS:
+        row[k + "_qty"] = ZERO
+        row[k + "_value"] = ZERO
+    return row
+
+
+# --- consumption -----------------------------------------------------------------------------------------------------------
+
+GROUPS = ("project", "cost_head", "work_order", "boq_item", "item")
+
+
+def consumption(db, client_id, store_ids, project_id=0, start=None, end=None, group_by="project"):
+    """Material consumed by project, cost head, work order, BOQ item or item: issues (and scrap and wastage) less what came back."""
+    if group_by not in GROUPS:
+        raise HTTPException(400, "Group by one of: %s." % ", ".join(GROUPS))
+    rows = store_integration.material_cost_rows(db, client_id, project_id=project_id or None, from_date=start, to_date=end, store_ids=store_ids)
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.id.in_({r[0] for r in rows} or {0})).all()}
+    wos = {w.id: w for w in db.query(models.DBWorkOrder).filter(models.DBWorkOrder.id.in_({r[2] for r in rows if r[2]} or {0})).all()}
+    boqs = {b.id: b for b in db.query(models.DBBoqLine).filter(models.DBBoqLine.id.in_({r[3] for r in rows if r[3]} or {0})).all()}
+    items = _items(db, {r[4] for r in rows})
+
+    def label(r):
+        p, head, wo, boq, item, _qty, _val = r
+        if group_by == "project":
+            return (p, "%s - %s" % (jobs[p].number, jobs[p].name) if p in jobs else str(p))
+        if group_by == "cost_head":
+            return (head or "BOQ WORK", head.replace("_", " ").title() if head else "BOQ work")
+        if group_by == "work_order":
+            return (wo or 0, wos[wo].number if wo in wos else "No work order")
+        if group_by == "boq_item":
+            return (boq or 0, ("%s %s" % (boqs[boq].item_no or "", (boqs[boq].description or "").split("\n")[0][:60])).strip() if boq in boqs else "Not charged to a BOQ item")
+        return (item, "%s - %s" % (items[item].item_code, items[item].item_name))
+
+    groups = {}
+    for r in rows:
+        key, name = label(r)
+        g = groups.setdefault(key, {"key": key, "name": name, "value": ZERO, "items": {}})
+        g["value"] += r[6]
+        it = g["items"].setdefault(r[4], {"item_id": r[4], "item_code": items[r[4]].item_code, "item_name": items[r[4]].item_name, "qty": ZERO, "value": ZERO})
+        it["qty"] += r[5]
+        it["value"] += r[6]
+    out = []
+    for g in sorted(groups.values(), key=lambda g: -g["value"]):
+        out.append({"key": g["key"] if not isinstance(g["key"], str) else g["key"], "name": g["name"], "value": v2(g["value"]),
+                    "items": [{**i, "qty": q3(i["qty"]), "value": v2(i["value"])} for i in sorted(g["items"].values(), key=lambda i: -i["value"])]})
+    return {"group_by": group_by, "total_value": sum((g["value"] for g in out), ZERO), "groups": out}
+
+
+# --- norms ---------------------------------------------------------------------------------------------------------------------
 
 def get_theoretical_requirement(db, boq_item_id, item_id) -> Optional[Decimal]:
-    """What the BOQ item should consume of an item by its quantity and norm (with the wastage allowance); None when there is no norm."""
-    norm = db.query(DBStoreConsumptionNorm).filter(DBStoreConsumptionNorm.boq_item_id == boq_item_id, DBStoreConsumptionNorm.item_id == item_id).first()
+    """What the BOQ item should consume of an item by its quantity and norms: BOQ quantity x quantity per unit x (1 + wastage %), in the
+    item's base unit. None when no norm is set for the pair (or the BOQ item does not exist)."""
+    norm = db.query(DBStoreMaterialNorm).filter(DBStoreMaterialNorm.boq_item_id == boq_item_id, DBStoreMaterialNorm.item_id == item_id).first()
     line = db.get(models.DBBoqLine, boq_item_id) if norm is not None else None
     if norm is None or line is None:
         return None
-    qty = Decimal(str(line.quantity or 0))
-    return (qty * norm.qty_per_unit * (1 + (norm.wastage_pct or ZERO) / 100)).quantize(_Q3, rounding=ROUND_HALF_UP)
+    need = Decimal(str(line.quantity or 0)) * Decimal(str(norm.qty_per_unit)) * (1 + Decimal(str(norm.wastage_pct or 0)) / 100)
+    return q3(need)
 
 
-def _d(v, what):
-    if not v:
-        return None
-    try:
-        return datetime.strptime(str(v)[:10], "%Y-%m-%d").date()
-    except ValueError:
-        raise HTTPException(400, "%s must be a date like 2026-04-01." % what) from None
-
-
-def _s(v: Decimal, step=_V2) -> str:
-    return str(Decimal(v).quantize(step, rounding=ROUND_HALF_UP))
-
-
-def col(key, label, align="L", kind="text"):
-    return {"key": key, "label": label, "align": align, "kind": kind}
-
-
-def _qcol(key, label):
-    return col(key, label, "R", "qty")
-
-
-def _mcol(key, label):
-    return col(key, label, "R", "money")
-
-
-class Ctx:
-    """What a report may see: the company and the stores the person can reach (narrowed by the store filter)."""
-
-    def __init__(self, db, client_id, stores, params):
-        self.db, self.client_id, self.stores, self.params = db, client_id, stores, params
-        self.store_ids = [s.id for s in stores]
-        self.store = {s.id: s for s in stores}
-        self._items = {}
-
-    def item(self, item_id):
-        if item_id not in self._items:
-            it = self.db.get(models.DBItem, item_id)
-            st = self.db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == item_id).first()
-            self._items[item_id] = (it, st)
-        return self._items[item_id]
-
-    def label(self, item_id):
-        it, _ = self.item(item_id)
-        return it.item_name, it.item_code
-
-    def uom(self, item_id):
-        it, st = self.item(item_id)
-        return (st.base_uom if st else it.units_of_measure) or ""
-
-    def int_param(self, key):
-        try:
-            return int(self.params.get(key) or 0)
-        except (TypeError, ValueError):
-            raise HTTPException(400, "%s must be a number." % key) from None
-
-
-def _ledger(ctx, upto=None, since=None, before=None):
-    q = ctx.db.query(DBStoreStockLedger).filter(DBStoreStockLedger.store_id.in_(ctx.store_ids or [0]))
-    if upto:
-        q = q.filter(DBStoreStockLedger.txn_date <= upto)
-    if since:
-        q = q.filter(DBStoreStockLedger.txn_date >= since)
-    if before:
-        q = q.filter(DBStoreStockLedger.txn_date < before)
-    return q
-
-
-# ------------------------------------------------------------------------------------------------ stock reports
-def stock_valuation(ctx):
-    """Stock and its value per store and item, today or as on a past date."""
-    as_on = _d(ctx.params.get("as_on"), "As on")
-    groups = {}
-    if as_on and as_on < date.today():
-        for e in _ledger(ctx, upto=as_on).all():
-            q, v = groups.get((e.store_id, e.item_id), (ZERO, ZERO))
-            groups[(e.store_id, e.item_id)] = (q + e.qty_in - e.qty_out, v + (e.value if e.qty_in > 0 else -e.value))
-    else:
-        for b in ctx.db.query(DBStoreStockBalance).filter(DBStoreStockBalance.store_id.in_(ctx.store_ids or [0])).all():
-            groups[(b.store_id, b.item_id)] = (b.qty, b.value)
-    cat = ctx.params.get("category")
-    rows, tq, tv = [], ZERO, ZERO
-    for (sid, iid), (q, v) in sorted(groups.items(), key=lambda kv: (ctx.store[kv[0][0]].code, ctx.label(kv[0][1])[0])):
-        if q == 0 and v == 0:
-            continue
-        _it, st = ctx.item(iid)
-        if cat and (not st or st.category != cat):
-            continue
-        name, code = ctx.label(iid)
-        rows.append({"store": ctx.store[sid].code, "code": code, "item": name, "category": st.category if st else "", "uom": ctx.uom(iid), "qty": _s(q, _Q3),
-                     "avg_rate": _s(v / q, _R4) if q else "0.0000", "value": _s(v)})
-        tq, tv = tq + q, tv + v
-    return ("Stock valuation" + (" as on %s" % as_on if as_on else ""),
-            [col("store", "Store"), col("code", "Code"), col("item", "Item"), col("category", "Category"), col("uom", "Unit", "C"), _qcol("qty", "Quantity"), _mcol("avg_rate", "Avg rate"), _mcol("value", "Value")],
-            rows, {"item": "Total", "value": _s(tv)})
-
-
-def stock_movement(ctx):
-    """Opening, receipts, issues and closing per item for a period."""
-    start, end = _d(ctx.params.get("from"), "From date"), _d(ctx.params.get("to"), "To date")
-    if not (start and end):
-        raise HTTPException(400, "Give the period: from and to dates.")
-    groups = {}
-
-    def bucket(e):
-        return groups.setdefault((e.store_id, e.item_id), {"oq": ZERO, "ov": ZERO, "rq": ZERO, "rv": ZERO, "iq": ZERO, "iv": ZERO})
-    for e in _ledger(ctx, before=start).all():
-        b = bucket(e)
-        b["oq"] += e.qty_in - e.qty_out
-        b["ov"] += e.value if e.qty_in > 0 else -e.value
-    for e in _ledger(ctx, since=start, upto=end).all():
-        b = bucket(e)
-        if e.qty_in > 0:
-            b["rq"], b["rv"] = b["rq"] + e.qty_in, b["rv"] + e.value
-        else:
-            b["iq"], b["iv"] = b["iq"] + e.qty_out, b["iv"] + e.value
-    rows, tot = [], {k: ZERO for k in ("ov", "rv", "iv")}
-    for (sid, iid), b in sorted(groups.items(), key=lambda kv: (ctx.store[kv[0][0]].code, ctx.label(kv[0][1])[0])):
-        cq, cv = b["oq"] + b["rq"] - b["iq"], b["ov"] + b["rv"] - b["iv"]
-        name, _ = ctx.label(iid)
-        rows.append({"store": ctx.store[sid].code, "item": name, "uom": ctx.uom(iid), "oq": _s(b["oq"], _Q3), "rq": _s(b["rq"], _Q3), "iq": _s(b["iq"], _Q3), "cq": _s(cq, _Q3),
-                     "ov": _s(b["ov"]), "rv": _s(b["rv"]), "iv": _s(b["iv"]), "cv": _s(cv)})
-        for k in tot:
-            tot[k] += b[k]
-    totals = {"item": "Total", "ov": _s(tot["ov"]), "rv": _s(tot["rv"]), "iv": _s(tot["iv"]), "cv": _s(tot["ov"] + tot["rv"] - tot["iv"])}
-    return ("Stock movement %s to %s" % (start, end),
-            [col("store", "Store"), col("item", "Item"), col("uom", "Unit", "C"), _qcol("oq", "Opening qty"), _qcol("rq", "Received"), _qcol("iq", "Issued"), _qcol("cq", "Closing qty"),
-             _mcol("ov", "Opening value"), _mcol("rv", "Received value"), _mcol("iv", "Issued value"), _mcol("cv", "Closing value")], rows, totals)
-
-
-def reorder(ctx):
-    """Items at or below their reorder level, with how much would bring them to the maximum."""
+def norm_variance(db, client_id, store_ids, project_id, tolerance_pct=ZERO):
+    """For every BOQ item of a project with a norm: what it should consume, what the stores actually issued to it, and the difference."""
+    norms = (db.query(DBStoreMaterialNorm, models.DBBoqLine).join(models.DBBoqLine, models.DBBoqLine.id == DBStoreMaterialNorm.boq_item_id)
+             .join(models.DBBoq, models.DBBoq.id == models.DBBoqLine.boq_id).filter(DBStoreMaterialNorm.client_id == client_id, models.DBBoq.job_id == project_id).all())
+    actual = {}
+    for p, head, wo, boq, item, qty, val in store_integration.material_cost_rows(db, client_id, project_id=project_id, store_ids=store_ids):
+        if boq:
+            a = actual.setdefault((boq, item), [ZERO, ZERO])
+            a[0] += qty
+            a[1] += val
+    items = _items(db, [n.item_id for n, _l in norms])
     rows = []
-    for b in ctx.db.query(DBStoreStockBalance).filter(DBStoreStockBalance.store_id.in_(ctx.store_ids or [0])).all():
-        _it, st = ctx.item(b.item_id)
-        level = (st.reorder_level or ZERO) if st else ZERO
-        if not level or b.qty > level:
-            continue
-        name, code = ctx.label(b.item_id)
-        top = (st.max_qty or ZERO)
-        rows.append({"store": ctx.store[b.store_id].code, "code": code, "item": name, "uom": ctx.uom(b.item_id), "qty": _s(b.qty, _Q3), "reorder": _s(level, _Q3),
-                     "short": _s(level - b.qty, _Q3), "suggest": _s(max(top - b.qty, ZERO), _Q3) if top else ""})
-    rows.sort(key=lambda r: (r["store"], r["item"]))
-    return ("Items to reorder", [col("store", "Store"), col("code", "Code"), col("item", "Item"), col("uom", "Unit", "C"), _qcol("qty", "On hand"), _qcol("reorder", "Reorder level"),
-                                 _qcol("short", "Below level by"), _qcol("suggest", "Order to reach maximum")], rows, {})
+    for n, line in norms:
+        theory = get_theoretical_requirement(db, line.id, n.item_id) or ZERO
+        qty, val = actual.get((line.id, n.item_id), [ZERO, ZERO])
+        diff = qty - theory
+        pct = (diff / theory * 100) if theory > 0 else None
+        over = qty > theory * (1 + tolerance_pct / 100) if theory > 0 else qty > 0
+        rows.append({"boq_item_id": line.id, "boq_item": ("%s %s" % (line.item_no or "", (line.description or "").split("\n")[0][:60])).strip(), "boq_qty": q3(line.quantity), "boq_uom": line.uom or "",
+                     "item_id": n.item_id, "item_code": items[n.item_id].item_code, "item_name": items[n.item_id].item_name, "qty_per_unit": Decimal(str(n.qty_per_unit)), "wastage_pct": Decimal(str(n.wastage_pct or 0)),
+                     "theoretical_qty": theory, "actual_qty": q3(qty), "actual_value": v2(val), "variance_qty": q3(diff), "variance_pct": pct.quantize(Decimal("0.1")) if pct is not None else None,
+                     "status": "OVER" if over else ("UNDER" if qty < theory else "OK")})
+    rows.sort(key=lambda r: (r["boq_item"], r["item_name"]))
+    return {"project_id": project_id, "tolerance_pct": tolerance_pct, "over": sum(1 for r in rows if r["status"] == "OVER"), "rows": rows}
 
 
-def slow_moving(ctx):
-    """Stock held that has not been issued for N days (default 90)."""
-    days = ctx.int_param("days") or 90
-    since = date.today() - timedelta(days=days)
-    moved = {(sid, iid) for sid, iid in _ledger(ctx, since=since).filter(DBStoreStockLedger.qty_out > 0, DBStoreStockLedger.movement_type.in_(
-        store_integration.COST_MOVEMENTS + (MovementType.TRANSFER_OUT.value, MovementType.SCRAP_OUT.value))).with_entities(DBStoreStockLedger.store_id, DBStoreStockLedger.item_id).all()}
-    rows, total = [], ZERO
-    for b in ctx.db.query(DBStoreStockBalance).filter(DBStoreStockBalance.store_id.in_(ctx.store_ids or [0]), DBStoreStockBalance.qty > 0).all():
-        if (b.store_id, b.item_id) in moved:
-            continue
-        last = ctx.db.query(DBStoreStockLedger.txn_date).filter(DBStoreStockLedger.store_id == b.store_id, DBStoreStockLedger.item_id == b.item_id, DBStoreStockLedger.qty_out > 0).order_by(
-            DBStoreStockLedger.txn_date.desc()).first()
-        name, code = ctx.label(b.item_id)
-        rows.append({"store": ctx.store[b.store_id].code, "code": code, "item": name, "uom": ctx.uom(b.item_id), "qty": _s(b.qty, _Q3), "value": _s(b.value),
-                     "last_out": last[0].isoformat() if last else "never"})
-        total += b.value
-    rows.sort(key=lambda r: -Decimal(r["value"]))
-    return ("Slow-moving stock (no issue for %d days)" % days, [col("store", "Store"), col("code", "Code"), col("item", "Item"), col("uom", "Unit", "C"), _qcol("qty", "Quantity"),
-                                                              _mcol("value", "Value"), col("last_out", "Last issued", "C")], rows, {"item": "Total", "value": _s(total)})
+# --- slow-moving and reorder --------------------------------------------------------------------------------------------------
 
-
-# ------------------------------------------------------------------------------------------------ cost reports
-def consumption(ctx):
-    """Material charged to a project, against what the BOQ norms say it should have taken."""
-    project_id = ctx.int_param("project_id")
-    job = ctx.db.get(models.DBJob, project_id) if project_id else None
-    if job is None or job.client_id != ctx.client_id:
-        raise HTTPException(400, "Choose a project.")
-    start, end = _d(ctx.params.get("from"), "From date"), _d(ctx.params.get("to"), "To date")
-    group = ctx.params.get("group_by") or "detail"
-    if group not in ("detail", "cost_head", "work_order", "item"):
-        raise HTTPException(400, "group_by must be detail, cost_head, work_order or item.")
-    lines = store_integration.get_project_material_cost(ctx.db, project_id, start, end)
-    wo_no = {w.id: w.number for w in ctx.db.query(models.DBWorkOrder).filter(models.DBWorkOrder.id.in_({l.work_order_id for l in lines if l.work_order_id} or {0})).all()}
-    boq_no = {b.id: ("%s %s" % (b.item_no, b.description or "")).strip()[:50] for b in ctx.db.query(models.DBBoqLine).filter(models.DBBoqLine.id.in_({l.boq_item_id for l in lines if l.boq_item_id} or {0})).all()}
-    agg, order = {}, []
-    for l in lines:
-        key = {"detail": (l.cost_head, l.work_order_id, l.boq_item_id, l.item_id), "cost_head": (l.cost_head,), "work_order": (l.work_order_id,), "item": (l.item_id,)}[group]
-        if key not in agg:
-            agg[key] = {"qty": ZERO, "value": ZERO, "theory": None, "line": l}
-            order.append(key)
-        a = agg[key]
-        a["qty"], a["value"] = a["qty"] + l.qty, a["value"] + l.value
-        if group == "detail" and l.boq_item_id:
-            t = get_theoretical_requirement(ctx.db, l.boq_item_id, l.item_id)
-            a["theory"] = t
-    rows, total = [], ZERO
-    for key in order:
-        a, l = agg[key], agg[key]["line"]
-        name, code = ctx.label(l.item_id)
-        row = {"cost_head": (l.cost_head or "").replace("_", " ").lower() or "—", "work_order": wo_no.get(l.work_order_id, "—"), "boq": boq_no.get(l.boq_item_id, "—"),
-               "item": name if group in ("detail", "item") else "", "uom": ctx.uom(l.item_id) if group in ("detail", "item") else "", "qty": _s(a["qty"], _Q3) if group in ("detail", "item") else "",
-               "value": _s(a["value"]), "theory": "", "variance": ""}
-        if a["theory"] is not None:
-            row["theory"], row["variance"] = _s(a["theory"], _Q3), _s(a["qty"] - a["theory"], _Q3)
-        rows.append(row)
-        total += a["value"]
-    cols = {"detail": ["cost_head", "work_order", "boq", "item", "uom", "qty", "theory", "variance", "value"], "cost_head": ["cost_head", "value"], "work_order": ["work_order", "value"], "item": ["item", "uom", "qty", "value"]}[group]
-    defs = {"cost_head": col("cost_head", "Cost head"), "work_order": col("work_order", "Work order"), "boq": col("boq", "BOQ item"), "item": col("item", "Item"), "uom": col("uom", "Unit", "C"),
-            "qty": _qcol("qty", "Issued (net)"), "theory": _qcol("theory", "Per BOQ norms"), "variance": _qcol("variance", "Over / (under)"), "value": _mcol("value", "Value")}
-    return ("Material consumption - %s%s" % (job.name, (" (%s to %s)" % (start or "start", end or "today")) if (start or end) else ""), [defs[c] for c in cols], rows, {cols[0]: "Total", "value": _s(total)})
-
-
-def subcon_material(ctx):
-    """Material given to a subcontractor, what came back and what is recoverable from their bills."""
-    sid = ctx.int_param("subcontractor_id")
-    c = ctx.db.get(models.DBContractor, sid) if sid else None
-    if c is None or c.client_id != ctx.client_id:
-        raise HTTPException(400, "Choose a subcontractor.")
-    upto = _d(ctx.params.get("to"), "To date") or date.today()
-    rows, total = [], ZERO
-    for l in store_outward.get_subcon_issues(ctx.db, sid, upto):
-        name, _ = ctx.label(l.item_id)
-        rows.append({"date": l.issue_date.isoformat(), "item": name, "uom": ctx.uom(l.item_id), "issued": _s(l.qty_issued, _Q3), "returned": _s(l.qty_returned, _Q3),
-                     "chargeable": "Yes" if l.chargeable else "No", "rate": _s(l.recovery_rate, _R4), "recovery": _s(l.recovery_value)})
-        total += l.recovery_value
-    return ("Material with %s up to %s" % (c.company_name, upto), [col("date", "Issued on", "C"), col("item", "Item"), col("uom", "Unit", "C"), _qcol("issued", "Issued"), _qcol("returned", "Returned"),
-                                                                   col("chargeable", "Chargeable", "C"), _mcol("rate", "Recovery rate"), _mcol("recovery", "To recover")], rows, {"item": "Total", "recovery": _s(total)})
-
-
-# ------------------------------------------------------------------------------------------------ other slices' data
-def _ledger_refs(ctx, ref_type, movement_types):
-    """Document id -> (store id, date, number) for the posted documents of one kind, read from the shared ledger (the document's own remarks name its number)."""
-    refs = {}
-    for e in ctx.db.query(DBStoreStockLedger).filter(DBStoreStockLedger.store_id.in_(ctx.store_ids or [0]), DBStoreStockLedger.ref_doc_type == ref_type,
-                                                    DBStoreStockLedger.movement_type.in_(movement_types), DBStoreStockLedger.reversal_of_id.is_(None)).all():
-        words = (e.remarks or "").split()
-        refs.setdefault(e.ref_doc_id, (e.store_id, e.txn_date, words[1].rstrip(":") if len(words) > 1 else "%s-%s" % (ref_type, e.ref_doc_id)))
-    return refs
-
-
-def _holder_name(ctx, holder_type, holder_id):
-    if holder_type == "EMPLOYEE" and holder_id:
-        e = ctx.db.get(models.DBEmployee, holder_id)
-        return ("%s %s" % (e.first_name, e.last_name)).strip() if e else ""
-    if holder_type == "SUBCONTRACTOR" and holder_id:
-        c = ctx.db.get(models.DBContractor, holder_id)
-        return (c.company_name or "") if c else ""
-    return holder_type.title()
-
-
-def returnables(ctx):
-    """Returnable items still out, who holds them and how late they are (the outward slice's public function; the store comes from the ledger)."""
-    issue_of = {}
-    for e in ctx.db.query(DBStoreStockLedger).filter(DBStoreStockLedger.store_id.in_(ctx.store_ids or [0]), DBStoreStockLedger.ref_doc_type == "ISSUE",
-                                                    DBStoreStockLedger.reversal_of_id.is_(None)).all():
-        words = (e.remarks or "").split()
-        issue_of[e.ref_line_id] = (e.store_id, words[1] if len(words) > 1 else "ISSUE-%s" % e.ref_doc_id)
+def slow_moving(db, client_id, store_ids, days=90):
+    """Stock that has not moved for `days` days or more: what is held, what it is worth and when it last moved."""
+    if days < 1 or days > 3650:
+        raise HTTPException(400, "Days must be between 1 and 3650.")
+    stores = _stores(db, client_id, store_ids)
+    if not stores:
+        return {"days": days, "total_value": ZERO, "rows": []}
+    held = db.query(DBStoreStockBalance).filter(DBStoreStockBalance.store_id.in_(list(stores)), DBStoreStockBalance.qty > 0).all()
+    last = {(s, i): d for s, i, d in db.query(DBStoreStockLedger.store_id, DBStoreStockLedger.item_id, func.max(DBStoreStockLedger.txn_date)).filter(
+        DBStoreStockLedger.store_id.in_(list(stores))).group_by(DBStoreStockLedger.store_id, DBStoreStockLedger.item_id).all()}
+    items = _items(db, [b.item_id for b in held])
+    today = date.today()
     rows = []
-    for r in store_outward.get_outstanding_returnables(ctx.db, project_id=ctx.int_param("project_id") or None):
-        if r.issue_line_id not in issue_of:
-            continue                                                         # another company's, or a store this person cannot reach
-        sid, number = issue_of[r.issue_line_id]
-        name, _ = ctx.label(r.item_id)
-        rows.append({"store": ctx.store[sid].code, "issue": number, "item": name, "holder": _holder_name(ctx, r.holder_type, r.holder_id), "qty": _s(r.qty_outstanding, _Q3),
-                     "due": r.expected_return_date.isoformat() if r.expected_return_date else "", "late": str(r.overdue_days) if r.overdue_days else ""})
-    return ("Returnables outstanding", [col("store", "Store"), col("issue", "Issue"), col("item", "Item"), col("holder", "Held by"), _qcol("qty", "Still out"), col("due", "Due", "C"),
-                                        _qcol("late", "Days late")], rows, {})
+    for b in held:
+        moved = last.get((b.store_id, b.item_id))
+        idle = (today - moved).days if moved else None
+        if idle is None or idle >= days:
+            rows.append({"store_id": b.store_id, "store_code": stores[b.store_id].code, "item_id": b.item_id, "item_code": items[b.item_id].item_code, "item_name": items[b.item_id].item_name,
+                         "qty": q3(b.qty), "value": v2(b.value), "last_moved": moved.isoformat() if moved else "", "days_idle": idle})
+    rows.sort(key=lambda r: -r["value"])
+    return {"days": days, "total_value": sum((r["value"] for r in rows), ZERO), "rows": rows}
 
 
-def in_transit(ctx):
-    """Stock dispatched between stores and not yet received."""
-    rows, total = [], ZERO
-    for l in store_control.get_in_transit(ctx.db, project_id=ctx.int_param("project_id") or None):
-        if l.from_store_id not in ctx.store and l.to_store_id not in ctx.store:
-            continue
-        name, _ = ctx.label(l.item_id)
-        rows.append({"transfer": str(l.transfer_id), "from": ctx.db.get(DBStore, l.from_store_id).code, "to": ctx.db.get(DBStore, l.to_store_id).code, "item": name,
-                     "qty": _s(l.qty, _Q3), "value": _s(l.value), "sent": l.dispatched_on.isoformat(), "inter": "Yes" if l.inter_project else ""})
-        total += l.value
-    return ("Stock in transit", [col("transfer", "Transfer", "C"), col("from", "From"), col("to", "To"), col("item", "Item"), _qcol("qty", "Quantity"), _mcol("value", "Value"),
-                                 col("sent", "Sent on", "C"), col("inter", "Inter-project", "C")], rows, {"item": "Total", "value": _s(total)})
-
-
-def count_variances(ctx):
-    """What stock counts found against the books."""
-    sid = ctx.int_param("store_id")
-    if not sid:
-        raise HTTPException(400, "Choose a store.")
-    rows, total = [], ZERO
-    for l in store_control.get_count_variances(ctx.db, sid, _d(ctx.params.get("from"), "From date"), _d(ctx.params.get("to"), "To date")):
-        name, _ = ctx.label(l.item_id)
-        rows.append({"count": str(l.count_id), "item": name, "uom": ctx.uom(l.item_id), "system": _s(l.system_qty, _Q3), "counted": _s(l.counted_qty, _Q3), "diff": _s(l.variance_qty, _Q3), "value": _s(l.variance_value)})
-        total += l.variance_value
-    return ("Stock count differences", [col("count", "Count", "C"), col("item", "Item"), col("uom", "Unit", "C"), _qcol("system", "Books"), _qcol("counted", "Counted"), _qcol("diff", "Difference"),
-                                        _mcol("value", "Value")], rows, {"item": "Net", "value": _s(total)})
-
-
-def scrap(ctx):
-    """Scrap taken out for a project: book value against what it fetched (the control slice's public function; number, date and store come from the ledger)."""
-    refs = _ledger_refs(ctx, "SCRAP", (MovementType.SCRAP_OUT.value,))
-    rows, book, got = [], ZERO, ZERO
-    for l in store_control.get_scrap_realisation(ctx.db, ctx.int_param("project_id") or None, _d(ctx.params.get("from"), "From date"), _d(ctx.params.get("to"), "To date")):
-        if l.scrap_doc_id not in refs:
-            continue
-        _sid, day, number = refs[l.scrap_doc_id]
-        name, _ = ctx.label(l.item_id)
-        rows.append({"scrap": number, "date": day.isoformat(), "item": name, "qty": _s(l.qty, _Q3), "book": _s(l.book_value), "got": _s(l.realised_value), "gain": _s(l.realised_value - l.book_value)})
-        book, got = book + l.book_value, got + l.realised_value
-    return ("Scrap realisation", [col("scrap", "Scrap note"), col("date", "Date", "C"), col("item", "Item"), _qcol("qty", "Quantity"), _mcol("book", "Book value"), _mcol("got", "Realised"), _mcol("gain", "Gain / (loss)")],
-            rows, {"item": "Total", "book": _s(book), "got": _s(got), "gain": _s(got - book)})
-
-
-def po_pending(ctx):
-    """Purchase order lines still to be received."""
+def reorder(db, client_id, store_ids):
+    """Items at or below their reorder level in a store, with a suggested quantity to bring them back up (to the maximum, or to twice the reorder level)."""
+    stores = _stores(db, client_id, store_ids)
+    if not stores:
+        return {"rows": []}
+    q = (db.query(DBStoreStockBalance, DBStoreItemSettings).join(DBStoreItemSettings, DBStoreItemSettings.item_id == DBStoreStockBalance.item_id)
+         .filter(DBStoreStockBalance.store_id.in_(list(stores)), DBStoreItemSettings.reorder_level > 0, DBStoreStockBalance.qty <= DBStoreItemSettings.reorder_level))
+    pairs = q.all()
+    items = _items(db, [b.item_id for b, _s in pairs])
     rows = []
-    q = ctx.db.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.client_id == ctx.client_id, models.DBPurchaseOrder.status == "Approved")
-    if ctx.int_param("project_id"):
-        q = q.filter(models.DBPurchaseOrder.job_id == ctx.int_param("project_id"))
-    for po in q.order_by(models.DBPurchaseOrder.id.desc()).limit(300).all():
-        for r in store_inward.get_po_receipt_summary(ctx.db, po.id):
-            if r.pending_qty <= 0:
-                continue
-            line = ctx.db.get(models.DBPurchaseOrderLineItem, r.po_line_id)
-            rows.append({"po": po.number, "supplier": po.supplier_name or "", "item": line.description or line.item_code, "ordered": _s(r.ordered_qty, _Q3), "received": _s(r.received_qty, _Q3),
-                         "rejected": _s(r.rejected_qty, _Q3), "pending": _s(r.pending_qty, _Q3), "needed": po.needed_by or ""})
-    return ("Purchase orders pending receipt", [col("po", "PO"), col("supplier", "Supplier"), col("item", "Item"), _qcol("ordered", "Ordered"), _qcol("received", "Received"), _qcol("rejected", "Rejected"),
-                                                _qcol("pending", "Pending"), col("needed", "Needed by", "C")], rows, {})
-
-
-REPORTS = {
-    "stock-valuation": (stock_valuation, "Stock valuation", ["as_on", "store_id", "category"]),
-    "stock-movement": (stock_movement, "Stock movement", ["from", "to", "store_id"]),
-    "reorder": (reorder, "Items to reorder", ["store_id"]),
-    "slow-moving": (slow_moving, "Slow-moving stock", ["days", "store_id"]),
-    "consumption": (consumption, "Material consumption", ["project_id", "from", "to", "group_by"]),
-    "subcon-material": (subcon_material, "Material with subcontractors", ["subcontractor_id", "to"]),
-    "returnables": (returnables, "Returnables outstanding", ["project_id", "store_id"]),
-    "in-transit": (in_transit, "Stock in transit", ["project_id", "store_id"]),
-    "count-variances": (count_variances, "Stock count differences", ["store_id", "from", "to"]),
-    "scrap": (scrap, "Scrap realisation", ["project_id", "from", "to", "store_id"]),
-    "po-pending": (po_pending, "Purchase orders pending receipt", ["project_id"]),
-}
-
-
-def catalog():
-    return [{"code": code, "title": title, "params": params} for code, (_fn, title, params) in REPORTS.items()]
-
-
-def run_report(db, client_id, stores, code, params) -> dict:
-    if code not in REPORTS:
-        raise HTTPException(404, "Unknown report")
-    ctx = Ctx(db, client_id, stores, params)
-    title, columns, rows, totals = REPORTS[code][0](ctx)
-    return {"code": code, "title": title, "params": {k: v for k, v in params.items() if v not in (None, "")}, "columns": columns, "rows": rows, "totals": totals,
-            "generated_at": datetime.now().isoformat(timespec="minutes")}
-
-
-def to_xlsx(rep: dict, company: str = "") -> bytes:
-    """The report as an Excel workbook: title, parameters, header row, data (numbers as numbers) and totals."""
-    from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Font, PatternFill
-    wb = Workbook()
-    ws = wb.active
-    ws.title = rep["code"][:31]
-    ws.append([company or "Store report"])
-    ws.append([rep["title"]])
-    ws.append(["  ".join("%s: %s" % (k, v) for k, v in rep["params"].items()) or "All records"])
-    ws.append([])
-    head = [c["label"] for c in rep["columns"]]
-    ws.append(head)
-    for cell in ws[5]:
-        cell.font, cell.fill = Font(bold=True), PatternFill("solid", fgColor="E8E8E8")
-    ws["A1"].font, ws["A2"].font = Font(bold=True, size=13), Font(bold=True)
-
-    def cellval(c, v):
-        if c["kind"] in ("qty", "money") and v not in ("", None):
-            try:
-                return float(v)
-            except ValueError:
-                return v
-        return v
-    for r in rep["rows"]:
-        ws.append([cellval(c, r.get(c["key"], "")) for c in rep["columns"]])
-    if rep["totals"]:
-        ws.append([cellval(c, rep["totals"].get(c["key"], "")) for c in rep["columns"]])
-        for cell in ws[ws.max_row]:
-            cell.font = Font(bold=True)
-    for i, c in enumerate(rep["columns"], 1):
-        letter = ws.cell(row=5, column=i).column_letter
-        ws.column_dimensions[letter].width = max(10, min(40, max([len(c["label"])] + [len(str(r.get(c["key"], ""))) for r in rep["rows"][:200]]) + 2))
-        for row in ws.iter_rows(min_row=6, min_col=i, max_col=i):
-            for cell in row:
-                if c["kind"] == "money":
-                    cell.number_format = "#,##0.00"
-                elif c["kind"] == "qty":
-                    cell.number_format = "#,##0.###"
-                if c["align"] == "R":
-                    cell.alignment = Alignment(horizontal="right")
-    ws.freeze_panes = "A6"
-    out = io.BytesIO()
-    wb.save(out)
-    return out.getvalue()
-
-
-def summary(db, client_id, stores) -> dict:
-    """The numbers on the reports home."""
-    ctx = Ctx(db, client_id, stores, {})
-    _t, _c, val_rows, val_tot = stock_valuation(ctx)
-    low = reorder(ctx)[2]
-    late = [r for r in returnables(ctx)[2] if r["late"]]
-    return {"stock_value": val_tot.get("value", "0.00"), "stock_lines": len(val_rows), "below_reorder": len(low), "in_transit": len({r["transfer"] for r in in_transit(ctx)[2]}),
-            "returnables_late": len(late), "open_writeoffs": len([w for w in store_outward.list_writeoff_requests(db, "OPEN") if w.store_id in ctx.store])}
+    for b, s in pairs:
+        qty, level = Decimal(str(b.qty)), Decimal(str(s.reorder_level))
+        target = Decimal(str(s.max_qty)) if s.max_qty and Decimal(str(s.max_qty)) > level else level * 2
+        rows.append({"store_id": b.store_id, "store_code": stores[b.store_id].code, "item_id": b.item_id, "item_code": items[b.item_id].item_code, "item_name": items[b.item_id].item_name,
+                     "base_uom": s.base_uom or "", "qty": q3(qty), "reorder_level": q3(level), "min_qty": q3(s.min_qty), "suggested_qty": q3(max(ZERO, target - qty)), "below_minimum": bool(s.min_qty and qty < Decimal(str(s.min_qty)))})
+    rows.sort(key=lambda r: (r["store_code"], r["item_name"]))
+    return {"rows": rows}

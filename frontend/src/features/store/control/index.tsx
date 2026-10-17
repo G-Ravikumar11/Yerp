@@ -1,131 +1,79 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { FileSpreadsheet, Plus } from 'lucide-react'
-import { Link, Route, Routes, useNavigate } from 'react-router-dom'
-import { Badge, Button, Card, Input, Select, SkeletonRows, Tabs } from '@/components/ui'
-import { apiUrl } from '@/lib/api'
-import { useSession } from '@/lib/session'
-import { storeGet, storePerm, useStoreMeta } from '@/api/store'
-import { DocStatusBadge } from '../shared'
+import { Link, NavLink, Route, Routes, useParams } from 'react-router-dom'
+import { ArrowLeft } from 'lucide-react'
+import { Skeleton } from '@/components/ui'
+import { cn } from '@/lib/utils'
 import { StoreShell } from '../StoreShell'
-import { AdjustmentForm, CountStart, ScrapForm, TransferForm } from './Forms'
-import { AdjustmentView, CountView, ScrapView, TransferView } from './Views'
-import { money, num, type ReorderRow, type Transfer } from './types'
+import { kindOf, KINDS, useDoc, type ControlKind } from './api'
+import DocListPage from './DocListPage'
+import DocPage from './DocPage'
+import { CountForm, ScrapForm, TransferForm } from './Forms'
+import { InTransitPage, RealisationPage, VariancesPage } from './Reports'
 
-/** Store > Control: transfers (with stock in transit), stock counts, adjustments and scrap. */
-export default function ControlIndex() {
+const tab = ({ isActive }: { isActive: boolean }) =>
+  cn('whitespace-nowrap rounded-lg px-3.5 py-1.5 text-[13px] font-medium', isActive ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground')
+
+function Tabs() {
   return (
-    <StoreShell slice="control">
-      <Routes>
-        <Route index element={<Lists />} />
-        <Route path="transfers/new" element={<TransferForm />} />
-        <Route path="transfers/:id/edit" element={<TransferForm />} />
-        <Route path="transfers/:id" element={<TransferView />} />
-        <Route path="counts/new" element={<CountStart />} />
-        <Route path="counts/:id" element={<CountView />} />
-        <Route path="adjustments/new" element={<AdjustmentForm />} />
-        <Route path="adjustments/:id/edit" element={<AdjustmentForm />} />
-        <Route path="adjustments/:id" element={<AdjustmentView />} />
-        <Route path="scrap/new" element={<ScrapForm />} />
-        <Route path="scrap/:id/edit" element={<ScrapForm />} />
-        <Route path="scrap/:id" element={<ScrapView />} />
-      </Routes>
-    </StoreShell>
+    <nav aria-label="Control" className="mb-4 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-muted p-1">
+      {KINDS.map((k) => <NavLink key={k.key} to={`/store/hub/control/${k.key}`} className={tab}>{k.plural}</NavLink>)}
+      <NavLink to="/store/hub/control/in-transit" className={tab}>In transit</NavLink>
+      <NavLink to="/store/hub/control/variances" className={tab}>Count differences</NavLink>
+      <NavLink to="/store/hub/control/realisation" className={tab}>Scrap realised</NavLink>
+    </nav>
   )
 }
 
-type Tab = 'transfers' | 'transit' | 'counts' | 'adjustments' | 'scrap' | 'reorder'
-const LABEL: Record<string, string> = { transfers: 'New transfer', counts: 'Start a count', adjustments: 'New adjustment', scrap: 'New scrap note' }
-interface Row { id: number; number: string; status: never; store_code: string; to_store_code?: string; trf_date?: string; count_date?: string; adj_date?: string; scrap_date?: string; kind?: string; reason?: string; transit?: string; total_value?: string; book_value?: string; realised_value?: string; variance_value?: string | null; counted_count?: number; line_count: number; inter_project?: boolean }
-
-function Lists() {
-  const { can } = useSession()
-  const nav = useNavigate()
-  const [tab, setTab] = useState<Tab>('transfers')
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Tabs label="Control" value={tab} onChange={setTab} items={[{ value: 'transfers', label: 'Transfers' }, { value: 'transit', label: 'In transit' }, { value: 'counts', label: 'Stock counts' }, { value: 'adjustments', label: 'Adjustments' }, { value: 'scrap', label: 'Scrap' }, { value: 'reorder', label: 'Reorder alerts' }]} />
-        {can(storePerm('control', 'create')) && tab !== 'transit' && tab !== 'reorder' && <Button onClick={() => nav(`${tab}/new`)}><Plus /> {LABEL[tab]}</Button>}
-      </div>
-      {tab === 'transit' ? <Transit /> : tab === 'reorder' ? <Reorder /> : <Docs kind={tab} />}
-    </div>
-  )
-}
-
-function Docs({ kind }: { kind: 'transfers' | 'counts' | 'adjustments' | 'scrap' }) {
-  const meta = useStoreMeta()
-  const [status, setStatus] = useState('')
-  const [q, setQ] = useState('')
-  const res = useQuery({ queryKey: ['store', 'control', 'list', kind, status, q], queryFn: () => storeGet<{ rows: Row[] }>('control', `/${kind}?status=${status}&q=${encodeURIComponent(q)}`) })
-  const rows = res.data?.rows ?? []
-  const date = (r: Row) => r.trf_date ?? r.count_date ?? r.adj_date ?? r.scrap_date
-  const detail = (r: Row) => kind === 'transfers' ? <>{r.store_code} → {r.to_store_code} {r.inter_project && <Badge tone="warning">Inter-project</Badge>} {r.transit === 'IN_TRANSIT' && <Badge tone="info">In transit</Badge>}</>
-    : kind === 'counts' ? `${r.store_code} · ${r.counted_count} of ${r.line_count} counted` : kind === 'adjustments' ? `${r.store_code} · ${r.kind?.toLowerCase()} · ${r.reason}` : `${r.store_code} · ${r.reason}`
-  const value = (r: Row) => kind === 'counts' ? (r.variance_value == null ? '—' : money(r.variance_value)) : kind === 'scrap' ? money(r.realised_value ?? '0') : money(r.total_value ?? '0')
+function List() {
+  const { kind: key } = useParams()
+  const kind = kindOf(key) ?? KINDS[0]
   return (
     <>
-      <div className="flex flex-wrap gap-3">
-        <Input className="max-w-xs" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search number" />
-        <Select className="w-44" value={status} placeholder="Any status" options={(meta.data?.doc_statuses ?? []).map((s) => ({ value: s, label: s }))} onChange={(e) => setStatus(e.target.value)} />
-      </div>
-      {res.isLoading ? <SkeletonRows rows={6} cols={5} /> : (
-        <Card className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead><tr className="border-b border-border text-left text-xs uppercase text-muted-foreground"><th className="p-3">Number</th><th className="p-3">Date</th><th className="p-3">Details</th><th className="p-3 text-right">{kind === 'counts' ? 'Net difference' : kind === 'scrap' ? 'Realised' : 'Value'}</th><th className="p-3">Status</th></tr></thead>
-            <tbody>
-              {rows.map((r) => <tr key={r.id} className="border-b border-border last:border-0 hover:bg-accent/40"><td className="p-3"><Link className="font-mono text-primary hover:underline" to={`${kind}/${r.id}`}>{r.number}</Link></td><td className="p-3">{date(r)}</td><td className="p-3">{detail(r)}</td><td className="p-3 text-right">{value(r)}</td><td className="p-3"><DocStatusBadge status={r.status} /></td></tr>)}
-              {rows.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">Nothing here yet.</td></tr>}
-            </tbody>
-          </table>
-        </Card>
-      )}
+      <Tabs />
+      <p className="mb-4 text-sm text-muted-foreground">{kind.blurb}</p>
+      <DocListPage key={kind.key} kind={kind.key} label={kind.label} plural={kind.plural} />
     </>
   )
 }
 
-function Transit() {
-  const res = useQuery({ queryKey: ['store', 'control', 'in-transit'], queryFn: () => storeGet<{ rows: Transfer[] }>('control', '/in-transit') })
-  const rows = res.data?.rows ?? []
-  return res.isLoading ? <SkeletonRows rows={4} cols={5} /> : (
-    <Card className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead><tr className="border-b border-border text-left text-xs uppercase text-muted-foreground"><th className="p-3">Transfer</th><th className="p-3">Route</th><th className="p-3">Sent</th><th className="p-3 text-right">Lines</th><th className="p-3 text-right">Value</th></tr></thead>
-        <tbody>
-          {rows.map((t) => <tr key={t.id} className="border-b border-border last:border-0"><td className="p-3"><Link className="font-mono text-primary hover:underline" to={`transfers/${t.id}`}>{t.number}</Link></td><td className="p-3">{t.store_code} → {t.to_store_code} {t.inter_project && <Badge tone="warning">Inter-project</Badge>}</td><td className="p-3">{t.trf_date}</td><td className="p-3 text-right">{t.line_count}</td><td className="p-3 text-right">{money(t.total_value)}</td></tr>)}
-          {rows.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">Nothing is on the road.</td></tr>}
-        </tbody>
-      </table>
-    </Card>
+function Page({ children, blurb }: { children: React.ReactNode; blurb: string }) {
+  return <><Tabs /><p className="mb-4 text-sm text-muted-foreground">{blurb}</p>{children}</>
+}
+
+/** New: a blank form. Edit: the same form filled from the draft, once it has loaded. A count is only ever created; it is filled in on its own page. */
+function FormPage({ editing }: { editing: boolean }) {
+  const { kind: key, id } = useParams()
+  const kind = kindOf(key)
+  const q = useDoc((kind?.key ?? 'transfer') as ControlKind, editing ? Number(id) : 0)
+  if (!kind) return <p className="text-sm text-muted-foreground">There is no such document type.</p>
+  const back = <Link to={editing ? `/store/hub/control/${kind.key}/${id}` : `/store/hub/control/${kind.key}`} className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> {editing ? 'Back to the document' : kind.plural}</Link>
+  if (editing && kind.key === 'count') return <div>{back}<p className="text-sm text-muted-foreground">A count is entered on its own page.</p></div>
+  if (editing && q.isPending) return <div>{back}<Skeleton className="h-40 w-full" /></div>
+  if (editing && (q.isError || !q.data)) return <div>{back}<p role="alert" className="text-sm text-danger">Could not load this document.</p></div>
+  if (editing && q.data && q.data.status !== 'DRAFT') return <div>{back}<p className="text-sm text-muted-foreground">Only a draft can be edited. Cancel it and make a new one to correct it.</p></div>
+  const doc = editing ? q.data : undefined
+  return (
+    <div>
+      {back}
+      <h2 className="mb-4 text-lg font-semibold">{editing ? `Edit ${q.data?.number}` : `New ${kind.label.toLowerCase()}`}</h2>
+      {kind.key === 'transfer' ? <TransferForm doc={doc} /> : kind.key === 'count' ? <CountForm /> : <ScrapForm doc={doc} />}
+    </div>
   )
 }
 
-function Reorder() {
-  const res = useQuery({ queryKey: ['store', 'control', 'reorder'], queryFn: () => storeGet<{ rows: ReorderRow[] }>('control', '/reorder-alerts') })
-  const rows = res.data?.rows ?? []
+/** Store > Control. Routes under /store/hub/control/* land here. */
+export default function ControlIndex() {
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-2xl text-sm text-muted-foreground">Items at or below their reorder level. Suggested quantity = maximum − (on hand + still to arrive on purchase orders). This is a list to export: nothing is ordered from here.</p>
-        <a href={apiUrl('/api/store/control/reorder-alerts?format=xlsx')}><Button variant="outline" size="sm"><FileSpreadsheet /> Export to Excel</Button></a>
-      </div>
-      {res.isLoading ? <SkeletonRows rows={5} cols={6} /> : (
-        <Card className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead><tr className="border-b border-border text-left text-xs uppercase text-muted-foreground"><th className="p-3">Store</th><th className="p-3">Item</th><th className="p-3 text-right">On hand</th><th className="p-3 text-right">Reorder level</th><th className="p-3 text-right">Maximum</th><th className="p-3 text-right">On order</th><th className="p-3 text-right">Suggested</th></tr></thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={`${r.store_id}-${r.item_id}`} className="border-b border-border last:border-0">
-                  <td className="p-3 font-mono">{r.store_code}</td><td className="p-3"><span className="font-mono text-xs text-muted-foreground">{r.item_code}</span> {r.item_name} {r.below_min && <Badge tone="danger">Below minimum</Badge>}</td>
-                  <td className="p-3 text-right">{num(r.on_hand)} {r.uom}</td><td className="p-3 text-right">{num(r.reorder_level)}</td><td className="p-3 text-right">{r.max_qty === '0.000' ? '—' : num(r.max_qty)}</td>
-                  <td className="p-3 text-right">{num(r.pending_po)}</td><td className="p-3 text-right font-medium">{r.suggested === '' ? 'set a maximum' : num(r.suggested)}</td>
-                </tr>
-              ))}
-              {rows.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-muted-foreground">Nothing is at or below its reorder level.</td></tr>}
-            </tbody>
-          </table>
-        </Card>
-      )}
-    </div>
+    <StoreShell slice="control">
+      <Routes>
+        <Route index element={<List />} />
+        <Route path="in-transit" element={<Page blurb="Stock sent from one store and not yet received at the other."><InTransitPage /></Page>} />
+        <Route path="variances" element={<Page blurb="What posted stock counts found against the books."><VariancesPage /></Page>} />
+        <Route path="realisation" element={<Page blurb="Scrap sold or written off: what it was worth in the books against what it fetched."><RealisationPage /></Page>} />
+        <Route path=":kind" element={<List />} />
+        <Route path=":kind/new" element={<FormPage editing={false} />} />
+        <Route path=":kind/:id" element={<DocPage />} />
+        <Route path=":kind/:id/edit" element={<FormPage editing />} />
+      </Routes>
+    </StoreShell>
   )
 }

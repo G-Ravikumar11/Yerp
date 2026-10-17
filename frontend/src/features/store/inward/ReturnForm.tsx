@@ -1,62 +1,55 @@
-import { useEffect, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Button, Card, Input, Select } from '@/components/ui'
-import { toast } from '@/stores/toast'
-import { storeGet, storePost } from '@/api/store'
-import { StorePicker } from '../shared'
-import { errText, num, type Grn, type PurchaseReturn } from './types'
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Button, Field, Input, Select, Textarea } from '@/components/ui'
+import { DataTable, type TableColumn } from '@/components/data/DataTable'
+import { useAction } from '@/lib/mutate'
+import { storePost, storePut } from '@/api/store'
+import { inwardKeys, num, today, useDocs, useReturnable, type Doc, type ReturnableLines } from './api'
 
-interface Returnable { grn: { id: number; number: string; supplier_name: string }; lines: { grn_line_id: number; item_name: string; item_code: string; base_uom: string; returnable_qty: string }[] }
+type Line = ReturnableLines['lines'][number]
 
-/** A purchase return of goods from a posted GRN (/returns/new, optionally ?grn=ID). */
-export function ReturnForm() {
+/** Goods back to the supplier: choose a posted receipt, then say how much of each line goes back and why. */
+export default function ReturnForm({ doc }: { doc?: Doc }) {
   const nav = useNavigate()
-  const qc = useQueryClient()
-  const [params] = useSearchParams()
-  const [storeId, setStoreId] = useState<number | null>(null)
-  const [grnId, setGrnId] = useState(params.get('grn') ?? '')
-  const [reason, setReason] = useState('')
-  const [qty, setQty] = useState<Record<number, string>>({})
-  const posted = useQuery({ queryKey: ['store', 'inward', 'grn', 'posted', storeId], enabled: !!storeId, queryFn: () => storeGet<{ rows: Grn[] }>('inward', `/grn?status=POSTED&store_id=${storeId}&limit=100`) })
-  const lines = useQuery({ queryKey: ['store', 'inward', 'returnable', grnId], enabled: !!grnId, queryFn: () => storeGet<Returnable>('inward', `/grn/${grnId}/returnable`) })
-  const fromGrn = useQuery({ queryKey: ['store', 'inward', 'grn', grnId], enabled: !!grnId && !storeId, queryFn: () => storeGet<Grn>('inward', `/grn/${grnId}`) })
-  useEffect(() => { if (fromGrn.data) setStoreId(fromGrn.data.store_id) }, [fromGrn.data])
-
-  const save = useMutation({
-    mutationFn: () => storePost<PurchaseReturn>('inward', '/returns', {
-      store_id: storeId, grn_id: Number(grnId), reason, supplier_name: lines.data?.grn.supplier_name,
-      lines: Object.entries(qty).filter(([, v]) => Number(v) > 0).map(([id, v]) => ({ grn_line_id: Number(id), qty: v })),
-    }),
-    onSuccess: (r) => { toast.success(`${r.number} saved`); qc.invalidateQueries({ queryKey: ['store', 'inward'] }); nav(`/store/hub/inward/returns/${r.id}`) },
-    onError: (e) => toast.error(errText(e)),
-  })
+  const grns = useDocs('grn', { status: 'POSTED', store_id: 0, q: '' })
+  const [grnId, setGrnId] = useState(doc?.grn_id ?? 0)
+  const [date, setDate] = useState(doc?.date || today())
+  const [reason, setReason] = useState(doc?.reason ?? '')
+  const [remarks, setRemarks] = useState(doc?.remarks ?? '')
+  const lines = useReturnable(grnId)
+  const [qty, setQty] = useState<Record<number, string>>(() => Object.fromEntries((doc?.lines ?? []).map((l) => [l.grn_line_id ?? 0, String(Number(l.qty))])))
+  const [why, setWhy] = useState<Record<number, string>>(() => Object.fromEntries((doc?.lines ?? []).map((l) => [l.grn_line_id ?? 0, l.reason ?? ''])))
+  const picked = (lines.data?.lines ?? []).filter((l) => Number(qty[l.grn_line_id]) > 0)
+  const save = useAction(
+    () => {
+      const body = { grn_id: grnId, return_date: date, reason, remarks, lines: picked.map((l) => ({ grn_line_id: l.grn_line_id, qty: qty[l.grn_line_id], uom: l.base_uom, reason: why[l.grn_line_id] ?? '' })) }
+      return doc ? storePut<Doc>('inward', `/returns/${doc.id}`, body) : storePost<Doc>('inward', '/returns', body)
+    },
+    { invalidate: [[...inwardKeys.all]], success: (d) => `Saved as draft - ${d.number}`, onSuccess: (d) => nav(`/store/hub/inward/returns/${d.id}`) },
+  )
+  const columns: TableColumn<Line>[] = [
+    { id: 'item', header: 'Item', cell: (l) => <div><div className="font-medium">{l.item_name}</div><div className="font-mono text-xs text-muted-foreground">{l.item_code}</div></div> },
+    { id: 'acc', header: 'Accepted', align: 'right', width: '8rem', cell: (l) => `${num(l.accepted)} ${l.base_uom}` },
+    { id: 'can', header: 'Can go back', align: 'right', width: '8rem', cell: (l) => `${num(l.returnable)} ${l.base_uom}` },
+    { id: 'qty', header: 'Return', width: '9rem', cell: (l) => <Input aria-label={`Quantity of ${l.item_name} to return`} inputMode="decimal" className="text-right" placeholder={`0 ${l.base_uom}`} value={qty[l.grn_line_id] ?? ''} onChange={(e) => setQty((q) => ({ ...q, [l.grn_line_id]: e.target.value }))} /> },
+    { id: 'why', header: 'Reason', width: '14rem', cell: (l) => <Input aria-label={`Reason for returning ${l.item_name}`} value={why[l.grn_line_id] ?? ''} onChange={(e) => setWhy((q) => ({ ...q, [l.grn_line_id]: e.target.value }))} /> },
+  ]
   return (
-    <div className="space-y-6">
-      <Card className="grid gap-4 p-5 sm:grid-cols-2">
-        <label className="text-sm">Store<StorePicker value={storeId} onChange={(id) => { setStoreId(id); setGrnId('') }} /></label>
-        <label className="text-sm">Goods received on
-          <Select value={grnId} placeholder="Choose a posted GRN" options={(posted.data?.rows ?? []).map((g) => ({ value: g.id, label: `${g.number} · ${g.supplier_name}` }))} onChange={(e) => { setGrnId(e.target.value); setQty({}) }} />
-        </label>
-        <label className="text-sm sm:col-span-2">Reason for return<Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Damaged, wrong grade, excess…" /></label>
-      </Card>
-      {lines.data && (
-        <Card className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead><tr className="border-b border-border text-left text-xs uppercase text-muted-foreground"><th className="p-3">Item</th><th className="p-3 text-right">Can still be returned</th><th className="p-3 text-right">Return</th></tr></thead>
-            <tbody>
-              {lines.data.lines.map((l) => (
-                <tr key={l.grn_line_id} className="border-b border-border last:border-0">
-                  <td className="p-3"><span className="font-mono text-xs text-muted-foreground">{l.item_code}</span> {l.item_name}</td>
-                  <td className="p-3 text-right">{num(l.returnable_qty)} {l.base_uom}</td>
-                  <td className="p-3 text-right"><Input className="ml-auto w-28 text-right" inputMode="decimal" disabled={Number(l.returnable_qty) <= 0} value={qty[l.grn_line_id] ?? ''} onChange={(e) => setQty({ ...qty, [l.grn_line_id]: e.target.value })} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
-      <div className="flex gap-2"><Button loading={save.isPending} disabled={!storeId || !grnId || !reason.trim()} onClick={() => save.mutate()}>Save draft</Button><Button variant="outline" onClick={() => nav('/store/hub/inward')}>Back</Button></div>
-    </div>
+    <form onSubmit={(e) => { e.preventDefault(); if (grnId && picked.length) save.mutate() }} className="grid gap-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <Field label="Receipt to return from" htmlFor="r-grn" hint="Only posted receipts can have goods returned.">
+          <Select id="r-grn" value={grnId || ''} placeholder="Choose a receipt" disabled={!!doc} onChange={(e) => { setGrnId(Number(e.target.value) || 0); setQty({}); setWhy({}) }}
+            options={(grns.data?.items ?? []).map((g) => ({ value: g.id, label: `${g.number} - ${g.supplier_name || 'no supplier'}` }))} />
+        </Field>
+        <Field label="Return date" htmlFor="r-date"><Input id="r-date" type="date" max={today()} value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+        <Field label="Reason" htmlFor="r-reason"><Input id="r-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Damaged, wrong grade..." /></Field>
+        <Field label="Remarks" htmlFor="r-rem" className="sm:col-span-2 lg:col-span-3"><Textarea id="r-rem" rows={1} value={remarks} onChange={(e) => setRemarks(e.target.value)} /></Field>
+      </div>
+      {grnId > 0 && <DataTable label="Receipt lines" rows={lines.data?.lines ?? []} loading={lines.isPending} columns={columns} rowKey={(l) => l.grn_line_id} />}
+      <div className="flex justify-end gap-2 border-t border-border pt-4">
+        <Button type="button" variant="ghost" onClick={() => nav(doc ? `/store/hub/inward/returns/${doc.id}` : '/store/hub/inward/returns')}>Cancel</Button>
+        <Button type="submit" loading={save.isPending} disabled={!grnId || !picked.length}>{doc ? 'Save changes' : 'Save as draft'}</Button>
+      </div>
+    </form>
   )
 }

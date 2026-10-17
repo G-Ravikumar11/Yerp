@@ -1,104 +1,97 @@
-"""Store module - printed control forms. Owned by P4.
+"""Store module - printed control forms: the transfer (challan) note, the stock-count sheet and the wastage / scrap voucher, in the ruled,
+boxed form the trade signs (app/documents/form_pdf.py draws them). Owned by P4.
 
-  Transfer note / delivery challan (TRF), count sheet (CNT, blind until approved), variance statement (VAR), adjustment voucher (ADJ),
-  write-off note (WOF) and scrap sale note (SCR). Each builder returns a description for app.documents.form_pdf.build_form_pdf (the
-  repo's ruled-box layout).
-"""
+The count sheet is blank where the counter writes: it never prints the system quantity, so a printed sheet can be used for a blind count."""
+from datetime import datetime
+
+from app import models
+from app.documents import form_pdf
 from app.documents.letterhead import letterhead
+from app.models.store_core import DBStore
 from app.services import store_control as svc
 
-
-def _dmy(iso):
-    return ".".join(reversed(iso.split("-"))) if iso else ""
+WATERMARK = {"DRAFT": "DRAFT - NOT POSTED", "SUBMITTED": "NOT YET APPROVED", "APPROVED": "NOT YET POSTED", "CANCELLED": "CANCELLED"}
 
 
-def _mark(status):
-    return "" if status == "POSTED" else "CANCELLED" if status == "CANCELLED" else "DRAFT"
+def _n(x):
+    return form_pdf.qty_text(x)
 
 
-def _label(code):
-    return (code or "").replace("_", " ").lower()
+def _money(x):
+    return form_pdf.plain_number(x, 2)
 
 
-def _spec(db, client, d, title, facts, blocks, landscape=False):
-    return {"title": "%s %s" % (title.title(), d["number"]), "author": d["created_by"], "watermark": _mark(d["status"]), "landscape": landscape,
-            "footer": "%s · %s" % (d["number"], d["status"]), "blocks": [{"type": "header", "company": letterhead(db, client), "title": title, "facts": facts}] + blocks}
+def _items(db, lines):
+    return {i.id: i for i in db.query(models.DBItem).filter(models.DBItem.id.in_([l.item_id for l in lines] or [0])).all()}
 
 
-def transfer_form_spec(db, client, t):
-    d = svc.transfer_dict(db, t)
-    rows = [[str(i), "%s\n%s" % (l["item_code"], l["item_name"]), l["qty"], l["rate"], l["value"], l["received_qty"] if l["received_qty"] is not None else "",
-             ("%s (%s)" % (l["loss_qty"], _label(l["loss_reason"]))) if float(l["loss_qty"]) else ""] for i, l in enumerate(d["lines"], 1)]
-    return _spec(db, client, d, "TRANSFER NOTE / DELIVERY CHALLAN", [("TRF No.", d["number"]), ("Date", _dmy(d["trf_date"])), ("From", d["store_code"]), ("To", d["to_store_code"])], [
-        {"type": "pairs", "cols": 2, "rows": [("From store", "%s - %s" % (d["store_code"], d["store_name"])), ("To store", "%s - %s" % (d["to_store_code"], d["to_store_name"])),
-                                               ("Challan no.", d["challan_no"]), ("Challan date", _dmy(d["challan_date"])), ("Vehicle", d["vehicle_no"]), ("Driver", d["driver_name"]),
-                                               ("Inter-project", "Yes" if d["inter_project"] else "No"), ("Status", d["transit"] or d["status"])]},
-        {"type": "table", "columns": [("#", 8, "C"), ("Item", 62, "L"), ("Qty sent", 20, "R"), ("Rate", 18, "R"), ("Value", 22, "R"), ("Qty received", 22, "R"), ("Lost in transit", 28, "L")], "rows": rows,
-         "totals": [("Value dispatched", d["total_value"], True)] + ([("Lost in transit", d["loss_value"], False)] if float(d["loss_value"]) else [])},
-        {"type": "signatures", "boxes": [("Dispatched by", d["created_by"]), ("Driver", d["driver_name"]), ("Received by", d["received_by"]), ("Approved by", "")]}])
+def _finish(db, client, doc, title, blocks, signs, watermark=None):
+    blocks.append({"type": "signatures", "boxes": signs})
+    company = letterhead(db, client)
+    return {"title": "%s %s" % (title, doc.number), "author": company["name"], "watermark": WATERMARK.get(doc.status, "") if watermark is None else watermark, "blocks": blocks,
+            "footer": "%s  |  %s  |  Printed %s" % (doc.number, company["name"], datetime.now().strftime("%d/%m/%Y %H:%M"))}
 
 
-def count_form_spec(db, client, c):
-    d = svc.count_dict(db, c, reveal=False)
-    cols = [("#", 8, "C"), ("Item", 80, "L"), ("Counted", 28, "R"), ("Recount", 26, "R")] + ([("Books", 24, "R"), ("Difference", 24, "R"), ("Value", 22, "R")] if d["revealed"] else [("Remarks", 36, "L")])
-    rows = []
-    for i, l in enumerate(d["lines"], 1):
-        row = [str(i), "%s\n%s" % (l["item_code"], l["item_name"]), l["counted_qty"] if l["counted_qty"] is not None else "", "recount" if l["recount"] else (l["first_count_qty"] or "")]
-        rows.append(row + ([l["system_qty"], l["variance_qty"], l["variance_value"]] if d["revealed"] else [l["remarks"]]))
-    scope = ", ".join(filter(None, [("categories: " + ", ".join(_label(x) for x in d["categories"])) if d["categories"] else "", ("bin " + d["bin_code"]) if d["bin_code"] else ""])) or "whole store"
-    return _spec(db, client, d, "STOCK COUNT SHEET", [("Count No.", d["number"]), ("Date", _dmy(d["count_date"])), ("Store", d["store_code"]), ("Status", d["status"])], [
-        {"type": "pairs", "cols": 2, "rows": [("Store", "%s - %s" % (d["store_code"], d["store_name"])), ("Scope", scope), ("Recount rounds", str(d["recount_rounds"])), ("Remarks", d["remarks"])]},
-        {"type": "table", "columns": cols, "rows": rows},
-        {"type": "signatures", "boxes": [("Counted by", d["created_by"]), ("Checked by", ""), ("Store in-charge", ""), ("Approved by", "")]}])
+def transfer_form(db, client, doc):
+    lines = svc.transfer_lines(db, doc)
+    items = _items(db, lines)
+    src, dst = db.get(DBStore, doc.store_id), db.get(DBStore, doc.to_store_id)
+    dispatched = bool(doc.receipt_status)
+    rows, total = [], 0
+    for i, l in enumerate(lines, 1):
+        it = items.get(l.item_id)
+        total += float(l.value or 0)
+        row = [str(i), it.item_code if it else "", it.item_name if it else "", svc.base_uom_of(db, it) if it else "", _n(l.qty)]
+        if dispatched:
+            row += [_money(l.rate), _money(l.value)]
+        rows.append(row)
+    cols = [("#", 7, "C"), ("Item Code", 28, "L"), ("Item", 60, "L"), ("Unit", 14, "C"), ("Qty", 22, "R")]
+    if dispatched:
+        cols += [("Rate", 24, "R"), ("Value", 27, "R")]
+    else:
+        cols[2] = ("Item", 90, "L")
+        cols[4] = ("Qty", 43, "R")
+    blocks = [{"type": "header", "company": letterhead(db, client), "title": "STOCK TRANSFER NOTE",
+               "facts": [("No", doc.number), ("Date", form_pdf.date_text(doc.transfer_date)), ("From", "%s - %s" % (src.code, src.name)), ("To", "%s - %s" % (dst.code, dst.name))]},
+              {"type": "pairs", "cols": 2, "rows": [("Vehicle", doc.vehicle_no or "-"), ("Between projects", "Yes" if doc.inter_project else "No"),
+                                                    ("Receipt", {"IN_TRANSIT": "In transit", "RECEIVED": "Received %s" % (form_pdf.date_text(doc.received_at) if doc.received_at else "")}.get(doc.receipt_status, "Not yet dispatched")),
+                                                    ("Remarks", doc.remarks or "-")]},
+              {"type": "table", "columns": cols, "rows": rows, "totals": [("VALUE", _money(total), True)] if dispatched else []}]
+    return _finish(db, client, doc, "Stock Transfer", blocks, [("Sent by (Storekeeper)", ""), ("Approved by", ""), ("Driver", ""), ("Received by", "")])
 
 
-def variance_form_spec(db, client, c):
-    """The variance statement: books, count, difference in quantity and value, only for lines that differ, with a net total."""
-    d = svc.count_dict(db, c, reveal=True)
-    diff = [l for l in d["lines"] if l["variance_qty"] not in (None, "0.000", "0")]
-    rows = [[str(i), "%s\n%s" % (l["item_code"], l["item_name"]), l["system_qty"], l["counted_qty"] or "", l["variance_qty"], l["variance_value"], l["first_count_qty"] or ""] for i, l in enumerate(diff, 1)]
-    return _spec(db, client, d, "STOCK VARIANCE STATEMENT", [("Count No.", d["number"]), ("Date", _dmy(d["count_date"])), ("Store", d["store_code"]), ("Status", d["status"])], [
-        {"type": "pairs", "cols": 2, "rows": [("Store", "%s - %s" % (d["store_code"], d["store_name"])), ("Lines counted", str(d["line_count"])), ("Lines with a difference", str(len(diff))),
-                                               ("Recount rounds", str(d["recount_rounds"]))]},
-        {"type": "table", "columns": [("#", 8, "C"), ("Item", 74, "L"), ("Books", 24, "R"), ("Counted", 24, "R"), ("Difference", 24, "R"), ("Value", 26, "R"), ("First count", 24, "R")], "rows": rows,
-         "totals": [("Net difference in value", d["variance_value"] or "0.00", True)]},
-        {"type": "signatures", "boxes": [("Counted by", d["created_by"]), ("Store in-charge", ""), ("Approved by", ""), ("Accounts", "")]}])
+def count_form(db, client, doc):
+    lines = svc.count_lines(db, doc)
+    items = _items(db, lines)
+    store = db.get(DBStore, doc.store_id)
+    rows = [[str(i), items[l.item_id].item_code, items[l.item_id].item_name, svc.base_uom_of(db, items[l.item_id]), "", "", ""] for i, l in enumerate(sorted(lines, key=lambda x: items[x.item_id].item_name), 1)]
+    blocks = [{"type": "header", "company": letterhead(db, client), "title": "STOCK COUNT SHEET",
+               "facts": [("No", doc.number), ("Date", form_pdf.date_text(doc.count_date)), ("Store", "%s - %s" % (store.code, store.name)), ("Type", doc.count_type.title())]},
+              {"type": "pairs", "cols": 2, "rows": [("Started by", doc.started_by_name or "-"), ("Remarks", doc.remarks or "-")]},
+              {"type": "table", "columns": [("#", 7, "C"), ("Item Code", 28, "L"), ("Item", 62, "L"), ("Unit", 14, "C"), ("Counted", 24, "R"), ("Recount", 21, "R"), ("Remarks", 26, "L")], "rows": rows}]
+    return _finish(db, client, doc, "Stock Count", blocks, [("Counted by", ""), ("Checked by", ""), ("Approved by", "")])
 
 
-def adjustment_form_spec(db, client, a):
-    d = svc.adjustment_dict(db, a)
-    rows = [[str(i), "%s\n%s" % (l["item_code"], l["item_name"]), l["direction"], l["qty"], l["rate"], l["value"], l["remarks"]] for i, l in enumerate(d["lines"], 1)]
-    return _spec(db, client, d, "STOCK ADJUSTMENT VOUCHER", [("ADJ No.", d["number"]), ("Date", _dmy(d["adj_date"])), ("Store", d["store_code"]), ("Status", d["status"])], [
-        {"type": "pairs", "cols": 2, "rows": [("Kind", d["kind"].title()), ("Reason code", _label(d["reason_code"])), ("Remark", d["reason"]), ("Supporting paper", d["attachment_ref"]),
-                                               ("Charged to", d["project_name"]), ("Cost head", _label(d["cost_head"]))]},
-        {"type": "table", "columns": [("#", 8, "C"), ("Item", 60, "L"), ("In/Out", 14, "C"), ("Qty", 20, "R"), ("Rate", 18, "R"), ("Value", 22, "R"), ("Remarks", 40, "L")], "rows": rows,
-         "totals": [("Total value", d["total_value"], True)]},
-        {"type": "signatures", "boxes": [("Prepared by", d["created_by"]), ("Store in-charge", ""), ("Approved by", ""), ("Accounts", "")]}])
+def scrap_form(db, client, doc):
+    lines = svc.scrap_lines(db, doc)
+    items = _items(db, lines)
+    store = db.get(DBStore, doc.store_id)
+    job = db.get(models.DBJob, doc.project_id) if doc.project_id else None
+    rows, total = [], 0
+    for i, l in enumerate(lines, 1):
+        total += float(l.realised_value or 0)
+        rows.append([str(i), items[l.item_id].item_code, items[l.item_id].item_name, svc.base_uom_of(db, items[l.item_id]), _n(l.qty), l.disposal.title(), l.reason or "", _money(l.realised_value)])
+    blocks = [{"type": "header", "company": letterhead(db, client), "title": "WASTAGE / SCRAP VOUCHER",
+               "facts": [("No", doc.number), ("Date", form_pdf.date_text(doc.scrap_date)), ("Store", "%s - %s" % (store.code, store.name))]},
+              {"type": "pairs", "cols": 2, "rows": [("Project", ("%s - %s" % (job.number, job.name)) if job else "-"), ("Buyer", doc.buyer or "-"), ("Gate pass / voucher", doc.reference or "-"), ("Remarks", doc.remarks or "-")]},
+              {"type": "table", "columns": [("#", 7, "C"), ("Item Code", 24, "L"), ("Item", 40, "L"), ("Unit", 11, "C"), ("Qty", 16, "R"), ("Disposal", 17, "C"), ("Reason", 41, "L"), ("Realised", 26, "R")],
+               "rows": rows, "totals": [("TOTAL REALISED", _money(total), True)]}]
+    return _finish(db, client, doc, "Wastage / Scrap", blocks, [("Prepared by (Storekeeper)", ""), ("Approved by", ""), ("Received by (buyer)", "")])
 
 
-def writeoff_form_spec(db, client, a):
-    """The write-off note for wastage, damage and lost returnables."""
-    d = svc.adjustment_dict(db, a)
-    rows = [[str(i), "%s\n%s" % (l["item_code"], l["item_name"]), l["qty"], l["rate"], l["value"], l["remarks"]] for i, l in enumerate(d["lines"], 1)]
-    return _spec(db, client, d, "WRITE-OFF NOTE", [("Note No.", d["number"]), ("Date", _dmy(d["adj_date"])), ("Store", d["store_code"]), ("Status", d["status"])], [
-        {"type": "pairs", "cols": 2, "rows": [("Reason", _label(d["reason_code"])), ("Remark", d["reason"]), ("Supporting paper", d["attachment_ref"]), ("Charged to", d["project_name"] or _label(d["cost_head"]))]},
-        {"type": "table", "columns": [("#", 8, "C"), ("Item", 70, "L"), ("Qty written off", 24, "R"), ("Rate", 20, "R"), ("Value", 24, "R"), ("Remarks", 40, "L")], "rows": rows,
-         "totals": [("Total written off", d["total_value"], True)]},
-        {"type": "signatures", "boxes": [("Store in-charge", d["created_by"]), ("Site engineer", ""), ("Project manager", ""), ("Accounts", "")]}])
-
-
-def scrap_form_spec(db, client, s):
-    d = svc.scrap_dict(db, s)
-    rows = [[str(i), "%s\n%s" % (l["item_code"], l["item_name"]), _label(l["scrap_class"]), l["qty"], l["book_value"], l["realised_value"], l["difference"]] for i, l in enumerate(d["lines"], 1)]
-    return _spec(db, client, d, "SCRAP SALE NOTE", [("Scrap No.", d["number"]), ("Date", _dmy(d["scrap_date"])), ("Store", d["store_code"]), ("Status", d["status"])], [
-        {"type": "pairs", "cols": 2, "rows": [("Sold / disposed to", d["buyer"]), ("Gate pass no.", d["gate_pass_no"]), ("Project", d["project_name"]), ("Reason", d["reason"])]},
-        {"type": "table", "columns": [("#", 8, "C"), ("Item", 60, "L"), ("Class", 32, "L"), ("Qty", 18, "R"), ("Book value", 22, "R"), ("Realised", 22, "R"), ("Gain / (loss)", 22, "R")], "rows": rows,
-         "totals": [("Book value", d["book_value"], False), ("Realised", d["realised_value"], False), ("Gain / (loss)", d["difference"], True)]},
-        {"type": "signatures", "boxes": [("Prepared by", d["created_by"]), ("Store in-charge", ""), ("Approved by", ""), ("Buyer", d["buyer"])]}])
+FORMS = {"transfer": ("Stock Transfer Note", transfer_form), "count": ("Stock Count Sheet", count_form), "scrap": ("Wastage / Scrap Voucher", scrap_form)}
 
 
 def list_forms() -> list:
-    """The forms this slice can print: [{code, title, build}]."""
-    return [{"code": "TRF", "title": "Transfer Note / Delivery Challan", "build": transfer_form_spec}, {"code": "CNT", "title": "Stock Count Sheet", "build": count_form_spec},
-            {"code": "VAR", "title": "Stock Variance Statement", "build": variance_form_spec}, {"code": "ADJ", "title": "Stock Adjustment Voucher", "build": adjustment_form_spec},
-            {"code": "WOF", "title": "Write-off Note", "build": writeoff_form_spec}, {"code": "SCR", "title": "Scrap Sale Note", "build": scrap_form_spec}]
+    """The forms this slice can print: [{code, title, build}]. build(db, client, doc) -> the description form_pdf.build_form_pdf draws."""
+    return [{"code": code, "title": title, "build": build} for code, (title, build) in FORMS.items()]

@@ -1,483 +1,555 @@
-"""Store module - control routes under /api/store/control. Owned by P4.
+"""Store module - control routes under /api/store/control: transfers between stores (transfer), stock counts (count) and wastage and
+scrap (scrap), the stock in transit, what counts found, and what scrap fetched. Owned by P4.
 
-Transfers (/transfers), stock counts (/counts), adjustments (/adjustments) and scrap (/scrap). Rights: view; create = draft, edit,
-submit; approve; post; cancel. Extra rights: approve_high_value (inter-project and high-value transfers, large differences and
-adjustments) and reveal_count (see the books during a count). Receiving a transfer needs store.control.post at the receiving store.
+Rights: store.control.view reads; .create makes, edits and deletes drafts, submits, starts a count and enters its sheet; .approve approves
+(and .approve_high_value is needed for a document worth 50,000 or more); .post posts - for a transfer that is the dispatch, and receiving
+it is also .post, at the destination store; .cancel cancels (a posted document is reversed); .reveal_count shows the system quantity while
+a count is open. Every route works inside the stores the person is assigned to.
 """
-import re
-from typing import Dict, List, Optional
+import io
+from datetime import date
+from decimal import Decimal
+from typing import List, Optional
 
+import openpyxl
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app import models
+from app.core.audit import log_audit
 from app.core.permissions import permissions_for
 from app.core.store_auth import store_actor, store_errors
 from app.db import get_db
 from app.documents import form_pdf
-from app.documents.store.control_forms import (
-    adjustment_form_spec, count_form_spec, scrap_form_spec, transfer_form_spec, variance_form_spec, writeoff_form_spec,
-)
-from app.models.store_control import (
-    AdjustmentReason, DBStoreAdjustment, DBStoreCount, DBStoreScrap, DBStoreTransfer, ScrapClass, WastageReason,
-)
-from app.models.store_core import DBStore, DocStatus
-from app.routers.store_masters import accessible_store_ids
+from app.documents.store.control_forms import FORMS
+from app.models.store_control import COUNT, SCRAP, TRANSFER, DBStoreControlLog, DBStoreCount, DBStoreScrap, DBStoreTransfer
+from app.models.store_core import DBStore, DBStoreUserAssignment, DocStatus
 from app.services import store_control as svc
 from app.services import store_outward
 from app.services.stock_ledger import assert_store_access
 
 router = APIRouter(prefix="/api/store/control", tags=["store-control"])
-
-ACTION_RIGHT = {"submit": "create", "approve": "approve", "post": "post", "cancel": "cancel"}
-
-
-class LineIn(BaseModel):
-    item_id: Optional[int] = None
-    qty: Optional[str] = None
-    uom: Optional[str] = None
-    scrap_class: Optional[str] = None
-    direction: Optional[str] = None
-    rate: Optional[str] = None
-    realised_value: Optional[str] = None
-    writeoff_request_id: Optional[int] = None
-    counted_qty: Optional[str] = None
-    remarks: Optional[str] = None
+ZERO = Decimal("0")
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+ACTION_RIGHT = {"submit": "store.control.create", "approve": "store.control.approve", "post": "store.control.post", "cancel": "store.control.cancel"}
 
 
-class TransferIn(BaseModel):
-    store_id: Optional[int] = None
-    to_store_id: Optional[int] = None
-    trf_date: Optional[str] = None
-    vehicle_no: Optional[str] = None
-    driver_name: Optional[str] = None
-    challan_no: Optional[str] = None
-    challan_date: Optional[str] = None
-    remarks: Optional[str] = None
-    lines: Optional[List[LineIn]] = None
+# --- request bodies ---------------------------------------------------------------------------------------------------
 
-
-class LossIn(BaseModel):
-    qty: Optional[str] = None
-    reason: Optional[str] = None
-    remarks: Optional[str] = None
-
-
-class ReceiveIn(BaseModel):
-    received: dict = {}
-    losses: Dict[str, LossIn] = {}
+class TransferLineIn(BaseModel):
+    item_id: int
+    qty: str
+    uom: str = ""
     remarks: str = ""
 
 
-class RecountIn(BaseModel):
-    line_ids: List[int]
-    reason: str = ""
+class TransferIn(BaseModel):
+    store_id: int
+    to_store_id: int
+    transfer_date: str
+    vehicle_no: str = ""
+    remarks: str = ""
+    lines: List[TransferLineIn]
 
 
 class CountIn(BaseModel):
-    store_id: Optional[int] = None
-    count_date: Optional[str] = None
-    item_ids: Optional[List[int]] = None
-    categories: Optional[List[str]] = None
-    bin_id: Optional[int] = None
-    remarks: Optional[str] = None
-    lines: Optional[List[LineIn]] = None
+    store_id: int
+    count_date: str
+    count_type: str = "FULL"
+    item_ids: List[int] = []
+    remarks: str = ""
 
 
-class AdjustmentIn(BaseModel):
-    store_id: Optional[int] = None
-    adj_date: Optional[str] = None
-    kind: Optional[str] = None
-    reason: Optional[str] = None
-    reason_code: Optional[str] = None
-    attachment_ref: Optional[str] = None
-    project_id: Optional[int] = None
-    cost_head: Optional[str] = None
-    lines: Optional[List[LineIn]] = None
+class SheetRowIn(BaseModel):
+    item_id: int
+    counted_qty: str
+    uom: str = ""
+    reason: str = ""
+    rate: str = ""                        # only for an item the books did not have
+
+
+class SheetIn(BaseModel):
+    rows: List[SheetRowIn]
+
+
+class ScrapLineIn(BaseModel):
+    item_id: int
+    qty: str
+    uom: str = ""
+    disposal: str = "SCRAP"
+    reason: str = ""
+    realised_value: str = ""
+    cost_head: str = ""
+    writeoff_request_id: Optional[int] = None
 
 
 class ScrapIn(BaseModel):
-    store_id: Optional[int] = None
-    scrap_date: Optional[str] = None
+    store_id: int
+    scrap_date: str
     project_id: Optional[int] = None
-    buyer: Optional[str] = None
-    gate_pass_no: Optional[str] = None
-    reason: Optional[str] = None
-    lines: Optional[List[LineIn]] = None
+    buyer: str = ""
+    reference: str = ""
+    remarks: str = ""
+    lines: List[ScrapLineIn]
 
 
 class ActionIn(BaseModel):
     reason: str = ""
 
 
-def _body(m: BaseModel) -> dict:
-    return m.model_dump(exclude_unset=True)
+# --- helpers -----------------------------------------------------------------------------------------------------------
+
+def _visible(db, actor):
+    if actor.employee is None or "store.admin" in permissions_for(actor.employee):
+        return None
+    return {r for (r,) in db.query(DBStoreUserAssignment.store_id).filter(DBStoreUserAssignment.employee_id == actor.employee.id, DBStoreUserAssignment.is_active.is_(True)).all()}
 
 
-def _can(actor, key: str) -> bool:
-    """The account holder holds every right; staff hold it by permission or store.admin."""
+def _has(actor, right) -> bool:
     if actor.employee is None:
         return True
-    held = permissions_for(actor.employee)
-    return key in held or "store.admin" in held
+    perms = permissions_for(actor.employee)
+    return right in perms or "store.admin" in perms
 
 
-def _commit(db, fn):
-    try:
-        with store_errors():
-            out = fn()
-        db.commit()
-        return out
-    except BaseException:
-        db.rollback()
-        raise
-
-
-def _store(db, actor, store_id):
-    if not store_id:
-        raise HTTPException(400, "Choose a store.")
-    assert_store_access(actor.user, store_id)
-    store = db.get(DBStore, store_id)
-    if not store.is_active:
-        raise HTTPException(400, "Store %s is switched off." % store.code)
+def _my_store(db, actor, store_id):
+    """A store of this company the person works in: 404 for anybody else's (so existence is not revealed), 403 for one they are not assigned to."""
+    store = db.get(DBStore, store_id) if store_id else None
+    if store is None or store.client_id != actor.client.id:
+        raise HTTPException(404, "Store not found")
+    assert_store_access(actor.user, store.id)
     return store
 
 
-def _doc(db, actor, model, doc_id):
-    doc = db.get(model, doc_id)
+def _kind(key):
+    kind = svc.KINDS.get(key)
+    if kind is None:
+        raise HTTPException(404, "Not found")
+    return kind
+
+
+def _doc(db, actor, kind, doc_id, *, either_end=False):
+    """A document of this company in a store the person works in. A transfer may also be reached from its destination store."""
+    doc = db.get(kind.header, doc_id)
     if doc is None or doc.client_id != actor.client.id:
-        raise HTTPException(404, "Document not found")
-    try:
+        raise HTTPException(404, "%s not found" % kind.label)
+    if either_end and kind.key == "transfer":
+        try:
+            assert_store_access(actor.user, doc.store_id)
+        except HTTPException:
+            assert_store_access(actor.user, doc.to_store_id)
+    else:
         assert_store_access(actor.user, doc.store_id)
-    except HTTPException:
-        # the receiving store may see a transfer coming to it
-        if not isinstance(doc, DBStoreTransfer):
-            raise
-        assert_store_access(actor.user, doc.to_store_id)
     return doc
 
 
-def _list(db, actor, model, store_id, status, q, from_date, to_date, limit, offset, date_col):
-    query = db.query(model).filter(model.client_id == actor.client.id)
-    mine = accessible_store_ids(actor, db)
-    is_trf = model is DBStoreTransfer
-    if store_id:
-        assert_store_access(actor.user, store_id)
-        query = query.filter(or_(model.store_id == store_id, model.to_store_id == store_id) if is_trf else model.store_id == store_id)
-    elif mine is not None:
-        ids = mine or [0]
-        query = query.filter(or_(model.store_id.in_(ids), model.to_store_id.in_(ids)) if is_trf else model.store_id.in_(ids))
-    if status:
-        if status not in {s.value for s in DocStatus}:
-            raise HTTPException(400, "Unknown status.")
-        query = query.filter(model.status == status)
-    term = (q or "").strip().replace("%", "").replace("_", "")
-    if term:
-        query = query.filter(model.number.ilike("%" + term + "%"))
-    if from_date:
-        query = query.filter(date_col >= svc.to_date(from_date, "From date"))
-    if to_date:
-        query = query.filter(date_col <= svc.to_date(to_date, "To date"))
-    return query.count(), query.order_by(model.id.desc()).offset(max(offset, 0)).limit(max(1, min(limit, 200))).all()
+def _editable(doc):
+    if doc.status != DocStatus.DRAFT.value:
+        raise HTTPException(409, "It is %s. Only a draft can be edited; cancel it and make a new one to correct it." % doc.status.lower())
 
 
-def _pdf(db, actor, doc, spec_fn):
-    if not form_pdf.PDF_AVAILABLE:
-        raise HTTPException(503, "The PDF library is not installed on this server.")
-    pdf = form_pdf.build_form_pdf(spec_fn(db, actor.client, doc))
-    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": 'inline; filename="%s.pdf"' % re.sub(r"[^A-Za-z0-9]+", "_", doc.number).strip("_")})
+def _iso(d):
+    return d.isoformat() if d else ""
 
 
-def _act(request, db, action, model, doc_id):
-    if action not in ACTION_RIGHT:
-        raise HTTPException(404, "Unknown action")
-    actor = store_actor(request, db, "store.control." + ACTION_RIGHT[action])
-    return actor, _doc(db, actor, model, doc_id)
+def _who(actor):
+    return dict(user_type="employee" if actor.employee is not None else "client", user_name=actor.name)
 
+
+def _items(db, ids):
+    return {i.id: i for i in db.query(models.DBItem).filter(models.DBItem.id.in_(list(ids) or [0])).all()}
+
+
+def doc_dict(db, kind, doc, actor, detail=False):
+    store = db.get(DBStore, doc.store_id)
+    out = {"kind": kind.key, "id": doc.id, "number": doc.number, "status": doc.status, "store_id": doc.store_id, "store_code": store.code if store else "", "store_name": store.name if store else "",
+           "date": _iso(getattr(doc, kind.date_attr)), "remarks": doc.remarks or "", "cancel_reason": doc.cancel_reason or "", "created_by": doc.created_by_name or "",
+           "created_at": doc.created_at.isoformat(timespec="seconds") if doc.created_at else "", "posted_at": doc.posted_at.isoformat(timespec="seconds") if doc.posted_at else ""}
+    if kind.key == "transfer":
+        to = db.get(DBStore, doc.to_store_id)
+        lines = svc.transfer_lines(db, doc)
+        out.update({"to_store_id": doc.to_store_id, "to_store_code": to.code if to else "", "to_store_name": to.name if to else "", "vehicle_no": doc.vehicle_no or "", "receipt_status": doc.receipt_status or "",
+                    "received_at": doc.received_at.isoformat(timespec="seconds") if doc.received_at else "", "received_by": doc.received_by_name or "", "inter_project": bool(doc.inter_project),
+                    "line_count": len(lines), "value": svc.s2(svc.transfer_value(db, doc))})
+        if detail:
+            items = _items(db, [l.item_id for l in lines])
+            out["lines"] = [{"id": l.id, "item_id": l.item_id, "item_code": items[l.item_id].item_code, "item_name": items[l.item_id].item_name, "base_uom": svc.base_uom_of(db, items[l.item_id]),
+                             "entry_uom": l.entry_uom or "", "entry_qty": svc.s3(l.entry_qty), "qty": svc.s3(l.qty), "rate": svc.s4(l.rate), "value": svc.s2(l.value), "remarks": l.remarks or ""} for l in lines]
+    elif kind.key == "count":
+        lines = svc.count_lines(db, doc)
+        reveal = _has(actor, "store.control.reveal_count") or doc.status != DocStatus.DRAFT.value or doc.started_at is None
+        out.update({"count_type": doc.count_type, "started": doc.started_at is not None, "started_at": doc.started_at.isoformat(timespec="seconds") if doc.started_at else "",
+                    "started_by": doc.started_by_name or "", "line_count": len(lines), "counted": sum(1 for l in lines if l.counted_qty is not None), "revealed": reveal,
+                    "variance_value": svc.s2(sum((svc.v2(svc.count_variance(l) * Decimal(str(l.avg_rate))) for l in lines), ZERO)) if reveal else None,
+                    "frozen": bool(doc.freeze_id and doc.status not in (DocStatus.POSTED.value, DocStatus.CANCELLED.value))})
+        if detail:
+            items = _items(db, [l.item_id for l in lines])
+            out["lines"] = [{"id": l.id, "item_id": l.item_id, "item_code": items[l.item_id].item_code, "item_name": items[l.item_id].item_name, "base_uom": svc.base_uom_of(db, items[l.item_id]),
+                             "in_snapshot": bool(l.in_snapshot), "counted_qty": None if l.counted_qty is None else svc.s3(l.counted_qty), "reason": l.reason or "",
+                             "system_qty": svc.s3(l.system_qty) if reveal else None, "avg_rate": svc.s4(l.avg_rate) if reveal else None,
+                             "variance_qty": svc.s3(svc.count_variance(l)) if reveal and l.counted_qty is not None else None,
+                             "variance_value": svc.s2(svc.count_variance(l) * Decimal(str(l.avg_rate))) if reveal and l.counted_qty is not None else None} for l in lines]
+    else:
+        job = db.get(models.DBJob, doc.project_id) if doc.project_id else None
+        lines = svc.scrap_lines(db, doc)
+        out.update({"project_id": doc.project_id, "project": ("%s - %s" % (job.number, job.name)) if job else "", "buyer": doc.buyer or "", "reference": doc.reference or "", "line_count": len(lines),
+                    "realised": svc.s2(sum((Decimal(str(l.realised_value or 0)) for l in lines), ZERO))})
+        if detail:
+            items = _items(db, [l.item_id for l in lines])
+            out["lines"] = [{"id": l.id, "item_id": l.item_id, "item_code": items[l.item_id].item_code, "item_name": items[l.item_id].item_name, "base_uom": svc.base_uom_of(db, items[l.item_id]),
+                             "entry_uom": l.entry_uom or "", "entry_qty": svc.s3(l.entry_qty), "qty": svc.s3(l.qty), "disposal": l.disposal, "reason": l.reason or "",
+                             "realised_value": svc.s2(l.realised_value), "cost_head": l.cost_head, "writeoff_request_id": l.writeoff_request_id} for l in lines]
+    if detail:
+        out["history"] = [{"action": h.action, "from": h.from_status, "to": h.to_status, "by": h.user_name, "at": h.at.isoformat(timespec="seconds") if h.at else "", "note": h.note or ""}
+                          for h in db.query(DBStoreControlLog).filter(DBStoreControlLog.doc_type == kind.ref, DBStoreControlLog.doc_id == doc.id).order_by(DBStoreControlLog.id).all()]
+    return out
+
+
+def _created(db, actor, kind, doc, request):
+    doc.created_by_id, doc.created_by_name = actor.user_id, actor.name
+    db.flush()
+    svc.log(db, actor, kind.ref, doc.id, "create", "", doc.status)
+    log_audit(db, actor.client.id, "store_%s_created" % kind.key, "store_doc", doc.id, doc.number, "", request=request, **_who(actor))
+
+
+# --- the front door, pickers and reports -------------------------------------------------------------------------------------
 
 @router.get("")
 def index(request: Request, db: Session = Depends(get_db)):
-    """The slice's front door (kept as the skeleton's smoke test expects); the documents are under /transfers, /counts, /adjustments and /scrap."""
-    store_actor(request, db, "store.control.view")
-    return {"slice": "control", "items": []}
+    """The slice's front door: the latest transfers this person may see."""
+    return {"slice": "control", "items": list_documents("transfer", request, limit=20, db=db)["items"]}
 
 
-@router.get("/meta")
-def meta(request: Request, db: Session = Depends(get_db)):
-    """The reason codes and classes the screens offer."""
-    store_actor(request, db, "store.control.view")
-    return {"adjustment_reasons": [e.value for e in AdjustmentReason], "wastage_reasons": [e.value for e in WastageReason], "scrap_classes": [e.value for e in ScrapClass],
-            "high_value_limit": str(svc.HIGH_VALUE_LIMIT)}
-
-
-@router.get("/reorder-alerts")
-def reorder_alerts(request: Request, store_id: int = 0, format: str = "json", db: Session = Depends(get_db)):
-    """Items at or below their reorder level per store, with suggested qty = max - (on hand + pending on purchase orders). Export only: nothing is ordered."""
+@router.get("/pick/writeoffs")
+def pick_writeoffs(store_id: int, request: Request, db: Session = Depends(get_db)):
+    """Open write-off requests (raised by outward returns) for a store, to be dealt with on a scrap document."""
     actor = store_actor(request, db, "store.control.view")
-    if store_id:
-        assert_store_access(actor.user, store_id)
-        stores = [db.get(DBStore, store_id)]
-    else:
-        mine = accessible_store_ids(actor, db)
-        q = db.query(DBStore).filter(DBStore.client_id == actor.client.id, DBStore.is_active.is_(True))
-        stores = (q.filter(DBStore.id.in_(mine or [0])) if mine is not None else q).order_by(DBStore.code).all()
-    rows = svc.get_reorder_alerts(db, actor.client.id, stores)
-    if format == "json":
-        return {"rows": rows}
-    if format == "xlsx":
-        return Response(svc.reorder_xlsx(rows, actor.client.company_name or ""), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        headers={"Content-Disposition": 'attachment; filename="reorder_alerts.xlsx"'})
-    raise HTTPException(400, "format must be json or xlsx.")
+    _my_store(db, actor, store_id)
+    rows = [w for w in store_outward.list_writeoff_requests(db, "OPEN") if w.store_id == store_id]
+    items = _items(db, [w.item_id for w in rows])
+    return {"items": [{"id": w.request_id, "item_id": w.item_id, "item_code": items[w.item_id].item_code, "item_name": items[w.item_id].item_name, "qty": svc.s3(w.qty), "reason": w.reason} for w in rows]}
 
 
-# ------------------------------------------------------------------------------------------------ transfers
-@router.get("/transfers")
-def list_transfers(request: Request, store_id: int = 0, status: str = "", q: str = "", from_date: str = "", to_date: str = "",
-                   limit: int = 50, offset: int = 0, db: Session = Depends(get_db)):
+@router.get("/pick/stores")
+def pick_stores(request: Request, db: Session = Depends(get_db)):
+    """Every active store of the company, for choosing where a transfer goes. A transfer may be sent to a store the sender does not
+    work in; only receiving it needs access to that store."""
     actor = store_actor(request, db, "store.control.view")
-    total, rows = _list(db, actor, DBStoreTransfer, store_id, status, q, from_date, to_date, limit, offset, DBStoreTransfer.trf_date)
-    return {"total": total, "rows": [svc.transfer_dict(db, r, with_lines=False) for r in rows]}
+    rows = db.query(DBStore).filter(DBStore.client_id == actor.client.id, DBStore.is_active.is_(True)).order_by(DBStore.code).all()
+    return {"items": [{"id": s.id, "code": s.code, "name": s.name, "type": s.type, "project_id": s.project_id} for s in rows]}
 
 
 @router.get("/in-transit")
 def in_transit(request: Request, project_id: int = 0, db: Session = Depends(get_db)):
-    """Dispatched transfers not yet received, for the stores the person can reach."""
+    """Stock sent from one store and not yet received at the other, with what it is worth."""
     actor = store_actor(request, db, "store.control.view")
-    mine = accessible_store_ids(actor, db)
-    seen, rows = set(), []
-    for r in svc.get_in_transit(db, project_id=project_id or None):
-        if r.transfer_id in seen:
+    seen = _visible(db, actor)
+    rows = svc.get_in_transit(db, project_id=project_id or None)
+    stores = {s.id: s for s in db.query(DBStore).filter(DBStore.id.in_([r.from_store_id for r in rows] + [r.to_store_id for r in rows] or [0])).all()}
+    items = _items(db, [r.item_id for r in rows])
+    docs = {t.id: t for t in db.query(DBStoreTransfer).filter(DBStoreTransfer.id.in_([r.transfer_id for r in rows] or [0])).all()}
+    out = []
+    for r in rows:
+        t = docs[r.transfer_id]
+        if t.client_id != actor.client.id or (seen is not None and r.from_store_id not in seen and r.to_store_id not in seen):
             continue
-        t = db.get(DBStoreTransfer, r.transfer_id)
-        if t.client_id != actor.client.id or (mine is not None and t.store_id not in mine and t.to_store_id not in mine):
-            continue
-        seen.add(r.transfer_id)
-        rows.append(svc.transfer_dict(db, t, with_lines=False))
-    return {"rows": rows}
+        out.append({"transfer_id": t.id, "number": t.number, "from_store": stores[r.from_store_id].code, "to_store": stores[r.to_store_id].code, "item_id": r.item_id, "item_code": items[r.item_id].item_code,
+                    "item_name": items[r.item_id].item_name, "qty": svc.s3(r.qty), "value": svc.s2(r.value), "dispatched_on": _iso(r.dispatched_on), "days": (date.today() - r.dispatched_on).days,
+                    "inter_project": r.inter_project})
+    total = sum((Decimal(r["value"]) for r in out), ZERO)
+    return {"total": len(out), "total_value": svc.s2(total), "items": out}
 
 
-@router.post("/transfers", status_code=201)
+@router.get("/count-variances")
+def count_variances(store_id: int, request: Request, from_date: str = "", to_date: str = "", db: Session = Depends(get_db)):
+    """What posted stock counts found against the books at a store."""
+    actor = store_actor(request, db, "store.control.view")
+    _my_store(db, actor, store_id)
+    rows = svc.get_count_variances(db, store_id, svc.day(from_date, "From date", allow_future=True, required=False) or date(2000, 1, 1), svc.day(to_date, "To date", allow_future=True, required=False) or date.today())
+    items = _items(db, [r.item_id for r in rows])
+    counts = {c.id: c for c in db.query(DBStoreCount).filter(DBStoreCount.id.in_([r.count_id for r in rows] or [0])).all()}
+    shown = [r for r in rows if r.variance_qty != 0]
+    return {"store_id": store_id, "net_value": svc.s2(sum((r.variance_value for r in shown), ZERO)), "items": [
+        {"count_id": r.count_id, "number": counts[r.count_id].number, "count_date": _iso(counts[r.count_id].count_date), "item_id": r.item_id, "item_code": items[r.item_id].item_code,
+         "item_name": items[r.item_id].item_name, "system_qty": svc.s3(r.system_qty), "counted_qty": svc.s3(r.counted_qty), "variance_qty": svc.s3(r.variance_qty), "variance_value": svc.s2(r.variance_value)} for r in shown]}
+
+
+@router.get("/scrap-realisation")
+def scrap_realisation(request: Request, project_id: int = 0, from_date: str = "", to_date: str = "", db: Session = Depends(get_db)):
+    """Scrap sold or written off: what it was worth in the books against what it fetched."""
+    actor = store_actor(request, db, "store.control.view")
+    if project_id and not db.query(models.DBJob.id).filter(models.DBJob.id == project_id, models.DBJob.client_id == actor.client.id).first():
+        raise HTTPException(404, "Project not found")
+    seen = _visible(db, actor)
+    rows = svc.get_scrap_realisation(db, project_id or None, svc.day(from_date, "From date", allow_future=True, required=False) or date(2000, 1, 1), svc.day(to_date, "To date", allow_future=True, required=False) or date.today())
+    docs = {s.id: s for s in db.query(DBStoreScrap).filter(DBStoreScrap.id.in_([r.scrap_doc_id for r in rows] or [0])).all()}
+    items = _items(db, [r.item_id for r in rows])
+    out = [r for r in rows if docs[r.scrap_doc_id].client_id == actor.client.id and (seen is None or docs[r.scrap_doc_id].store_id in seen)]
+    return {"book_value": svc.s2(sum((r.book_value for r in out), ZERO)), "realised_value": svc.s2(sum((r.realised_value for r in out), ZERO)),
+            "items": [{"scrap_doc_id": r.scrap_doc_id, "number": docs[r.scrap_doc_id].number, "date": _iso(docs[r.scrap_doc_id].scrap_date), "item_id": r.item_id, "item_code": items[r.item_id].item_code,
+                       "item_name": items[r.item_id].item_name, "qty": svc.s3(r.qty), "book_value": svc.s2(r.book_value), "realised_value": svc.s2(r.realised_value),
+                       "gain": svc.s2(r.realised_value - r.book_value)} for r in out]}
+
+
+# --- listing ------------------------------------------------------------------------------------------------------------
+
+@router.get("/{kind_key}")
+def list_documents(kind_key: str, request: Request, status: str = "", store_id: int = 0, q: str = "", from_date: str = "", to_date: str = "", limit: int = 100, offset: int = 0,
+                   db: Session = Depends(get_db)):
+    kind = _kind(kind_key)
+    actor = store_actor(request, db, "store.control.view")
+    query = db.query(kind.header).filter(kind.header.client_id == actor.client.id)
+    seen = _visible(db, actor)
+    if seen is not None:
+        mine = kind.header.store_id.in_(seen or {0})
+        query = query.filter(or_(mine, DBStoreTransfer.to_store_id.in_(seen or {0})) if kind.key == "transfer" else mine)
+    if store_id:
+        _my_store(db, actor, store_id)
+        query = query.filter(or_(kind.header.store_id == store_id, DBStoreTransfer.to_store_id == store_id) if kind.key == "transfer" else kind.header.store_id == store_id)
+    if status:
+        query = query.filter(kind.header.status == status.strip().upper())
+    term = (q or "").strip()
+    if term:
+        like = "%" + term.replace("%", "").replace("_", "") + "%"
+        query = query.filter(kind.header.number.ilike(like))
+    date_col = getattr(kind.header, kind.date_attr)
+    if from_date:
+        query = query.filter(date_col >= svc.day(from_date, "From date", allow_future=True))
+    if to_date:
+        query = query.filter(date_col <= svc.day(to_date, "To date", allow_future=True))
+    total = query.count()
+    rows = query.order_by(kind.header.id.desc()).offset(max(0, offset)).limit(max(1, min(limit, 500))).all()
+    return {"total": total, "items": [doc_dict(db, kind, r, actor) for r in rows]}
+
+
+@router.get("/{kind_key}/export")
+def export_documents(kind_key: str, request: Request, status: str = "", store_id: int = 0, q: str = "", db: Session = Depends(get_db)):
+    kind = _kind(kind_key)
+    rows = list_documents(kind_key, request, status=status, store_id=store_id, q=q, limit=500, db=db)["items"]
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = kind.label[:30]
+    cols = ["number", "date", "status", "store_code"] + {"transfer": ["to_store_code", "receipt_status", "inter_project", "value"], "count": ["count_type", "counted", "line_count", "variance_value"],
+                                                        "scrap": ["project", "buyer", "reference", "realised"]}[kind.key] + ["created_by", "remarks"]
+    ws.append([c.replace("_", " ").title() for c in cols])
+    for r in rows:
+        ws.append([r.get(c, "") for c in cols])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return Response(content=buf.getvalue(), media_type=XLSX, headers={"Content-Disposition": 'attachment; filename="control-%s.xlsx"' % kind.key})
+
+
+@router.get("/{kind_key}/{doc_id}")
+def get_document(kind_key: str, doc_id: int, request: Request, db: Session = Depends(get_db)):
+    kind = _kind(kind_key)
+    actor = store_actor(request, db, "store.control.view")
+    return doc_dict(db, kind, _doc(db, actor, kind, doc_id, either_end=True), actor, detail=True)
+
+
+@router.get("/{kind_key}/{doc_id}/print")
+def print_document(kind_key: str, doc_id: int, request: Request, db: Session = Depends(get_db)):
+    kind = _kind(kind_key)
+    actor = store_actor(request, db, "store.control.view")
+    doc = _doc(db, actor, kind, doc_id, either_end=True)
+    try:
+        pdf = form_pdf.build_form_pdf(FORMS[kind.key][1](db, actor.client, doc))
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": 'inline; filename="%s.pdf"' % doc.number.replace("/", "-")})
+
+
+# --- transfers ----------------------------------------------------------------------------------------------------------
+
+def _transfer_values(db, actor, body):
+    src = svc.store_of(db, actor.client.id, body.store_id, "source store")
+    assert_store_access(actor.user, src.id)
+    dst = svc.store_of(db, actor.client.id, body.to_store_id, "destination store")
+    if dst.id == src.id:
+        raise HTTPException(400, "A transfer goes from one store to another, not to the same store.")
+    return src, dst, svc.day(body.transfer_date, "Transfer date"), svc.build_transfer_lines(db, actor.client.id, body.lines)
+
+
+@router.post("/transfer")
 def create_transfer(body: TransferIn, request: Request, db: Session = Depends(get_db)):
     actor = store_actor(request, db, "store.control.create")
-    store = _store(db, actor, body.store_id)
-    return svc.transfer_dict(db, _commit(db, lambda: svc.create_transfer(db, actor, store, _body(body))))
+    src, dst, on, lines = _transfer_values(db, actor, body)
+    doc = DBStoreTransfer(client_id=actor.client.id, store_id=src.id, to_store_id=dst.id, number=svc.numbered(db, "TRF", src.id, on), status=DocStatus.DRAFT.value,
+                          transfer_date=on, vehicle_no=svc.text(body.vehicle_no, "vehicle number", 30), remarks=svc.text(body.remarks, "remarks", 500),
+                          inter_project=1 if svc.is_inter_project(db, src.id, dst.id) else 0)
+    db.add(doc)
+    db.flush()
+    svc.write_transfer_lines(db, doc, lines)
+    _created(db, actor, svc.KINDS["transfer"], doc, request)
+    db.commit()
+    return doc_dict(db, svc.KINDS["transfer"], doc, actor, detail=True)
 
 
-@router.get("/transfers/{doc_id}")
-def get_transfer(doc_id: int, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.control.view")
-    return svc.transfer_dict(db, _doc(db, actor, DBStoreTransfer, doc_id))
-
-
-@router.put("/transfers/{doc_id}")
+@router.put("/transfer/{doc_id}")
 def edit_transfer(doc_id: int, body: TransferIn, request: Request, db: Session = Depends(get_db)):
     actor = store_actor(request, db, "store.control.create")
-    t = _doc(db, actor, DBStoreTransfer, doc_id)
-    _commit(db, lambda: svc.update_transfer(db, actor, t, db.get(DBStore, t.store_id), _body(body)))
-    return svc.transfer_dict(db, t)
+    doc = _doc(db, actor, svc.KINDS["transfer"], doc_id)
+    _editable(doc)
+    if body.store_id != doc.store_id:
+        raise HTTPException(400, "A transfer cannot be moved to another source store; cancel it and make a new one.")
+    src, dst, on, lines = _transfer_values(db, actor, body)
+    doc.to_store_id, doc.transfer_date, doc.vehicle_no, doc.remarks = dst.id, on, svc.text(body.vehicle_no, "vehicle number", 30), svc.text(body.remarks, "remarks", 500)
+    doc.inter_project = 1 if svc.is_inter_project(db, src.id, dst.id) else 0
+    svc.write_transfer_lines(db, doc, lines)
+    db.commit()
+    return doc_dict(db, svc.KINDS["transfer"], doc, actor, detail=True)
 
 
-@router.post("/transfers/{doc_id}/receive")
-def receive_transfer(doc_id: int, request: Request, body: ReceiveIn = ReceiveIn(), db: Session = Depends(get_db)):
-    """The receiving store confirms what arrived (default: all of it); a shortage goes back to the sender."""
+@router.post("/transfer/{doc_id}/receive")
+def receive_transfer(doc_id: int, request: Request, db: Session = Depends(get_db)):
+    """Receipt at the destination store: the stock that was in transit comes in at the rate it left at. Needs store.control.post and
+    access to the destination store."""
     actor = store_actor(request, db, "store.control.post")
-    t = db.get(DBStoreTransfer, doc_id)
-    if t is None or t.client_id != actor.client.id:
-        raise HTTPException(404, "Document not found")
-    assert_store_access(actor.user, t.to_store_id)
-    _commit(db, lambda: svc.receive_transfer(db, actor, t, {int(k): v for k, v in body.received.items()}, {int(k): v.model_dump(exclude_none=True) for k, v in body.losses.items()}, body.remarks))
-    return svc.transfer_dict(db, t)
+    kind = svc.KINDS["transfer"]
+    doc = db.get(DBStoreTransfer, doc_id)
+    if doc is None or doc.client_id != actor.client.id:
+        raise HTTPException(404, "Transfer not found")
+    assert_store_access(actor.user, doc.to_store_id)
+    try:
+        with store_errors():
+            svc.transfer_receive(db, actor, doc)
+        log_audit(db, actor.client.id, "store_transfer_received", "store_doc", doc.id, doc.number, doc.receipt_status, request=request, **_who(actor))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return doc_dict(db, kind, doc, actor, detail=True)
 
 
-@router.post("/transfers/{doc_id}/approve-loss")
-def approve_transfer_loss(doc_id: int, request: Request, db: Session = Depends(get_db)):
-    """Approve the loss in transit reported at receipt: it is posted as wastage on the transfer document."""
-    actor = store_actor(request, db, "store.control.approve")
-    t = _doc(db, actor, DBStoreTransfer, doc_id)
-    _commit(db, lambda: svc.approve_transfer_loss(db, actor, t, can_high=_can(actor, "store.control.approve_high_value")))
-    return svc.transfer_dict(db, t)
+# --- stock counts --------------------------------------------------------------------------------------------------------
 
-
-@router.post("/transfers/{doc_id}/{action}")
-def transfer_action(doc_id: int, action: str, request: Request, body: ActionIn = ActionIn(), db: Session = Depends(get_db)):
-    actor, t = _act(request, db, action, DBStoreTransfer, doc_id)
-    if action in ("submit", "approve", "post"):
-        assert_store_access(actor.user, t.store_id)               # the sender's side moves the stock
-    _commit(db, lambda: svc.transfer_action(db, actor, t, action, body.reason, can_high=_can(actor, "store.control.approve_high_value")))
-    return svc.transfer_dict(db, t)
-
-
-@router.get("/transfers/{doc_id}/pdf")
-def transfer_pdf(doc_id: int, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.control.view")
-    return _pdf(db, actor, _doc(db, actor, DBStoreTransfer, doc_id), transfer_form_spec)
-
-
-# ------------------------------------------------------------------------------------------------ counts
-@router.get("/counts")
-def list_counts(request: Request, store_id: int = 0, status: str = "", q: str = "", from_date: str = "", to_date: str = "",
-                limit: int = 50, offset: int = 0, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.control.view")
-    total, rows = _list(db, actor, DBStoreCount, store_id, status, q, from_date, to_date, limit, offset, DBStoreCount.count_date)
-    reveal = _can(actor, "store.control.reveal_count")
-    return {"total": total, "rows": [svc.count_dict(db, r, with_lines=False, reveal=reveal) for r in rows]}
-
-
-@router.post("/counts", status_code=201)
+@router.post("/count")
 def create_count(body: CountIn, request: Request, db: Session = Depends(get_db)):
-    """Starts a count: the store is frozen and the books are snapshotted."""
     actor = store_actor(request, db, "store.control.create")
-    store = _store(db, actor, body.store_id)
-    return svc.count_dict(db, _commit(db, lambda: svc.create_count(db, actor, store, _body(body))), reveal=_can(actor, "store.control.reveal_count"))
+    store = svc.store_of(db, actor.client.id, body.store_id)
+    assert_store_access(actor.user, store.id)
+    on = svc.day(body.count_date, "Count date")
+    ctype = (body.count_type or "FULL").strip().upper()
+    if ctype not in ("FULL", "PARTIAL"):
+        raise HTTPException(400, "A count is FULL or PARTIAL.")
+    doc = DBStoreCount(client_id=actor.client.id, store_id=store.id, number=svc.numbered(db, COUNT, store.id, on), status=DocStatus.DRAFT.value, count_date=on, count_type=ctype,
+                       remarks=svc.text(body.remarks, "remarks", 500))
+    db.add(doc)
+    db.flush()
+    svc.count_scope(db, actor.client.id, doc, body.item_ids)
+    _created(db, actor, svc.KINDS["count"], doc, request)
+    db.commit()
+    return doc_dict(db, svc.KINDS["count"], doc, actor, detail=True)
 
 
-@router.get("/counts/{doc_id}")
-def get_count(doc_id: int, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.control.view")
-    return svc.count_dict(db, _doc(db, actor, DBStoreCount, doc_id), reveal=_can(actor, "store.control.reveal_count"))
-
-
-@router.put("/counts/{doc_id}")
-def enter_counts(doc_id: int, body: CountIn, request: Request, db: Session = Depends(get_db)):
+@router.post("/count/{doc_id}/start")
+def start_count(doc_id: int, request: Request, db: Session = Depends(get_db)):
+    """Freeze the store and take the snapshot of the books. Nothing moves in or out of the store until the count is posted or cancelled."""
     actor = store_actor(request, db, "store.control.create")
-    c = _doc(db, actor, DBStoreCount, doc_id)
-    _commit(db, lambda: svc.update_count(db, actor, c, db.get(DBStore, c.store_id), _body(body)))
-    return svc.count_dict(db, c, reveal=_can(actor, "store.control.reveal_count"))
+    kind = svc.KINDS["count"]
+    doc = _doc(db, actor, kind, doc_id)
+    try:
+        with store_errors():
+            svc.count_start(db, actor, doc)
+        log_audit(db, actor.client.id, "store_count_started", "store_doc", doc.id, doc.number, "frozen", request=request, **_who(actor))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return doc_dict(db, kind, doc, actor, detail=True)
 
 
-@router.post("/counts/{doc_id}/recount")
-def recount(doc_id: int, body: RecountIn, request: Request, db: Session = Depends(get_db)):
-    """Send some lines of a submitted count back to be counted again."""
-    actor = store_actor(request, db, "store.control.approve")
-    c = _doc(db, actor, DBStoreCount, doc_id)
-    _commit(db, lambda: svc.request_recount(db, actor, c, body.line_ids, body.reason))
-    return svc.count_dict(db, c, reveal=_can(actor, "store.control.reveal_count"))
-
-
-@router.post("/counts/{doc_id}/{action}")
-def count_action(doc_id: int, action: str, request: Request, body: ActionIn = ActionIn(), db: Session = Depends(get_db)):
-    actor, c = _act(request, db, action, DBStoreCount, doc_id)
-    _commit(db, lambda: svc.count_action(db, actor, c, action, body.reason, can_high=_can(actor, "store.control.approve_high_value")))
-    return svc.count_dict(db, c, reveal=_can(actor, "store.control.reveal_count"))
-
-
-@router.get("/counts/{doc_id}/pdf")
-def count_pdf(doc_id: int, request: Request, form: str = "sheet", db: Session = Depends(get_db)):
-    """form=sheet (the count sheet, blind until approved) or form=variance (the variance statement, quantity and value)."""
-    actor = store_actor(request, db, "store.control.view")
-    c = _doc(db, actor, DBStoreCount, doc_id)
-    if form not in ("sheet", "variance"):
-        raise HTTPException(400, "form must be sheet or variance.")
-    if form == "variance" and c.status not in (DocStatus.APPROVED.value, DocStatus.POSTED.value) and not _can(actor, "store.control.reveal_count"):
-        raise HTTPException(403, "The variance statement is printed once the count is approved.")
-    return _pdf(db, actor, c, variance_form_spec if form == "variance" else count_form_spec)
-
-
-# ------------------------------------------------------------------------------------------------ adjustments
-@router.get("/writeoff-requests")
-def open_writeoffs(request: Request, store_id: int = 0, db: Session = Depends(get_db)):
-    """Open write-off requests from the outward slice that an adjustment of kind WRITEOFF can close."""
-    actor = store_actor(request, db, "store.control.view")
-    mine = accessible_store_ids(actor, db)
-    rows = []
-    for r in store_outward.list_writeoff_requests(db, "OPEN"):
-        st = db.get(DBStore, r.store_id)
-        if st.client_id != actor.client.id or (mine is not None and r.store_id not in mine) or (store_id and r.store_id != store_id):
-            continue
-        from app import models
-        item = db.get(models.DBItem, r.item_id)
-        rows.append({"request_id": r.request_id, "store_id": r.store_id, "store_code": st.code, "item_id": r.item_id, "item_code": item.item_code, "item_name": item.item_name,
-                     "qty": str(r.qty), "reason": r.reason})
-    return {"rows": rows}
-
-
-@router.get("/adjustments")
-def list_adjustments(request: Request, store_id: int = 0, status: str = "", q: str = "", from_date: str = "", to_date: str = "",
-                     limit: int = 50, offset: int = 0, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.control.view")
-    total, rows = _list(db, actor, DBStoreAdjustment, store_id, status, q, from_date, to_date, limit, offset, DBStoreAdjustment.adj_date)
-    return {"total": total, "rows": [svc.adjustment_dict(db, r, with_lines=False) for r in rows]}
-
-
-@router.post("/adjustments", status_code=201)
-def create_adjustment(body: AdjustmentIn, request: Request, db: Session = Depends(get_db)):
+@router.put("/count/{doc_id}/sheet")
+def count_sheet(doc_id: int, body: SheetIn, request: Request, db: Session = Depends(get_db)):
+    """Enter what was counted. Can be called again to recount."""
     actor = store_actor(request, db, "store.control.create")
-    store = _store(db, actor, body.store_id)
-    return svc.adjustment_dict(db, _commit(db, lambda: svc.create_adjustment(db, actor, store, _body(body))))
+    kind = svc.KINDS["count"]
+    doc = _doc(db, actor, kind, doc_id)
+    try:
+        svc.count_sheet(db, actor, doc, body.rows)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return doc_dict(db, kind, doc, actor, detail=True)
 
 
-@router.get("/adjustments/{doc_id}")
-def get_adjustment(doc_id: int, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.control.view")
-    return svc.adjustment_dict(db, _doc(db, actor, DBStoreAdjustment, doc_id))
+# --- wastage and scrap ----------------------------------------------------------------------------------------------------
+
+def _scrap_values(db, actor, body):
+    store = svc.store_of(db, actor.client.id, body.store_id)
+    assert_store_access(actor.user, store.id)
+    if body.project_id and not db.query(models.DBJob.id).filter(models.DBJob.id == body.project_id, models.DBJob.client_id == actor.client.id).first():
+        raise HTTPException(400, "That project does not exist.")
+    return store, svc.day(body.scrap_date, "Date"), svc.build_scrap_lines(db, actor.client.id, store.id, body.lines)
 
 
-@router.put("/adjustments/{doc_id}")
-def edit_adjustment(doc_id: int, body: AdjustmentIn, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.control.create")
-    a = _doc(db, actor, DBStoreAdjustment, doc_id)
-    _commit(db, lambda: svc.update_adjustment(db, actor, a, db.get(DBStore, a.store_id), _body(body)))
-    return svc.adjustment_dict(db, a)
-
-
-@router.post("/adjustments/{doc_id}/{action}")
-def adjustment_action(doc_id: int, action: str, request: Request, body: ActionIn = ActionIn(), db: Session = Depends(get_db)):
-    actor, a = _act(request, db, action, DBStoreAdjustment, doc_id)
-    _commit(db, lambda: svc.adjustment_action(db, actor, a, action, body.reason, can_high=_can(actor, "store.control.approve_high_value")))
-    return svc.adjustment_dict(db, a)
-
-
-@router.get("/adjustments/{doc_id}/pdf")
-def adjustment_pdf(doc_id: int, request: Request, form: str = "", db: Session = Depends(get_db)):
-    """The adjustment voucher; a wastage or write-off prints as a write-off note (or form=voucher / form=writeoff to choose)."""
-    actor = store_actor(request, db, "store.control.view")
-    a = _doc(db, actor, DBStoreAdjustment, doc_id)
-    if form not in ("", "voucher", "writeoff"):
-        raise HTTPException(400, "form must be voucher or writeoff.")
-    note = form == "writeoff" or (form == "" and a.kind in ("WASTAGE", "WRITEOFF"))
-    return _pdf(db, actor, a, writeoff_form_spec if note else adjustment_form_spec)
-
-
-# ------------------------------------------------------------------------------------------------ scrap
-@router.get("/scrap")
-def list_scrap(request: Request, store_id: int = 0, status: str = "", q: str = "", from_date: str = "", to_date: str = "",
-               limit: int = 50, offset: int = 0, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.control.view")
-    total, rows = _list(db, actor, DBStoreScrap, store_id, status, q, from_date, to_date, limit, offset, DBStoreScrap.scrap_date)
-    return {"total": total, "rows": [svc.scrap_dict(db, r, with_lines=False) for r in rows]}
-
-
-@router.post("/scrap", status_code=201)
+@router.post("/scrap")
 def create_scrap(body: ScrapIn, request: Request, db: Session = Depends(get_db)):
     actor = store_actor(request, db, "store.control.create")
-    store = _store(db, actor, body.store_id)
-    return svc.scrap_dict(db, _commit(db, lambda: svc.create_scrap(db, actor, store, _body(body))))
-
-
-@router.get("/scrap/{doc_id}")
-def get_scrap(doc_id: int, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.control.view")
-    return svc.scrap_dict(db, _doc(db, actor, DBStoreScrap, doc_id))
+    store, on, lines = _scrap_values(db, actor, body)
+    doc = DBStoreScrap(client_id=actor.client.id, store_id=store.id, number=svc.numbered(db, SCRAP, store.id, on), status=DocStatus.DRAFT.value, scrap_date=on, project_id=body.project_id or None,
+                       buyer=svc.text(body.buyer, "buyer", 120), reference=svc.text(body.reference, "reference", 80), remarks=svc.text(body.remarks, "remarks", 500))
+    db.add(doc)
+    db.flush()
+    svc.write_scrap_lines(db, doc, lines)
+    _created(db, actor, svc.KINDS["scrap"], doc, request)
+    db.commit()
+    return doc_dict(db, svc.KINDS["scrap"], doc, actor, detail=True)
 
 
 @router.put("/scrap/{doc_id}")
 def edit_scrap(doc_id: int, body: ScrapIn, request: Request, db: Session = Depends(get_db)):
     actor = store_actor(request, db, "store.control.create")
-    s = _doc(db, actor, DBStoreScrap, doc_id)
-    _commit(db, lambda: svc.update_scrap(db, actor, s, db.get(DBStore, s.store_id), _body(body)))
-    return svc.scrap_dict(db, s)
+    doc = _doc(db, actor, svc.KINDS["scrap"], doc_id)
+    _editable(doc)
+    if body.store_id != doc.store_id:
+        raise HTTPException(400, "A document cannot be moved to another store; cancel it and make a new one.")
+    _store, on, lines = _scrap_values(db, actor, body)
+    doc.scrap_date, doc.project_id, doc.buyer = on, body.project_id or None, svc.text(body.buyer, "buyer", 120)
+    doc.reference, doc.remarks = svc.text(body.reference, "reference", 80), svc.text(body.remarks, "remarks", 500)
+    svc.write_scrap_lines(db, doc, lines)
+    db.commit()
+    return doc_dict(db, svc.KINDS["scrap"], doc, actor, detail=True)
 
 
-@router.post("/scrap/{doc_id}/{action}")
-def scrap_action(doc_id: int, action: str, request: Request, body: ActionIn = ActionIn(), db: Session = Depends(get_db)):
-    actor, s = _act(request, db, action, DBStoreScrap, doc_id)
-    _commit(db, lambda: svc.scrap_action(db, actor, s, action, body.reason))
-    return svc.scrap_dict(db, s)
+# --- the common end -------------------------------------------------------------------------------------------------------
+
+@router.delete("/{kind_key}/{doc_id}")
+def delete_draft(kind_key: str, doc_id: int, request: Request, db: Session = Depends(get_db)):
+    """Throw a draft away. Anything submitted, started or posted is cancelled instead, so its history stays."""
+    kind = _kind(kind_key)
+    actor = store_actor(request, db, "store.control.create")
+    doc = _doc(db, actor, kind, doc_id)
+    _editable(doc)
+    if kind.key == "count" and doc.started_at is not None:
+        raise HTTPException(409, "This count has been started and the store is frozen. Cancel it instead.")
+    db.query(kind.line).filter(getattr(kind.line, kind.fk) == doc.id).delete(synchronize_session=False)
+    db.query(DBStoreControlLog).filter(DBStoreControlLog.doc_type == kind.ref, DBStoreControlLog.doc_id == doc.id).delete(synchronize_session=False)
+    number = doc.number
+    db.delete(doc)
+    log_audit(db, actor.client.id, "store_%s_deleted" % kind.key, "store_doc", doc_id, number, "draft", request=request, **_who(actor))
+    db.commit()
+    return {"message": "Draft deleted"}
 
 
-@router.get("/scrap/{doc_id}/pdf")
-def scrap_pdf(doc_id: int, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.control.view")
-    return _pdf(db, actor, _doc(db, actor, DBStoreScrap, doc_id), scrap_form_spec)
+@router.post("/{kind_key}/{doc_id}/{action}")
+def act(kind_key: str, doc_id: int, action: str, request: Request, body: Optional[ActionIn] = None, db: Session = Depends(get_db)):
+    """submit, approve, post or cancel (with a reason). Posting - and cancelling a posted document - moves stock in one transaction:
+    if any line cannot move, nothing does."""
+    kind = _kind(kind_key)
+    if action not in ACTION_RIGHT:
+        raise HTTPException(404, "There is no such action.")
+    actor = store_actor(request, db, ACTION_RIGHT[action])
+    doc = _doc(db, actor, kind, doc_id)
+    try:
+        with store_errors():
+            svc.advance(db, actor, kind, doc, action, body.reason if body else "", can_high_value=_has(actor, "store.control.approve_high_value"))
+        log_audit(db, actor.client.id, "store_%s_%s" % (kind.key, action), "store_doc", doc.id, doc.number, doc.status, request=request, **_who(actor))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return doc_dict(db, kind, doc, actor, detail=True)

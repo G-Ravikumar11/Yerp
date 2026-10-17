@@ -1,198 +1,139 @@
-"""Store module - control (transfers, stock counts, adjustments, scrap) tables. Owned by P4.
+"""Store module - control tables: transfers between stores (with the time they are in transit), stock counts that freeze a store and
+adjust it to what was found, and wastage and scrap. Owned by P4.
 
-Transfer (TRF): stock leaves the sending store when POSTED (TRANSFER_OUT) and is "in transit" until the receiving store
-confirms it (TRANSFER_IN at the rate it left at); anything short comes back to the sender. Stock count (CNT): freezes the store,
-counts against a blind snapshot, and posts the variance as ADJUST_IN / ADJUST_OUT. Adjustment (ADJ): a stock correction, wastage
-charged to a project or cost head, or the write-off of material lost on issue. Scrap (SCR): scrap taken out at book value with
-what it fetched recorded. All follow DRAFT -> SUBMITTED -> APPROVED -> POSTED or CANCELLED; every change is in store_control_log.
-`store_id` on each document is the store whose stock it moves (the sender, for a transfer).
+Every document has a header and lines and a status from DocStatus (DRAFT -> SUBMITTED -> APPROVED -> POSTED, or CANCELLED). Stock moves
+only when it is POSTED, through app/services/stock_ledger.py. A transfer is POSTED when it is dispatched (stock leaves the source and
+is in transit); receiving it at the destination is a second step recorded in `receipt_status`. Quantities are Numeric(18,3) in the
+item's BASE unit; rates are Numeric(18,4), values Numeric(18,2).
 """
-import enum
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Column, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy.orm import declared_attr
 
 from app.db.session import Base
 from app.models.store_core import QTY, RATE, VALUE, DocStatus
 
-REVISION = "store_005_control"
+TRANSFER, COUNT, SCRAP = "TRANSFER", "COUNT", "SCRAP"        # what the ledger calls these documents (ref_doc_type)
+WASTAGE = "WASTAGE"                                          # a SCRAP document line's disposal, besides SCRAP itself
 
 
-class AdjustmentReason(str, enum.Enum):
-    """Why stock is corrected by hand (kind STOCK)."""
-    DATA_CORRECTION = "DATA_CORRECTION"
-    FOUND = "FOUND"
-    LOST = "LOST"
-    THEFT = "THEFT"
-    CONVERSION = "CONVERSION"
+class _Header:
+    @declared_attr
+    def client_id(cls):
+        return Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
 
+    @declared_attr
+    def store_id(cls):
+        return Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
 
-class WastageReason(str, enum.Enum):
-    """Why material is written off (kinds WASTAGE and WRITEOFF) and why goods were lost in transit."""
-    CEMENT_SET = "CEMENT_SET"            # cement set / hardened
-    BREAKAGE = "BREAKAGE"
-    RUSTING = "RUSTING"
-    EXPIRY = "EXPIRY"
-    PILFERAGE = "PILFERAGE"
-
-
-class ScrapClass(str, enum.Enum):
-    STEEL_CUT_PIECES = "STEEL_CUT_PIECES"
-    EMPTY_CEMENT_BAGS = "EMPTY_CEMENT_BAGS"
-    DAMAGED_SHUTTERING = "DAMAGED_SHUTTERING"
-    OTHER = "OTHER"
-
-
-class _Doc:
-    """Columns every control document shares."""
+    id = Column(Integer, primary_key=True, index=True)
     number = Column(String, nullable=False, index=True)
     status = Column(String, nullable=False, default=DocStatus.DRAFT.value, index=True)
+    remarks = Column(Text, default="")
     cancel_reason = Column(String, default="")
-    created_by = Column(Integer, nullable=True)
+    created_by_id = Column(Integer, nullable=True)
     created_by_name = Column(String, default="")
     created_at = Column(DateTime, default=datetime.now)
     posted_at = Column(DateTime, nullable=True)
 
 
-class DBStoreTransfer(Base, _Doc):
-    __tablename__ = "stk_transfer"
-    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_stk_trf_number"),)
+class DBStoreTransfer(_Header, Base):
+    """Stock sent from one store (`store_id`) to another (`to_store_id`)."""
+    __tablename__ = "store_transfer"
+    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_transfer_number"),)
 
-    id = Column(Integer, primary_key=True, index=True)
-    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
-    store_id = Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)        # the sender
     to_store_id = Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
-    trf_date = Column(Date, nullable=False, default=date.today)
-    inter_project = Column(Boolean, default=False)
+    transfer_date = Column(Date, nullable=False, default=date.today)
     vehicle_no = Column(String, default="")
-    driver_name = Column(String, default="")
-    challan_no = Column(String, default="")
-    challan_date = Column(Date, nullable=True)
-    remarks = Column(Text, default="")
-    loss_status = Column(String, default="")                      # "" none | PENDING (reported, not approved) | APPROVED (posted as wastage)
-    loss_approved_at = Column(DateTime, nullable=True)
-    loss_approved_by_name = Column(String, default="")
-    received_at = Column(DateTime, nullable=True)                 # empty while the goods are in transit
+    receipt_status = Column(String, default="")              # '' until dispatched, then IN_TRANSIT -> RECEIVED
+    received_at = Column(DateTime, nullable=True)
     received_by_name = Column(String, default="")
-    received_on = Column(Date, nullable=True)
+    inter_project = Column(Integer, default=0)               # 1 when the two stores belong to different projects
 
 
 class DBStoreTransferLine(Base):
-    __tablename__ = "stk_transfer_line"
+    __tablename__ = "store_transfer_line"
 
     id = Column(Integer, primary_key=True, index=True)
-    transfer_id = Column(Integer, ForeignKey("stk_transfer.id"), nullable=False, index=True)
+    transfer_id = Column(Integer, ForeignKey("store_transfer.id"), nullable=False, index=True)
+    line_no = Column(Integer, default=1)
     item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
-    qty = Column(QTY, nullable=False)                             # sent, base unit
-    rate = Column(RATE, nullable=False, default=0)                # the average it left at; set when posted
-    value = Column(VALUE, nullable=False, default=0)
-    received_qty = Column(QTY, nullable=True)                     # filled when received
-    loss_qty = Column(QTY, nullable=False, default=0)             # lost or damaged in transit; received + loss = sent
-    loss_reason = Column(String, default="")                      # a WastageReason
-    loss_remarks = Column(String, default="")
+    entry_uom = Column(String, default="")
+    entry_qty = Column(QTY, default=0)
+    qty = Column(QTY, nullable=False, default=0)             # base unit
+    rate = Column(RATE, default=0)                           # what it left at (the average of the day): set when dispatched
+    value = Column(VALUE, default=0)
     remarks = Column(String, default="")
 
 
-class DBStoreCount(Base, _Doc):
-    __tablename__ = "stk_count"
-    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_stk_cnt_number"),)
+class DBStoreCount(_Header, Base):
+    """A physical stock count of one store. Starting it freezes the store and takes a snapshot of the books; posting it adjusts
+    the books to what was counted and unfreezes the store."""
+    __tablename__ = "store_count"
+    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_count_number"),)
 
-    id = Column(Integer, primary_key=True, index=True)
-    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
-    store_id = Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
     count_date = Column(Date, nullable=False, default=date.today)
-    freeze_id = Column(Integer, ForeignKey("store_freeze.id"), nullable=True)      # the freeze this count took
-    categories = Column(String, default="")                       # comma list of item categories this count is limited to; empty = any
-    bin_id = Column(Integer, ForeignKey("store_bin.id"), nullable=True)           # the bin / section being counted (printed on the sheet)
-    recount_rounds = Column(Integer, default=0)
-    remarks = Column(Text, default="")
+    count_type = Column(String, default="FULL")              # FULL (everything held) | PARTIAL (the items chosen)
+    started_at = Column(DateTime, nullable=True)
+    started_by_name = Column(String, default="")
+    freeze_id = Column(Integer, ForeignKey("store_freeze.id"), nullable=True)
 
 
 class DBStoreCountLine(Base):
-    __tablename__ = "stk_count_line"
+    __tablename__ = "store_count_line"
+    __table_args__ = (UniqueConstraint("count_id", "item_id", name="uq_store_count_item"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    count_id = Column(Integer, ForeignKey("stk_count.id"), nullable=False, index=True)
+    count_id = Column(Integer, ForeignKey("store_count.id"), nullable=False, index=True)
     item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
-    system_qty = Column(QTY, nullable=False, default=0)           # the books when the count started (hidden from counters)
-    system_value = Column(VALUE, nullable=False, default=0)
-    avg_rate = Column(RATE, nullable=False, default=0)
-    counted_qty = Column(QTY, nullable=True)
-    first_count_qty = Column(QTY, nullable=True)                  # kept when a line is recounted
-    recount = Column(Boolean, default=False)                      # asked to be counted again
-    recounts = Column(Integer, default=0)
-    variance_qty = Column(QTY, nullable=False, default=0)         # counted - system, set on submit
-    variance_value = Column(VALUE, nullable=False, default=0)     # signed
-    remarks = Column(String, default="")
-
-
-class DBStoreAdjustment(Base, _Doc):
-    __tablename__ = "stk_adjustment"
-    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_stk_adj_number"),)
-
-    id = Column(Integer, primary_key=True, index=True)
-    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
-    store_id = Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
-    adj_date = Column(Date, nullable=False, default=date.today)
-    kind = Column(String, nullable=False, default="STOCK")        # STOCK | WASTAGE | WRITEOFF
-    reason = Column(String, default="")                           # the mandatory remark
-    reason_code = Column(String, default="")                      # an AdjustmentReason (STOCK) or a WastageReason (WASTAGE, WRITEOFF)
-    attachment_ref = Column(String, default="")                   # reference of the supporting paper (police report, survey note, photo ...)
-    project_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
-    cost_head = Column(String, nullable=True)
-    high_value = Column(Boolean, default=False)
-
-
-class DBStoreAdjustmentLine(Base):
-    __tablename__ = "stk_adjustment_line"
-
-    id = Column(Integer, primary_key=True, index=True)
-    adjustment_id = Column(Integer, ForeignKey("stk_adjustment.id"), nullable=False, index=True)
-    item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
-    direction = Column(String, nullable=False, default="OUT")     # IN | OUT
-    qty = Column(QTY, nullable=False)
-    rate = Column(RATE, nullable=False, default=0)                # IN: given or the average; OUT: the average it left at
-    value = Column(VALUE, nullable=False, default=0)
-    writeoff_request_id = Column(Integer, nullable=True)          # a write-off request from the outward slice, for kind WRITEOFF
-    remarks = Column(String, default="")
-
-
-class DBStoreScrap(Base, _Doc):
-    __tablename__ = "stk_scrap"
-    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_stk_scr_number"),)
-
-    id = Column(Integer, primary_key=True, index=True)
-    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
-    store_id = Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
-    scrap_date = Column(Date, nullable=False, default=date.today)
-    project_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
-    buyer = Column(String, default="")
-    gate_pass_no = Column(String, default="")
+    system_qty = Column(QTY, default=0)                      # the books when the count started
+    avg_rate = Column(RATE, default=0)                       # the average rate then; what the variance is valued at
+    counted_qty = Column(QTY, nullable=True)                 # empty until counted
+    in_snapshot = Column(Integer, default=1)                 # 0 for an item found that the books did not have
     reason = Column(String, default="")
 
 
+class DBStoreScrap(_Header, Base):
+    """Stock written off as wastage, or scrap that is sold or thrown away."""
+    __tablename__ = "store_scrap"
+    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_scrap_number"),)
+
+    scrap_date = Column(Date, nullable=False, default=date.today)
+    project_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    buyer = Column(String, default="")
+    reference = Column(String, default="")                   # the gate pass, voucher or challan
+
+
 class DBStoreScrapLine(Base):
-    __tablename__ = "stk_scrap_line"
+    __tablename__ = "store_scrap_line"
 
     id = Column(Integer, primary_key=True, index=True)
-    scrap_id = Column(Integer, ForeignKey("stk_scrap.id"), nullable=False, index=True)
+    scrap_id = Column(Integer, ForeignKey("store_scrap.id"), nullable=False, index=True)
+    line_no = Column(Integer, default=1)
     item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
-    qty = Column(QTY, nullable=False)
-    scrap_class = Column(String, default="OTHER")                 # a ScrapClass
-    book_value = Column(VALUE, nullable=False, default=0)         # at the store average, set when posted
-    realised_value = Column(VALUE, nullable=False, default=0)     # what it fetched
-    remarks = Column(String, default="")
+    entry_uom = Column(String, default="")
+    entry_qty = Column(QTY, default=0)
+    qty = Column(QTY, nullable=False, default=0)
+    disposal = Column(String, default="SCRAP")               # SCRAP | WASTAGE
+    reason = Column(String, default="")
+    realised_value = Column(VALUE, default=0)                # what a scrap sale fetched
+    cost_head = Column(String, nullable=True)                # where a wastage cost is charged (a CostHead)
+    writeoff_request_id = Column(Integer, nullable=True)     # an outward write-off request this line deals with
 
 
 class DBStoreControlLog(Base):
-    __tablename__ = "stk_control_log"
-    __table_args__ = (Index("ix_stk_control_log_doc", "doc_type", "doc_id"),)
+    """Every change of status of a control document: who, when, from what to what."""
+    __tablename__ = "store_control_log"
+    __table_args__ = (Index("ix_store_control_log_doc", "doc_type", "doc_id"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    doc_type = Column(String, nullable=False)                      # TRF | CNT | ADJ | SCR
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    doc_type = Column(String, nullable=False)                # TRANSFER | COUNT | SCRAP
     doc_id = Column(Integer, nullable=False)
+    action = Column(String, nullable=False)                  # create | start | submit | approve | post | receive | cancel
     from_status = Column(String, default="")
-    to_status = Column(String, nullable=False)
+    to_status = Column(String, default="")
     user_id = Column(Integer, nullable=True)
     user_name = Column(String, default="")
     at = Column(DateTime, default=datetime.now)

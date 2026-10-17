@@ -1,73 +1,68 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Plus } from 'lucide-react'
-import { Link, Route, Routes, useNavigate } from 'react-router-dom'
-import { Button, Card, Input, Select, SkeletonRows, Tabs } from '@/components/ui'
-import { useSession } from '@/lib/session'
-import { storeGet, storePerm, useStoreMeta, type DocStatus } from '@/api/store'
-import { DocStatusBadge } from '../shared'
+import { Link, NavLink, Route, Routes, useParams } from 'react-router-dom'
+import { ArrowLeft } from 'lucide-react'
+import { Skeleton } from '@/components/ui'
+import { cn } from '@/lib/utils'
 import { StoreShell } from '../StoreShell'
-import { GrnView, ReturnView } from './DocView'
-import { GrnForm } from './GrnForm'
-import { ReturnForm } from './ReturnForm'
-import { money, type Grn, type PurchaseReturn } from './types'
+import { kindOf, KINDS, useDoc, type InwardKind } from './api'
+import DocListPage from './DocListPage'
+import DocPage from './DocPage'
+import GrnForm from './GrnForm'
+import ItemLinesForm from './ItemLinesForm'
+import ReturnForm from './ReturnForm'
 
-/** Store > Inward: goods received notes (with quality check) and purchase returns. */
+const tab = ({ isActive }: { isActive: boolean }) =>
+  cn('whitespace-nowrap rounded-lg px-3.5 py-1.5 text-[13px] font-medium', isActive ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground')
+
+function List() {
+  const { kind: key } = useParams()
+  const kind = kindOf(key) ?? KINDS[0]
+  return (
+    <>
+      <nav aria-label="Inward documents" className="mb-4 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-muted p-1">
+        {KINDS.map((k) => <NavLink key={k.key} to={`/store/hub/inward/${k.key}`} className={tab}>{k.plural}</NavLink>)}
+      </nav>
+      <p className="mb-4 text-sm text-muted-foreground">{kind.blurb}</p>
+      <DocListPage key={kind.key} kind={kind.key} label={kind.label} plural={kind.plural} />
+    </>
+  )
+}
+
+function FormFor({ kind, doc }: { kind: InwardKind; doc?: Parameters<typeof GrnForm>[0]['doc'] }) {
+  if (kind === 'grn') return <GrnForm doc={doc} />
+  if (kind === 'returns') return <ReturnForm doc={doc} />
+  return <ItemLinesForm kind={kind} doc={doc} />
+}
+
+/** New: a blank form. Edit: the same form filled from the draft, once it has loaded. */
+function FormPage({ editing }: { editing: boolean }) {
+  const { kind: key, id } = useParams()
+  const kind = kindOf(key)
+  const q = useDoc((kind?.key ?? 'grn') as InwardKind, editing ? Number(id) : 0)
+  if (!kind) return <p className="text-sm text-muted-foreground">There is no such document type.</p>
+  const back = <Link to={editing ? `/store/hub/inward/${kind.key}/${id}` : `/store/hub/inward/${kind.key}`} className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> {editing ? 'Back to the document' : kind.plural}</Link>
+  if (editing && q.isPending) return <div>{back}<Skeleton className="h-40 w-full" /></div>
+  if (editing && (q.isError || !q.data)) return <div>{back}<p role="alert" className="text-sm text-danger">Could not load this document.</p></div>
+  if (editing && q.data && q.data.status !== 'DRAFT') return <div>{back}<p className="text-sm text-muted-foreground">Only a draft can be edited. Cancel it and make a new one to correct it.</p></div>
+  return (
+    <div>
+      {back}
+      <h2 className="mb-4 text-lg font-semibold">{editing ? `Edit ${q.data?.number}` : `New ${kind.label.toLowerCase()}`}</h2>
+      <FormFor kind={kind.key} doc={editing ? q.data : undefined} />
+    </div>
+  )
+}
+
+/** Store > Inward. Routes under /store/hub/inward/* land here. */
 export default function InwardIndex() {
   return (
     <StoreShell slice="inward">
       <Routes>
-        <Route index element={<Lists />} />
-        <Route path="grn/new" element={<GrnForm />} />
-        <Route path="grn/:id/edit" element={<GrnForm />} />
-        <Route path="grn/:id" element={<GrnView />} />
-        <Route path="returns/new" element={<ReturnForm />} />
-        <Route path="returns/:id" element={<ReturnView />} />
+        <Route index element={<List />} />
+        <Route path=":kind" element={<List />} />
+        <Route path=":kind/new" element={<FormPage editing={false} />} />
+        <Route path=":kind/:id" element={<DocPage />} />
+        <Route path=":kind/:id/edit" element={<FormPage editing />} />
       </Routes>
     </StoreShell>
-  )
-}
-
-function Lists() {
-  const { can } = useSession()
-  const nav = useNavigate()
-  const meta = useStoreMeta()
-  const [tab, setTab] = useState<'grn' | 'returns'>('grn')
-  const [status, setStatus] = useState('')
-  const [q, setQ] = useState('')
-  const res = useQuery({
-    queryKey: ['store', 'inward', 'list', tab, status, q],
-    queryFn: () => storeGet<{ rows: (Grn | PurchaseReturn)[]; total: number }>('inward', `/${tab}?status=${status}&q=${encodeURIComponent(q)}`),
-  })
-  const rows = res.data?.rows ?? []
-  const canCreate = can(storePerm('inward', 'create'))
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Tabs label="Inward" value={tab} onChange={setTab} items={[{ value: 'grn', label: 'Goods received' }, { value: 'returns', label: 'Returns to supplier' }]} />
-        {canCreate && <Button onClick={() => nav(tab === 'grn' ? 'grn/new' : 'returns/new')}><Plus /> {tab === 'grn' ? 'New GRN' : 'New return'}</Button>}
-      </div>
-      <div className="flex flex-wrap gap-3">
-        <Input className="max-w-xs" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search number or supplier" />
-        <Select className="w-44" value={status} placeholder="Any status" options={(meta.data?.doc_statuses ?? []).map((s) => ({ value: s, label: s }))} onChange={(e) => setStatus(e.target.value as DocStatus)} />
-      </div>
-      {res.isLoading ? <SkeletonRows rows={6} cols={5} /> : (
-        <Card className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead><tr className="border-b border-border text-left text-xs uppercase text-muted-foreground"><th className="p-3">Number</th><th className="p-3">Date</th><th className="p-3">Supplier</th><th className="p-3 text-right">Lines</th><th className="p-3 text-right">Value</th><th className="p-3">Status</th></tr></thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className="border-b border-border last:border-0 hover:bg-accent/40">
-                  <td className="p-3"><Link className="font-mono text-primary hover:underline" to={`${tab}/${r.id}`}>{r.number}</Link></td>
-                  <td className="p-3">{'grn_date' in r ? r.grn_date : r.return_date}</td><td className="p-3">{r.supplier_name}</td>
-                  <td className="p-3 text-right">{r.line_count}</td><td className="p-3 text-right">{money(r.total_value)}</td><td className="p-3"><DocStatusBadge status={r.status} /></td>
-                </tr>
-              ))}
-              {rows.length === 0 && <tr><td colSpan={6} className="p-6 text-center text-muted-foreground">Nothing here yet.</td></tr>}
-            </tbody>
-          </table>
-        </Card>
-      )}
-    </div>
   )
 }

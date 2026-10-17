@@ -1,123 +1,107 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Plus } from 'lucide-react'
-import { Link, Route, Routes, useNavigate } from 'react-router-dom'
-import { Badge, Button, Card, Input, Select, SkeletonRows, Tabs } from '@/components/ui'
-import { useSession } from '@/lib/session'
-import { storeGet, storePerm, useStoreMeta } from '@/api/store'
-import { DocStatusBadge } from '../shared'
+import { Link, NavLink, Route, Routes, useParams } from 'react-router-dom'
+import { ArrowLeft } from 'lucide-react'
+import { Skeleton } from '@/components/ui'
+import { cn } from '@/lib/utils'
 import { StoreShell } from '../StoreShell'
-import { IssueForm } from './IssueForm'
-import { RequisitionForm } from './RequisitionForm'
-import { ReturnForm } from './ReturnForm'
-import { IssueView, RequisitionView, ReturnView } from './Views'
-import { money, num } from './types'
+import { kindOf, KINDS, useDoc, useIndent, type OutwardKind } from './api'
+import { RecoveriesPage, SettingsPage } from './Closing'
+import DocListPage from './DocListPage'
+import DocPage from './DocPage'
+import { GatePassForm, GatePassListPage, GatePassPage } from './GatePassPages'
+import { IndentForm, IndentListPage, IndentPage } from './IndentPages'
+import IssueForm from './IssueForm'
+import { RecoveryPage, ReturnablesPage, WriteoffsPage } from './Reports'
+import ReturnForm from './ReturnForm'
 
-/** Store > Outward: requisitions, issues to site and subcontractors, returns, outstanding returnables and write-off requests. */
-export default function OutwardIndex() {
+const tab = ({ isActive }: { isActive: boolean }) =>
+  cn('whitespace-nowrap rounded-lg px-3.5 py-1.5 text-[13px] font-medium', isActive ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground')
+
+function Tabs() {
   return (
-    <StoreShell slice="outward">
-      <Routes>
-        <Route index element={<Lists />} />
-        <Route path="requisitions/new" element={<RequisitionForm />} />
-        <Route path="requisitions/:id/edit" element={<RequisitionForm />} />
-        <Route path="requisitions/:id" element={<RequisitionView />} />
-        <Route path="issues/new" element={<IssueForm />} />
-        <Route path="issues/:id/edit" element={<IssueForm />} />
-        <Route path="issues/:id" element={<IssueView />} />
-        <Route path="returns/new" element={<ReturnForm />} />
-        <Route path="returns/:id" element={<ReturnView />} />
-      </Routes>
-    </StoreShell>
+    <nav aria-label="Outward" className="mb-4 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-muted p-1">
+      <NavLink to="/store/hub/outward/indent" className={tab}>Indents</NavLink>
+      {KINDS.map((k) => <NavLink key={k.key} to={`/store/hub/outward/${k.key}`} className={tab}>{k.plural}</NavLink>)}
+      <NavLink to="/store/hub/outward/gate-pass" className={tab}>Gate passes</NavLink>
+      <NavLink to="/store/hub/outward/returnables" className={tab}>Returnables out</NavLink>
+      <NavLink to="/store/hub/outward/writeoffs" className={tab}>Write-offs</NavLink>
+      <NavLink to="/store/hub/outward/recoveries" className={tab}>Recoveries</NavLink>
+      <NavLink to="/store/hub/outward/recovery" className={tab}>Subcontractor statement</NavLink>
+      <NavLink to="/store/hub/outward/settings" className={tab}>Settings</NavLink>
+    </nav>
   )
 }
 
-type Tab = 'issues' | 'requisitions' | 'returns' | 'outstanding' | 'writeoffs'
-interface DocRow { id: number; number: string; status: never; store_code: string; line_count: number; total_value?: string; issue_date?: string; req_date?: string; return_date?: string; purpose?: string; subcontractor_name?: string; issue_type?: string; direct?: boolean; issue_number?: string }
-
-function Lists() {
-  const { can } = useSession()
-  const nav = useNavigate()
-  const [tab, setTab] = useState<Tab>('issues')
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Tabs label="Outward" value={tab} onChange={setTab} items={[{ value: 'issues', label: 'Issues' }, { value: 'requisitions', label: 'Requisitions' }, { value: 'returns', label: 'Returns' }, { value: 'outstanding', label: 'Outstanding returnables' }, { value: 'writeoffs', label: 'Write-off requests' }]} />
-        {can(storePerm('outward', 'create')) && (tab === 'issues' || tab === 'requisitions') && <Button onClick={() => nav(`${tab}/new`)}><Plus /> {tab === 'issues' ? 'New issue' : 'New requisition'}</Button>}
-      </div>
-      {tab === 'outstanding' ? <Outstanding /> : tab === 'writeoffs' ? <Writeoffs /> : <Docs kind={tab} />}
-    </div>
-  )
-}
-
-function Docs({ kind }: { kind: 'issues' | 'requisitions' | 'returns' }) {
-  const meta = useStoreMeta()
-  const [status, setStatus] = useState('')
-  const [q, setQ] = useState('')
-  const res = useQuery({ queryKey: ['store', 'outward', 'list', kind, status, q], queryFn: () => storeGet<{ rows: DocRow[]; total: number }>('outward', `/${kind}?status=${status}&q=${encodeURIComponent(q)}`) })
-  const rows = res.data?.rows ?? []
+function List() {
+  const { kind: key } = useParams()
+  const kind = kindOf(key) ?? KINDS[0]
   return (
     <>
-      <div className="flex flex-wrap gap-3">
-        <Input className="max-w-xs" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search number" />
-        <Select className="w-44" value={status} placeholder="Any status" options={(meta.data?.doc_statuses ?? []).map((s) => ({ value: s, label: s }))} onChange={(e) => setStatus(e.target.value)} />
-      </div>
-      {res.isLoading ? <SkeletonRows rows={6} cols={5} /> : (
-        <Card className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead><tr className="border-b border-border text-left text-xs uppercase text-muted-foreground"><th className="p-3">Number</th><th className="p-3">Date</th><th className="p-3">{kind === 'issues' ? 'Issued to' : kind === 'returns' ? 'Against' : 'Purpose'}</th><th className="p-3 text-right">Lines</th>{kind !== 'requisitions' && <th className="p-3 text-right">Value</th>}<th className="p-3">Status</th></tr></thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className="border-b border-border last:border-0 hover:bg-accent/40">
-                  <td className="p-3"><Link className="font-mono text-primary hover:underline" to={`${kind}/${r.id}`}>{r.number}</Link></td>
-                  <td className="p-3">{r.issue_date ?? r.req_date ?? r.return_date}</td>
-                  <td className="p-3">{kind === 'issues' ? <>{r.issue_type === 'SUBCONTRACTOR' ? r.subcontractor_name : 'Site use'} {r.direct && <Badge tone="warning">Direct</Badge>}</> : kind === 'returns' ? r.issue_number : r.purpose}</td>
-                  <td className="p-3 text-right">{r.line_count}</td>{kind !== 'requisitions' && <td className="p-3 text-right">{money(r.total_value ?? '0')}</td>}<td className="p-3"><DocStatusBadge status={r.status} /></td>
-                </tr>
-              ))}
-              {rows.length === 0 && <tr><td colSpan={6} className="p-6 text-center text-muted-foreground">Nothing here yet.</td></tr>}
-            </tbody>
-          </table>
-        </Card>
-      )}
+      <Tabs />
+      <p className="mb-4 text-sm text-muted-foreground">{kind.blurb}</p>
+      <DocListPage key={kind.key} kind={kind.key} label={kind.label} plural={kind.plural} />
     </>
   )
 }
 
-function Outstanding() {
-  const res = useQuery({ queryKey: ['store', 'outward', 'outstanding'], queryFn: () => storeGet<{ rows: { issue_line_id: number; issue_id: number; issue_number: string; store_code: string; item_code: string; item_name: string; holder_name: string; qty_outstanding: string; expected_return_date: string | null; overdue_days: number }[] }>('outward', '/outstanding') })
-  const rows = res.data?.rows ?? []
-  return res.isLoading ? <SkeletonRows rows={5} cols={5} /> : (
-    <Card className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead><tr className="border-b border-border text-left text-xs uppercase text-muted-foreground"><th className="p-3">Item</th><th className="p-3">Held by</th><th className="p-3 text-right">Still out</th><th className="p-3">Due</th><th className="p-3">Issue</th></tr></thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.issue_line_id} className="border-b border-border last:border-0">
-              <td className="p-3"><span className="font-mono text-xs text-muted-foreground">{r.item_code}</span> {r.item_name}</td><td className="p-3">{r.holder_name}</td><td className="p-3 text-right">{num(r.qty_outstanding)}</td>
-              <td className="p-3">{r.expected_return_date ?? '—'} {r.overdue_days > 0 && <Badge tone="danger">{r.overdue_days} days late</Badge>}</td>
-              <td className="p-3"><Link className="font-mono text-primary hover:underline" to={`issues/${r.issue_id}`}>{r.issue_number}</Link></td>
-            </tr>
-          ))}
-          {rows.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">Everything issued has come back.</td></tr>}
-        </tbody>
-      </table>
-    </Card>
+function Page({ children, blurb }: { children: React.ReactNode; blurb: string }) {
+  return <><Tabs /><p className="mb-4 text-sm text-muted-foreground">{blurb}</p>{children}</>
+}
+
+const backTo = (to: string, label: string) => <Link to={to} className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> {label}</Link>
+
+/** New: a blank form. Edit: the same form filled from the draft, once it has loaded. */
+function FormPage({ editing }: { editing: boolean }) {
+  const { kind: key, id } = useParams()
+  const kind = kindOf(key)
+  const q = useDoc((kind?.key ?? 'issue') as OutwardKind, editing ? Number(id) : 0)
+  if (!kind) return <p className="text-sm text-muted-foreground">There is no such document type.</p>
+  const back = backTo(editing ? `/store/hub/outward/${kind.key}/${id}` : `/store/hub/outward/${kind.key}`, editing ? 'Back to the document' : kind.plural)
+  if (editing && q.isPending) return <div>{back}<Skeleton className="h-40 w-full" /></div>
+  if (editing && (q.isError || !q.data)) return <div>{back}<p role="alert" className="text-sm text-danger">Could not load this document.</p></div>
+  if (editing && q.data && q.data.status !== 'DRAFT') return <div>{back}<p className="text-sm text-muted-foreground">Only a draft can be edited. Cancel it and make a new one to correct it.</p></div>
+  const doc = editing ? q.data : undefined
+  return (
+    <div>
+      {back}
+      <h2 className="mb-4 text-lg font-semibold">{editing ? `Edit ${q.data?.number}` : `New ${kind.label.toLowerCase()}`}</h2>
+      {kind.key === 'issue' ? <IssueForm doc={doc} /> : <ReturnForm doc={doc} />}
+    </div>
   )
 }
 
-function Writeoffs() {
-  const res = useQuery({ queryKey: ['store', 'outward', 'writeoffs'], queryFn: () => storeGet<{ rows: { id: number; store_code: string; item_code: string; item_name: string; qty: string; reason: string; status: string }[] }>('outward', '/writeoffs?status=') })
-  const rows = res.data?.rows ?? []
-  return res.isLoading ? <SkeletonRows rows={5} cols={4} /> : (
-    <Card className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead><tr className="border-b border-border text-left text-xs uppercase text-muted-foreground"><th className="p-3">Store</th><th className="p-3">Item</th><th className="p-3 text-right">Quantity</th><th className="p-3">Reason</th><th className="p-3">Status</th></tr></thead>
-        <tbody>
-          {rows.map((r) => <tr key={r.id} className="border-b border-border last:border-0"><td className="p-3 font-mono">{r.store_code}</td><td className="p-3">{r.item_name}</td><td className="p-3 text-right">{num(r.qty)}</td><td className="p-3">{r.reason}</td><td className="p-3"><Badge tone={r.status === 'OPEN' ? 'warning' : 'neutral'}>{r.status}</Badge></td></tr>)}
-          {rows.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">No write-off requests. Material declared lost on a return appears here until Control writes it off.</td></tr>}
-        </tbody>
-      </table>
-    </Card>
+function IndentFormPage({ editing }: { editing: boolean }) {
+  const { id } = useParams()
+  const q = useIndent(editing ? Number(id) : 0)
+  const back = backTo(editing ? `/store/hub/outward/indent/${id}` : '/store/hub/outward/indent', editing ? 'Back to the indent' : 'Indents')
+  if (editing && q.isPending) return <div>{back}<Skeleton className="h-40 w-full" /></div>
+  if (editing && (q.isError || !q.data)) return <div>{back}<p role="alert" className="text-sm text-danger">Could not load this indent.</p></div>
+  if (editing && q.data && q.data.status !== 'DRAFT') return <div>{back}<p className="text-sm text-muted-foreground">Only a draft can be edited. Cancel it and raise a new one to correct it.</p></div>
+  return <div>{back}<h2 className="mb-4 text-lg font-semibold">{editing ? `Edit ${q.data?.number}` : 'New indent'}</h2><IndentForm indent={editing ? q.data : undefined} /></div>
+}
+
+/** Store > Outward. Routes under /store/hub/outward/* land here. */
+export default function OutwardIndex() {
+  return (
+    <StoreShell slice="outward">
+      <Routes>
+        <Route index element={<Page blurb="Material asked for by site engineers, approved by the project manager and filled by issues."><IndentListPage /></Page>} />
+        <Route path="indent" element={<Page blurb="Material asked for by site engineers, approved by the project manager and filled by issues."><IndentListPage /></Page>} />
+        <Route path="indent/new" element={<IndentFormPage editing={false} />} />
+        <Route path="indent/:id" element={<IndentPage />} />
+        <Route path="indent/:id/edit" element={<IndentFormPage editing />} />
+        <Route path="gate-pass" element={<Page blurb="Material that has left, or is leaving, the store's premises."><GatePassListPage /></Page>} />
+        <Route path="gate-pass/new" element={<div>{backTo('/store/hub/outward/gate-pass', 'Gate passes')}<h2 className="mb-4 text-lg font-semibold">New gate pass</h2><GatePassForm /></div>} />
+        <Route path="gate-pass/:id" element={<GatePassPage />} />
+        <Route path="returnables" element={<Page blurb="Returnable items and tools issued and not yet back, who holds them and how late they are. Close what will not come back by charging for it or asking for a write-off."><ReturnablesPage /></Page>} />
+        <Route path="writeoffs" element={<Page blurb="Returnables reported lost or written off, waiting to be dealt with under Control."><WriteoffsPage /></Page>} />
+        <Route path="recoveries" element={<Page blurb="What has been charged to subcontractors and holders, to be recovered from their bills."><RecoveriesPage /></Page>} />
+        <Route path="recovery" element={<Page blurb="Material issued to one subcontractor, what came back and what is to be recovered from their bill."><RecoveryPage /></Page>} />
+        <Route path="settings" element={<Page blurb="Defaults for recovering material from subcontractors."><SettingsPage /></Page>} />
+        <Route path=":kind" element={<List />} />
+        <Route path=":kind/new" element={<FormPage editing={false} />} />
+        <Route path=":kind/:id" element={<DocPage />} />
+        <Route path=":kind/:id/edit" element={<FormPage editing />} />
+      </Routes>
+    </StoreShell>
   )
 }

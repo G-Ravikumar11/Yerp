@@ -1,132 +1,113 @@
-"""Store module - what the rest of the ERP (costing, billing) reads from the store. Owned by P5.
+"""Store module - what the rest of the ERP (costing, billing, purchasing) reads from the store. Owned by P5.
 
-  * get_project_material_cost: material charged to a project, from the ledger, net of reversals and of material returned.
-  * sync_subcon_recoveries: makes the subcontract billing's material-recovery rows from chargeable subcontractor issues, so the
-    next bill deducts what the store gave the subcontractor. It only adds to / withdraws from rows the store itself made (tracked in
-    store_recovery_link) and never touches a row a bill has already taken.
+Material cost is read straight from the stock ledger. The movements that are a cost to a project are the ones that consume stock:
+ISSUE_OUT, SUBCON_ISSUE_OUT, WASTAGE_OUT and SCRAP_OUT; what comes back from site (ISSUE_RETURN_IN, SUBCON_RETURN_IN) is taken off. A reversal is
+a row of the same movement type in the opposite column, so it nets by itself; its `txn_date` is the day it was made. Transfers between stores
+are not consumption and are left out, and so are receipts and adjustments. Values are the ledger's own (issues at the average rate of the day).
 """
 from datetime import date, datetime
-from decimal import ROUND_HALF_UP, Decimal
-from typing import List
+from decimal import Decimal
+from typing import List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import case, func
 
 from app import models
-from app.models.store_core import DBStore, DBStoreItemSettings, DBStoreStockLedger, MovementType
-from app.models.store_reports import DBStoreRecoveryLink
-from app.schemas.store_contracts import MaterialCostLine
-from app.services import store_outward
+from app.models.store_core import DBStore, DBStoreStockLedger, MovementType
+from app.schemas.store_contracts import MaterialCostLine, PoLineReceipt
 
 ZERO = Decimal("0")
-# Movements that charge material to a project, and the returns that take some of it back. Reversals reuse the type with the
-# opposite direction, so signing by direction nets everything out.
-COST_MOVEMENTS = (MovementType.ISSUE_OUT.value, MovementType.SUBCON_ISSUE_OUT.value, MovementType.WASTAGE_OUT.value,
-                  MovementType.ISSUE_RETURN_IN.value, MovementType.SUBCON_RETURN_IN.value)
+COST_OUT = (MovementType.ISSUE_OUT.value, MovementType.SUBCON_ISSUE_OUT.value, MovementType.WASTAGE_OUT.value, MovementType.SCRAP_OUT.value)
+COST_BACK = (MovementType.ISSUE_RETURN_IN.value, MovementType.SUBCON_RETURN_IN.value)
+COST_TYPES = COST_OUT + COST_BACK
 
 
-def _day(v):
-    if not v:
-        return None
-    if isinstance(v, date):
-        return v
-    return datetime.strptime(str(v)[:10], "%Y-%m-%d").date()
+def _day(x, default) -> date:
+    if isinstance(x, datetime):
+        return x.date()
+    if isinstance(x, date):
+        return x
+    try:
+        return datetime.strptime(str(x)[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return default
+
+
+def signed_value():
+    """The ledger row's value as a cost: positive when stock was consumed, negative when it came back (or when a consumption was reversed)."""
+    out_cost = case((DBStoreStockLedger.qty_out > 0, DBStoreStockLedger.value), else_=-DBStoreStockLedger.value)
+    back_cost = case((DBStoreStockLedger.qty_in > 0, -DBStoreStockLedger.value), else_=DBStoreStockLedger.value)
+    return case((DBStoreStockLedger.movement_type.in_(COST_OUT), out_cost), else_=back_cost)
+
+
+def signed_qty():
+    """The quantity as consumption, the way value is a cost: stock going out is positive, stock coming back is negative, whichever type the row is."""
+    return DBStoreStockLedger.qty_out - DBStoreStockLedger.qty_in
+
+
+def material_cost_rows(db, client_id, project_id=None, from_date=None, to_date=None, store_ids=None, boq_item_id=None):
+    """Consumption by (project, cost head, work order, BOQ item, item) for one company, net of returns and reversals.
+    Returns [(project_id, cost_head, work_order_id, boq_item_id, item_id, qty, value)] with the zero rows left out."""
+    q = (db.query(DBStoreStockLedger.project_id, DBStoreStockLedger.cost_head, DBStoreStockLedger.work_order_id, DBStoreStockLedger.boq_item_id, DBStoreStockLedger.item_id,
+                  func.sum(signed_qty()), func.sum(signed_value()))
+         .join(DBStore, DBStore.id == DBStoreStockLedger.store_id)
+         .filter(DBStore.client_id == client_id, DBStoreStockLedger.movement_type.in_(COST_TYPES), DBStoreStockLedger.project_id.isnot(None)))
+    if project_id:
+        q = q.filter(DBStoreStockLedger.project_id == project_id)
+    if from_date:
+        q = q.filter(DBStoreStockLedger.txn_date >= _day(from_date, date.min))
+    if to_date:
+        q = q.filter(DBStoreStockLedger.txn_date <= _day(to_date, date.max))
+    if store_ids is not None:
+        q = q.filter(DBStoreStockLedger.store_id.in_(list(store_ids) or [0]))
+    if boq_item_id:
+        q = q.filter(DBStoreStockLedger.boq_item_id == boq_item_id)
+    rows = q.group_by(DBStoreStockLedger.project_id, DBStoreStockLedger.cost_head, DBStoreStockLedger.work_order_id, DBStoreStockLedger.boq_item_id, DBStoreStockLedger.item_id).all()
+    return [(p, h, w, b, i, Decimal(str(qty or 0)), Decimal(str(val or 0))) for p, h, w, b, i, qty, val in rows if (qty or 0) != 0 or (val or 0) != 0]
 
 
 def get_project_material_cost(db, project_id, from_date, to_date) -> List[MaterialCostLine]:
-    """Material issued to a project between two dates, by cost head, work order, BOQ item and item (net of returns and reversals)."""
-    q = db.query(DBStoreStockLedger).filter(DBStoreStockLedger.project_id == project_id, DBStoreStockLedger.movement_type.in_(COST_MOVEMENTS))
-    if _day(from_date):
-        q = q.filter(DBStoreStockLedger.txn_date >= _day(from_date))
-    if _day(to_date):
-        q = q.filter(DBStoreStockLedger.txn_date <= _day(to_date))
-    groups = {}
-    for e in q.all():
-        key = (e.cost_head, e.work_order_id, e.boq_item_id, e.item_id)
-        qty, value = groups.get(key, (ZERO, ZERO))
-        out = e.qty_out > 0
-        groups[key] = (qty + (e.qty_out if out else -e.qty_in), value + (e.value if out else -e.value))
-    return [MaterialCostLine(project_id=project_id, cost_head=h, work_order_id=w, boq_item_id=b, item_id=i, qty=qty, value=value)
-            for (h, w, b, i), (qty, value) in sorted(groups.items(), key=lambda kv: tuple(str(x) for x in kv[0])) if qty != 0 or value != 0]
+    """Material issued to a project between two dates, by cost head, work order and BOQ item.
+
+    Net of what came back from site and of reversals, in the item's base unit and at the ledger's value. Lines are sorted by cost head, work
+    order, BOQ item and item so a caller can total them in groups. A project with nothing issued gives []."""
+    job = db.get(models.DBJob, project_id) if project_id else None
+    if job is None:
+        return []
+    rows = material_cost_rows(db, job.client_id, project_id=project_id, from_date=from_date, to_date=to_date)
+    lines = [MaterialCostLine(project_id=p, cost_head=h, work_order_id=w, boq_item_id=b, item_id=i, qty=qty.quantize(Decimal("0.001")), value=val.quantize(Decimal("0.01")))
+             for p, h, w, b, i, qty, val in rows]
+    return sorted(lines, key=lambda l: (l.cost_head or "", l.work_order_id or 0, l.boq_item_id or 0, l.item_id))
 
 
-# =============================================================================================== subcontract recoveries
-_DEAD_ORDER = ("DRAFT", "CANCELLED", "CANCELED", "SUPERSEDED", "REJECTED")
+def project_store_material(db, project_id) -> Decimal:
+    """What the store has issued to a project in all, net: the figure the project's costing shows beside its bills."""
+    total = (db.query(func.sum(signed_value())).filter(DBStoreStockLedger.project_id == project_id, DBStoreStockLedger.movement_type.in_(COST_TYPES)).scalar())
+    return Decimal(str(total or 0)).quantize(Decimal("0.01"))
 
 
-def _order_for(db, client_id, contractor_id, job_id):
-    rows = db.query(models.DBSubcontractOrder).filter(models.DBSubcontractOrder.client_id == client_id, models.DBSubcontractOrder.contractor_id == contractor_id,
-                                                      models.DBSubcontractOrder.job_id == job_id).order_by(models.DBSubcontractOrder.id.desc()).all()
-    return next((o for o in rows if (o.status or "").upper() not in _DEAD_ORDER), None)
+def store_material_by_project(db, client_id) -> dict:
+    """{project_id: net value issued} for a company - one query, for the project board."""
+    rows = (db.query(DBStoreStockLedger.project_id, func.sum(signed_value())).join(DBStore, DBStore.id == DBStoreStockLedger.store_id)
+            .filter(DBStore.client_id == client_id, DBStoreStockLedger.movement_type.in_(COST_TYPES), DBStoreStockLedger.project_id.isnot(None))
+            .group_by(DBStoreStockLedger.project_id).all())
+    return {p: Decimal(str(v or 0)).quantize(Decimal("0.01")) for p, v in rows}
 
 
-def _issue_facts(db, store_ids):
-    """For each subcontractor issue line posted from these stores: (issue id, issue number, project id, subcontractor id), read from the shared ledger."""
-    out = {}
-    for e in db.query(DBStoreStockLedger).filter(DBStoreStockLedger.store_id.in_(store_ids or [0]), DBStoreStockLedger.movement_type == MovementType.SUBCON_ISSUE_OUT.value,
-                                                 DBStoreStockLedger.reversal_of_id.is_(None)).all():
-        number = (e.remarks or "")[len("Issue "):] if (e.remarks or "").startswith("Issue ") else "ISSUE-%s" % e.ref_doc_id
-        out[e.ref_line_id] = (e.ref_doc_id, number, e.project_id, e.subcontractor_id)
+def po_receipt_for_order(db, po_id) -> List[dict]:
+    """What the store has received against a purchase order, line by line, for the purchase-order screens (posted receipts only)."""
+    from app.services import store_inward
+    out = []
+    for r in store_inward.get_po_receipt_summary(db, po_id) or []:
+        r: PoLineReceipt
+        out.append({"po_line_id": r.po_line_id, "item_id": r.item_id, "ordered_qty": str(r.ordered_qty), "received_qty": str(r.received_qty), "accepted_qty": str(r.accepted_qty),
+                    "rejected_qty": str(r.rejected_qty), "pending_qty": str(r.pending_qty)})
     return out
 
 
-def sync_subcon_recoveries(db, client_id) -> dict:
-    """Bring material_recoveries in line with the store's chargeable subcontractor issues. The caller commits.
-
-    Reads the outward slice only through get_subcon_issues (posted issues, with what came back) and the shared ledger."""
-    created = updated = withdrawn = 0
-    skipped = []
-    stores = [i for (i,) in db.query(DBStore.id).filter(DBStore.client_id == client_id).all()]
-    facts = _issue_facts(db, stores)
-    live = set()
-    for sub_id in sorted({f[3] for f in facts.values() if f[3]}):
-        for l in store_outward.get_subcon_issues(db, sub_id, date.today()):
-            if not l.chargeable or l.issue_line_id not in facts:
-                continue
-            live.add(l.issue_line_id)
-            _issue_id, number, project_id, _sub = facts[l.issue_line_id]
-            net = l.qty_issued - l.qty_returned
-            link = db.query(DBStoreRecoveryLink).filter(DBStoreRecoveryLink.issue_line_id == l.issue_line_id).first()
-            rec = db.get(models.DBMaterialRecovery, link.recovery_id) if link else None
-            if rec is not None and rec.sub_bill_id:
-                continue                                                  # a bill has taken it; leave it as billed
-            if net <= 0:
-                if rec is not None:
-                    db.delete(link)
-                    db.flush()
-                    db.delete(rec)
-                    withdrawn += 1
-                continue
-            rate = l.recovery_rate or ZERO
-            amount = (net * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            if rec is not None:
-                if abs(float(net) - (rec.quantity or 0)) > 1e-9 or abs(float(amount) - (rec.amount or 0)) > 1e-9:
-                    rec.quantity, rec.rate, rec.amount = float(net), float(rate), float(amount)
-                    updated += 1
-                continue
-            order = _order_for(db, client_id, sub_id, project_id)
-            if order is None:
-                skipped.append({"issue": number, "reason": "No active subcontract order for this subcontractor on the project."})
-                continue
-            item = db.get(models.DBItem, l.item_id)
-            st = db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == l.item_id).first()
-            rec = models.DBMaterialRecovery(client_id=client_id, order_id=order.id, job_id=project_id, issue_number=number, item_code=item.item_code, item_name=item.item_name,
-                                            uom=(st.base_uom if st else item.units_of_measure) or "", quantity=float(net), rate=float(rate), amount=float(amount),
-                                            issued_on=l.issue_date.isoformat())
-            db.add(rec)
-            db.flush()
-            db.add(DBStoreRecoveryLink(client_id=client_id, issue_line_id=l.issue_line_id, recovery_id=rec.id))
-            created += 1
-    # issues that are no longer posted (cancelled) give their unbilled recovery back
-    for link in db.query(DBStoreRecoveryLink).filter(DBStoreRecoveryLink.client_id == client_id).all():
-        if link.issue_line_id in live:
-            continue
-        rec = db.get(models.DBMaterialRecovery, link.recovery_id)
-        if rec is not None and rec.sub_bill_id:
-            continue
-        db.delete(link)
-        db.flush()
-        if rec is not None:
-            db.delete(rec)
-        withdrawn += 1
-    db.flush()
-    return {"created": created, "updated": updated, "withdrawn": withdrawn, "skipped": skipped}
+def subcon_material_to_recover(db, contractor_id, upto: Optional[date] = None) -> Decimal:
+    """What is still to be recovered from a subcontractor's bills for material the store issued them (chargeable lines, net of returns)."""
+    from app.services import store_outward
+    total = ZERO
+    for l in store_outward.get_subcon_issues(db, contractor_id, upto or date.today()) or []:
+        total += l.recovery_value
+    return total.quantize(Decimal("0.01"))

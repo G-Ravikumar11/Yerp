@@ -1,106 +1,391 @@
-"""Store module - masters routes under /api/store/masters. Owned by P1.
+"""Store module - masters under /api/store/masters: the stores, their bins, who works in which store, each item's stock
+settings and its unit conversions. Owned by P1.
 
-Stores, bins, who works where, per-item stock settings, unit conversions and the freeze switch.
-Rights: view = read; create = add and edit; approve = assignments and freeze/unfreeze; cancel = switch off.
+Rights: store.masters.view to read, store.masters.create to add or change anything, store.masters.approve to take a store
+out of use or bring it back. A store a member of staff is not assigned to is not theirs to see (assert_store_access).
+Nothing here moves stock: the ledger is only ever written through app/services/stock_ledger.py.
 """
+import re
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
-from sqlalchemy import func
+from pydantic import BaseModel
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app import models
+from app.core.audit import log_audit
 from app.core.permissions import permissions_for
-from app.core.store_auth import store_actor, store_errors
+from app.core.store_auth import store_actor
 from app.db import get_db
 from app.models.store_core import (
-    DBStore, DBStoreBin, DBStoreFreeze, DBStoreItemSettings, DBStoreStockBalance, DBStoreUomConversion,
-    DBStoreUserAssignment, ItemCategory, StoreType,
+    DBStore, DBStoreBin, DBStoreDocSequence, DBStoreFreeze, DBStoreItemSettings, DBStoreStockBalance, DBStoreStockLedger,
+    DBStoreUomConversion, DBStoreUserAssignment, ItemCategory, StoreType,
 )
-from app.services.stock_ledger import assert_store_access, freeze_store, unfreeze_store
-
-REVISION = "store_002_foundation"      # this slice adds no tables; the name labels the change (the repo has no Alembic)
+from app.services.stock_ledger import assert_store_access
 
 router = APIRouter(prefix="/api/store/masters", tags=["store-masters"])
 
-D = Decimal
-_STORE_TYPES = {t.value for t in StoreType}
-_CATEGORIES = {c.value for c in ItemCategory}
+ZERO = Decimal("0")
+STORE_CODE = re.compile(r"^[A-Z0-9][A-Z0-9_-]{1,11}$")      # it is printed in every document number, so no "/" and no spaces
+MAX_FACTOR = Decimal("1000000000")
+MAX_QTY = Decimal("999999999999")
 
 
-def accessible_store_ids(actor, db) -> Optional[set]:
-    """The ids of the stores this person may work in; None means every store of the company."""
+# --- shared with the enquiry slice --------------------------------------------------------------------------------
+
+def num(x, places="0.001") -> str:
+    """A Decimal (or None) as the plain string the API sends."""
+    d = Decimal(str(x if x is not None else 0))
+    return format(d.quantize(Decimal(places)), "f")
+
+
+def visible_store_ids(db, actor) -> Optional[set]:
+    """The stores this person may see: None for 'all of the company' (the account holder, store.admin), else their assignments."""
     if actor.employee is None or "store.admin" in permissions_for(actor.employee):
         return None
     return {r for (r,) in db.query(DBStoreUserAssignment.store_id).filter(
         DBStoreUserAssignment.employee_id == actor.employee.id, DBStoreUserAssignment.is_active.is_(True)).all()}
 
 
-def _dec(v, what):
-    try:
-        out = D(str(v))
-    except (InvalidOperation, ValueError):
-        raise HTTPException(400, "%s is not a number." % what) from None
-    if out < 0:
-        raise HTTPException(400, "%s cannot be negative." % what)
+def my_store(db, actor, store_id) -> DBStore:
+    """A store of this company the person may work in; 404 for anybody else's, 403 for one they are not assigned to."""
+    store = db.get(DBStore, store_id) if store_id else None
+    if store is None or store.client_id != actor.client.id:
+        raise HTTPException(404, "Store not found")
+    assert_store_access(actor.user, store.id)
+    return store
+
+
+def _who(actor, request):
+    return dict(request=request, user_type="employee" if actor.employee is not None else "client", user_name=actor.name)
+
+
+def _clean(text, what, limit, required=True):
+    out = " ".join((text or "").split())
+    if required and not out:
+        raise HTTPException(400, "Give the %s." % what)
+    if len(out) > limit:
+        raise HTTPException(400, "Keep the %s to %d characters." % (what, limit))
     return out
 
 
-def _store(db, actor, store_id) -> DBStore:
-    assert_store_access(actor.user, store_id)
-    return db.get(DBStore, store_id)
+def _decimal(value, what, *, high=MAX_QTY, minimum=ZERO, allow_zero=True):
+    try:
+        d = Decimal(str(value if value is not None else 0).strip() or "0")
+    except InvalidOperation:
+        raise HTTPException(400, "%s is not a number." % what) from None
+    if not d.is_finite():
+        raise HTTPException(400, "%s is not a number." % what)
+    if d < minimum or (d == minimum and not allow_zero) or d > high:
+        raise HTTPException(400, "%s must be %s%s." % (what, "more than " if not allow_zero else "", str(minimum) if not allow_zero else "between %s and %s" % (minimum, high)))
+    return d
 
 
-def _clean(v: str, what: str) -> str:
-    v = (v or "").strip()
-    if not v:
-        raise HTTPException(400, "%s is required." % what)
-    return v
+# --- stores ---------------------------------------------------------------------------------------------------------
 
-
-def _store_row(s, frozen=False, items=0):
-    return {"id": s.id, "code": s.code, "name": s.name, "type": s.type, "project_id": s.project_id, "address": s.address or "",
-            "is_active": bool(s.is_active), "frozen": frozen, "stock_lines": items}
-
-
-def _check_project(db, actor, project_id):
-    if project_id and not db.query(models.DBJob.id).filter(models.DBJob.id == project_id, models.DBJob.client_id == actor.client.id).first():
-        raise HTTPException(404, "Project not found")
-
-
-# ---------------------------------------------------------------------------------------------------- schemas
 class StoreIn(BaseModel):
-    code: str = Field(max_length=20)
-    name: str = Field(max_length=120)
+    code: str
+    name: str
     type: str = StoreType.CENTRAL.value
     project_id: Optional[int] = None
     address: str = ""
 
 
-class StoreEdit(BaseModel):
-    name: Optional[str] = Field(default=None, max_length=120)
-    type: Optional[str] = None
-    project_id: Optional[int] = None
-    address: Optional[str] = None
-    is_active: Optional[bool] = None
+def _check_store_fields(db, client_id, body):
+    name = _clean(body.name, "store name", 100)
+    kind = (body.type or "").strip().upper()
+    if kind not in {t.value for t in StoreType}:
+        raise HTTPException(400, "Type must be one of: %s." % ", ".join(t.value for t in StoreType))
+    project = None
+    if body.project_id:
+        project = db.query(models.DBJob).filter(models.DBJob.id == body.project_id, models.DBJob.client_id == client_id).first()
+        if project is None:
+            raise HTTPException(400, "That project does not exist.")
+    return name, kind, project, _clean(body.address, "address", 300, required=False)
 
+
+def _store_row(s, extra):
+    return {"id": s.id, "code": s.code, "name": s.name, "type": s.type, "project_id": s.project_id, "address": s.address or "",
+            "is_active": bool(s.is_active), **extra}
+
+
+def _store_rows(db, stores):
+    ids = [s.id for s in stores]
+    if not ids:
+        return []
+    bins = dict(db.query(DBStoreBin.store_id, func.count(DBStoreBin.id)).filter(DBStoreBin.store_id.in_(ids)).group_by(DBStoreBin.store_id).all())
+    staff = dict(db.query(DBStoreUserAssignment.store_id, func.count(DBStoreUserAssignment.id)).filter(
+        DBStoreUserAssignment.store_id.in_(ids), DBStoreUserAssignment.is_active.is_(True)).group_by(DBStoreUserAssignment.store_id).all())
+    held = {sid: (n, v) for sid, n, v in db.query(DBStoreStockBalance.store_id, func.count(DBStoreStockBalance.id), func.sum(DBStoreStockBalance.value)).filter(
+        DBStoreStockBalance.store_id.in_(ids), DBStoreStockBalance.qty > 0).group_by(DBStoreStockBalance.store_id).all()}
+    frozen = {f.store_id: f.reason for f in db.query(DBStoreFreeze).filter(DBStoreFreeze.store_id.in_(ids), DBStoreFreeze.unfrozen_at.is_(None)).all()}
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.id.in_([s.project_id for s in stores if s.project_id])).all()} if any(s.project_id for s in stores) else {}
+    out = []
+    for s in stores:
+        n, v = held.get(s.id, (0, ZERO))
+        job = jobs.get(s.project_id)
+        out.append(_store_row(s, {"project_name": ("%s - %s" % (job.number, job.name)) if job else "", "bins": bins.get(s.id, 0),
+                                  "staff": staff.get(s.id, 0), "items_held": n, "stock_value": num(v or ZERO, "0.01"),
+                                  "frozen": s.id in frozen, "frozen_reason": frozen.get(s.id, "")}))
+    return out
+
+
+@router.get("")
+def index(request: Request, db: Session = Depends(get_db)):
+    """The slice's front door: the stores this person may see."""
+    return {"slice": "masters", **list_stores(request, db=db)}
+
+
+@router.get("/stores")
+def list_stores(request: Request, q: str = "", type: str = "", project_id: int = 0, status: str = "all", db: Session = Depends(get_db)):
+    actor = store_actor(request, db, "store.masters.view")
+    query = db.query(DBStore).filter(DBStore.client_id == actor.client.id)
+    seen = visible_store_ids(db, actor)
+    if seen is not None:
+        query = query.filter(DBStore.id.in_(seen or {0}))
+    term = (q or "").strip()
+    if term:
+        like = "%" + term.replace("%", "").replace("_", "") + "%"
+        query = query.filter(or_(DBStore.code.ilike(like), DBStore.name.ilike(like)))
+    if type:
+        query = query.filter(DBStore.type == type.strip().upper())
+    if project_id:
+        query = query.filter(DBStore.project_id == project_id)
+    if status == "active":
+        query = query.filter(DBStore.is_active.is_(True))
+    elif status == "inactive":
+        query = query.filter(DBStore.is_active.is_(False))
+    return {"items": _store_rows(db, query.order_by(DBStore.code).all())}
+
+
+@router.get("/stores/{store_id}")
+def get_store(store_id: int, request: Request, db: Session = Depends(get_db)):
+    actor = store_actor(request, db, "store.masters.view")
+    return _store_rows(db, [my_store(db, actor, store_id)])[0]
+
+
+@router.post("/stores")
+def add_store(body: StoreIn, request: Request, db: Session = Depends(get_db)):
+    actor = store_actor(request, db, "store.masters.create")
+    code = (body.code or "").strip().upper()
+    if not STORE_CODE.match(code):
+        raise HTTPException(400, "The store code is 2 to 12 capital letters or numbers (with - or _), like CS01. It is printed in every document number.")
+    name, kind, _project, address = _check_store_fields(db, actor.client.id, body)
+    if db.query(DBStore.id).filter(DBStore.client_id == actor.client.id, DBStore.code == code).first():
+        raise HTTPException(409, "There is already a store with the code %s." % code)
+    store = DBStore(client_id=actor.client.id, code=code, name=name, type=kind, project_id=body.project_id or None, address=address, is_active=True)
+    db.add(store)
+    db.flush()
+    log_audit(db, actor.client.id, "store_added", "store", store.id, store.code, "%s %s" % (kind, name), **_who(actor, request))
+    db.commit()
+    return _store_rows(db, [store])[0]
+
+
+@router.put("/stores/{store_id}")
+def edit_store(store_id: int, body: StoreIn, request: Request, db: Session = Depends(get_db)):
+    actor = store_actor(request, db, "store.masters.create")
+    store = my_store(db, actor, store_id)
+    code = (body.code or "").strip().upper()
+    name, kind, _project, address = _check_store_fields(db, actor.client.id, body)
+    if code != store.code:
+        if not STORE_CODE.match(code):
+            raise HTTPException(400, "The store code is 2 to 12 capital letters or numbers (with - or _), like CS01.")
+        used = db.query(DBStoreStockLedger.id).filter(DBStoreStockLedger.store_id == store.id).first() or \
+            db.query(DBStoreDocSequence.id).filter(DBStoreDocSequence.store_id == store.id).first()
+        if used:
+            raise HTTPException(409, "%s already appears on stock entries and document numbers, so its code cannot change. Change the name instead." % store.code)
+        if db.query(DBStore.id).filter(DBStore.client_id == actor.client.id, DBStore.code == code).first():
+            raise HTTPException(409, "There is already a store with the code %s." % code)
+    before = "%s %s %s project=%s" % (store.code, store.type, store.name, store.project_id)
+    store.code, store.name, store.type, store.project_id, store.address = code, name, kind, body.project_id or None, address
+    log_audit(db, actor.client.id, "store_edited", "store", store.id, store.code, "%s -> %s %s %s project=%s" % (before, code, kind, name, store.project_id), **_who(actor, request))
+    db.commit()
+    return _store_rows(db, [store])[0]
+
+
+def _set_active(store_id, active, request, db):
+    actor = store_actor(request, db, "store.masters.approve")
+    store = my_store(db, actor, store_id)
+    if bool(store.is_active) == active:
+        raise HTTPException(409, "%s is already %s." % (store.code, "in use" if active else "out of use"))
+    if not active:
+        held = db.query(func.count(DBStoreStockBalance.id)).filter(DBStoreStockBalance.store_id == store.id, DBStoreStockBalance.qty > 0).scalar()
+        if held:
+            raise HTTPException(409, "%s still holds stock (%d items). Move it out or transfer it before taking the store out of use." % (store.code, held))
+        if db.query(DBStoreFreeze.id).filter(DBStoreFreeze.store_id == store.id, DBStoreFreeze.unfrozen_at.is_(None)).first():
+            raise HTTPException(409, "%s is frozen for a stock count. Finish the count first." % store.code)
+    store.is_active = active
+    log_audit(db, actor.client.id, "store_activated" if active else "store_deactivated", "store", store.id, store.code, "", **_who(actor, request))
+    db.commit()
+    return _store_rows(db, [store])[0]
+
+
+@router.post("/stores/{store_id}/deactivate")
+def deactivate_store(store_id: int, request: Request, db: Session = Depends(get_db)):
+    """Take a store out of use. Refused while it holds stock; its history stays."""
+    return _set_active(store_id, False, request, db)
+
+
+@router.post("/stores/{store_id}/activate")
+def activate_store(store_id: int, request: Request, db: Session = Depends(get_db)):
+    return _set_active(store_id, True, request, db)
+
+
+# --- bins -----------------------------------------------------------------------------------------------------------
 
 class BinIn(BaseModel):
-    code: str = Field(max_length=30)
+    code: str
     description: str = ""
-    is_active: bool = True
 
+
+def _bin_dict(b):
+    return {"id": b.id, "store_id": b.store_id, "code": b.code, "description": b.description or "", "is_active": bool(b.is_active)}
+
+
+def _bin_fields(body):
+    code = _clean(body.code, "bin code", 20).upper()
+    return code, _clean(body.description, "description", 120, required=False)
+
+
+@router.get("/stores/{store_id}/bins")
+def list_bins(store_id: int, request: Request, db: Session = Depends(get_db)):
+    actor = store_actor(request, db, "store.masters.view")
+    store = my_store(db, actor, store_id)
+    return {"items": [_bin_dict(b) for b in db.query(DBStoreBin).filter(DBStoreBin.store_id == store.id).order_by(DBStoreBin.code).all()]}
+
+
+@router.post("/stores/{store_id}/bins")
+def add_bin(store_id: int, body: BinIn, request: Request, db: Session = Depends(get_db)):
+    actor = store_actor(request, db, "store.masters.create")
+    store = my_store(db, actor, store_id)
+    code, description = _bin_fields(body)
+    if db.query(DBStoreBin.id).filter(DBStoreBin.store_id == store.id, DBStoreBin.code == code).first():
+        raise HTTPException(409, "%s already has a bin %s." % (store.code, code))
+    row = DBStoreBin(store_id=store.id, code=code, description=description, is_active=True)
+    db.add(row)
+    db.flush()
+    log_audit(db, actor.client.id, "store_bin_added", "store", store.id, store.code, code, **_who(actor, request))
+    db.commit()
+    return _bin_dict(row)
+
+
+def _my_bin(db, actor, bin_id):
+    row = db.get(DBStoreBin, bin_id)
+    store = db.get(DBStore, row.store_id) if row else None
+    if row is None or store is None or store.client_id != actor.client.id:
+        raise HTTPException(404, "Bin not found")
+    assert_store_access(actor.user, store.id)
+    return row, store
+
+
+@router.put("/bins/{bin_id}")
+def edit_bin(bin_id: int, body: BinIn, request: Request, db: Session = Depends(get_db)):
+    actor = store_actor(request, db, "store.masters.create")
+    row, store = _my_bin(db, actor, bin_id)
+    code, description = _bin_fields(body)
+    if code != row.code and db.query(DBStoreBin.id).filter(DBStoreBin.store_id == store.id, DBStoreBin.code == code).first():
+        raise HTTPException(409, "%s already has a bin %s." % (store.code, code))
+    row.code, row.description = code, description
+    log_audit(db, actor.client.id, "store_bin_edited", "store", store.id, store.code, code, **_who(actor, request))
+    db.commit()
+    return _bin_dict(row)
+
+
+@router.delete("/bins/{bin_id}")
+def remove_bin(bin_id: int, request: Request, db: Session = Depends(get_db)):
+    """Nothing else refers to a bin yet, so removing one loses nothing."""
+    actor = store_actor(request, db, "store.masters.create")
+    row, store = _my_bin(db, actor, bin_id)
+    log_audit(db, actor.client.id, "store_bin_removed", "store", store.id, store.code, row.code, **_who(actor, request))
+    db.delete(row)
+    db.commit()
+    return {"message": "Bin removed"}
+
+
+# --- who works in which store ---------------------------------------------------------------------------------------
 
 class AssignIn(BaseModel):
     employee_id: int
     role: str = "STOREKEEPER"
 
 
-class ItemSettingsIn(BaseModel):
+def _employee_name(e):
+    return ("%s %s" % (e.first_name or "", e.last_name or "")).strip()
+
+
+def _assign_dict(a, e):
+    return {"id": a.id, "store_id": a.store_id, "employee_id": a.employee_id, "name": _employee_name(e) if e else "", "email": e.email if e else "",
+            "job_title": (e.job_title or "") if e else "", "role": a.role or "", "is_active": bool(a.is_active)}
+
+
+@router.get("/employees")
+def employee_options(request: Request, q: str = "", limit: int = 30, db: Session = Depends(get_db)):
+    """Staff who can be assigned to a store."""
+    actor = store_actor(request, db, "store.masters.view")
+    query = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == actor.client.id, models.DBEmployee.status.in_(["active", "onboarding"]))
+    term = (q or "").strip()
+    if term:
+        like = "%" + term.replace("%", "").replace("_", "") + "%"
+        query = query.filter(or_(models.DBEmployee.first_name.ilike(like), models.DBEmployee.last_name.ilike(like), models.DBEmployee.email.ilike(like)))
+    rows = query.order_by(models.DBEmployee.first_name).limit(max(1, min(limit, 100))).all()
+    return {"items": [{"id": e.id, "name": _employee_name(e), "email": e.email, "job_title": e.job_title or ""} for e in rows]}
+
+
+@router.get("/stores/{store_id}/assignments")
+def list_assignments(store_id: int, request: Request, db: Session = Depends(get_db)):
+    actor = store_actor(request, db, "store.masters.view")
+    store = my_store(db, actor, store_id)
+    rows = db.query(DBStoreUserAssignment, models.DBEmployee).join(models.DBEmployee, models.DBEmployee.id == DBStoreUserAssignment.employee_id).filter(
+        DBStoreUserAssignment.store_id == store.id).order_by(models.DBEmployee.first_name).all()
+    return {"items": [_assign_dict(a, e) for a, e in rows]}
+
+
+@router.post("/stores/{store_id}/assignments")
+def assign(store_id: int, body: AssignIn, request: Request, db: Session = Depends(get_db)):
+    """Put a member of staff in a store (or bring back one who was taken out, with the new role label)."""
+    actor = store_actor(request, db, "store.masters.create")
+    store = my_store(db, actor, store_id)
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == body.employee_id, models.DBEmployee.client_id == actor.client.id).first()
+    if emp is None:
+        raise HTTPException(400, "That employee does not exist.")
+    role = _clean(body.role, "role", 30).upper().replace(" ", "_")
+    row = db.query(DBStoreUserAssignment).filter(DBStoreUserAssignment.store_id == store.id, DBStoreUserAssignment.employee_id == emp.id).first()
+    if row is not None and row.is_active:
+        raise HTTPException(409, "%s already works in %s." % (_employee_name(emp), store.code))
+    if row is None:
+        row = DBStoreUserAssignment(store_id=store.id, employee_id=emp.id, role=role, is_active=True)
+        db.add(row)
+    else:
+        row.role, row.is_active = role, True
+    db.flush()
+    log_audit(db, actor.client.id, "store_staff_assigned", "store", store.id, store.code, "%s as %s" % (_employee_name(emp), role), **_who(actor, request))
+    db.commit()
+    return _assign_dict(row, emp)
+
+
+@router.delete("/stores/{store_id}/assignments/{employee_id}")
+def unassign(store_id: int, employee_id: int, request: Request, db: Session = Depends(get_db)):
+    """Take a member of staff out of a store. The row stays, switched off, so the history of who worked there is kept."""
+    actor = store_actor(request, db, "store.masters.create")
+    store = my_store(db, actor, store_id)
+    row = db.query(DBStoreUserAssignment).filter(DBStoreUserAssignment.store_id == store.id, DBStoreUserAssignment.employee_id == employee_id,
+                                                  DBStoreUserAssignment.is_active.is_(True)).first()
+    if row is None:
+        raise HTTPException(404, "That person does not work in this store.")
+    emp = db.get(models.DBEmployee, employee_id)
+    row.is_active = False
+    log_audit(db, actor.client.id, "store_staff_removed", "store", store.id, store.code, _employee_name(emp) if emp else str(employee_id), **_who(actor, request))
+    db.commit()
+    return {"message": "Removed from the store"}
+
+
+# --- item settings and unit conversions -----------------------------------------------------------------------------
+
+class SettingsIn(BaseModel):
     category: str = ItemCategory.CONSUMABLE.value
-    base_uom: Optional[str] = None
+    base_uom: str
     reorder_level: str = "0"
     min_qty: str = "0"
     max_qty: str = "0"
@@ -109,330 +394,146 @@ class ItemSettingsIn(BaseModel):
     is_batch_tracked: bool = False
 
 
-class UomIn(BaseModel):
-    from_uom: str = Field(max_length=20)
+class ConversionIn(BaseModel):
     to_base_factor: str
 
 
-class FreezeIn(BaseModel):
-    reason: str = ""
-
-
-# ---------------------------------------------------------------------------------------------------- overview
-@router.get("")
-def index(request: Request, db: Session = Depends(get_db)):
-    """The slice's front door (kept as the skeleton's smoke test expects); the real overview is /summary."""
-    store_actor(request, db, "store.masters.view")
-    return {"slice": "masters", "items": []}
-
-
-@router.get("/summary")
-def summary(request: Request, db: Session = Depends(get_db)):
-    """Counts for the masters home."""
-    actor = store_actor(request, db, "store.masters.view")
-    mine = accessible_store_ids(actor, db)
-    q = db.query(DBStore).filter(DBStore.client_id == actor.client.id)
-    if mine is not None:
-        q = q.filter(DBStore.id.in_(mine or [0]))
-    rows = q.all()
-    ids = [s.id for s in rows]
-    frozen = db.query(DBStoreFreeze.id).filter(DBStoreFreeze.store_id.in_(ids or [0]), DBStoreFreeze.unfrozen_at.is_(None)).count()
-    settled = db.query(DBStoreItemSettings.id).join(models.DBItem, models.DBItem.id == DBStoreItemSettings.item_id).filter(
-        models.DBItem.client_id == actor.client.id).count()
-    stock_items = db.query(models.DBItem.id).filter(models.DBItem.client_id == actor.client.id, models.DBItem.kind == "RM",
-                                                    models.DBItem.is_active.is_(True)).count()
-    return {"stores": len(rows), "active_stores": sum(1 for s in rows if s.is_active),
-            "frozen_stores": frozen, "items_with_settings": settled, "items_without_settings": max(stock_items - settled, 0)}
-
-
-# ---------------------------------------------------------------------------------------------------- stores
-@router.get("/stores")
-def list_stores(request: Request, include_inactive: bool = False, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.masters.view")
-    q = db.query(DBStore).filter(DBStore.client_id == actor.client.id)
-    if not include_inactive:
-        q = q.filter(DBStore.is_active.is_(True))
-    mine = accessible_store_ids(actor, db)
-    if mine is not None:
-        q = q.filter(DBStore.id.in_(mine or [0]))
-    rows = q.order_by(DBStore.code).all()
-    ids = [s.id for s in rows] or [0]
-    frozen = {r for (r,) in db.query(DBStoreFreeze.store_id).filter(DBStoreFreeze.store_id.in_(ids), DBStoreFreeze.unfrozen_at.is_(None)).all()}
-    lines = dict(db.query(DBStoreStockBalance.store_id, func.count(DBStoreStockBalance.id)).filter(
-        DBStoreStockBalance.store_id.in_(ids), DBStoreStockBalance.qty > 0).group_by(DBStoreStockBalance.store_id).all())
-    return {"stores": [_store_row(s, s.id in frozen, lines.get(s.id, 0)) for s in rows]}
-
-
-@router.post("/stores", status_code=201)
-def create_store(body: StoreIn, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.masters.create")
-    code = _clean(body.code, "Store code").upper()
-    if body.type not in _STORE_TYPES:
-        raise HTTPException(400, "Store type must be one of %s." % ", ".join(sorted(_STORE_TYPES)))
-    _check_project(db, actor, body.project_id)
-    if db.query(DBStore.id).filter(DBStore.client_id == actor.client.id, DBStore.code == code).first():
-        raise HTTPException(409, "A store with code %s already exists." % code)
-    s = DBStore(client_id=actor.client.id, code=code, name=_clean(body.name, "Store name"), type=body.type,
-                project_id=body.project_id, address=body.address or "", is_active=True)
-    db.add(s)
-    db.commit()
-    return _store_row(s)
-
-
-@router.put("/stores/{store_id}")
-def edit_store(store_id: int, body: StoreEdit, request: Request, db: Session = Depends(get_db)):
-    """The code never changes: it is printed on every document number."""
-    actor = store_actor(request, db, "store.masters.create")
-    s = _store(db, actor, store_id)
-    data = body.model_dump(exclude_unset=True)
-    if "is_active" in data and data["is_active"] is False:
-        store_actor(request, db, "store.masters.cancel")
-        if db.query(DBStoreStockBalance.id).filter(DBStoreStockBalance.store_id == s.id, DBStoreStockBalance.qty > 0).first():
-            raise HTTPException(409, "Store %s still holds stock; move it out before switching the store off." % s.code)
-    if "name" in data:
-        s.name = _clean(data["name"], "Store name")
-    if "type" in data:
-        if data["type"] not in _STORE_TYPES:
-            raise HTTPException(400, "Store type must be one of %s." % ", ".join(sorted(_STORE_TYPES)))
-        s.type = data["type"]
-    if "project_id" in data:
-        _check_project(db, actor, data["project_id"])
-        s.project_id = data["project_id"]
-    if "address" in data:
-        s.address = data["address"] or ""
-    if "is_active" in data:
-        s.is_active = bool(data["is_active"])
-    db.commit()
-    return _store_row(s)
-
-
-# ---------------------------------------------------------------------------------------------------- bins
-@router.get("/stores/{store_id}/bins")
-def list_bins(store_id: int, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.masters.view")
-    _store(db, actor, store_id)
-    rows = db.query(DBStoreBin).filter(DBStoreBin.store_id == store_id).order_by(DBStoreBin.code).all()
-    return {"bins": [{"id": b.id, "code": b.code, "description": b.description or "", "is_active": bool(b.is_active)} for b in rows]}
-
-
-@router.post("/stores/{store_id}/bins", status_code=201)
-def create_bin(store_id: int, body: BinIn, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.masters.create")
-    _store(db, actor, store_id)
-    code = _clean(body.code, "Bin code").upper()
-    if db.query(DBStoreBin.id).filter(DBStoreBin.store_id == store_id, DBStoreBin.code == code).first():
-        raise HTTPException(409, "Bin %s already exists in this store." % code)
-    b = DBStoreBin(store_id=store_id, code=code, description=body.description or "", is_active=body.is_active)
-    db.add(b)
-    db.commit()
-    return {"id": b.id, "code": b.code, "description": b.description, "is_active": bool(b.is_active)}
-
-
-@router.put("/bins/{bin_id}")
-def edit_bin(bin_id: int, body: BinIn, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.masters.create")
-    b = db.get(DBStoreBin, bin_id)
-    if b is None:
-        raise HTTPException(404, "Bin not found")
-    _store(db, actor, b.store_id)
-    if not body.is_active and b.is_active:
-        store_actor(request, db, "store.masters.cancel")
-    b.description, b.is_active = body.description or "", body.is_active
-    db.commit()
-    return {"id": b.id, "code": b.code, "description": b.description, "is_active": bool(b.is_active)}
-
-
-# ---------------------------------------------------------------------------------------------------- who works where
-@router.get("/employees")
-def list_employees(request: Request, q: str = "", db: Session = Depends(get_db)):
-    """Staff who can be assigned to a store."""
-    actor = store_actor(request, db, "store.masters.view")
-    query = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == actor.client.id)
-    term = (q or "").strip().replace("%", "")
-    if term:
-        like = "%" + term + "%"
-        query = query.filter(func.lower(models.DBEmployee.first_name + " " + models.DBEmployee.last_name).like(like.lower()))
-    rows = query.order_by(models.DBEmployee.first_name).limit(50).all()
-    return {"employees": [{"id": e.id, "name": ("%s %s" % (e.first_name, e.last_name)).strip(), "job_title": e.job_title or ""} for e in rows]}
-
-
-def _assign_row(a, emp):
-    return {"id": a.id, "employee_id": a.employee_id, "name": ("%s %s" % (emp.first_name, emp.last_name)).strip() if emp else "",
-            "role": a.role or "", "is_active": bool(a.is_active)}
-
-
-@router.get("/stores/{store_id}/assignments")
-def list_assignments(store_id: int, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.masters.view")
-    _store(db, actor, store_id)
-    rows = db.query(DBStoreUserAssignment, models.DBEmployee).join(models.DBEmployee, models.DBEmployee.id == DBStoreUserAssignment.employee_id).filter(
-        DBStoreUserAssignment.store_id == store_id).order_by(models.DBEmployee.first_name).all()
-    return {"assignments": [_assign_row(a, e) for a, e in rows]}
-
-
-@router.post("/stores/{store_id}/assignments", status_code=201)
-def assign(store_id: int, body: AssignIn, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.masters.approve")
-    _store(db, actor, store_id)
-    emp = db.get(models.DBEmployee, body.employee_id)
-    if emp is None or emp.client_id != actor.client.id:
-        raise HTTPException(404, "Employee not found")
-    a = db.query(DBStoreUserAssignment).filter(DBStoreUserAssignment.store_id == store_id, DBStoreUserAssignment.employee_id == emp.id).first()
-    if a is None:
-        a = DBStoreUserAssignment(store_id=store_id, employee_id=emp.id)
-        db.add(a)
-    a.role, a.is_active = (body.role or "STOREKEEPER").strip(), True
-    db.commit()
-    return _assign_row(a, emp)
-
-
-@router.delete("/assignments/{assignment_id}")
-def unassign(assignment_id: int, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.masters.approve")
-    a = db.get(DBStoreUserAssignment, assignment_id)
-    if a is None:
-        raise HTTPException(404, "Assignment not found")
-    _store(db, actor, a.store_id)
-    a.is_active = False
-    db.commit()
-    return {"id": a.id, "is_active": False}
-
-
-# ---------------------------------------------------------------------------------------------------- freeze
-@router.get("/stores/{store_id}/freezes")
-def freezes(store_id: int, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.masters.view")
-    _store(db, actor, store_id)
-    rows = db.query(DBStoreFreeze).filter(DBStoreFreeze.store_id == store_id).order_by(DBStoreFreeze.id.desc()).limit(50).all()
-    return {"freezes": [{"id": f.id, "reason": f.reason, "frozen_at": f.frozen_at.isoformat() if f.frozen_at else None,
-                         "unfrozen_at": f.unfrozen_at.isoformat() if f.unfrozen_at else None} for f in rows]}
-
-
-@router.post("/stores/{store_id}/freeze")
-def freeze(store_id: int, body: FreezeIn, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.masters.approve")
-    _store(db, actor, store_id)
-    try:
-        with store_errors():
-            freeze_store(db, store_id, body.reason, actor.user_id)
-        db.commit()
-    except HTTPException:
-        db.rollback()
-        raise
-    return {"store_id": store_id, "frozen": True}
-
-
-@router.post("/stores/{store_id}/unfreeze")
-def unfreeze(store_id: int, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.masters.approve")
-    _store(db, actor, store_id)
-    try:
-        with store_errors():
-            unfreeze_store(db, store_id, actor.user_id)
-        db.commit()
-    except HTTPException:
-        db.rollback()
-        raise
-    return {"store_id": store_id, "frozen": False}
-
-
-# ---------------------------------------------------------------------------------------------------- item settings
-def _item(db, actor, item_id):
+def _my_item(db, actor, item_id):
     item = db.get(models.DBItem, item_id)
-    if item is None or item.client_id != actor.client.id:
+    if item is None or item.client_id != actor.client.id or item.kind != "RM":
         raise HTTPException(404, "Item not found")
     return item
 
 
-def _settings_row(item, st, convs):
-    return {"item_id": item.id, "code": item.item_code, "name": item.item_name, "item_unit": item.units_of_measure or "",
-            "configured": st is not None, "category": st.category if st else ItemCategory.CONSUMABLE.value,
-            "base_uom": st.base_uom if st else (item.units_of_measure or ""),
-            "reorder_level": str(st.reorder_level or 0) if st else "0", "min_qty": str(st.min_qty or 0) if st else "0",
-            "max_qty": str(st.max_qty or 0) if st else "0", "qc_required": bool(st.qc_required) if st else False,
-            "over_receipt_tolerance_pct": str(st.over_receipt_tolerance_pct or 0) if st else "0",
-            "is_batch_tracked": bool(st.is_batch_tracked) if st else False,
-            "conversions": [{"id": c.id, "from_uom": c.from_uom, "to_base_factor": str(c.to_base_factor)} for c in convs]}
+def _settings_dict(item, s):
+    return {"item_id": item.id, "category": s.category if s else ItemCategory.CONSUMABLE.value, "base_uom": (s.base_uom if s else item.units_of_measure) or "",
+            "reorder_level": num(s.reorder_level if s else 0), "min_qty": num(s.min_qty if s else 0), "max_qty": num(s.max_qty if s else 0),
+            "qc_required": bool(s.qc_required) if s else False, "over_receipt_tolerance_pct": num(s.over_receipt_tolerance_pct if s else 0),
+            "is_batch_tracked": bool(s.is_batch_tracked) if s else False}
+
+
+def _item_dict(item, s, conversions, on_hand):
+    return {"id": item.id, "code": item.item_code, "name": item.item_name, "item_uom": item.units_of_measure or "", "is_active": bool(item.is_active),
+            "configured": s is not None, "settings": _settings_dict(item, s), "conversions": conversions, "on_hand": num(on_hand), }
+
+
+def _conversions(db, item_ids):
+    out = {i: [] for i in item_ids}
+    for c in db.query(DBStoreUomConversion).filter(DBStoreUomConversion.item_id.in_(item_ids)).order_by(DBStoreUomConversion.id).all() if item_ids else []:
+        out[c.item_id].append({"uom": c.from_uom, "to_base_factor": num(c.to_base_factor, "0.000001")})
+    return out
 
 
 @router.get("/items")
-def list_items(request: Request, q: str = "", configured: Optional[bool] = None, limit: int = 100, db: Session = Depends(get_db)):
-    """Stock items with their store settings (or the gaps where none are set yet)."""
+def list_items(request: Request, q: str = "", category: str = "", configured: str = "all", limit: int = 100, offset: int = 0, db: Session = Depends(get_db)):
+    """Every stock item with its store settings (or the defaults it would get) and how much is held in the stores this person may see."""
     actor = store_actor(request, db, "store.masters.view")
-    query = db.query(models.DBItem).filter(models.DBItem.client_id == actor.client.id, models.DBItem.kind == "RM",
-                                           models.DBItem.is_active.is_(True))
-    term = (q or "").strip().replace("%", "").replace("_", "")
+    query = db.query(models.DBItem, DBStoreItemSettings).outerjoin(DBStoreItemSettings, DBStoreItemSettings.item_id == models.DBItem.id).filter(
+        models.DBItem.client_id == actor.client.id, models.DBItem.kind == "RM")
+    term = (q or "").strip()
     if term:
-        like = "%" + term + "%"
-        query = query.filter(models.DBItem.item_code.ilike(like) | models.DBItem.item_name.ilike(like))
-    rows = query.order_by(models.DBItem.item_name).all()
-    ids = [r.id for r in rows] or [0]
-    sets = {s.item_id: s for s in db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id.in_(ids)).all()}
-    convs: dict = {}
-    for c in db.query(DBStoreUomConversion).filter(DBStoreUomConversion.item_id.in_(ids)).order_by(DBStoreUomConversion.id).all():
-        convs.setdefault(c.item_id, []).append(c)
-    out = [_settings_row(r, sets.get(r.id), convs.get(r.id, [])) for r in rows if configured is None or (r.id in sets) == configured]
-    return {"items": out[:max(1, min(limit, 500))], "total": len(out)}
+        like = "%" + term.replace("%", "").replace("_", "") + "%"
+        query = query.filter(or_(models.DBItem.item_code.ilike(like), models.DBItem.item_name.ilike(like)))
+    if category:
+        query = query.filter(DBStoreItemSettings.category == category.strip().upper())
+    if configured == "yes":
+        query = query.filter(DBStoreItemSettings.id.isnot(None))
+    elif configured == "no":
+        query = query.filter(DBStoreItemSettings.id.is_(None))
+    total = query.count()
+    rows = query.order_by(models.DBItem.item_name).offset(max(0, offset)).limit(max(1, min(limit, 500))).all()
+    ids = [i.id for i, _ in rows]
+    seen = visible_store_ids(db, actor)
+    held = {}
+    if ids:
+        bq = db.query(DBStoreStockBalance.item_id, func.sum(DBStoreStockBalance.qty)).filter(DBStoreStockBalance.item_id.in_(ids))
+        if seen is not None:
+            bq = bq.filter(DBStoreStockBalance.store_id.in_(seen or {0}))
+        held = dict(bq.group_by(DBStoreStockBalance.item_id).all())
+    conv = _conversions(db, ids)
+    return {"total": total, "items": [_item_dict(i, s, conv[i.id], held.get(i.id, ZERO)) for i, s in rows]}
+
+
+@router.get("/items/{item_id}")
+def get_item(item_id: int, request: Request, db: Session = Depends(get_db)):
+    actor = store_actor(request, db, "store.masters.view")
+    item = _my_item(db, actor, item_id)
+    s = db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == item.id).first()
+    return _item_dict(item, s, _conversions(db, [item.id])[item.id], ZERO)
+
+
+def _has_movements(db, item_id) -> bool:
+    return db.query(DBStoreStockLedger.id).filter(DBStoreStockLedger.item_id == item_id).first() is not None
 
 
 @router.put("/items/{item_id}/settings")
-def save_item_settings(item_id: int, body: ItemSettingsIn, request: Request, db: Session = Depends(get_db)):
+def save_settings(item_id: int, body: SettingsIn, request: Request, db: Session = Depends(get_db)):
     actor = store_actor(request, db, "store.masters.create")
-    item = _item(db, actor, item_id)
-    if body.category not in _CATEGORIES:
-        raise HTTPException(400, "Category must be one of %s." % ", ".join(sorted(_CATEGORIES)))
-    st = db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == item_id).first()
-    base = (body.base_uom or (st.base_uom if st else None) or item.units_of_measure or "").strip()
-    if not base:
-        raise HTTPException(400, "A base unit is required.")
-    held = db.query(DBStoreStockBalance.id).filter(DBStoreStockBalance.item_id == item_id).first() is not None
-    if st is not None and held and base != st.base_uom:
-        raise HTTPException(409, "Stock of this item already exists in %s; its base unit cannot change." % st.base_uom)
-    reorder, mn, mx = _dec(body.reorder_level, "Reorder level"), _dec(body.min_qty, "Minimum"), _dec(body.max_qty, "Maximum")
-    tol = _dec(body.over_receipt_tolerance_pct, "Over-receipt tolerance")
-    if mx and mn > mx:
-        raise HTTPException(400, "Minimum cannot exceed maximum.")
-    if tol > 100:
-        raise HTTPException(400, "Tolerance cannot exceed 100%.")
-    if st is None:
-        st = DBStoreItemSettings(item_id=item_id)
-        db.add(st)
-    st.category, st.base_uom, st.reorder_level, st.min_qty, st.max_qty = body.category, base, reorder, mn, mx
-    st.qc_required, st.over_receipt_tolerance_pct, st.is_batch_tracked = body.qc_required, tol, body.is_batch_tracked
+    item = _my_item(db, actor, item_id)
+    category = (body.category or "").strip().upper()
+    if category not in {c.value for c in ItemCategory}:
+        raise HTTPException(400, "Category must be one of: %s." % ", ".join(c.value for c in ItemCategory))
+    base = _clean(body.base_uom, "base unit", 20)
+    reorder = _decimal(body.reorder_level, "Reorder level")
+    low = _decimal(body.min_qty, "Minimum quantity")
+    high = _decimal(body.max_qty, "Maximum quantity")
+    tolerance = _decimal(body.over_receipt_tolerance_pct, "Over-receipt tolerance", high=Decimal("100"))
+    if high and low > high:
+        raise HTTPException(400, "The minimum cannot be more than the maximum.")
+    row = db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == item.id).first()
+    current = ((row.base_uom if row else item.units_of_measure) or "").strip()
+    if base.lower() != current.lower() and _has_movements(db, item.id):
+        raise HTTPException(409, "Stock of this item is already counted in %s, so the base unit cannot change." % current)
+    if row is None:
+        row = DBStoreItemSettings(item_id=item.id, base_uom=base)
+        db.add(row)
+    row.category, row.base_uom, row.reorder_level, row.min_qty, row.max_qty = category, base, reorder, low, high
+    row.qc_required, row.over_receipt_tolerance_pct, row.is_batch_tracked = body.qc_required, tolerance, body.is_batch_tracked
+    # A conversion from the unit that has become the base is meaningless; drop it rather than leave a loop behind.
+    for c in db.query(DBStoreUomConversion).filter(DBStoreUomConversion.item_id == item.id).all():
+        if c.from_uom.strip().lower() == base.lower():
+            db.delete(c)
+    db.flush()
+    log_audit(db, actor.client.id, "store_item_settings", "item", item.id, item.item_code, "%s base %s reorder %s min %s max %s" % (category, base, reorder, low, high), **_who(actor, request))
     db.commit()
-    convs = db.query(DBStoreUomConversion).filter(DBStoreUomConversion.item_id == item_id).order_by(DBStoreUomConversion.id).all()
-    return _settings_row(item, st, convs)
+    return _item_dict(item, row, _conversions(db, [item.id])[item.id], ZERO)
 
 
-@router.post("/items/{item_id}/uoms", status_code=201)
-def add_conversion(item_id: int, body: UomIn, request: Request, db: Session = Depends(get_db)):
-    """1 `from_uom` = `to_base_factor` of the base unit. Adding the same unit again replaces its factor."""
+@router.put("/items/{item_id}/conversions/{uom}")
+def save_conversion(item_id: int, uom: str, body: ConversionIn, request: Request, db: Session = Depends(get_db)):
+    """1 `uom` of the item = `to_base_factor` of its base unit (1 bag = 50 kg). Adds it, or changes it. Documents already
+    posted were stored in the base unit, so changing a factor only affects what is entered from now on."""
     actor = store_actor(request, db, "store.masters.create")
-    item = _item(db, actor, item_id)
-    st = db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == item_id).first()
-    base = st.base_uom if st else (item.units_of_measure or "")
-    unit = _clean(body.from_uom, "Unit")
-    factor = _dec(body.to_base_factor, "Factor")
+    item = _my_item(db, actor, item_id)
+    code = _clean(uom, "unit", 20)
+    settings = db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == item.id).first()
+    base = ((settings.base_uom if settings else item.units_of_measure) or "").strip()
+    if code.lower() == base.lower():
+        raise HTTPException(400, "%s is the base unit of this item; it needs no conversion." % base)
+    factor = _decimal(body.to_base_factor, "The factor", high=MAX_FACTOR, allow_zero=False)
+    factor = factor.quantize(Decimal("0.000001"))
     if factor <= 0:
-        raise HTTPException(400, "The factor must be more than zero.")
-    if unit.lower() == base.lower():
-        raise HTTPException(400, "%s is the base unit; it needs no conversion." % base)
-    c = next((x for x in db.query(DBStoreUomConversion).filter(DBStoreUomConversion.item_id == item_id).all() if x.from_uom.lower() == unit.lower()), None)
-    if c is None:
-        c = DBStoreUomConversion(item_id=item_id, from_uom=unit)
-        db.add(c)
-    c.to_base_factor = factor
+        raise HTTPException(400, "The factor is too small: it must be at least 0.000001.")
+    row = next((c for c in db.query(DBStoreUomConversion).filter(DBStoreUomConversion.item_id == item.id).all() if c.from_uom.strip().lower() == code.lower()), None)
+    if row is None:
+        row = DBStoreUomConversion(item_id=item.id, from_uom=code, to_base_factor=factor)
+        db.add(row)
+    else:
+        row.to_base_factor = factor
+    db.flush()
+    log_audit(db, actor.client.id, "store_uom_conversion", "item", item.id, item.item_code, "1 %s = %s %s" % (code, factor, base), **_who(actor, request))
     db.commit()
-    return {"id": c.id, "from_uom": c.from_uom, "to_base_factor": str(c.to_base_factor)}
+    return {"uom": row.from_uom, "to_base_factor": num(row.to_base_factor, "0.000001"), "base_uom": base}
 
 
-@router.delete("/uoms/{conversion_id}")
-def remove_conversion(conversion_id: int, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.masters.cancel")
-    c = db.get(DBStoreUomConversion, conversion_id)
-    if c is None:
-        raise HTTPException(404, "Conversion not found")
-    _item(db, actor, c.item_id)
-    db.delete(c)
+@router.delete("/items/{item_id}/conversions/{uom}")
+def remove_conversion(item_id: int, uom: str, request: Request, db: Session = Depends(get_db)):
+    actor = store_actor(request, db, "store.masters.create")
+    item = _my_item(db, actor, item_id)
+    row = next((c for c in db.query(DBStoreUomConversion).filter(DBStoreUomConversion.item_id == item.id).all() if c.from_uom.strip().lower() == uom.strip().lower()), None)
+    if row is None:
+        raise HTTPException(404, "No conversion from %s is set for this item." % uom)
+    log_audit(db, actor.client.id, "store_uom_conversion_removed", "item", item.id, item.item_code, row.from_uom, **_who(actor, request))
+    db.delete(row)
     db.commit()
-    return {"id": conversion_id, "deleted": True}
+    return {"message": "Conversion removed"}

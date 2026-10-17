@@ -1,214 +1,177 @@
-import { useEffect, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Plus, Trash2 } from 'lucide-react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { Button, Card, Input, Select } from '@/components/ui'
-import { toast } from '@/stores/toast'
-import { storeGet, storePost, storePut, useStoreMeta, type StoreItemOption } from '@/api/store'
+import { Button, Field, Input, Select, Textarea } from '@/components/ui'
+import { useProjects, projectLabel } from '@/api/projects'
+import { useAction } from '@/lib/mutate'
+import { storePost, storePut, useStoreMeta, type StoreItemOption } from '@/api/store'
 import { ItemPicker, StorePicker, UomQtyInput } from '../shared'
-import { useControlMeta } from './DocShell'
-import { errText, label, num, type Adjustment, type Count, type Scrap, type Transfer, type WriteoffReq } from './types'
+import { controlKeys, headLabel, num, today, useAllStores, useOpenWriteoffs, type Doc } from './api'
 
-interface Row { key: number; item: StoreItemOption | null; qty: string; uom: string; direction: 'IN' | 'OUT'; rate: string; realised: string; klass?: string; writeoff?: number }
-let k = 1
-const blank = (): Row => ({ key: k++, item: null, qty: '', uom: '', direction: 'OUT', rate: '', realised: '' })
-const asItem = (l: { item_id: number; item_code: string; item_name: string }): StoreItemOption => ({ id: l.item_id, code: l.item_code, name: l.item_name, base_uom: '', uoms: [], category: null })
-const ITEMS = '/store/hub/control'
+interface Row { key: number; item: StoreItemOption | null; qty: { qty: string; uom: string }; disposal: 'SCRAP' | 'WASTAGE'; reason: string; realised: string; head: string; request: number }
+let seq = 1
+const blank = (): Row => ({ key: seq++, item: null, qty: { qty: '', uom: '' }, disposal: 'SCRAP', reason: '', realised: '', head: '', request: 0 })
+const asItem = (l: NonNullable<Doc['lines']>[number]): StoreItemOption => ({ id: l.item_id, code: l.item_code, name: l.item_name, base_uom: l.base_uom, uoms: [], category: null })
 
-function useSaver<T extends { id: number; number: string }>(kind: string, route: string, build: () => unknown, id?: string) {
+/** A transfer: from one store to another, with the items and quantities. */
+export function TransferForm({ doc }: { doc?: Doc }) {
   const nav = useNavigate()
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: () => (id ? storePut<T>('control', `/${kind}/${id}`, build()) : storePost<T>('control', `/${kind}`, build())),
-    onSuccess: (d) => { toast.success(`${d.number} saved`); qc.invalidateQueries({ queryKey: ['store', 'control'] }); nav(`${ITEMS}/${route}/${d.id}`) },
-    onError: (e) => toast.error(errText(e)),
-  })
-}
-
-function Lines({ rows, setRows, mode }: { rows: Row[]; setRows: (f: (r: Row[]) => Row[]) => void; mode: 'plain' | 'adjust' | 'scrap' }) {
-  const cmeta = useControlMeta()
-  const set = (key: number, patch: Partial<Row>) => setRows((r) => r.map((x) => (x.key === key ? { ...x, ...patch } : x)))
+  const [f, setF] = useState({ store_id: doc?.store_id ?? 0, to_store_id: doc?.to_store_id ?? 0, transfer_date: doc?.date || today(), vehicle_no: doc?.vehicle_no ?? '', remarks: doc?.remarks ?? '' })
+  const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }))
+  const [rows, setRows] = useState<{ key: number; item: StoreItemOption | null; qty: { qty: string; uom: string } }[]>(() =>
+    (doc?.lines ?? []).length ? (doc?.lines ?? []).map((l) => ({ key: seq++, item: asItem(l), qty: { qty: String(Number(l.entry_qty)), uom: l.entry_uom ?? '' } })) : [{ key: seq++, item: null, qty: { qty: '', uom: '' } }],
+  )
+  const upd = (key: number, patch: Partial<(typeof rows)[number]>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)))
+  const filled = rows.filter((r) => r.item && Number(r.qty.qty) > 0)
+  const save = useAction(
+    () => {
+      const body = { ...f, lines: filled.map((r) => ({ item_id: r.item?.id, qty: r.qty.qty, uom: r.qty.uom })) }
+      return doc ? storePut<Doc>('control', `/transfer/${doc.id}`, body) : storePost<Doc>('control', '/transfer', body)
+    },
+    { invalidate: [[...controlKeys.all]], success: (d) => `Saved as draft - ${d.number}`, onSuccess: (d) => nav(`/store/hub/control/transfer/${d.id}`) },
+  )
+  const ready = f.store_id > 0 && f.to_store_id > 0 && f.store_id !== f.to_store_id && filled.length > 0
   return (
-    <Card className="overflow-x-auto p-5">
-      <table className="w-full min-w-[620px] text-sm">
-        <thead><tr className="text-left text-xs uppercase text-muted-foreground"><th className="pb-2 pr-3">Item</th>{mode === 'adjust' && <th className="pb-2 pr-3">In / out</th>}<th className="pb-2 pr-3">Quantity</th>{mode === 'adjust' && <th className="pb-2 pr-3">Rate (stock in)</th>}{mode === 'scrap' && <><th className="pb-2 pr-3">Class</th><th className="pb-2 pr-3">Realised ₹</th></>}<th /></tr></thead>
-        <tbody>
+    <form onSubmit={(e) => { e.preventDefault(); if (ready) save.mutate() }} className="grid gap-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <Field label="From store" htmlFor="t-from"><StorePicker id="t-from" value={f.store_id || null} disabled={!!doc} onChange={(id) => set('store_id', id ?? 0)} /></Field>
+        <Field label="To store" htmlFor="t-to" hint="Any store of the company; its staff receive it."><StoreAnyPicker id="t-to" value={f.to_store_id || null} excludeId={f.store_id || undefined} onChange={(id) => set('to_store_id', id ?? 0)} /></Field>
+        <Field label="Transfer date" htmlFor="t-date"><Input id="t-date" type="date" max={today()} value={f.transfer_date} onChange={(e) => set('transfer_date', e.target.value)} /></Field>
+        <Field label="Vehicle no." htmlFor="t-veh"><Input id="t-veh" value={f.vehicle_no} onChange={(e) => set('vehicle_no', e.target.value)} /></Field>
+        <Field label="Remarks" htmlFor="t-rem" className="sm:col-span-2"><Textarea id="t-rem" rows={1} value={f.remarks} onChange={(e) => set('remarks', e.target.value)} /></Field>
+      </div>
+      <section aria-labelledby="t-lines">
+        <h3 id="t-lines" className="mb-2 border-b pb-1 text-sm font-semibold">Items</h3>
+        <div className="grid gap-3">
           {rows.map((r) => (
-            <tr key={r.key} className="align-top">
-              <td className="w-72 py-1 pr-3">{r.writeoff ? <span>{r.item?.name}</span> : <ItemPicker value={r.item} onChange={(item) => set(r.key, { item, uom: item?.base_uom ?? '' })} />}</td>
-              {mode === 'adjust' && <td className="w-28 py-1 pr-3"><Select value={r.direction} disabled={!!r.writeoff} options={[{ value: 'IN', label: 'In' }, { value: 'OUT', label: 'Out' }]} onChange={(e) => set(r.key, { direction: e.target.value as 'IN' | 'OUT' })} /></td>}
-              <td className="py-1 pr-3">{r.writeoff ? num(r.qty) : <UomQtyInput itemId={r.item?.id ?? null} value={{ qty: r.qty, uom: r.uom }} onChange={(v) => set(r.key, v)} disabled={!r.item} />}</td>
-              {mode === 'adjust' && <td className="w-32 py-1 pr-3"><Input inputMode="decimal" disabled={r.direction !== 'IN'} placeholder="average" value={r.rate} onChange={(e) => set(r.key, { rate: e.target.value })} /></td>}
-              {mode === 'scrap' && <><td className="w-44 py-1 pr-3"><Select value={r.klass ?? 'OTHER'} options={(cmeta.data?.scrap_classes ?? ['OTHER']).map((c) => ({ value: c, label: label(c) }))} onChange={(e) => set(r.key, { klass: e.target.value })} /></td><td className="w-32 py-1 pr-3"><Input inputMode="decimal" value={r.realised} onChange={(e) => set(r.key, { realised: e.target.value })} /></td></>}
-              <td className="py-1">{!r.writeoff && <Button variant="ghost" size="icon-sm" aria-label="Remove line" onClick={() => setRows((x) => x.filter((y) => y.key !== r.key))}><Trash2 /></Button>}</td>
-            </tr>
+            <div key={r.key} className="grid gap-3 rounded-lg border border-border p-3 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1.2fr)_auto]">
+              <ItemPicker value={r.item} onChange={(item) => upd(r.key, { item, qty: { qty: '', uom: item?.base_uom ?? '' } })} />
+              <UomQtyInput itemId={r.item?.id ?? null} value={r.qty} onChange={(qty) => upd(r.key, { qty })} />
+              <Button type="button" variant="ghost" size="sm" aria-label="Remove line" disabled={rows.length === 1} onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))}><Trash2 /></Button>
+            </div>
           ))}
-        </tbody>
-      </table>
-      <Button variant="outline" size="sm" className="mt-3" onClick={() => setRows((r) => [...r, blank()])}><Plus /> Add item</Button>
-    </Card>
+        </div>
+        <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => setRows((rs) => [...rs, { key: seq++, item: null, qty: { qty: '', uom: '' } }])}><Plus /> Add item</Button>
+      </section>
+      <Footer cancelTo={doc ? `/store/hub/control/transfer/${doc.id}` : '/store/hub/control/transfer'} busy={save.isPending} disabled={!ready} label={doc ? 'Save changes' : 'Save as draft'} />
+    </form>
   )
 }
 
-const FormButtons = ({ save, disabled, back }: { save: { isPending: boolean; mutate: () => void }; disabled?: boolean; back: () => void }) => (
-  <div className="flex gap-2"><Button loading={save.isPending} disabled={disabled} onClick={() => save.mutate()}>Save draft</Button><Button variant="outline" onClick={back}>Back</Button></div>
-)
-
-export function TransferForm() {
-  const { id } = useParams()
-  const nav = useNavigate()
-  const [from, setFrom] = useState<number | null>(null)
-  const [to, setTo] = useState<number | null>(null)
-  const [vehicle, setVehicle] = useState('')
-  const [driver, setDriver] = useState('')
-  const [challan, setChallan] = useState('')
-  const [challanDate, setChallanDate] = useState('')
-  const [remarks, setRemarks] = useState('')
-  const [rows, setRows] = useState<Row[]>([blank()])
-  const existing = useQuery({ queryKey: ['store', 'control', 'transfers', id], enabled: !!id, queryFn: () => storeGet<Transfer>('control', `/transfers/${id}`) })
-  useEffect(() => {
-    const t = existing.data
-    if (!t) return
-    setFrom(t.store_id); setTo(t.to_store_id); setVehicle(t.vehicle_no); setDriver(t.driver_name); setChallan(t.challan_no); setChallanDate(t.challan_date ?? ''); setRemarks(t.remarks)
-    setRows((t.lines ?? []).map((l) => ({ ...blank(), item: asItem(l), qty: l.qty })))
-  }, [existing.data])
-  const save = useSaver<Transfer>('transfers', 'transfers', () => ({ store_id: from, to_store_id: to, vehicle_no: vehicle, driver_name: driver, challan_no: challan, challan_date: challanDate || null, remarks, lines: rows.filter((r) => r.item && r.qty.trim()).map((r) => ({ item_id: r.item!.id, qty: r.qty, uom: r.uom || undefined })) }), id)
+/** A destination may be any store of the company, not only the ones this person works in: only receiving needs access to it. */
+function StoreAnyPicker({ id, value, excludeId, onChange }: { id: string; value: number | null; excludeId?: number; onChange: (id: number | null) => void }) {
+  const stores = useAllStores()
   return (
-    <div className="space-y-6">
-      <Card className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
-        <label className="text-sm">From store<StorePicker value={from} onChange={(s) => setFrom(s)} disabled={!!id} /></label>
-        <label className="text-sm">To store<StorePicker value={to} onChange={(s) => setTo(s)} excludeId={from ?? undefined} /></label>
-        <label className="text-sm">Vehicle no.<Input value={vehicle} onChange={(e) => setVehicle(e.target.value)} /></label>
-        <label className="text-sm">Driver<Input value={driver} onChange={(e) => setDriver(e.target.value)} /></label>
-        <label className="text-sm">Challan no.<Input value={challan} onChange={(e) => setChallan(e.target.value)} /></label>
-        <label className="text-sm">Challan date<Input type="date" value={challanDate} onChange={(e) => setChallanDate(e.target.value)} /></label>
-        <label className="text-sm lg:col-span-2">Remarks<Input value={remarks} onChange={(e) => setRemarks(e.target.value)} /></label>
-      </Card>
-      <Lines rows={rows} setRows={setRows} mode="plain" />
-      <p className="text-xs text-muted-foreground">Stock leaves the sending store when the transfer is posted and stays in transit until the receiving store confirms it.</p>
-      <FormButtons save={save} disabled={!from || !to} back={() => nav(ITEMS)} />
+    <Select id={id} value={value ?? ''} placeholder="Choose a store" disabled={stores.isPending} onChange={(e) => onChange(Number(e.target.value) || null)}
+      options={(stores.data ?? []).filter((s) => s.id !== excludeId).map((s) => ({ value: s.id, label: `${s.code} - ${s.name}` }))} />
+  )
+}
+
+function Footer({ cancelTo, busy, disabled, label }: { cancelTo: string; busy: boolean; disabled: boolean; label: string }) {
+  const nav = useNavigate()
+  return (
+    <div className="flex justify-end gap-2 border-t border-border pt-4">
+      <Button type="button" variant="ghost" onClick={() => nav(cancelTo)}>Cancel</Button>
+      <Button type="submit" loading={busy} disabled={disabled}>{label}</Button>
     </div>
   )
 }
 
-export function CountStart() {
+/** A new stock count: the store, the date, and whether it is the whole store or chosen items. The count itself starts from its own page. */
+export function CountForm() {
   const nav = useNavigate()
-  const qc = useQueryClient()
-  const [store, setStore] = useState<number | null>(null)
-  const [remarks, setRemarks] = useState('')
-  const [picked, setPicked] = useState<StoreItemOption[]>([])
-  const [item, setItem] = useState<StoreItemOption | null>(null)
-  const [cats, setCats] = useState<string[]>([])
-  const [binId, setBinId] = useState('')
-  const meta = useStoreMeta()
-  const bins = useQuery({ queryKey: ['store', 'masters', 'bins', store], enabled: !!store, queryFn: () => storeGet<{ bins: { id: number; code: string }[] }>('masters', `/stores/${store}/bins`).catch(() => ({ bins: [] })) })
-  const save = useMutation({
-    mutationFn: () => storePost<Count>('control', '/counts', { store_id: store, remarks, categories: cats.length ? cats : undefined, bin_id: binId ? Number(binId) : undefined, item_ids: picked.length ? picked.map((i) => i.id) : undefined }),
-    onSuccess: (c) => { toast.success(`${c.number} started; ${c.store_code} is frozen`); qc.invalidateQueries({ queryKey: ['store'] }); nav(`${ITEMS}/counts/${c.id}`) },
-    onError: (e) => toast.error(errText(e)),
+  const [f, setF] = useState({ store_id: 0, count_date: today(), count_type: 'FULL' as 'FULL' | 'PARTIAL', remarks: '' })
+  const [items, setItems] = useState<(StoreItemOption | null)[]>([null])
+  const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }))
+  const chosen = items.filter((i): i is StoreItemOption => !!i)
+  const save = useAction(() => storePost<Doc>('control', '/count', { ...f, item_ids: f.count_type === 'PARTIAL' ? chosen.map((i) => i.id) : [] }), {
+    invalidate: [[...controlKeys.all]], success: (d) => `Count created - ${d.number}. Start it when you are ready to count.`, onSuccess: (d) => nav(`/store/hub/control/count/${d.id}`),
   })
+  const ready = f.store_id > 0 && (f.count_type === 'FULL' || chosen.length > 0)
   return (
-    <div className="space-y-6">
-      <Card className="grid gap-4 p-5 sm:grid-cols-2">
-        <label className="text-sm">Store to count<StorePicker value={store} onChange={(s) => setStore(s)} /></label>
-        <label className="text-sm">Remarks<Input value={remarks} onChange={(e) => setRemarks(e.target.value)} /></label>
-        <div className="text-sm">
-          <p className="mb-1">Limit to categories <span className="text-muted-foreground">(none = all)</span></p>
-          <div className="flex flex-wrap gap-3">{(meta.data?.item_categories ?? []).map((c) => <label key={c} className="flex items-center gap-1.5"><input type="checkbox" checked={cats.includes(c)} onChange={() => setCats(cats.includes(c) ? cats.filter((x) => x !== c) : [...cats, c])} />{c.toLowerCase()}</label>)}</div>
-        </div>
-        <label className="text-sm">Bin / section being counted<Select value={binId} placeholder="Whole store" options={(bins.data?.bins ?? []).map((b) => ({ value: b.id, label: b.code }))} onChange={(e) => setBinId(e.target.value)} /></label>
-        <div className="sm:col-span-2">
-          <p className="mb-1 text-sm">Count only these items <span className="text-muted-foreground">(leave empty to count everything the store holds)</span></p>
-          <div className="mb-2 flex flex-wrap gap-2">{picked.map((i) => <Button key={i.id} variant="soft" size="sm" onClick={() => setPicked(picked.filter((p) => p.id !== i.id))}>{i.name} ×</Button>)}</div>
-          <div className="max-w-sm"><ItemPicker value={item} onChange={(i) => { if (i && !picked.some((p) => p.id === i.id)) setPicked([...picked, i]); setItem(null) }} /></div>
-        </div>
-      </Card>
-      <p className="text-sm text-warning">Starting a count freezes the store: nothing can be received or issued there until the count is posted or cancelled.</p>
-      <FormButtons save={{ isPending: save.isPending, mutate: () => save.mutate() }} disabled={!store} back={() => nav(ITEMS)} />
-    </div>
+    <form onSubmit={(e) => { e.preventDefault(); if (ready) save.mutate() }} className="grid gap-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <Field label="Store" htmlFor="c-store"><StorePicker id="c-store" value={f.store_id || null} onChange={(id) => set('store_id', id ?? 0)} /></Field>
+        <Field label="Count date" htmlFor="c-date"><Input id="c-date" type="date" max={today()} value={f.count_date} onChange={(e) => set('count_date', e.target.value)} /></Field>
+        <Field label="Count" htmlFor="c-type"><Select id="c-type" value={f.count_type} onChange={(e) => set('count_type', e.target.value as 'FULL' | 'PARTIAL')} options={[{ value: 'FULL', label: 'Everything the store holds' }, { value: 'PARTIAL', label: 'Chosen items only' }]} /></Field>
+        <Field label="Remarks" htmlFor="c-rem" className="sm:col-span-2 lg:col-span-3"><Textarea id="c-rem" rows={1} value={f.remarks} onChange={(e) => set('remarks', e.target.value)} /></Field>
+      </div>
+      {f.count_type === 'PARTIAL' && (
+        <section aria-labelledby="c-items">
+          <h3 id="c-items" className="mb-2 border-b pb-1 text-sm font-semibold">Items to count</h3>
+          <div className="grid gap-2">{items.map((it, i) => <ItemPicker key={i} value={it} onChange={(v) => setItems((xs) => xs.map((x, j) => (j === i ? v : x)))} />)}</div>
+          <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => setItems((xs) => [...xs, null])}><Plus /> Add item</Button>
+        </section>
+      )}
+      <p className="text-xs text-muted-foreground">Starting a count freezes the store: nothing can be received, issued or transferred until the count is posted or cancelled.</p>
+      <Footer cancelTo="/store/hub/control/count" busy={save.isPending} disabled={!ready} label="Create count" />
+    </form>
   )
 }
 
-export function AdjustmentForm() {
-  const { id } = useParams()
+/** Wastage and scrap: items written off, each as scrap (which can record what it fetched) or wastage (charged to a cost head). */
+export function ScrapForm({ doc }: { doc?: Doc }) {
   const nav = useNavigate()
   const meta = useStoreMeta()
-  const [store, setStore] = useState<number | null>(null)
-  const [kind, setKind] = useState<'STOCK' | 'WASTAGE' | 'WRITEOFF'>('STOCK')
-  const [reason, setReason] = useState('')
-  const [code, setCode] = useState('')
-  const [attachment, setAttachment] = useState('')
-  const [head, setHead] = useState('')
-  const [rows, setRows] = useState<Row[]>([blank()])
-  const cmeta = useControlMeta()
-  const existing = useQuery({ queryKey: ['store', 'control', 'adjustments', id], enabled: !!id, queryFn: () => storeGet<Adjustment>('control', `/adjustments/${id}`) })
-  const requests = useQuery({ queryKey: ['store', 'control', 'writeoff-requests', store], enabled: kind === 'WRITEOFF' && !!store, queryFn: () => storeGet<{ rows: WriteoffReq[] }>('control', `/writeoff-requests?store_id=${store}`) })
-  useEffect(() => {
-    const a = existing.data
-    if (!a) return
-    setStore(a.store_id); setKind(a.kind); setReason(a.reason); setCode(a.reason_code); setAttachment(a.attachment_ref); setHead(a.cost_head ?? '')
-    setRows((a.lines ?? []).map((l) => ({ ...blank(), item: asItem(l), qty: l.qty, direction: l.direction, rate: l.direction === 'IN' && Number(l.rate) ? l.rate : '', writeoff: l.writeoff_request_id ?? undefined })))
-  }, [existing.data])
-  const save = useSaver<Adjustment>('adjustments', 'adjustments', () => ({
-    store_id: store, kind, reason, reason_code: code, attachment_ref: attachment, cost_head: kind === 'WASTAGE' ? head || null : null,
-    lines: kind === 'WRITEOFF' ? rows.filter((r) => r.writeoff).map((r) => ({ writeoff_request_id: r.writeoff })) : rows.filter((r) => r.item && r.qty.trim()).map((r) => ({ item_id: r.item!.id, qty: r.qty, uom: r.uom || undefined, direction: r.direction, rate: r.direction === 'IN' && r.rate ? r.rate : undefined })),
-  }), id)
-  return (
-    <div className="space-y-6">
-      <Card className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
-        <label className="text-sm">Store<StorePicker value={store} onChange={(s) => { setStore(s); if (kind === 'WRITEOFF') setRows([]) }} disabled={!!id} /></label>
-        <label className="text-sm">Kind<Select value={kind} disabled={!!id} options={[{ value: 'STOCK', label: 'Stock correction' }, { value: 'WASTAGE', label: 'Wastage (a cost)' }, { value: 'WRITEOFF', label: 'Write off lost material' }]} onChange={(e) => { setKind(e.target.value as typeof kind); setRows(e.target.value === 'WRITEOFF' ? [] : [blank()]) }} /></label>
-        <label className="text-sm">Reason code<Select value={code} placeholder="Choose" options={((kind === 'STOCK' ? cmeta.data?.adjustment_reasons : cmeta.data?.wastage_reasons) ?? []).map((c) => ({ value: c, label: label(c) }))} onChange={(e) => setCode(e.target.value)} /></label>
-        <label className="text-sm">Supporting paper (reference)<Input value={attachment} onChange={(e) => setAttachment(e.target.value)} placeholder="FIR no., survey note, photo id" /></label>
-        <label className="text-sm lg:col-span-2">Remark (what happened)<Input value={reason} onChange={(e) => setReason(e.target.value)} /></label>
-        {kind === 'WASTAGE' && <label className="text-sm">Cost head<Select value={head} placeholder="Store's project" options={(meta.data?.cost_heads ?? []).map((c) => ({ value: c, label: c.replace(/_/g, ' ').toLowerCase() }))} onChange={(e) => setHead(e.target.value)} /></label>}
-      </Card>
-      {kind === 'WRITEOFF' ? (
-        <Card className="p-5">
-          <h3 className="mb-2 text-sm font-semibold">Open write-off requests</h3>
-          {(requests.data?.rows ?? []).length === 0 && <p className="text-sm text-muted-foreground">{store ? 'None open in this store.' : 'Choose a store.'}</p>}
-          {(requests.data?.rows ?? []).map((r) => {
-            const on = rows.some((x) => x.writeoff === r.request_id)
-            return (
-              <label key={r.request_id} className="flex items-center gap-3 py-1 text-sm">
-                <input type="checkbox" checked={on} onChange={() => setRows(on ? rows.filter((x) => x.writeoff !== r.request_id) : [...rows, { ...blank(), item: asItem(r), qty: r.qty, writeoff: r.request_id }])} />
-                {r.item_name} · {num(r.qty)} · {r.reason}
-              </label>
-            )
-          })}
-        </Card>
-      ) : <Lines rows={rows} setRows={setRows} mode="adjust" />}
-      <FormButtons save={save} disabled={!store || !reason.trim() || !code || !attachment.trim()} back={() => nav(ITEMS)} />
-    </div>
+  const projects = useProjects()
+  const [f, setF] = useState({ store_id: doc?.store_id ?? 0, scrap_date: doc?.date || today(), project_id: doc?.project_id ?? 0, buyer: doc?.buyer ?? '', reference: doc?.reference ?? '', remarks: doc?.remarks ?? '' })
+  const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }))
+  const [rows, setRows] = useState<Row[]>(() =>
+    (doc?.lines ?? []).length
+      ? (doc?.lines ?? []).map((l) => ({ key: seq++, item: asItem(l), qty: { qty: String(Number(l.entry_qty)), uom: l.entry_uom ?? '' }, disposal: l.disposal ?? 'SCRAP', reason: l.reason ?? '', realised: Number(l.realised_value) ? String(Number(l.realised_value)) : '',
+          head: l.cost_head ?? '', request: l.writeoff_request_id ?? 0 }))
+      : [blank()],
   )
-}
-
-export function ScrapForm() {
-  const { id } = useParams()
-  const nav = useNavigate()
-  const [store, setStore] = useState<number | null>(null)
-  const [buyer, setBuyer] = useState('')
-  const [gate, setGate] = useState('')
-  const [reason, setReason] = useState('')
-  const [rows, setRows] = useState<Row[]>([blank()])
-  const existing = useQuery({ queryKey: ['store', 'control', 'scrap', id], enabled: !!id, queryFn: () => storeGet<Scrap>('control', `/scrap/${id}`) })
-  useEffect(() => {
-    const s = existing.data
-    if (!s) return
-    setStore(s.store_id); setBuyer(s.buyer); setGate(s.gate_pass_no); setReason(s.reason)
-    setRows((s.lines ?? []).map((l) => ({ ...blank(), item: asItem(l), qty: l.qty, realised: l.realised_value, klass: l.scrap_class })))
-  }, [existing.data])
-  const save = useSaver<Scrap>('scrap', 'scrap', () => ({ store_id: store, buyer, gate_pass_no: gate, reason, lines: rows.filter((r) => r.item && r.qty.trim()).map((r) => ({ item_id: r.item!.id, qty: r.qty, uom: r.uom || undefined, scrap_class: r.klass || 'OTHER', realised_value: r.realised || '0' })) }), id)
+  const requests = useOpenWriteoffs(f.store_id)
+  const upd = (key: number, patch: Partial<Row>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)))
+  const filled = rows.filter((r) => r.item && Number(r.qty.qty) > 0)
+  const save = useAction(
+    () => {
+      const body = { ...f, project_id: f.project_id || null, lines: filled.map((r) => ({ item_id: r.item?.id, qty: r.qty.qty, uom: r.qty.uom, disposal: r.disposal, reason: r.reason, realised_value: r.disposal === 'SCRAP' ? r.realised : '', cost_head: r.head, writeoff_request_id: r.request || null })) }
+      return doc ? storePut<Doc>('control', `/scrap/${doc.id}`, body) : storePost<Doc>('control', '/scrap', body)
+    },
+    { invalidate: [[...controlKeys.all]], success: (d) => `Saved as draft - ${d.number}`, onSuccess: (d) => nav(`/store/hub/control/scrap/${d.id}`) },
+  )
+  const ready = f.store_id > 0 && filled.length > 0 && filled.every((r) => r.reason.trim())
   return (
-    <div className="space-y-6">
-      <Card className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
-        <label className="text-sm">Store<StorePicker value={store} onChange={(s) => setStore(s)} disabled={!!id} /></label>
-        <label className="text-sm">Sold / disposed to<Input value={buyer} onChange={(e) => setBuyer(e.target.value)} /></label>
-        <label className="text-sm">Gate pass no.<Input value={gate} onChange={(e) => setGate(e.target.value)} /></label>
-        <label className="text-sm">Why it is scrap<Input value={reason} onChange={(e) => setReason(e.target.value)} /></label>
-      </Card>
-      <Lines rows={rows} setRows={setRows} mode="scrap" />
-      <FormButtons save={save} disabled={!store || !reason.trim()} back={() => nav(ITEMS)} />
-    </div>
+    <form onSubmit={(e) => { e.preventDefault(); if (ready) save.mutate() }} className="grid gap-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <Field label="Store" htmlFor="s-store"><StorePicker id="s-store" value={f.store_id || null} disabled={!!doc} onChange={(id) => set('store_id', id ?? 0)} /></Field>
+        <Field label="Date" htmlFor="s-date"><Input id="s-date" type="date" max={today()} value={f.scrap_date} onChange={(e) => set('scrap_date', e.target.value)} /></Field>
+        <Field label="Project" htmlFor="s-proj" hint="Whose cost it is, if any."><Select id="s-proj" value={f.project_id || ''} placeholder="No project" onChange={(e) => set('project_id', Number(e.target.value) || 0)} options={(projects.data ?? []).map((p) => ({ value: p.id, label: projectLabel(p) }))} /></Field>
+        <Field label="Buyer" htmlFor="s-buyer"><Input id="s-buyer" value={f.buyer} onChange={(e) => set('buyer', e.target.value)} /></Field>
+        <Field label="Gate pass / voucher no." htmlFor="s-ref"><Input id="s-ref" value={f.reference} onChange={(e) => set('reference', e.target.value)} /></Field>
+        <Field label="Remarks" htmlFor="s-rem"><Textarea id="s-rem" rows={1} value={f.remarks} onChange={(e) => set('remarks', e.target.value)} /></Field>
+      </div>
+      <section aria-labelledby="s-lines">
+        <h3 id="s-lines" className="mb-2 border-b pb-1 text-sm font-semibold">Items written off</h3>
+        <div className="grid gap-3">
+          {rows.map((r) => (
+            <div key={r.key} className="grid gap-3 rounded-lg border border-border p-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1.1fr)_9rem_minmax(0,1.3fr)_auto]">
+              <ItemPicker value={r.item} onChange={(item) => upd(r.key, { item, qty: { qty: '', uom: item?.base_uom ?? '' }, request: 0 })} />
+              <UomQtyInput itemId={r.item?.id ?? null} value={r.qty} onChange={(qty) => upd(r.key, { qty })} />
+              <Select aria-label="Disposal" value={r.disposal} onChange={(e) => upd(r.key, { disposal: e.target.value as 'SCRAP' | 'WASTAGE', realised: '' })} options={[{ value: 'SCRAP', label: 'Scrap' }, { value: 'WASTAGE', label: 'Wastage' }]} />
+              <Input aria-label="Reason" placeholder="Why (required)" value={r.reason} onChange={(e) => upd(r.key, { reason: e.target.value })} />
+              <Button type="button" variant="ghost" size="sm" aria-label="Remove line" disabled={rows.length === 1} onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))}><Trash2 /></Button>
+              <div className="flex flex-wrap items-center gap-4 lg:col-span-5">
+                {r.disposal === 'SCRAP' ? (
+                  <label className="flex items-center gap-2 text-sm">Fetched <Input aria-label="Amount realised" inputMode="decimal" className="h-9 w-32 text-right" placeholder="0.00" value={r.realised} onChange={(e) => upd(r.key, { realised: e.target.value })} /></label>
+                ) : (
+                  <label className="flex items-center gap-2 text-sm">Charged to <Select aria-label="Cost head" className="h-9" value={r.head} placeholder="No cost head" onChange={(e) => upd(r.key, { head: e.target.value })} options={(meta.data?.cost_heads ?? []).map((h) => ({ value: h, label: headLabel(h) }))} /></label>
+                )}
+                {r.item && (requests.data ?? []).some((w) => w.item_id === r.item?.id) && (
+                  <label className="flex items-center gap-2 text-sm" title="It left the store when it was issued, so no stock moves: the line only closes the request.">Deals with write-off request
+                    <Select aria-label="Write-off request" className="h-9" value={r.request || ''} placeholder="None" onChange={(e) => upd(r.key, { request: Number(e.target.value) || 0 })}
+                      options={(requests.data ?? []).filter((w) => w.item_id === r.item?.id).map((w) => ({ value: w.id, label: `#${w.id} - ${num(w.qty)} - ${w.reason}` }))} />
+                  </label>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+        <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => setRows((rs) => [...rs, blank()])}><Plus /> Add item</Button>
+      </section>
+      <Footer cancelTo={doc ? `/store/hub/control/scrap/${doc.id}` : '/store/hub/control/scrap'} busy={save.isPending} disabled={!ready} label={doc ? 'Save changes' : 'Save as draft'} />
+    </form>
   )
 }
