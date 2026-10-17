@@ -16,8 +16,8 @@ REVISION = "store_004_outward"
 
 
 class DBStoreRequisition(Base):
-    __tablename__ = "store_requisition"
-    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_mrq_number"),)
+    __tablename__ = "stk_requisition"
+    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_stk_mrq_number"),)
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
@@ -38,10 +38,10 @@ class DBStoreRequisition(Base):
 
 
 class DBStoreRequisitionLine(Base):
-    __tablename__ = "store_requisition_line"
+    __tablename__ = "stk_requisition_line"
 
     id = Column(Integer, primary_key=True, index=True)
-    requisition_id = Column(Integer, ForeignKey("store_requisition.id"), nullable=False, index=True)
+    requisition_id = Column(Integer, ForeignKey("stk_requisition.id"), nullable=False, index=True)
     item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
     uom = Column(String, nullable=False)
     entered_qty = Column(QTY, nullable=False)
@@ -50,8 +50,8 @@ class DBStoreRequisitionLine(Base):
 
 
 class DBStoreIssue(Base):
-    __tablename__ = "store_issue"
-    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_issue_number"),)
+    __tablename__ = "stk_issue"
+    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_stk_issue_number"),)
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
@@ -59,7 +59,7 @@ class DBStoreIssue(Base):
     store_id = Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
     issue_date = Column(Date, nullable=False, default=date.today)
     issue_type = Column(String, nullable=False, default="SITE")     # SITE | SUBCONTRACTOR
-    requisition_id = Column(Integer, ForeignKey("store_requisition.id"), nullable=True, index=True)
+    requisition_id = Column(Integer, ForeignKey("stk_requisition.id"), nullable=True, index=True)
     project_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
     work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True)
     boq_item_id = Column(Integer, ForeignKey("boq_lines.id"), nullable=True)
@@ -79,11 +79,11 @@ class DBStoreIssue(Base):
 
 
 class DBStoreIssueLine(Base):
-    __tablename__ = "store_issue_line"
+    __tablename__ = "stk_issue_line"
 
     id = Column(Integer, primary_key=True, index=True)
-    issue_id = Column(Integer, ForeignKey("store_issue.id"), nullable=False, index=True)
-    requisition_line_id = Column(Integer, ForeignKey("store_requisition_line.id"), nullable=True, index=True)
+    issue_id = Column(Integer, ForeignKey("stk_issue.id"), nullable=False, index=True)
+    requisition_line_id = Column(Integer, ForeignKey("stk_requisition_line.id"), nullable=True, index=True)
     item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
     uom = Column(String, nullable=False)
     entered_qty = Column(QTY, nullable=False)
@@ -97,14 +97,14 @@ class DBStoreIssueLine(Base):
 
 
 class DBStoreIssueReturn(Base):
-    __tablename__ = "store_issue_return"
-    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_rtn_number"),)
+    __tablename__ = "stk_issue_return"
+    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_stk_rtn_number"),)
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
     number = Column(String, nullable=False, index=True)             # RTN/CS01/26-27/00002
     store_id = Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
-    issue_id = Column(Integer, ForeignKey("store_issue.id"), nullable=False, index=True)
+    issue_id = Column(Integer, ForeignKey("stk_issue.id"), nullable=False, index=True)
     return_date = Column(Date, nullable=False, default=date.today)
     remarks = Column(Text, default="")
     status = Column(String, nullable=False, default=DocStatus.DRAFT.value, index=True)
@@ -116,11 +116,11 @@ class DBStoreIssueReturn(Base):
 
 
 class DBStoreIssueReturnLine(Base):
-    __tablename__ = "store_issue_return_line"
+    __tablename__ = "stk_issue_return_line"
 
     id = Column(Integer, primary_key=True, index=True)
-    return_id = Column(Integer, ForeignKey("store_issue_return.id"), nullable=False, index=True)
-    issue_line_id = Column(Integer, ForeignKey("store_issue_line.id"), nullable=False, index=True)
+    return_id = Column(Integer, ForeignKey("stk_issue_return.id"), nullable=False, index=True)
+    issue_line_id = Column(Integer, ForeignKey("stk_issue_line.id"), nullable=False, index=True)
     item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False)
     qty = Column(QTY, nullable=False, default=0)                    # comes back into stock (base unit)
     lost_qty = Column(QTY, nullable=False, default=0)               # will not come back: raises a write-off request when posted
@@ -131,7 +131,7 @@ class DBStoreIssueReturnLine(Base):
 
 class DBStoreWriteoffRequest(Base):
     """Material that was issued and will not come back, waiting for the control slice to write it off."""
-    __tablename__ = "store_writeoff_request"
+    __tablename__ = "stk_writeoff_request"
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
@@ -139,8 +139,8 @@ class DBStoreWriteoffRequest(Base):
     item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False)
     qty = Column(QTY, nullable=False)
     reason = Column(String, default="")
-    source_issue_line_id = Column(Integer, ForeignKey("store_issue_line.id"), nullable=True, index=True)
-    source_return_id = Column(Integer, ForeignKey("store_issue_return.id"), nullable=True, index=True)
+    source_issue_line_id = Column(Integer, ForeignKey("stk_issue_line.id"), nullable=True, index=True)
+    source_return_id = Column(Integer, ForeignKey("stk_issue_return.id"), nullable=True, index=True)
     status = Column(String, nullable=False, default="OPEN", index=True)    # OPEN | CLOSED | CANCELLED
     closed_by_doc_type = Column(String, nullable=True)
     closed_by_doc_id = Column(Integer, nullable=True)
@@ -150,8 +150,8 @@ class DBStoreWriteoffRequest(Base):
 
 
 class DBStoreOutwardLog(Base):
-    __tablename__ = "store_outward_log"
-    __table_args__ = (Index("ix_store_outward_log_doc", "doc_type", "doc_id"),)
+    __tablename__ = "stk_outward_log"
+    __table_args__ = (Index("ix_stk_outward_log_doc", "doc_type", "doc_id"),)
 
     id = Column(Integer, primary_key=True, index=True)
     doc_type = Column(String, nullable=False)                        # MRQ | ISSUE | RTN

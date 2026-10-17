@@ -55,8 +55,8 @@ class _Doc:
 
 
 class DBStoreTransfer(Base, _Doc):
-    __tablename__ = "store_transfer"
-    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_trf_number"),)
+    __tablename__ = "stk_transfer"
+    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_stk_trf_number"),)
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
@@ -78,10 +78,10 @@ class DBStoreTransfer(Base, _Doc):
 
 
 class DBStoreTransferLine(Base):
-    __tablename__ = "store_transfer_line"
+    __tablename__ = "stk_transfer_line"
 
     id = Column(Integer, primary_key=True, index=True)
-    transfer_id = Column(Integer, ForeignKey("store_transfer.id"), nullable=False, index=True)
+    transfer_id = Column(Integer, ForeignKey("stk_transfer.id"), nullable=False, index=True)
     item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
     qty = Column(QTY, nullable=False)                             # sent, base unit
     rate = Column(RATE, nullable=False, default=0)                # the average it left at; set when posted
@@ -94,8 +94,8 @@ class DBStoreTransferLine(Base):
 
 
 class DBStoreCount(Base, _Doc):
-    __tablename__ = "store_count"
-    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_cnt_number"),)
+    __tablename__ = "stk_count"
+    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_stk_cnt_number"),)
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
@@ -109,10 +109,10 @@ class DBStoreCount(Base, _Doc):
 
 
 class DBStoreCountLine(Base):
-    __tablename__ = "store_count_line"
+    __tablename__ = "stk_count_line"
 
     id = Column(Integer, primary_key=True, index=True)
-    count_id = Column(Integer, ForeignKey("store_count.id"), nullable=False, index=True)
+    count_id = Column(Integer, ForeignKey("stk_count.id"), nullable=False, index=True)
     item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
     system_qty = Column(QTY, nullable=False, default=0)           # the books when the count started (hidden from counters)
     system_value = Column(VALUE, nullable=False, default=0)
@@ -127,8 +127,8 @@ class DBStoreCountLine(Base):
 
 
 class DBStoreAdjustment(Base, _Doc):
-    __tablename__ = "store_adjustment"
-    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_adj_number"),)
+    __tablename__ = "stk_adjustment"
+    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_stk_adj_number"),)
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
@@ -144,10 +144,10 @@ class DBStoreAdjustment(Base, _Doc):
 
 
 class DBStoreAdjustmentLine(Base):
-    __tablename__ = "store_adjustment_line"
+    __tablename__ = "stk_adjustment_line"
 
     id = Column(Integer, primary_key=True, index=True)
-    adjustment_id = Column(Integer, ForeignKey("store_adjustment.id"), nullable=False, index=True)
+    adjustment_id = Column(Integer, ForeignKey("stk_adjustment.id"), nullable=False, index=True)
     item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
     direction = Column(String, nullable=False, default="OUT")     # IN | OUT
     qty = Column(QTY, nullable=False)
@@ -158,8 +158,8 @@ class DBStoreAdjustmentLine(Base):
 
 
 class DBStoreScrap(Base, _Doc):
-    __tablename__ = "store_scrap"
-    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_scr_number"),)
+    __tablename__ = "stk_scrap"
+    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_stk_scr_number"),)
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
@@ -172,10 +172,10 @@ class DBStoreScrap(Base, _Doc):
 
 
 class DBStoreScrapLine(Base):
-    __tablename__ = "store_scrap_line"
+    __tablename__ = "stk_scrap_line"
 
     id = Column(Integer, primary_key=True, index=True)
-    scrap_id = Column(Integer, ForeignKey("store_scrap.id"), nullable=False, index=True)
+    scrap_id = Column(Integer, ForeignKey("stk_scrap.id"), nullable=False, index=True)
     item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
     qty = Column(QTY, nullable=False)
     scrap_class = Column(String, default="OTHER")                 # a ScrapClass
@@ -185,8 +185,8 @@ class DBStoreScrapLine(Base):
 
 
 class DBStoreControlLog(Base):
-    __tablename__ = "store_control_log"
-    __table_args__ = (Index("ix_store_control_log_doc", "doc_type", "doc_id"),)
+    __tablename__ = "stk_control_log"
+    __table_args__ = (Index("ix_stk_control_log_doc", "doc_type", "doc_id"),)
 
     id = Column(Integer, primary_key=True, index=True)
     doc_type = Column(String, nullable=False)                      # TRF | CNT | ADJ | SCR

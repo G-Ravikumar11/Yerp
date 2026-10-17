@@ -18,8 +18,8 @@ REVISION = "store_006_reports"
 
 
 class DBStoreConsumptionNorm(Base):
-    __tablename__ = "store_consumption_norm"
-    __table_args__ = (UniqueConstraint("boq_item_id", "item_id", name="uq_store_norm_boq_item"),)
+    __tablename__ = "stk_consumption_norm"
+    __table_args__ = (UniqueConstraint("boq_item_id", "item_id", name="uq_stk_norm_boq_item"),)
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
@@ -31,7 +31,7 @@ class DBStoreConsumptionNorm(Base):
 
 
 class DBStoreRecoveryLink(Base):
-    __tablename__ = "store_recovery_link"
+    __tablename__ = "stk_recovery_link"
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)

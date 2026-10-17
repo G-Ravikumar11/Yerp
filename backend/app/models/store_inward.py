@@ -19,8 +19,8 @@ REVISION = "store_003_inward"
 
 
 class DBStoreGrn(Base):
-    __tablename__ = "store_grn"
-    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_grn_number"),)
+    __tablename__ = "stk_grn"
+    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_stk_grn_number"),)
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
@@ -42,10 +42,10 @@ class DBStoreGrn(Base):
 
 
 class DBStoreGrnLine(Base):
-    __tablename__ = "store_grn_line"
+    __tablename__ = "stk_grn_line"
 
     id = Column(Integer, primary_key=True, index=True)
-    grn_id = Column(Integer, ForeignKey("store_grn.id"), nullable=False, index=True)
+    grn_id = Column(Integer, ForeignKey("stk_grn.id"), nullable=False, index=True)
     po_line_id = Column(Integer, ForeignKey("purchase_order_line_items.id"), nullable=True, index=True)
     item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
     uom = Column(String, nullable=False)                             # the unit typed
@@ -62,15 +62,15 @@ class DBStoreGrnLine(Base):
 
 
 class DBStorePurchaseReturn(Base):
-    __tablename__ = "store_purchase_return"
-    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_prn_number"),)
+    __tablename__ = "stk_purchase_return"
+    __table_args__ = (UniqueConstraint("client_id", "number", name="uq_stk_prn_number"),)
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
     number = Column(String, nullable=False, index=True)             # PRN/CS01/26-27/00003
     store_id = Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
     return_date = Column(Date, nullable=False, default=date.today)
-    grn_id = Column(Integer, ForeignKey("store_grn.id"), nullable=True, index=True)
+    grn_id = Column(Integer, ForeignKey("stk_grn.id"), nullable=True, index=True)
     supplier_name = Column(String, default="")
     reason = Column(String, default="")
     remarks = Column(Text, default="")
@@ -83,11 +83,11 @@ class DBStorePurchaseReturn(Base):
 
 
 class DBStorePurchaseReturnLine(Base):
-    __tablename__ = "store_purchase_return_line"
+    __tablename__ = "stk_purchase_return_line"
 
     id = Column(Integer, primary_key=True, index=True)
-    return_id = Column(Integer, ForeignKey("store_purchase_return.id"), nullable=False, index=True)
-    grn_line_id = Column(Integer, ForeignKey("store_grn_line.id"), nullable=True, index=True)
+    return_id = Column(Integer, ForeignKey("stk_purchase_return.id"), nullable=False, index=True)
+    grn_line_id = Column(Integer, ForeignKey("stk_grn_line.id"), nullable=True, index=True)
     item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
     qty = Column(QTY, nullable=False)                                # base unit
     value = Column(VALUE, nullable=False, default=0)                 # filled when posted (valued at the store average)
@@ -96,8 +96,8 @@ class DBStorePurchaseReturnLine(Base):
 
 class DBStoreInwardLog(Base):
     """Who moved a GRN or purchase return to which status, and when."""
-    __tablename__ = "store_inward_log"
-    __table_args__ = (Index("ix_store_inward_log_doc", "doc_type", "doc_id"),)
+    __tablename__ = "stk_inward_log"
+    __table_args__ = (Index("ix_stk_inward_log_doc", "doc_type", "doc_id"),)
 
     id = Column(Integer, primary_key=True, index=True)
     doc_type = Column(String, nullable=False)                        # GRN | PRN
