@@ -26,6 +26,16 @@ ITEM_MASTER_COLUMNS = (
     ("erp_items", "source_boq_id", "INTEGER"), ("erp_items", "source_boq_key", "VARCHAR DEFAULT ''"),
 )
 
+STORE_OUTWARD_COLUMNS = (
+    # (table, column, type) - what the outward slice added to its own tables after they were first made (indents, who received the issue, the
+    # recovery basis, damaged returns). create_all makes new tables but never adds a column to one that exists, so a database that already has
+    # store_issue needs these. Additive and defaulted, safe on a live database.
+    ("store_issue", "indent_id", "INTEGER"), ("store_issue", "subcontract_order_id", "INTEGER"), ("store_issue", "received_by_type", "VARCHAR DEFAULT ''"),
+    ("store_issue", "received_by_employee_id", "INTEGER"), ("store_issue", "received_by_name", "VARCHAR DEFAULT ''"),
+    ("store_issue_line", "indent_line_id", "INTEGER"), ("store_issue_line", "recovery_basis", "VARCHAR DEFAULT ''"), ("store_issue_line", "handling_pct", "NUMERIC(7,3) DEFAULT 0"),
+    ("store_issue_return_line", "condition", "VARCHAR DEFAULT 'GOOD'"), ("store_issue_return_line", "bin_id", "INTEGER"),
+)
+
 SUBCONTRACT_CONTROL_COLUMNS = (
     # (table, column, Postgres type, SQLite type) - closing orders out, liquidated damages, the bank guarantee
     # register, retention releases that need a second signature, and who set a budget. All additive and defaulted.
@@ -1713,6 +1723,20 @@ def ensure_columns():
                 except Exception:
                     pass
 
+            # The Store module's outward tables: columns added after the tables were first made. A database that has no store tables yet is not an error.
+            try:
+                have = {r[0] for r in conn.execute(text("SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()")).fetchall()}
+                for table, column, typedef in STORE_OUTWARD_COLUMNS:
+                    if table in have:
+                        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step store outward: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
             # Subcontract controls: close-out, LD, the BG register, two-signature retention releases.
             try:
                 for table, column, pg_type, _ in SUBCONTRACT_CONTROL_COLUMNS:
@@ -1824,7 +1848,7 @@ def migrate_sqlite():
                 add_col("subcontract_orders", column, "FLOAT DEFAULT 0")
             add_col("subcontract_items", "technical_spec", "TEXT DEFAULT ''")
             add_col("business_units", "logo_url", "TEXT DEFAULT ''")
-            for table, column, typedef in QUALITY_COLUMNS + ITEM_MASTER_COLUMNS:
+            for table, column, typedef in QUALITY_COLUMNS + ITEM_MASTER_COLUMNS + STORE_OUTWARD_COLUMNS:
                 add_col(table, column, typedef.replace("BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"))
             try:
                 conn.execute(text(SCHEDULE_BACKFILL))
