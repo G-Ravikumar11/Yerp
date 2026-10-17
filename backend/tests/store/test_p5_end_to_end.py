@@ -98,12 +98,18 @@ def test_the_whole_store_module_agrees_with_itself(account):
     assert posted["status"] == "POSTED" and posted["lines"][0]["accepted_qty"] == "5000.000" and posted["lines"][0]["rate"] == "7.0000"
 
     # --- P3: an issue charged to the BOQ item, a part return, tools issued and one lost -------------------------------------------------------------
-    issue = ok(t.post("/api/store/outward/issue", json={"store_id": central["id"], "issue_date": TODAY, "project_id": project, "work_order_id": work_order,
-                                                          "lines": [{"item_id": items["cement"], "qty": "20", "uom": "bag", "boq_item_id": boq_line}]}))
+    indent = ok(t.post("/api/store/outward/indent", json={"store_id": central["id"], "project_id": project, "work_order_id": work_order, "boq_item_id": boq_line, "activity": "Columns",
+                                                            "required_by": (date.today() + timedelta(days=2)).isoformat(), "lines": [{"item_id": items["cement"], "qty": "25", "uom": "bag"}]}))
+    ok(t.post("/api/store/outward/indent/%d/submit" % indent["id"]))
+    indent = ok(t.post("/api/store/outward/indent/%d/approve" % indent["id"], json={"lines": [{"line_id": indent["lines"][0]["id"], "approved_qty": "20", "uom": "bag"}], "remarks": "20 this week"}))
+    assert indent["status"] == "OPEN" and indent["lines"][0]["approved_qty"] == "1000.000"
+    issue = ok(t.post("/api/store/outward/issue", json={"store_id": central["id"], "issue_date": TODAY, "project_id": project, "work_order_id": work_order, "indent_id": indent["id"], "received_by_type": "FOREMAN",
+                                                          "received_by_name": "Suresh", "lines": [{"item_id": items["cement"], "qty": "20", "uom": "bag", "indent_line_id": indent["lines"][0]["id"]}]}))
     issue = walk(t, "outward", "issue", issue["id"], "submit", "approve", "post")
+    assert issue["lines"][0]["boq_item_id"] == boq_line and ok(t.get("/api/store/outward/indent/%d" % indent["id"]))["status"] == "CLOSED"       # the indent's BOQ item, and it is filled
     ret = ok(t.post("/api/store/outward/returns", json={"issue_id": issue["id"], "return_date": TODAY, "lines": [{"issue_line_id": issue["lines"][0]["id"], "qty_returned": "2", "uom": "bag"}]}))
     walk(t, "outward", "returns", ret["id"], "submit", "approve", "post")
-    tools = ok(t.post("/api/store/outward/issue/direct", json={"store_id": central["id"], "issue_date": TODAY, "project_id": project, "holder_type": "GANG", "holder_name": "Shuttering gang",
+    tools = ok(t.post("/api/store/outward/issue/direct", json={"store_id": central["id"], "issue_date": TODAY, "project_id": project, "received_by_type": "GANG", "received_by_name": "Shuttering gang",
                                                                 "lines": [{"item_id": items["plate"], "qty": "10", "cost_head": "TEMPORARY_WORKS"}]}))
     assert tools["status"] == "POSTED" and tools["direct"] is True
     lost = ok(t.post("/api/store/outward/returns", json={"issue_id": tools["id"], "return_date": TODAY, "lines": [{"issue_line_id": tools["lines"][0]["id"], "qty_returned": "6", "qty_lost": "3", "reason": "fell from scaffold"}]}))
