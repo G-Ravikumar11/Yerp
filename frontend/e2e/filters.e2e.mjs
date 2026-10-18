@@ -33,7 +33,7 @@ await fill(page, 'input[aria-label=Search]', 'zzzz-no-such-contractor')
 await sleep(300)
 check('and searching it narrows the list', (await text()).includes('Nobody matches') || (await page.$$eval('table[aria-label="Sub contractors"] tbody tr', (r) => r.length)) < n)
 
-for (const [path, label] of [['/store/goods-receipt', 'Goods receipts'], ['/store/enquiries', 'Enquiries'], ['/store/eway', 'E-way bills'], ['/projects/equipment?tab=register', 'Machines']]) {
+for (const [path, label] of [['/store/old/goods-receipt', 'Goods receipts'], ['/store/enquiries', 'Enquiries'], ['/store/eway', 'E-way bills'], ['/projects/equipment?tab=register', 'Machines']]) {
   await open(page, path)
   await sleep(800)
   check(`${label}: the filter bar is there`, (await page.$('input[aria-label=Search]')) !== null, path)

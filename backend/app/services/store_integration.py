@@ -111,3 +111,152 @@ def subcon_material_to_recover(db, contractor_id, upto: Optional[date] = None) -
     for l in store_outward.get_subcon_issues(db, contractor_id, upto or date.today()) or []:
         total += l.recovery_value
     return total.quantize(Decimal("0.01"))
+
+
+# --- the older screens' questions, answered with the Hub in them ------------------------------------------------------
+# Purchase orders, project costs, material planning and the e-way check were written against the old store. Receipts
+# and issues now come through the Hub as well, so these count both: the old store's history, and the Hub from its start.
+
+def _per_unit(db, item, uom, seen):
+    """How many of the item's base unit one `uom` is: 1 for the base unit itself, None when the Hub has no conversion."""
+    from app.models.store_core import DBStoreUomConversion
+    from app.services.store_inward import base_uom_of
+    if item is None:
+        return None
+    key = (item.id, (uom or "").strip().lower())
+    if key not in seen:
+        if not key[1] or key[1] == base_uom_of(db, item).lower():
+            seen[key] = Decimal(1)
+        else:
+            conv = next((c for c in db.query(DBStoreUomConversion).filter(DBStoreUomConversion.item_id == item.id).all()
+                         if c.from_uom.strip().lower() == key[1]), None)
+            seen[key] = Decimal(str(conv.to_base_factor)) if conv and conv.to_base_factor else None
+    return seen[key]
+
+
+def hub_received_on_orders(db, po_ids):
+    """What the Hub has accepted against purchase orders, in each order line's own unit and net of what went back to the
+    supplier: ({po_id: {po_line_id: qty}}, {po_id: number of receipts}). Posted receipts only, for a whole list in a
+    handful of queries."""
+    from app.models.store_core import DocStatus
+    from app.models.store_inward import DBStoreGrn, DBStoreGrnLine
+    from app.services.store_inward import _returned_by_grn_line
+    ids = list({i for i in (po_ids or []) if i})
+    if not ids:
+        return {}, {}
+    posted = (DocStatus.POSTED.value,)
+    rows = (db.query(DBStoreGrn.po_id, DBStoreGrn.id, DBStoreGrnLine.id, DBStoreGrnLine.po_line_id, DBStoreGrnLine.item_id, DBStoreGrnLine.accepted_qty)
+            .join(DBStoreGrnLine, DBStoreGrnLine.grn_id == DBStoreGrn.id)
+            .filter(DBStoreGrn.po_id.in_(ids), DBStoreGrn.status.in_(posted)).all())
+    if not rows:
+        return {}, {}
+    back = _returned_by_grn_line(db, [r[2] for r in rows], posted)
+    po_lines = {l.id: l for l in db.query(models.DBPurchaseOrderLineItem).filter(
+        models.DBPurchaseOrderLineItem.id.in_({r[3] for r in rows if r[3]} or {0})).all()}
+    items = {i.id: i for i in db.query(models.DBItem).filter(models.DBItem.id.in_({r[4] for r in rows})).all()}
+    received, receipts, seen = {}, {}, {}
+    for po, grn, gl, pl, item_id, accepted in rows:
+        receipts.setdefault(po, set()).add(grn)
+        if pl not in po_lines:
+            continue
+        base = Decimal(str(accepted or 0)) - back.get(gl, ZERO)
+        per = _per_unit(db, items.get(item_id), po_lines[pl].uom, seen)
+        slot = received.setdefault(po, {})
+        slot[pl] = float(Decimal(str(slot.get(pl, 0))) + (base / per if per else base))
+    return received, {po: len(g) for po, g in receipts.items()}
+
+
+def hub_received_po_lines(db, client_id):
+    """The purchase-order lines the Hub has booked into stock (posted receipts): what a supplier bill paid for there is
+    stock, charged to a job when it is issued and not when it is bought."""
+    from app.models.store_core import DocStatus
+    from app.models.store_inward import DBStoreGrn, DBStoreGrnLine
+    return {pl for (pl,) in db.query(DBStoreGrnLine.po_line_id).join(DBStoreGrn, DBStoreGrn.id == DBStoreGrnLine.grn_id).filter(
+        DBStoreGrn.client_id == client_id, DBStoreGrn.status == DocStatus.POSTED.value, DBStoreGrnLine.po_line_id.isnot(None),
+        DBStoreGrnLine.accepted_qty > 0).distinct().all()}
+
+
+def old_received_in_base(db, lines_with_items):
+    """What the old store's posted receipts accepted on purchase-order lines, in each item's base unit. `lines_with_items`
+    is {po_line_id: (po line, stock item)}. The Hub's receipt summary adds it, so an order half received before the
+    cut-over is not shown as wholly pending after it."""
+    if not lines_with_items:
+        return {}
+    got = {}
+    for pl, qty in db.query(models.DBGoodsReceiptLine.po_line_id, models.DBGoodsReceiptLine.accepted_qty).join(
+            models.DBGoodsReceipt, models.DBGoodsReceipt.id == models.DBGoodsReceiptLine.goods_receipt_id).filter(
+            models.DBGoodsReceiptLine.po_line_id.in_(list(lines_with_items)), models.DBGoodsReceipt.status == "POSTED").all():
+        got[pl] = got.get(pl, 0.0) + (qty or 0.0)
+    out, seen = {}, {}
+    for pl, qty in got.items():
+        line, item = lines_with_items[pl]
+        per = _per_unit(db, item, line.uom, seen)
+        out[pl] = (Decimal(str(qty)) * per if per else Decimal(str(qty))).quantize(Decimal("0.001"))
+    return out
+
+
+def current_stock(db, client_id, codes=None):
+    """{item code: {item_code, item_name, uom, on_hand, value, rate}}: what the company holds now, in the shape the older
+    screens read. Until the company moves its old store into the Hub that is the old store, as it always was; after the
+    cut-over it is the Hub's stores together, which began from the old store's closing stock."""
+    from app.models.store_core import DBStoreStockBalance
+    from app.services.store_cutover import cutover_of
+    from app.services.stores import stock_balances
+    if codes is not None:
+        codes = {c for c in codes if c}
+        if not codes:
+            return {}
+    if cutover_of(db, client_id) is None:
+        return stock_balances(db, client_id, item_codes=codes)
+    q = (db.query(models.DBItem.item_code, models.DBItem.item_name, models.DBItem.units_of_measure,
+                  func.sum(DBStoreStockBalance.qty), func.sum(DBStoreStockBalance.value))
+         .join(DBStoreStockBalance, DBStoreStockBalance.item_id == models.DBItem.id)
+         .join(DBStore, DBStore.id == DBStoreStockBalance.store_id)
+         .filter(DBStore.client_id == client_id))
+    if codes is not None:
+        q = q.filter(models.DBItem.item_code.in_(list(codes)))
+    out = {}
+    for code, name, uom, qty, value in q.group_by(models.DBItem.item_code, models.DBItem.item_name, models.DBItem.units_of_measure).all():
+        on_hand, worth = float(qty or 0), float(value or 0)
+        out[code] = {"item_code": code, "item_name": name or "", "uom": uom or "", "on_hand": round(on_hand, 3),
+                     "value": round(worth, 2), "rate": round(worth / on_hand, 4) if on_hand else 0.0}
+    return out
+
+
+def _dispatched(db, client_id, number=None):
+    """Hub transfers that have left their store and were not cancelled."""
+    from app.models.store_control import DBStoreTransfer
+    from app.models.store_core import DocStatus
+    q = (db.query(DBStoreTransfer).join(DBStore, DBStore.id == DBStoreTransfer.store_id)
+         .filter(DBStore.client_id == client_id, DBStoreTransfer.status == DocStatus.POSTED.value))
+    if number is not None:
+        q = q.filter(DBStoreTransfer.number == number)
+    return q.all()
+
+
+def hub_transfers_out(db, client_id):
+    """{transfer number: value} for every Hub transfer dispatched: goods on the road, which need an e-way bill over the limit."""
+    from app.models.store_control import DBStoreTransferLine
+    docs = {t.id: t.number for t in _dispatched(db, client_id)}
+    if not docs:
+        return {}
+    return {docs[tid]: float(Decimal(str(value or 0)).quantize(Decimal("0.01")))
+            for tid, value in db.query(DBStoreTransferLine.transfer_id, func.sum(DBStoreTransferLine.value)).filter(
+                DBStoreTransferLine.transfer_id.in_(list(docs))).group_by(DBStoreTransferLine.transfer_id).all()}
+
+
+def hub_transfer_lines(db, client_id, number):
+    """The lines of one dispatched Hub transfer, by its number, at what they left at and with HSN: for its e-way bill.
+    [] when there is no such transfer."""
+    from app.models.store_control import DBStoreTransferLine
+    docs = _dispatched(db, client_id, number)
+    if not docs:
+        return []
+    out = []
+    for l in db.query(DBStoreTransferLine).filter(DBStoreTransferLine.transfer_id == docs[0].id).order_by(
+            DBStoreTransferLine.line_no, DBStoreTransferLine.id).all():
+        item = db.get(models.DBItem, l.item_id)
+        out.append({"item_code": item.item_code if item else "", "item_name": item.item_name if item else "",
+                    "hsn": (item.hsn_code if item else "") or "", "qty": float(l.qty or 0),
+                    "uom": (item.units_of_measure if item else "") or "", "value": float(l.value or 0)})
+    return out

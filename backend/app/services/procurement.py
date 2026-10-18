@@ -12,6 +12,7 @@ from app.core.auth import wo_actor
 from app.core.currency import lines_money, money, unit_rate
 from app.core.gst import state_from_gstin
 from app.core.units import canonical_unit
+from app.services.store_integration import hub_received_on_orders
 from app.services.stores import stock_movement
 
 
@@ -114,6 +115,12 @@ class OrderPrefetch:
         for gl in _in_chunks(db, models.DBGoodsReceiptLine.goods_receipt_id, grn_po):
             slot = self._received.setdefault(grn_po[gl.goods_receipt_id], {})
             slot[gl.po_line_id] = slot.get(gl.po_line_id, 0.0) + (gl.accepted_qty or 0.0)
+        # What the Store Hub has received against the same orders, in the order line's unit.
+        hub, self.hub_receipts = hub_received_on_orders(db, ids)
+        for po_id, got in hub.items():
+            slot = self._received.setdefault(po_id, {})
+            for line_id, qty in got.items():
+                slot[line_id] = slot.get(line_id, 0.0) + qty
         live = {b.id: b.purchase_order_id for bs in self.all_bills.values() for b in bs if b.status != "Rejected"}
         self._billed_lines = {}
         for bl in _in_chunks(db, models.DBBillLineItem.bill_id, live):
@@ -171,14 +178,14 @@ def purchase_order_to_dict(db, o, include_chain=False, pre=None):
     # showing a bill and no receipt is the one worth looking at before paying.
     if pre is not None:
         got, lines = pre.received(o.id), pre.lines.get(o.id, [])
-        row["receipt_count"] = len(pre.receipts.get(o.id, []))
+        row["receipt_count"] = len(pre.receipts.get(o.id, [])) + pre.hub_receipts.get(o.id, 0)
     else:
         got = received_to_date(db, o.id)
         lines = db.query(models.DBPurchaseOrderLineItem).filter(
             models.DBPurchaseOrderLineItem.order_id == o.id).order_by(models.DBPurchaseOrderLineItem.id).all()
         row["receipt_count"] = db.query(models.DBGoodsReceipt).filter(
             models.DBGoodsReceipt.purchase_order_id == o.id,
-            models.DBGoodsReceipt.status != "CANCELLED").count()
+            models.DBGoodsReceipt.status != "CANCELLED").count() + hub_received_on_orders(db, [o.id])[1].get(o.id, 0)
     row["received_total"] = money(sum(got.get(l.id, 0.0) * (l.price or 0) for l in lines))
     row["line_items"] = [{
         "id": l.id, "description": l.description or "",

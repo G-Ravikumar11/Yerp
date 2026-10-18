@@ -200,6 +200,7 @@ from app.models.stores import (
     DBStockIssue,
     DBStockIssueLine,
     DBStockBalance,
+    DBStoreCutover,
 )
 from app.models.store_core import (
     DBStore,

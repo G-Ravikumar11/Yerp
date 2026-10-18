@@ -12,7 +12,7 @@ const made = await api(page, 'POST', '/api/erp/items/bulk', { items: [{ kind: 'R
 const code = made.data.codes[0]
 await api(page, 'POST', '/api/stock/adjustments', { item_code: code, counted: 10, remarks: 'Opening stock' })
 await page.evaluate(() => indexedDB.deleteDatabase('keyval-store'))
-await open(page, '/store/stock')
+await open(page, '/store/old/stock')
 await page.waitForSelector('table[aria-label=Stock] tbody tr')
 check('the store shows what is held, its value and what is running low', ['Items held', 'Value in the store', 'Below reorder level'].every((w) => (page.__t ??= '').length >= 0) && (await text('main')).includes('Value in the store') && (await text('main')).includes(code))
 const first = code
@@ -67,7 +67,7 @@ await sleep(1200)
 await gone()
 check('material can be sent to another store at what it cost', true)
 
-await open(page, '/store/material-costing')
+await open(page, '/store/old/material-costing')
 await page.waitForSelector('select[aria-label="Work order"]')
 check('Material Used vs Costed shows costed against drawn', (await text('main')).includes('Costed on') && (await text('main')).includes('Actually drawn'))
 await done()

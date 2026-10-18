@@ -18,7 +18,9 @@ from app.core.dates import _days_until, ageing_bucket
 from app.core.permissions import employee_can
 from app.core.queries import by_id, on_job
 from app.services.assets import asset_service_state, equipment_cost_by_job
-from app.services.stores import stock_balances, stocked_share_of_bills
+from app.models.store_inward import DBStoreGrn
+from app.services.store_integration import current_stock, hub_transfers_out, project_store_material, store_material_by_project
+from app.services.stores import stocked_share_of_bills
 
 
 def job_or_404(db, client_id, job_id):
@@ -115,7 +117,6 @@ def labour_cost_for_job(db, client_id, job_id):
 
 def _store_material(db, client_id, job_id):
     """What the Store module has issued to a job, net of what came back. One query for the whole board when jobs are costed together."""
-    from app.services.store_integration import project_store_material, store_material_by_project
     pre = db.info.get("by_job")
     if pre is not None:
         if "store_material" not in pre:
@@ -572,6 +573,7 @@ def preload_pnl_for_job(db, client_id, job_id):
             models.DBStockMovement.client_id == client_id,
             models.DBStockMovement.job_id == job_id,
             models.DBStockMovement.kind.in_(("ISSUE", "RETURN"))).all()),
+        "hub_material": {job_id: project_store_material(db, job_id)},
         "diaries": one(db.query(models.DBSiteDiary).filter(
             models.DBSiteDiary.client_id == client_id, models.DBSiteDiary.job_id == job_id).all()),
         "pos": one(db.query(models.DBPurchaseOrder).filter(
@@ -629,6 +631,7 @@ def preload_pnl(db, client_id):
         "moves": by_job(db.query(models.DBStockMovement).filter(
             models.DBStockMovement.client_id == client_id,
             models.DBStockMovement.kind.in_(("ISSUE", "RETURN"))).all()),
+        "hub_material": store_material_by_project(db, client_id),
         "diaries": by_job(db.query(models.DBSiteDiary).filter(
             models.DBSiteDiary.client_id == client_id).all()),
         "pos": by_job(db.query(models.DBPurchaseOrder).filter(
@@ -685,10 +688,13 @@ def project_pnl(db, client_id, job, pre=None):
     stocked = pre.get("stocked") or {}
     bill_cost = money(sum((b.total or 0) * (1.0 - stocked.get(b.id, 0.0)) for b in supplier_bills))
 
-    # Material actually drawn from the store for this job. Issues are negative
-    # and returns positive, so the negated sum is what the site consumed and a
-    # cancelled issue costs nothing.
-    material = money(-sum(m.value or 0 for m in pre["moves"].get(job.id, [])))
+    # Material actually drawn from the store for this job. In the old store
+    # issues are negative and returns positive, so the negated sum is what the
+    # site consumed and a cancelled issue costs nothing. The Store Hub's issues
+    # come on top, net of returns: it began from the old store's closing stock,
+    # so neither repeats the other.
+    material = money(-sum(m.value or 0 for m in pre["moves"].get(job.id, []))
+                     + float((pre.get("hub_material") or {}).get(job.id, 0)))
 
     diaries = pre["diaries"].get(job.id, [])
     labour = money(sum(d.labour_cost or 0 for d in diaries))
@@ -849,7 +855,7 @@ def attention_items(db, client_id):
         })
 
     # --- the store -------------------------------------------------------
-    balances = stock_balances(db, client_id)
+    balances = current_stock(db, client_id)
     levels = {i.item_code: (i.reorder_level or 0.0)
               for i in db.query(models.DBItem).filter(
                   models.DBItem.client_id == client_id).all()}
@@ -890,7 +896,9 @@ def attention_items(db, client_id):
 
     grn_drafts = db.query(models.DBGoodsReceipt).filter(
         models.DBGoodsReceipt.client_id == client_id,
-        models.DBGoodsReceipt.status == "DRAFT").count()
+        models.DBGoodsReceipt.status == "DRAFT").count() + db.query(DBStoreGrn).filter(
+        DBStoreGrn.client_id == client_id,
+        DBStoreGrn.status.in_(("DRAFT", "SUBMITTED", "APPROVED"))).count()
     if grn_drafts:
         items.append({
             "kind": "receipts", "severity": "notice", "value": 0.0,
@@ -970,7 +978,8 @@ def setup_progress(db, client_id):
         models.DBRABill.client_id == client_id))
     received = n(db.query(models.DBGoodsReceipt).filter(
         models.DBGoodsReceipt.client_id == client_id,
-        models.DBGoodsReceipt.status == "POSTED"))
+        models.DBGoodsReceipt.status == "POSTED")) + n(db.query(DBStoreGrn).filter(
+        DBStoreGrn.client_id == client_id, DBStoreGrn.status == "POSTED"))
     diaries = n(db.query(models.DBSiteDiary).filter(
         models.DBSiteDiary.client_id == client_id))
 
@@ -2078,6 +2087,7 @@ def attention_elsewhere(db, client_id, jobs, today):
             models.DBStockMovement.client_id == client_id,
             models.DBStockMovement.kind == "TRANSFER_OUT").all():
         moved[m.source_ref] = money(moved.get(m.source_ref, 0.0) - (m.value or 0))
+    moved.update(hub_transfers_out(db, client_id))
     bare = [ref for ref, v in moved.items() if v > EWAY_THRESHOLD and ref not in covered]
     if bare:
         items.append({

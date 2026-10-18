@@ -7,10 +7,14 @@ from app import models
 
 from app.core.config import logger
 from app.core.currency import money, unit_rate
+from app.services.store_integration import current_stock, hub_received_on_orders, hub_received_po_lines
 
 
 def stock_movement(db, client_id, item_code, kind, quantity, rate, **kw):
-    """Write one row. The only way stock ever changes."""
+    """Write one row. The only way stock ever changes - until the company moves into the Store Hub, after which the
+    old store is a record and this refuses."""
+    from app.services.store_cutover import refuse_if_moved
+    refuse_if_moved(db, client_id)
     item = db.query(models.DBItem).filter(
         models.DBItem.client_id == client_id,
         models.DBItem.item_code == item_code).first()
@@ -345,6 +349,7 @@ def stocked_share_of_bills(db, client_id):
         models.DBGoodsReceipt, models.DBGoodsReceipt.id == models.DBGoodsReceiptLine.goods_receipt_id).filter(
         models.DBGoodsReceipt.client_id == client_id,
         models.DBGoodsReceipt.status == "POSTED").all() if l.po_line_id}
+    received |= hub_received_po_lines(db, client_id)
     whole, stock = {}, {}
     for l in db.query(models.DBBillLineItem).filter(models.DBBillLineItem.bill_id.in_(list(bills))).all():
         value = (l.qty or 0) * (l.price or 0)
@@ -383,7 +388,7 @@ def material_required(db, client_id, wo):
     if not needed:
         return []
 
-    balances = stock_balances(db, client_id, item_codes=set(needed))
+    balances = current_stock(db, client_id, codes=set(needed))
 
     # Quantity sitting on purchase orders that have not been fully received.
     on_order = {}
@@ -402,11 +407,15 @@ def material_required(db, client_id, wo):
                     models.DBGoodsReceiptLine.goods_receipt_id == grn.id).all():
                 received[l.item_code] = money(
                     received.get(l.item_code, 0.0) + (l.accepted_qty or 0))
+        hub, _n = hub_received_on_orders(db, ids)
         for l in db.query(models.DBPurchaseOrderLineItem).filter(
                 models.DBPurchaseOrderLineItem.order_id.in_(ids)).all():
             code = (l.item_code or "").strip()
             if code:
                 on_order[code] = money(on_order.get(code, 0.0) + (l.qty or 0))
+                got = hub.get(l.order_id, {}).get(l.id)
+                if got:
+                    received[code] = money(received.get(code, 0.0) + got)
         for code, got in received.items():
             if code in on_order:
                 on_order[code] = money(max(0.0, on_order[code] - got))

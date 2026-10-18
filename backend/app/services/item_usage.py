@@ -47,15 +47,16 @@ def where_used(db, client_id, item):
     budgets = db.query(func.count(models.DBBomLine.id)).filter(
         models.DBBomLine.client_id == client_id, (models.DBBomLine.fg_code == code) | (models.DBBomLine.rm_code == code)).scalar() or 0
     groups.append(_group("budgets", "Budget lines", budgets, []))
-    moves = db.query(func.count(models.DBStockMovement.id)).filter(
-        models.DBStockMovement.client_id == client_id, models.DBStockMovement.item_code == code).scalar() or 0
+    moves = (db.query(func.count(models.DBStockMovement.id)).filter(
+        models.DBStockMovement.client_id == client_id, models.DBStockMovement.item_code == code).scalar() or 0) + (
+        db.query(func.count(models.DBStoreStockLedger.id)).filter(models.DBStoreStockLedger.item_id == item.id).scalar() or 0)
     groups.append(_group("stock", "Store movements", moves, []))
     groups = [g for g in groups if g["count"]]
     return {"total": sum(g["count"] for g in groups), "groups": groups}
 
 
 def used_codes(db, client_id, codes):
-    """Which of these codes appear on a BOQ, order or in the store: four queries however many are asked about."""
+    """Which of these codes appear on a BOQ, order or in the store (old or Hub): six queries however many are asked about."""
     codes = list(codes)
     if not codes:
         return set()
@@ -73,4 +74,7 @@ def used_codes(db, client_id, codes):
         models.DBSubcontractOrder.client_id == client_id, models.DBSubcontractItem.item_code.in_(codes)).distinct()}
     found |= {c for (c,) in db.query(models.DBStockMovement.item_code).filter(
         models.DBStockMovement.client_id == client_id, models.DBStockMovement.item_code.in_(codes)).distinct()}
+    found |= {c for (c,) in db.query(models.DBItem.item_code).join(
+        models.DBStoreStockLedger, models.DBStoreStockLedger.item_id == models.DBItem.id).filter(
+        models.DBItem.client_id == client_id, models.DBItem.item_code.in_(codes)).distinct()}
     return found

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect } from 'react'
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import { MotionConfig } from 'framer-motion'
 import { Loader2 } from 'lucide-react'
@@ -12,6 +12,7 @@ import { watchConnection } from '@/stores/offline'
 import { applyTheme, useUI } from '@/stores/ui'
 import { AppShell, HomePage, SCREENS } from '@/app-mobile/entry'
 import NotFound from '@/pages/NotFound'
+import { REDIRECTS } from '@/routes'
 
 const LoginPage = lazy(() => import('@/features/auth/LoginPage'))
 const ForgotPasswordPage = lazy(() => import('@/features/auth/ForgotPasswordPage'))
@@ -100,6 +101,9 @@ export default function App() {
               <Route index element={<HomePage />} />
               {SCREENS.map(({ path, Component }) => (
                 <Route key={path} path={path.slice(1)} element={<Component />} />
+              ))}
+              {REDIRECTS.map(({ from, to }) => (
+                <Route key={from} path={from.slice(1)} element={<Navigate to={to} replace />} />
               ))}
               <Route path="*" element={<NotFound />} />
             </Route>

@@ -239,3 +239,22 @@ class DBStockBalance(Base):
     issued = Column(Float, default=0.0)          # lifetime out
     movements = Column(Integer, default=0)
     updated_at = Column(String, default="")
+
+
+class DBStoreCutover(Base):
+    """The day a company's old store (Stock & Issues, Goods Receipt) moved into the Store Hub.
+
+    Its closing stock became Hub opening stock that day. From then on the old store is a record only: nothing more
+    can be received, issued or moved in it, and its history stays readable and keeps counting in project costs.
+    """
+    __tablename__ = "store_cutovers"
+    __table_args__ = (
+        UniqueConstraint('client_id', name='uq_store_cutover_client'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    cutover_date = Column(String, nullable=False)        # YYYY-MM-DD: the Hub opening stock is as on this day
+    done_by_name = Column(String, default="")
+    done_at = Column(String, default="")
+    summary = Column(Text, default="")                   # JSON: what was carried into which Hub store

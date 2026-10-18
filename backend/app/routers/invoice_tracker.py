@@ -13,6 +13,7 @@ from app.documents.letterhead import letterhead
 from app.documents.pdf_twins import SHEET_AS_PDF
 from app.documents.tracker_xlsx import build_workbook
 from app.db import get_db
+from app.models.store_inward import DBStoreGrn, DBStoreGrnLine
 from app.services.invoice_tracker import DEFAULT_GST, DEFAULT_MARKUP, build_tracker
 
 router = APIRouter()
@@ -63,8 +64,11 @@ def invoice_tracker(request: Request, job_id: int = 0, gst: float = DEFAULT_GST,
 @router.put("/api/invoice-tracker/invoices/{grn_id}")
 def save_invoice(grn_id: int, body: InvoiceIn, request: Request, db: Session = Depends(get_db)):
     client = require_items_access(request, db, KEEP)
-    if not db.query(models.DBGoodsReceipt.id).filter(models.DBGoodsReceipt.id == grn_id,
-                                                     models.DBGoodsReceipt.client_id == client.id).first():
+    # A negative id is a receipt made in the Store Hub (see hub_receipts).
+    found = (db.query(DBStoreGrn.id).filter(DBStoreGrn.id == -grn_id, DBStoreGrn.client_id == client.id).first() if grn_id < 0 else
+             db.query(models.DBGoodsReceipt.id).filter(models.DBGoodsReceipt.id == grn_id,
+                                                       models.DBGoodsReceipt.client_id == client.id).first())
+    if not found:
         raise HTTPException(404, "Goods receipt not found")
     row = db.query(models.DBTrackerInvoice).filter(models.DBTrackerInvoice.client_id == client.id,
                                                    models.DBTrackerInvoice.grn_id == grn_id).first()
@@ -109,9 +113,11 @@ def save_invoice(grn_id: int, body: InvoiceIn, request: Request, db: Session = D
 @router.put("/api/invoice-tracker/blocks/{line_id}")
 def save_block(line_id: int, body: BlockIn, request: Request, db: Session = Depends(get_db)):
     client = require_items_access(request, db, KEEP)
-    line = db.query(models.DBGoodsReceiptLine).join(
+    line = (db.query(DBStoreGrnLine.id).join(DBStoreGrn, DBStoreGrn.id == DBStoreGrnLine.grn_id).filter(
+        DBStoreGrnLine.id == -line_id, DBStoreGrn.client_id == client.id).first() if line_id < 0 else
+            db.query(models.DBGoodsReceiptLine).join(
         models.DBGoodsReceipt, models.DBGoodsReceipt.id == models.DBGoodsReceiptLine.goods_receipt_id).filter(
-        models.DBGoodsReceiptLine.id == line_id, models.DBGoodsReceipt.client_id == client.id).first()
+        models.DBGoodsReceiptLine.id == line_id, models.DBGoodsReceipt.client_id == client.id).first())
     if not line:
         raise HTTPException(404, "Receipt line not found")
     row = db.query(models.DBTrackerBlock).filter(models.DBTrackerBlock.client_id == client.id,
