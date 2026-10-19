@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { AlertTriangle, History, Link2, Lock, LockOpen, Save, Search, Wand2 } from 'lucide-react'
+import { AlertTriangle, History, Link2, Lock, LockOpen, Save, Search } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Button, ConfirmDialog, Field, Input, Modal, NumField, Select, Skeleton, Stat } from '@/components/ui'
 import { get } from '@/lib/api'
@@ -139,7 +139,7 @@ function SitePricing({ siteId }: { siteId: number }) {
               )}
               {canFinalize && data.boq.editable && (
                 <Button variant="outline" disabled={!finalisedToApply || busy} onClick={() => setApplying(true)}>
-                  <Wand2 /> Apply finalised rates to BOQ
+                  Apply finalised rates to BOQ
                 </Button>
               )}
               <Button variant="ghost" onClick={() => setHistory(true)}><History /> History</Button>

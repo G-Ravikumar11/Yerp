@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils'
 const field =
   'w-full rounded-md border border-input bg-transparent px-3 text-sm text-foreground ' +
   'placeholder:text-subtle transition-[border-color,box-shadow,background-color] duration-150 ' +
-  'hover:border-subtle/60 focus-visible:border-ring focus-visible:outline-none ' +
+  'focus-visible:border-ring focus-visible:outline-none ' +
   'focus-visible:ring-4 focus-visible:ring-ring/15 disabled:cursor-not-allowed disabled:opacity-50 ' +
   'aria-[invalid=true]:border-danger aria-[invalid=true]:focus-visible:ring-danger/15'
 

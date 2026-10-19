@@ -77,7 +77,7 @@ export function Tile({ f, onRemove }: { f: FileItem; onRemove?: () => void }) {
         </a>
       )}
       <figcaption className="mt-1 text-xs leading-snug">
-        <span className="mr-1 rounded bg-primary-soft px-1 text-[10px] font-semibold text-primary">{KIND[f.kind] ?? f.kind}</span>{f.caption || f.name}
+        <span className="mr-1 rounded-md bg-primary-soft px-1 text-[10px] font-semibold text-primary">{KIND[f.kind] ?? f.kind}</span>{f.caption || f.name}
         <span className="block text-[11px] text-muted-foreground">{fileSize(f.size)}{f.taken_on && ` - ${f.taken_on}`}{f.uploaded_by_name && ` - ${f.uploaded_by_name}`}</span>
       </figcaption>
       {onRemove && <button type="button" className="mt-1 text-[11px] text-danger underline-offset-2 hover:underline" onClick={onRemove}>Remove</button>}

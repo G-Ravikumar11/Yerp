@@ -23,8 +23,8 @@ export default function ProfilePage() {
       <PageHeader eyebrow="My work" title="My Profile" description="What the business holds about you. To change any of it, ask HR." />
       {q.isPending || !p ? <Skeleton className="h-64 w-full" /> : (
         <section aria-label="Profile" className="overflow-hidden rounded-xl border border-border bg-card shadow-card">
-          <div className="flex flex-col items-center bg-gradient-to-br from-steel-500 to-steel-600 px-6 py-8 text-center text-white">
-            <span className="grid size-20 place-items-center rounded-2xl bg-white/15 text-2xl font-bold">{p.first_name.charAt(0)}</span>
+          <div className="flex flex-col items-center bg-info px-6 py-8 text-center text-white">
+            <span className="grid size-20 place-items-center rounded-lg bg-white/15 text-2xl font-bold">{p.first_name.charAt(0)}</span>
             <h2 className="mt-3 text-xl font-semibold">{p.full_name}</h2>
             <p className="text-sm text-white/70">{p.job_title}{p.department && ` - ${p.department}`}</p>
             <p className="mt-1 font-mono text-xs text-white/60">{p.employee_id_code}</p>

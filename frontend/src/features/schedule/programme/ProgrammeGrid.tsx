@@ -225,7 +225,7 @@ export function ProgrammeGrid(p: GridProps) {
               onDragLeave={() => setDropAt((d) => (d === r.id ? null : d))}
               onDrop={(ev) => { ev.preventDefault(); if (dragId !== null && dragId !== r.id) p.onDrop(dragId, r.id, ev.altKey); setDragId(null); setDropAt(null) }}
             >
-              {blocks.map(([a, b], blk) => (<div key={blk} className={cn('flex border-r border-border', blk === 0 ? 'z-30' : 'z-20', (blk === 0 || !narrow) && 'sticky', 'bg-card', on && '[background-image:linear-gradient(var(--primary-soft),var(--primary-soft))]', r.summary && 'font-semibold')} style={{ width: cols.slice(a, b).reduce((s, c) => s + c.w, 0), left: blk === 0 ? 0 : frozenW }}>
+              {blocks.map(([a, b], blk) => (<div key={blk} className={cn('flex border-r border-border', blk === 0 ? 'z-30' : 'z-20', (blk === 0 || !narrow) && 'sticky', 'bg-card', on && 'bg-primary-soft', r.summary && 'font-semibold')} style={{ width: cols.slice(a, b).reduce((s, c) => s + c.w, 0), left: blk === 0 ? 0 : frozenW }}>
                 {cols.slice(a, b).map((c, k) => {
                   const ci = a + k
                   const active = on && ci === p.active.c
@@ -257,7 +257,7 @@ export function ProgrammeGrid(p: GridProps) {
                           }}
                           className={cn('absolute inset-y-0 left-0 bg-background px-2 text-[12.5px] outline-none',
                             // a date needs more room than its cell: the box opens wider, over the next cell, so the year shows
-                            c.kind === 'date' ? 'w-[160px] rounded-sm border border-primary shadow-lg' : 'right-0')}
+                            c.kind === 'date' ? 'w-[160px] rounded-sm border border-primary shadow-md' : 'right-0')}
                         />
                       ) : c.id === 'wbs' ? (
                         <span className="flex items-center gap-0.5">
@@ -276,19 +276,19 @@ export function ProgrammeGrid(p: GridProps) {
                       ) : c.id === 'name' ? (
                         <span className="flex min-w-0 items-center gap-1" style={{ paddingLeft: r.level * 14 }}>
                           {r.summary ? (
-                            <button type="button" className="-ml-1 grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground" aria-label={p.collapsed.has(r.id) ? `Show what is under ${r.name}` : `Hide what is under ${r.name}`} aria-expanded={!p.collapsed.has(r.id)} onMouseDown={(ev) => ev.stopPropagation()} onClick={() => p.onToggle(r.id)}>
+                            <button type="button" className="-ml-1 grid size-5 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" aria-label={p.collapsed.has(r.id) ? `Show what is under ${r.name}` : `Hide what is under ${r.name}`} aria-expanded={!p.collapsed.has(r.id)} onMouseDown={(ev) => ev.stopPropagation()} onClick={() => p.onToggle(r.id)}>
                               {p.collapsed.has(r.id) ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
                             </button>
                           ) : <span className="w-4 shrink-0" />}
                           <span className={cn('truncate', r.critical && p.showCritical && !r.summary && 'text-danger')} title={r.description || r.name}>{r.name}</span>
                           {p.editable && p.onAddChild && (
-                            <button type="button" className={cn('grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-primary focus:opacity-100', !on && 'opacity-0 group-hover/row:opacity-100')}
+                            <button type="button" className={cn('grid size-5 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-primary focus:opacity-100', !on && 'opacity-0 group-hover/row:opacity-100')}
                               aria-label={`Add a sub-item under ${r.name}`} title="Add a sub-item under this row: break it into steps, each with its own dates"
                               onMouseDown={(ev) => ev.stopPropagation()} onClick={() => p.onAddChild!(r.id)}>
                               <Plus className="size-3.5" />
                             </button>
                           )}
-                          <button type="button" className={cn('grid size-5 shrink-0 place-items-center rounded hover:bg-accent', r.problem ? 'text-danger' : r.description ? 'text-muted-foreground' : 'text-muted-foreground/40 hover:text-muted-foreground')} aria-label={`Details of ${r.name}`} title={r.problem || 'Full description, links, progress and settings'} onMouseDown={(ev) => ev.stopPropagation()} onClick={() => p.onDetail(r.id)}>
+                          <button type="button" className={cn('grid size-5 shrink-0 place-items-center rounded-md hover:bg-accent', r.problem ? 'text-danger' : r.description ? 'text-muted-foreground' : 'text-muted-foreground/40 hover:text-muted-foreground')} aria-label={`Details of ${r.name}`} title={r.problem || 'Full description, links, progress and settings'} onMouseDown={(ev) => ev.stopPropagation()} onClick={() => p.onDetail(r.id)}>
                             <Info className="size-3.5" />
                           </button>
                         </span>

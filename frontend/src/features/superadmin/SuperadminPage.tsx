@@ -32,7 +32,7 @@ export default function SuperadminPage() {
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-10 border-b border-border bg-card">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg bg-primary font-bold text-primary-foreground">A</span><h1 className="text-lg font-bold">Y ERP <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">Super Admin</span></h1></div>
+          <div className="flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg bg-primary font-bold text-primary-foreground">A</span><h1 className="text-lg font-bold">Y ERP <span className="ml-1 rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">Super Admin</span></h1></div>
           <div className="flex items-center gap-2 text-sm"><span className="hidden text-muted-foreground sm:inline">{me.data.username}</span><Button size="sm" variant="outline" onClick={() => setPasswordOpen(true)}>Change password</Button><Button size="sm" variant="outline" loading={out.isPending} onClick={() => out.mutate()}>Sign out</Button></div>
         </div>
       </header>
@@ -162,7 +162,7 @@ function Bars({ label, values, months, money }: { label: string; values: number[
         {values.map((v, i) => (
           <div key={i} className="flex min-w-0 flex-1 flex-col items-center gap-1">
             <span className="text-[11px] font-semibold text-muted-foreground">{money ? formatINR(v) : v}</span>
-            <div className="flex h-24 w-full items-end overflow-hidden rounded bg-muted"><div className="w-full rounded bg-primary" style={{ height: `${Math.max(2, Math.round((v / max) * 100))}%` }} /></div>
+            <div className="flex h-24 w-full items-end overflow-hidden rounded-md bg-muted"><div className="w-full rounded-md bg-primary" style={{ height: `${Math.max(2, Math.round((v / max) * 100))}%` }} /></div>
             <span className="w-full truncate text-center text-[11px] text-muted-foreground">{(months[i] ?? '').slice(5)}</span>
           </div>
         ))}

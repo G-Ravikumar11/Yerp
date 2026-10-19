@@ -279,7 +279,7 @@ export function Expenses() {
         <div className="w-52"><Select aria-label="Category" value={r.category} placeholder="Every category" onChange={(e) => setR((x) => ({ ...x, category: e.target.value }))} options={(d?.all_categories ?? []).map((c) => ({ value: c, label: c }))} /></div>
         {manage && <Button className="ml-auto" onClick={() => setEdit('new')}><Plus /> Expense</Button>}
       </RangeBar>
-      {d && <div className="mb-3 flex flex-wrap gap-2 text-[13px]">{Object.entries(d.by_category).map(([k, v]) => <span key={k} className="rounded-full border border-border px-3 py-1">{k}: <strong>{formatINR(v)}</strong></span>)}<span className="rounded-full bg-primary-soft px-3 py-1 font-semibold">Total {formatINR(d.total)}</span></div>}
+      {d && <div className="mb-3 flex flex-wrap gap-2 text-[13px]">{Object.entries(d.by_category).map(([k, v]) => <span key={k} className="rounded-md border border-border px-3 py-1">{k}: <strong>{formatINR(v)}</strong></span>)}<span className="rounded-md bg-primary-soft px-3 py-1 font-semibold">Total {formatINR(d.total)}</span></div>}
       {q.isError ? <LoadError message={q.error.message} retry={() => q.refetch()} /> : (
         <Card className="overflow-hidden"><DataTable label="Equipment expenses" className="rounded-none border-0 shadow-none" rows={shown} columns={cols} rowKey={(e) => `${e.source}-${e.id}`} loading={q.isPending} empty="No expenses for these filters." />{!q.isPending && pager}</Card>
       )}

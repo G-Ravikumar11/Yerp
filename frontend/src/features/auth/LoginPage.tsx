@@ -104,22 +104,22 @@ export default function LoginPage() {
   }
 
   const pitch = (
-    <section aria-label="About Y ERP" className="hidden flex-col justify-between bg-gradient-to-br from-slate-900 via-slate-800 to-blue-900 p-10 text-slate-200 md:flex">
+    <section aria-label="About Y ERP" className="hidden flex-col justify-between bg-primary p-10 text-white md:flex">
       <div>
-        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-blue-300">Civil contracting ERP</p>
+        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-white/80">Civil contracting ERP</p>
         <h2 className="mb-2 mt-3 text-3xl font-extrabold leading-tight text-white">From the tender to the money, in one place.</h2>
-        <p className="max-w-[34ch] text-sm text-slate-300">Every link of a contract, and each one feeds the next. Nothing is typed twice, and nothing lives in a spreadsheet beside it.</p>
-        {company && <p className="mt-2 text-sm text-blue-200">The system of record for {company}.</p>}
+        <p className="max-w-[34ch] text-sm text-white/80">Every link of a contract, and each one feeds the next. Nothing is typed twice, and nothing lives in a spreadsheet beside it.</p>
+        {company && <p className="mt-2 text-sm text-white/80">The system of record for {company}.</p>}
         <ol className="mt-6 grid gap-3">
           {STEPS.map(([head, text], i) => (
             <li key={head} className="grid grid-cols-[30px_1fr] items-start gap-2.5 text-sm">
-              <span className="grid size-6 place-items-center rounded-lg bg-blue-300/15 text-xs font-bold text-blue-200">{i + 1}</span>
-              <span><b className="text-white">{head}</b><small className="block text-xs text-slate-400">{text}</small></span>
+              <span className="grid size-6 place-items-center rounded-lg bg-white/15 text-xs font-bold text-white/80">{i + 1}</span>
+              <span><b className="text-white">{head}</b><small className="block text-xs text-white/70">{text}</small></span>
             </li>
           ))}
         </ol>
       </div>
-      <p className="mt-7 text-xs text-slate-400"><b className="text-slate-200">No spreadsheets.</b> Grids paste and walk like a sheet, every table sorts and totals, every bill has a page that prints.</p>
+      <p className="mt-7 text-xs text-white/70"><b className="text-white">No spreadsheets.</b> Grids paste and walk like a sheet, every table sorts and totals, every bill has a page that prints.</p>
     </section>
   )
 
@@ -130,10 +130,10 @@ export default function LoginPage() {
       <form onSubmit={submit} className="grid gap-4">
         <Field label="Email address" htmlFor="email"><Input id="email" type="email" autoComplete="username" autoFocus required placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
         <Field label="Password" htmlFor="password"><Input id="password" type={showPassword ? 'text' : 'password'} autoComplete="current-password" required placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)}
-          trailing={<button type="button" onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} className="grid size-6 place-items-center rounded text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">{showPassword ? <Eye className="size-4" /> : <EyeOff className="size-4" />}</button>} /></Field>
+          trailing={<button type="button" onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} className="grid size-6 place-items-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">{showPassword ? <Eye className="size-4" /> : <EyeOff className="size-4" />}</button>} /></Field>
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
           <label htmlFor="rememberMe" className="flex w-fit cursor-pointer items-center gap-2 text-muted-foreground">
-            <input id="rememberMe" type="checkbox" className="size-4 cursor-pointer rounded border-border accent-primary" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
+            <input id="rememberMe" type="checkbox" className="size-4 cursor-pointer rounded-md border-border accent-primary" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
             Remember me
           </label>
           <a href={appUrl('forgot-password')} className="text-muted-foreground hover:text-primary">Forgot password?</a>

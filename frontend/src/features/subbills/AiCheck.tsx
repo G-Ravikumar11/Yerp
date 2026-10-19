@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { ScanSearch, Sparkles } from 'lucide-react'
+import { AiMark } from '@/components/ui/ai-mark'
+import { ScanSearch } from 'lucide-react'
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui'
 import { checkHardCopy, reviewBill, useAiStatus, type BillReview, type HardCopyCheck } from '@/api/aiSubcontracts'
 import type { SubBill } from '@/api/subbills'
@@ -18,7 +19,7 @@ export function AiCheck({ bill }: { bill: SubBill }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2"><Sparkles className="size-4" /> Check this bill</CardTitle>
+        <CardTitle className="flex items-center gap-2"><AiMark /> Check this bill</CardTitle>
         <CardDescription>
           Flags anything unusual, and reads the hard copy to compare it with this bill. It suggests; you decide.
           {status.data && !status.data.available && ' The AI part is not set up yet, so only the plain checks run.'}
@@ -26,7 +27,7 @@ export function AiCheck({ bill }: { bill: SubBill }) {
       </CardHeader>
       <CardContent className="grid gap-4 text-[13.5px]">
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" loading={run.isPending} onClick={() => run.mutate()}><Sparkles /> Review the bill</Button>
+          <Button variant="outline" size="sm" loading={run.isPending} onClick={() => run.mutate()}><AiMark /> Review the bill</Button>
           {bill.hardcopy && <Button variant="outline" size="sm" loading={read.isPending} disabled={!status.data?.reads_photos} title={status.data?.reads_photos ? undefined : 'Reading a scanned bill needs the AI key'} onClick={() => read.mutate()}><ScanSearch /> Read the hard copy</Button>}
         </div>
 

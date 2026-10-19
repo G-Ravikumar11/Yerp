@@ -80,14 +80,14 @@ export function WorkOrderPicker<T extends PickerOrder>({ orders, value, onChange
           setActive(Math.max(0, orders.findIndex((o) => o.id === value)))
           setOpen((o) => !o)
         }}
-        className="flex h-11 w-full items-center gap-3 rounded-md border border-input bg-card px-3 text-left text-sm transition-[border-color,box-shadow] hover:border-subtle/60 focus-visible:border-ring focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/15"
+        className="flex h-11 w-full items-center gap-3 rounded-md border border-input bg-card px-3 text-left text-sm transition-[border-color,box-shadow] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/15"
       >
         {current ? (
           <span className="flex min-w-0 flex-1 items-baseline gap-2">
             <span className="shrink-0 whitespace-nowrap font-mono text-[13px] font-semibold">{current.wo_number}</span>
-            {jobCode(current) && <span className="shrink-0 rounded bg-primary-soft px-1.5 py-0.5 font-mono text-[11px] text-primary">{jobCode(current)}</span>}
+            {jobCode(current) && <span className="shrink-0 rounded-md bg-primary-soft px-1.5 py-0.5 font-mono text-[11px] text-primary">{jobCode(current)}</span>}
             <span className="truncate text-muted-foreground">{current.contractor || 'no contractor'}</span>
-            {tagOf(current) && <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{tagOf(current)}</span>}
+            {tagOf(current) && <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{tagOf(current)}</span>}
           </span>
         ) : (
           <span className="flex-1 text-subtle">{loading ? 'Loading...' : 'No approved work orders yet'}</span>
@@ -96,7 +96,7 @@ export function WorkOrderPicker<T extends PickerOrder>({ orders, value, onChange
       </button>
 
       {open && (
-        <div className="absolute left-0 right-0 top-full z-30 mt-1.5 overflow-hidden rounded-lg border border-border bg-popover shadow-lg sm:min-w-[32rem]">
+        <div className="absolute left-0 right-0 top-full z-30 mt-1.5 overflow-hidden rounded-lg border border-border bg-popover shadow-md sm:min-w-[32rem]">
           <div className="flex items-center gap-2 border-b border-border px-3">
             <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden />
             <input
@@ -147,8 +147,8 @@ export function WorkOrderPicker<T extends PickerOrder>({ orders, value, onChange
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline gap-2">
                     <span className="shrink-0 whitespace-nowrap font-mono text-[13px] font-semibold">{o.wo_number}</span>
-                    {jobCode(o) && <span className="shrink-0 rounded bg-primary-soft px-1.5 py-0.5 font-mono text-[11px] text-primary">{jobCode(o)}</span>}
-                    {tagOf(o) && <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{tagOf(o)}</span>}
+                    {jobCode(o) && <span className="shrink-0 rounded-md bg-primary-soft px-1.5 py-0.5 font-mono text-[11px] text-primary">{jobCode(o)}</span>}
+                    {tagOf(o) && <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{tagOf(o)}</span>}
                     <span className="truncate text-[13px]">{o.contractor || 'no contractor'}</span>
                   </span>
                   <span className="block truncate text-xs text-muted-foreground">

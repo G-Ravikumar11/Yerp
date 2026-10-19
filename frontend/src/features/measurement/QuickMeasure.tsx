@@ -87,7 +87,7 @@ export const QuickMeasure = forwardRef<QuickMeasureHandle, { lines: MbLine[]; on
                     type="button"
                     onClick={() => onPick(m)}
                     onPointerEnter={() => setActive(i)}
-                    className={cn('rounded-full border px-2.5 py-0.5 text-xs transition-colors', m === hit ? 'border-primary/40 bg-primary-soft text-primary' : 'border-border text-muted-foreground hover:text-foreground')}
+                    className={cn('rounded-md border px-2.5 py-0.5 text-xs transition-colors', m === hit ? 'border-primary/40 bg-primary-soft text-primary' : 'border-border text-muted-foreground hover:text-foreground')}
                   >
                     <span className="font-mono">{m.activity_no}</span> {m.description.slice(0, 28)}
                   </button>

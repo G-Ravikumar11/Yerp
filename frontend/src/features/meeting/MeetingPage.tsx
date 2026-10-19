@@ -14,8 +14,8 @@ function Tile({ stream, name, muted, off, local, hand, sharing }: { stream?: Med
   return (
     <div className="relative aspect-video overflow-hidden rounded-xl bg-slate-900">
       <video ref={ref} autoPlay playsInline muted={local} className={`size-full ${sharing ? 'object-contain' : 'object-cover'} ${off ? 'opacity-0' : ''}`} />
-      <span className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-0.5 text-xs text-white">{local ? 'You' : name}{muted && ' · muted'}{sharing && ' · sharing'}</span>
-      {hand && <span className="absolute right-2 top-2 text-lg" aria-label="Hand raised">✋</span>}
+      <span className="absolute bottom-2 left-2 rounded-md bg-black/60 px-2 py-0.5 text-xs text-white">{local ? 'You' : name}{muted && ' · muted'}{sharing && ' · sharing'}</span>
+      {hand && <Hand className="absolute right-2 top-2 size-5" aria-label="Hand raised" />}
     </div>
   )
 }
@@ -67,7 +67,7 @@ function Room({ room, name }: { room: string; name: string }) {
     <div className="flex h-screen flex-col bg-slate-950 text-white">
       <header className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-sm">
         <span>Room <b className="font-mono">{room}</b> · {m.people.length + 1} in the call</span>
-        <button className="rounded bg-white/10 px-2 py-1 text-xs hover:bg-white/20" onClick={() => void navigator.clipboard?.writeText(link)}>Copy invite link</button>
+        <button className="rounded-md bg-white/10 px-2 py-1 text-xs hover:bg-white/20" onClick={() => void navigator.clipboard?.writeText(link)}>Copy invite link</button>
       </header>
       {m.waiting && <p role="status" className="bg-warning/20 px-4 py-2 text-center text-sm">Waiting for the host to let you in...</p>}
       {m.notice && <button className="bg-info/20 px-4 py-2 text-center text-sm" onClick={m.clearNotice}>{m.notice}</button>}
@@ -76,7 +76,7 @@ function Room({ room, name }: { room: string; name: string }) {
         <div className={`grid flex-1 content-start gap-3 overflow-y-auto p-3 ${m.people.length > 0 ? 'sm:grid-cols-2' : ''} ${m.people.length > 3 ? 'lg:grid-cols-3' : ''}`}>
           {sharer && <div className="sm:col-span-full"><Tile stream={sharer.stream} name={sharer.name} sharing /></div>}
           <Tile local stream={m.localStream} name={name} off={!m.cam} muted={!m.mic} hand={false} />
-          {m.people.filter((p) => !p.sharing).map((p) => <div key={p.id} className="group relative"><Tile stream={p.stream} name={p.name} muted={p.muted} off={p.videoOff} hand={p.hand} />{m.host && <button className="absolute right-2 top-2 hidden rounded bg-black/70 px-2 py-0.5 text-xs group-hover:block" onClick={() => m.remove(p.id)}>Remove</button>}</div>)}
+          {m.people.filter((p) => !p.sharing).map((p) => <div key={p.id} className="group relative"><Tile stream={p.stream} name={p.name} muted={p.muted} off={p.videoOff} hand={p.hand} />{m.host && <button className="absolute right-2 top-2 hidden rounded-md bg-black/70 px-2 py-0.5 text-xs group-hover:block" onClick={() => m.remove(p.id)}>Remove</button>}</div>)}
         </div>
         {open && (
           <aside aria-label="Chat" className="hidden w-72 flex-col border-l border-white/10 sm:flex">
@@ -84,7 +84,7 @@ function Room({ room, name }: { room: string; name: string }) {
               {m.chat.map((c, i) => c.system ? <p key={i} className="text-center text-xs text-white/50">{c.text}</p> : <p key={i}><b className={c.mine ? 'text-blue-300' : 'text-emerald-300'}>{c.name}</b> {c.text}</p>)}
             </div>
             <form className="flex gap-2 border-t border-white/10 p-2" onSubmit={(e) => { e.preventDefault(); m.sendChat(text); setText('') }}>
-              <input aria-label="Message" value={text} onChange={(e) => setText(e.target.value)} placeholder="Message everyone" className="min-w-0 flex-1 rounded bg-white/10 px-2 py-1 text-sm outline-none" />
+              <input aria-label="Message" value={text} onChange={(e) => setText(e.target.value)} placeholder="Message everyone" className="min-w-0 flex-1 rounded-md bg-white/10 px-2 py-1 text-sm outline-none" />
               <Button size="sm" type="submit">Send</Button>
             </form>
           </aside>

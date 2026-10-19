@@ -4,13 +4,13 @@ import type { ReactNode } from 'react'
 export function AuthLayout({ title, subtitle, mark = 'Y', logo, children, aside }: { title: string; subtitle?: string; mark?: string; logo?: string; children: ReactNode; aside?: ReactNode }) {
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-4 py-8">
-      <div className={aside ? 'grid w-full max-w-4xl overflow-hidden rounded-2xl border border-border bg-card shadow-xl md:grid-cols-[1.15fr_1fr]' : 'w-full max-w-md rounded-2xl border border-border bg-card p-8 shadow-xl'}>
+      <div className={aside ? 'grid w-full max-w-4xl overflow-hidden rounded-lg border border-border bg-card shadow-md md:grid-cols-[1.15fr_1fr]' : 'w-full max-w-md rounded-lg border border-border bg-card p-8 shadow-md'}>
         {aside}
         <div className={aside ? 'p-8 sm:p-10' : undefined}>
           <div className="mb-7 text-center">
             {logo
-              ? <div className="mx-auto mb-3 grid size-16 place-items-center overflow-hidden rounded-2xl bg-white ring-1 ring-border"><img src={logo} alt={title} className="size-full object-contain p-1" /></div>
-              : <div className="mx-auto mb-3 grid size-14 place-items-center rounded-2xl bg-gradient-to-br from-primary to-primary/60 text-xl font-bold text-primary-foreground">{mark}</div>}
+              ? <div className="mx-auto mb-3 grid size-16 place-items-center overflow-hidden rounded-lg bg-white ring-1 ring-border"><img src={logo} alt={title} className="size-full object-contain p-1" /></div>
+              : <div className="mx-auto mb-3 grid size-14 place-items-center rounded-lg bg-primary text-xl font-bold text-primary-foreground">{mark}</div>}
             <h1 className="text-xl font-bold">{title}</h1>
             {subtitle && <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>}
           </div>

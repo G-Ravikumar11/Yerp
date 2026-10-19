@@ -37,7 +37,7 @@ export function Toaster() {
                     t.action!.onClick()
                     dismiss(t.id)
                   }}
-                  className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground hover:brightness-110"
+                  className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground hover:bg-[color-mix(in_srgb,var(--primary),black_10%)]"
                 >
                   {t.action.label}
                 </button>

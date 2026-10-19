@@ -27,7 +27,7 @@ export function SyncIndicator() {
             exit={{ opacity: 0, scale: 0.9 }}
             onClick={() => setOpen(true)}
             className={cn(
-              'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium ring-1 ring-inset transition-colors',
+              'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium ring-1 ring-inset transition-colors',
               failed ? 'bg-danger-soft text-danger ring-danger/25' : !online ? 'bg-warning-soft text-warning ring-warning/30' : 'bg-info-soft text-info ring-info/25',
             )}
           >

@@ -1,7 +1,7 @@
 import type { CostMix } from '@/api/costs'
 import { formatINR } from '@/lib/utils'
 
-const COLOURS: Record<string, string> = { labour: '#4f46e5', materials: '#0ea5e9', subcontract: '#f59e0b', plant: '#8b5cf6', other: '#94a3b8' }
+const COLOURS: Record<string, string> = { labour: '#0f5132', materials: '#0ea5e9', subcontract: '#f59e0b', plant: '#dc6803', other: '#94a3b8' }
 
 /** Where the money went, by heading: a single total says a job is losing money, the split says whether it was bought badly or built slowly. */
 export function CostMixBar({ categories }: { categories: CostMix[] }) {

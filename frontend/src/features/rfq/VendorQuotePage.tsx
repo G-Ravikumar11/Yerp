@@ -151,7 +151,7 @@ export default function VendorQuotePage() {
               <Field label="Message to the company (optional)" htmlFor="vq-msg" className="sm:col-span-2"><Textarea id="vq-msg" rows={2} value={terms.message} onChange={setTerm('message')} /></Field>
             </div>
           </section>
-          <div className="sticky bottom-0 -mx-4 border-t border-border bg-card/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0">
+          <div className="sticky bottom-0 -mx-4 border-t border-border bg-card/95 px-4 py-3 sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0">
             {error && <p role="alert" className="mb-2 text-sm text-danger">{error}</p>}
             <div className="flex flex-wrap items-center gap-3">
               <Button size="lg" loading={busy} disabled={reading || (priced === 0 && !file)} onClick={() => void send()}>{page.submitted_at ? 'Send my revised quote' : 'Send my quote'}</Button>
@@ -169,7 +169,7 @@ function Shell({ company, children }: { company?: string; children: React.ReactN
     <main className="min-h-screen bg-background px-4 py-6 sm:py-10">
       <div className="mx-auto w-full max-w-3xl">
         {company && <p className="mb-4 flex items-center gap-2 text-sm font-semibold"><Badge tone="neutral">{company}</Badge></p>}
-        <div className="rounded-2xl border border-border bg-card p-4 shadow-card sm:p-6">{children}</div>
+        <div className="rounded-lg border border-border bg-card p-4 shadow-card sm:p-6">{children}</div>
         <p className="mt-4 text-center text-xs text-muted-foreground">Only the items asked for are shown here; other suppliers cannot see your prices.</p>
       </div>
     </main>

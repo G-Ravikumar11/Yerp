@@ -160,7 +160,7 @@ export function SheetFill({ orderId, itemId, itemName, onLoad }: { orderId: numb
                       {e.multiplier !== 1 ? ` · ${e.multiplier} blocks` : ''}
                       {(e.held_back ?? 0) > 0 ? ` · ${formatQty(e.held_back)} held` : ''}
                     </span>
-                    {e.already_in_book && <span className="shrink-0 rounded bg-warning-soft px-1.5 py-0.5 text-[11px] text-warning">already in the book</span>}
+                    {e.already_in_book && <span className="shrink-0 rounded-md bg-warning-soft px-1.5 py-0.5 text-[11px] text-warning">already in the book</span>}
                   </button>
                 </li>
               )

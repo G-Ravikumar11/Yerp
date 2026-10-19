@@ -96,7 +96,7 @@ export function WorkersTab() {
       {d && d.workers.length > 0 && (
         <div className="mb-4 flex flex-wrap gap-2" aria-label="Workers by trade">
           {d.trades.map((t) => (
-            <span key={t} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 text-xs">
+            <span key={t} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1 text-xs">
               {t} <span className="tabular font-semibold">{s?.by_trade[t] ?? 0}</span>
             </span>
           ))}
@@ -337,7 +337,7 @@ function PhotoBox({ file, onFile }: { file: File | null; onFile: (f: File | null
         type="button"
         aria-label={file ? 'Change the photo' : 'Add a photo'}
         onClick={() => void takePhoto(input.current, (files) => files[0] && onFile(files[0]))}
-        className="grid aspect-[3/4] w-32 place-items-center overflow-hidden rounded-lg border-2 border-dashed border-border bg-muted/40 text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+        className="grid aspect-[3/4] w-32 place-items-center overflow-hidden rounded-lg border-2 border-dashed border-border bg-muted/40 text-muted-foreground transition-colors hover:bg-muted"
       >
         {src ? <img src={src} alt="The worker's photo" className="size-full object-cover" /> : <span className="flex flex-col items-center gap-1 text-xs font-medium"><Camera className="size-6" />Photo</span>}
       </button>

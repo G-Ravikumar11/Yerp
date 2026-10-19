@@ -48,7 +48,7 @@ function Body({ statement, initial }: { statement: Statement; initial: string[] 
               return (
                 <button key={s.quote_id} type="button" aria-pressed={on} onClick={() => toggle(s.supplier_name)}
                   className={cn('flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors', on ? 'bg-primary-soft text-foreground' : 'text-muted-foreground hover:bg-accent')}>
-                  <span className={cn('grid size-4 shrink-0 place-items-center rounded border', on ? 'border-primary bg-primary text-primary-foreground' : 'border-input')}>{on && <Check className="size-3" />}</span>
+                  <span className={cn('grid size-4 shrink-0 place-items-center rounded-md border', on ? 'border-primary bg-primary text-primary-foreground' : 'border-input')}>{on && <Check className="size-3" />}</span>
                   <span className="min-w-0 flex-1 truncate">{s.supplier_name}</span>
                   {s.rank && <span className="text-[10px] font-semibold text-muted-foreground">{s.rank}</span>}
                 </button>

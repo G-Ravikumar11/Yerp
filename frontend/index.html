@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="color-scheme" content="dark light" />
-    <meta name="theme-color" content="#0b0b0e" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#f9fafb" />
     <meta name="description" content="Y ERP - the measurement book, work orders and billing for a contracting business." />
     <!-- Bills and measurement rows are full of digits: stop iOS turning them into phone-number links. -->
     <meta name="format-detection" content="telephone=no" />
@@ -12,23 +12,9 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Y ERP</title>
-    <script>
-      // Apply the saved theme before first paint so there is no light flash.
-      // The colours match stores/ui.ts, which keeps them in step once the app is running.
-      (function () {
-        try {
-          var saved = JSON.parse(localStorage.getItem('yerp-ui') || '{}').state || {};
-          var mode = saved.theme || 'system';
-          var dark = mode === 'dark' || (mode === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
-          document.documentElement.classList.toggle('dark', dark);
-          var bar = document.querySelector('meta[name="theme-color"]');
-          if (bar) bar.setAttribute('content', dark ? '#0b0b0e' : '#fbfaf8');
-        } catch (e) {}
-      })();
-    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=yip2" />
     <link rel="alternate icon" type="image/png" sizes="32x32" href="/favicon-32.png?v=yip2" />
-    <link rel="shortcut icon" href="/favicon.ico?v=yip2" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico?v=yip2" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png?v=yip2" />
   </head>
   <body>

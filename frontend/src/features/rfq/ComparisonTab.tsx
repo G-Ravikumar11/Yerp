@@ -92,7 +92,7 @@ function Verdict({ d, c, onAward }: { d: Statement; c: Comparison; onAward: (p: 
 
 function Rank({ rank }: { rank?: string }) {
   if (!rank) return null
-  return <span className={cn('rounded px-1.5 py-px text-[10px] font-bold tracking-wide', rank === 'L1' ? 'bg-success text-white' : 'bg-muted text-muted-foreground')}>{rank}</span>
+  return <span className={cn('rounded-md px-1.5 py-px text-[10px] font-bold tracking-wide', rank === 'L1' ? 'bg-success text-white' : 'bg-muted text-muted-foreground')}>{rank}</span>
 }
 
 /** Items down the side, suppliers across, the lowest in each row in green; totals and terms underneath. */
@@ -133,7 +133,7 @@ function Sheet({ d, c, onQuote }: { d: Statement; c: Comparison; onQuote: (suppl
                       <div className="truncate font-semibold" title={s.supplier_name}>{s.supplier_name}</div>
                       <div className="mt-1 flex flex-wrap items-center justify-end gap-1">
                         <Rank rank={c.rank.get(s.supplier_name)} />
-                        {!s.complete && <span className="rounded bg-warning-soft px-1.5 py-px text-[10px] font-medium text-warning" title={`Quoted ${s.lines_quoted} of ${d.lines.length} items`}>{s.lines_quoted} of {d.lines.length} items</span>}
+                        {!s.complete && <span className="rounded-md bg-warning-soft px-1.5 py-px text-[10px] font-medium text-warning" title={`Quoted ${s.lines_quoted} of ${d.lines.length} items`}>{s.lines_quoted} of {d.lines.length} items</span>}
                       </div>
                     </div>
                     <div className="-mr-1.5 flex shrink-0 flex-col print:hidden">

@@ -65,7 +65,7 @@ export default function CalendarPage() {
                 const body = day && (
                   <>
                     <span className={'grid size-6 place-items-center rounded-full text-[13px] ' + (key === today ? 'bg-[var(--primary)] font-semibold text-white' : sunday ? 'text-danger' : '')}>{day}</span>
-                    {here.map((h) => <p key={h.id ?? h.name} className={'mt-1 line-clamp-2 text-[11px] font-medium leading-tight ' + (h.custom ? 'text-amber-700 dark:text-amber-400' : '')}>{h.name}</p>)}
+                    {here.map((h) => <p key={h.id ?? h.name} className={'mt-1 line-clamp-2 text-[11px] font-medium leading-tight ' + (h.custom ? 'text-amber-700' : '')}>{h.name}</p>)}
                   </>
                 )
                 const tint = (day ? '' : 'bg-muted/20 ') + (own.length ? 'bg-amber-500/15 ' : here.length ? 'bg-[var(--primary)]/10 ' : '')
@@ -92,7 +92,7 @@ export default function CalendarPage() {
                   <div>
                     <span className="font-medium">{new Date(h.date + 'T00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', weekday: 'short' })}</span><br />
                     <span className="text-muted-foreground">{h.name}</span>
-                    {h.custom && <span className="ml-1.5 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">Added</span>}
+                    {h.custom && <span className="ml-1.5 rounded-md bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Added</span>}
                   </div>
                   {h.custom && isOwner && <Button size="sm" variant="ghost" aria-label={`Remove ${h.name}`} onClick={() => setRemoving(h)}><Trash2 /></Button>}
                 </li>

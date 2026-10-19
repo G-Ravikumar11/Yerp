@@ -63,7 +63,7 @@ function Crate({ x, y, className }: { x: number; y: number; className?: string }
  */
 function Crane() {
   return (
-    <svg viewBox="0 0 160 132" className="w-24 text-foreground [--crane-navy:#0b2d52] dark:[--crane-navy:#c9d6e6]" role="img" aria-label="A tower crane moving a crate">
+    <svg viewBox="0 0 160 132" className="w-24 text-foreground [--crane-navy:#0b2d52]" role="img" aria-label="A tower crane moving a crate">
       <defs>
         <linearGradient id="crane-jib" x1="0" y1="0" x2="1" y2="0">
           <stop offset="0" stopColor={SKY} />
@@ -110,7 +110,7 @@ function Crane() {
 }
 
 /**
- * While any screen is loading or saving, a crane works in a frosted-glass circle (smoky in the light theme, pale blue in the dark one) in the middle of the page, with "Loading"
+ * While any screen is loading or saving, a crane works in the middle of the page, with "Loading"
  * under it - so a slow page is never mistaken for a stuck one. It never blocks the page. A thin bar also runs along
  * the top of the window.
  */
@@ -132,7 +132,7 @@ export function ActivityIndicator() {
         className={cn('pointer-events-none fixed inset-0 z-[65] grid place-items-center transition-opacity duration-300', crane ? 'opacity-100' : 'opacity-0')}
       >
         {crane && (
-          <div className="crane-pop flex flex-col items-center gap-1 drop-shadow-[0_6px_14px_rgba(0,0,0,0.18)]">
+          <div className="crane-pop flex flex-col items-center gap-1">
             <Crane />
             <p className="text-[9.5px] font-semibold uppercase tracking-[0.2em] text-foreground/70">
               Loading<span className="crane-dot">.</span><span className="crane-dot">.</span><span className="crane-dot">.</span>
