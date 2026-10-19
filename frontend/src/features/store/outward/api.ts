@@ -30,6 +30,7 @@ export interface IssueLine {
   indent_line_id?: number | null
   recovery_basis?: string
   handling_pct?: string
+  batch_no?: string
   resolved_rate?: string | null
 }
 export interface ReturnLine {
@@ -189,3 +190,9 @@ export const useBins = (storeId: number) =>
 export const useRecoveries = (status: string) =>
   useQuery({ queryKey: ['store', 'outward', 'recoveries', status], queryFn: () => storeGet<{ total_amount: string; items: Recovery2[] }>('outward', `/recoveries${qs({ status })}`) })
 export const useOutwardSettings = () => useQuery({ queryKey: ['store', 'outward', 'settings'], queryFn: () => storeGet<OutwardSettings>('outward', '/settings') })
+
+/** What is left of each batch of an item in a store, oldest first (worked out first in, first out), with its shelf life. */
+export interface Batch { batch_no: string; source: string; received_on: string; manufacturing_date: string; expiry_date: string; qty: string; state: '' | 'OK' | 'NEAR' | 'EXPIRED'; recommended: boolean }
+export const batchesKey = (storeId: number, itemId: number, on: string) => ['store', 'outward', 'batches', storeId, itemId, on] as const
+export const useBatches = (storeId: number, itemId: number, on: string) =>
+  useQuery({ queryKey: batchesKey(storeId, itemId, on), enabled: storeId > 0 && itemId > 0, queryFn: async () => (await storeGet<{ batches: Batch[] }>('outward', `/batches${qs({ store_id: storeId, item_id: itemId, on })}`)).batches })

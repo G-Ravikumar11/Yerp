@@ -34,6 +34,11 @@ STORE_OUTWARD_COLUMNS = (
     ("store_issue", "received_by_employee_id", "INTEGER"), ("store_issue", "received_by_name", "VARCHAR DEFAULT ''"),
     ("store_issue_line", "indent_line_id", "INTEGER"), ("store_issue_line", "recovery_basis", "VARCHAR DEFAULT ''"), ("store_issue_line", "handling_pct", "NUMERIC(7,3) DEFAULT 0"),
     ("store_issue_return_line", "condition", "VARCHAR DEFAULT 'GOOD'"), ("store_issue_return_line", "bin_id", "INTEGER"),
+    # Gate deliveries on the goods receipt: received before their purchase order, linked to it later.
+    ("store_grn", "gate_delivery", "INTEGER DEFAULT 0"), ("store_grn", "driver_remarks", "VARCHAR DEFAULT ''"), ("store_grn", "linked_at", "TIMESTAMP"),
+    ("store_grn", "linked_by_name", "VARCHAR DEFAULT ''"), ("store_grn", "price_variance", "NUMERIC(18,2) DEFAULT 0"),
+    # Shelf life: the dates on a receipt line, and the batch an issue took.
+    ("store_grn_line", "manufacturing_date", "DATE"), ("store_grn_line", "expiry_date", "DATE"), ("store_issue_line", "batch_no", "VARCHAR DEFAULT ''"),
 )
 
 SUBCONTRACT_CONTROL_COLUMNS = (

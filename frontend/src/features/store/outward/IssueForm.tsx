@@ -1,17 +1,19 @@
 import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Plus, Trash2, Zap } from 'lucide-react'
-import { Button, Field, Input, Select, Textarea } from '@/components/ui'
+import { AlertTriangle, Plus, Trash2, Zap } from 'lucide-react'
+import { Badge, Button, Field, Input, Select, Textarea } from '@/components/ui'
 import { useProjects, projectLabel } from '@/api/projects'
 import { useSession } from '@/lib/session'
 import { useAction } from '@/lib/mutate'
 import { storePost, storePut, useStoreMeta, type StoreItemOption } from '@/api/store'
 import { ItemPicker, StorePicker, UomQtyInput } from '../shared'
-import { headLabel, num, outwardKeys, today, useBoqItems, useEmployees, useIndentPending, useOpenIndents, useOutwardSettings, useSubOrders, useSubcontractors, useWorkOrders, type Doc } from './api'
+import { batchesKey, headLabel, num, outwardKeys, today, useBatches, type Batch, useBoqItems, useEmployees, useIndentPending, useOpenIndents, useOutwardSettings, useSubOrders, useSubcontractors, useWorkOrders, type Doc } from './api'
 
-interface Row { key: number; item: StoreItemOption | null; qty: { qty: string; uom: string }; target: string; chargeable: boolean; basis: string; rate: string; handling: string; due: string; indentLine: number }
+/** `batch` null: the batch to issue first, as the store recommends it (first in, first out). */
+interface Row { key: number; item: StoreItemOption | null; qty: { qty: string; uom: string }; target: string; chargeable: boolean; basis: string; rate: string; handling: string; due: string; indentLine: number; batch: string | null }
 let seq = 1
-const blank = (): Row => ({ key: seq++, item: null, qty: { qty: '', uom: '' }, target: '', chargeable: false, basis: '', rate: '', handling: '', due: '', indentLine: 0 })
+const blank = (): Row => ({ key: seq++, item: null, qty: { qty: '', uom: '' }, target: '', chargeable: false, basis: '', rate: '', handling: '', due: '', indentLine: 0, batch: null })
 const isReturnable = (i: StoreItemOption | null) => i?.category === 'RETURNABLE' || i?.category === 'TOOL'
 
 /**
@@ -47,7 +49,7 @@ export default function IssueForm({ doc }: { doc?: Doc }) {
       ? (doc?.lines ?? []).map((l) => ({
           key: seq++, item: { id: l.item_id, code: l.item_code, name: l.item_name, base_uom: l.base_uom, uoms: [], category: l.returnable ? 'RETURNABLE' : null }, qty: { qty: String(Number(l.entry_qty)), uom: l.entry_uom },
           target: l.boq_item_id ? `boq:${l.boq_item_id}` : l.cost_head ? `head:${l.cost_head}` : '', chargeable: l.chargeable, basis: l.recovery_basis ?? '', rate: Number(l.recovery_rate) ? String(Number(l.recovery_rate)) : '',
-          handling: l.chargeable ? String(Number(l.handling_pct ?? 0)) : '', due: l.expected_return_date, indentLine: l.indent_line_id ?? 0,
+          handling: l.chargeable ? String(Number(l.handling_pct ?? 0)) : '', due: l.expected_return_date, indentLine: l.indent_line_id ?? 0, batch: l.batch_no ?? '',
         }))
       : [blank()],
   )
@@ -62,6 +64,9 @@ export default function IssueForm({ doc }: { doc?: Doc }) {
       target: p.indent.boq_item_id ? `boq:${p.indent.boq_item_id}` : '', indentLine: l.indent_line_id })))
   }
   const filled = rows.filter((r) => r.item && Number(r.qty.qty) > 0)
+  const qc = useQueryClient()
+  // A line left on the store's own choice takes the batch to issue first.
+  const batchOf = (r: Row) => r.batch ?? (qc.getQueryData<Batch[]>(batchesKey(f.store_id, r.item?.id ?? 0, f.issue_date)) ?? []).find((b) => b.recommended)?.batch_no ?? ''
   const body = () => ({
     store_id: f.store_id, issue_date: f.issue_date, issue_type: f.issue_type, project_id: f.project_id, work_order_id: f.work_order_id || null, indent_id: f.indent_id || null,
     subcontractor_id: sub ? f.subcontractor_id || null : null, subcontract_order_id: sub ? f.subcontract_order_id || null : null,
@@ -69,7 +74,7 @@ export default function IssueForm({ doc }: { doc?: Doc }) {
     purpose: f.purpose, remarks: f.remarks,
     lines: filled.map((r) => ({ item_id: r.item?.id, qty: r.qty.qty, uom: r.qty.uom, indent_line_id: r.indentLine || null, boq_item_id: r.target.startsWith('boq:') ? Number(r.target.slice(4)) : null, cost_head: r.target.startsWith('head:') ? r.target.slice(5) : '',
       chargeable: sub && r.chargeable, recovery_basis: sub && r.chargeable ? r.basis : '', recovery_rate: sub && r.chargeable && (r.basis || settings.data?.default_recovery_basis) === 'CONTRACT_RATE' ? r.rate : '',
-      handling_pct: sub && r.chargeable ? r.handling : '', expected_return_date: isReturnable(r.item) ? r.due : '' })),
+      handling_pct: sub && r.chargeable ? r.handling : '', expected_return_date: isReturnable(r.item) ? r.due : '', batch_no: batchOf(r) })),
   })
   const save = useAction(
     () => (direct ? storePost<Doc>('outward', '/issue/direct', body()) : doc ? storePut<Doc>('outward', `/issue/${doc.id}`, body()) : storePost<Doc>('outward', '/issue', body())),
@@ -121,6 +126,7 @@ export default function IssueForm({ doc }: { doc?: Doc }) {
               <Select aria-label="Charge to" value={r.target} placeholder={sub ? 'Charge to (optional)' : 'Charge to...'} onChange={(e) => upd(r.key, { target: e.target.value })}
                 options={[...(boq.data ?? []).map((b) => ({ value: `boq:${b.id}`, label: `BOQ ${b.item_no} ${b.description}`.slice(0, 70) })), ...(meta.data?.cost_heads ?? []).map((h) => ({ value: `head:${h}`, label: `Cost head: ${headLabel(h)}` }))]} />
               <Button type="button" variant="ghost" size="sm" aria-label="Remove line" disabled={rows.length === 1 || !!r.indentLine} onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))}><Trash2 /></Button>
+              {r.item && f.store_id > 0 && <BatchPicker storeId={f.store_id} itemId={r.item.id} on={f.issue_date} value={r.batch} onChange={(batch) => upd(r.key, { batch })} />}
               {(sub || isReturnable(r.item)) && (
                 <div className="flex flex-wrap items-center gap-4 lg:col-span-4">
                   {isReturnable(r.item) && <label className="flex items-center gap-2 text-sm">Expected back by <Input type="date" className="h-9 w-40" min={f.issue_date} value={r.due} onChange={(e) => upd(r.key, { due: e.target.value })} /></label>}
@@ -145,5 +151,38 @@ export default function IssueForm({ doc }: { doc?: Doc }) {
         <Button type="submit" loading={save.isPending} disabled={!ready}>{direct ? <><Zap /> Issue now</> : doc ? 'Save changes' : 'Save as draft'}</Button>
       </div>
     </form>
+  )
+}
+
+const dmy = (iso: string) => (iso ? new Date(iso + 'T00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '')
+const daysTo = (iso: string, from: string) => Math.round((new Date(iso + 'T00:00').getTime() - new Date(from + 'T00:00').getTime()) / 86_400_000)
+
+/**
+ * Which batch a line is taken from, where the store's receipts named batches: the oldest not expired is chosen for you (first in, first out),
+ * one past its expiry cannot be issued, and one within fifteen days of it is flagged.
+ */
+function BatchPicker({ storeId, itemId, on, value, onChange }: { storeId: number; itemId: number; on: string; value: string | null; onChange: (batch: string) => void }) {
+  const q = useBatches(storeId, itemId, on)
+  const lots = (q.data ?? []).filter((b) => b.batch_no)
+  if (!lots.length) return null
+  const first = lots.find((b) => b.recommended)
+  const chosen = value === null ? first : lots.find((b) => b.batch_no === value)
+  const label = (b: Batch) => `${b.batch_no} - ${num(b.qty)} left${b.expiry_date ? `, expires ${dmy(b.expiry_date)}` : ''}${b.state === 'EXPIRED' ? ' (expired)' : ''}`
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm lg:col-span-4">
+      <label className="flex items-center gap-2">Batch
+        <Select aria-label="Batch" className="h-9 min-w-64" value={chosen?.batch_no ?? ''} placeholder="Not from a named batch" onChange={(e) => onChange(e.target.value)}
+          options={lots.map((b) => ({ value: b.batch_no, label: label(b), disabled: b.state === 'EXPIRED' }))} />
+      </label>
+      {chosen?.state === 'EXPIRED' && <Badge tone="danger" dot>Expired {dmy(chosen.expiry_date)}</Badge>}
+      {chosen?.state === 'NEAR' && <Badge tone="warning" dot>Expires in {daysTo(chosen.expiry_date, on)} day{daysTo(chosen.expiry_date, on) === 1 ? '' : 's'}</Badge>}
+      {first && chosen && chosen.batch_no !== first.batch_no && chosen.state !== 'EXPIRED' && (
+        <span className="flex items-center gap-1.5 text-warning">
+          <AlertTriangle className="size-4" /> First in, first out: batch {first.batch_no}{first.received_on ? ` (in ${dmy(first.received_on)})` : ''} is older.
+          <Button type="button" size="sm" variant="outline" onClick={() => onChange(first.batch_no)}>Use {first.batch_no}</Button>
+        </span>
+      )}
+      {!first && <span className="text-danger">Every batch held has expired - none can be issued.</span>}
+    </div>
   )
 }

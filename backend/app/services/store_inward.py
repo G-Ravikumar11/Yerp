@@ -14,7 +14,7 @@ from sqlalchemy import func
 
 from app import models
 from app.models.store_core import (
-    DBStore, DBStoreItemSettings, DocStatus, InvalidMovementError, MovementType,
+    DBStore, DBStoreItemSettings, DBStoreStockBalance, DocStatus, InvalidMovementError, MovementType,
 )
 from app.models.store_inward import (
     CLIENT_SUPPLY, GRN, OPENING, PURCHASE_RETURN, DBStoreClientSupply, DBStoreClientSupplyLine, DBStoreGrn, DBStoreGrnLine,
@@ -22,6 +22,7 @@ from app.models.store_inward import (
 )
 from app.schemas.store_contracts import PoLineReceipt
 from app.services.stock_ledger import convert_to_base, post_movement, reverse_document
+from app.services.store_batches import default_expiry
 from app.services.store_integration import old_received_in_base
 from app.services.store_numbering import next_doc_number
 
@@ -205,6 +206,11 @@ def get_po_receipt_summary(db, po_id) -> List[PoLineReceipt]:
     return out
 
 
+def _category_of(db, item_id):
+    s = db.query(DBStoreItemSettings.category, DBStoreItemSettings.is_batch_tracked).filter(DBStoreItemSettings.item_id == item_id).first()
+    return {"category": s[0] if s else None, "batch_tracked": bool(s[1]) if s else False}
+
+
 def open_purchase_orders(db, client_id, visible_projects=None, q=""):
     """Approved purchase orders that still have something to receive, with each line's pending quantity."""
     query = db.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.client_id == client_id, models.DBPurchaseOrder.status.in_(PO_OPEN))
@@ -224,7 +230,7 @@ def open_purchase_orders(db, client_id, visible_projects=None, q=""):
                 continue
             rows.append({"po_line_id": l.id, "item_id": item.id, "item_code": item.item_code, "item_name": item.item_name, "description": l.description or "",
                          "po_uom": l.uom or "", "po_qty": s3(l.qty), "price": s4(l.price), "base_uom": base_uom_of(db, item), "ordered": s3(sm.ordered_qty),
-                         "accepted": s3(sm.accepted_qty), "pending": s3(sm.pending_qty)})
+                         "accepted": s3(sm.accepted_qty), "pending": s3(sm.pending_qty), **_category_of(db, item.id)})
         if rows:
             out.append({"id": po.id, "number": po.number, "supplier_name": po.supplier_name or "", "project_id": po.job_id, "issue_date": po.issue_date or "", "lines": rows})
     return out
@@ -286,7 +292,11 @@ def build_grn_lines(db, client_id, po, rows, grn_id=None):
         rate_entry = dec(price, label + " rate", allow_zero=False)
         rate = r4(rate_entry * entry / received)                       # per base unit
         status = "PENDING" if qc_required(db, item.id) else "NOT_REQUIRED"
-        out.append({"po_line": po_line, "item": item, "entry_uom": uom, "entry_qty": q3(entry), "received": received, "rejected": rejected,
+        made = day(getattr(r, "manufacturing_date", ""), label + " manufacturing date", required=False)
+        expiry = day(getattr(r, "expiry_date", ""), label + " expiry date", allow_future=True, required=False) or default_expiry(item, made)
+        if made and expiry and expiry < made:
+            raise HTTPException(400, "%s: the expiry date is before the manufacturing date." % label)
+        out.append({"po_line": po_line, "manufacturing_date": made, "expiry_date": expiry, "item": item, "entry_uom": uom, "entry_qty": q3(entry), "received": received, "rejected": rejected,
                     "accepted": ZERO if status == "PENDING" else received - rejected, "rate": rate, "qc_status": status, "reject_reason": reason,
                     "batch_no": text(r.batch_no, "batch", 40), "bin_id": r.bin_id or None, "remarks": text(r.remarks, "remarks", 200), "label": label})
     return out
@@ -324,7 +334,8 @@ def write_grn_lines(db, grn, lines):
     for n, l in enumerate(lines, 1):
         db.add(DBStoreGrnLine(grn_id=grn.id, line_no=n, po_line_id=l["po_line"].id if l["po_line"] else None, item_id=l["item"].id, entry_uom=l["entry_uom"],
                               entry_qty=l["entry_qty"], received_qty=l["received"], accepted_qty=l["accepted"], rejected_qty=l["rejected"], rate=l["rate"],
-                              qc_status=l["qc_status"], reject_reason=l["reject_reason"], batch_no=l["batch_no"], bin_id=l["bin_id"], remarks=l["remarks"]))
+                              qc_status=l["qc_status"], reject_reason=l["reject_reason"], batch_no=l["batch_no"], bin_id=l["bin_id"], remarks=l["remarks"],
+                              manufacturing_date=l["manufacturing_date"], expiry_date=l["expiry_date"]))
     db.flush()
 
 
@@ -400,6 +411,98 @@ def grn_post(db, actor, grn):
         posted += 1
     if not posted:
         raise HTTPException(409, "Nothing was accepted on this receipt, so there is nothing to post. Cancel it instead.")
+
+
+# --- gate deliveries ---------------------------------------------------------------------------------------------------
+# A lorry of sand or steel arrives after hours with no purchase order raised for it yet. It is unloaded and received on its
+# own delivery challan, posted to stock so the site can use it, and linked to the order once purchasing raises one.
+
+def check_gate_delivery(body, po):
+    """A gate delivery has no order yet, and carries the challan, vehicle and driver's word it will be matched on later."""
+    if po is not None:
+        raise HTTPException(400, "A gate delivery is one with no purchase order yet. Choose the order, or leave it out and link it later.")
+    missing = [name for name, v in (("challan number", body.challan_no), ("challan date", body.challan_date), ("vehicle number", body.vehicle_no),
+                                    ("driver or transporter remarks", body.driver_remarks)) if not (v or "").strip()]
+    if missing:
+        raise HTTPException(400, "A gate delivery needs its %s." % ", ".join(missing))
+
+
+def gate_rates(db, client_id, store_id, rows):
+    """A rate for each gate-delivery line given none, so the stock has a value until the order settles it: what the store
+    holds the item at, or else the rate it is usually bought at. Filled into the rows, per the unit each was counted in."""
+    from app.services.store_integration import _per_unit
+    for n, r in enumerate(rows, 1):
+        if (r.rate or "").strip() or not r.item_id:
+            continue
+        item = item_of(db, client_id, r.item_id)
+        held = db.query(DBStoreStockBalance).filter(DBStoreStockBalance.store_id == store_id, DBStoreStockBalance.item_id == item.id).first()
+        base = Decimal(str(held.avg_rate)) if held is not None and held.qty and held.avg_rate else Decimal(str(item.purchase_rate or 0))
+        if base <= 0:
+            raise HTTPException(400, "Line %d: give an estimated rate for %s - it has no stock or purchase rate to take one from." % (n, item.item_name))
+        per = _per_unit(db, item, (r.uom or "").strip() or base_uom_of(db, item), {}) or Decimal(1)
+        r.rate = str(r4(base * per))
+
+
+def link_gate_delivery(db, actor, grn, po_id, pairs=None):
+    """Tie a posted gate delivery to the purchase order raised for it. Each line goes to the order's line for its item (or the
+    one chosen in `pairs`, {grn line id: order line id}) and is checked against what was ordered, with the tolerance, as any
+    receipt is - from then on the order counts it received and its bill can be matched. The stock keeps the value it came in
+    at; the difference from the order's rate is kept on the receipt as its price variance. Returns the variance."""
+    if not grn.gate_delivery:
+        raise HTTPException(409, "Only a gate delivery is linked to its purchase order afterwards.")
+    if grn.po_id:
+        po = db.get(models.DBPurchaseOrder, grn.po_id)
+        raise HTTPException(409, "%s is already linked to purchase order %s." % (grn.number, po.number if po else grn.po_id))
+    if grn.status != DocStatus.POSTED.value:
+        raise HTTPException(409, "Post the gate delivery before linking it; a draft is simply given its order when it is edited.")
+    po = _po_for(db, actor.client.id, po_id)
+    def same(a, b):
+        return " ".join((a or "").lower().split()) == " ".join((b or "").lower().split())
+    if grn.supplier_name and po.supplier_name and not same(grn.supplier_name, po.supplier_name):
+        raise HTTPException(409, "%s was delivered by %s, but purchase order %s is with %s." % (grn.number, grn.supplier_name, po.number, po.supplier_name))
+    if grn.project_id and po.job_id and grn.project_id != po.job_id:
+        raise HTTPException(409, "%s was received for another project than purchase order %s." % (grn.number, po.number))
+    po_lines = db.query(models.DBPurchaseOrderLineItem).filter(models.DBPurchaseOrderLineItem.order_id == po.id).order_by(models.DBPurchaseOrderLineItem.id).all()
+    stock_item = {pl.id: po_item(db, po, pl) for pl in po_lines}
+    chosen = {int(k): int(v) for k, v in (pairs or {}).items()}
+    items = {i.id: i for i in db.query(models.DBItem).filter(models.DBItem.id.in_([l.item_id for l in grn_lines(db, grn)] or [0])).all()}
+    rows, used = [], set()
+    for l in grn_lines(db, grn):
+        label, item = "Line %d" % (l.line_no or 0), items[l.item_id]
+        if l.id in chosen:
+            pl = next((p for p in po_lines if p.id == chosen[l.id]), None)
+            if pl is None:
+                raise HTTPException(400, "%s: that is not a line of purchase order %s." % (label, po.number))
+            if stock_item.get(pl.id) is None or stock_item[pl.id].id != item.id:
+                raise HTTPException(400, "%s: the order line chosen is not for %s." % (label, item.item_name))
+        else:
+            fits = [p for p in po_lines if stock_item.get(p.id) is not None and stock_item[p.id].id == item.id]
+            if not fits:
+                raise HTTPException(409, "%s: purchase order %s has no line for %s." % (label, po.number, item.item_name))
+            if len(fits) > 1:
+                raise HTTPException(409, "%s: purchase order %s has %d lines for %s; choose which one it was." % (label, po.number, len(fits), item.item_name))
+            pl = fits[0]
+        if pl.id in used:
+            raise HTTPException(400, "%s: two lines of the delivery are on the same order line." % label)
+        used.add(pl.id)
+        rows.append({"po_line": pl, "item": item, "received": Decimal(str(l.received_qty)), "rejected": Decimal(str(l.rejected_qty)),
+                     "accepted": Decimal(str(l.accepted_qty)), "qc_status": l.qc_status, "label": label, "line": l})
+    check_over_receipt(db, po, rows, exclude_grn=grn.id)
+    variance = ZERO
+    for r in rows:
+        pl, l = r["po_line"], r["line"]
+        ordered = _ordered_base(db, pl, r["item"])
+        po_rate = Decimal(str(pl.price or 0)) * Decimal(str(pl.qty or 0)) / ordered if ordered > 0 else Decimal(str(l.rate))
+        variance += r["accepted"] * (po_rate - Decimal(str(l.rate)))
+        l.po_line_id = pl.id
+    grn.po_id = po.id
+    grn.supplier_name = grn.supplier_name or po.supplier_name or ""
+    grn.project_id = grn.project_id or po.job_id
+    grn.linked_at, grn.linked_by_name = datetime.now(), actor.name
+    grn.price_variance = variance.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    log(db, actor, GRN, grn.id, "link", grn.status, grn.status, "to %s; price variance %s" % (po.number, format(grn.price_variance, "f")))
+    db.flush()
+    return grn.price_variance
 
 
 def grn_check_cancel(db, grn):

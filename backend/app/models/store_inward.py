@@ -12,7 +12,7 @@ from sqlalchemy import Column, Date, DateTime, ForeignKey, Index, Integer, Strin
 from sqlalchemy.orm import declared_attr
 
 from app.db.session import Base
-from app.models.store_core import QTY, RATE, DocStatus
+from app.models.store_core import QTY, RATE, VALUE, DocStatus
 
 # What the ledger calls each document (ref_doc_type) and what its number starts with.
 GRN, PURCHASE_RETURN, CLIENT_SUPPLY, OPENING = "GRN", "PRTN", "CSUP", "OSTK"
@@ -52,6 +52,14 @@ class DBStoreGrn(_Header, Base):
     challan_date = Column(Date, nullable=True)
     vehicle_no = Column(String, default="")
     project_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    # A gate delivery: a lorry unloaded before any purchase order was raised for it, received on its own challan. It is
+    # posted to stock at once at the rate known at the gate, and linked to the order later; the difference between that
+    # rate and the order's is its price variance (the ledger is never rewritten).
+    gate_delivery = Column(Integer, default=0)
+    driver_remarks = Column(String, default="")
+    linked_at = Column(DateTime, nullable=True)
+    linked_by_name = Column(String, default="")
+    price_variance = Column(VALUE, default=0)
 
 
 class DBStoreGrnLine(Base):
@@ -73,6 +81,8 @@ class DBStoreGrnLine(Base):
     qc_note = Column(String, default="")
     reject_reason = Column(String, default="")
     batch_no = Column(String, default="")
+    manufacturing_date = Column(Date, nullable=True)         # shelf life: cement, admixtures, epoxies (services/store_batches.py)
+    expiry_date = Column(Date, nullable=True)
     bin_id = Column(Integer, ForeignKey("store_bin.id"), nullable=True)
     remarks = Column(String, default="")
 

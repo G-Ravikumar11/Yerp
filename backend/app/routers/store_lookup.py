@@ -67,7 +67,8 @@ def items(request: Request, q: str = "", limit: int = 30, db: Session = Depends(
     for r in rows:
         base, uoms = _uoms(db, r, settings.get(r.id))
         out.append({"id": r.id, "code": r.item_code, "name": r.item_name, "base_uom": base, "uoms": uoms,
-                    "category": settings[r.id].category if r.id in settings else None})
+                    "category": settings[r.id].category if r.id in settings else None,
+                    "batch_tracked": bool(settings[r.id].is_batch_tracked) if r.id in settings else False})
     return {"items": out}
 
 

@@ -8,7 +8,7 @@ is assigned to. Posting is one transaction: every line moves stock or none does.
 import io
 from datetime import date
 from decimal import Decimal
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import openpyxl
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -29,6 +29,7 @@ from app.models.store_inward import (
     CLIENT_SUPPLY, GRN, OPENING, PURCHASE_RETURN, DBStoreClientSupply, DBStoreGrn, DBStoreInwardLog, DBStoreOpening, DBStorePurchaseReturn,
 )
 from app.services import store_inward as svc
+from app.services.store_batches import shelf_state
 from app.services.stock_ledger import assert_store_access
 
 router = APIRouter(prefix="/api/store/inward", tags=["store-inward"])
@@ -48,6 +49,8 @@ class GrnLineIn(BaseModel):
     rejected_qty: str = ""
     reject_reason: str = ""
     batch_no: str = ""
+    manufacturing_date: str = ""         # shelf life; cement given only this expires ninety days on
+    expiry_date: str = ""
     bin_id: Optional[int] = None
     remarks: str = ""
 
@@ -62,7 +65,14 @@ class GrnIn(BaseModel):
     vehicle_no: str = ""
     project_id: Optional[int] = None
     remarks: str = ""
+    gate_delivery: bool = False          # no purchase order yet: received on its challan, linked to the order later
+    driver_remarks: str = ""
     lines: List[GrnLineIn]
+
+
+class LinkPoIn(BaseModel):
+    po_id: int
+    lines: Dict[int, int] = {}           # receipt line id -> purchase-order line id, where the item alone does not say which
 
 
 class QcIn(BaseModel):
@@ -186,13 +196,16 @@ def doc_dict(db, kind, doc, detail=False):
         out.update({"po_id": doc.po_id, "po_number": po.number if po else "", "supplier_name": doc.supplier_name or "", "challan_no": doc.challan_no or "",
                     "challan_date": _iso(doc.challan_date), "vehicle_no": doc.vehicle_no or "", "project_id": doc.project_id,
                     "project": ("%s - %s" % (job.number, job.name)) if job else "", "line_count": len(lines), "value": format(value.quantize(Decimal("0.01")), "f"),
-                    "qc_pending": sum(1 for l in lines if l.qc_status == "PENDING")})
+                    "qc_pending": sum(1 for l in lines if l.qc_status == "PENDING"), "gate_delivery": bool(doc.gate_delivery),
+                    "driver_remarks": doc.driver_remarks or "", "linked_at": _iso(doc.linked_at), "linked_by": doc.linked_by_name or "",
+                    "price_variance": format(Decimal(str(doc.price_variance or 0)).quantize(Decimal("0.01")), "f")})
         if detail:
             items = _items(db, [l.item_id for l in lines])
             out["lines"] = [_line_common(db, l, items.get(l.item_id), {"po_line_id": l.po_line_id, "received_qty": svc.s3(l.received_qty), "accepted_qty": svc.s3(l.accepted_qty),
                                                                        "rejected_qty": svc.s3(l.rejected_qty), "rate": svc.s4(l.rate), "qc_status": l.qc_status, "qc_by": l.qc_by_name or "",
                                                                        "qc_note": l.qc_note or "", "reject_reason": l.reject_reason or "", "batch_no": l.batch_no or "", "bin_id": l.bin_id,
-                                                                       "remarks": l.remarks or ""}) for l in lines]
+                                                                       "manufacturing_date": _iso(l.manufacturing_date), "expiry_date": _iso(l.expiry_date),
+                                                                       "shelf_state": shelf_state(l.expiry_date, date.today()), "remarks": l.remarks or ""}) for l in lines]
     elif kind.key == "returns":
         grn = db.get(DBStoreGrn, doc.grn_id)
         lines = svc.return_lines(db, doc)
@@ -354,6 +367,9 @@ def _grn_header(db, actor, body, grn=None):
     project = body.project_id or (po.job_id if po else None)
     svc.check_project(db, actor.client.id, project)
     challan_date = svc.day(body.challan_date, "Challan date", required=False)
+    if body.gate_delivery:
+        svc.check_gate_delivery(body, po)
+        svc.gate_rates(db, actor.client.id, store.id, body.lines)
     lines = svc.build_grn_lines(db, actor.client.id, po, body.lines)
     svc.check_over_receipt(db, po, lines, exclude_grn=grn.id if grn else None)
     return store, on, po, supplier, project, challan_date, lines
@@ -363,6 +379,8 @@ def _fill_grn(grn, body, on, po, supplier, project, challan_date):
     grn.grn_date, grn.po_id, grn.supplier_name, grn.project_id = on, po.id if po else None, supplier, project
     grn.challan_no, grn.challan_date, grn.vehicle_no = svc.text(body.challan_no, "challan number", 60), challan_date, svc.text(body.vehicle_no, "vehicle number", 30)
     grn.remarks = svc.text(body.remarks, "remarks", 500)
+    grn.gate_delivery = 1 if body.gate_delivery else 0
+    grn.driver_remarks = svc.text(body.driver_remarks, "driver remarks", 300) if body.gate_delivery else ""
 
 
 @router.post("/grn")
@@ -389,6 +407,20 @@ def edit_grn(doc_id: int, body: GrnIn, request: Request, db: Session = Depends(g
     _store, on, po, supplier, project, challan_date, lines = _grn_header(db, actor, body, grn)
     _fill_grn(grn, body, on, po, supplier, project, challan_date)
     svc.write_grn_lines(db, grn, lines)
+    db.commit()
+    return doc_dict(db, svc.KINDS["grn"], grn, detail=True)
+
+
+@router.post("/grn/{doc_id}/link-po")
+def link_grn_to_po(doc_id: int, body: LinkPoIn, request: Request, db: Session = Depends(get_db)):
+    """A posted gate delivery tied to the purchase order raised for it, so the order shows it received."""
+    actor = store_actor(request, db, "store.inward.create")
+    grn = _doc(db, actor, svc.KINDS["grn"], doc_id)
+    with store_errors():
+        variance = svc.link_gate_delivery(db, actor, grn, body.po_id, body.lines)
+    po = db.get(models.DBPurchaseOrder, grn.po_id)
+    log_audit(db, actor.client.id, "store_grn_linked", "store_doc", grn.id, grn.number, "to %s, price variance %s" % (po.number, variance), request=request,
+              user_type="employee" if actor.employee is not None else "client", user_name=actor.name)
     db.commit()
     return doc_dict(db, svc.KINDS["grn"], grn, detail=True)
 

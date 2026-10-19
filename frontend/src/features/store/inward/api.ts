@@ -31,6 +31,9 @@ export interface DocLine {
   qc_note?: string
   reject_reason?: string
   batch_no?: string
+  manufacturing_date?: string
+  expiry_date?: string
+  shelf_state?: '' | 'OK' | 'NEAR' | 'EXPIRED'
   remarks?: string
   // return
   grn_line_id?: number
@@ -63,6 +66,13 @@ export interface Doc {
   project_id?: number | null
   project?: string
   qc_pending?: number
+  /** A delivery received before its purchase order, on its challan; linked to the order later. */
+  gate_delivery?: boolean
+  driver_remarks?: string
+  linked_at?: string
+  linked_by?: string
+  /** Linked: what the order's rate comes to above (or below) the rate it was received at. */
+  price_variance?: string
   grn_id?: number
   grn_number?: string
   reason?: string
@@ -77,7 +87,7 @@ export interface PoOption {
   supplier_name: string
   project_id: number | null
   issue_date: string
-  lines: { po_line_id: number; item_id: number; item_code: string; item_name: string; description: string; po_uom: string; po_qty: string; price: string; base_uom: string; ordered: string; accepted: string; pending: string }[]
+  lines: { po_line_id: number; item_id: number; item_code: string; item_name: string; description: string; po_uom: string; po_qty: string; price: string; base_uom: string; ordered: string; accepted: string; pending: string; category?: string | null; batch_tracked?: boolean }[]
 }
 export interface ReturnableLines {
   grn: { id: number; number: string; status: DocStatus; store_id: number; supplier_name: string }

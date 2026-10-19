@@ -23,6 +23,7 @@ from app.models.store_outward import (
 )
 from app.schemas.store_contracts import ReturnableOutstanding, SubconIssueLine, WriteOffRequest
 from app.services.stock_ledger import convert_to_base, get_balance, post_movement, reverse_document
+from app.services.store_batches import batches_on_hand
 from app.services.store_numbering import next_doc_number
 
 ZERO = Decimal("0")
@@ -297,7 +298,16 @@ def build_issue_lines(db, client_id, body, head, on_date, issue_id=None):
             raise HTTPException(400, "%s: only returnable items and tools have a return date." % label)
         if due is not None and due < on_date:
             raise HTTPException(400, "%s: the return date is before the issue date." % label)
-        out.append({"item": item, "entry_uom": uom, "entry_qty": q3(entry), "qty": qty, "boq_item_id": boq_id, "cost_head": head_name, "chargeable": 1 if chargeable else 0,
+        batch = text(getattr(r, "batch_no", ""), "batch", 40)
+        if batch:
+            # Taken from a batch the store holds, and not one past its expiry: expired cement or admixture is not used on site.
+            lot = next((b for b in batches_on_hand(db, body.store_id, item.id, on_date) if b["batch_no"] == batch), None)
+            if lot is None:
+                raise HTTPException(409, "%s: the store holds no batch %s of %s." % (label, batch, item.item_name))
+            if lot["state"] == "EXPIRED":
+                raise HTTPException(409, "%s: batch %s of %s expired on %s and is not issued. Write it off under Control, or choose another batch." % (
+                    label, batch, item.item_name, lot["expiry_date"]))
+        out.append({"item": item, "batch_no": batch, "entry_uom": uom, "entry_qty": q3(entry), "qty": qty, "boq_item_id": boq_id, "cost_head": head_name, "chargeable": 1 if chargeable else 0,
                     "recovery_rate": q3(rate), "recovery_basis": basis, "handling_pct": handling, "due": due, "remarks": text(r.remarks, "remarks", 200), "label": label, "indent_line_id": il_id})
     return out
 
@@ -307,7 +317,7 @@ def write_issue_lines(db, issue, lines):
     for n, l in enumerate(lines, 1):
         db.add(DBStoreIssueLine(issue_id=issue.id, line_no=n, item_id=l["item"].id, entry_uom=l["entry_uom"], entry_qty=l["entry_qty"], qty=l["qty"], boq_item_id=l["boq_item_id"],
                                 cost_head=l["cost_head"], chargeable=l["chargeable"], recovery_rate=l["recovery_rate"], recovery_basis=l["recovery_basis"], handling_pct=l["handling_pct"],
-                                expected_return_date=l["due"], remarks=l["remarks"], indent_line_id=l["indent_line_id"]))
+                                expected_return_date=l["due"], remarks=l["remarks"], indent_line_id=l["indent_line_id"], batch_no=l["batch_no"]))
     db.flush()
 
 

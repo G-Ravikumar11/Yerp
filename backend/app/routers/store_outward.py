@@ -29,6 +29,7 @@ from app.models.store_outward import (
     INDENT, ISSUE, ISSUE_RETURN, SITE, DBStoreGatePass, DBStoreIndent, DBStoreIndentLine, DBStoreIssue, DBStoreIssueLine, DBStoreIssueReturn, DBStoreOutwardLog, DBStoreWriteoffRequest,
 )
 from app.services import store_outward as svc
+from app.services.store_batches import batches_on_hand
 from app.services.stock_ledger import assert_store_access
 
 router = APIRouter(prefix="/api/store/outward", tags=["store-outward"])
@@ -46,6 +47,7 @@ class IssueLineIn(BaseModel):
     boq_item_id: Optional[int] = None
     cost_head: str = ""
     indent_line_id: Optional[int] = None  # the indent line this fills, when issued against an indent
+    batch_no: str = ""                    # the batch it is taken from; an expired one is refused
     chargeable: bool = False              # subcontractor issue: recovered from their bill (false = free of cost)
     recovery_basis: str = ""              # CONTRACT_RATE | AVERAGE_COST (the company's usual when left out)
     recovery_rate: str = ""               # the contract rate, per base unit, when the basis is CONTRACT_RATE
@@ -234,7 +236,7 @@ def doc_dict(db, kind, doc, detail=False):
                              "cost_head": l.cost_head, "chargeable": bool(l.chargeable), "recovery_basis": l.recovery_basis or "", "handling_pct": svc.s3(l.handling_pct),
                              "recovery_rate": svc.s3(l.recovery_rate), "resolved_rate": svc.s3(recs[l.id].recovery_rate) if l.id in recs else None,
                              "expected_return_date": _iso(l.expected_return_date), "returnable": svc.is_returnable(db, l.item_id),
-                             "outstanding": svc.s3(outstanding.get(l.id, ZERO)) if doc.status == DocStatus.POSTED.value else None, "remarks": l.remarks or ""} for l in lines]
+                             "outstanding": svc.s3(outstanding.get(l.id, ZERO)) if doc.status == DocStatus.POSTED.value else None, "remarks": l.remarks or "", "batch_no": l.batch_no or ""} for l in lines]
             out["warnings"] = svc.norm_warnings(db, doc)
             out["gate_passes"] = [{"id": g.id, "number": g.number, "status": g.status} for g in db.query(DBStoreGatePass).filter(DBStoreGatePass.issue_id == doc.id).order_by(DBStoreGatePass.id).all()]
     else:
@@ -266,6 +268,17 @@ def _created(db, actor, kind, doc, request, direct=False):
 def index(request: Request, db: Session = Depends(get_db)):
     """The slice's front door: the latest issues this person may see."""
     return {"slice": "outward", "items": list_documents("issue", request, limit=20, db=db)["items"]}
+
+
+@router.get("/batches")
+def batches(request: Request, store_id: int, item_id: int, on: str = "", db: Session = Depends(get_db)):
+    """The batches of an item a store holds, oldest first, with their shelf life: the one to issue first is marked."""
+    actor = store_actor(request, db, "store.outward.view")
+    svc.store_of(db, actor.client.id, store_id)
+    assert_store_access(actor.user, store_id)
+    svc.item_of(db, actor.client.id, item_id)
+    on_date = svc.day(on, "date", allow_future=True, required=False) or date.today()
+    return {"batches": batches_on_hand(db, store_id, item_id, on_date)}
 
 
 @router.get("/pick/boq-items")

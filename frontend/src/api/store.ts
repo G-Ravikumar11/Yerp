@@ -37,7 +37,7 @@ export const storeKeys = {
 
 export interface StoreOption { id: number; code: string; name: string; type: StoreType; project_id: number | null }
 export interface UomOption { code: string; to_base_factor: number }
-export interface StoreItemOption { id: number; code: string; name: string; base_uom: string; uoms: UomOption[]; category: string | null }
+export interface StoreItemOption { id: number; code: string; name: string; base_uom: string; uoms: UomOption[]; category: string | null; batch_tracked?: boolean }
 export interface StoreMeta {
   movement_types: MovementType[]; doc_statuses: DocStatus[]; cost_heads: CostHead[]; store_types: StoreType[]
   item_categories: string[]; slices: StoreSlice[]; actions: StoreAction[]
