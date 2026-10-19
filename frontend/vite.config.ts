@@ -74,6 +74,9 @@ export default defineConfig(({ mode, command }) => {
           // last deploy until the page reloaded itself. The saved app shell is the answer only when the server cannot be
           // reached. The page itself is a couple of kilobytes; the scripts it names still come from the saved copy.
           navigateFallback: null,
+          // Not "/next/ is /next/index.html": that let the saved copy answer the home page itself, so after a deploy the
+          // Command Center came back as the old build however often it was reloaded. Every page asks the server first.
+          directoryIndex: '',
           runtimeCaching: [
             {
               urlPattern: ({ request, url }) => request.mode === 'navigate' && url.pathname.startsWith('/next'),

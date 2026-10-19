@@ -29,6 +29,24 @@ export function noteAnswer(res: Response) {
   if (reset) void resetIfAsked(reset)
 }
 
+const FRESH = '_build'
+
+/** Opens this page again from the server, never from a saved copy. A plain reload let an older offline worker answer the
+    home page with the build it had saved, so the app came back unchanged. Asked for with a parameter the saved copy
+    does not know, the server answers; the parameter is taken off the address once the page is up (see below). */
+export function reloadFresh() {
+  const url = new URL(window.location.href)
+  url.searchParams.set(FRESH, newer || String(Date.now()))
+  window.location.replace(url.href)
+}
+
+// The page just opened by reloadFresh: tidy its address.
+if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has(FRESH)) {
+  const url = new URL(window.location.href)
+  url.searchParams.delete(FRESH)
+  window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash)
+}
+
 /** Loads the newer build. Once per build: if the page that loads is still not it (the deploy not finished), carry on
     rather than loop. */
 function loadNewer() {
@@ -37,7 +55,7 @@ function loadNewer() {
     if (sessionStorage.getItem(key) === newer) return
     sessionStorage.setItem(key, newer)
   } catch { /* storage blocked: load it anyway, this once */ }
-  window.location.reload()
+  reloadFresh()
 }
 
 /** Something the person may be in the middle of, that a reload would lose: a form, a dialog, a box being typed in. */
@@ -87,7 +105,7 @@ export function FreshBuild() {
   // Drawn without JSX so this file stays plain TypeScript beside the helpers it shares.
   return createElement('div', { role: 'status', className: 'fixed inset-x-0 bottom-4 z-[90] mx-auto flex w-fit max-w-[calc(100%-2rem)] items-center gap-3 rounded-lg border border-border bg-card px-4 py-2.5 text-sm shadow-md' },
     createElement('span', null, 'A new version of Y ERP is ready.'),
-    createElement('button', { type: 'button', className: 'rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground', onClick: () => window.location.reload() }, 'Reload'))
+    createElement('button', { type: 'button', className: 'rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground', onClick: reloadFresh }, 'Reload'))
 }
 
 /* --- Starting a device clean --------------------------------------------------------------------------------------

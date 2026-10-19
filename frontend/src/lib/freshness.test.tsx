@@ -9,12 +9,12 @@ async function load() {
   return import('./freshness')
 }
 
-const reload = vi.fn()
+const replace = vi.fn()
 
 describe('coming back to an app left open over a deploy', () => {
   beforeEach(() => {
-    reload.mockReset()
-    Object.defineProperty(window, 'location', { configurable: true, value: { ...window.location, reload } })
+    replace.mockReset()
+    Object.defineProperty(window, 'location', { configurable: true, value: { href: 'http://localhost/next/', search: '', replace } })
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { headers: { 'X-App-Build': 'a-newer-build' } })))
     sessionStorage.clear()
   })
@@ -35,7 +35,8 @@ describe('coming back to an app left open over a deploy', () => {
     const { FreshBuild } = await load()
     render(<MemoryRouter><FreshBuild /></MemoryRouter>)
     await comeBack()
-    await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1))
+    // From the server, not a saved copy: the address carries the build asked for, which no saved copy answers.
+    await vi.waitFor(() => expect(replace).toHaveBeenCalledWith('http://localhost/next/?_build=a-newer-build'))
   })
 
   it('offers the reload instead when a form is open, and does not take what was typed', async () => {
@@ -43,6 +44,6 @@ describe('coming back to an app left open over a deploy', () => {
     render(<MemoryRouter><form><input aria-label="Quantity" /></form><FreshBuild /></MemoryRouter>)
     await comeBack()
     await vi.waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('A new version of Y ERP is ready.'))
-    expect(reload).not.toHaveBeenCalled()
+    expect(replace).not.toHaveBeenCalled()
   })
 })
