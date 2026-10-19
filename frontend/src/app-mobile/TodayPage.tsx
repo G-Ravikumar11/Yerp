@@ -47,7 +47,7 @@ export default function TodayPage() {
   const plan = useDayPlan(site?.id ?? 0, today())
   const attention = useAttention()
   const inbox = useInbox()
-  if (isLoading) return <Skeleton className="mt-4 h-64 w-full rounded-3xl" />
+  if (isLoading) return <Skeleton className="mt-4 h-64 w-full rounded-lg" />
   if (user?.headOffice) return <Navigate to="/ho" replace />
 
   const tasks = plan.data?.tasks ?? []
@@ -80,7 +80,7 @@ export default function TodayPage() {
         <div role="tablist" aria-label="Site" className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {list.map((p) => (
             <button key={p.id} role="tab" aria-selected={p.id === site?.id} type="button" onClick={() => set(p.id)}
-              className={cn('h-9 shrink-0 rounded-full px-4 text-sm font-medium', p.id === site?.id ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground')}>
+              className={cn('h-9 shrink-0 rounded-md px-4 text-sm font-medium', p.id === site?.id ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground')}>
               {p.name}
             </button>
           ))}
@@ -88,7 +88,7 @@ export default function TodayPage() {
       )}
 
       {site && (
-        <Link to={`/projects/programme?job=${site.id}`} className="mt-4 flex items-center gap-4 rounded-[26px] border border-border bg-gradient-to-br from-primary/25 via-card to-card p-4">
+        <Link to={`/projects/programme?job=${site.id}`} className="mt-4 flex items-center gap-4 rounded-lg border border-border bg-card p-4">
           {plan.isPending ? <Skeleton className="size-24 rounded-full" /> : <Ring percent={percent} />}
           <div className="min-w-0">
             <div className="text-[17px] font-semibold">{tasks.length ? `${done} of ${tasks.length} tasks done` : 'Work done so far'}</div>
@@ -103,7 +103,7 @@ export default function TodayPage() {
           <Label>Quick actions</Label>
           <div className="grid grid-cols-3 gap-2 min-[360px]:grid-cols-5">
             {quick.map(({ label, path, icon: Icon, tone }) => (
-              <Link key={label} to={path} className="flex h-[84px] flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-card text-[11.5px] font-medium active:scale-95">
+              <Link key={label} to={path} className="flex h-[84px] flex-col items-center justify-center gap-2 rounded-lg border border-border bg-card text-[11.5px] font-medium active:scale-95">
                 <span className={cn('grid size-9 place-items-center rounded-xl', tone)}><Icon className="size-[18px]" /></span>{label}
               </Link>
             ))}

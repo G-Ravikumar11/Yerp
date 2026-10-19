@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import { AiMark } from '@/components/ui/ai-mark'
 import { Link } from 'react-router-dom'
-import { Sparkles } from 'lucide-react'
+
 import { Badge, Button, Field, Input, Modal, Select } from '@/components/ui'
 import { applyDraft, askPlan, draftProgramme, reviewPlan, suggestDay, type DayIdeas, type DraftSource, type PlanAnswer, type PlanDraft, type PlanReview } from '@/api/aiPlanning'
 import { useBoqs } from '@/api/boq'
@@ -22,7 +23,7 @@ export function AiPlanPanel({ job }: { job: number }) {
   return (
     <div className="mb-5 rounded-lg border border-border px-4 py-3 text-[13.5px]">
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="outline" loading={run.isPending} onClick={() => run.mutate()}><Sparkles /> Check for delays</Button>
+        <Button size="sm" variant="outline" loading={run.isPending} onClick={() => run.mutate()}><AiMark /> Check for delays</Button>
         {!review && <span className="text-muted-foreground">Looks for late and slipping activities and work waiting on something behind.</span>}
       </div>
       {review && (
@@ -39,7 +40,7 @@ export function AiPlanPanel({ job }: { job: number }) {
           <Input aria-label="Ask about this plan" className="h-9 min-w-56 flex-1" placeholder="Ask about this plan, e.g. what is holding it back?" value={q} onChange={(e) => setQ(e.target.value)} />
           <Button size="sm" type="submit" variant="outline" loading={go.isPending} disabled={!q.trim()}>Ask</Button>
         </form>
-        <div className="mt-2 flex flex-wrap gap-1.5">{QUESTIONS.map((s) => <button key={s} type="button" className="rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground hover:text-foreground" onClick={() => ask(s)}>{s}</button>)}</div>
+        <div className="mt-2 flex flex-wrap gap-1.5">{QUESTIONS.map((s) => <button key={s} type="button" className="rounded-md border border-border px-2.5 py-0.5 text-xs text-muted-foreground hover:text-foreground" onClick={() => ask(s)}>{s}</button>)}</div>
         {answer && <p aria-label="Answer" className="mt-2 text-sm">{answer.available ? answer.answer : <span className="text-muted-foreground">{answer.message}</span>}</p>}
       </div>
     </div>
@@ -57,7 +58,7 @@ export function AiDayTasks({ job, on, canAdd }: { job: number; on: string; canAd
   return (
     <div className="mb-4 rounded-lg border border-border px-4 py-3 text-[13.5px]">
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="outline" loading={run.isPending} onClick={() => run.mutate()}><Sparkles /> Suggest tasks for {on === today() ? 'today' : formatDate(on)}</Button>
+        <Button size="sm" variant="outline" loading={run.isPending} onClick={() => run.mutate()}><AiMark /> Suggest tasks for {on === today() ? 'today' : formatDate(on)}</Button>
         {!ideas && <span className="text-muted-foreground">Turns what is running, overdue and starting into a short list. You choose which to add.</span>}
       </div>
       {ideas && (
@@ -108,7 +109,7 @@ export function AiDraftModal({ job, open, onClose }: { job: number; open: boolea
           <Field label="Draft from" htmlFor="ad-wo" className="sm:col-span-2"><Select id="ad-wo" value={pick} onChange={(e) => { setFrom(e.target.value); setDraft(null) }} options={sources} /></Field>
           <Field label="The work starts on" htmlFor="ad-start"><Input id="ad-start" type="date" value={start} onChange={(e) => { setStart(e.target.value); setDraft(null) }} /></Field>
           <Field label="And finishes by" htmlFor="ad-finish"><Input id="ad-finish" type="date" value={finish} onChange={(e) => { setFinish(e.target.value); setDraft(null) }} /></Field>
-          <div className="sm:col-span-2"><Button variant="outline" loading={make.isPending} disabled={!pick || !start || !finish} onClick={() => make.mutate()}><Sparkles /> Suggest a programme</Button></div>
+          <div className="sm:col-span-2"><Button variant="outline" loading={make.isPending} disabled={!pick || !start || !finish} onClick={() => make.mutate()}><AiMark /> Suggest a programme</Button></div>
         </div>
       )}
       {draft && !draft.available && <p role="alert" className="mt-4 text-sm text-muted-foreground">{draft.message}</p>}

@@ -30,7 +30,7 @@ function AnswerButtons({ value, onChange, label }: { value: string; onChange: (v
     <div role="radiogroup" aria-label={label} className="inline-grid grid-cols-3 gap-0.5 rounded-full border border-border bg-card p-0.5 text-[12px]">
       {ANSWERS.map((a) => (
         <button key={a.v} type="button" role="radio" aria-checked={value === a.v} onClick={() => onChange(value === a.v ? '' : a.v)}
-          className={'rounded-full px-2.5 py-1 font-medium transition-colors ' + (value === a.v ? 'bg-[var(--primary)] text-white' : 'text-foreground hover:bg-muted')}>
+          className={'rounded-md px-2.5 py-1 font-medium transition-colors ' + (value === a.v ? 'bg-[var(--primary)] text-white' : 'text-foreground hover:bg-muted')}>
           {a.label}
         </button>
       ))}

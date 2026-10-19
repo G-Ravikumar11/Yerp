@@ -48,7 +48,7 @@ function VoucherForm({ onSaved }: { onSaved: () => void }) {
   const cell = 'h-9 w-full rounded-md border border-border bg-background px-2 text-[13px] outline-none focus:border-primary'
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-5 sm:p-6">
+    <div className="rounded-lg border border-border bg-card p-5 sm:p-6">
       <h2 className="mb-5 text-center text-lg font-bold tracking-[0.12em]">MATERIAL ISSUE VOUCHER</h2>
       <div className="grid gap-4 lg:grid-cols-[1fr_16rem]">
         <div className="grid gap-4 sm:grid-cols-2">

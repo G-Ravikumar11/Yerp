@@ -157,7 +157,7 @@ export function BoqPickerModal({ job, onClose, anchor = null, onDone }: { job: n
                   className={`border-b border-border/60 last:border-b-0 ${on ? 'bg-primary-soft/60' : ''}`}>
                   <div className="flex min-h-9 items-center gap-2 px-2 py-1 text-[13px]" style={{ paddingLeft: 8 + n.level * 18 }}>
                     {n.heading ? (
-                      <button type="button" aria-label={open.has(n.id) ? `Close ${n.name}` : `Open ${n.name}`} onClick={() => expand(n.id)} className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-accent">
+                      <button type="button" aria-label={open.has(n.id) ? `Close ${n.name}` : `Open ${n.name}`} onClick={() => expand(n.id)} className="grid size-5 place-items-center rounded-md text-muted-foreground hover:bg-accent">
                         {open.has(n.id) || find.trim() ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
                       </button>
                     ) : <span className="w-5" />}

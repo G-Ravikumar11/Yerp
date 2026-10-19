@@ -94,7 +94,7 @@ function Body({ ncr: n, history, onClose, onPhotos }: { ncr: Ncr; history?: impo
   return (
     <div className="grid gap-4">
       <ol aria-label="Progress" className="flex flex-wrap items-center gap-1.5 text-xs">
-        {STEPS.map(([s, label], k) => <li key={s} aria-current={k === at ? 'step' : undefined} className={`rounded-full px-2.5 py-1 ring-1 ring-inset ${k === at ? 'bg-primary-soft font-semibold text-primary ring-primary/25' : k < at ? 'text-foreground ring-border' : 'text-muted-foreground ring-border'}`}>{k < at ? '✓ ' : ''}{label}</li>)}
+        {STEPS.map(([s, label], k) => <li key={s} aria-current={k === at ? 'step' : undefined} className={`rounded-md px-2.5 py-1 ring-1 ring-inset ${k === at ? 'bg-primary-soft font-semibold text-primary ring-primary/25' : k < at ? 'text-foreground ring-border' : 'text-muted-foreground ring-border'}`}>{k < at ? '✓ ' : ''}{label}</li>)}
       </ol>
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone={ncrTone(n.status, n.overdue)} dot>{n.overdue ? 'Late - ' : ''}{n.status_label}</Badge>

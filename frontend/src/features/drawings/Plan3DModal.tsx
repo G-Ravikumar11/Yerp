@@ -43,7 +43,7 @@ function labelTexture(T: typeof import('three'), text: string, dark: boolean) {
  */
 async function mountPlan(canvas: HTMLCanvasElement, plan: Plan3D): Promise<PlanView> {
   const [T, utils] = await Promise.all([import('three'), import('three/examples/jsm/utils/BufferGeometryUtils.js')])
-  const dark = document.documentElement.classList.contains('dark') || window.matchMedia('(prefers-color-scheme: dark)').matches
+  const dark = true // the app is dark only
 
   // Where the plan sits in the picture, so it is centred however it was drawn.
   const xs: number[] = []

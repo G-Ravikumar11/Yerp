@@ -46,9 +46,8 @@ export default function MobileShell() {
     // --tabbar is the height of the bottom bar: shorter when the phone is turned on its side, so the screen keeps its room.
     // The sides keep clear of a camera cut-out or a fold (the safe-area insets), which only show up when turned.
     <div className="relative isolate min-h-dvh [--tabbar:64px] [@media(max-height:480px)]:[--tabbar:56px]">
-      <div aria-hidden className="app-backdrop pointer-events-none fixed inset-0 -z-10" />
       {!isTab && (
-        <header className="sticky top-0 z-30 flex h-12 items-center gap-1 border-b border-border bg-background/90 pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))] backdrop-blur-xl">
+        <header className="sticky top-0 z-30 flex h-12 items-center gap-1 border-b border-border bg-background pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))]">
           <button type="button" onClick={() => (window.history.length > 1 ? go(-1) : go('/'))} className="flex h-10 items-center gap-0.5 rounded-xl pl-1 pr-3 text-[15px] font-medium text-primary active:opacity-60">
             <ChevronLeft className="size-6" />Back
           </button>
@@ -63,7 +62,7 @@ export default function MobileShell() {
         )}>
         {!isLoading && !isAnonymous && !pathname.startsWith('/settings') && pathname === '/more' && <CompanyNotice />}
         {isLoading ? (
-          <div className="space-y-4" role="status" aria-label="Loading"><Skeleton className="h-9 w-48" /><Skeleton className="h-48 w-full rounded-3xl" /></div>
+          <div className="space-y-4" role="status" aria-label="Loading"><Skeleton className="h-9 w-48" /><Skeleton className="h-48 w-full rounded-lg" /></div>
         ) : isAnonymous || error ? (
           <div className="py-24 text-center">
             <h1 className="text-2xl font-semibold">{error ? 'Could not reach the server' : 'Please sign in'}</h1>
@@ -72,7 +71,7 @@ export default function MobileShell() {
           </div>
         ) : (
           <PageErrorBoundary resetKey={pathname}>
-            <Suspense fallback={<div className="space-y-4" role="status" aria-label="Loading"><Skeleton className="h-9 w-48" /><Skeleton className="h-64 w-full rounded-3xl" /></div>}>
+            <Suspense fallback={<div className="space-y-4" role="status" aria-label="Loading"><Skeleton className="h-9 w-48" /><Skeleton className="h-64 w-full rounded-lg" /></div>}>
               <Outlet />
             </Suspense>
           </PageErrorBoundary>

@@ -36,7 +36,7 @@ function PortalCard({ pt, level, roleLevel, readOnly, onChange }: { pt: Portal; 
       <div role="radiogroup" aria-label={`${pt.label} access`} className="mt-4 grid grid-cols-3 gap-1 rounded-full border border-border bg-card p-1 text-[13px]">
         {LEVELS.map((l) => (
           <button key={l.code} type="button" role="radio" aria-checked={level === l.code} disabled={fixed} onClick={() => onChange(l.code)}
-            className={'rounded-full px-2 py-2 font-medium transition-colors disabled:cursor-default ' + (level === l.code ? 'bg-[var(--primary)] text-white shadow-sm' : 'text-foreground hover:bg-muted disabled:hover:bg-transparent') + (fixed && level !== l.code ? ' text-muted-foreground' : '')}>
+            className={'rounded-md px-2 py-2 font-medium transition-colors disabled:cursor-default ' + (level === l.code ? 'bg-[var(--primary)] text-white shadow-sm' : 'text-foreground hover:bg-muted disabled:hover:bg-transparent') + (fixed && level !== l.code ? ' text-muted-foreground' : '')}>
             {l.label}
           </button>
         ))}
@@ -68,7 +68,7 @@ function SitePicker({ id, jobs, value, onChange }: { id: string; jobs: { id: num
               return (
                 <button key={j.id} type="button" role="option" aria-selected={on} onClick={() => onChange(on ? value.filter((x) => x !== j.id) : [...value, j.id])}
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted">
-                  <span className="flex size-4 items-center justify-center rounded border border-border">{on && <Check className="size-3" />}</span>
+                  <span className="flex size-4 items-center justify-center rounded-md border border-border">{on && <Check className="size-3" />}</span>
                   {j.number} {j.name}
                 </button>
               )

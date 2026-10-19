@@ -71,7 +71,7 @@ export function ItemPicker({ value, onChange, placeholder = 'Search item code or
         }}
       />
       {open && (
-        <ul role="listbox" className="absolute z-30 mt-1 max-h-64 w-full overflow-auto rounded-md border border-input bg-popover py-1 text-sm shadow-lg">
+        <ul role="listbox" className="absolute z-30 mt-1 max-h-64 w-full overflow-auto rounded-md border border-input bg-popover py-1 text-sm shadow-md">
           {(q.data ?? []).map((it) => (
             <li key={it.id} role="option" aria-selected={false}>
               <button

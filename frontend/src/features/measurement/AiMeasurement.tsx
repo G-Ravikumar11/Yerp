@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { AlertTriangle, ScanText, Sparkles } from 'lucide-react'
+import { AiMark } from '@/components/ui/ai-mark'
+import { AlertTriangle, ScanText } from 'lucide-react'
 import { Badge, Button, Field, Input, Modal, Textarea } from '@/components/ui'
 import { analyseBook, askBook, readSheet, type BookAnswer, type MeasurementAnalysis, type ReadSheet } from '@/api/aiMeasurement'
 import type { Flag } from '@/api/aiSubcontracts'
@@ -17,7 +18,7 @@ export function BookAnalysis({ orderId }: { orderId: number }) {
   return (
     <div className="mb-4 rounded-lg border border-border px-4 py-3 text-[13.5px]">
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="outline" loading={run.isPending} onClick={() => run.mutate()}><Sparkles /> Analyse the book</Button>
+        <Button size="sm" variant="outline" loading={run.isPending} onClick={() => run.mutate()}><AiMark /> Analyse the book</Button>
         {!out && <span className="text-muted-foreground">Looks for over-measured items, double entries, odd quantities and work running behind time.</span>}
       </div>
       {out && (
@@ -49,7 +50,7 @@ function AskBook({ orderId }: { orderId: number }) {
         <Input aria-label="Ask about this book" className="h-9 min-w-56 flex-1" placeholder="Ask about this book, e.g. which items are behind?" value={q} onChange={(e) => setQ(e.target.value)} />
         <Button size="sm" type="submit" variant="outline" loading={go.isPending} disabled={!q.trim()}>Ask</Button>
       </form>
-      <div className="mt-2 flex flex-wrap gap-1.5">{QUESTIONS.map((s) => <button key={s} type="button" className="rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground hover:text-foreground" onClick={() => ask(s)}>{s}</button>)}</div>
+      <div className="mt-2 flex flex-wrap gap-1.5">{QUESTIONS.map((s) => <button key={s} type="button" className="rounded-md border border-border px-2.5 py-0.5 text-xs text-muted-foreground hover:text-foreground" onClick={() => ask(s)}>{s}</button>)}</div>
       {answer && <p aria-label="Answer" className="mt-2 text-sm">{answer.available ? answer.answer : <span className="text-muted-foreground">{answer.message}</span>}</p>}
     </div>
   )

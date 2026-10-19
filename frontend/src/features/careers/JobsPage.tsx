@@ -56,8 +56,8 @@ export default function JobsPage() {
             <article key={j.reference} className="rounded-xl border border-border bg-card p-5">
               <div className="flex items-start justify-between gap-3"><h2 className="text-lg font-semibold">{j.title}</h2><span className="text-xs text-muted-foreground">{j.reference}</span></div>
               <div className="my-2 flex flex-wrap gap-1.5 text-xs">
-                {chips.map((c) => <span key={c} className="rounded-full bg-muted px-2.5 py-0.5">{c}</span>)}
-                {pay(j) && <span className="rounded-full bg-success-soft px-2.5 py-0.5 text-success">{pay(j)}</span>}
+                {chips.map((c) => <span key={c} className="rounded-md bg-muted px-2.5 py-0.5">{c}</span>)}
+                {pay(j) && <span className="rounded-md bg-success-soft px-2.5 py-0.5 text-success">{pay(j)}</span>}
               </div>
               {j.description && <p className="whitespace-pre-line text-sm">{j.description}</p>}
               {j.requirements && <details className="mt-2 text-sm"><summary className="cursor-pointer font-medium">What we are looking for</summary><p className="mt-1 whitespace-pre-line text-muted-foreground">{j.requirements}</p></details>}

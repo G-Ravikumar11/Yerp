@@ -256,3 +256,11 @@ def test_enquiry_follows_store_assignments_and_company(account, portal, second_t
     assert second_tenant.get(E + "/balances").json()["total"] == 0
     assert second_tenant.get(E + "/items/%d" % item).status_code == 404
     assert second_tenant.get(E + "/balances", params={"store_id": a["id"]}).status_code == 404
+
+
+def test_quick_find_groups_stock_for_the_home_page_search(account):
+    tenant = account["client"]
+    store, item, _cid = seed(account, qty="15", rate="5")
+    assert tenant.get(E + "/quick", params={"q": "s"}).json()["rows"] == []                  # too short to search
+    rows = tenant.get(E + "/quick", params={"q": "seed item"}).json()["rows"]
+    assert len(rows) == 1 and rows[0]["item_id"] == item and rows[0]["qty"] == "15.000" and rows[0]["stores"] == 1

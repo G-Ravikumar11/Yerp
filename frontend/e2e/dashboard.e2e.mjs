@@ -30,9 +30,6 @@ check('the attention list shows what needs a look, each a link', attention > 0, 
 
 if (SHOTS) {
   await page.evaluate(() => window.scrollTo(0, 0))
-  await page.screenshot({ path: SHOTS + '/dash-dark.png' })
-  await page.evaluate(() => document.querySelector('[aria-label="Light"]').click())
-  await sleep(600)
-  await page.screenshot({ path: SHOTS + '/dash-light.png' })
+  await page.screenshot({ path: SHOTS + '/dash.png' })
 }
 await done()

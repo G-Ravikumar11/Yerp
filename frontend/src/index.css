@@ -3,39 +3,35 @@
 @import '@fontsource-variable/jetbrains-mono';
 @import 'tailwindcss';
 
-/* Dark is a class, not only a media query, so the theme toggle can override
-   the operating system. See the inline script in index.html. */
-@custom-variant dark (&:where(.dark, .dark *));
-
 /* ==========================================================================
    Design tokens
    --------------------------------------------------------------------------
-   One accent - "ember", a safety-orange copper that reads as site kit rather
-   than SaaS blue - on cool zinc neutrals. Surfaces get lighter as they rise
-   in dark mode and darker in light mode, so depth is felt, not outlined.
+   Plain, solid and functional, dark only. Primary is blue, the accent is
+   hard-hat amber, on cool neutral greys. No gradients, glows, blur or
+   decorative motion: every colour carries hierarchy, state or feedback.
    Everything a component paints comes from a semantic token below; the raw
    scales exist to define those and for charts.
    ========================================================================== */
 
 /* static: emit every token, used or not - the design page and charts read them by name. */
 @theme static {
-  /* Ember - the brand accent */
-  --color-ember-50: oklch(0.98 0.015 70);
-  --color-ember-100: oklch(0.955 0.04 70);
-  --color-ember-200: oklch(0.91 0.075 65);
-  --color-ember-300: oklch(0.85 0.12 60);
-  --color-ember-400: oklch(0.78 0.16 55);
-  --color-ember-500: oklch(0.71 0.18 50);
-  --color-ember-600: oklch(0.63 0.18 45);
-  --color-ember-700: oklch(0.54 0.16 42);
-  --color-ember-800: oklch(0.45 0.13 40);
-  --color-ember-900: oklch(0.38 0.1 40);
-  --color-ember-950: oklch(0.26 0.07 40);
+  /* Amber - the accent (500 is #dc6803). The name "ember" is kept so existing classes still resolve. */
+  --color-ember-50: #fff7ed;
+  --color-ember-100: #ffedd5;
+  --color-ember-200: #fed7aa;
+  --color-ember-300: #fdba74;
+  --color-ember-400: #f79009;
+  --color-ember-500: #dc6803;
+  --color-ember-600: #b54708;
+  --color-ember-700: #93370d;
+  --color-ember-800: #7a2e0e;
+  --color-ember-900: #6c2711;
+  --color-ember-950: #4e1d09;
 
-  /* Steel - the cool counterpoint, for charts and secondary emphasis */
-  --color-steel-400: oklch(0.72 0.09 250);
-  --color-steel-500: oklch(0.62 0.12 255);
-  --color-steel-600: oklch(0.52 0.13 258);
+  /* Steel - the info blue, for charts and secondary emphasis */
+  --color-steel-400: #3b63c4;
+  --color-steel-500: #2a4bb5;
+  --color-steel-600: #1e40af;
 
   /* Semantic, theme-aware (values set per theme below) */
   --color-background: var(--background);
@@ -67,6 +63,7 @@
   --color-invalid: var(--error-tint);
   --color-sidebar: var(--sidebar);
   --color-sidebar-border: var(--sidebar-border);
+  --color-body: var(--body);
 
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
@@ -80,149 +77,86 @@
   --font-display: 'Outfit Variable', 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
-  --radius-sm: 0.5rem;
-  --radius-md: 0.625rem;
-  --radius-lg: 0.875rem;
-  --radius-xl: 1.125rem;
-  --radius-2xl: 1.5rem;
+  /* Radius is capped at 8px: 4px small elements, 6px default, 8px modals and anything larger.
+     Full rounding (rounded-full) is for avatars, dots and switches only. */
+  --radius-xs: 4px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 8px;
+  --radius-2xl: 8px;
+  --radius-3xl: 8px;
+  --radius-4xl: 8px;
 
-  --shadow-xs: 0 1px 2px 0 oklch(0 0 0 / 0.05);
-  --shadow-card: 0 1px 2px 0 oklch(0 0 0 / 0.04), 0 4px 16px -4px oklch(0 0 0 / 0.06);
-  --shadow-lift: 0 2px 4px 0 oklch(0 0 0 / 0.05), 0 12px 32px -8px oklch(0 0 0 / 0.16);
-  --shadow-pop: 0 4px 8px 0 oklch(0 0 0 / 0.08), 0 24px 64px -12px oklch(0 0 0 / 0.32);
-  --shadow-glow: 0 0 0 1px oklch(0.71 0.18 50 / 0.5), 0 0 24px -4px oklch(0.71 0.18 50 / 0.45);
+  /* Shadows stop at --shadow-md (4px 8px, 0.08). Cards use xs or sm; dropdowns, popovers and modals use md.
+     The larger Tailwind sizes are the same as md, so nothing can be heavier. */
+  --shadow-2xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.08);
+  --shadow-lg: var(--shadow-md);
+  --shadow-xl: var(--shadow-md);
+  --shadow-2xl: var(--shadow-md);
+  --shadow-card: var(--shadow-xs);
+  --shadow-lift: var(--shadow-md);
+  --shadow-pop: var(--shadow-md);
 
-  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-
-  --animate-fade-in: fade-in 0.35s var(--ease-out-expo) both;
-  --animate-slide-up: slide-up 0.45s var(--ease-out-expo) both;
-  --animate-pop: pop 0.28s var(--ease-spring) both;
+  --animate-fade-in: fade-in 0.15s ease-out both;
+  --animate-slide-up: fade-in 0.15s ease-out both;
+  --animate-pop: fade-in 0.15s ease-out both;
 
   @keyframes fade-in {
     from { opacity: 0; }
     to { opacity: 1; }
   }
-  @keyframes slide-up {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-  @keyframes pop {
-    from { opacity: 0; transform: scale(0.96); }
-    to { opacity: 1; transform: scale(1); }
-  }
 }
 
-/* ---- Light -------------------------------------------------------------- */
+/* ---- Dark: the app's only theme ------------------------------------------ */
 :root {
-  --radius: 0.75rem;
+  --radius: 6px;
 
-  --background: oklch(0.982 0.003 90);
-  --foreground: oklch(0.205 0.012 270);
-  --surface: oklch(0.965 0.004 90);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.205 0.012 270);
-  --popover: oklch(1 0 0);
-  --muted: oklch(0.955 0.004 90);
-  --muted-foreground: oklch(0.5 0.012 270);
-  --subtle: oklch(0.72 0.01 270);
-  --border: oklch(0.915 0.005 90);
-  --input: oklch(0.88 0.006 90);
-  --ring: oklch(0.71 0.18 50);
+  --background: #111827;
+  --foreground: #f9fafb;
+  --surface: #1f2937;
+  --card: #1f2937;
+  --card-foreground: #f9fafb;
+  --popover: #1f2937;
+  --muted: #374151;
+  --muted-foreground: #9ca3af;
+  --subtle: #6b7280;
+  --border: #374151;
+  --input: #4b5563;
+  --ring: #3b82f6;
+  --body: #d1d5db;
 
-  --primary: var(--color-ember-500);
-  --primary-foreground: oklch(0.2 0.03 45);
-  --primary-soft: oklch(0.96 0.035 65);
-  --accent: oklch(0.955 0.012 70);
-  --accent-foreground: oklch(0.3 0.03 45);
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --primary-soft: #1e2d52;
+  --accent: #374151;
+  --accent-foreground: #f3f4f6;
 
-  --success: oklch(0.58 0.14 155);
-  --success-soft: oklch(0.96 0.04 155);
-  --warning: oklch(0.7 0.15 80);
-  --warning-soft: oklch(0.97 0.05 90);
-  --danger: oklch(0.58 0.2 25);
-  --danger-soft: oklch(0.965 0.03 25);
-  --info: oklch(0.58 0.12 245);
-  --info-soft: oklch(0.96 0.025 245);
+  --success: #3d9468;
+  --success-soft: #1d3a2d;
+  --warning: #ca8a04;
+  --warning-soft: #3a3014;
+  --danger: #dc5252;
+  --danger-soft: #3d2020;
+  --info: #6b8be0;
+  --info-soft: #1f2a4a;
 
   /* Solid, not see-through: a pinned cell sits over the ones scrolling
      beneath it, and a translucent tint would let their text show through. */
-  --select-tint: color-mix(in oklab, var(--card) 86%, var(--color-ember-500));
-  --error-tint: color-mix(in oklab, var(--card) 88%, var(--danger));
+  --select-tint: #1e2d52;
+  --error-tint: #3d2020;
 
-  --sidebar: oklch(0.99 0.002 90);
-  --sidebar-border: oklch(0.925 0.005 90);
+  --sidebar: #111827;
+  --sidebar-border: #374151;
 
-  --chart-1: var(--color-ember-500);
-  --chart-2: var(--color-steel-500);
-  --chart-3: oklch(0.66 0.13 165);
-  --chart-4: oklch(0.72 0.12 90);
-  --chart-5: oklch(0.6 0.14 320);
-}
-
-/* ---- Dark --------------------------------------------------------------- */
-.dark {
-  --background: oklch(0.145 0.007 270);
-  --foreground: oklch(0.965 0.004 90);
-  --surface: oklch(0.175 0.008 270);
-  --card: oklch(0.195 0.009 270);
-  --card-foreground: oklch(0.965 0.004 90);
-  --popover: oklch(0.215 0.01 270);
-  --muted: oklch(0.235 0.01 270);
-  --muted-foreground: oklch(0.7 0.012 270);
-  --subtle: oklch(0.5 0.012 270);
-  --border: oklch(1 0 0 / 0.08);
-  --input: oklch(1 0 0 / 0.13);
-  --ring: oklch(0.78 0.16 55);
-
-  --primary: var(--color-ember-400);
-  --primary-foreground: oklch(0.18 0.03 45);
-  --primary-soft: oklch(0.71 0.18 50 / 0.14);
-  --accent: oklch(1 0 0 / 0.06);
-  --accent-foreground: oklch(0.96 0.02 70);
-
-  --success: oklch(0.74 0.15 155);
-  --success-soft: oklch(0.74 0.15 155 / 0.14);
-  --warning: oklch(0.82 0.15 85);
-  --warning-soft: oklch(0.82 0.15 85 / 0.14);
-  --danger: oklch(0.7 0.19 25);
-  --danger-soft: oklch(0.7 0.19 25 / 0.15);
-  --info: oklch(0.74 0.11 245);
-  --info-soft: oklch(0.74 0.11 245 / 0.15);
-
-  --sidebar: oklch(0.165 0.008 270);
-  --sidebar-border: oklch(1 0 0 / 0.07);
-
-  --chart-1: var(--color-ember-400);
-  --chart-2: var(--color-steel-400);
-  --chart-3: oklch(0.76 0.13 165);
-  --chart-4: oklch(0.82 0.12 90);
-  --chart-5: oklch(0.72 0.14 320);
-
-  --shadow-card: 0 1px 0 0 oklch(1 0 0 / 0.04) inset, 0 8px 24px -8px oklch(0 0 0 / 0.5);
-  --shadow-lift: 0 1px 0 0 oklch(1 0 0 / 0.05) inset, 0 16px 40px -10px oklch(0 0 0 / 0.6);
-  --shadow-pop: 0 1px 0 0 oklch(1 0 0 / 0.06) inset, 0 32px 80px -16px oklch(0 0 0 / 0.75);
-}
-
-/* ---- App backdrop ---------------------------------------------------------
-   Soft washes behind every screen: ice blues in the light theme, a gentle glow in the dark one. */
-.app-backdrop {
-  /* fades out towards the bottom so it never ends in a visible edge */
-  -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
-  /* soft ice blues - the blues of the company's logo - light enough that cards and text stay crisp on top */
-  background:
-    radial-gradient(60% 65% at 8% 0%, oklch(0.9 0.06 245 / 0.75), transparent 72%),
-    radial-gradient(50% 55% at 92% 4%, oklch(0.91 0.05 275 / 0.6), transparent 72%),
-    radial-gradient(60% 50% at 52% 46%, oklch(0.95 0.035 215 / 0.5), transparent 74%),
-    radial-gradient(50% 45% at 100% 100%, oklch(0.93 0.04 240 / 0.45), transparent 72%);
-}
-.dark .app-backdrop {
-  background:
-    radial-gradient(55% 60% at 8% 0%, oklch(0.58 0.12 60 / 0.34), transparent 72%),
-    radial-gradient(48% 55% at 92% 4%, oklch(0.5 0.12 295 / 0.3), transparent 72%),
-    radial-gradient(55% 50% at 52% 46%, oklch(0.5 0.08 180 / 0.2), transparent 74%),
-    radial-gradient(50% 45% at 100% 100%, oklch(0.5 0.1 20 / 0.2), transparent 72%);
+  --chart-1: #3b82f6;
+  --chart-2: #f79009;
+  --chart-3: #3d9468;
+  --chart-4: #ca8a04;
+  --chart-5: #9ca3af;
 }
 
 /* The thin bar under the top of the screen while the app is working. */
@@ -260,12 +194,7 @@
   .crane-crate-left, .crane-dot { opacity: 1; }
 }
 
-/* The error pages: the helmet adrift bobs gently and the stars twinkle. */
-.error-float { animation: error-float 6s ease-in-out infinite; transform-origin: 50% 50%; }
-.error-twinkle { animation: error-twinkle 2.4s ease-in-out infinite; }
-@keyframes error-float { 0%, 100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-14px) rotate(3deg); } }
-@keyframes error-twinkle { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
-@media (prefers-reduced-motion: reduce) { .error-float, .error-twinkle { animation: none; } }
+/* The error pages: static picture, no motion. */
 
 /* ---- Base --------------------------------------------------------------- */
 @layer base {
@@ -275,9 +204,6 @@
 
   html {
     -webkit-text-size-adjust: 100%;
-    color-scheme: light;
-  }
-  html.dark {
     color-scheme: dark;
   }
 
@@ -290,9 +216,6 @@
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
     min-height: 100dvh;
-    /* A whisper of accent at the top edge gives the page a light source. */
-    background-image: radial-gradient(60rem 28rem at 50% -12rem, oklch(0.71 0.18 50 / 0.07), transparent 70%);
-    background-repeat: no-repeat;
   }
 
   h1, h2, h3, h4 {
@@ -302,7 +225,7 @@
   }
 
   ::selection {
-    background: oklch(0.71 0.18 50 / 0.3);
+    background: #1e3a8a;
   }
 
   :focus-visible {
@@ -321,22 +244,32 @@
   /* Slim scrollbars that stay out of the way of a data grid. */
   * {
     scrollbar-width: thin;
-    scrollbar-color: oklch(0.5 0.01 270 / 0.4) transparent;
+    scrollbar-color: #9ca3af transparent;
   }
   *::-webkit-scrollbar {
     width: 10px;
     height: 10px;
   }
   *::-webkit-scrollbar-thumb {
-    background: oklch(0.5 0.01 270 / 0.35);
-    border-radius: 999px;
+    background: #9ca3af;
+    border-radius: 4px;
     border: 3px solid transparent;
     background-clip: content-box;
   }
   *::-webkit-scrollbar-thumb:hover {
-    background: oklch(0.5 0.01 270 / 0.6);
+    background: #6b7280;
     background-clip: content-box;
     border: 3px solid transparent;
+  }
+}
+
+/* ---- Components --------------------------------------------------------- */
+@layer components {
+  /* A flat panel: solid fill, 1px border, 6px corners. Nothing else. */
+  .surface {
+    background: var(--popover);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
   }
 }
 
@@ -350,18 +283,11 @@
   .text-balance {
     text-wrap: balance;
   }
-  .glass {
-    background: color-mix(in oklab, var(--card) 72%, transparent);
-    backdrop-filter: blur(14px) saturate(1.4);
-  }
   .hairline {
     box-shadow: 0 0 0 1px var(--border);
   }
   .ember-text {
-    background: linear-gradient(120deg, var(--color-ember-300), var(--color-ember-500) 45%, var(--color-ember-700));
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+    color: var(--color-ember-600);
   }
   .pt-safe { padding-top: env(safe-area-inset-top); }
   .pb-safe { padding-bottom: env(safe-area-inset-bottom); }

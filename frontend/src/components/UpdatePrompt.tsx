@@ -26,15 +26,15 @@ export function UpdatePrompt() {
     try { await offer.onConfirm() } finally { close() }
   }
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-6 backdrop-blur-[3px]" onClick={close}>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-6" onClick={close}>
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="update-title"
-        className="w-full max-w-sm rounded-3xl border border-border bg-card p-6 text-center shadow-2xl"
+        className="w-full max-w-sm rounded-lg border border-border bg-card p-6 text-center shadow-md"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mx-auto mb-4 grid size-14 place-items-center rounded-2xl bg-primary/15 text-primary" aria-hidden="true">
+        <div className="mx-auto mb-4 grid size-14 place-items-center rounded-lg bg-primary/15 text-primary" aria-hidden="true">
           <svg viewBox="0 0 24 24" className="size-7" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M5 21h14" /></svg>
         </div>
         <h2 id="update-title" className="text-lg font-bold">{offer.title}</h2>

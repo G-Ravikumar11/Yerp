@@ -19,8 +19,8 @@ function Form({ job, kinds, onClose }: { job: number; kinds: Record<string, stri
   const [where, setWhere] = useState('')
   const [what, setWhat] = useState('')
   const [who, setWho] = useState('')
-  const [from, setFrom] = useState(dt(new Date()))
-  const [to, setTo] = useState(dt(new Date(Date.now() + 8 * 3600_000)))
+  const [from, setFrom] = useState(() => dt(new Date()))
+  const [to, setTo] = useState(() => dt(new Date(Date.now() + 8 * 3600_000)))
   const [done, setDone] = useState<Record<string, boolean>>({})
   const items = kinds[kind] ?? []
   const save = useAction(() => issuePermit({ job_id: job, kind, location: where, description: what, receiver: who, valid_from: from, valid_to: to, precautions: items.map((item) => ({ item, done: !!done[item] })) }), { invalidate: [safetyKeys.all, ['staff']], success: (r) => `${r.permit.number} issued, until ${r.permit.valid_to}`, onSuccess: onClose })

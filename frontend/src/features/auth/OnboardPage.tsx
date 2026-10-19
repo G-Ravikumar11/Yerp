@@ -85,7 +85,7 @@ export default function OnboardPage() {
       )}
       {step === 3 && (
         <div className="grid gap-4">
-          <label htmlFor="logo-file" className="grid cursor-pointer place-items-center gap-1 rounded-xl border-2 border-dashed border-border p-8 text-center text-sm text-muted-foreground hover:border-primary">
+          <label htmlFor="logo-file" className="grid cursor-pointer place-items-center gap-1 rounded-xl border-2 border-dashed border-border p-8 text-center text-sm text-muted-foreground hover:bg-muted">
             <input id="logo-file" type="file" accept="image/*" className="sr-only" onChange={(e) => pickLogo(e.target.files?.[0])} />
             {logo ? <img src={logo} alt="Your logo" className="max-h-24" /> : <><span>Click to upload your logo</span><span className="text-xs">PNG, JPG or SVG, up to 2 MB.</span></>}
           </label>

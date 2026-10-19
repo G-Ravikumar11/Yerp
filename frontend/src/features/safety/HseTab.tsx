@@ -39,7 +39,7 @@ export function HseTab({ job, setJob, onGo, onNewPermit }: { job: number; setJob
           <Button variant="outline" asChild><a href={pdfUrl} target="_blank" rel="noopener" download="Yalavarti Infra HSE Plan.pdf"><Download /> Full plan (PDF)</a></Button>
         </div>
         <nav aria-label="On this page" className="flex w-full flex-wrap gap-1.5 border-t border-border pt-3">
-          {SECTIONS.map(([id, label]) => <a key={id} href={`#${id}`} className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground">{label}</a>)}
+          {SECTIONS.map(([id, label]) => <a key={id} href={`#${id}`} className="rounded-md border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground">{label}</a>)}
         </nav>
       </section>
 

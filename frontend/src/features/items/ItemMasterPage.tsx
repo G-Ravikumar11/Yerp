@@ -150,7 +150,7 @@ export default function ItemMasterPage() {
                 const on = f.missing === g
                 return (
                   <button key={g} type="button" aria-pressed={on} onClick={() => change({ missing: on ? '' : g })}
-                    className={cn('inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset transition-colors',
+                    className={cn('inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium ring-1 ring-inset transition-colors',
                       on ? 'bg-primary text-primary-foreground ring-primary' : 'bg-warning-soft text-warning ring-warning/30 hover:bg-warning/20')}>
                     {GAP_LABEL[g]} <span className="tabular opacity-80">{new Intl.NumberFormat('en-IN').format(gaps.data![g])}</span>
                   </button>
@@ -205,7 +205,7 @@ export default function ItemMasterPage() {
       {(chips.length > 0 || f.q) && (
         <div className="mb-3 flex flex-wrap items-center gap-2" aria-label="Filters in use">
           {chips.map((c) => (
-            <button key={c.key} type="button" className="inline-flex items-center gap-1 rounded-full bg-muted px-3 py-1 text-xs ring-1 ring-border hover:bg-muted/70" aria-label={`Remove filter ${c.label}`} onClick={() => { setPicked(new Set()); setF((s) => clearFilter(s, c.key)) }}>
+            <button key={c.key} type="button" className="inline-flex items-center gap-1 rounded-md bg-muted px-3 py-1 text-xs ring-1 ring-border hover:bg-muted/70" aria-label={`Remove filter ${c.label}`} onClick={() => { setPicked(new Set()); setF((s) => clearFilter(s, c.key)) }}>
               {c.label} <X className="size-3" />
             </button>
           ))}

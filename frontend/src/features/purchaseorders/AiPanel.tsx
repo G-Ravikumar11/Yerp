@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Mail, Sparkles } from 'lucide-react'
+import { AiMark } from '@/components/ui/ai-mark'
+import { Mail } from 'lucide-react'
 import { Badge, Button } from '@/components/ui'
 import { draftPoEmail, reviewPo, type PoEmail, type PoReview } from '@/api/aiPurchasing'
 import { useAction } from '@/lib/mutate'
@@ -15,7 +16,7 @@ export function AiPanel({ orderId }: { orderId: number }) {
   return (
     <section aria-label="AI help" className="mb-4 rounded-lg border border-border p-3 text-[13.5px]">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="mr-auto flex items-center gap-1.5 font-medium"><Sparkles className="size-4" /> Check this order</span>
+        <span className="mr-auto flex items-center gap-1.5 font-medium"><AiMark /> Check this order</span>
         <Button size="sm" variant="outline" loading={run.isPending} onClick={() => run.mutate()}>Review it</Button>
         <Button size="sm" variant="outline" loading={draft.isPending} onClick={() => draft.mutate()}><Mail /> Draft the supplier email</Button>
       </div>

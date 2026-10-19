@@ -35,7 +35,7 @@ export function DepartmentHierarchy({ dept }: { dept: Department }) {
 
   const card = (e: Employee, row: number) => (
     <button type="button" onClick={() => setShown(e)} aria-label={`${e.full_name}, ${e.job_title || 'no title'}. Show details`} className="group mx-auto block w-44 text-center">
-      <span className="relative z-10 mx-auto grid size-16 place-items-center rounded-full border-[3px] bg-white text-lg font-semibold shadow-sm transition-transform group-hover:scale-105" style={{ borderColor: tier(row), color: tier(row) }}>{initials(e.full_name)}</span>
+      <span className="relative z-10 mx-auto grid size-16 place-items-center rounded-full border-[3px] bg-white text-lg font-semibold shadow-sm" style={{ borderColor: tier(row), color: tier(row) }}>{initials(e.full_name)}</span>
       <span className="-mt-8 block rounded-sm px-2 pb-2 pt-9 text-white" style={{ background: tier(row) }}>
         <span className="block truncate text-[13px] font-semibold">{e.full_name}</span>
         <span className="block truncate text-[12px] opacity-90">{e.job_title || 'No title'}</span>

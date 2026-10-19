@@ -51,7 +51,7 @@ export function SuppliersTab({ d, onAsk, onQuote }: { d: Statement; onAsk: () =>
       cell: (r) => (r.quote ? (
         <div>
           <div className="inline-flex items-center gap-1.5 font-medium">
-            {rank.get(r.name) && <span className={rank.get(r.name) === 'L1' ? 'rounded bg-success px-1.5 py-px text-[10px] font-bold text-white' : 'rounded bg-muted px-1.5 py-px text-[10px] font-bold text-muted-foreground'}>{rank.get(r.name)}</span>}
+            {rank.get(r.name) && <span className={rank.get(r.name) === 'L1' ? 'rounded-md bg-success px-1.5 py-px text-[10px] font-bold text-white' : 'rounded-md bg-muted px-1.5 py-px text-[10px] font-bold text-muted-foreground'}>{rank.get(r.name)}</span>}
             {formatINR(r.quote.landed)}
           </div>
           {!r.quote.complete && <div className="text-xs text-warning">{r.quote.lines_quoted} of {d.lines.length} items priced</div>}

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { FileUp, Plus, Printer, Sparkles } from 'lucide-react'
+import { FileUp, Plus, Printer } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { ProjectPicker } from '@/components/data/ProjectPicker'
 import { Button, Input, Stat, StatGrid, Tabs } from '@/components/ui'
@@ -25,8 +25,8 @@ export default function SchedulePage() {
   const on = params.get('on') || today()
   const remember = (next: { job?: number; on?: string }) => setParams((p) => {
     const q = new URLSearchParams(p)
-    if (next.job !== undefined) next.job ? q.set('job', String(next.job)) : q.delete('job')
-    if (next.on !== undefined) next.on === today() ? q.delete('on') : q.set('on', next.on)
+    if (next.job !== undefined) { if (next.job) q.set('job', String(next.job)); else q.delete('job') }
+    if (next.on !== undefined) { if (next.on === today()) q.delete('on'); else q.set('on', next.on) }
     return q
   }, { replace: true })
   const setJob = (id: number) => remember({ job: id })
@@ -44,7 +44,7 @@ export default function SchedulePage() {
   const inGrid = tab === 'programme' && job > 0
   return (
     <>
-      <PageHeader eyebrow="Projects" title="Planning & Progress" description="What is to be done each day, how far along the work is, and what slips if the thing before it slips." actions={<>{!inGrid && can('workorders.manage') && <Button disabled={!job} onClick={() => setEditing('new')}><Plus /> Activity</Button>}{!inGrid && <Button variant="outline" disabled={!job} onClick={() => setDrawing(true)}>Draw from BOQ</Button>}{!inGrid && <Button variant="outline" disabled={!job} onClick={() => setImporting(true)}><FileUp /> Import a programme</Button>}{can('workorders.manage') && <Button variant="outline" disabled={!job} onClick={() => setDrafting(true)}><Sparkles /> Draft with AI</Button>}<Button variant="outline" onClick={() => (inGrid ? window.open(programmeFileUrl(job, 'pdf'), '_blank') : window.print())}><Printer /> {inGrid ? 'Print A3 PDF' : 'Print'}</Button></>} />
+      <PageHeader eyebrow="Projects" title="Planning & Progress" description="What is to be done each day, how far along the work is, and what slips if the thing before it slips." actions={<>{!inGrid && can('workorders.manage') && <Button disabled={!job} onClick={() => setEditing('new')}><Plus /> Activity</Button>}{!inGrid && <Button variant="outline" disabled={!job} onClick={() => setDrawing(true)}>Draw from BOQ</Button>}{!inGrid && <Button variant="outline" disabled={!job} onClick={() => setImporting(true)}><FileUp /> Import a programme</Button>}{can('workorders.manage') && <Button variant="outline" disabled={!job} onClick={() => setDrafting(true)}>Draft with AI</Button>}<Button variant="outline" onClick={() => (inGrid ? window.open(programmeFileUrl(job, 'pdf'), '_blank') : window.print())}><Printer /> {inGrid ? 'Print A3 PDF' : 'Print'}</Button></>} />
       <div className="mb-4 flex flex-wrap items-end gap-4"><ProjectPicker value={job} onChange={setJob} id="sch-job" /></div>
       {job > 0 && (
         <div className="mb-5 flex flex-wrap items-center gap-3">

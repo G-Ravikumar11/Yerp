@@ -72,7 +72,7 @@ export default function ApprovalsPage() {
 
           {items.length === 0 ? (
             <Card className="grid place-items-center gap-3 py-20 text-center">
-              <span className="grid size-14 place-items-center rounded-2xl bg-success-soft text-success">
+              <span className="grid size-14 place-items-center rounded-lg bg-success-soft text-success">
                 <CheckCheck className="size-6" />
               </span>
               <p className="text-lg font-semibold">Nothing is waiting</p>

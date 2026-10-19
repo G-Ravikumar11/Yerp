@@ -101,7 +101,7 @@ export default function ReportPage({ report }: { report: ReportKey }) {
       {(mine.length > 0 || can(storePerm('reports', 'create'))) && (
         <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
           {mine.map((s) => (
-            <span key={s.id} className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1">
+            <span key={s.id} className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1">
               <button type="button" className="font-medium hover:underline" onClick={() => setP(s.params)}>{s.name}</button>
               {can(storePerm('reports', 'create')) && <button type="button" aria-label={`Remove saved report ${s.name}`} className="text-muted-foreground hover:text-danger" onClick={() => drop.mutate(s.id)}>x</button>}
             </span>

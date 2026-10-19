@@ -30,7 +30,7 @@ export function AddSheet({ open, onClose }: { open: boolean; onClose: () => void
           <motion.div
             role="dialog"
             aria-label="Add a record"
-            className="fixed inset-x-0 bottom-0 z-[51] mx-auto max-w-xl rounded-t-[28px] border border-b-0 border-border bg-card pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pb-[calc(24px+env(safe-area-inset-bottom))] pt-2.5 md:max-w-3xl"
+            className="fixed inset-x-0 bottom-0 z-[51] mx-auto max-w-xl rounded-t-lg border border-b-0 border-border bg-card pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pb-[calc(24px+env(safe-area-inset-bottom))] pt-2.5 md:max-w-3xl"
             initial={{ y: '100%' }}
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
@@ -46,7 +46,7 @@ export function AddSheet({ open, onClose }: { open: boolean; onClose: () => void
             {/* Two rows of three on a phone held upright; one row of six where there is width, or too little height for two rows. */}
             <div className="grid grid-cols-3 gap-2.5 md:grid-cols-6 [@media(max-height:480px)]:grid-cols-6">
               {tiles.map(({ label, hint, path, icon: Icon, tone }) => (
-                <button key={label} type="button" onClick={() => { onClose(); go(path) }} className="flex min-h-[104px] flex-col items-center justify-center gap-2 rounded-2xl bg-muted/60 px-1.5 py-3 text-center active:scale-95">
+                <button key={label} type="button" onClick={() => { onClose(); go(path) }} className="flex min-h-[104px] flex-col items-center justify-center gap-2 rounded-lg bg-muted/60 px-1.5 py-3 text-center active:scale-95">
                   <span className={cn('grid size-10 place-items-center rounded-xl', tone)}><Icon className="size-5" /></span>
                   <span className="text-[13px] font-semibold leading-tight">{label}</span>
                   <span className="text-[11px] leading-tight text-muted-foreground">{hint}</span>

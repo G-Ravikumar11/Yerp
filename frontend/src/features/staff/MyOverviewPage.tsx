@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { useState } from 'react'
 import { AlertTriangle, CalendarDays, FileText, Receipt, ShoppingCart, Target, Users, Wallet } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Skeleton, Stat, StatGrid } from '@/components/ui'
@@ -24,7 +25,7 @@ export default function MyOverviewPage() {
   const today = useToday()
   const dash = useMyDashboard()
   const first = (today.data?.name || user?.name || '').split(' ')[0]
-  const hour = new Date().getHours()
+  const [hour] = useState(() => new Date().getHours())
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
   const s = dash.data?.attendance_summary
 

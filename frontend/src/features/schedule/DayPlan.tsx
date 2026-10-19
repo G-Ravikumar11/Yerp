@@ -30,7 +30,7 @@ function Group({ title, hint, rows, empty, job, on, note }: { title: string; hin
               <Link
                 to={`/projects/programme/${job}/activity/${r.id}?on=${on}`}
                 aria-label={`Open ${r.name}`}
-                className="block w-full rounded-lg border border-border bg-card px-2.5 py-2 text-left shadow-card transition-colors hover:border-primary hover:bg-accent/40"
+                className="block w-full rounded-lg border border-border bg-card px-2.5 py-2 text-left shadow-card transition-colors hover:bg-muted"
               >
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="truncate text-[13px] font-semibold" title={[r.path, r.name].filter(Boolean).join(' > ')}><span className="mr-1.5 font-mono text-[10px] font-normal text-muted-foreground">{r.wbs || r.code}</span>{r.path && <span className="mr-1 font-normal text-muted-foreground">{r.path} &rsaquo;</span>}{r.name}</span>
