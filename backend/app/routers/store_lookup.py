@@ -8,7 +8,7 @@ from app import models
 from app.core.permissions import STORE_ACTIONS, STORE_SLICES
 from app.core.store_auth import store_actor
 from app.db import get_db
-from app.services.store_codes import resolve
+from app.services.store_codes import resolve, scanning_on
 from app.models.store_core import (
     CostHead, DBStore, DBStoreItemSettings, DBStoreUomConversion, DBStoreUserAssignment, DocStatus, ItemCategory,
     MovementType, StoreType,
@@ -29,10 +29,11 @@ def _uoms(db, item, settings):
 
 @router.get("/meta")
 def meta(request: Request, db: Session = Depends(get_db)):
-    store_actor(request, db, ANY_VIEW)
+    actor = store_actor(request, db, ANY_VIEW)
     return {"movement_types": [m.value for m in MovementType], "doc_statuses": [d.value for d in DocStatus],
             "cost_heads": [c.value for c in CostHead], "store_types": [t.value for t in StoreType],
-            "item_categories": [c.value for c in ItemCategory], "slices": list(STORE_SLICES), "actions": list(STORE_ACTIONS)}
+            "item_categories": [c.value for c in ItemCategory], "slices": list(STORE_SLICES), "actions": list(STORE_ACTIONS),
+            "scanning": scanning_on(db, actor.client.id)}
 
 
 @router.get("/stores")

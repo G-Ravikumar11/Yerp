@@ -1,5 +1,5 @@
 import { Select } from '@/components/ui'
-import { scanCode, scanWhat, useStoreOptions, type StoreOption, type StoreType } from '@/api/store'
+import { scanCode, scanWhat, useScanning, useStoreOptions, type StoreOption, type StoreType } from '@/api/store'
 import { ApiError } from '@/lib/api'
 import { toast } from '@/stores/toast'
 import { ScanButton } from './Scanner'
@@ -25,6 +25,7 @@ export interface StorePickerProps {
 /** A drop-down of the stores this person may work in; scanning a rack or yard-bay tag chooses the store it is in. */
 export function StorePicker({ value, onChange, projectId = 0, type, excludeId, placeholder = 'Choose a store', disabled, id, scan = true, onBin, ...rest }: StorePickerProps) {
   const q = useStoreOptions(projectId)
+  const scanning = useScanning()
   const stores = (q.data ?? []).filter((s) => (!type || s.type === type) && s.id !== excludeId)
   const fromTag = async (code: string) => {
     try {
@@ -52,7 +53,7 @@ export function StorePicker({ value, onChange, projectId = 0, type, excludeId, p
       }}
     />
   )
-  if (!scan || disabled) return select
+  if (!scan || !scanning || disabled) return select
   return (
     <div className="flex gap-2">
       <div className="min-w-0 flex-1">{select}</div>

@@ -19,6 +19,14 @@ from app.models.store_inward import DBStoreGrn
 from app.models.store_outward import DBStoreGatePass, DBStoreIssue
 
 BIN_PREFIX = "BIN:"
+SETTING = "store_scanning"
+
+
+def scanning_on(db, client_id) -> bool:
+    """Whether the company uses scanning in the Store (Settings > Company > Store). Off unless turned on: the scan buttons,
+    the barcode field, label printing and the gate pass's QR stay out of sight until a store wants them."""
+    row = db.query(models.DBSettings.value).filter(models.DBSettings.client_id == client_id, models.DBSettings.key == SETTING).first()
+    return bool(row) and str(row[0]).strip().lower() in ("true", "1", "yes", "on")
 
 
 def bin_tag(store, bin_row) -> str:

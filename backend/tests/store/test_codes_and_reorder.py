@@ -81,3 +81,12 @@ def test_issuing_down_to_the_reorder_level_raises_one_alert(account):
     assert "reorder level" in alert.title and "3500 kg left" in alert.body and alert.view == "reorder-view"
     _issue(t, central, w, "10")                                                 # 3000 kg: already below, no second alert
     assert len(alerts()) == 1
+
+
+def test_scanning_is_off_until_the_company_turns_it_on(account):
+    t = account["client"]
+    assert ok(t.get("/api/store/lookup/meta"))["scanning"] is False
+    ok(t.post("/api/settings", json={"store_scanning": "true"}))
+    assert ok(t.get("/api/store/lookup/meta"))["scanning"] is True
+    ok(t.post("/api/settings", json={"store_scanning": "false"}))
+    assert ok(t.get("/api/store/lookup/meta"))["scanning"] is False

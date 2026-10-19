@@ -3,7 +3,7 @@ import { Badge, Button, Field, Input, Modal, Select } from '@/components/ui'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { useSession } from '@/lib/session'
 import { useAction } from '@/lib/mutate'
-import { storeDelete, storePerm, storePut, useStoreMeta } from '@/api/store'
+import { storeDelete, storePerm, storePut, useScanning, useStoreMeta } from '@/api/store'
 import { ScanButton } from '../shared'
 import { mastersInvalidate, useMasterItems, type ItemRow, type ItemSettings } from './api'
 
@@ -55,6 +55,7 @@ function ItemModal({ item, canEdit, onClose }: { item: ItemRow; canEdit: boolean
   const [conv, setConv] = useState(item.conversions)
   const [add, setAdd] = useState({ uom: '', factor: '' })
   const set = <K extends keyof ItemSettings>(k: K, v: ItemSettings[K]) => setS((x) => ({ ...x, [k]: v }))
+  const scanning = useScanning()
   const save = useAction(() => storePut<ItemRow>('masters', `/items/${item.id}/settings`, s), {
     invalidate: [...mastersInvalidate],
     success: 'Settings saved',
@@ -84,12 +85,12 @@ function ItemModal({ item, canEdit, onClose }: { item: ItemRow; canEdit: boolean
           <Field label="Reorder level" htmlFor="im-reorder"><Input id="im-reorder" inputMode="decimal" disabled={!canEdit} value={s.reorder_level} onChange={(e) => set('reorder_level', e.target.value)} /></Field>
           <Field label="Minimum" htmlFor="im-min"><Input id="im-min" inputMode="decimal" disabled={!canEdit} value={s.min_qty} onChange={(e) => set('min_qty', e.target.value)} /></Field>
           <Field label="Maximum" htmlFor="im-max" hint="Zero means no maximum."><Input id="im-max" inputMode="decimal" disabled={!canEdit} value={s.max_qty} onChange={(e) => set('max_qty', e.target.value)} /></Field>
-          <Field label="Maker's barcode" htmlFor="im-barcode" className="sm:col-span-3" hint="The barcode printed on the bag, can or box - admixture, adhesive, paint, fittings. Scanning it then finds this item. Leave empty for loose material.">
+          {scanning && <Field label="Maker's barcode" htmlFor="im-barcode" className="sm:col-span-3" hint="The barcode printed on the bag, can or box - admixture, adhesive, paint, fittings. Scanning it then finds this item. Leave empty for loose material.">
             <div className="flex gap-2">
               <Input id="im-barcode" disabled={!canEdit} value={s.barcode ?? ''} onChange={(e) => set('barcode', e.target.value)} maxLength={64} />
               {canEdit && <ScanButton title="Scan the maker's barcode" onCode={(c) => set('barcode', c)} />}
             </div>
-          </Field>
+          </Field>}
         </div>
         <div className="mt-3 flex flex-wrap gap-5 text-sm">
           <label className="flex items-center gap-2"><input type="checkbox" disabled={!canEdit} checked={s.qc_required} onChange={(e) => set('qc_required', e.target.checked)} /> Quality check needed on receipt</label>

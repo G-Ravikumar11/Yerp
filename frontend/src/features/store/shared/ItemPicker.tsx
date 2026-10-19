@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Search, X } from 'lucide-react'
 import { Input } from '@/components/ui'
-import { scanCode, scanWhat, useItemSearch, type StoreItemOption } from '@/api/store'
+import { scanCode, scanWhat, useItemSearch, useScanning, type StoreItemOption } from '@/api/store'
 import { ApiError } from '@/lib/api'
 import { toast } from '@/stores/toast'
 import { ScanButton } from './Scanner'
@@ -35,6 +35,7 @@ export function ItemPicker({ value, onChange, placeholder = 'Search item code or
     return () => document.removeEventListener('mousedown', away)
   }, [])
   const q = useItemSearch(typed)
+  const scanning = useScanning()
   // A scanned code, or one typed and Entered: the item it belongs to, if any.
   const take = async (code: string, quiet = false) => {
     try {
@@ -94,7 +95,7 @@ export function ItemPicker({ value, onChange, placeholder = 'Search item code or
         }}
       />
       </div>
-      {!disabled && <ScanButton title="Scan the item" hint="The QR on its rack label, or the maker's barcode on the bag, can or box." onCode={(c) => void take(c)} />}
+      {scanning && !disabled && <ScanButton title="Scan the item" hint="The QR on its rack label, or the maker's barcode on the bag, can or box." onCode={(c) => void take(c)} />}
       {open && (
         <ul role="listbox" className="absolute top-full z-30 mt-1 max-h-64 w-full overflow-auto rounded-md border border-input bg-popover py-1 text-sm shadow-md">
           {(q.data ?? []).map((it) => (

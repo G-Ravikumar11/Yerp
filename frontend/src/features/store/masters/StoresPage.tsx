@@ -5,7 +5,7 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { useProjects, projectLabel } from '@/api/projects'
 import { useSession } from '@/lib/session'
 import { useAction } from '@/lib/mutate'
-import { storeDelete, storePerm, storePost, storePut, useStoreMeta } from '@/api/store'
+import { storeDelete, storePerm, storePost, storePut, useScanning, useStoreMeta } from '@/api/store'
 import { mastersInvalidate, useAssignments, useBins, useEmployeeOptions, useStores, type AssignRow, type BinRow, type StoreRow } from './api'
 
 const money = (v: string) => Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -120,6 +120,7 @@ function StoreFormModal({ store, onClose }: { store: StoreRow | null; onClose: (
 
 function StoreDetailModal({ store, canEdit, canClose, onEdit, onToggle, onClose }: { store: StoreRow; canEdit: boolean; canClose: boolean; onEdit: () => void; onToggle: () => void; onClose: () => void }) {
   const bins = useBins(store.id)
+  const scanning = useScanning()
   const staff = useAssignments(store.id)
   const [bin, setBin] = useState({ code: '', description: '' })
   const [who, setWho] = useState('')
@@ -140,8 +141,8 @@ function StoreDetailModal({ store, canEdit, canClose, onEdit, onToggle, onClose 
           <div className="mb-2 flex flex-wrap items-center gap-2 border-b pb-1">
             <h3 id="sd-bins" className="mr-auto text-sm font-semibold">Bins</h3>
             {/* Sticky QR labels: a tag for each rack and yard bay, and a rack label for each item held - loose material carries none. */}
-            <Button size="sm" variant="ghost" asChild><a href={`/api/store/masters/labels.pdf?store_id=${store.id}&kind=bins`} target="_blank" rel="noreferrer"><Printer /> Bin labels</a></Button>
-            <Button size="sm" variant="ghost" asChild><a href={`/api/store/masters/labels.pdf?store_id=${store.id}&kind=items`} target="_blank" rel="noreferrer"><Printer /> Rack labels for items</a></Button>
+            {scanning && <Button size="sm" variant="ghost" asChild><a href={`/api/store/masters/labels.pdf?store_id=${store.id}&kind=bins`} target="_blank" rel="noreferrer"><Printer /> Bin labels</a></Button>}
+            {scanning && <Button size="sm" variant="ghost" asChild><a href={`/api/store/masters/labels.pdf?store_id=${store.id}&kind=items`} target="_blank" rel="noreferrer"><Printer /> Rack labels for items</a></Button>}
           </div>
           {bins.isPending ? <p className="text-sm text-muted-foreground">Loading...</p> : (bins.data ?? []).length === 0 ? <p className="text-sm text-muted-foreground">No bins yet.</p> : (
             <ul className="divide-y rounded-lg border">

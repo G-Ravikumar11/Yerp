@@ -41,9 +41,13 @@ export interface StoreItemOption { id: number; code: string; name: string; base_
 export interface StoreMeta {
   movement_types: MovementType[]; doc_statuses: DocStatus[]; cost_heads: CostHead[]; store_types: StoreType[]
   item_categories: string[]; slices: StoreSlice[]; actions: StoreAction[]
+  /** The company uses QR and barcode scanning in the Store (Settings > Company > Store). Off unless turned on. */
+  scanning?: boolean
 }
 
 export const useStoreMeta = () => useQuery({ queryKey: storeKeys.meta, staleTime: 60 * 60_000, queryFn: () => get<StoreMeta>('/api/store/lookup/meta') })
+/** Whether to show the scan buttons, the maker's barcode and label printing. */
+export const useScanning = () => !!useStoreMeta().data?.scanning
 /** The stores this person may work in (optionally those of one project). */
 export const useStoreOptions = (projectId = 0) =>
   useQuery({

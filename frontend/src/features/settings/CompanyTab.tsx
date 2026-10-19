@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2 } from 'lucide-react'
 import { Check, Circle } from 'lucide-react'
 import { Button, Field, Input, Select, Skeleton, Textarea } from '@/components/ui'
@@ -6,6 +7,7 @@ import { MANDATORY, useIdentity } from '@/api/identity'
 import { PictureField } from '@/components/data/PictureField'
 import { useAction } from '@/lib/mutate'
 import { saveCompany, saveLogo, settingsKeys, useCompany, useLogo, type BankDetail } from '@/api/settings'
+import { storeKeys } from '@/api/store'
 import { Section } from './Section'
 import { TaxRates } from './TaxRates'
 
@@ -118,6 +120,30 @@ export default function CompanyTab() {
         <Button className="mt-3" loading={saveLogoAction.isPending} onClick={() => saveLogoAction.mutate()}>Save logo</Button>
       </Section>
       <TaxRates />
+      <StoreScanning />
     </>
+  )
+}
+
+/** QR codes and barcodes in the Store: off unless a store wants them, so the screens stay as simple as they were. */
+function StoreScanning() {
+  const q = useCompany()
+  const qc = useQueryClient()
+  const on = ['true', '1', 'yes', 'on'].includes(String(q.data?.store_scanning ?? '').toLowerCase())
+  const save = useAction((v: boolean) => saveCompany({ store_scanning: v ? 'true' : 'false' }), {
+    invalidate: [[...settingsKeys.all]],
+    success: (_r, v) => (v ? 'Scanning is on in the Store' : 'Scanning is off in the Store'),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: [...storeKeys.meta] }),
+  })
+  return (
+    <Section title="Store: QR codes and barcodes" description="For a central store with racks of small look-alike items, packaged goods with the maker's barcode, or a gate that checks gate passes on a phone. Loose material - cement, sand, aggregate, steel - needs none of it.">
+      <label className="flex items-start gap-3 text-sm">
+        <input type="checkbox" className="mt-0.5" checked={on} disabled={q.isPending || save.isPending} onChange={(e) => save.mutate(e.target.checked)} />
+        <span>
+          <span className="font-medium">Use scanning in the Store</span>
+          <span className="block text-muted-foreground">Shows the Scan button in the Store Hub and on the item and store boxes, the maker's barcode in item settings, printing of bin and rack labels, and a QR on printed gate passes. A handheld barcode scanner works in the item box either way.</span>
+        </span>
+      </label>
+    </Section>
   )
 }
