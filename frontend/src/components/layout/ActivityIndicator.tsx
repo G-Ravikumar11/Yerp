@@ -63,12 +63,8 @@ function Crate({ x, y, className }: { x: number; y: number; className?: string }
  */
 function Crane() {
   return (
-    <svg viewBox="0 0 160 132" className="w-24 text-foreground [--crane-navy:#0b2d52]" role="img" aria-label="A tower crane moving a crate">
+    <svg viewBox="0 0 160 132" className="w-24 text-foreground [--crane-navy:#c9d6e6]" role="img" aria-label="A tower crane moving a crate">
       <defs>
-        <linearGradient id="crane-jib" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0" stopColor={SKY} />
-          <stop offset="1" stopColor={BLUE} />
-        </linearGradient>
         <clipPath id="crane-below-jib">
           <rect x="0" y="47" width="160" height="85" />
         </clipPath>
@@ -87,7 +83,7 @@ function Crane() {
       {/* everything above the turntable slews round together */}
       <g className="crane-slew">
         <path d={TRUSS} stroke={BLUE} strokeWidth="0.8" fill="none" opacity="0.8" />
-        <rect x="22" y="40" width="84" height="4" rx="1" fill="url(#crane-jib)" />
+        <rect x="22" y="40" width="84" height="4" rx="1" fill={BLUE} />
         <path d="M80 28 L26 40 M80 28 L104 40" stroke={NAVY} strokeWidth="0.7" opacity="0.7" />
         <path d="M76.5 42 L80 26 L83.5 42 Z" fill={ORANGE} />
         <rect x="71" y="44" width="18" height="6" rx="1.2" fill="#5b6b7d" />

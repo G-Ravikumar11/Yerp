@@ -10,7 +10,7 @@ const CONTACT = '[email]'
 type Section = { heading: string; body: string[] }
 
 const TERMS: Section[] = [
-  { heading: '1. Acceptance of these terms', body: [`These Terms of Service govern your use of Y ERP, provided by ${COMPANY}. By signing in or using the service you agree to them. If you do not agree, do not use the service.`] },
+  { heading: '1. Acceptance of these terms', body: [`These Terms of Service govern your use of Y ERP, provided by ${COMPANY} By signing in or using the service you agree to them. If you do not agree, do not use the service.`] },
   { heading: '2. The service', body: ['Y ERP is a construction management system for measurement books, work orders, billing, stores, site records and related work. Features may change from time to time.'] },
   { heading: '3. Accounts', body: ['Accounts are issued by your company administrator. You are responsible for keeping your sign-in details private and for everything done under your account. Tell us at once if you think your account has been used without your permission.'] },
   { heading: '4. Your data', body: ['The records you and your company enter remain yours. You allow us to store and process them only as needed to run the service for you. Your company administrator decides who in your company can see or change them.'] },
@@ -46,7 +46,7 @@ export function LegalPage({ kind }: { kind: 'terms' | 'privacy' }) {
         <Link to="/login" className="text-sm text-muted-foreground hover:underline">Back to sign in</Link>
         <h1 className="mt-6 text-2xl font-semibold text-foreground">{title}</h1>
         <p className="mt-1 text-sm text-muted-foreground">Last updated: {UPDATED}</p>
-        <p className="mt-6 text-[15px] leading-relaxed text-body">{title} for {COMPANY}. Last updated: {UPDATED}. Contact: {CONTACT}.</p>
+        <p className="mt-6 text-[15px] leading-relaxed text-body">{title} for {COMPANY} Last updated: {UPDATED}. Contact: {CONTACT}.</p>
         {sections.map((s) => (
           <section key={s.heading} className="mt-8">
             <h2 className="text-base font-semibold text-foreground">{s.heading}</h2>

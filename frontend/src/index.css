@@ -6,7 +6,7 @@
 /* ==========================================================================
    Design tokens
    --------------------------------------------------------------------------
-   Plain, solid and functional. Primary is construction green, the accent is
+   Plain, solid and functional, dark only. Primary is blue, the accent is
    hard-hat amber, on cool neutral greys. No gradients, glows, blur or
    decorative motion: every colour carries hierarchy, state or feedback.
    Everything a component paints comes from a semantic token below; the raw
@@ -63,7 +63,7 @@
   --color-invalid: var(--error-tint);
   --color-sidebar: var(--sidebar);
   --color-sidebar-border: var(--sidebar-border);
-  --color-body: #374151;
+  --color-body: var(--body);
 
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
@@ -111,51 +111,52 @@
   }
 }
 
-/* ---- Light -------------------------------------------------------------- */
+/* ---- Dark: the app's only theme ------------------------------------------ */
 :root {
   --radius: 6px;
 
-  --background: #f9fafb;
-  --foreground: #111827;
-  --surface: #f3f4f6;
-  --card: #f3f4f6;
-  --card-foreground: #111827;
-  --popover: #ffffff;
-  --muted: #e5e7eb;
-  --muted-foreground: #6b7280;
-  --subtle: #9ca3af;
-  --border: #e5e7eb;
-  --input: #d1d5db;
-  --ring: #0f5132;
+  --background: #111827;
+  --foreground: #f9fafb;
+  --surface: #1f2937;
+  --card: #1f2937;
+  --card-foreground: #f9fafb;
+  --popover: #1f2937;
+  --muted: #374151;
+  --muted-foreground: #9ca3af;
+  --subtle: #6b7280;
+  --border: #374151;
+  --input: #4b5563;
+  --ring: #3b82f6;
+  --body: #d1d5db;
 
-  --primary: #0f5132;
+  --primary: #2563eb;
   --primary-foreground: #ffffff;
-  --primary-soft: #e3ece7;
-  --accent: #e5e7eb;
-  --accent-foreground: #374151;
+  --primary-soft: #1e2d52;
+  --accent: #374151;
+  --accent-foreground: #f3f4f6;
 
-  --success: #15803d;
-  --success-soft: #e4efe8;
+  --success: #3d9468;
+  --success-soft: #1d3a2d;
   --warning: #ca8a04;
-  --warning-soft: #f5eddc;
-  --danger: #b91c1c;
-  --danger-soft: #f3e2e2;
-  --info: #1e40af;
-  --info-soft: #e1e5f1;
+  --warning-soft: #3a3014;
+  --danger: #dc5252;
+  --danger-soft: #3d2020;
+  --info: #6b8be0;
+  --info-soft: #1f2a4a;
 
   /* Solid, not see-through: a pinned cell sits over the ones scrolling
      beneath it, and a translucent tint would let their text show through. */
-  --select-tint: #e3ece7;
-  --error-tint: #f3e2e2;
+  --select-tint: #1e2d52;
+  --error-tint: #3d2020;
 
-  --sidebar: #ffffff;
-  --sidebar-border: #e5e7eb;
+  --sidebar: #111827;
+  --sidebar-border: #374151;
 
-  --chart-1: #0f5132;
-  --chart-2: #1e40af;
-  --chart-3: #dc6803;
+  --chart-1: #3b82f6;
+  --chart-2: #f79009;
+  --chart-3: #3d9468;
   --chart-4: #ca8a04;
-  --chart-5: #6b7280;
+  --chart-5: #9ca3af;
 }
 
 /* The thin bar under the top of the screen while the app is working. */
@@ -203,7 +204,7 @@
 
   html {
     -webkit-text-size-adjust: 100%;
-    color-scheme: light;
+    color-scheme: dark;
   }
 
   body {
@@ -224,7 +225,7 @@
   }
 
   ::selection {
-    background: #fed7aa;
+    background: #1e3a8a;
   }
 
   :focus-visible {

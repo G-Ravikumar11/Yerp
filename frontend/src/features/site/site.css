@@ -52,9 +52,7 @@ section[id]{scroll-margin-top:72px}
 
 /* nav: transparent over photography, solid black once scrolled */
 .nav{position:fixed;inset:0 0 auto;z-index:100;display:flex;align-items:center;gap:40px;padding:22px max(32px,calc((100vw - 1280px)/2));padding-top:max(22px,env(safe-area-inset-top));transition:background-color var(--t),padding var(--t),transform .45s var(--ease)}
-.nav.solid{background:#ffffff;border-bottom:1px solid #e5e7eb;box-shadow:0 1px 2px rgba(0,0,0,0.04);color:#111827;padding-top:14px;padding-bottom:14px}
-.nav.solid .nav__burger span{background:#111827}
-@media (min-width:901px){.nav.solid .nav__links a{color:#374151}.nav.solid .nav__links a.active{color:#111827}.nav.solid .nav__links a.active::after{background:#111827}}
+.nav.solid{background:var(--black);border-bottom:1px solid #374151;padding-top:14px;padding-bottom:14px}
 .nav.hide{transform:translateY(-100%)}
 .brand{display:flex;align-items:center;gap:12px;font:600 1.35rem/1 var(--display);letter-spacing:.2em;text-transform:uppercase}
 .brand img{width:36px;height:auto;border-radius:22%}
@@ -143,7 +141,7 @@ section[id]{scroll-margin-top:72px}
 /* selected work: full-bleed cinematic bands */
 .case{position:relative;height:88vh;min-height:560px;overflow:hidden;display:flex;align-items:flex-end;margin-top:4px}
 .case img{position:absolute;inset:-6% 0;width:100%;height:112%;object-fit:cover;filter:saturate(.9)}
-.case{border-bottom:3px solid #0f5132}
+.case{border-bottom:3px solid #2563eb}
 .case::after{content:none}
 .case__body{position:relative;z-index:1;display:grid;grid-template-columns:1fr auto;gap:24px;align-items:end;padding-bottom:clamp(40px,6vw,72px)}
 .case__n{font:500 .8rem var(--text);letter-spacing:.14em;color:rgba(255,255,255,.7)}
@@ -403,8 +401,8 @@ body{counter-reset:sec}
 .nav__m{display:none}
 
 /* the YERP login: the way in for staff and clients, always one click away */
-.btn--login{background:#0f5132;color:#ffffff;border:none;border-radius:6px;padding:8px 20px;font-weight:500;gap:9px}
-.btn--login:hover{background:#0a3d25}
+.btn--login{background:#2563eb;color:#ffffff;border:none;border-radius:6px;padding:8px 20px;font-weight:500;gap:9px}
+.btn--login:hover{background:#1d4ed8}
 .btn--login .ico{width:15px;height:15px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .nav__login{margin-left:auto}
 .nav__links{margin-left:auto}
