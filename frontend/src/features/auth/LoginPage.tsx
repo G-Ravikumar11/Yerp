@@ -42,7 +42,7 @@ export default function LoginPage() {
   const [error, setError] = useState(code ? (ERRORS[code] ?? 'Something went wrong. Please try again.') : '')
   const [company, setCompany] = useState('')
   // The company's own logo, which the server shows to anyone before they sign in; the blue Y until it has loaded or if there is none.
-  const [logo, setLogo] = useState(`${import.meta.env.BASE_URL}favicon.svg`)
+  const [logo, setLogo] = useState(`${import.meta.env.BASE_URL}brand/yalavarti-mark.svg`)
   const [google, setGoogle] = useState(false)
   const [yahoo, setYahoo] = useState(false)
   const [email, setEmail] = useState('')
