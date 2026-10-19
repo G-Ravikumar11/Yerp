@@ -65,6 +65,7 @@ from app.services.subcontract_billing import (
     _live_releases,
     add_sub_measurement,
     apply_material_recovery,
+    apply_store_material,
     bill_scan_required,
     dimension_total,
     draw_sub_bill_lines,
@@ -77,6 +78,7 @@ from app.services.subcontract_billing import (
     release_material_recovery,
     release_or_404,
     retention_positions,
+    store_material_due,
     sub_advance_recovery,
     sub_bill_chain_rows,
     sub_bill_current_step,
@@ -945,6 +947,8 @@ def create_sub_bill(body: SubBillIn, request: Request, db: Session = Depends(get
     recost_sub_bill(db, bill)
     if apply_material_recovery(db, client.id, order, bill):
         recost_sub_bill(db, bill)
+    if apply_store_material(db, bill):
+        recost_sub_bill(db, bill)
     log_audit(db, client.id, "sub_bill_raised", "subcontract_order", order.id,
               order.wo_number or "", "%s %s" % (bill.number, inr(bill.this_bill)), request)
     db.commit()
@@ -1053,7 +1057,7 @@ def edit_sub_bill(bill_id: int, body: SubBillEditIn, request: Request, db: Sessi
         material = money(sum(r.amount or 0 for r in db.query(models.DBMaterialRecovery).filter(
             models.DBMaterialRecovery.client_id == client.id,
             models.DBMaterialRecovery.sub_bill_id == bill.id).all()))
-        bill.other_deductions = money(material + money(body.other_deductions))
+        bill.other_deductions = money(material + (bill.store_material or 0) + money(body.other_deductions))
     if body.ld_amount is not None:
         wanted = money(body.ld_amount)
         if wanted < 0:
@@ -1171,6 +1175,8 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
         draw_sub_bill_lines(db, bill, order)
         recost_sub_bill(db, bill)
         apply_ld(db, order, bill)
+        apply_store_material(db, bill)
+        recost_sub_bill(db, bill)
         if (bill.net_payable or 0) < 0:
             raise HTTPException(409, "The deductions take %s below nothing (%s). Bring them down before sending it."
                                      % (bill.number, inr(bill.net_payable)))
@@ -1196,6 +1202,17 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
                     "Give a reason to certify it regardless." if actor_id is None
                     else "Take it back to the measurement book, or ask the Master to certify it with a reason."))
             notes.append("Certified past the BOQ (%s). Reason: %s" % ("; ".join(over), comments))
+        # Material the Store Hub issued to the contractor as chargeable comes off their bills. A bill that leaves some of
+        # it unrecovered is not certified - but by the Master, with the reason kept on the bill.
+        short = money(store_material_due(db, bill) - (bill.store_material or 0))
+        if short >= 1:
+            if actor_id is not None or not comments:
+                raise HTTPException(409, "%s leaves %s of store material issued to the contractor unrecovered (%s taken "
+                                         "off this bill). %s" % (
+                    bill.number, inr(short), inr(bill.store_material or 0),
+                    "Give a reason to certify it regardless." if actor_id is None
+                    else "Send it back to take the material off, or ask the Master to certify it with a reason."))
+            notes.append("Certified with %s of store material unrecovered. Reason: %s" % (inr(short), comments))
         if notes:
             bill.override_note = ((bill.override_note + " | ") if bill.override_note else "") + " | ".join(notes)
         # Certifying a subcontractor's bill is agreeing to pay it - once the

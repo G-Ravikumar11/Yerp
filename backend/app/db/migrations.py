@@ -55,6 +55,7 @@ SUBCONTRACT_CONTROL_COLUMNS = (
     ("sub_bills", "ld_note", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
     ("sub_bills", "ld_set_by_hand", "BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"),
     ("sub_bills", "override_note", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("sub_bills", "store_material", "DOUBLE PRECISION DEFAULT 0", "FLOAT DEFAULT 0"),
     ("retention_releases", "raised_by", "INTEGER", "INTEGER"),
     ("retention_releases", "certified_by_name", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
     ("retention_releases", "certified_at", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),

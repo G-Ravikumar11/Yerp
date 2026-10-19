@@ -55,6 +55,7 @@ from app.services.procurement import (
 )
 from app.core.units import canonical_unit
 from app.services.projects import job_or_404
+from app.services.store_cutover import refuse_if_moved
 from app.services.stores import material_required
 from app.services.subcontract_orders import work_order_or_404
 
@@ -276,6 +277,7 @@ def create_goods_receipt(body: GRNIn, request: Request, db: Session = Depends(ge
     lines that came up short, not to type the whole order back in.
     """
     client, actor_id, actor_name = grn_actor(request, db)
+    refuse_if_moved(db, client.id)
     po = db.query(models.DBPurchaseOrder).filter(
         models.DBPurchaseOrder.id == body.purchase_order_id,
         models.DBPurchaseOrder.client_id == client.id).first()

@@ -34,7 +34,7 @@ const QUICK: { label: string; path: string; perm?: string; icon: LucideIcon; ton
   { label: 'Diary', path: '/projects/diary', perm: 'site.record', icon: BookOpen, tone: 'bg-primary/15 text-primary' },
   { label: 'Tasks', path: '/projects/programme', icon: ListChecks, tone: 'bg-success/15 text-success' },
   { label: 'Measure', path: '/subcontractors/measurement-book', perm: 'site.record', icon: Ruler, tone: 'bg-primary/15 text-primary' },
-  { label: 'Goods in', path: '/store/goods-receipt', perm: 'stores.receive', icon: PackageCheck, tone: 'bg-warning/15 text-warning' },
+  { label: 'Goods in', path: '/store/hub/inward/grn/new', perm: 'store.inward.create', icon: PackageCheck, tone: 'bg-warning/15 text-warning' },
   { label: 'Safety', path: '/projects/safety', icon: ShieldAlert, tone: 'bg-danger/15 text-danger' },
 ]
 

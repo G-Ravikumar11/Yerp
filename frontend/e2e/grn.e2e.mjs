@@ -16,7 +16,7 @@ const poId = po.id ?? po.order?.id
 await api(page, 'PUT', `/api/purchase-orders/${poId}`, { supplier_name: `QA Brick Works ${stamp}`, amount: 1000, tax_amount: 0, total: 1000, issue_date: '2026-10-01', needed_by: '', notes: '', job_id: job.id, status: 'Approved', line_items: [{ item_code: code, description: `QA bricks ${stamp}`, uom: 'Nos', qty: 100, price: 10, tax_rate: '0%' }] })
 await page.evaluate(() => indexedDB.deleteDatabase('keyval-store'))
 
-await open(page, '/store/goods-receipt')
+await open(page, '/store/old/goods-receipt')
 await page.waitForSelector('main h1')
 await clickText(page, 'main button', 'Receive a delivery')
 await page.waitForSelector('#gr-order')

@@ -471,6 +471,9 @@ class DBSubBill(Base):
     ld_set_by_hand = Column(Boolean, default=False)
     # Why a rule that would have stopped it was overridden when it was certified, in the words of whoever did.
     override_note = Column(Text, default="")
+    # Material the Store Hub issued to the contractor as chargeable, taken off this bill. Part of other_deductions, kept
+    # apart so the next bill knows what has already been recovered: the Hub's own figure is everything ever issued.
+    store_material = Column(Float, default=0.0)
     # Who prepared it and when it was sent. Certifying then climbs the
     # hierarchy one signature at a time (approval_chains, "sub_bill").
     submitted_by = Column(Integer, nullable=True)

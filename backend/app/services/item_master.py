@@ -319,11 +319,11 @@ def sites_using(db, client_id, codes):
 
 
 def stock_of(db, client_id, codes):
-    """{item_code: on_hand} for the codes, in one query: the store's running total, not a replay of the ledger."""
+    """{item_code: on_hand} for the codes: the old store's running total, or the Store Hub's once the company has moved into it."""
+    from app.services.store_integration import current_stock
     if not codes:
         return {}
-    return {c: m for c, m in db.query(models.DBStockBalance.item_code, models.DBStockBalance.on_hand).filter(
-        models.DBStockBalance.client_id == client_id, models.DBStockBalance.item_code.in_(list(codes))).all()}
+    return {c: a["on_hand"] for c, a in current_stock(db, client_id, codes=set(codes)).items()}
 
 
 def item_dict(item, site_count=0, stock=None):

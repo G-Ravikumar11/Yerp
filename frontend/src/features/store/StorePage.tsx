@@ -6,6 +6,7 @@ import { Button, Card, Input } from '@/components/ui'
 import { get } from '@/lib/api'
 import { useSession } from '@/lib/session'
 import { storePerm } from '@/api/store'
+import { OldStoreCard } from './OldStore'
 import { SLICES, StoreShell } from './StoreShell'
 
 /** The things people do most, each opening the right form directly. Shown only when the person holds the right to do it. */
@@ -25,6 +26,7 @@ export default function StorePage() {
   const tasks = TASKS.filter((t) => can(t.perm))
   return (
     <StoreShell slice={null}>
+      <OldStoreCard />
       <div className="space-y-8">
         <QuickFind allowed={can(storePerm('enquiry'))} />
         {tasks.length > 0 && (

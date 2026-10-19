@@ -114,16 +114,14 @@ const NAV: NavEntry[] = [
     label: 'Store',
     icon: Package,
     items: [
-      { label: 'Item Master', path: '/store/items', perm: 'items.manage' },
-      { label: 'Enquiries & Comparison', path: '/store/enquiries', perm: 'purchase.manage' },
-      { label: 'Purchase Orders', path: '/store/purchase-orders', perm: 'purchase.manage|bills.view_all' },
-      { label: 'E-way Bills', path: '/store/eway' },
-      { label: 'Goods Receipt & Match', path: '/store/goods-receipt', perm: 'stores.receive' },
-      { label: 'Invoice Tracker', path: '/store/invoice-tracker', perm: 'stores.receive|stores.manage|purchase.manage|bills.view_all' },
-      { label: 'Stock & Issues', path: '/store/stock', perm: 'site.record|stores.manage' },
-      { label: 'Material Issue Voucher', path: '/store/material-vouchers', perm: 'site.record|stores.manage' },
-      { label: 'Material Used vs Costed', path: '/store/material-costing', perm: 'reports.view' },
+      // Every receipt, issue, transfer and count is in the Store Hub. The old store's screens are kept as records,
+      // reached from the Hub (routes.tsx sends their old addresses there).
       { label: 'Store Hub', path: '/store/hub', perm: STORE_ANY },
+      { label: 'Purchase Orders', path: '/store/purchase-orders', perm: 'purchase.manage|bills.view_all' },
+      { label: 'Enquiries & Comparison', path: '/store/enquiries', perm: 'purchase.manage' },
+      { label: 'Item Master', path: '/store/items', perm: 'items.manage' },
+      { label: 'Invoice Tracker', path: '/store/invoice-tracker', perm: 'stores.receive|stores.manage|purchase.manage|bills.view_all' },
+      { label: 'E-way Bills', path: '/store/eway' },
     ],
   },
   {
@@ -160,6 +158,14 @@ const NAV: NavEntry[] = [
 
 export type Trail = { label: string; path?: string }[]
 
+/** Screens with no menu entry of their own: the old store's records, opened from the Store Hub. */
+const OFF_MENU: Record<string, string> = {
+  '/store/old/stock': 'Stock & Issues (old store)',
+  '/store/old/goods-receipt': 'Goods Receipt & Match (old store)',
+  '/store/old/material-vouchers': 'Material Issue Voucher (old store)',
+  '/store/old/material-costing': 'Material Used vs Costed (old store)',
+}
+
 /** Home > Group > Page for whatever path is showing. */
 export function trailFor(pathname: string, staff = false): Trail {
   const home: Trail = [{ label: 'Home', path: '/' }]
@@ -171,6 +177,8 @@ export function trailFor(pathname: string, staff = false): Trail {
       if (hit) return [...home, { label: e.label }, { label: hit.label }]
     }
   }
+  const off = OFF_MENU[pathname]
+  if (off) return [...home, { label: 'Store' }, { label: 'Store Hub', path: '/store/hub' }, { label: off }]
   // A page inside a section: /subcontractors/work-orders/12 sits under Work Orders.
   for (const e of NAV) {
     if (e.kind !== 'group') continue

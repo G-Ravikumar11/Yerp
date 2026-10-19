@@ -10,7 +10,7 @@ const TILES: { label: string; hint: string; path: string; perm?: string; icon: L
   { label: 'Site diary', hint: 'Labour, weather, photos', path: '/projects/diary', perm: 'site.record', icon: BookOpen, tone: 'bg-primary/15 text-primary' },
   { label: 'Tasks', hint: 'Tick what got done', path: '/projects/programme', icon: ListChecks, tone: 'bg-success/15 text-success' },
   { label: 'Measurement', hint: 'No × L × B × D', path: '/subcontractors/measurement-book', perm: 'site.record', icon: Ruler, tone: 'bg-primary/15 text-primary' },
-  { label: 'Goods in', hint: 'Material at the gate', path: '/store/goods-receipt', perm: 'stores.receive', icon: PackageCheck, tone: 'bg-warning/15 text-warning' },
+  { label: 'Goods in', hint: 'Material at the gate', path: '/store/hub/inward/grn/new', perm: 'store.inward.create', icon: PackageCheck, tone: 'bg-warning/15 text-warning' },
   { label: 'Safety', hint: 'Near miss or incident', path: '/projects/safety', icon: AlertTriangle, tone: 'bg-danger/15 text-danger' },
   { label: 'Quality', hint: 'Inspection or snag', path: '/projects/quality', icon: ClipboardCheck, tone: 'bg-muted text-foreground' },
 ]

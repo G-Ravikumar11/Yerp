@@ -10,6 +10,14 @@ export interface Screen {
   Component: LazyExoticComponent<ComponentType>
 }
 
+/** Addresses that moved: a bookmark or an old link lands on the Store Hub screen that does the same job. */
+export const REDIRECTS: { from: string; to: string }[] = [
+  { from: '/store/goods-receipt', to: '/store/hub/inward/grn' },
+  { from: '/store/stock', to: '/store/hub/enquiry' },
+  { from: '/store/material-vouchers', to: '/store/hub/outward/issue' },
+  { from: '/store/material-costing', to: '/store/hub/reports/norm-variance' },
+]
+
 export const SCREENS: Screen[] = [
   { path: '/calendar', Component: lazy(() => import('@/features/calendar/CalendarPage')) },
   { path: '/ho', Component: lazy(() => import('@/features/headoffice/HoPortalPage')) },
@@ -64,10 +72,11 @@ export const SCREENS: Screen[] = [
   { path: '/store/hub/outward/*', Component: lazy(() => import('@/features/store/outward')) },
   { path: '/store/hub/control/*', Component: lazy(() => import('@/features/store/control')) },
   { path: '/store/hub/reports/*', Component: lazy(() => import('@/features/store/reports')) },
-  { path: '/store/stock', Component: lazy(() => import('@/features/stock/StockPage')) },
-  { path: '/store/material-vouchers', Component: lazy(() => import('@/features/stock/MaterialVouchersPage')) },
-  { path: '/store/material-costing', Component: lazy(() => import('@/features/stock/ConsumptionPage')) },
-  { path: '/store/goods-receipt', Component: lazy(() => import('@/features/grn/GrnPage')) },
+  // The old store's screens: in use until the company moves into the Store Hub, then kept as records.
+  { path: '/store/old/stock', Component: lazy(() => import('@/features/stock/StockPage')) },
+  { path: '/store/old/material-vouchers', Component: lazy(() => import('@/features/stock/MaterialVouchersPage')) },
+  { path: '/store/old/material-costing', Component: lazy(() => import('@/features/stock/ConsumptionPage')) },
+  { path: '/store/old/goods-receipt', Component: lazy(() => import('@/features/grn/GrnPage')) },
   { path: '/store/invoice-tracker', Component: lazy(() => import('@/features/invoicetracker/InvoiceTrackerPage')) },
   { path: '/store/eway', Component: lazy(() => import('@/features/eway/EwayPage')) },
   { path: '/store/enquiries', Component: lazy(() => import('@/features/rfq/RfqPage')) },

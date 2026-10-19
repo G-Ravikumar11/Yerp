@@ -243,6 +243,7 @@ def sub_bill_dict(db, bill, detail=False, credits=None):
         "retention_amount": money(bill.retention_amount),
         "advance_recovery": money(bill.advance_recovery),
         "other_deductions": money(bill.other_deductions),
+        "store_material": money(bill.store_material),
         "back_charges": money(bill.back_charges),
         "ld_amount": money(bill.ld_amount), "ld_note": bill.ld_note or "",
         "ld_set_by_hand": bool(bill.ld_set_by_hand), "override_note": bill.override_note or "",
@@ -343,9 +344,8 @@ def sub_bill_dict(db, bill, detail=False, credits=None):
         row["place_of_supply_name"] = GST_STATES.get(bill.place_of_supply or "", "")
         row["amount_in_words"] = amount_in_words(bill.net_payable)
         if bill.contractor_id:
-            # Material the Store module issued to this contractor that is chargeable and not yet back: what is still to be recovered from their bills.
-            from app.services.store_integration import subcon_material_to_recover
-            row["store_material_to_recover"] = money(float(subcon_material_to_recover(db, bill.contractor_id)))
+            # Store Hub material issued to this contractor as chargeable that this bill and their others have not yet recovered.
+            row["store_material_to_recover"] = money(max(0.0, store_material_due(db, bill) - (bill.store_material or 0)))
         row["material_recovered"] = money(sum(r.amount or 0 for r in db.query(models.DBMaterialRecovery).filter(
             models.DBMaterialRecovery.client_id == bill.client_id,
             models.DBMaterialRecovery.sub_bill_id == bill.id).all()))
@@ -821,6 +821,49 @@ def apply_material_recovery(db, client_id, order, bill):
                (" and %d more" % (len(notes) - 6) if len(notes) > 6 else "")
         bill.deduction_notes = ((bill.deduction_notes or "") + ("; " if bill.deduction_notes else "") + line)[:500]
     return taken
+
+
+# The bills that have taken Store Hub material off: sent, certified or paid. A draft has not yet, and a cancelled one
+# gave it back.
+STORE_RECOVERY_LIVE = ("SUBMITTED", "CERTIFIED", "PAID")
+STORE_NOTE = re.compile(r"(^|; )Store Hub material recovered: [^;]*")
+
+
+def store_material_due(db, bill):
+    """What the contractor still owes for material the Store Hub issued to them as chargeable, up to the end of this
+    bill's period - net of what came back, and of what their other sent or certified bills have already taken off.
+    This bill's own deduction is not taken off."""
+    if not bill.contractor_id:
+        return 0.0
+    from app.services.store_integration import subcon_material_to_recover
+    try:
+        upto = date.fromisoformat((bill.period_to or "")[:10])
+    except ValueError:
+        upto = date.today()
+    owed = float(subcon_material_to_recover(db, bill.contractor_id, upto))
+    if not owed:
+        return 0.0
+    taken = sum(b.store_material or 0 for b in db.query(models.DBSubBill).filter(
+        models.DBSubBill.client_id == bill.client_id, models.DBSubBill.contractor_id == bill.contractor_id,
+        models.DBSubBill.id != bill.id, models.DBSubBill.status.in_(STORE_RECOVERY_LIVE)).all())
+    return money(max(0.0, owed - taken))
+
+
+def apply_store_material(db, bill):
+    """Take what is owed for Store Hub material off this bill as far as it can bear, the way the old store's material is
+    taken: the rest waits for the next bill. Worked out afresh each time the bill is drawn up or sent, so an issue made
+    in between is on it. Returns the amount taken."""
+    had = money(bill.store_material or 0)
+    bill.other_deductions = money((bill.other_deductions or 0) - had)
+    room = money(sub_bill_room(bill) - 0.5)
+    take = money(max(0.0, min(store_material_due(db, bill), room)))
+    bill.store_material = take
+    bill.other_deductions = money((bill.other_deductions or 0) + take)
+    notes = STORE_NOTE.sub("", bill.deduction_notes or "").lstrip("; ")
+    if take:
+        notes = (notes + ("; " if notes else "") + "Store Hub material recovered: %s" % inr(take))
+    bill.deduction_notes = notes[:500]
+    return take
 
 
 def release_material_recovery(db, client_id, bill_id):

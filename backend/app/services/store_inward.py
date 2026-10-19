@@ -22,6 +22,7 @@ from app.models.store_inward import (
 )
 from app.schemas.store_contracts import PoLineReceipt
 from app.services.stock_ledger import convert_to_base, post_movement, reverse_document
+from app.services.store_integration import old_received_in_base
 from app.services.store_numbering import next_doc_number
 
 ZERO = Decimal("0")
@@ -190,12 +191,15 @@ def get_po_receipt_summary(db, po_id) -> List[PoLineReceipt]:
     back = {}
     for gl, pl in grn_lines:
         back[pl] = back.get(pl, ZERO) + returned.get(gl, ZERO)
+    items = {l.id: po_item(db, po, l) for l in lines}
+    # What the old store received on this order, before the company moved into the Hub, is received here too.
+    old = old_received_in_base(db, {l.id: (l, items[l.id]) for l in lines})
     out = []
     for l in lines:
-        item = po_item(db, po, l)
+        item = items[l.id]
         ordered = _ordered_base(db, l, item) if item else Decimal(str(l.qty or 0))
         rec, acc, rej = posted.get(l.id, (ZERO, ZERO, ZERO))
-        acc = acc - back.get(l.id, ZERO)
+        rec, acc = rec + old.get(l.id, ZERO), acc - back.get(l.id, ZERO) + old.get(l.id, ZERO)
         out.append(PoLineReceipt(po_line_id=l.id, item_id=item.id if item else None, ordered_qty=q3(ordered), received_qty=q3(rec),
                                  accepted_qty=q3(acc), rejected_qty=q3(rej), pending_qty=q3(max(ZERO, ordered - acc))))
     return out
@@ -294,6 +298,10 @@ def check_over_receipt(db, po, lines, exclude_grn=None):
         return
     ids = [l["po_line"].id for l in lines if l["po_line"] is not None]
     prior = _sum_lines(db, LIVE, ids, exclude_grn=exclude_grn)
+    old = old_received_in_base(db, {l["po_line"].id: (l["po_line"], l["item"]) for l in lines if l["po_line"] is not None})
+    for pl_id, qty in old.items():
+        r, a, j = prior.get(pl_id, (ZERO, ZERO, ZERO))
+        prior[pl_id] = (r + qty, a + qty, j)
     for l in lines:
         pl = l["po_line"]
         if pl is None:

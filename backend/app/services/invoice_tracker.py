@@ -7,11 +7,13 @@ subcontract work orders, by work type.
 """
 import re
 from collections import OrderedDict
+from types import SimpleNamespace
 
 from app import models
 from app.constants.subcontract_orders import WO_COMMITTED_STATUSES
 from app.core.currency import money, unit_rate
 from app.core.queries import by_id, prime
+from app.services.store_integration import current_stock
 
 DEFAULT_GST = 18.0
 DEFAULT_MARKUP = 20.0       # installation + consumables + wastage + overhead and profit, on the basic rate
@@ -86,14 +88,39 @@ def stock_by_category(db, client_id, items=None):
     """Every purchased material with what the store holds now, under its category: the physical stock sheet."""
     M = models
     items = purchased_items(db, client_id) if items is None else items
-    held = {b.item_code: b for b in db.query(M.DBStockBalance).filter(M.DBStockBalance.client_id == client_id).all()}
+    held = current_stock(db, client_id)
     groups = OrderedDict()
     for it in items:
         b = held.get(it.item_code)
         groups.setdefault(_category(it), []).append({
             "item_code": it.item_code, "item_name": it.item_name, "uom": it.units_of_measure or "",
-            "on_hand": money(b.on_hand) if b else 0.0, "counted": b is not None})
+            "on_hand": money(b["on_hand"]) if b else 0.0, "counted": b is not None})
     return [{"category": c, "items": rows} for c, rows in groups.items()]
+
+
+def hub_receipts(db, client_id, job_id=0):
+    """The Store Hub's posted goods receipts, shaped like the old store's so the tracker reads both alike. Their ids,
+    and their lines' ids, are negative: the tracker's own rows (invoice details, blocks) key on a receipt id, and a
+    Hub receipt must never land on an old receipt's row."""
+    from app.models.store_inward import DBStoreGrn, DBStoreGrnLine
+    from app.services.store_inward import base_uom_of
+    q = db.query(DBStoreGrn).filter(DBStoreGrn.client_id == client_id, DBStoreGrn.status == "POSTED")
+    if job_id:
+        q = q.filter(DBStoreGrn.project_id == job_id)
+    docs = q.order_by(DBStoreGrn.grn_date, DBStoreGrn.id).limit(2000).all()
+    grns = [SimpleNamespace(id=-g.id, number=g.number or "", supplier_name=g.supplier_name or "", invoice_number=g.challan_no or "",
+                            received_on=g.grn_date.isoformat() if g.grn_date else "", purchase_order_id=g.po_id,
+                            vehicle_number=g.vehicle_no or "") for g in docs]
+    rows = db.query(DBStoreGrnLine).filter(DBStoreGrnLine.grn_id.in_([g.id for g in docs])).order_by(
+        DBStoreGrnLine.grn_id, DBStoreGrnLine.line_no, DBStoreGrnLine.id).all() if docs else []
+    items = {i.id: i for i in db.query(models.DBItem).filter(models.DBItem.id.in_({l.item_id for l in rows})).all()} if rows else {}
+    lines = []
+    for l in rows:
+        it = items.get(l.item_id)
+        lines.append(SimpleNamespace(id=-l.id, goods_receipt_id=-l.grn_id, item_code=it.item_code if it else "",
+                                     description=it.item_name if it else "", uom=base_uom_of(db, it) if it else "",
+                                     accepted_qty=float(l.accepted_qty or 0), rate=float(l.rate or 0)))
+    return grns, lines
 
 
 def build_tracker(db, client_id, job_id=0, gst_percent=DEFAULT_GST, markup_percent=DEFAULT_MARKUP):
@@ -102,16 +129,21 @@ def build_tracker(db, client_id, job_id=0, gst_percent=DEFAULT_GST, markup_perce
     if job_id:
         q = q.filter(M.DBGoodsReceipt.job_id == job_id)
     grns = q.order_by(M.DBGoodsReceipt.received_on, M.DBGoodsReceipt.id).limit(2000).all()
-    grn_ids = [g.id for g in grns]
-    lines = db.query(M.DBGoodsReceiptLine).filter(M.DBGoodsReceiptLine.goods_receipt_id.in_(grn_ids)).order_by(
+    old_ids = [g.id for g in grns]
+    lines = db.query(M.DBGoodsReceiptLine).filter(M.DBGoodsReceiptLine.goods_receipt_id.in_(old_ids)).order_by(
         M.DBGoodsReceiptLine.goods_receipt_id, M.DBGoodsReceiptLine.display_order,
-        M.DBGoodsReceiptLine.id).all() if grn_ids else []
+        M.DBGoodsReceiptLine.id).all() if old_ids else []
+    # Deliveries received in the Store Hub come in beside the old store's, in date order.
+    hub_grns, hub_lines = hub_receipts(db, client_id, job_id)
+    grns = sorted(grns + hub_grns, key=lambda g: (g.received_on or "", g.id < 0, abs(g.id)))
+    lines = lines + hub_lines
+    grn_ids = [g.id for g in grns]
 
     codes = {l.item_code for l in lines if l.item_code}
     items = {i.item_code: i for i in db.query(M.DBItem).filter(
         M.DBItem.client_id == client_id, M.DBItem.item_code.in_(codes)).all()} if codes else {}
     master = purchased_items(db, client_id)
-    held = {b.item_code: b for b in db.query(M.DBStockBalance).filter(M.DBStockBalance.client_id == client_id).all()}
+    held = current_stock(db, client_id)
     prime(db, M.DBPurchaseOrder, [g.purchase_order_id for g in grns])
     meta = {m.grn_id: m for m in db.query(M.DBTrackerInvoice).filter(
         M.DBTrackerInvoice.client_id == client_id, M.DBTrackerInvoice.grn_id.in_(grn_ids)).all()} if grn_ids else {}
@@ -216,7 +248,7 @@ def build_tracker(db, client_id, job_id=0, gst_percent=DEFAULT_GST, markup_perce
                 avg_rate=unit_rate(m["total_amount"] / qty) if qty else 0.0,
                 working_rate=None if rate is None else unit_rate(rate),
                 working_amount=None if rate is None else money(qty * rate),
-                on_hand=money(stock.on_hand) if stock else 0.0, counted=stock is not None))
+                on_hand=money(stock["on_hand"]) if stock else 0.0, counted=stock is not None))
         total = money(sum(m["total_amount"] for m in mats))
         # Under each invoice column: its amount and GST for this trade, then the bill's own charges and printed total.
         # An invoice that spans several trades shows its charges and printed total only against the invoice list.

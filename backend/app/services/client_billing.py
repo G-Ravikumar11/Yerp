@@ -363,7 +363,9 @@ def received_to_date(db, purchase_order_id, exclude_grn_id=None):
         models.DBGoodsReceipt.purchase_order_id == purchase_order_id,
         models.DBGoodsReceipt.status != "CANCELLED").all()
     ids = [g.id for g in live if g.id != exclude_grn_id]
-    totals = {}
+    # What the Store Hub has received against the order counts too, in the order line's unit.
+    from app.services.store_integration import hub_received_on_orders
+    totals = dict(hub_received_on_orders(db, [purchase_order_id])[0].get(purchase_order_id, {}))
     if not ids:
         return totals
     for l in db.query(models.DBGoodsReceiptLine).filter(
