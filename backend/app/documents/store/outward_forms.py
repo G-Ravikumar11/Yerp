@@ -147,6 +147,8 @@ def gate_form(db, client, gp):
                "facts": [("No", gp.number), ("Date", form_pdf.date_text(gp.gate_date)), ("Store", "%s - %s" % (store.code, store.name) if store else "")]},
               {"type": "pairs", "cols": 2, "rows": pairs},
               {"type": "table", "columns": [("#", 8, "C"), ("Item Code", 30, "L"), ("Item", 90, "L"), ("Unit", 20, "C"), ("Qty", 34, "R")], "rows": rows},
+              {"type": "qr", "data": gp.number, "lines": ["Security: scan this code in Y ERP (Store Hub > Scan) to check the pass "
+                                                          "is genuine and still open, and that the material on the vehicle is what it lists.", gp.number]},
               {"type": "signatures", "boxes": [("Authorised by (Storekeeper)", gp.authorised_by_name or ""), ("Security (gate)", ""), ("Received by", "")]}]
     if gp.returnable:
         blocks.insert(3, {"type": "text", "text": "This material is to be returned to the store by the date above. Its return is recorded against the issue; an item not returned is charged or written off.", "style": "small"})

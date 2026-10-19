@@ -8,6 +8,7 @@ from app import models
 from app.core.permissions import STORE_ACTIONS, STORE_SLICES
 from app.core.store_auth import store_actor
 from app.db import get_db
+from app.services.store_codes import resolve
 from app.models.store_core import (
     CostHead, DBStore, DBStoreItemSettings, DBStoreUomConversion, DBStoreUserAssignment, DocStatus, ItemCategory,
     MovementType, StoreType,
@@ -63,13 +64,32 @@ def items(request: Request, q: str = "", limit: int = 30, db: Session = Depends(
         query = query.filter(or_(models.DBItem.item_code.ilike(like), models.DBItem.item_name.ilike(like)))
     rows = query.order_by(models.DBItem.item_name).limit(max(1, min(limit, 100))).all()
     settings = {s.item_id: s for s in db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id.in_([r.id for r in rows])).all()} if rows else {}
-    out = []
-    for r in rows:
-        base, uoms = _uoms(db, r, settings.get(r.id))
-        out.append({"id": r.id, "code": r.item_code, "name": r.item_name, "base_uom": base, "uoms": uoms,
-                    "category": settings[r.id].category if r.id in settings else None,
-                    "batch_tracked": bool(settings[r.id].is_batch_tracked) if r.id in settings else False})
-    return {"items": out}
+    return {"items": [_option(db, r, settings.get(r.id)) for r in rows]}
+
+
+def _option(db, item, s):
+    """An item as the pickers hold it."""
+    base, uoms = _uoms(db, item, s)
+    return {"id": item.id, "code": item.item_code, "name": item.item_name, "base_uom": base, "uoms": uoms,
+            "category": s.category if s else None, "batch_tracked": bool(s.is_batch_tracked) if s else False}
+
+
+@router.get("/scan")
+def scan(request: Request, code: str = "", db: Session = Depends(get_db)):
+    """What a scanned or typed code is: an item (its code, or the maker's barcode on it), a rack or yard-bay tag, or a store
+    document (a gate pass at the gate, an issue, a goods receipt)."""
+    actor = store_actor(request, db, ANY_VIEW)
+    mine = None
+    if actor.employee is not None:
+        from app.core.permissions import permissions_for
+        if "store.admin" not in permissions_for(actor.employee):
+            mine = {r for (r,) in db.query(DBStoreUserAssignment.store_id).filter(
+                DBStoreUserAssignment.employee_id == actor.employee.id, DBStoreUserAssignment.is_active.is_(True)).all()}
+    found = resolve(db, actor.client.id, code, lambda store_id: mine is None or store_id in mine)
+    if found["kind"] == "item":
+        item = db.get(models.DBItem, found.pop("item_id"))
+        found["item"] = _option(db, item, db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == item.id).first())
+    return found
 
 
 @router.get("/items/{item_id}/uoms")

@@ -63,3 +63,12 @@ export const useItemUoms = (itemId: number | null) =>
     staleTime: 5 * 60_000,
     queryFn: () => get<{ item_id: number; base_uom: string; uoms: UomOption[] }>(`/api/store/lookup/items/${itemId}/uoms`),
   })
+
+/** What a scanned or typed code is: an item (its code or the maker's barcode on it), a rack or yard-bay tag, or a store document. */
+export type ScanResult =
+  | { kind: 'item'; item: StoreItemOption }
+  | { kind: 'bin'; store: StoreOption; bin: { id: number; code: string } }
+  | { kind: 'document'; doc: 'gate-pass' | 'issue' | 'grn'; id: number; number: string; status: string; path: string }
+export const scanCode = (code: string) => get<ScanResult>(`/api/store/lookup/scan?code=${encodeURIComponent(code)}`)
+/** A scan that found something other than what the box wanted, said plainly. */
+export const scanWhat = (r: ScanResult) => (r.kind === 'item' ? `item ${r.item.code} ${r.item.name}` : r.kind === 'bin' ? `bin ${r.bin.code} in store ${r.store.code}` : `document ${r.number}`)

@@ -12,8 +12,9 @@ from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from fastapi import HTTPException
+from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import object_session
+from sqlalchemy.orm import Session, object_session
 
 from app import models
 from app.core.permissions import permissions_for
@@ -124,6 +125,7 @@ def _apply(db, *, store, item_id, mtype, qty, rate, txn_date, user_id, ref_doc_t
                 raise InvalidMovementError("That would leave store %s with a negative value for item %s." % (store.code, item_id))
         new_qty, new_value, avg = old_qty - qty, old_value - value, old_avg
         entry_rate = _q(value / qty, _RATE)
+        _note_reorder(db, store, item_id, old_qty, new_qty)
     bal.qty, bal.value, bal.avg_rate = new_qty, new_value, avg
     entry = DBStoreStockLedger(
         txn_date=txn_date, store_id=store.id, item_id=item_id, movement_type=mtype.value,
@@ -298,3 +300,46 @@ def unfreeze_store(db, store_id, user_id):
     freeze.unfrozen_at, freeze.unfrozen_by = datetime.now(), user_id
     db.flush()
     return freeze
+
+
+# --- reorder alerts ------------------------------------------------------------------------------------------------------
+# Stock that goes out and takes a store down to an item's reorder level puts an alert on the dashboard (the bell, and email
+# or WhatsApp where the company has asked for them) - once, as it crosses the level, not on every issue below it. The
+# ledger never commits, and an alert is saved and sent on its own, so it is only noted here and goes out once the posting
+# itself is saved; a posting rolled back sends nothing.
+
+REORDER_KEY = "store_reorder_alerts"
+
+
+def _note_reorder(db, store, item_id, before, after):
+    s = db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == item_id).first()
+    level = _dec(s.reorder_level) if s is not None and s.reorder_level else ZERO
+    if level > 0 and before > level >= after:
+        db.info.setdefault(REORDER_KEY, []).append((store.client_id, store.id, item_id, after, level))
+
+
+def _send_reorder_alerts(session):
+    pending = session.info.pop(REORDER_KEY, None)
+    if not pending:
+        return
+    from app.core.notifications import notify
+    from app.db.session import SessionLocal
+    with SessionLocal() as s:
+        for client_id, store_id, item_id, left, level in pending:
+            store, item = s.get(DBStore, store_id), s.get(models.DBItem, item_id)
+            if store is None or item is None:
+                continue
+            settings = s.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == item_id).first()
+            unit = (settings.base_uom if settings else item.units_of_measure) or ""
+            notify(s, client_id, "store_reorder", "%s is at its reorder level in %s" % (item.item_name, store.code),
+                   "%s %s left in %s - %s; the reorder level is %s. Raise a purchase enquiry for it from the Reorder report."
+                   % (format(_q(left, _QTY).normalize(), "f"), unit, store.code, store.name, format(_q(level, _QTY).normalize(), "f")),
+                   view="reorder-view", ref_type="store_item", ref_id=item_id, severity="action")
+
+
+def _drop_reorder_alerts(session):
+    session.info.pop(REORDER_KEY, None)
+
+
+event.listen(Session, "after_commit", _send_reorder_alerts)
+event.listen(Session, "after_rollback", _drop_reorder_alerts)

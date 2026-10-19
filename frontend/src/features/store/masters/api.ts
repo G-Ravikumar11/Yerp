@@ -31,6 +31,8 @@ export interface ItemSettings {
   qc_required: boolean
   over_receipt_tolerance_pct: string
   is_batch_tracked: boolean
+  /** The maker's barcode on packaged goods, scanned to find the item. */
+  barcode?: string
 }
 export interface Conversion { uom: string; to_base_factor: string }
 export interface ItemRow {

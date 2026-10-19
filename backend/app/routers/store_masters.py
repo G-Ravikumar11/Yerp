@@ -10,6 +10,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -24,6 +25,7 @@ from app.models.store_core import (
     DBStoreUomConversion, DBStoreUserAssignment, ItemCategory, StoreType,
 )
 from app.services.stock_ledger import assert_store_access
+from app.services.store_codes import bin_tag, check_barcode, labels_pdf
 
 router = APIRouter(prefix="/api/store/masters", tags=["store-masters"])
 
@@ -249,6 +251,31 @@ def _bin_fields(body):
     return code, _clean(body.description, "description", 120, required=False)
 
 
+@router.get("/labels.pdf")
+def labels(request: Request, store_id: int, kind: str = "bins", item_ids: str = "", db: Session = Depends(get_db)):
+    """Sticky QR labels to print: a tag for every rack and yard bay of a store (kind=bins), or a rack label for each item the
+    store holds (kind=items; item_ids, comma-separated, for chosen ones). Scanning one in the app finds the bin or the item."""
+    actor = store_actor(request, db, "store.masters.view")
+    store = my_store(db, actor, store_id)
+    if kind == "bins":
+        rows = [(bin_tag(store, b), b.code, "%s - %s%s" % (store.code, store.name, (" - " + b.description) if b.description else ""))
+                for b in db.query(DBStoreBin).filter(DBStoreBin.store_id == store.id).order_by(DBStoreBin.code).all()]
+        title = "Bin labels %s" % store.code
+    elif kind == "items":
+        chosen = [int(x) for x in re.findall(r"\d+", item_ids or "")]
+        q = db.query(models.DBItem).filter(models.DBItem.client_id == actor.client.id, models.DBItem.kind == "RM")
+        if chosen:
+            q = q.filter(models.DBItem.id.in_(chosen))
+        else:
+            q = q.join(DBStoreStockBalance, DBStoreStockBalance.item_id == models.DBItem.id).filter(DBStoreStockBalance.store_id == store.id, DBStoreStockBalance.qty > 0)
+        rows = [(i.item_code, i.item_code, "%s  (%s)" % (i.item_name, store.code)) for i in q.order_by(models.DBItem.item_name).limit(480).all()]
+        title = "Item labels %s" % store.code
+    else:
+        raise HTTPException(400, "Labels are for bins or items.")
+    return Response(content=labels_pdf(title, rows), media_type="application/pdf",
+                    headers={"Content-Disposition": 'inline; filename="%s.pdf"' % title.replace(" ", "-")})
+
+
 @router.get("/stores/{store_id}/bins")
 def list_bins(store_id: int, request: Request, db: Session = Depends(get_db)):
     actor = store_actor(request, db, "store.masters.view")
@@ -392,6 +419,7 @@ class SettingsIn(BaseModel):
     qc_required: bool = False
     over_receipt_tolerance_pct: str = "0"
     is_batch_tracked: bool = False
+    barcode: Optional[str] = None        # the maker's barcode; left out keeps the one on file
 
 
 class ConversionIn(BaseModel):
@@ -409,7 +437,7 @@ def _settings_dict(item, s):
     return {"item_id": item.id, "category": s.category if s else ItemCategory.CONSUMABLE.value, "base_uom": (s.base_uom if s else item.units_of_measure) or "",
             "reorder_level": num(s.reorder_level if s else 0), "min_qty": num(s.min_qty if s else 0), "max_qty": num(s.max_qty if s else 0),
             "qc_required": bool(s.qc_required) if s else False, "over_receipt_tolerance_pct": num(s.over_receipt_tolerance_pct if s else 0),
-            "is_batch_tracked": bool(s.is_batch_tracked) if s else False}
+            "is_batch_tracked": bool(s.is_batch_tracked) if s else False, "barcode": (s.barcode or "") if s else ""}
 
 
 def _item_dict(item, s, conversions, on_hand):
@@ -489,6 +517,10 @@ def save_settings(item_id: int, body: SettingsIn, request: Request, db: Session 
         db.add(row)
     row.category, row.base_uom, row.reorder_level, row.min_qty, row.max_qty = category, base, reorder, low, high
     row.qc_required, row.over_receipt_tolerance_pct, row.is_batch_tracked = body.qc_required, tolerance, body.is_batch_tracked
+    if body.barcode is not None:
+        code = _clean(body.barcode, "barcode", 64, required=False) if body.barcode.strip() else ""
+        check_barcode(db, actor.client.id, item.id, code)
+        row.barcode = code
     # A conversion from the unit that has become the base is meaningless; drop it rather than leave a loop behind.
     for c in db.query(DBStoreUomConversion).filter(DBStoreUomConversion.item_id == item.id).all():
         if c.from_uom.strip().lower() == base.lower():

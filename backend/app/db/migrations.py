@@ -38,6 +38,7 @@ STORE_OUTWARD_COLUMNS = (
     ("store_grn", "gate_delivery", "INTEGER DEFAULT 0"), ("store_grn", "driver_remarks", "VARCHAR DEFAULT ''"), ("store_grn", "linked_at", "TIMESTAMP"),
     ("store_grn", "linked_by_name", "VARCHAR DEFAULT ''"), ("store_grn", "price_variance", "NUMERIC(18,2) DEFAULT 0"),
     # Shelf life: the dates on a receipt line, and the batch an issue took.
+    ("store_item_settings", "barcode", "VARCHAR DEFAULT ''"),
     ("store_grn_line", "manufacturing_date", "DATE"), ("store_grn_line", "expiry_date", "DATE"), ("store_issue_line", "batch_no", "VARCHAR DEFAULT ''"),
 )
 

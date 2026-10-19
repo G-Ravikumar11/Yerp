@@ -12,7 +12,9 @@ import { money, qs, qty, STATUS_LABEL, STATUS_TONE, usePosition, type BalanceRow
 export default function StockPositionPage() {
   const nav = useNavigate()
   const meta = useStoreMeta()
-  const [f, setF] = useState({ store_id: 0, q: useSearchParams()[0].get('q') ?? '', category: '', status: '', include_zero: false })
+  const [params] = useSearchParams()
+  // A link (a scanned bin tag) may name the store and the search.
+  const [f, setF] = useState({ store_id: Number(params.get('store') || 0), q: params.get('q') ?? '', category: '', status: '', include_zero: false })
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }))
   const pos = usePosition(f)
 

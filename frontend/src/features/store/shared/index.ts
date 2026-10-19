@@ -1,5 +1,6 @@
 export * from './DocActionsBar'
 export * from './DocStatusBadge'
 export * from './ItemPicker'
+export * from './Scanner'
 export * from './StorePicker'
 export * from './UomQtyInput'

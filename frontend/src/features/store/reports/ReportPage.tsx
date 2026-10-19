@@ -7,6 +7,7 @@ import { useSession } from '@/lib/session'
 import { useAction } from '@/lib/mutate'
 import { storeDelete, storePerm, storePost, useStoreMeta } from '@/api/store'
 import { StorePicker } from '../shared'
+import { RaiseEnquiry } from './RaiseEnquiry'
 import { dmy, money, num, qs, reportKeys, useReport, useSaved, type ReportData, type ReportKey, type Row, type Saved } from './api'
 
 type Params = Record<string, string>
@@ -94,6 +95,7 @@ export default function ReportPage({ report }: { report: ReportKey }) {
         {has('days') && <Field label="Idle for at least (days)" htmlFor="rp-days" className="w-44"><Input id="rp-days" inputMode="numeric" className="text-right" value={p.days ?? ''} onChange={(e) => set('days', e.target.value)} placeholder="90" /></Field>}
         {has('zero') && <label className="flex items-center gap-2 pb-2.5 text-sm"><input type="checkbox" checked={p.include_zero === 'true'} onChange={(e) => set('include_zero', e.target.checked ? 'true' : '')} /> Show nil stock</label>}
         <div className="ml-auto flex flex-wrap gap-2">
+          {report === 'reorder' && can('purchase.manage') && <RaiseEnquiry rows={data?.rows ?? []} />}
           <Button variant="outline" disabled={!ready} asChild><a href={`/api/store/reports/${report}/export${qs(p)}`}><FileSpreadsheet /> Excel</a></Button>
           <Button variant="outline" disabled={!ready} asChild><a href={`/api/store/reports/${report}/print${qs(p)}`} target="_blank" rel="noreferrer"><Printer /> PDF</a></Button>
         </div>

@@ -207,6 +207,7 @@ NOTIFY_KINDS = {
     "retention_released": "Retention was released - to claim, or to pay a contractor",
     "portal_invoice": "A supplier sent an invoice through the partner portal",
     "chat_mention": "Somebody was named in a project chat",
+    "store_reorder": "A store's stock of an item is down to its reorder level",
     "daily_digest": "The morning list of what needs looking at",
 }
 # Out of the box: the bell for everything, email for the money and the digest.

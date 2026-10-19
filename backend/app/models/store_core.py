@@ -155,6 +155,7 @@ class DBStoreItemSettings(Base):
     qc_required = Column(Boolean, default=False)
     over_receipt_tolerance_pct = Column(PERCENT, default=0)
     is_batch_tracked = Column(Boolean, default=False)
+    barcode = Column(String, default="", index=True)            # the maker's barcode on packaged goods, scanned to find the item
 
 
 class DBStoreUomConversion(Base):

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus } from 'lucide-react'
+import { Plus, Printer } from 'lucide-react'
 import { Badge, Button, ConfirmDialog, Field, Input, Modal, Select, Textarea } from '@/components/ui'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { useProjects, projectLabel } from '@/api/projects'
@@ -137,7 +137,12 @@ function StoreDetailModal({ store, canEdit, canClose, onEdit, onToggle, onClose 
       <div className="grid gap-6">
         {store.frozen && <p role="status" className="rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">Frozen for a stock count{store.frozen_reason ? `: ${store.frozen_reason}` : ''}. Nothing can move in or out until it is unfrozen.</p>}
         <section aria-labelledby="sd-bins">
-          <h3 id="sd-bins" className="mb-2 border-b pb-1 text-sm font-semibold">Bins</h3>
+          <div className="mb-2 flex flex-wrap items-center gap-2 border-b pb-1">
+            <h3 id="sd-bins" className="mr-auto text-sm font-semibold">Bins</h3>
+            {/* Sticky QR labels: a tag for each rack and yard bay, and a rack label for each item held - loose material carries none. */}
+            <Button size="sm" variant="ghost" asChild><a href={`/api/store/masters/labels.pdf?store_id=${store.id}&kind=bins`} target="_blank" rel="noreferrer"><Printer /> Bin labels</a></Button>
+            <Button size="sm" variant="ghost" asChild><a href={`/api/store/masters/labels.pdf?store_id=${store.id}&kind=items`} target="_blank" rel="noreferrer"><Printer /> Rack labels for items</a></Button>
+          </div>
           {bins.isPending ? <p className="text-sm text-muted-foreground">Loading...</p> : (bins.data ?? []).length === 0 ? <p className="text-sm text-muted-foreground">No bins yet.</p> : (
             <ul className="divide-y rounded-lg border">
               {(bins.data ?? []).map((b) => (
