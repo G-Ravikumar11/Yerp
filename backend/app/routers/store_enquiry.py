@@ -128,7 +128,7 @@ def export_balances(request: Request, store_id: int = 0, q: str = "", category: 
 def quick_find(request: Request, q: str = "", limit: int = 8, db: Session = Depends(get_db)):
     """Type-ahead for the Store home page: a few matching items with the quantity held across the person's stores. One grouped query."""
     actor = store_actor(request, db, "store.enquiry.view")
-    term = (q or "").strip().replace("%", "").replace("_", "")
+    term = (q or "").strip().replace("%", "").replace("_", "").replace("\\", "")
     if len(term) < 2:
         return {"rows": []}
     like = "%" + term + "%"
@@ -136,9 +136,12 @@ def quick_find(request: Request, q: str = "", limit: int = 8, db: Session = Depe
     store_filter = DBStoreStockBalance.store_id.in_(seen or {0}) if seen is not None else DBStoreStockBalance.store_id.isnot(None)
     held = (db.query(DBStoreStockBalance.item_id.label("item_id"), func.sum(DBStoreStockBalance.qty).label("qty"), func.count(DBStoreStockBalance.store_id).label("stores"))
             .filter(store_filter, DBStoreStockBalance.qty > 0).group_by(DBStoreStockBalance.item_id).subquery())
-    rows = (db.query(models.DBItem.id, models.DBItem.item_code, models.DBItem.item_name, models.DBItem.units_of_measure, held.c.qty, held.c.stores)
+    rows = (db.query(models.DBItem.id, models.DBItem.item_code, models.DBItem.item_name,
+                     func.coalesce(func.nullif(DBStoreItemSettings.base_uom, ""), models.DBItem.units_of_measure), held.c.qty, held.c.stores)
             .outerjoin(held, held.c.item_id == models.DBItem.id)
-            .filter(models.DBItem.client_id == actor.client.id, models.DBItem.item_code.ilike(like) | models.DBItem.item_name.ilike(like))
+            .outerjoin(DBStoreItemSettings, DBStoreItemSettings.item_id == models.DBItem.id)
+            .filter(models.DBItem.client_id == actor.client.id, models.DBItem.is_active.isnot(False),
+                    models.DBItem.item_code.ilike(like) | models.DBItem.item_name.ilike(like))
             .order_by(held.c.qty.is_(None), models.DBItem.item_name).limit(max(1, min(limit, 20))).all())
     return {"rows": [{"item_id": r[0], "item_code": r[1], "item_name": r[2], "uom": r[3] or "", "qty": str(r[4] or 0), "stores": int(r[5] or 0)} for r in rows]}
 

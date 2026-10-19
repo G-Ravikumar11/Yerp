@@ -79,6 +79,7 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
   const [terms, setTerms] = useState<OrderTerm[]>(() => (order.terms ?? []).map((t) => ({ clause_category: t.clause_category, clause_text: t.clause_text })))
   const [dialog, setDialog] = useState<'approve' | 'reject' | 'cancel' | 'amend' | 'execute' | 'self-approve' | 'close' | null>(null)
   const [finished, setFinished] = useState(() => new Date(Date.now() - 86400000).toISOString().slice(0, 10))
+  const [todayIso] = useState(() => new Date().toISOString().slice(0, 10))
   const [override, setOverride] = useState(false)
   const [costCentre, setCostCentre] = useState(false)
 
@@ -359,7 +360,7 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
         onConfirm={(comments) => closing.mutate(comments)}
       >
         <Field label="The work actually finished on" htmlFor="close-date" hint="The defects period, and the retention due at its end, run from this date.">
-          <Input id="close-date" type="date" value={finished} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setFinished(e.target.value)} />
+          <Input id="close-date" type="date" value={finished} max={todayIso} onChange={(e) => setFinished(e.target.value)} />
         </Field>
       </ConfirmDialog>
       <ConfirmDialog

@@ -115,7 +115,7 @@ export default function DashboardPage() {
 
   const first = user?.name?.split(' ')[0]
   const waiting = inbox.data?.mine ?? 0
-  const today = new Intl.DateTimeFormat('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date())
+  const [today] = useState(() => new Intl.DateTimeFormat('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date()))
   const items = attention.data?.items ?? []
   const cashHasData = (cash.data ?? []).some((m) => m.received || m.paid)
 

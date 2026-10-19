@@ -25,8 +25,8 @@ export default function SchedulePage() {
   const on = params.get('on') || today()
   const remember = (next: { job?: number; on?: string }) => setParams((p) => {
     const q = new URLSearchParams(p)
-    if (next.job !== undefined) next.job ? q.set('job', String(next.job)) : q.delete('job')
-    if (next.on !== undefined) next.on === today() ? q.delete('on') : q.set('on', next.on)
+    if (next.job !== undefined) { if (next.job) q.set('job', String(next.job)); else q.delete('job') }
+    if (next.on !== undefined) { if (next.on === today()) q.delete('on'); else q.set('on', next.on) }
     return q
   }, { replace: true })
   const setJob = (id: number) => remember({ job: id })

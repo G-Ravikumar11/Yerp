@@ -53,7 +53,7 @@ export function useListFilters<T>(rows: readonly T[] | undefined, opts: FilterOp
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [chosen, setChosen] = useState<Record<string, string>>({})
-  const list = rows ?? []
+  const list = useMemo(() => rows ?? [], [rows])
   const facetDefs = opts.facets ?? {}
 
   const statuses = useMemo(() => (opts.status ? [...new Set(list.map(opts.status).filter(Boolean))].sort() : []), [list, opts.status])
