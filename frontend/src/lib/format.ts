@@ -18,8 +18,12 @@ export function formatPercent(value: number | null | undefined): string {
 }
 
 /** Today's date on this device's clock, as yyyy-mm-dd. (The UTC date is yesterday's for the first hours of an Indian morning.) */
-export const today = () => {
+export const today = () => daysAgo(0)
+
+/** The date `n` days before today on this device's clock, as yyyy-mm-dd. */
+export const daysAgo = (n: number) => {
   const d = new Date()
+  d.setDate(d.getDate() - n)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 

@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Badge, Button, Field, Input, Stat, StatGrid } from '@/components/ui'
 import { ApiError } from '@/lib/api'
-import { formatDate } from '@/lib/format'
+import { formatDate, today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { portalAcceptBill, portalSendInvoice, usePortal, type PortalBill, type PortalOrder, type PortalOrderDetail, type PortalPayment, type PortalStatement, type PortalSummary } from '@/api/portal'
 
@@ -161,7 +161,7 @@ export function Statement() {
 export function SendInvoice() {
   const qc = useQueryClient()
   const orders = usePortal<{ orders: PortalOrder[] }>('orders', '/api/portal/orders').data?.orders ?? []
-  const [f, setF] = useState({ number: '', issue_date: new Date().toISOString().slice(0, 10), amount: '', tax_amount: '0', po_number: '', note: '' })
+  const [f, setF] = useState({ number: '', issue_date: today(), amount: '', tax_amount: '0', po_number: '', note: '' })
   const [file, setFile] = useState<File | null>(null)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [busy, setBusy] = useState(false)

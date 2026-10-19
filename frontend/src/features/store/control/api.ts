@@ -112,5 +112,6 @@ export const useOpenWriteoffs = (storeId: number) =>
 export const num = (v: string | undefined | null) => Number(v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 3 })
 export const money = (v: string | undefined | null) => Number(v ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 export const dmy = (iso: string) => (iso ? new Date(iso.slice(0, 10) + 'T00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '-')
-export const today = () => new Date().toISOString().slice(0, 10)
+/** Today on this device's clock - the UTC date is still yesterday for the first hours of an Indian morning. */
+export { today } from '@/lib/format'
 export const headLabel = (h: string | null | undefined) => (h ? h.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase()) : '')

@@ -4,6 +4,7 @@ import { Button, Modal } from '@/components/ui'
 import { PictureField } from '@/components/data/PictureField'
 import { saveLogo, settingsKeys } from '@/api/settings'
 import type { Activity, Schedule } from '@/api/schedule'
+import { today } from '@/lib/format'
 import { useAction } from '@/lib/mutate'
 
 const DAY = 86400000
@@ -224,7 +225,7 @@ export function PrintReport({ schedule, company }: { schedule: Schedule; company
   const rows = schedule.activities
   const s = schedule.summary
   const dates = rows.flatMap((a) => [a.planned_start, a.planned_finish, a.forecast_finish]).filter(Boolean).map(at)
-  const todayN = at(new Date().toISOString().slice(0, 10))
+  const todayN = at(today())
   const t0 = dates.length ? Math.min(...dates) : todayN
   const t1 = dates.length ? Math.max(...dates, todayN) : todayN
   const span = Math.max(1, t1 - t0 + 1)

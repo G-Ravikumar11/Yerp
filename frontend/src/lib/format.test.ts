@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import { formatDate, formatPercent, formatQty, plural, today } from './format'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { daysAgo, formatDate, formatPercent, formatQty, plural, today } from './format'
+import { today as storeToday } from '@/features/store/inward/api'
 
 describe('formatDate', () => {
   it('writes an ISO date the way people read it', () => {
@@ -45,7 +46,17 @@ describe('plural', () => {
 })
 
 describe('today', () => {
+  afterEach(() => { vi.useRealTimers() })
   it('is yyyy-mm-dd', () => {
     expect(today()).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+  it('is the date on the device clock, not the UTC date', () => {
+    // Half past midnight on the 19th: in India the UTC date is still the 18th until 5:30 am.
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 9, 19, 0, 30))
+    expect(today()).toBe('2026-10-19')
+    expect(storeToday()).toBe('2026-10-19')
+    expect(daysAgo(1)).toBe('2026-10-18')
+    expect(daysAgo(19)).toBe('2026-09-30')
   })
 })
