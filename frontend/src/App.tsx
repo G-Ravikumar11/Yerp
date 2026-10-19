@@ -9,6 +9,7 @@ import { FreshBuild } from '@/lib/freshness'
 import { LegacyLinks } from '@/lib/legacyLinks'
 import { persistOptions, queryClient } from '@/lib/query'
 import { watchConnection } from '@/stores/offline'
+import { applyTheme, useUI } from '@/stores/ui'
 import { AppShell, HomePage, SCREENS } from '@/app-mobile/entry'
 import NotFound from '@/pages/NotFound'
 import { REDIRECTS } from '@/routes'
@@ -39,6 +40,19 @@ function PageLoading() {
 }
 
 export default function App() {
+  const theme = useUI((s) => s.theme)
+
+  // Keep the page in step with the chosen theme - and, on "system", with the
+  // operating system when it changes at dusk.
+  useEffect(() => {
+    applyTheme(theme)
+    if (theme !== 'system') return
+    const mq = matchMedia('(prefers-color-scheme: dark)')
+    const on = () => applyTheme('system')
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [theme])
+
   useEffect(() => watchConnection(), [])
 
   // Something was deleted. Every screen not on show had kept its own copy of its lists, and drew that copy first when

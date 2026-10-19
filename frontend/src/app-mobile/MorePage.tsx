@@ -1,18 +1,28 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ChevronRight, LogOut } from 'lucide-react'
+import { ChevronRight, LogOut, Monitor, Moon, Sun } from 'lucide-react'
 import { post } from '@/lib/api'
 import { visibleNav } from '@/lib/nav'
 import { appUrl } from '@/lib/paths'
 import { forgetLocalData } from '@/lib/query'
 import { initials, useSession } from '@/lib/session'
+import { cn } from '@/lib/utils'
 import { useOffline } from '@/stores/offline'
+import { type Theme, useUI } from '@/stores/ui'
 import { ConfirmDialog } from '@/components/ui'
 import { Label, LargeTitle, Sheet } from './ui'
 
-/** Everything else: every screen the website's menu has, as lists, plus signing out. */
+const THEMES: { value: Theme; label: string; icon: typeof Sun }[] = [
+  { value: 'light', label: 'Light', icon: Sun },
+  { value: 'dark', label: 'Dark', icon: Moon },
+  { value: 'system', label: 'Auto', icon: Monitor },
+]
+
+/** Everything else: every screen the website's menu has, as lists, plus the look of the app and signing out. */
 export default function MorePage() {
   const { user, can, isHeadOffice } = useSession()
+  const theme = useUI((s) => s.theme)
+  const setTheme = useUI((s) => s.setTheme)
   const unsent = useOffline((s) => s.queue.length)
   const [asking, setAsking] = useState(false)
   const nav = visibleNav(can, user?.type === 'employee', isHeadOffice)
@@ -56,6 +66,15 @@ export default function MorePage() {
           <Link key={e.path} to={e.path} className="flex min-h-12 items-center justify-between gap-3 py-2.5 text-[15px] font-medium">{e.label}<ChevronRight className="size-4 text-muted-foreground" /></Link>
         ))}
       </Sheet>
+
+      <Label>Look</Label>
+      <div role="radiogroup" aria-label="Theme" className="grid grid-cols-3 gap-1 rounded-lg bg-card p-1">
+        {THEMES.map(({ value, label, icon: Icon }) => (
+          <button key={value} type="button" role="radio" aria-checked={theme === value} onClick={() => setTheme(value)} className={cn('flex h-11 items-center justify-center gap-2 rounded-md text-sm font-semibold', theme === value ? 'bg-muted text-foreground' : 'text-muted-foreground')}>
+            <Icon className="size-4" />{label}
+          </button>
+        ))}
+      </div>
 
       <button type="button" onClick={() => (unsent ? setAsking(true) : void signOut())} className="mt-6 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-danger/10 text-[15px] font-semibold text-danger">
         <LogOut className="size-[18px]" />Sign out

@@ -1,6 +1,6 @@
 import { Fragment } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { ChevronRight, Download, LogOut, Menu } from 'lucide-react'
+import { ChevronRight, Download, LogOut, Menu, Monitor, Moon, Sun } from 'lucide-react'
 import { post } from '@/lib/api'
 import { useInstall } from '@/lib/install'
 import { forgetLocalData } from '@/lib/query'
@@ -8,7 +8,7 @@ import { useOffline } from '@/stores/offline'
 import { trailFor } from '@/lib/nav'
 import { initials, useSession } from '@/lib/session'
 import { cn } from '@/lib/utils'
-import { useUI } from '@/stores/ui'
+import { type Theme, useUI } from '@/stores/ui'
 import { useState } from 'react'
 import { ConfirmDialog, InfoTip, Skeleton, Tooltip } from '@/components/ui'
 import { infoFor } from '@/lib/pageInfo'
@@ -48,6 +48,37 @@ function Breadcrumbs() {
       </ol>
     </nav>
     {info && <InfoTip title={trail[trail.length - 1]?.label ?? ''}>{info}</InfoTip>}
+    </div>
+  )
+}
+
+const THEMES: { value: Theme; label: string; icon: typeof Sun }[] = [
+  { value: 'light', label: 'Light', icon: Sun },
+  { value: 'dark', label: 'Dark', icon: Moon },
+  { value: 'system', label: 'System', icon: Monitor },
+]
+
+function ThemeSwitch() {
+  const { theme, setTheme } = useUI()
+  return (
+    <div role="radiogroup" aria-label="Theme" className="flex items-center gap-0.5 rounded-md bg-muted p-0.5">
+      {THEMES.map(({ value, label, icon: Icon }) => {
+        const on = theme === value
+        return (
+          <Tooltip key={value} content={label} side="bottom">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={on}
+              aria-label={label}
+              onClick={() => setTheme(value)}
+              className={cn('grid size-7 place-items-center rounded-md transition-colors duration-150', on ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground')}
+            >
+              <Icon className="size-3.5" />
+            </button>
+          </Tooltip>
+        )
+      })}
     </div>
   )
 }
@@ -133,6 +164,7 @@ export function Topbar() {
           {user?.type === 'employee' && <NotificationBell />}
           <ActivityIndicator />
           <SyncIndicator />
+          <ThemeSwitch />
           <span className="hidden h-6 w-px bg-border sm:block" aria-hidden />
           <UserChip />
         </div>

@@ -3,10 +3,13 @@
 @import '@fontsource-variable/jetbrains-mono';
 @import 'tailwindcss';
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* ==========================================================================
    Design tokens
    --------------------------------------------------------------------------
-   Plain, solid and functional, dark only. Primary is blue, the accent is
+   Plain, solid and functional, light or dark (the switch in the top bar;
+   dark unless changed). Primary is blue, the accent is
    hard-hat amber, on cool neutral greys. No gradients, glows, blur or
    decorative motion: every colour carries hierarchy, state or feedback.
    Everything a component paints comes from a semantic token below; the raw
@@ -111,10 +114,56 @@
   }
 }
 
-/* ---- Dark: the app's only theme ------------------------------------------ */
+/* ---- Light --------------------------------------------------------------- */
 :root {
   --radius: 6px;
 
+  --background: #f9fafb;
+  --foreground: #111827;
+  --surface: #f3f4f6;
+  --card: #ffffff;
+  --card-foreground: #111827;
+  --popover: #ffffff;
+  --muted: #f3f4f6;
+  --muted-foreground: #6b7280;
+  --subtle: #9ca3af;
+  --border: #e5e7eb;
+  --input: #d1d5db;
+  --ring: #2563eb;
+  --body: #374151;
+
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --primary-soft: #dbeafe;
+  --accent: #f3f4f6;
+  --accent-foreground: #111827;
+
+  --success: #15803d;
+  --success-soft: #dcfce7;
+  --warning: #b45309;
+  --warning-soft: #fef3c7;
+  --danger: #dc2626;
+  --danger-soft: #fee2e2;
+  --info: #2563eb;
+  --info-soft: #dbeafe;
+
+  /* Solid, not see-through: a pinned cell sits over the ones scrolling
+     beneath it, and a translucent tint would let their text show through. */
+  --select-tint: #eff6ff;
+  --error-tint: #fef2f2;
+
+  --sidebar: #ffffff;
+  --sidebar-border: #e5e7eb;
+
+  --chart-1: #2563eb;
+  --chart-2: #f79009;
+  --chart-3: #15803d;
+  --chart-4: #ca8a04;
+  --chart-5: #6b7280;
+}
+
+/* ---- Dark ---------------------------------------------------------------- */
+.dark {
   --background: #111827;
   --foreground: #f9fafb;
   --surface: #1f2937;
@@ -204,6 +253,10 @@
 
   html {
     -webkit-text-size-adjust: 100%;
+    color-scheme: light;
+  }
+
+  html.dark {
     color-scheme: dark;
   }
 
@@ -225,6 +278,10 @@
   }
 
   ::selection {
+    background: #bfdbfe;
+  }
+
+  .dark ::selection {
     background: #1e3a8a;
   }
 
