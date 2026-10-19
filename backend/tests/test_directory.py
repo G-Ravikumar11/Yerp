@@ -179,6 +179,22 @@ def test_platform_active_count_ignores_non_client_logins(client, superadmin):
     assert data["tenants"]["active_last_30_days"] <= data["tenants"]["total"]
 
 
+def test_platform_active_count_ignores_deleted_tenant_logins(superadmin):
+    from app import db as database, models
+
+    before = superadmin.get("/api/superadmin/platform-stats").json()["tenants"]["active_last_30_days"]
+    with database.SessionLocal() as db:
+        db.add(models.DBClientLoginLog(
+            client_id=9_999_999,
+            email="orphan-login@example.com",
+            user_type="client",
+            status="success",
+        ))
+        db.commit()
+    after = superadmin.get("/api/superadmin/platform-stats").json()["tenants"]["active_last_30_days"]
+    assert after == before
+
+
 def test_client_overview_reports_usage_and_portals(client, account, superadmin):
     # The tenant from the `account` fixture already exists.
     clients = superadmin.get("/api/superadmin/clients").json()
