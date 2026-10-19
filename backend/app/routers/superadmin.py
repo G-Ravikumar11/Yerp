@@ -116,13 +116,18 @@ def superadmin_platform_stats(request: Request, db: Session = Depends(get_db)):
     now = datetime.now()
     month_prefix = now.strftime("%Y-%m")
     # Super admin and employee logins carry a NULL client_id; counting them
-    # would inflate the tenant activity figure.
-    active_30d = db.query(models.DBClientLoginLog.client_id).filter(
+    # would inflate the tenant activity figure. Likewise, old logs can point at
+    # deleted tenants, so only count ids that still exist in clients.
+    active_30d = db.query(
+        sqlfunc.count(sqlfunc.distinct(models.DBClientLoginLog.client_id))
+    ).join(
+        models.DBClient, models.DBClient.id == models.DBClientLoginLog.client_id
+    ).filter(
         models.DBClientLoginLog.status == "success",
         models.DBClientLoginLog.user_type == "client",
         models.DBClientLoginLog.client_id.isnot(None),
         models.DBClientLoginLog.created_at >= (now - timedelta(days=30)).strftime("%Y-%m-%d"),
-    ).distinct().count()
+    ).scalar() or 0
 
     return {
         "tenants": {
