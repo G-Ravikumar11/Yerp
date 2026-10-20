@@ -7,7 +7,7 @@ import { today } from '@/lib/format'
 import { useSession } from '@/lib/session'
 import { AccessPicker } from './AccessPicker'
 
-const blank = (): EmployeeInput => ({ first_name: '', last_name: '', email: '', org_email: '', password: '', phone: '', job_title: '', department_id: null, reports_to: null, level: '', role: 'employee', permission_role: 'staff', site_ids: [], employment_type: 'full_time', pay_frequency: 'monthly', salary: 0, tax_rate: 0, start_date: today(), emergency_contact: '', emergency_phone: '' })
+const blank = (): EmployeeInput => ({ first_name: '', last_name: '', email: '', org_email: '', password: '', phone: '', job_title: '', department_id: null, reports_to: null, level: '', role: '', permission_role: 'staff', site_ids: [], employment_type: 'full_time', pay_frequency: 'monthly', salary: 0, tax_rate: 0, start_date: today(), emergency_contact: '', emergency_phone: '' })
 
 /** A new member of staff: who they are, the department they belong to, what they may do, and a login if they need one. */
 export function EmployeeFormModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -29,6 +29,15 @@ function Form({ onClose }: { onClose: () => void }) {
   const jobs = useJobOptions(false)
   const suggested = useSuggestedEmail(f.first_name, f.last_name)
   const set = (k: keyof EmployeeInput) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((s) => ({ ...s, [k]: e.target.value }))
+  // The reporting line runs up the levels: somebody can report to the same level or above, never below. People with no level yet are not ruled out.
+  const rank = (code: string) => cat.data?.levels.find((l) => l.code === code)?.rank ?? 0
+  const managers = (people.data ?? []).filter((p) => !f.level || !p.level || rank(p.level) >= rank(f.level))
+  // Choosing a role fills in its level. The reporting line follows the role too: the Master sees who it will be and may pick somebody else; for everyone else the server sets it when the employee is saved.
+  const pickRole = (code: string) => setF((s) => {
+    const r = cat.data?.roles.find((x) => x.code === code)
+    const boss = isOwner && r?.reports_to ? (people.data ?? []).find((p) => p.role === r.reports_to) : undefined
+    return { ...s, role: code, level: s.level || r?.level || '', reports_to: boss?.id ?? s.reports_to }
+  })
   const num = (k: keyof EmployeeInput) => (n: number) => setF((s) => ({ ...s, [k]: n }))
   // Their own address follows their name until somebody types one.
   const [typed, setTyped] = useState(false)
@@ -69,9 +78,9 @@ function Form({ onClose }: { onClose: () => void }) {
         <Field label="Phone" htmlFor="ef-phone"><Input id="ef-phone" type="tel" value={f.phone} onChange={set('phone')} /></Field>
         <Field label="Job title" htmlFor="ef-title"><Input id="ef-title" value={f.job_title} onChange={set('job_title')} /></Field>
         <Field label="Department" htmlFor="ef-dept" hint={isOwner ? undefined : 'Only the Master places people in departments.'}><Select id="ef-dept" disabled={!isOwner} value={f.department_id ?? ''} onChange={(e) => setF((s) => ({ ...s, department_id: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={(depts.data ?? []).filter((d) => d.site_ids.length > 0 || d.id === f.department_id).map((d) => ({ value: d.id, label: d.name }))} /></Field>
-        <Field label="Reports to" htmlFor="ef-mgr"><Select id="ef-mgr" value={f.reports_to ?? ''} onChange={(e) => setF((s) => ({ ...s, reports_to: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={(people.data ?? []).map((p) => ({ value: p.id, label: p.full_name }))} /></Field>
+        <Field label="Reports to" htmlFor="ef-mgr" hint={isOwner ? 'Follows the role; change it if needed.' : 'Set automatically from the role. Only the Master can change it.'}><Select id="ef-mgr" disabled={!isOwner} value={f.reports_to ?? ''} onChange={(e) => setF((s) => ({ ...s, reports_to: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={managers.map((p) => ({ value: p.id, label: p.level ? `${p.full_name} (${p.level})` : p.full_name }))} /></Field>
         <Field label="Level" htmlFor="ef-level"><Select id="ef-level" value={f.level} onChange={set('level')} placeholder="Not set" options={(cat.data?.levels ?? []).map((l) => ({ value: l.code, label: l.label }))} /></Field>
-        <Field label="Reporting role" htmlFor="ef-role"><Select id="ef-role" value={f.role} onChange={set('role')} options={(cat.data?.roles ?? [{ code: 'employee', label: 'Employee' }]).map((r) => ({ value: r.code, label: r.label }))} /></Field>
+        <Field label="Reporting role" htmlFor="ef-role"><Select id="ef-role" value={f.role} onChange={(e) => pickRole(e.target.value)} placeholder="Not set" options={(cat.data?.roles ?? []).map((r) => ({ value: r.code, label: r.label }))} /></Field>
         <Field label="Start date" htmlFor="ef-start"><Input id="ef-start" type="date" value={f.start_date} onChange={set('start_date')} /></Field>
         <Field label="Type" htmlFor="ef-type"><Select id="ef-type" value={f.employment_type} onChange={set('employment_type')} options={[['full_time', 'Full time'], ['part_time', 'Part time'], ['contract', 'Contract'], ['intern', 'Intern']].map(([v, l]) => ({ value: v, label: l }))} /></Field>
         <Field label="Paid" htmlFor="ef-freq"><Select id="ef-freq" value={f.pay_frequency} onChange={set('pay_frequency')} options={[['monthly', 'Monthly'], ['biweekly', 'Every two weeks'], ['weekly', 'Weekly'], ['hourly', 'Hourly']].map(([v, l]) => ({ value: v, label: l }))} /></Field>

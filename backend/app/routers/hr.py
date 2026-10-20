@@ -21,11 +21,12 @@ from app.core.references import release_references
 from app.core.permissions import (
     DEFAULT_PERMISSION_ROLE,
     EMPLOYEE_LEVELS,
-    EMPLOYEE_ROLES,
+    ASSIGNABLE_ROLES,
     PERMISSION_KEYS,
     PERMISSION_ROLES,
     PORTAL_PERMISSIONS,
     PORTALS,
+    ROLE_LEVEL,
     ROLE_PERMISSIONS,
     permission_list,
     permissions_for,
@@ -34,6 +35,7 @@ from app.core.security import validate_password_strength
 from app.schemas.hr import DepartmentCreate, DepartmentMembersIn, DocumentRequirementIn, EmployeeCreate, RequirementTemplateIn
 from app.services.employee_portal import leave_balance_for
 from app.services.hr import (
+    automatic_reports_to,
     assert_department_name_free,
     assert_employee_code_free,
     assign_document_requests,
@@ -198,7 +200,7 @@ def get_hr_levels(request: Request, db: Session = Depends(get_db)):
     get_client_user(request, db)
     return {
         "levels": EMPLOYEE_LEVELS,
-        "roles": EMPLOYEE_ROLES,
+        "roles": ASSIGNABLE_ROLES,
         "permission_roles": PERMISSION_ROLES,
         "permissions": PORTAL_PERMISSIONS,
         "portals": PORTALS,
@@ -422,10 +424,15 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
 
     level = validate_level(body.level)
     role = validate_role(body.role)
+    level = level or ROLE_LEVEL.get(role, "")
     permission_role = validate_permission_role(body.permission_role)
     if permission_role != DEFAULT_PERMISSION_ROLE:
         require_owner(request, db)
-    reports_to = validate_manager(db, client.id, None, body.reports_to)
+    if body.reports_to:
+        require_owner(request, db)  # the reporting line is the Master's to set
+    reports_to = validate_manager(db, client.id, None, body.reports_to, level)
+    if not reports_to:
+        reports_to = automatic_reports_to(db, client.id, role, body.department_id)
     if body.department_id:
         require_owner(request, db)
         department_or_404(db, client.id, body.department_id)
@@ -633,7 +640,9 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
     if "level" in body:
         body["level"] = validate_level(body["level"])
     if "role" in body:
-        body["role"] = validate_role(body["role"])
+        body["role"] = validate_role(body["role"], emp.role)
+        if not body.get("level") and not emp.level:
+            body["level"] = ROLE_LEVEL.get(body["role"], "")
     # Access is the Master's alone. A blind setattr below would otherwise let
     # any team member widen their own or anybody's rights through this route.
     if ACCESS_FIELDS & body.keys():
@@ -646,7 +655,18 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
     if "permission_role" in body:
         body["permission_role"] = validate_permission_role(body["permission_role"])
     if "reports_to" in body:
-        body["reports_to"] = validate_manager(db, client.id, emp.id, body["reports_to"])
+        if (body["reports_to"] or None) != emp.reports_to:
+            require_owner(request, db)  # the reporting line is the Master's to change
+        body["reports_to"] = validate_manager(db, client.id, emp.id, body["reports_to"],
+                                              body.get("level") or emp.level or "")
+    # A new role moves the line to the role above it, unless the Master has just set the line by hand.
+    if "role" in body and body["role"] != (emp.role or "") and body.get("reports_to", emp.reports_to) == emp.reports_to:
+        auto = automatic_reports_to(db, client.id, body["role"], body.get("department_id", emp.department_id), emp.id)
+        if auto:
+            try:
+                body["reports_to"] = validate_manager(db, client.id, emp.id, auto, body.get("level") or emp.level or "")
+            except HTTPException:
+                pass  # a loop or a lower level: keep the line as it was rather than refuse the save
     site_ids = body.pop("site_ids", None)
     for key, val in body.items():
         if hasattr(emp, key) and key not in ("id", "client_id", "created_at", "password_hash", "employee_id"):

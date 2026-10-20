@@ -23,8 +23,8 @@ export function DepartmentHierarchy({ dept }: { dept: Department }) {
     const people = (staff.data ?? []).filter((e) => e.department_id === dept.id && ['active', 'onboarding'].includes(e.status))
     const byLevel = new Map<string, Employee[]>()
     for (const e of people) byLevel.set(e.level || '', [...(byLevel.get(e.level || '') ?? []), e])
-    // The catalogue lists the levels junior to senior, so the chart reads it backwards; unlevelled people come last.
-    const order = [...levels.map((l) => l.code).reverse(), ...[...byLevel.keys()].filter((k) => k && !levels.some((l) => l.code === k)), '']
+    // Most senior first (a higher rank is more senior); unlevelled people come last.
+    const order = [...[...levels].sort((a, b) => b.rank - a.rank).map((l) => l.code), ...[...byLevel.keys()].filter((k) => k && !levels.some((l) => l.code === k)), '']
     return order.filter((code) => byLevel.has(code)).map((code) => ({
       code, people: byLevel.get(code)!.sort((a, b) => a.full_name.localeCompare(b.full_name)),
     }))

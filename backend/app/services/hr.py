@@ -7,11 +7,38 @@ from sqlalchemy import func as sqlfunc
 
 from app import models
 
+from app.constants.approvals import GONE_STATUSES
 from app.constants.hr import DEFAULT_DOCUMENT_REQUIREMENTS, DEFAULT_ONBOARDING_ITEMS, ORG_DOMAIN_KEY
 from app.core.currency import money
 from app.core.dates import _parse_date
+from app.core.permissions import EMPLOYEE_ROLES
 from app.core.security import validate_password_strength
 from app.core.tenant_settings import tenant_setting
+
+
+_ROLE_BOSS = {r["code"]: r["reports_to"] for r in EMPLOYEE_ROLES}
+
+
+def automatic_reports_to(db, client_id, role, department_id=None, exclude_id=None):
+    """Who a person in `role` reports to when nobody has said: the holder of the role above theirs.
+
+    If nobody holds that role it climbs to the one above, so a Store Assistant with no Store Executive
+    reports to the Project Manager. A holder in the same department wins, then the longest-serving.
+    None when no role above is held; the Master can then set the line by hand.
+    """
+    seen = set()
+    code = _ROLE_BOSS.get(role)
+    while code and code not in seen:
+        seen.add(code)
+        holders = db.query(models.DBEmployee).filter(
+            models.DBEmployee.client_id == client_id, models.DBEmployee.role == code,
+            models.DBEmployee.id != (exclude_id or 0),
+            models.DBEmployee.status.notin_(GONE_STATUSES)).order_by(models.DBEmployee.id).all()
+        if holders:
+            same = [h for h in holders if department_id and h.department_id == department_id]
+            return (same or holders)[0].id
+        code = _ROLE_BOSS.get(code)
+    return None
 
 
 def validated_staff_password(password):

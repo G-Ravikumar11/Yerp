@@ -46,6 +46,12 @@ function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
   const cat = useHrCatalogue()
   const [f, setF] = useState({ first_name: e.first_name, last_name: e.last_name, email: e.email, org_email: e.org_email ?? '', phone: e.phone, job_title: e.job_title, department_id: e.department_id, reports_to: e.reports_to, level: e.level, role: e.role, employment_type: e.employment_type, pay_frequency: e.pay_frequency, salary: e.salary, tax_rate: e.tax_rate, start_date: e.start_date, emergency_contact: e.emergency_contact, emergency_phone: e.emergency_phone })
   const { isOwner } = useSession()
+  // The reporting line runs up the levels: the same level or above, never below.
+  const rank = (code: string) => cat.data?.levels.find((l) => l.code === code)?.rank ?? 0
+  const managers = (people.data ?? []).filter((p) => p.id !== e.id && (!f.level || !p.level || rank(p.level) >= rank(f.level)))
+  // Choosing a role fills in a level if there is none. A fixed role this person already holds stays in the list, since it cannot be handed to anyone else.
+  const roleOptions = [...(cat.data?.roles ?? []), ...(e.role && !cat.data?.roles.some((r) => r.code === e.role) ? [{ code: e.role, label: e.role }] : [])]
+  const pickRole = (code: string) => setF((s) => ({ ...s, role: code, level: s.level || cat.data?.roles.find((r) => r.code === code)?.level || '' }))
   const set = (k: keyof typeof f) => (ev: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((s) => ({ ...s, [k]: ev.target.value }))
   const save = useAction(() => updateEmployee(e.id, f), { invalidate: [peopleKeys.all], success: 'Saved', onSuccess: onDone })
   return (
@@ -58,9 +64,9 @@ function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
         <Field label="Phone" htmlFor="ep-phone"><Input id="ep-phone" value={f.phone} onChange={set('phone')} /></Field>
         <Field label="Job title" htmlFor="ep-title"><Input id="ep-title" value={f.job_title} onChange={set('job_title')} /></Field>
         <Field label="Department" htmlFor="ep-dept" hint={isOwner ? undefined : 'Only the Master moves people between departments.'}><Select id="ep-dept" disabled={!isOwner} value={f.department_id ?? ''} onChange={(ev) => setF((s) => ({ ...s, department_id: ev.target.value ? Number(ev.target.value) : null }))} placeholder="None" options={(depts.data ?? []).filter((d) => d.site_ids.length > 0 || d.id === f.department_id).map((d) => ({ value: d.id, label: d.name }))} /></Field>
-        <Field label="Reports to" htmlFor="ep-mgr"><Select id="ep-mgr" value={f.reports_to ?? ''} onChange={(ev) => setF((s) => ({ ...s, reports_to: ev.target.value ? Number(ev.target.value) : null }))} placeholder="None" options={(people.data ?? []).filter((p) => p.id !== e.id).map((p) => ({ value: p.id, label: p.full_name }))} /></Field>
+        <Field label="Reports to" htmlFor="ep-mgr" hint={isOwner ? 'Follows the role; change it if needed.' : 'Set automatically from the role. Only the Master can change it.'}><Select id="ep-mgr" disabled={!isOwner} value={f.reports_to ?? ''} onChange={(ev) => setF((s) => ({ ...s, reports_to: ev.target.value ? Number(ev.target.value) : null }))} placeholder="None" options={managers.map((p) => ({ value: p.id, label: p.level ? `${p.full_name} (${p.level})` : p.full_name }))} /></Field>
         <Field label="Level" htmlFor="ep-level"><Select id="ep-level" value={f.level} onChange={set('level')} placeholder="Not set" options={(cat.data?.levels ?? []).map((l) => ({ value: l.code, label: l.label }))} /></Field>
-        <Field label="Reporting role" htmlFor="ep-role"><Select id="ep-role" value={f.role} onChange={set('role')} options={(cat.data?.roles ?? []).map((r) => ({ value: r.code, label: r.label }))} /></Field>
+        <Field label="Reporting role" htmlFor="ep-role"><Select id="ep-role" value={f.role} onChange={(ev) => pickRole(ev.target.value)} placeholder="Not set" options={roleOptions.map((r) => ({ value: r.code, label: r.label }))} /></Field>
         <Field label="Start date" htmlFor="ep-start"><Input id="ep-start" type="date" value={f.start_date} onChange={set('start_date')} /></Field>
         <Field label="Salary" htmlFor="ep-salary"><NumField id="ep-salary" value={f.salary} onValue={(n) => setF((s) => ({ ...s, salary: n }))} /></Field>
         <Field label="Tax rate %" htmlFor="ep-tax"><NumField id="ep-tax" value={f.tax_rate} onValue={(n) => setF((s) => ({ ...s, tax_rate: n }))} /></Field>

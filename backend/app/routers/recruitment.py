@@ -34,7 +34,7 @@ from app.schemas.recruitment import (
     OfferIn,
     RecruitmentFormCreate,
 )
-from app.services.hr import department_or_404, move_to_department, start_onboarding
+from app.services.hr import automatic_reports_to, department_or_404, move_to_department, start_onboarding
 from app.services.recruitment import (
     _get_submission_for_client,
     _parse_datetime_minutes,
@@ -1030,7 +1030,9 @@ def hire_candidate(sub_id: int, request: Request, body: dict = None, db: Session
 
     level = validate_level(body.get("level"))
     role = validate_role(body.get("role"))
-    reports_to = validate_manager(db, client.id, None, body.get("reports_to"))
+    if body.get("reports_to"):
+        require_owner(request, db)  # the reporting line is the Master's to set
+    reports_to = validate_manager(db, client.id, None, body.get("reports_to"), level)         or automatic_reports_to(db, client.id, role, body.get("department_id") or None)
     # Placing somebody in a department is the Master's call, and the id has to
     # be one of this company's - it was stored unchecked before.
     dept_id = body.get("department_id") or None
