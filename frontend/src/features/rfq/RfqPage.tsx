@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
-import { Plus } from 'lucide-react'
+import { Columns3, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
@@ -81,6 +81,16 @@ export default function RfqPage() {
         ) : <span className="text-muted-foreground">-</span>,
     },
     { id: 'stage', header: 'Stage', width: '11rem', cell: (r) => { const st = stage(r); return <Badge tone={st.tone} dot>{st.label}</Badge> } },
+    {
+      id: 'compare',
+      header: '',
+      align: 'right',
+      width: '8rem',
+      cell: (r) => (
+        <Button variant="outline" size="sm" disabled={!r.quotes} title={r.quotes ? 'Compare the quotes side by side' : 'No quotes to compare yet'}
+          onClick={(e) => { e.stopPropagation(); navigate(`/store/enquiries/${r.id}?view=compare`) }}><Columns3 /> Comparison</Button>
+      ),
+    },
     { id: 'master-del', header: '', align: 'right', width: '3rem', cell: (r) => <MasterDelete kind="rfq" id={r.id} label={r.number} noun="enquiry" /> },
   ]
   const setShow = (v: Show) => setParams((p) => { const n = new URLSearchParams(p); if (v === 'open') n.delete('show'); else n.set('show', v); return n }, { replace: true })

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Ban, Check, Download, Pencil } from 'lucide-react'
+import { ArrowLeft, Ban, Check, Columns3, Download, Pencil } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { PromptModal } from '@/components/data/PromptModal'
 import { Badge, Button, Skeleton, Tabs } from '@/components/ui'
@@ -64,6 +64,7 @@ function Enquiry({ d }: { d: Statement }) {
         actions={
           <>
             <Badge tone={st.tone} dot>{st.label}</Badge>
+            <Button variant={view === 'compare' ? 'secondary' : 'outline'} onClick={() => setView('compare')}><Columns3 /> Comparison</Button>
             {quotes > 0 && <Button variant="outline" onClick={() => setDoc(true)}><Download /> Download</Button>}
             {open && <Button variant="outline" onClick={() => setEditing(true)}><Pencil /> Edit</Button>}
             {open && <Button variant="ghost" onClick={() => setCancelling(true)}><Ban /> Cancel enquiry</Button>}
