@@ -8,6 +8,7 @@ import re
 import time
 from datetime import datetime, timedelta
 
+import itsdangerous
 from fastapi import HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
@@ -56,6 +57,32 @@ class SessionExpiryMiddleware:
         await self.app(scope, receive, send)
 
 
+class _ClockSafeSigner(itsdangerous.TimestampSigner):
+    """The session cookie's signer, untroubled by a clock put back a little.
+
+    The cookie carries the second it was signed, and itsdangerous takes one signed "in the future" as expired. When
+    the clock is stepped back (Windows did it by 2 s mid-run; a server's time sync can too), a cookie signed just
+    before the step was refused and the person was signed out between two clicks. A stamp up to CLOCK_STEP ahead of
+    the clock is taken as now; anything older than its lifetime is refused as before."""
+
+    CLOCK_STEP = 300
+
+    def unsign(self, value, max_age=None, return_timestamp=False):
+        try:
+            return super().unsign(value, max_age=max_age, return_timestamp=return_timestamp)
+        except itsdangerous.SignatureExpired as e:
+            ahead = e.date_signed.timestamp() - time.time() if e.date_signed else -1
+            if 0 < ahead <= self.CLOCK_STEP:
+                return super().unsign(value, max_age=None, return_timestamp=return_timestamp)
+            raise
+
+
+class ClockSafeSessionMiddleware(SessionMiddleware):
+    def __init__(self, app, secret_key, **kwargs):
+        super().__init__(app, secret_key, **kwargs)
+        self.signer = _ClockSafeSigner(str(secret_key))
+
+
 class SessionCookieLifetimeMiddleware:
     """Outside SessionMiddleware: sets the cookie's Max-Age per sign-in. Remember me gets a persistent cookie; a
     sign-in without it gets none, so the browser drops it on close. (The signature check allows the longest
@@ -90,7 +117,7 @@ class SessionCookieLifetimeMiddleware:
 
 app.add_middleware(SessionExpiryMiddleware)
 app.add_middleware(
-    SessionMiddleware,
+    ClockSafeSessionMiddleware,
     secret_key=SECRET_KEY,
     same_site=SESSION_SAMESITE,
     https_only=COOKIE_SECURE,
