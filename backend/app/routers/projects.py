@@ -21,7 +21,7 @@ from app.core.config import logger
 from app.core.currency import DEFAULT_CURRENCY, money, totals_by_currency
 from app.core.gst import GST_STATES
 from app.core.queries import prime
-from app.core.serials import allocate_job_number
+from app.core.serials import allocate_job_number, typed_job_number
 from app.core.sheets import sheet_response
 from app.routers.files import list_files
 from app.schemas.projects import (
@@ -276,7 +276,8 @@ def create_job(body: JobIn, request: Request, db: Session = Depends(get_db)):
 
     job = models.DBJob(
         client_id=client.id,
-        number=allocate_job_number(db, client.id),
+        number=(typed_job_number(db, client.id, body.number) if (body.number or "").strip()
+                else allocate_job_number(db, client.id)),
         name=name,
         contact_id=contact_id,
         customer_name=customer_name,
@@ -311,6 +312,8 @@ def update_job(job_id: int, body: JobIn, request: Request, db: Session = Depends
         raise HTTPException(status_code=400, detail="Give the job a name")
 
     was_open = job.status not in JOB_CLOSED_STATUSES
+    if body.number is not None and " ".join(body.number.split()) != (job.number or ""):
+        job.number = typed_job_number(db, client.id, body.number, job.id)
     job.name = name
     job.customer_name = (body.customer_name or "").strip()
     # The jobs screen sends a name, never an id; taking the missing id as

@@ -77,6 +77,20 @@ export function BoqPickerModal({ job, onClose, anchor = null, onDone }: { job: n
     ids.forEach((id) => (all ? next.delete(id) : next.add(id)))
     return next
   })
+  // Select all: every line, or every line found while searching. Lines already on the programme are left out (ticked
+  // again they would be put on twice) unless every line is on it already; they can still be ticked one by one.
+  const everyLine = useMemo(() => {
+    const lines = (find.trim() ? rows : nodes).filter((n) => !n.heading)
+    const fresh = lines.filter((n) => !n.drawn_rows)
+    return { ids: (fresh.length ? fresh : lines).map((n) => n.id), skipped: fresh.length ? lines.length - fresh.length : 0 }
+  }, [find, rows, nodes])
+  const allOn = everyLine.ids.length > 0 && everyLine.ids.every((id) => picked.has(id))
+  const someOn = !allOn && everyLine.ids.some((id) => picked.has(id))
+  const toggleAll = () => setPicked((p) => {
+    const next = new Set(p)
+    everyLine.ids.forEach((id) => (allOn ? next.delete(id) : next.add(id)))
+    return next
+  })
   const expand = (id: string) => setOpened((o) => { const n = new Set(o ?? open); if (n.has(id)) n.delete(id); else n.add(id); return n })
   const chosen = nodes.filter((n) => !n.heading && picked.has(n.id))
   const amount = chosen.reduce((s, n) => s + (n.amount || n.quantity * n.rate), 0)
@@ -140,6 +154,13 @@ export function BoqPickerModal({ job, onClose, anchor = null, onDone }: { job: n
               <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input aria-label="Find in the BOQ" placeholder="Find: 2.1.1, excavation, M40 ..." value={find} onChange={(e) => setFind(e.target.value)} className="pl-8" />
             </div>
+            <label className="flex items-center gap-2 rounded-md px-2 py-1 text-sm font-medium hover:bg-accent"
+              title={everyLine.skipped ? `${everyLine.skipped} line${everyLine.skipped === 1 ? ' is' : 's are'} already on the programme and left out; tick them one by one to put them on again.` : undefined}>
+              <input type="checkbox" className="size-4 accent-primary" checked={allOn} disabled={!everyLine.ids.length}
+                ref={(el) => { if (el) el.indeterminate = someOn }} onChange={toggleAll} />
+              {find.trim() ? 'Select all found' : 'Select all'}
+              {everyLine.skipped > 0 && <span className="text-xs font-normal text-muted-foreground">(not the {everyLine.skipped} already on it)</span>}
+            </label>
             <Button size="sm" variant="ghost" onClick={() => setOpened(new Set(nodes.filter((n) => n.heading).map((n) => n.id)))}>Open all</Button>
             <Button size="sm" variant="ghost" onClick={() => setOpened(new Set())}>Close all</Button>
             <span className="text-sm text-muted-foreground">{chosen.length} ticked · {formatINR(amount)}</span>

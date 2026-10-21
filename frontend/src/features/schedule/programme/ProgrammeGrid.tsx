@@ -249,6 +249,10 @@ export function ProgrammeGrid(p: GridProps) {
                           aria-label={c.label}
                           value={editing}
                           onChange={(ev) => setEditing(ev.target.value)}
+                          // A click inside the box (the calendar button of a date, or placing the cursor) is not a click on
+                          // the cell: let through, it closed the box before a date could be picked, and nothing was saved.
+                          onMouseDown={(ev) => ev.stopPropagation()}
+                          onDoubleClick={(ev) => ev.stopPropagation()}
                           onBlur={() => commit()}
                           onKeyDown={(ev) => {
                             if (ev.key === 'Enter') { ev.preventDefault(); commit([1, 0]) }

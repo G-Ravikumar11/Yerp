@@ -17,7 +17,7 @@ export function ProjectFormModal({ project, open, onClose }: { project: BoardPro
 function Form({ project: p, onClose }: { project: BoardProject | null; onClose: () => void }) {
   const states = useGstStates()
   const loc = useSiteLocation(p?.id ?? null)
-  const [f, setF] = useState({ name: p?.name ?? '', customer_name: p?.customer_name ?? '', status: p?.status ?? 'quoting', site_address: p?.site_address ?? '', state_code: p?.state_code ?? '', start_date: p?.start_date ?? today(), target_end_date: p?.target_end_date ?? '', description: p?.description ?? '' })
+  const [f, setF] = useState({ number: p?.number ?? '', name: p?.name ?? '', customer_name: p?.customer_name ?? '', status: p?.status ?? 'quoting', site_address: p?.site_address ?? '', state_code: p?.state_code ?? '', start_date: p?.start_date ?? today(), target_end_date: p?.target_end_date ?? '', description: p?.description ?? '' })
   const [n, setN] = useState({ quoted_value: p?.quoted_value ?? 0, budget: p?.budget ?? 0, retention_percent: p?.retention_percent ?? 0 })
   const [geo, setGeo] = useState<string | null>(null)
   const [radius, setRadius] = useState<number | null>(null)
@@ -41,7 +41,9 @@ function Form({ project: p, onClose }: { project: BoardProject | null; onClose: 
   return (
     <div>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Project name" htmlFor="pj-name" className="sm:col-span-2"><Input id="pj-name" value={f.name} onChange={set('name')} placeholder="Fairview, plot 3" autoFocus /></Field>
+        <Field label="Job code" htmlFor="pj-number" hint="Your own code for the project, as it goes on every paper. Not repeated."><Input id="pj-number" value={f.number} maxLength={40} onChange={set('number')} placeholder="APNRT-01" autoFocus={!p} /></Field>
+        <span className="hidden sm:block" />
+        <Field label="Project name" htmlFor="pj-name" className="sm:col-span-2"><Input id="pj-name" value={f.name} onChange={set('name')} placeholder="Fairview, plot 3" autoFocus={!!p} /></Field>
         <Field label="Customer" htmlFor="pj-cust"><Input id="pj-cust" value={f.customer_name} onChange={set('customer_name')} /></Field>
         <Field label="Status" htmlFor="pj-status"><Select id="pj-status" value={f.status} onChange={set('status')} options={Object.entries(JOB_STATUS).map(([v, l]) => ({ value: v, label: l }))} /></Field>
         <Field label="Site address" htmlFor="pj-site" className="sm:col-span-2"><Input id="pj-site" value={f.site_address} onChange={set('site_address')} /></Field>
@@ -66,7 +68,7 @@ function Form({ project: p, onClose }: { project: BoardProject | null; onClose: 
       <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
         {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button loading={save.isPending} disabled={!f.name.trim()} onClick={() => save.mutate()}>Save project</Button>
+        <Button loading={save.isPending} disabled={!f.name.trim() || !f.number.trim()} onClick={() => save.mutate()}>Save project</Button>
       </div>
     </div>
   )

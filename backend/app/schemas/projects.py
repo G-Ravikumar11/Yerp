@@ -6,6 +6,8 @@ from pydantic import BaseModel
 
 class JobIn(BaseModel):
     name: str
+    # The job code, typed by whoever opens the project. Left out, the next JOB-0001 style number is given.
+    number: Optional[str] = None
     customer_name: Optional[str] = ""
     contact_id: Optional[int] = None
     site_address: Optional[str] = ""

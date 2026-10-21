@@ -78,6 +78,26 @@ def test_jobs_number_in_sequence(tenant):
     assert make_job(tenant, name="Second")["number"] == "JOB-0002"
 
 
+def test_the_job_code_is_typed_by_hand_and_never_repeated(tenant):
+    job = make_job(tenant, number="  APNRT-01 ")
+    assert job["number"] == "APNRT-01"
+    # The same code, in any case, is refused for a second project.
+    res = tenant.post("/api/jobs", json={"name": "Another", "number": "apnrt-01"})
+    assert res.status_code == 409 and "already the job code" in res.json()["detail"]
+    other = make_job(tenant, name="Second", number="YP/24/007")
+    # Changed on the project itself; taking another project's code is refused.
+    edit = {"name": "Second", "number": "YP/24/008"}
+    assert tenant.put(f"/api/jobs/{other['id']}", json=edit).json()["number"] == "YP/24/008"
+    assert tenant.put(f"/api/jobs/{other['id']}", json={"name": "Second", "number": "APNRT-01"}).status_code == 409
+    # Left out, the code stays as it was.
+    assert tenant.put(f"/api/jobs/{other['id']}", json={"name": "Second"}).json()["number"] == "YP/24/008"
+
+
+def test_a_number_given_goes_past_a_code_typed_by_hand(tenant):
+    make_job(tenant, number="JOB-0001")
+    assert make_job(tenant, name="Second")["number"] == "JOB-0002"
+
+
 def test_a_job_needs_a_name(tenant):
     assert tenant.post("/api/jobs", json={"name": "   "}).status_code == 400
 
