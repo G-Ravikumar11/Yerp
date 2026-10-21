@@ -41,7 +41,7 @@ class DBEmployee(Base):
     address = Column(String, default="")
 
     job_title = Column(String, default="")
-    role = Column(String, default="employee")
+    role = Column(String, default="")
     # What this person may DO in the portal, decided by HR. Deliberately
     # separate from `role`, which is their place in the reporting line: a site
     # supervisor may need to raise costs without being anyone's manager, and a

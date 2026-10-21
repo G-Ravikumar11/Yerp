@@ -95,8 +95,10 @@ export interface Portal {
 
 export interface HrCatalogue {
   portals: Portal[]
-  levels: { code: string; label: string }[]
-  roles: { code: string; label: string }[]
+  /** `rank` is higher for a more senior level: L1 is the top. */
+  levels: { code: string; label: string; rank: number }[]
+  /** `reports_to` is the role this one normally reports to; `level` is where it sits. */
+  roles: { code: string; label: string; level: string; reports_to: string | null; department: string }[]
   permission_roles: PermissionRole[]
   permissions: Permission[]
 }

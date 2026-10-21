@@ -24,7 +24,7 @@ def dept(tenant):
 
 @pytest.fixture
 def job(tenant, dept):
-    manager = make_employee(tenant, level="L6", role="manager")
+    manager = make_employee(tenant, level="L4", role="project_manager")
     res = tenant.post("/api/recruitment/jobs", json={
         "title": "Senior Backend Engineer", "department_id": dept["id"],
         "hiring_manager_id": manager["id"], "location": "London", "work_mode": "hybrid",

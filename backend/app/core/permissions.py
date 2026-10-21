@@ -11,26 +11,63 @@ TEAM_ROLES = ("owner", "admin", "viewer")
 # `level` is the seniority band; `role` is the person's place in the reporting
 # line. They are deliberately separate: a senior engineer (L4) and a team lead
 # can be the same band but different roles.
+#
+# L1 is the top of the ladder, as in the company's own org notes, so a HIGHER rank is a MORE senior level.
 EMPLOYEE_LEVELS = [
-    {"code": "L1", "label": "L1 - Intern / Trainee", "rank": 1},
-    {"code": "L2", "label": "L2 - Junior", "rank": 2},
-    {"code": "L3", "label": "L3 - Mid", "rank": 3},
-    {"code": "L4", "label": "L4 - Senior", "rank": 4},
-    {"code": "L5", "label": "L5 - Lead", "rank": 5},
-    {"code": "L6", "label": "L6 - Principal / Manager", "rank": 6},
-    {"code": "L7", "label": "L7 - Director", "rank": 7},
-    {"code": "L8", "label": "L8 - Executive", "rank": 8},
+    {"code": "L1", "label": "L1 - HOD", "rank": 7},
+    {"code": "L2", "label": "L2 - MD", "rank": 6},
+    {"code": "L3", "label": "L3 - Coordinator / HO", "rank": 5},
+    {"code": "L4", "label": "L4 - Project Manager", "rank": 4},
+    {"code": "L5", "label": "L5 - Site Director / Sr. Engineer", "rank": 3},
+    {"code": "L6", "label": "L6 - Site Engineer", "rank": 2},
+    {"code": "L7", "label": "L7 - Engineer / Assistant", "rank": 1},
 ]
 LEVEL_CODES = {lvl["code"] for lvl in EMPLOYEE_LEVELS}
 LEVEL_RANK = {lvl["code"]: lvl["rank"] for lvl in EMPLOYEE_LEVELS}
+
+# The designations. `level` is where the role sits; `reports_to` is the role it normally reports to (the
+# default reporting line, which HR still sets person by person); `access` is the access level (a
+# PERMISSION_ROLES code) the Master would normally give it. Nothing here grants access by itself: the
+# Master sets each person's access, as before.
 EMPLOYEE_ROLES = [
-    {"code": "employee", "label": "Employee"},
-    {"code": "team_lead", "label": "Team Lead"},
-    {"code": "manager", "label": "Manager"},
-    {"code": "department_head", "label": "Department Head"},
-    {"code": "hr_admin", "label": "HR Admin"},
-    {"code": "executive", "label": "Executive"},
+    {"code": "hod", "label": "HOD", "level": "L1", "department": "Management",
+     "reports_to": None, "access": "head_projects"},
+    {"code": "md", "label": "MD", "level": "L2", "department": "Management",
+     "reports_to": "hod", "access": "owner"},
+    {"code": "coordinator", "label": "Coordinator", "level": "L3", "department": "Head office",
+     "reports_to": "md", "access": "ho_coordinator"},
+    {"code": "ho_planning_head", "label": "HO Planning Head", "level": "L3", "department": "Head office",
+     "reports_to": "md", "access": "ho_coordinator"},
+    {"code": "ho_qs", "label": "HO QS", "level": "L3", "department": "Head office",
+     "reports_to": "md", "access": "ho_qs"},
+    {"code": "store_coordinator", "label": "Coordinator Store / Sr. Store", "level": "L3",
+     "department": "Store", "reports_to": "hod", "access": "stores"},
+    {"code": "project_manager", "label": "Project Manager", "level": "L4", "department": "Projects",
+     "reports_to": "ho_planning_head", "access": "project_manager"},
+    {"code": "safety_head", "label": "Safety Head", "level": "L4", "department": "Site",
+     "reports_to": "ho_planning_head", "access": "construction"},
+    {"code": "sr_hr", "label": "Sr. HR", "level": "L4", "department": "HR",
+     "reports_to": "hod", "access": "hr_admin"},
+    {"code": "tpt", "label": "TPT (Transport)", "level": "L4", "department": "Transport",
+     "reports_to": "hod", "access": "staff"},
+    {"code": "site_director", "label": "Site Director", "level": "L5", "department": "Site",
+     "reports_to": "project_manager", "access": "construction"},
+    {"code": "sr_engineer", "label": "Sr. Engineer", "level": "L5", "department": "Site",
+     "reports_to": "project_manager", "access": "construction"},
+    {"code": "site_engineer", "label": "Site Engineer", "level": "L6", "department": "Site",
+     "reports_to": "site_director", "access": "construction"},
+    {"code": "store_executive", "label": "Store Executive", "level": "L6", "department": "Store",
+     "reports_to": "project_manager", "access": "stores"},
+    {"code": "engineer", "label": "Engineer", "level": "L7", "department": "Site",
+     "reports_to": "site_engineer", "access": "staff"},
+    {"code": "store_assistant", "label": "Store Assistant", "level": "L7", "department": "Store",
+     "reports_to": "store_executive", "access": "stores"},
 ]
+ROLE_LEVEL = {r["code"]: r["level"] for r in EMPLOYEE_ROLES}
+# Roles that can be held but never handed out: they are not in the role picker and no create, update or
+# hire can give one to anybody. Whoever already holds one keeps it.
+FIXED_ROLES = frozenset({"hod", "md", "coordinator", "ho_planning_head", "ho_qs", "store_coordinator"})
+ASSIGNABLE_ROLES = [r for r in EMPLOYEE_ROLES if r["code"] not in FIXED_ROLES]
 ROLE_CODES = {r["code"] for r in EMPLOYEE_ROLES}
 
 

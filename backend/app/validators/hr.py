@@ -7,7 +7,7 @@ from sqlalchemy import func as sqlfunc
 from app import models
 
 from app.constants.hr import EMPLOYEE_MONEY_FIELDS, PERMISSION_ROLE_CODES, _DOMAIN_RE
-from app.core.permissions import DEFAULT_PERMISSION_ROLE, LEVEL_CODES, ROLE_CODES
+from app.core.permissions import DEFAULT_PERMISSION_ROLE, FIXED_ROLES, LEVEL_CODES, LEVEL_RANK, ROLE_CODES
 
 
 def validate_permission_role(role):
@@ -33,21 +33,25 @@ def validate_level(level):
     return level
 
 
-def validate_role(role):
+def validate_role(role, current=""):
     role = (role or "").strip().lower()
     if role and role not in ROLE_CODES:
         raise HTTPException(
             status_code=400,
             detail=f"Unknown role '{role}'. Expected one of: {', '.join(sorted(ROLE_CODES))}",
         )
-    return role or "employee"
+    if role in FIXED_ROLES and role != (current or ""):
+        raise HTTPException(status_code=403, detail="This role is fixed and cannot be given to anyone")
+    return role
 
 
-def validate_manager(db, client_id, employee_id, manager_id):
-    """A reporting line must stay a tree.
+def validate_manager(db, client_id, employee_id, manager_id, level=""):
+    """A reporting line must stay a tree, and run upwards through the levels.
 
-    Without this an admin could point A at B and B at A; the org chart renderer
-    walks children recursively and would spin forever on the cycle.
+    Without the first an admin could point A at B and B at A; the org chart renderer
+    walks children recursively and would spin forever on the cycle. `level` is the
+    employee's own: a manager may share it but not sit below it. Blank on either
+    side is not checked.
     """
     if not manager_id:
         return None
@@ -58,6 +62,12 @@ def validate_manager(db, client_id, employee_id, manager_id):
     ).first()
     if not manager:
         raise HTTPException(status_code=400, detail="Manager not found")
+    if LEVEL_RANK.get(level) and LEVEL_RANK.get(manager.level) and LEVEL_RANK[manager.level] < LEVEL_RANK[level]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{manager.first_name} {manager.last_name} is {manager.level}, below this employee's "
+                   f"{level}; a manager must be at the same level or higher",
+        )
     # Walk up from the proposed manager; hitting this employee means a cycle.
     seen = set()
     cursor = manager

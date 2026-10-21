@@ -31,7 +31,7 @@ class EmployeeCreate(BaseModel):
     department_id: Optional[int] = None
     reports_to: Optional[int] = None
     job_title: Optional[str] = ""
-    role: Optional[str] = "employee"
+    role: Optional[str] = ""
     permission_role: Optional[str] = "staff"
     level: Optional[str] = ""
     employment_type: Optional[str] = "full_time"
