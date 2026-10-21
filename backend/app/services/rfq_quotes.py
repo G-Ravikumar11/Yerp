@@ -114,22 +114,13 @@ def invites_of(db, rfq_id):
 def statement_for_screen(db, client_id, rfq, base=""):
     """The comparative statement, with who entered each quote, the supplier's own document beside it, and the links
     sent for quotes and how far each has got."""
-    st = comparative_statement(db, rfq)
-    quotes = {q.id: q for q in db.query(models.DBRfqQuote).filter(models.DBRfqQuote.rfq_id == rfq.id).all()}
-    docs = documents_of(db, client_id, "rfq_quote", list(quotes))
+    st = comparative_statement(db, rfq)                 # its suppliers carry who entered each quote, and its orders
+    docs = documents_of(db, client_id, "rfq_quote", [s["quote_id"] for s in st["suppliers"]])
     for s in st["suppliers"]:
-        q = quotes.get(s["quote_id"])
-        s["source"] = (q.source if q else "") or ""
         s["document"] = docs.get(s["quote_id"])
     invites = invites_of(db, rfq.id)
     inv_docs = documents_of(db, client_id, "rfq_invite", [i.id for i in invites if i.document_id])
     st["invites"] = [dict(invite_dict(i, base), document=inv_docs.get(i.id)) for i in invites]
-    # The purchase orders the award made, so the enquiry says where its items went.
-    po_ids = {r["po_id"] for r in st["lines"] if r["po_id"]}
-    st["orders"] = [{"id": o.id, "number": o.number, "supplier_name": o.supplier_name or "", "total": money(o.total),
-                     "status": o.status or ""}
-                    for o in db.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.client_id == client_id,
-                                                                     models.DBPurchaseOrder.id.in_(po_ids)).order_by(models.DBPurchaseOrder.id).all()] if po_ids else []
     return st
 
 

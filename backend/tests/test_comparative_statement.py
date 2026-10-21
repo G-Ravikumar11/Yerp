@@ -222,6 +222,27 @@ def test_an_enquiry_can_be_corrected_until_the_first_quote(tenant):
     assert tenant.get("/api/rfqs/%d" % rid).json()["lines"][0]["qty"] == 1200
 
 
+def test_a_title_change_after_quotes_is_not_taken_for_a_change_of_items(tenant):
+    from app import db as database, models
+    d = rfq(tenant)
+    rid = d["rfq"]["id"]
+    quote(tenant, d, "ACC", 390, 61000)
+    # A line saved before units were tidied keeps the unit as it was typed.
+    with database.SessionLocal() as s:
+        s.query(models.DBRfqLine).filter(models.DBRfqLine.rfq_id == rid, models.DBRfqLine.item_code == "RM-CEM").update({"uom": "bags"})
+        s.commit()
+    # The same items, sent in another order, spaced and cased differently, with a blank row left on the screen.
+    body = {"title": "Cement and steel, Block A raft", "lines": [
+        {"item_code": "RM-STL", "description": "TMT  Fe500D 12mm ", "uom": "mt", "qty": 20},
+        {"item_code": "", "description": "", "uom": "", "qty": 0},
+        {"item_code": "RM-CEM", "description": "cement OPC 53", "uom": "Bags", "qty": 1000}]}
+    res = tenant.put("/api/rfqs/%d" % rid, json=body)
+    assert res.status_code == 200, res.text
+    after = tenant.get("/api/rfqs/%d" % rid).json()
+    assert after["rfq"]["title"] == "Cement and steel, Block A raft"
+    assert [l["rfq_line_id"] for l in after["lines"]] == [l["rfq_line_id"] for l in d["lines"]]      # the priced lines kept
+
+
 def test_a_cancelled_enquiry_cannot_be_changed(tenant):
     r = rfq(tenant)
     rid = r["rfq"]["id"]

@@ -7,6 +7,10 @@ import { api, ApiError } from '@/lib/api'
 import { formatINR } from '@/lib/utils'
 import { toast } from '@/stores/toast'
 
+/** One supplier however the name was typed: case, spacing and full stops aside, as the server's norm_name has it. */
+const flatName = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+const sameName = (a: string, b: string) => flatName(a) === flatName(b)
+
 interface DocText { name: string; kind: string; text: string; shown_as_is: boolean }
 
 /** Keep the supplier's quotation with a quote that has none yet. */
@@ -54,7 +58,7 @@ export function QuoteCheckModal({ statement, supplier, onClose }: { statement: S
               <thead className="bg-surface text-left text-xs text-muted-foreground"><tr><th className="px-3 py-2">Item</th><th className="px-3 py-2 text-right">Rate</th></tr></thead>
               <tbody>
                 {statement.lines.map((l) => {
-                  const o = l.offers.find((x) => x.supplier_name === supplier.supplier_name)
+                  const o = l.offers.find((x) => sameName(x.supplier_name, supplier.supplier_name))
                   return (
                     <tr key={l.rfq_line_id} className="border-t border-border">
                       <td className="px-3 py-2">{l.description}<div className="text-xs text-muted-foreground">{l.qty} {l.uom}</div></td>

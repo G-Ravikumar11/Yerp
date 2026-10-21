@@ -469,6 +469,21 @@ def _rfq_quotes(db, rfq_id):
     return quotes, rates
 
 
+def quote_totals(q, lines, rates):
+    """One supplier's quote on an enquiry: basic, tax, how many lines it prices, and the total landed at site (basic,
+    tax and freight together). The comparative statement and the enquiry list both read it from here."""
+    basic = tax = 0.0
+    quoted = 0
+    for l in lines:
+        ql = rates.get((q.id, l.id))
+        if ql and ql.rate > 0:
+            amt = (l.qty or 0) * ql.rate
+            basic += amt
+            tax += amt * (ql.tax_percent or 0) / 100.0
+            quoted += 1
+    return basic, tax, quoted, money(basic + tax + (q.freight or 0))
+
+
 def comparative_statement(db, rfq):
     """Every line against every supplier, the lowest named, and each
     supplier's total landed at site - basic, tax and freight together,
@@ -477,23 +492,15 @@ def comparative_statement(db, rfq):
     quotes, rates = _rfq_quotes(db, rfq.id)
     suppliers = []
     for q in quotes:
-        basic = tax = 0.0
-        quoted = 0
-        for l in lines:
-            ql = rates.get((q.id, l.id))
-            if ql and ql.rate > 0:
-                amt = (l.qty or 0) * ql.rate
-                basic += amt
-                tax += amt * (ql.tax_percent or 0) / 100.0
-                quoted += 1
+        basic, tax, quoted, landed = quote_totals(q, lines, rates)
         suppliers.append({
-            "quote_id": q.id, "supplier_name": q.supplier_name, "quote_ref": q.quote_ref or "",
+            "quote_id": q.id, "supplier_name": q.supplier_name, "quote_ref": q.quote_ref or "", "source": q.source or "",
             "quote_date": q.quote_date or "", "delivery_days": q.delivery_days or 0,
             "payment_terms": q.payment_terms or "", "freight": money(q.freight),
             "valid_until": q.valid_until or "", "notes": q.notes or "",
             "lines_quoted": quoted, "complete": quoted == len(lines),
             "basic": money(basic), "tax": money(tax),
-            "landed": money(basic + tax + (q.freight or 0))})
+            "landed": landed})
     rows = []
     for l in lines:
         offers = []
@@ -514,10 +521,13 @@ def comparative_statement(db, rfq):
                                if low and low["rate"] else 0.0),
             "awarded_supplier": l.awarded_supplier or "", "awarded_rate": unit_rate(l.awarded_rate),
             "po_id": l.po_id})
-    # The order each awarded line went on, by number: what the buyer looks for next.
+    # The order each awarded line went on, by number: what the buyer looks for next; and the orders themselves, so
+    # the enquiry says where its items went.
     po_ids = {r["po_id"] for r in rows if r["po_id"]}
-    numbers = dict(db.query(models.DBPurchaseOrder.id, models.DBPurchaseOrder.number).filter(
-        models.DBPurchaseOrder.id.in_(po_ids)).all()) if po_ids else {}
+    orders = db.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.client_id == rfq.client_id,
+                                                     models.DBPurchaseOrder.id.in_(po_ids)).order_by(
+        models.DBPurchaseOrder.id).all() if po_ids else []
+    numbers = {o.id: o.number for o in orders}
     for r in rows:
         r["po_number"] = numbers.get(r["po_id"], "")
     complete = [s for s in suppliers if s["complete"]]
@@ -532,6 +542,8 @@ def comparative_statement(db, rfq):
             "l1": best["supplier_name"] if best else "",
             "l1_landed": best["landed"] if best else 0.0,
             "lowest_per_line_basic": per_line_total,
+            "orders": [{"id": o.id, "number": o.number, "supplier_name": o.supplier_name or "", "total": money(o.total),
+                        "status": o.status or ""} for o in orders],
             "saving_vs_l2": money(ranked[1]["landed"] - ranked[0]["landed"]) if len(ranked) > 1 else 0.0}
 
 
@@ -613,16 +625,7 @@ def rfq_list_rows(db, client_id, rfqs):
         mine = lines.get(r.id, [])
         best = None
         for q in quotes.get(r.id, []):
-            basic = tax = 0.0
-            quoted = 0
-            for l in mine:
-                ql = rates.get((q.id, l.id))
-                if ql and ql.rate > 0:
-                    amt = (l.qty or 0) * ql.rate
-                    basic += amt
-                    tax += amt * (ql.tax_percent or 0) / 100.0
-                    quoted += 1
-            landed = money(basic + tax + (q.freight or 0))
+            _, _, quoted, landed = quote_totals(q, mine, rates)
             if mine and quoted == len(mine) and (best is None or landed < best["landed"]):
                 best = {"supplier_name": q.supplier_name, "landed": landed}
         awarded = sorted({l.awarded_supplier for l in mine if l.awarded_supplier})

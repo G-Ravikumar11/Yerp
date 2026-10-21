@@ -224,7 +224,10 @@ def _apply_reversal(db, e, store, user_id, reason):
             raise InvalidMovementError("Reversing %s %s would leave a negative value." % (e.ref_doc_type, e.ref_doc_id))
         new_qty = old_qty - qty
         taken = old_value if new_qty == 0 else value
-        new_value, avg = old_value - taken, _dec(bal.avg_rate)
+        new_value = old_value - taken
+        # What is left is worth what is left: undoing a dearer receipt brings the average back down. (Emptied, the
+        # last average is kept, as an issue that empties the bin keeps it.)
+        avg = _q(new_value / new_qty, _RATE) if new_qty else _dec(bal.avg_rate)
         qty_in, qty_out, value = ZERO, qty, taken
     else:                                       # bring it back in
         new_qty, new_value = old_qty + qty, old_value + value

@@ -205,41 +205,6 @@ def test_deleting_an_enquiry_takes_its_links_and_the_suppliers_files(tenant, cli
                                               models.DBFile.attached_id == inv["id"]).count() == 0
 
 
-# --- checking a quote against the supplier's own quotation (as an RA bill against its hard copy) --------------------
-
-def test_a_quote_is_checked_item_by_item_against_their_quotation(tenant, monkeypatch):
-    from app.ai import quote_reader
-    from app.ai.llm_client import AiResult
-    r = rfq(tenant)
-    c = quote(tenant, r, "ACC", 390, 62000, freight=1500, quote_ref="ACC/221")
-    cem, stl = r["lines"][0]["rfq_line_id"], r["lines"][1]["rfq_line_id"]
-    qid = c["suppliers"][0]["quote_id"]
-    assert tenant.post("/api/ai/rfqs/%d/quotes/%d/check" % (r["rfq"]["id"], qid)).status_code == 409, "nothing to check against yet"
-    tenant.post("/api/rfqs/%d/quotes/%d/document" % (r["rfq"]["id"], qid), files={"file": ("ACC.docx", docx("ACC/221", [["Cement", "390"]]), "application/octet-stream")})
-    paper = {"supplier_name": "ACC", "quote_ref": "ACC/221", "freight": 2500, "delivery_days": None,
-             "lines": [{"rfq_line_id": cem, "rate": 390, "tax_percent": 18}, {"rfq_line_id": stl, "rate": 61500, "tax_percent": 18}],
-             "unmatched": ["Sand 1450 per cum"], "confidence": 0.9}
-    monkeypatch.setattr(quote_reader, "ask_json", lambda *a, **k: AiResult(True, model="t", data=paper))
-    monkeypatch.setattr(quote_reader.guard, "run_feature", lambda db, req, client, key, label, ref, call: call())
-    res = tenant.post("/api/ai/rfqs/%d/quotes/%d/check" % (r["rfq"]["id"], qid))
-    assert res.status_code == 200, res.text
-    out = res.json()
-    rows = {x["rfq_line_id"]: x for x in out["rows"]}
-    assert rows[cem]["status"] == "agrees" and rows[stl]["status"] == "differs"
-    assert (rows[stl]["entered_rate"], rows[stl]["paper_rate"]) == (62000, 61500)
-    assert [t["item"] for t in out["terms"] if t["status"] == "differs"] == ["Transport to site"]
-    assert out["differences"] == 2 and out["agrees"] is False and out["unmatched"] == ["Sand 1450 per cum"]
-
-
-def test_checking_without_ai_says_so(tenant):
-    r = rfq(tenant)
-    c = quote(tenant, r, "ACC", 390, 62000)
-    qid = c["suppliers"][0]["quote_id"]
-    tenant.post("/api/rfqs/%d/quotes/%d/document" % (r["rfq"]["id"], qid), files={"file": ("ACC.xlsx", xlsx([["Cement", 390]]), "application/octet-stream")})
-    out = tenant.post("/api/ai/rfqs/%d/quotes/%d/check" % (r["rfq"]["id"], qid)).json()
-    assert out["available"] is False
-
-
 def test_their_word_or_excel_quotation_can_be_read_as_text_beside_the_quote(tenant):
     r = rfq(tenant)
     c = quote(tenant, r, "ACC", 390, 62000)

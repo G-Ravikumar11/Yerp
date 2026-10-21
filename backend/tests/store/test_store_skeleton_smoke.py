@@ -55,6 +55,7 @@ def test_in_out_and_reversal_keep_the_balance_right(db, store_world):
     reverse_document(db, ref_doc_type="GRN", ref_doc_id=10, user_id=None, reason="wrong supplier")
     bal = get_balance(db, w.central_id, w.item["cement"])
     assert (bal.qty, bal.value) == (D("5000.000"), D("35000.00"))
+    assert bal.avg_rate == D("7.0000")             # the dearer receipt undone, the average is back where it was
     ledger = db.query(DBStoreStockLedger).filter(DBStoreStockLedger.item_id == w.item["cement"]).all()
     assert sum(r.qty_in - r.qty_out for r in ledger) == bal.qty
     assert sum(r.value if r.qty_in else -r.value for r in ledger) == bal.value       # the ledger always adds up to the balance

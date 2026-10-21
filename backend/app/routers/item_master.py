@@ -67,10 +67,11 @@ def items_list(request: Request, q: str = "", category: str = "", subcategory: s
                page: int = 1, page_size: int = 25, missing: str = "", db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     query = _filtered(db, client.id, q, category, subcategory, item_type, uom, status, kind, site_id, missing)
-    total = query.count()
-    # How many of each kind the same filters find, for the Materials / Work items tabs.
+    # How many of each kind the same filters find, for the Materials / Work items tabs - and from the same one query,
+    # the total of the list shown: that kind's count, or every kind's when none is chosen.
     counts = dict(_filtered(db, client.id, q, category, subcategory, item_type, uom, status, "", site_id, missing)
                   .with_entities(models.DBItem.kind, func.count(models.DBItem.id)).group_by(models.DBItem.kind).all())
+    total = counts.get((kind or "").upper(), 0) if kind else sum(counts.values())
     column = SORTS.get(sort, models.DBItem.item_code)
     order = column.desc() if direction == "desc" else column.asc()
     page_size = max(1, min(page_size, 200))

@@ -805,9 +805,14 @@ def edit_rfq(rfq_id: int, body: RfqIn, request: Request, db: Session = Depends(g
         job_or_404(db, client.id, body.job_id)
     lines = rfq_line_rows([l.dict() for l in body.lines])
     old = _rfq_lines(db, r.id)
-    same = [(l.item_code or "", l.description, l.uom or "", money(l.qty)) for l in old] == [
-        ((l.get("item_code") or "").strip(), l["description"].strip(), canonical_unit(l.get("uom")) or (l.get("uom") or ""),
-         money(l["qty"])) for l in lines]
+
+    def key(code, description, uom, qty):
+        # Both sides read alike: spacing and case aside, the unit as the master spells it, in any order. A line saved
+        # before units were tidied, or the screen sending them in another order, is not a change to what was priced.
+        flat = lambda t: " ".join((t or "").split()).lower()
+        return flat(code), flat(description), flat(canonical_unit(uom) or uom), money(qty)
+    same = sorted(key(l.item_code, l.description, l.uom, l.qty) for l in old) == sorted(
+        key(l.get("item_code"), l["description"], l.get("uom"), l["qty"]) for l in lines)
     if not same:
         if db.query(models.DBRfqQuote.id).filter(models.DBRfqQuote.rfq_id == r.id).first():
             raise HTTPException(409, "Quotes are already in for these items, so they cannot be changed. Cancel this "
