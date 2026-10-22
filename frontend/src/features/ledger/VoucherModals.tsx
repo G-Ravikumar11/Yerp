@@ -72,28 +72,31 @@ function ExpenseForm({ kind, onClose }: { kind: 'expense' | 'income'; onClose: (
   )
 }
 
+/** What a transfer opens with: a site's cash box topped up shows the box and the amount already filled in. */
+export interface TransferDefaults { to?: number; amount?: number; note?: string }
+
 /** A contra: cash drawn from the bank for a site's cash box, paid back in, or moved between two banks. */
-export function TransferModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function TransferModal({ open, onClose, defaults, invalidate = [] }: { open: boolean; onClose: () => void; defaults?: TransferDefaults; invalidate?: readonly (readonly unknown[])[] }) {
   return (
     <Modal open={open} onOpenChange={(o) => !o && onClose()} title="Transfer between accounts" description="Cash drawn from the bank for a site, a cash box paid back in, or money moved between two banks. It is neither received nor paid: one contra voucher, in both books.">
-      {open && <TransferForm onClose={onClose} />}
+      {open && <TransferForm onClose={onClose} defaults={defaults} invalidate={invalidate} />}
     </Modal>
   )
 }
 
-function TransferForm({ onClose }: { onClose: () => void }) {
+function TransferForm({ onClose, defaults, invalidate }: { onClose: () => void; defaults?: TransferDefaults; invalidate: readonly (readonly unknown[])[] }) {
   const accounts = useAccounts()
   const list = accounts.data ?? []
   const [from, setFrom] = useState('')
-  const [to, setTo] = useState('')
-  const [amount, setAmount] = useState(0)
+  const [to, setTo] = useState(defaults?.to ? String(defaults.to) : '')
+  const [amount, setAmount] = useState(defaults?.amount ?? 0)
   const [on, setOn] = useState(today())
   const [mode, setMode] = useState('Cheque')
   const [ref, setRef] = useState('')
-  const [note, setNote] = useState('')
+  const [note, setNote] = useState(defaults?.note ?? '')
   const options = list.map((a) => ({ value: a.id, label: `${a.name} (${a.kind})` }))
   const save = useAction(() => transferMoney({ from_account_id: Number(from), to_account_id: Number(to), amount, paid_on: on, mode, reference: ref, note }), {
-    invalidate: [ledgerKeys.all],
+    invalidate: [ledgerKeys.all, ...invalidate.map((k) => [...k])],
     onSuccess: (r) => { onClose(); openVoucher(r.entry) },
   })
   if (accounts.data && list.length < 2) return <p className="rounded-lg border border-border bg-muted/40 p-4 text-sm">A transfer needs two accounts. Add the bank account and a cash box for the site on the Bank book tab first.</p>

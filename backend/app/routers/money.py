@@ -1,7 +1,7 @@
 """The money endpoints."""
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
 
 from app import models
@@ -19,7 +19,9 @@ from app.core.notifications import notify
 from app.core.sheets import sheet_response
 from app.documents.forms import _pre, form_pdf_response, money_voucher_spec, statement_form_spec
 from app.documents.letterhead import our_party
-from app.schemas.money import BankAccountIn, MoneyIn, PaymentDecisionIn, PaymentRulesIn, RequestPayIn, TransferIn
+from app.schemas.money import (BankAccountIn, CashBoxIn, MoneyIn, PaymentDecisionIn, PaymentRulesIn, RequestPayIn,
+                               SiteCashExpenseIn, TransferIn)
+from app.services import site_cash
 from app.services import payment_requests as preq
 from app.services.credit_notes import credit_totals_by_bill, credits_by_job
 from app.services.crm import (
@@ -899,6 +901,127 @@ def cancel_payment_request(request_id: int, request: Request, db: Session = Depe
     return {"ok": True, "message": message}
 
 
+# --- site cash (imprest) -----------------------------------------------------------------------------------------------
+
+def _site_cash_names(db, client_id, ids):
+    from app.services.hr import employee_name
+    ids = {i for i in ids if i}
+    return {e.id: employee_name(e) for e in db.query(models.DBEmployee).filter(
+        models.DBEmployee.client_id == client_id, models.DBEmployee.id.in_(ids)).all()} if ids else {}
+
+
+def _jobs(db, client_id, ids):
+    ids = {i for i in ids if i}
+    return {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client_id,
+                                                           models.DBJob.id.in_(ids)).all()} if ids else {}
+
+
+@router.get("/api/site-cash")
+def site_cash_view(request: Request, account_id: int = 0, status: str = "", db: Session = Depends(get_db)):
+    """The cash boxes this person sees - every one for accounts, their own for a site engineer - with what each should
+    hold, what is waiting to be checked, and the payments made out of them."""
+    client, emp = session_person(request, db)
+    boxes = site_cash.boxes_for(db, client.id, emp)
+    pending = site_cash.pending_by_box(db, client.id)
+    names = _site_cash_names(db, client.id, [b.custodian_id for b in boxes])
+    ids = [b.id for b in boxes]
+    q = db.query(models.DBSiteCashExpense).filter(models.DBSiteCashExpense.client_id == client.id,
+                                                  models.DBSiteCashExpense.account_id.in_(ids or [0]))
+    if account_id:
+        q = q.filter(models.DBSiteCashExpense.account_id == account_id)
+    if status:
+        q = q.filter(models.DBSiteCashExpense.status == status.upper())
+    rows = q.order_by(models.DBSiteCashExpense.spent_on.desc(), models.DBSiteCashExpense.id.desc()).limit(500).all()
+    jobs = _jobs(db, client.id, [b.job_id for b in boxes] + [x.job_id for x in rows])
+    from app.services.rfq_quotes import documents_of
+    photos = documents_of(db, client.id, "site_cash", [x.id for x in rows])
+    return {"boxes": [site_cash.box_dict(db, b, account_balance(db, client.id, b), pending.get(b.id, 0.0), names, jobs)
+                      for b in boxes],
+            "expenses": [site_cash.expense_dict(x, photos, names, jobs) for x in rows],
+            "manage": site_cash.can_manage(emp), "me": emp.id if emp is not None else None}
+
+
+@router.put("/api/site-cash/boxes/{account_id}")
+def set_cash_box(account_id: int, body: CashBoxIn, request: Request, db: Session = Depends(get_db)):
+    """Make a cash box a site's imprest: the site, the member of staff who holds it, and the float it is kept at."""
+    client, emp = session_person(request, db)
+    if not site_cash.can_manage(emp):
+        raise HTTPException(403, "Accounts set up the site cash boxes.")
+    box = site_cash.box_or_404(db, client.id, emp, account_id)
+    box.job_id = owned_or_404(db, models.DBJob, client.id, body.job_id, "Project")
+    box.custodian_id = owned_or_404(db, models.DBEmployee, client.id, body.custodian_id, "Custodian")
+    box.imprest_amount = money(max(0.0, body.imprest_amount or 0))
+    log_audit(db, client.id, "cash_box_set", "bank_account", box.id, box.name or "",
+              "float %s" % inr(box.imprest_amount), request)
+    db.commit()
+    return {"ok": True, "message": "%s set up: float %s." % (box.name, inr(box.imprest_amount))}
+
+
+@router.post("/api/site-cash/expenses")
+def submit_site_expense(body: SiteCashExpenseIn, request: Request, db: Session = Depends(get_db)):
+    """A payment made out of the site's cash box, entered from site."""
+    from app.services.hr import employee_name
+    client, emp = session_person(request, db)
+    box = site_cash.box_or_404(db, client.id, emp, body.account_id)
+    who = employee_name(emp) if emp is not None else (client.contact_name or "Master")
+    x = site_cash.submit(db, client, emp, who, box, body)
+    log_audit(db, client.id, "site_cash_spent", "site_cash", x.id, x.number,
+              "%s %s %s" % (x.head, inr(x.amount), x.paid_to), request)
+    db.commit()
+    return {"ok": True, "expense": site_cash.expense_dict(x),
+            "message": "%s: %s to %s entered; accounts will check it." % (x.number, inr(x.amount), x.paid_to)}
+
+
+@router.post("/api/site-cash/expenses/{expense_id}/photo")
+def site_expense_photo(expense_id: int, request: Request, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """The bill, photographed on site, kept with the expense."""
+    from app.core.files import store_file
+    from app.services.hr import employee_name
+    client, emp = session_person(request, db)
+    x = site_cash.expense_or_404(db, client.id, expense_id)
+    site_cash.box_or_404(db, client.id, emp, x.account_id)
+    if x.status != "SUBMITTED":
+        raise HTTPException(409, "%s is already %s." % (x.number, x.status.lower()))
+    who = employee_name(emp) if emp is not None else (client.contact_name or "Master")
+    f = store_file(db, client.id, file, file.file.read(), job_id=x.job_id, attached_type="site_cash", attached_id=x.id,
+                   kind="bill", caption="Bill for %s, %s" % (x.number, x.paid_to), by=who)
+    db.commit()
+    return {"ok": True, "photo": {"id": f.id, "name": f.name}, "message": "Bill kept with %s." % x.number}
+
+
+@router.post("/api/site-cash/expenses/{expense_id}/decide")
+def decide_site_expense(expense_id: int, body: PaymentDecisionIn, request: Request, db: Session = Depends(get_db)):
+    client, emp = session_person(request, db)
+    return _decide_site_expense(db, client, emp, expense_id, body.decision, body.note, request)
+
+
+def _decide_site_expense(db, client, emp, expense_id, decision, note, request):
+    from app.services.hr import employee_name
+    who = employee_name(emp) if emp is not None else (client.contact_name or "Master")
+    x = site_cash.expense_or_404(db, client.id, expense_id)
+    message = site_cash.decide(db, client, emp, who, x, decision, note)
+    log_audit(db, client.id, "site_cash_" + ("approved" if decision == "approve" else "rejected"), "site_cash",
+              x.id, x.number, message, request)
+    db.commit()
+    return {"ok": True, "expense": site_cash.expense_dict(x), "message": message}
+
+
+@router.get("/api/site-cash/boxes/{account_id}/statement.pdf")
+def cash_box_statement(account_id: int, request: Request, date_from: str = "", date_to: str = "",
+                       db: Session = Depends(get_db)):
+    """The box's cash book for the period, on the letterhead: opening, every top-up and every expense booked, the
+    closing balance - and what has been spent and not yet checked - for the custodian to sign and accounts to keep."""
+    from app.documents.forms import cash_statement_spec
+    client, emp = session_person(request, db)
+    box = site_cash.box_or_404(db, client.id, emp, account_id)
+    book = cash_book(db, client.id, box, date_from, date_to)
+    pending = site_cash.pending_by_box(db, client.id).get(box.id, 0.0)
+    names = _site_cash_names(db, client.id, [box.custodian_id])
+    job = _jobs(db, client.id, [box.job_id]).get(box.job_id)
+    return form_pdf_response(cash_statement_spec(db, client, box, book, pending, names.get(box.custodian_id, ""), job,
+                                                 date_from, date_to), "cash_book_%s" % (box.name or "site"))
+
+
 @router.get("/api/money/heads")
 def money_heads(request: Request, db: Session = Depends(get_db)):
     """The heads an expense voucher or a sundry receipt is booked under."""
@@ -958,6 +1081,9 @@ def void_money(entry_id: int, request: Request, body: dict = None,
     if e.voided:
         raise HTTPException(409, "%s is already void." % e.number)
     e.voided, e.void_reason = True, reason[:300]
+    booked = site_cash.expense_for_entry(db, e.id)
+    if booked is not None and booked.status == "APPROVED":
+        booked.status, booked.entry_id, booked.checked_by_name, booked.checked_at = "SUBMITTED", None, "", ""
     paid_for = preq.request_for_entry(db, e.id)
     if paid_for is not None and paid_for.status == "PAID":
         paid_for.status, paid_for.entry_id = "APPROVED", None     # still approved; the payment was the mistake
@@ -1093,8 +1219,13 @@ def money_book(request: Request, account_id: int = 0, date_from: str = "", date_
             models.DBBankAccount.client_id == client.id).first()
         if not account:
             raise HTTPException(404, "Account not found")
+    return cash_book(db, client.id, account, date_from, date_to)
+
+
+def cash_book(db, client_id, account, date_from="", date_to=""):
+    """Every movement through one account (or all of them), in date order, with the balance after each."""
     q = db.query(models.DBMoneyEntry).filter(
-        models.DBMoneyEntry.client_id == client.id, models.DBMoneyEntry.voided.is_(False))
+        models.DBMoneyEntry.client_id == client_id, models.DBMoneyEntry.voided.is_(False))
     q = q.filter(models.DBMoneyEntry.account_id == account.id) if account else q
     entries = q.order_by(models.DBMoneyEntry.paid_on, models.DBMoneyEntry.id).all()
     balance = money(account.opening_balance) if account else 0.0
@@ -1109,7 +1240,7 @@ def money_book(request: Request, account_id: int = 0, date_from: str = "", date_
         opening_row = balance if not rows else None
         balance = money(balance + signed)
         rows.append({"id": e.id, "date": e.paid_on, "number": e.number, "party": e.party_name,
-                     "against": e.doc_number or e.head or ("transfer" if e.doc_type == "contra" else "on account"),
+                     "against": e.doc_number or e.head or ("Transfer" if e.doc_type == "contra" else "on account"),
                      "mode": e.mode,
                      "reference": e.reference or "",
                      "received": money(e.amount) if e.direction == "IN" else 0.0,

@@ -83,6 +83,7 @@ export function attentionHref(view: string): { to: string; external: boolean } {
     'money-view': '/money/owed',
     'ledger-view': '/money/ledgers',
     'payments-view': '/money/ledgers?tab=requests',
+    'sitecash-view': '/money/site-cash',
     'bills-view': '/money/supplier-bills',
     'gst-view': '/money/gst',
     'fixedassets-view': '/money/assets',

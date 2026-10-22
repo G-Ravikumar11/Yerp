@@ -235,7 +235,8 @@ def account_dict(a):
     return {"id": a.id, "name": a.name or "", "kind": a.kind or "Bank",
             "bank_name": a.bank_name or "", "account_no": a.account_no or "",
             "ifsc": a.ifsc or "", "opening_balance": money(a.opening_balance),
-            "opening_date": a.opening_date or "", "is_active": bool(a.is_active)}
+            "opening_date": a.opening_date or "", "is_active": bool(a.is_active),
+            "job_id": a.job_id, "custodian_id": a.custodian_id, "imprest_amount": money(a.imprest_amount)}
 
 
 def account_balance(db, client_id, account):

@@ -1078,6 +1078,45 @@ def money_voucher_spec(db, client, e, accounts, job=None):
             "footer": "%s  |  %s  |  %s" % (e.number or "", title.title(), company["name"])}
 
 
+def cash_statement_spec(db, client, box, book, pending, custodian, job, date_from="", date_to=""):
+    """A site's cash book for a period, as the custodian signs it and accounts keep it: what came into the box, what
+    went out of it, the balance, and - beside the books - what has been spent and not yet checked, so the cash that
+    should be in the box can be counted against it."""
+    company = letterhead(db, client)
+    fi = form_pdf.inr
+    rows = [[form_pdf.date_text(r["date"]), r["number"], ("%s - %s" % (r["against"], r["party"])) if r["party"] else r["against"],
+             fi(r["received"]) if r["received"] else "", fi(r["paid"]) if r["paid"] else "", fi(r["balance"])]
+            for r in book["rows"]]
+    closing = book["closing"]
+    sums = [("Balance in the books", fi(closing), True)]
+    if pending:
+        sums.append(("Less: spent, waiting to be checked", fi(-pending), False))
+    sums.append(("CASH THAT SHOULD BE IN THE BOX", fi(closing - pending), True))
+    if box.imprest_amount:
+        sums.append(("Top-up to bring the float back to %s" % fi(box.imprest_amount),
+                     fi(max(0.0, box.imprest_amount - closing)), False))
+    blocks = [
+        {"type": "header", "company": company, "title": "SITE CASH BOOK",
+         "facts": [("Cash box", box.name or ""), ("From", form_pdf.date_text(date_from) or "Beginning"),
+                   ("To", form_pdf.date_text(date_to) or datetime.now().strftime("%d/%m/%Y")),
+                   ("Printed", datetime.now().strftime("%d/%m/%Y"))]},
+        {"type": "pairs", "cols": 2, "rows": [("Project", ("%s %s" % (job.number or "", job.name or "")).strip() if job else "-"),
+                                             ("Custodian", custodian or "-"),
+                                             ("Float (imprest)", fi(box.imprest_amount or 0)),
+                                             ("Opening balance", fi(book["opening"]))]},
+        {"type": "table", "columns": [("Date", 18, "C"), ("Voucher", 24, "L"), ("Particulars", 70, "L"),
+                                      ("Received", 23, "R"), ("Paid", 23, "R"), ("Balance", 24, "R")],
+         "rows": rows or [["", "", "Nothing through the box in this period.", "", "", ""]],
+         "totals": [("Total received into the box", fi(book["received"]), False),
+                    ("Total paid out of the box", fi(book["paid"]), False)]},
+        {"type": "sums", "rows": sums},
+        {"type": "words", "label": "Cash in the box, Rupees", "text": _words(max(0.0, closing - pending))},
+        {"type": "signatures", "boxes": [("Custodian", custodian or ""), ("Checked By", ""), ("Approved By", "")]},
+    ]
+    return {"title": "Site cash book - %s" % (box.name or ""), "author": company["name"], "blocks": blocks,
+            "footer": "Site cash book  |  %s  |  %s" % (box.name or "", company["name"])}
+
+
 def _cell_text(v):
     if v is None:
         return ""

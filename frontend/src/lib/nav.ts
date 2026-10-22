@@ -46,6 +46,7 @@ const NAV: NavEntry[] = [
       { label: 'Overview', path: '/', notHeadOffice: true },
       { label: 'Timesheet', path: '/me/timesheet' },
       { label: 'My Costs', path: '/me/costs', perm: 'bills.submit' },
+      { label: 'Site Cash', path: '/me/site-cash' },
       { label: 'My Orders', path: '/me/orders', perm: 'bills.submit' },
       { label: 'My Leave', path: '/me/leave' },
       { label: 'Payslips', path: '/me/payslips' },
@@ -137,6 +138,7 @@ const NAV: NavEntry[] = [
       { label: 'GST', path: '/money/gst', perm: 'bills.view_all' },
       { label: 'Fixed Assets', path: '/money/assets', perm: 'bills.view_all' },
       { label: 'TDS, Guarantees & Advances', path: '/money/registers', perm: 'bills.view_all' },
+      { label: 'Site Cash', path: '/money/site-cash', perm: 'bills.view_all' },
     ],
   },
   {

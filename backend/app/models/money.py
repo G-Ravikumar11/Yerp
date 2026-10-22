@@ -21,6 +21,10 @@ class DBBankAccount(Base):
     opening_date = Column(String, default="")
     is_active = Column(Boolean, default=True)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    # A site's cash box (imprest): the site it is for, who holds it, and the float it is topped back up to.
+    job_id = Column(Integer, nullable=True, index=True)
+    custodian_id = Column(Integer, nullable=True, index=True)
+    imprest_amount = Column(Float, default=0.0)
 
 
 class DBMoneyEntry(Base):
@@ -200,3 +204,33 @@ class DBPaymentRequest(Base):
     rejected_by_name = Column(String, default="")
     reject_reason = Column(String, default="")
     entry_id = Column(Integer, nullable=True, index=True)         # the payment that settled it
+
+
+# SITE CASH (IMPREST)
+#
+# A site runs on a cash box: head office tops it up, the site engineer pays the diesel, the lorry, the tea out of it,
+# and keeps the bills. Each payment is entered from site - with a photo of the bill - and checked by accounts; only a
+# checked expense is booked (as an expense voucher out of the box, charged to the site), and the box is topped back
+# up to its float. Until it is checked it is cash the box no longer holds but the books do not know of yet.
+class DBSiteCashExpense(Base):
+    __tablename__ = "site_cash_expenses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    number = Column(String, default="", index=True)                 # SCE-0001
+    account_id = Column(Integer, ForeignKey("bank_accounts.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    spent_on = Column(String, default="")
+    head = Column(String, default="")
+    paid_to = Column(String, default="")
+    amount = Column(Float, default=0.0)
+    note = Column(String, default="")
+    bill_no = Column(String, default="")
+    status = Column(String, default="SUBMITTED", index=True)         # SUBMITTED -> APPROVED | REJECTED
+    submitted_by = Column(Integer, nullable=True)                    # the member of staff; None for the Master
+    submitted_by_name = Column(String, default="")
+    submitted_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    checked_by_name = Column(String, default="")
+    checked_at = Column(String, default="")
+    reject_reason = Column(String, default="")
+    entry_id = Column(Integer, nullable=True, index=True)           # the expense voucher it was booked as

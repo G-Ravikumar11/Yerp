@@ -781,6 +781,20 @@ def approval_inbox(db, client, emp):
                 view="payments-view", approve_label="Release" if pr.status == "AWAITING_MD" else "Approve",
                 note_to_approve=False))
 
+    # 5d. Money spent out of a site's cash box, waiting on accounts to check it.
+    from app.services.site_cash import can_manage as manages_cash
+    if manages_cash(emp):
+        for x in db.query(models.DBSiteCashExpense).filter(
+                models.DBSiteCashExpense.client_id == client.id,
+                models.DBSiteCashExpense.status == "SUBMITTED").order_by(models.DBSiteCashExpense.id).all():
+            if emp is not None and x.submitted_by == emp.id:
+                continue
+            items.append(_row(
+                "site_cash", "Site cash", x.id, x.number, x.amount, party=x.paid_to or "",
+                project=job_label_for(db, x.job_id), raised_by=x.submitted_by_name or "", since=x.submitted_at or "",
+                what="%s, spent %s%s" % (x.head, x.spent_on, (". " + x.note) if x.note else ""),
+                view="sitecash-view", approve_label="Accept", note_to_approve=False))
+
     # 6. Leave.
     if can("leave.approve"):
         q = db.query(models.DBLeaveRequest).filter(

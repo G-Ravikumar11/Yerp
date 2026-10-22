@@ -10,6 +10,7 @@ export const PAGE_INFO: Record<string, string> = {
 
   '/me/timesheet': 'Record the hours you worked on each project and day, and send the week for approval.',
   '/me/costs': 'Claim what you spent on site - fuel, materials, travel - with the bill attached, and follow it to payment.',
+  '/me/site-cash': 'The cash box you hold for the site: enter each payment as you make it with a photo of the bill, see what should be in hand, and print the cash book.',
   '/me/orders': 'The work orders and purchase orders you raised or are responsible for, and where each one stands.',
   '/me/leave': 'Your leave balance, your requests and their status. Apply for leave here; holidays and days off are not counted against you.',
   '/me/payslips': 'Your payslips month by month, with earnings, deductions and the working days they were based on.',
@@ -77,6 +78,7 @@ export const PAGE_INFO: Record<string, string> = {
   '/money/gst': 'GST on sales and purchases for the period, and what is payable or claimable.',
   '/money/assets': 'Fixed assets with cost, depreciation and book value.',
   '/money/registers': 'TDS, bank guarantees and advances: the registers you must keep, with amounts and due dates.',
+  '/money/site-cash': 'The cash box of each site: what it should hold, what the site spent and is waiting to be checked, accepting or rejecting it against the bill, and topping the float back up.',
 
   '/people/employees': 'Everyone who works for you: details, role, sites, pay and, under Access, what each person may see and do.',
   '/people/employees/:id': 'One employee: their details, documents, pay, leave and - under Access - their portals and permissions.',

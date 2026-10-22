@@ -49,6 +49,25 @@ class RequestPayIn(BaseModel):
     amount: Optional[float] = None         # less than approved, if only part is paid now
 
 
+class SiteCashExpenseIn(BaseModel):
+    """A payment made out of a site's cash box, as the site entered it."""
+    account_id: int
+    amount: float
+    head: str
+    paid_to: str
+    spent_on: Optional[str] = ""
+    note: Optional[str] = ""
+    bill_no: Optional[str] = ""
+    job_id: Optional[int] = None
+
+
+class CashBoxIn(BaseModel):
+    """A cash box set up as a site's imprest: the site, who holds it, and its float."""
+    job_id: Optional[int] = None
+    custodian_id: Optional[int] = None
+    imprest_amount: Optional[float] = 0
+
+
 class PaymentDecisionIn(BaseModel):
     decision: str                       # approve | reject
     note: Optional[str] = ""
