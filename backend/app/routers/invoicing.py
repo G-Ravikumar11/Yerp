@@ -688,6 +688,11 @@ def mark_bill_paid(bill_id: int, request: Request, body: dict = None, db: Sessio
         raise HTTPException(status_code=403, detail="This bill has not been approved yet.")
     if bill.approval_status and bill.approval_status not in ("none", "approved", ""):
         raise HTTPException(status_code=403, detail=f"Cannot mark bill paid: approval status is '{bill.approval_status}'.")
+    from app.services.payment_requests import needs_request
+    if needs_request(db, client.id, session_employee(request, db), (bill.total or bill.amount or 0.0) - (bill.amount_paid or 0.0)):
+        # Where payments wait for approval, marking a bill paid would skip it: it is paid from an approved request.
+        raise HTTPException(status_code=409, detail="Payments are approved before they are made: send this bill for approval "
+                                                    "(a payment request), and pay it once it is approved.")
     bill.amount_paid = bill.total or bill.amount or 0.0
     bill.status = "Paid"
     notify_employee(db, client.id, bill.submitted_by, "Paid",

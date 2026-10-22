@@ -176,6 +176,8 @@ def job_money(db, client_id, job, pre=None):
                                      - c["material_recovered_from_contractors"])
     by_category["subcontract"] = money(by_category["subcontract"] + c["subcontractors"] + subcontracted)
     by_category["plant"] = money(by_category["plant"] + c["plant"] + c["equipment"])
+    # Expense vouchers charged to the site (diesel, transport, sundries) are in incurred, so in the headings too.
+    by_category["other"] = money(by_category["other"] + c.get("site_expenses", 0.0))
     for p in open_pos:
         by_category["materials"] = money(by_category["materials"] + (p.total or 0))
 
@@ -332,12 +334,18 @@ def _settle_doc(db, client_id, doc_type, doc, worth, on):
     return got
 
 
-def next_money_number(db, client_id, direction):
-    stem = "RCT-" if direction == "IN" else "PMT-"
-    n = db.query(models.DBMoneyEntry).filter(
-        models.DBMoneyEntry.client_id == client_id,
-        models.DBMoneyEntry.direction == direction).count()
-    return "%s%04d" % (stem, n + 1)
+def next_money_number(db, client_id, direction, stem=None):
+    """The next voucher number in its own series: RCT- for money in, PMT- for money out, CON- for a transfer between
+    our own accounts. Read from the highest number in the series, so a transfer's two legs do not push the receipts
+    and payments along."""
+    stem = stem or ("RCT-" if direction == "IN" else "PMT-")
+    top = 0
+    for (number,) in db.query(models.DBMoneyEntry.number).filter(
+            models.DBMoneyEntry.client_id == client_id, models.DBMoneyEntry.number.like(stem + "%")).all():
+        tail = (number or "")[len(stem):]
+        if tail.isdigit():
+            top = max(top, int(tail))
+    return "%s%04d" % (stem, top + 1)
 
 
 def money_entry_dict(e, accounts=None):
@@ -349,7 +357,8 @@ def money_entry_dict(e, accounts=None):
             "account": acc.name if acc else "", "amount": money(e.amount),
             "paid_on": e.paid_on or "", "mode": e.mode or "", "reference": e.reference or "",
             "note": e.note or "", "voided": bool(e.voided), "void_reason": e.void_reason or "",
-            "recorded_by_name": e.recorded_by_name or "", "created_at": e.created_at or ""}
+            "recorded_by_name": e.recorded_by_name or "", "created_at": e.created_at or "",
+            "head": e.head or "", "pair_id": e.pair_id}
 
 
 def _doc_for_any(db, client_id, doc_type, doc_id):

@@ -68,6 +68,11 @@ SUBCONTRACT_CONTROL_COLUMNS = (
     ("retention_releases", "override_note", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
 )
 
+ACCOUNTS_COLUMNS = (
+    # (table, column, type) - the accounts vouchers: an expense or sundry receipt's head, and the other leg of a transfer.
+    ("money_entries", "head", "VARCHAR DEFAULT ''"), ("money_entries", "pair_id", "INTEGER"),
+)
+
 QUALITY_COLUMNS = (
     ("rfq_quotes", "source", "VARCHAR DEFAULT ''"),
     # (table, column, Postgres type, SQLite type) - what the quality module grew after it was first created.
@@ -1758,7 +1763,7 @@ def ensure_columns():
 
             # Quality: the workflow columns. Additive, defaulted, safe on a live database.
             try:
-                for table, column, typedef in QUALITY_COLUMNS:
+                for table, column, typedef in QUALITY_COLUMNS + ACCOUNTS_COLUMNS:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
                 conn.commit()
             except Exception:
@@ -1855,7 +1860,7 @@ def migrate_sqlite():
                 add_col("subcontract_orders", column, "FLOAT DEFAULT 0")
             add_col("subcontract_items", "technical_spec", "TEXT DEFAULT ''")
             add_col("business_units", "logo_url", "TEXT DEFAULT ''")
-            for table, column, typedef in QUALITY_COLUMNS + ITEM_MASTER_COLUMNS + STORE_OUTWARD_COLUMNS:
+            for table, column, typedef in QUALITY_COLUMNS + ACCOUNTS_COLUMNS + ITEM_MASTER_COLUMNS + STORE_OUTWARD_COLUMNS:
                 add_col(table, column, typedef.replace("BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"))
             try:
                 conn.execute(text(SCHEDULE_BACKFILL))

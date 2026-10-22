@@ -992,6 +992,92 @@ def statement_form_spec(client, party_name, party_label, s, date_from="", date_t
             "footer": "Statement of account  |  %s  |  %s" % (party_name, company["name"])}
 
 
+DOC_LABEL = {"ra_bill": "RA bill", "sub_bill": "Sub contractor's RA bill", "supplier_bill": "Supplier bill",
+             "sub_advance": "Mobilisation advance", "retention_release": "Retention release"}
+PARTY_LABEL = {"client": "Client", "contractor": "Sub Contractor", "supplier": "Supplier"}
+
+
+def money_voucher_spec(db, client, e, accounts, job=None):
+    """A receipt, a payment, an expense or a transfer as the voucher the accounts office files and the other side
+    signs for: the company's letterhead, who, how much in figures and in words, what it was for, through which
+    account, and the signatures. Money received carries the authorised signatory's signature and seal - it is the
+    receipt the payer keeps; money paid carries the preparer's and leaves the rest for a pen, the receiver's last."""
+    company = letterhead(db, client)
+    fi = form_pdf.inr
+    contra = e.doc_type == "contra"
+    incoming = e.direction == "IN"
+    title = ("CONTRA VOUCHER" if contra else "EXPENSE VOUCHER" if e.doc_type == "expense"
+             else "RECEIPT VOUCHER" if incoming else "PAYMENT VOUCHER")
+    account = accounts.get(e.account_id)
+    acct_text = ("%s%s" % (account.name or "", (" - A/c %s" % account.account_no) if account and account.account_no else "")
+                 if account else "")
+    facts = [("Voucher No", e.number or ""), ("Date", form_pdf.date_text(e.paid_on)), ("Mode", e.mode or "")]
+    if e.reference:
+        facts.append(("Cheque / UTR" if e.mode in ("Cheque", "Bank transfer", "UPI") else "Reference", e.reference))
+    blocks = [{"type": "header", "company": company, "title": title, "facts": facts}]
+
+    if contra:
+        src, dst = (e.party_name or "", acct_text) if incoming else (acct_text, e.party_name or "")
+        blocks.append({"type": "pairs", "cols": 2, "rows": [("From account", src), ("To account", dst)]})
+        particulars = "Funds transferred from %s to %s" % (src, dst)
+    else:
+        card = party_card(db, client.id, e.party_name or "") if e.party_type in PARTY_LABEL else {}
+        label = ("Received from" if incoming else "Paid to") + \
+            ((" (%s)" % PARTY_LABEL[e.party_type]) if e.party_type in PARTY_LABEL else "")
+        # A fuel pump or a tea stall has no PAN on file: no empty boxes for it.
+        facts = [f for f in party_facts(card.get("gstin"), card.get("pan"), card.get("state")) if f[1]]
+        blocks.append({"type": "party", "label": label, "name": e.party_name or "", "address": card.get("address") or "",
+                       "facts": facts})
+        if e.doc_type in ("expense", "income"):
+            against = "%s (%s)" % (e.head or "", "expense" if e.doc_type == "expense" else "sundry receipt")
+            particulars = "%s%s" % (e.head or "", (" - " + e.note) if e.note else "")
+        elif e.doc_type == "on_account":
+            against = "On account (advance; to be set against a bill)"
+            particulars = ("Advance received on account" if incoming else "Advance paid on account") + \
+                ((" - " + e.note) if e.note else "")
+        else:
+            against = "%s %s" % (DOC_LABEL.get(e.doc_type, "Bill"), e.doc_number or "")
+            particulars = ("Received against " if incoming else "Paid against ") + against
+        rows = [("Against", against)]
+        if job is not None:
+            rows.append(("Project", ("%s %s" % (job.number or "", job.name or "")).strip()))
+        rows.append(("Received into" if incoming else "Paid from", acct_text or "-"))
+        blocks.append({"type": "pairs", "rows": rows, "label_width": 34})
+
+    blocks += [
+        {"type": "table", "columns": [("#", 8, "C"), ("Particulars", 136, "L"), ("Amount", 38, "R")],
+         "rows": [["1", particulars, fi(e.amount)]], "totals": [("TOTAL", fi(e.amount), True)]},
+        {"type": "words", "label": "Rupees", "text": _words(e.amount)},
+    ]
+    if e.note and e.doc_type not in ("expense", "income", "on_account"):
+        blocks.append({"type": "pairs", "rows": [("Narration", e.note)], "label_width": 34})
+    if e.voided:
+        blocks.append({"type": "text", "style": "bold", "text": "VOID - %s" % (e.void_reason or "cancelled")})
+
+    sig = doc_signatories(db, client.id)
+    prepared = e.recorded_by_name or ""
+    if incoming and not contra:
+        boxes, seal = sign_boxes(db, client.id, [("Prepared By", prepared),
+                                                 ("Authorized Signatory", _sig_line(sig["authorised"]) or company["name"])],
+                                 "" if e.voided else "approved")
+    else:
+        from app.services.payment_requests import request_for_entry
+        asked = request_for_entry(db, e.id)
+        boxes = [("Prepared By", prepared), ("Checked By", asked.checked_by_name if asked else ""),
+                 ("Approved By", (asked.approved_by_name if asked else "") or _sig_line(sig["authorised"]))]
+        if not contra:
+            boxes.append(("Receiver's Signature", e.party_name or ""))
+        boxes, seal = sign_boxes(db, client.id, boxes, "" if e.voided else ("approved" if asked else "submitted"))
+        if asked:
+            blocks.append({"type": "text", "style": "small", "text": "Approved on payment request %s%s." % (
+                asked.number, (" - checked by %s, approved by %s" % (asked.checked_by_name, asked.approved_by_name))
+                if asked.checked_by_name else "")})
+    blocks.append({"type": "signatures", "boxes": boxes, "seal": seal})
+    return {"title": "%s %s" % (title.title(), e.number or ""), "author": company["name"], "blocks": blocks,
+            "watermark": "VOID" if e.voided else "",
+            "footer": "%s  |  %s  |  %s" % (e.number or "", title.title(), company["name"])}
+
+
 def _cell_text(v):
     if v is None:
         return ""

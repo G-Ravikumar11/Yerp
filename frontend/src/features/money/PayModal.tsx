@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Button, Field, Input, Modal, NumField, Select, Skeleton } from '@/components/ui'
 import { PAY_MODES, recordPayment, useBankAccounts, useOutstanding } from '@/api/money'
+import { mustAsk, paymentKeys, raisePaymentRequest, usePaymentRules } from '@/api/payments'
 import { useAction } from '@/lib/mutate'
 import { formatDate, today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
@@ -69,8 +70,13 @@ function PayForm({
   const [account, setAccount] = useState(accounts.length === 1 ? String(accounts[0].id) : '')
   const [note, setNote] = useState('')
 
-  const save = useAction(() => recordPayment({ doc_type: docType, doc_id: docId, amount, paid_on: paidOn, mode, reference: ref, note, account_id: account ? Number(account) : null }), {
-    invalidate: [...invalidate.map((k) => [...k]), ['money']],
+  const rules = usePaymentRules()
+  // Money out, where the company approves payments first and this is not the Master: it is sent for approval.
+  const ask = verb === 'Pay' && mustAsk(rules.data, amount)
+  const save = useAction(() => (ask
+    ? raisePaymentRequest({ doc_type: docType, doc_id: docId, amount, mode, note, account_id: account ? Number(account) : null })
+    : recordPayment({ doc_type: docType, doc_id: docId, amount, paid_on: paidOn, mode, reference: ref, note, account_id: account ? Number(account) : null })), {
+    invalidate: [...invalidate.map((k) => [...k]), ['money'], paymentKeys.all],
     onSuccess: onDone,
   })
 
@@ -114,7 +120,7 @@ function PayForm({
           Cancel
         </Button>
         <Button loading={save.isPending} disabled={amount <= 0} onClick={() => save.mutate()}>
-          {verb} {formatINR(amount)}
+          {ask ? `Send ${formatINR(amount)} for approval` : `${verb} ${formatINR(amount)}`}
         </Button>
       </div>
     </div>

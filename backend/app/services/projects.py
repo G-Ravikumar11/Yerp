@@ -125,6 +125,21 @@ def _store_material(db, client_id, job_id):
     return float(project_store_material(db, job_id))
 
 
+def site_expenses_by_job(db, client_id, job_ids=None):
+    """{job_id: amount} paid out on expense vouchers charged to each project - diesel, transport, site expenses - and
+    not voided. Money with no bill behind it is still what the site cost."""
+    from sqlalchemy import func as _f
+    q = db.query(models.DBMoneyEntry.job_id, _f.coalesce(_f.sum(models.DBMoneyEntry.amount), 0.0)).filter(
+        models.DBMoneyEntry.client_id == client_id, models.DBMoneyEntry.doc_type == "expense",
+        models.DBMoneyEntry.direction == "OUT", models.DBMoneyEntry.voided.isnot(True),
+        models.DBMoneyEntry.job_id.isnot(None))
+    if job_ids is not None:
+        if not job_ids:
+            return {}
+        q = q.filter(models.DBMoneyEntry.job_id.in_(list(job_ids)))
+    return {j: float(v or 0) for j, v in q.group_by(models.DBMoneyEntry.job_id).all()}
+
+
 def job_costing(db, client_id, job):
     """Quoted, spent - and what is left of the budget."""
     bills = on_job(db, models.DBBill, client_id, job.id)
@@ -166,7 +181,15 @@ def job_costing(db, client_id, job):
                     if q.status in ("Accepted", "Invoiced")]
         quoted = money(sum(q.total or 0 for q in accepted))
 
-    total_cost = money(spent + labour)
+    pre = db.info.get("by_job")
+    if pre is not None:
+        # A list costing many jobs: every job's expense vouchers in one query, kept for the rest of the list.
+        if "expenses" not in pre:
+            pre["expenses"] = site_expenses_by_job(db, client_id)
+        expenses = money(pre["expenses"].get(job.id, 0.0))
+    else:
+        expenses = money(site_expenses_by_job(db, client_id, [job.id]).get(job.id, 0.0))
+    total_cost = money(spent + labour + expenses)
     budget = money(job.budget or 0)
 
     return {
@@ -176,6 +199,7 @@ def job_costing(db, client_id, job):
         "unpaid_bills": unpaid,
         "labour_cost": labour,
         "labour_hours": hours,
+        "site_expenses": expenses,
         "total_cost": total_cost,
         # Material issued from the stores to this job. Shown beside the bills, not added to them: the stock was bought on a bill already.
         "store_material": money(_store_material(db, client_id, job.id)),
@@ -279,6 +303,7 @@ def cost_jobs(db, client_id, jobs):
     attendance = bucket(db.query(models.DBAttendance).filter(
         models.DBAttendance.client_id == client_id,
         models.DBAttendance.job_id.in_(ids)).all())
+    expenses_by_job = site_expenses_by_job(db, client_id, ids)
 
     wo_ids = [w.id for group in work_orders.values() for w in group]
     bom_by_wo = {}
@@ -310,7 +335,8 @@ def cost_jobs(db, client_id, jobs):
                              for l in bom_by_wo.get(w.id, [])))
 
         quoted = money(job.quoted_value or 0) or ordered
-        total_cost = money(spent + labour)
+        expenses = money(expenses_by_job.get(job.id, 0.0))
+        total_cost = money(spent + labour + expenses)
         budget = money(job.budget or 0)
 
         out.append({
@@ -330,6 +356,7 @@ def cost_jobs(db, client_id, jobs):
                 "quoted": quoted, "budget": budget,
                 "spent": spent, "unpaid_bills": unpaid,
                 "labour_cost": labour, "labour_hours": hours,
+                "site_expenses": expenses,
                 "total_cost": total_cost,
                 "used": total_cost,
                 "remaining": money(budget - total_cost) if budget else 0.0,
@@ -592,6 +619,7 @@ def preload_pnl_for_job(db, client_id, job_id):
             models.DBSubcontractOrder.client_id == client_id, models.DBSubcontractOrder.job_id == job_id).all()),
         "settled": settled_amounts(db, client_id),
         "credits": preload_credits(db, client_id),
+        "expenses": site_expenses_by_job(db, client_id, [job_id]),
     }
 
 
@@ -649,6 +677,7 @@ def preload_pnl(db, client_id):
             models.DBSubcontractOrder.client_id == client_id).all()),
         "settled": settled_amounts(db, client_id),
         "credits": preload_credits(db, client_id),
+        "expenses": site_expenses_by_job(db, client_id),
     }
 
 
@@ -722,7 +751,10 @@ def project_pnl(db, client_id, job, pre=None):
     # inside what they billed, so it comes off here or it is counted twice.
     recovered = money((pre.get("recovered") or {}).get(job.id, 0.0))
 
-    incurred = money(bill_cost + material + labour + plant + subcontract + equipment - recovered)
+    # Paid on expense vouchers charged to the site: the diesel, the lorry, the site's sundries, with no bill behind them.
+    site_expenses = money((pre.get("expenses") or {}).get(job.id, 0.0))
+
+    incurred = money(bill_cost + material + labour + plant + subcontract + equipment + site_expenses - recovered)
     budgeted = money(sum(pre["bom"].get(i, 0.0) for i in wo_ids)) if wo_ids else 0.0
 
     revenue = money(max(invoiced, certified))
@@ -750,6 +782,7 @@ def project_pnl(db, client_id, job, pre=None):
             "labour": labour,
             "plant": plant,
             "equipment": equipment,
+            "site_expenses": site_expenses,
             "material_recovered_from_contractors": recovered,
             "incurred": incurred,
             "committed_not_yet_billed": committed,

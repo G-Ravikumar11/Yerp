@@ -29,18 +29,42 @@ export interface Entry {
   direction: 'IN' | 'OUT'
   party_type: PartyType
   party_name: string
+  doc_type: string
   doc_number: string
   account: string
   amount: number
   paid_on: string
   mode: string
   reference: string
+  note: string
   voided: boolean
   void_reason: string
+  /** An expense voucher's or a sundry receipt's head. */
+  head: string
+  job_id: number | null
 }
 
+export interface EntrySummary { received: number; paid: number; expenses: number; transferred: number; entries: number }
 export const useEntries = () =>
-  useQuery({ queryKey: k('entries'), queryFn: () => get<{ entries: Entry[]; summary: { received: number; paid: number; entries: number } }>('/api/money/entries') })
+  useQuery({ queryKey: k('entries'), queryFn: () => get<{ entries: Entry[]; summary: EntrySummary }>('/api/money/entries') })
+
+/** The voucher for an entry, on the letterhead: a receipt, a payment, an expense or a transfer. */
+export const voucherUrl = (id: number) => `/api/money/entries/${id}/voucher.pdf`
+
+/** What an entry was for, in a word: the bill, the expense head, a transfer, or on account. */
+export const entryAgainst = (e: Pick<Entry, 'doc_type' | 'doc_number' | 'head'>) =>
+  e.doc_type === 'contra' ? 'Transfer' : e.head || e.doc_number || 'on account'
+
+/** The heads an expense voucher or a sundry receipt is booked under. */
+export const useMoneyHeads = () => useQuery({ queryKey: k('heads'), staleTime: 60 * 60_000, queryFn: () => get<{ expense: string[]; income: string[] }>('/api/money/heads') })
+
+/** Money out with no bill behind it (diesel, transport, site sundries), or in (scrap sold, interest). */
+export const recordVoucher = (b: { doc_type: 'expense' | 'income'; head: string; party_name: string; amount: number; paid_on: string; mode: string; reference: string; note: string; account_id: number | null; job_id: number | null }) =>
+  post<{ message: string; entry: Entry }>('/api/money/entries', { ...b, doc_id: null })
+
+/** Cash drawn from the bank for a site, paid back in, or moved between banks: one contra voucher, both books. */
+export const transferMoney = (b: { from_account_id: number; to_account_id: number; amount: number; paid_on: string; mode: string; reference: string; note: string }) =>
+  post<{ message: string; entry: Entry }>('/api/money/transfer', b)
 
 export const voidEntry = (id: number, reason: string) => post<{ message: string }>(`/api/money/entries/${id}/void`, { reason })
 
@@ -66,7 +90,7 @@ export const useAccounts = () => useQuery({ queryKey: k('accounts'), queryFn: as
 
 export interface Book {
   opening: number
-  rows: { date: string; number: string; party: string; against: string; mode: string; reference: string; received: number; paid: number; balance: number }[]
+  rows: { id: number; date: string; number: string; party: string; against: string; mode: string; reference: string; received: number; paid: number; balance: number }[]
   received: number
   paid: number
   closing: number

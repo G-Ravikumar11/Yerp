@@ -396,6 +396,9 @@ def approvals_decide(body: ApprovalDecisionIn, request: Request, db: Session = D
         return act_on_boq_variation(body.id, "approve" if decision == "approve" else "reject", request, {"comments": note}, db)
     if kind == "variation":
         return act_on_variation(body.id, decision, request, {"comments": note}, db)
+    if kind == "payment_request":
+        from app.routers.money import _decide_payment
+        return _decide_payment(db, client, emp, body.id, decision, note, request)
     if kind == "leave":
         leave = db.query(models.DBLeaveRequest).filter(
             models.DBLeaveRequest.id == body.id,

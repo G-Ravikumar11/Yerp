@@ -762,6 +762,25 @@ def approval_inbox(db, client, emp):
                 view="money-view", approve_label="Certify", reject_label="Cancel", note_to_approve=False,
                 warnings=[r.override_note] if r.override_note else []))
 
+    # 5c. Payments waiting to be checked (the accounts head) or released (the MD, over the limit).
+    from app.services.payment_requests import can_check, can_release
+    stages = [s for s, ok in (("PENDING", can_check(emp)), ("AWAITING_MD", can_release(emp))) if ok]
+    if stages:
+        for pr in db.query(models.DBPaymentRequest).filter(
+                models.DBPaymentRequest.client_id == client.id,
+                models.DBPaymentRequest.status.in_(stages)).order_by(models.DBPaymentRequest.id).all():
+            if emp is not None and pr.requested_by == emp.id:
+                continue
+            against = pr.doc_number or pr.head or ("advance on account" if pr.doc_type == "on_account" else "")
+            items.append(_row(
+                "payment_request", "Payment" + (" (MD)" if pr.status == "AWAITING_MD" else ""), pr.id, pr.number,
+                pr.amount, party=pr.party_name or "", project=job_label_for(db, pr.job_id),
+                raised_by=pr.requested_by_name or "", since=pr.requested_at or "",
+                what=("For %s" % against if against else "") + ((". " + pr.note) if pr.note else "")
+                     + ((". Checked by %s" % pr.checked_by_name) if pr.checked_by_name else ""),
+                view="payments-view", approve_label="Release" if pr.status == "AWAITING_MD" else "Approve",
+                note_to_approve=False))
+
     # 6. Leave.
     if can("leave.approve"):
         q = db.query(models.DBLeaveRequest).filter(

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Button, Field, Input, Modal, NumField, Select } from '@/components/ui'
 import { ledgerKeys, PARTY_LABEL, recordOnAccount, useAccounts } from '@/api/ledger'
 import { PAY_MODES } from '@/api/money'
+import { mustAsk, paymentKeys, raisePaymentRequest, usePaymentRules } from '@/api/payments'
 import { useAction } from '@/lib/mutate'
 import { today } from '@/lib/format'
 
@@ -25,7 +26,12 @@ function Form({ direction, onClose }: { direction: 'IN' | 'OUT'; onClose: () => 
   const [note, setNote] = useState('')
   const [account, setAccount] = useState('')
   const only = accounts.data?.length === 1 ? String(accounts.data[0].id) : ''
-  const save = useAction(() => recordOnAccount({ direction, party_type: type, party_name: party.trim(), amount, paid_on: on, mode, reference: ref, note, account_id: Number(account || only) || null }), { invalidate: [ledgerKeys.all, ['owed']], onSuccess: onClose })
+  const rules = usePaymentRules()
+  // An advance paid out, where the company approves payments first: sent for approval, paid once approved.
+  const ask = direction === 'OUT' && mustAsk(rules.data, amount)
+  const save = useAction(() => (ask
+    ? raisePaymentRequest({ doc_type: 'on_account', party_type: type, party_name: party.trim(), amount, mode, note, account_id: Number(account || only) || null })
+    : recordOnAccount({ direction, party_type: type, party_name: party.trim(), amount, paid_on: on, mode, reference: ref, note, account_id: Number(account || only) || null })), { invalidate: [ledgerKeys.all, ['owed'], paymentKeys.all], onSuccess: onClose })
   return (
     <div>
       <div className="grid gap-4 sm:grid-cols-2">
@@ -41,7 +47,7 @@ function Form({ direction, onClose }: { direction: 'IN' | 'OUT'; onClose: () => 
       <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
         {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button loading={save.isPending} disabled={!party.trim() || amount <= 0} onClick={() => save.mutate()}>{direction === 'IN' ? 'Record the receipt' : 'Record the payment'}</Button>
+        <Button loading={save.isPending} disabled={!party.trim() || amount <= 0} onClick={() => save.mutate()}>{direction === 'IN' ? 'Record the receipt' : ask ? 'Send for approval' : 'Record the payment'}</Button>
       </div>
     </div>
   )

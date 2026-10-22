@@ -116,6 +116,7 @@ from app.models.money import (
     DBRetentionRelease,
     DBCreditNote,
     DBCreditNoteLine,
+    DBPaymentRequest,
 )
 from app.models.procurement import (
     DBPurchaseOrder,

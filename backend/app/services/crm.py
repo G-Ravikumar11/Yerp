@@ -7,6 +7,7 @@ from sqlalchemy import and_, func as sqlfunc, or_
 
 from app import models
 
+from app.constants.money import NO_PARTY_DOCS
 from app.constants.crm import EMD_MODES, EST_TRANSITIONS, LEAD_SOURCES
 from app.core.currency import compute_invoice_totals, line_net_amount, money, parse_tax_rate, unit_rate
 from app.core.dates import _days_until, _parse_date
@@ -468,6 +469,8 @@ def _ledger_rows(db, client_id):
     for e in db.query(models.DBMoneyEntry).filter(
             models.DBMoneyEntry.client_id == client_id,
             models.DBMoneyEntry.voided.is_(False)).all():
+        if (e.doc_type or "") in NO_PARTY_DOCS:
+            continue            # an expense, a sundry receipt or a transfer between our own accounts is nobody's account
         rows.append({"party_type": e.party_type or "other", "party": e.party_name or "",
                      "date": e.paid_on or "", "kind": ("Received" if e.direction == "IN" else "Paid")
                      + ((" - " + e.mode) if e.mode else ""),
