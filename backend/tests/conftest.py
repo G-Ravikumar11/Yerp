@@ -38,6 +38,9 @@ os.environ.setdefault("PASSWORD_ITERATIONS", "1000")
 # Tests drive run_due_jobs() directly; a loop ticking in the background would
 # race them and claim periods out from under the assertions.
 os.environ.setdefault("SCHEDULER_ENABLED", "0")
+# The suite must never send real mail: .env holds the live SMTP account, and load_dotenv keeps anything already set.
+for _k in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM"):
+    os.environ[_k] = ""
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -55,6 +58,13 @@ def _create_schema():
         os.remove(_TMP_DB)
     except OSError:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _no_real_mail(monkeypatch):
+    from app.core import notifications
+    monkeypatch.setattr(notifications, "_send_via_smtp", lambda to_email, raw_msg: (True, "not sent in tests"))
+    yield
 
 
 @pytest.fixture(autouse=True)
