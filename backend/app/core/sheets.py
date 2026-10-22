@@ -17,7 +17,7 @@ from app.core.auth import CURRENT_CLIENT_ID
 from app.documents.pdf_twins import SHEET_AS_PDF
 
 
-def sheet_response(headers, sample, filename, fmt="xlsx", preamble=None, closing=None, branded=True, logo_watermark=False):
+def sheet_response(headers, sample, filename, fmt="xlsx", preamble=None, closing=None, branded=True, logo_watermark=False, portrait=False):
     """The template, as a real workbook by default.
 
     A workbook is what people asked for and what they will edit; CSV stays
@@ -35,7 +35,7 @@ def sheet_response(headers, sample, filename, fmt="xlsx", preamble=None, closing
     as_pdf = SHEET_AS_PDF.get()
     if as_pdf is not None:
         return form_pdf_response(sheet_report_spec(headers, sample, filename, preamble, closing,
-                                                   as_pdf.get("client"), logo_watermark), filename.rsplit(".", 1)[0])
+                                                   as_pdf.get("client"), logo_watermark, portrait), filename.rsplit(".", 1)[0])
 
     if fmt == "csv" or filename.endswith(".csv"):
         buf = io.StringIO()
