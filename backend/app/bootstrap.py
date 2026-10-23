@@ -190,6 +190,7 @@ from app.routers import (
     store_outward,
     store_control,
     store_reports,
+    store_rejections,
 )
 
 for _module in (
@@ -247,6 +248,7 @@ for _module in (
     store_outward,
     store_control,
     store_reports,
+    store_rejections,
 ):
     app.include_router(_module.router)
 

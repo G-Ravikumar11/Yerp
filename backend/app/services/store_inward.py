@@ -24,6 +24,7 @@ from app.schemas.store_contracts import PoLineReceipt
 from app.services.stock_ledger import convert_to_base, post_movement, reverse_document
 from app.services.store_batches import default_expiry
 from app.services.store_integration import old_received_in_base
+from app.services import store_rejections
 from app.services.store_numbering import next_doc_number
 
 ZERO = Decimal("0")
@@ -411,6 +412,7 @@ def grn_post(db, actor, grn):
         posted += 1
     if not posted:
         raise HTTPException(409, "Nothing was accepted on this receipt, so there is nothing to post. Cancel it instead.")
+    store_rejections.record_for_grn(db, grn)
 
 
 # --- gate deliveries ---------------------------------------------------------------------------------------------------
@@ -665,6 +667,8 @@ def advance(db, actor, kind, doc, action, reason=""):
             kind.check_cancel(db, doc)
         if now == DocStatus.POSTED.value:
             reverse_document(db, ref_doc_type=kind.ref, ref_doc_id=doc.id, user_id=actor.user_id, reason=reason)
+            if kind.key == "grn":
+                store_rejections.void_for_grn(db, doc)
         doc.status, doc.cancel_reason = DocStatus.CANCELLED.value, reason
         log(db, actor, kind.ref, doc.id, "cancel", now, doc.status, reason)
         return doc

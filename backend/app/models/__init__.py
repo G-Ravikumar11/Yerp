@@ -215,7 +215,7 @@ from app.models.store_core import (
     DBStoreStockLedger,
     DBStoreStockBalance,
 )
-from app.models import store_inward, store_outward, store_control, store_reports  # noqa: F401  (the Store slices' own tables)
+from app.models import store_inward, store_outward, store_control, store_reports, store_extras  # noqa: F401  (the Store slices' own tables)
 from app.models.subcontracts import (
     DBBusinessUnit,
     DBWorkType,

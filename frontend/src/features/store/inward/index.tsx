@@ -8,19 +8,27 @@ import DocListPage from './DocListPage'
 import DocPage from './DocPage'
 import GrnForm from './GrnForm'
 import ItemLinesForm from './ItemLinesForm'
+import RejectedGoods from './RejectedGoods'
 import ReturnForm from './ReturnForm'
 
 const tab = ({ isActive }: { isActive: boolean }) =>
   cn('whitespace-nowrap rounded-lg px-3.5 py-1.5 text-[13px] font-medium', isActive ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground')
+
+function InwardTabs() {
+  return (
+    <nav aria-label="Inward documents" className="mb-4 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-muted p-1">
+      {KINDS.map((k) => <NavLink key={k.key} to={`/store/hub/inward/${k.key}`} className={tab}>{k.plural}</NavLink>)}
+      <NavLink to="/store/hub/inward/rejected" className={tab}>Rejected goods</NavLink>
+    </nav>
+  )
+}
 
 function List() {
   const { kind: key } = useParams()
   const kind = kindOf(key) ?? KINDS[0]
   return (
     <>
-      <nav aria-label="Inward documents" className="mb-4 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-muted p-1">
-        {KINDS.map((k) => <NavLink key={k.key} to={`/store/hub/inward/${k.key}`} className={tab}>{k.plural}</NavLink>)}
-      </nav>
+      <InwardTabs />
       <p className="mb-4 text-sm text-muted-foreground">{kind.blurb}</p>
       <DocListPage key={kind.key} kind={kind.key} label={kind.label} plural={kind.plural} />
     </>
@@ -58,6 +66,7 @@ export default function InwardIndex() {
     <StoreShell slice="inward">
       <Routes>
         <Route index element={<List />} />
+        <Route path="rejected" element={<><InwardTabs /><RejectedGoods /></>} />
         <Route path=":kind" element={<List />} />
         <Route path=":kind/new" element={<FormPage editing={false} />} />
         <Route path=":kind/:id" element={<DocPage />} />
