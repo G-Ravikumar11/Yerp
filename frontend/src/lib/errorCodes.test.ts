@@ -33,7 +33,7 @@ describe('error codes', () => {
   })
 
   it('every code is explained, and refs look like the server\'s', () => {
-    const server = ['YE-AUTH-01', 'YE-AUTH-02', 'YE-AUTH-03', 'YE-AUTH-04', 'YE-AUTH-05', 'YE-AUTH-06', 'YE-AUTH-07', 'YE-AUTH-08',
+    const server = ['YE-AUTH-01', 'YE-AUTH-02', 'YE-AUTH-03', 'YE-AUTH-04', 'YE-AUTH-05', 'YE-AUTH-06', 'YE-AUTH-07', 'YE-AUTH-08', 'YE-AUTH-09', 'YE-AUTH-10',
       'YE-ACCESS-01', 'YE-ACCESS-02', 'YE-DATA-01', 'YE-DATA-02', 'YE-DATA-03', 'YE-DATA-04', 'YE-FILE-01', 'YE-FILE-02', 'YE-FILE-03',
       'YE-BUSY-01', 'YE-BUSY-02', 'YE-BUSY-03', 'YE-SRV-01']
     for (const c of [...server, 'YE-NET', 'YE-APP']) expect(ERROR_CODES[c]?.title, c).toBeTruthy()

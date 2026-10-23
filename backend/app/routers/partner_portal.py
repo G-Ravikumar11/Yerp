@@ -9,6 +9,7 @@ from app import models
 from app.db import get_db
 
 from app.constants.common import PORTAL_INVOICE_TYPES
+from app.core import login_guard
 from app.core.audit import log_audit, log_login
 from app.core.auth import end_every_session
 from app.core.currency import inr, money
@@ -83,11 +84,14 @@ def portal_login(body: PortalLoginIn, request: Request, db: Session = Depends(ge
     if rate_limiter.is_rate_limited(f"portal_login:{ip}", max_requests=10, window=60):
         raise HTTPException(429, "Too many attempts. Try again in a minute.")
     email = (body.email or "").strip().lower()
+    login_guard.guard(request, email, login_guard.body_of(body))
     u = db.query(models.DBPortalUser).filter(sqlfunc.lower(models.DBPortalUser.email) == email).first()
     if not u or not u.password_hash or not verify_password(body.password, u.password_hash):
         log_login(db, u.client_id if u else None, email, "partner", "password", request, "failed")
+        login_guard.failed(request, email if u else "", db, u.client_id if u else None)
         db.commit()
         raise HTTPException(401, "That email and password do not match.")
+    login_guard.succeeded(request, email)
     upgrade_password_hash(u, "password_hash", body.password)
     if not u.is_active:
         raise HTTPException(403, "Your access has been removed. Ask the office if you need it back.")

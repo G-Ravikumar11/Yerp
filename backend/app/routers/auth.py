@@ -8,6 +8,7 @@ from sqlalchemy import func as sqlfunc
 from sqlalchemy.orm import Session
 
 from app import models
+from app.core import login_guard
 from app.core import passwords
 from app.db import get_db
 
@@ -49,11 +50,21 @@ from app.services.subcontract_billing import portal_party
 router = APIRouter()
 
 
+@router.get("/api/captcha")
+def captcha(request: Request):
+    """The check a sign-in page shows when it has been asked for one: Turnstile's site key, or a picture of letters
+    with the token to send back beside the answer. Rate limited like the sign-ins it guards."""
+    if rate_limiter.is_rate_limited("captcha:" + login_guard.client_ip(request), max_requests=30, window=300):
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+    return login_guard.challenge()
+
+
 @router.post("/api/client/register")
 def client_register(body: ClientRegister, request: Request, db: Session = Depends(get_db)):
     ip = request.client.host if request.client else "unknown"
     if rate_limiter.is_rate_limited(f"register:{ip}", max_requests=5, window=300):
         raise HTTPException(status_code=429, detail="Too many registration attempts. Try again later.")
+    login_guard.guard(request, "", login_guard.body_of(body))
 
     # This install belongs to one business. Registration exists to create that
     # business once; left open afterwards, anybody who finds the address can
@@ -92,6 +103,7 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
     # Emails are not case-sensitive and a stray space from a paste or autofill is not part of one.
     email = (body.email or "").strip().lower()
+    login_guard.guard(request, email, login_guard.body_of(body))
     client = db.query(models.DBClient).filter(sqlfunc.lower(models.DBClient.email) == email).first()
     if client and verify_password(body.password, client.password_hash):
         upgrade_password_hash(client, "password_hash", body.password)
@@ -115,10 +127,15 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
             set_session_lifetime(request, body.remember_me)
             member.last_login = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             log_login(db, owner.id, member.email, "member", "password", request, "success")
+            login_guard.succeeded(request, email)
             db.commit()
             return {"message": "Logged in", "is_onboarded": owner.is_onboarded,
                     "company_name": owner.company_name, "role": member.role}
         log_login(db, None, body.email, "client", "password", request, "failed")
+        if client or member:
+            # A wrong password on a real account. An email that is nobody's here is not counted: the sign-in page
+            # tries the staff door next, and that door counts it if it is nobody's there either.
+            login_guard.failed(request, email, db, client.id if client else member.client_id)
         # For the error log: a wrong password on a known account is filed under its company. An email that is no
         # owner's or colleague's is not a failure here - the sign-in page tries the staff sign-in next.
         request.state.error_who = email
@@ -136,6 +153,7 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
     request.session.pop("member_id", None)
     set_session_lifetime(request, body.remember_me)
     log_login(db, client.id, body.email, "client", "password", request, "success")
+    login_guard.succeeded(request, email)
     return {"message": "Logged in", "is_onboarded": client.is_onboarded, "company_name": client.company_name}
 
 
@@ -472,6 +490,8 @@ def forgot_password(body: ForgotPasswordIn, background_tasks: BackgroundTasks,
     ip = request.client.host if request.client else "unknown"
     if rate_limiter.is_rate_limited(f"forgot:{ip}", max_requests=5, window=300):
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+    # Always a CAPTCHA here: a form that sends email to any address is a way to flood somebody's inbox.
+    login_guard.guard(request, "", login_guard.body_of(body), always=True)
 
     generic = {"message": "If that email has an account, a reset link is on its way."}
     email = (body.email or "").strip().lower()

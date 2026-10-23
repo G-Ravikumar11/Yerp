@@ -298,6 +298,57 @@ async def security_middleware(request: Request, call_next):
         "SAMEORIGIN" if response.headers.get("content-type", "").startswith("application/pdf") else "DENY")
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    # Only our own pages may frame ours (the PDF beside a bill), whatever an old browser makes of X-Frame-Options.
+    response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'self'")
+    # The camera (scanning, bill photos) and location (attendance) for this site only; nothing else asked for.
+    response.headers["Permissions-Policy"] = "camera=(self), geolocation=(self), microphone=(), payment=(), usb=()"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
+    response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
     if request.url.scheme == "https":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
+
+
+# A FLOOD OF REQUESTS
+#
+# One address asking the API more than API_FLOOD_PER_MINUTE times a minute is not a person: the rest of that minute it
+# is told to wait (429). Generous - a whole site office behind one connection, every screen open, does not come near
+# it - so it only stops a script. 0 turns it off. Counted per real address (ClientAddressMiddleware runs first).
+class FloodMiddleware:
+    def __init__(self, app):
+        self.app = app
+        self.windows = {}
+
+    @staticmethod
+    def limit():
+        try:
+            return int(os.getenv("API_FLOOD_PER_MINUTE", "1200"))
+        except ValueError:
+            return 1200
+
+    async def __call__(self, scope, receive, send):
+        limit = self.limit()
+        if limit > 0 and scope["type"] == "http" and scope.get("path", "").startswith("/api/") \
+                and scope.get("path") != "/api/health":
+            ip = (scope.get("client") or ("unknown",))[0]
+            minute = int(time.time() // 60)
+            seen = self.windows.get(ip)
+            if not seen or seen[0] != minute:
+                if len(self.windows) > 50000:
+                    self.windows = {k: v for k, v in self.windows.items() if v[0] == minute}
+                seen = [minute, 0]
+                self.windows[ip] = seen
+            seen[1] += 1
+            if seen[1] > limit:
+                response = JSONResponse({"detail": "Too many requests from this connection. Wait a minute and try again.",
+                                         "code": "YE-BUSY-01"}, status_code=429, headers={"Retry-After": "60"})
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
+from app.core.login_guard import ClientAddressMiddleware  # noqa: E402
+
+# Added last, so they run first: the real address is put in place, then the flood is counted against it.
+app.add_middleware(FloodMiddleware)
+app.add_middleware(ClientAddressMiddleware)

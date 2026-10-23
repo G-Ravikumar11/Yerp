@@ -55,6 +55,8 @@ def test_each_situation_has_its_own_code():
         (401, "Password not set. Contact your administrator."): "YE-AUTH-06",
         (400, "That reset link is invalid or has expired"): "YE-AUTH-07",
         (400, "Email already registered"): "YE-AUTH-08",
+        (428, "Please confirm you are a person: complete the check below and try again."): "YE-AUTH-09",
+        (429, "This account is locked for 15 minutes after too many wrong passwords."): "YE-AUTH-10",
         (403, "Not allowed"): "YE-ACCESS-01",
         (403, "This link has expired. Open the file again from the app."): "YE-ACCESS-02",
         (404, "Drawing not found"): "YE-DATA-01",

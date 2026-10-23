@@ -209,9 +209,10 @@ NOTIFY_KINDS = {
     "chat_mention": "Somebody was named in a project chat",
     "store_reorder": "A store's stock of an item is down to its reorder level",
     "daily_digest": "The morning list of what needs looking at",
+    "security_lock": "An account was locked after too many wrong passwords",
 }
-# Out of the box: the bell for everything, email for the money and the digest.
-NOTIFY_DEFAULT_EMAIL = {"ra_bill_certified", "money_in", "daily_digest"}
+# Out of the box: the bell for everything, email for the money, the digest and a locked account.
+NOTIFY_DEFAULT_EMAIL = {"ra_bill_certified", "money_in", "daily_digest", "security_lock"}
 
 
 def notify_settings(db, client_id):

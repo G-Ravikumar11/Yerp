@@ -38,6 +38,10 @@ os.environ.setdefault("PASSWORD_ITERATIONS", "1000")
 # Tests drive run_due_jobs() directly; a loop ticking in the background would
 # race them and claim periods out from under the assertions.
 os.environ.setdefault("SCHEDULER_ENABLED", "0")
+# Thousands of sign-ins and requests from one test address: the CAPTCHA and the flood limit are switched back on
+# in test_login_guard.py, where they are what is being tested.
+os.environ.setdefault("CAPTCHA_MODE", "off")
+os.environ.setdefault("API_FLOOD_PER_MINUTE", "0")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -64,6 +68,8 @@ def _reset_rate_limiter():
     of weakening the limit itself."""
     main.rate_limiter._hits.clear()
     main._READ_CACHE.clear()
+    from app.core.login_guard import failures
+    failures.reset()
     yield
 
 
