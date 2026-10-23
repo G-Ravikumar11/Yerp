@@ -65,9 +65,12 @@ def _create_schema():
 
 
 @pytest.fixture(autouse=True)
-def _no_real_mail(monkeypatch):
-    from app.core import notifications
-    monkeypatch.setattr(notifications, "_send_via_smtp", lambda to_email, raw_msg: (True, "not sent in tests"))
+def _no_real_mail(request, monkeypatch):
+    # A test of the SMTP sender itself is marked fake_smtp: it replaces smtplib with a fake server, so it runs the real
+    # sender with nothing leaving the machine. Everywhere else the sender is not reached at all.
+    if request.node.get_closest_marker("fake_smtp") is None:
+        from app.core import notifications
+        monkeypatch.setattr(notifications, "_send_via_smtp", lambda to_email, raw_msg: (True, "not sent in tests"))
     yield
 
 

@@ -1,7 +1,12 @@
 """Reset mail goes out through the server's SMTP account when no Gmail is connected, and says so when it cannot."""
 import smtplib
 
+import pytest
+
 from app.core import notifications
+
+# These test the SMTP sender itself, so they run it - against FakeSMTP below, never a real server.
+pytestmark = pytest.mark.fake_smtp
 
 
 class FakeSMTP:
