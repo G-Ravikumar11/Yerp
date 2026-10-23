@@ -49,6 +49,7 @@ export default function DocPage() {
           { id: 'acc', header: 'Accepted', align: 'right', width: '7rem', cell: (l) => `${num(l.accepted_qty)} ${l.base_uom}` },
           { id: 'rej', header: 'Rejected', align: 'right', width: '7rem', hideBelow: 'md', cell: (l) => (Number(l.rejected_qty) ? <span title={l.reject_reason}>{num(l.rejected_qty)}</span> : '-') },
           { id: 'rate', header: 'Rate', align: 'right', width: '7rem', hideBelow: 'md', cell: (l) => `${money(l.rate)}/${l.base_uom}` },
+          ...(Number(doc.charges_total) > 0 ? [{ id: 'landed', header: 'Landed rate', align: 'right', width: '8rem', hideBelow: 'md', cell: (l: DocLine) => <div title={`Charges on this line: ${money(l.charges_share)}`}>{money(l.landed_rate)}/{l.base_uom}<div className="text-xs text-muted-foreground">+{money(l.charges_share)}</div></div> }] : []),
           {
             id: 'qc',
             header: 'Quality check',
@@ -64,6 +65,9 @@ export default function DocPage() {
       : kind.key === 'returns'
         ? ([
             { id: 'qty', header: 'Returned', align: 'right', width: '10rem', cell: (l) => `${num(l.qty)} ${l.base_uom}` },
+            { id: 'rate', header: 'Receipt rate', align: 'right', width: '8rem', hideBelow: 'md', cell: (l) => `${money(l.rate)}/${l.base_uom}` },
+            { id: 'value', header: 'Debit value', align: 'right', width: '8rem', cell: (l) => money(l.value) },
+            { id: 'gst', header: 'GST', align: 'right', width: '8rem', hideBelow: 'md', cell: (l) => (Number(l.tax_value) ? `${money(l.tax_value)} (${Number(l.tax_pct)}%)` : '-') },
             { id: 'reason', header: 'Reason', cell: (l) => l.reason || '-' },
           ] as TableColumn<DocLine>[])
         : ([
@@ -77,7 +81,9 @@ export default function DocPage() {
     ['Date', dmy(doc.date)],
     ...(isGrn && doc.gate_delivery ? ([['Gate delivery', doc.driver_remarks || '-']] as [string, string][]) : []),
     ...(isGrn ? ([['Purchase order', doc.po_number || (doc.gate_delivery ? 'Not linked yet' : '-')], ['Supplier', doc.supplier_name || '-'], ['Challan', [doc.challan_no, doc.challan_date && dmy(doc.challan_date)].filter(Boolean).join(' / ') || '-'], ['Vehicle', doc.vehicle_no || '-'], ['Project', doc.project || '-']] as [string, string][]) : []),
-    ...(kind.key === 'returns' ? ([['Against receipt', doc.grn_number || '-'], ['Supplier', doc.supplier_name || '-'], ['Reason', doc.reason || '-']] as [string, string][]) : []),
+    ...(isGrn && Number(doc.charges_total) > 0 ? ([['Freight and charges', `${money(doc.charges_total)} (${(doc.charges ?? []).map((c) => `${c.label} ${money(c.amount)}`).join(', ')})`], ['Landed value', money(doc.landed_value)]] as [string, string][]) : []),
+    ...(kind.key === 'returns' ? ([['Against receipt', doc.grn_number || '-'], ['Purchase order', doc.po_number || '-'], ['Supplier', doc.supplier_name || '-'], ['Reason', doc.reason || '-'],
+      ['Debit note', `${money(doc.debit_value)} + GST ${money(doc.tax_value)} = ${money(doc.debit_total)}`]] as [string, string][]) : []),
     ...(kind.key === 'client-supply' ? ([['Project', doc.project || '-'], ['Client reference', doc.client_ref || '-']] as [string, string][]) : []),
     ['Remarks', doc.remarks || '-'],
     ['Made by', `${doc.created_by || '-'}${doc.created_at ? ' on ' + dmy(doc.created_at) : ''}`],
@@ -92,7 +98,7 @@ export default function DocPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {isGrn && doc.gate_delivery && !doc.po_id && doc.status === 'POSTED' && can(storePerm('inward', 'create')) && <Button onClick={() => setLinking(true)}><Link2 /> Link to purchase order</Button>}
-          <Button variant="outline" asChild><a href={`/api/store/inward/${kind.key}/${doc.id}/print`} target="_blank" rel="noreferrer"><Printer /> Print</a></Button>
+          <Button variant="outline" asChild><a href={`/api/store/inward/${kind.key}/${doc.id}/print`} target="_blank" rel="noreferrer"><Printer /> {kind.key === 'returns' ? 'Print debit note' : 'Print'}</a></Button>
           {doc.status === 'DRAFT' && can(storePerm('inward', 'create')) && (
             <>
               <Button variant="outline" onClick={() => nav(`/store/hub/inward/${kind.key}/${doc.id}/edit`)}><Pencil /> Edit</Button>

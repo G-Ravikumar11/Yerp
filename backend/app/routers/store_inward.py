@@ -6,6 +6,7 @@ check; .post posts to stock; .cancel cancels (a posted document is reversed). Ev
 is assigned to. Posting is one transaction: every line moves stock or none does.
 """
 import io
+import json
 from datetime import date
 from decimal import Decimal
 from typing import Dict, List, Optional
@@ -55,6 +56,13 @@ class GrnLineIn(BaseModel):
     remarks: str = ""
 
 
+class ChargeIn(BaseModel):
+    kind: str = "OTHER"                  # FREIGHT | LOADING | GST (not claimable) | INSURANCE | OTHER
+    label: str = ""
+    amount: str = "0"
+    basis: str = "VALUE"                 # spread over the lines by VALUE or by QTY
+
+
 class GrnIn(BaseModel):
     store_id: int
     grn_date: str
@@ -67,7 +75,12 @@ class GrnIn(BaseModel):
     remarks: str = ""
     gate_delivery: bool = False          # no purchase order yet: received on its challan, linked to the order later
     driver_remarks: str = ""
+    charges: List[ChargeIn] = []         # landed cost: freight, loading, GST not claimable - into the stock value
     lines: List[GrnLineIn]
+
+
+class PoLineItemIn(BaseModel):
+    item_id: int
 
 
 class LinkPoIn(BaseModel):
@@ -193,26 +206,37 @@ def doc_dict(db, kind, doc, detail=False):
         job = db.get(models.DBJob, doc.project_id) if doc.project_id else None
         lines = svc.grn_lines(db, doc)
         value = sum((Decimal(str(l.accepted_qty)) * Decimal(str(l.rate)) for l in lines), ZERO)
+        posted = doc.status == DocStatus.POSTED.value
+        shares = {l.id: Decimal(str(l.charges_share or 0)) for l in lines} if posted else svc.landed_split(doc, lines)
+        charges = Decimal(str(doc.charges_total or 0))
         out.update({"po_id": doc.po_id, "po_number": po.number if po else "", "supplier_name": doc.supplier_name or "", "challan_no": doc.challan_no or "",
                     "challan_date": _iso(doc.challan_date), "vehicle_no": doc.vehicle_no or "", "project_id": doc.project_id,
                     "project": ("%s - %s" % (job.number, job.name)) if job else "", "line_count": len(lines), "value": format(value.quantize(Decimal("0.01")), "f"),
                     "qc_pending": sum(1 for l in lines if l.qc_status == "PENDING"), "gate_delivery": bool(doc.gate_delivery),
                     "driver_remarks": doc.driver_remarks or "", "linked_at": _iso(doc.linked_at), "linked_by": doc.linked_by_name or "",
-                    "price_variance": format(Decimal(str(doc.price_variance or 0)).quantize(Decimal("0.01")), "f")})
+                    "price_variance": format(Decimal(str(doc.price_variance or 0)).quantize(Decimal("0.01")), "f"),
+                    "charges": svc.charges_of(doc), "charges_total": svc.s2(charges), "landed_value": svc.s2(value + charges if any(Decimal(str(l.accepted_qty or 0)) > 0 for l in lines) else value),
+                    "charge_kinds": svc.CHARGE_KINDS})
         if detail:
             items = _items(db, [l.item_id for l in lines])
             out["lines"] = [_line_common(db, l, items.get(l.item_id), {"po_line_id": l.po_line_id, "received_qty": svc.s3(l.received_qty), "accepted_qty": svc.s3(l.accepted_qty),
                                                                        "rejected_qty": svc.s3(l.rejected_qty), "rate": svc.s4(l.rate), "qc_status": l.qc_status, "qc_by": l.qc_by_name or "",
                                                                        "qc_note": l.qc_note or "", "reject_reason": l.reject_reason or "", "batch_no": l.batch_no or "", "bin_id": l.bin_id,
                                                                        "manufacturing_date": _iso(l.manufacturing_date), "expiry_date": _iso(l.expiry_date),
-                                                                       "shelf_state": shelf_state(l.expiry_date, date.today()), "remarks": l.remarks or ""}) for l in lines]
+                                                                       "shelf_state": shelf_state(l.expiry_date, date.today()), "remarks": l.remarks or "",
+                                                                       "charges_share": svc.s2(shares.get(l.id, ZERO)),
+                                                                       "landed_rate": svc.s4(l.landed_rate if posted and l.landed_rate is not None else svc.landed_rate(l, shares.get(l.id, ZERO)))}) for l in lines]
     elif kind.key == "returns":
         grn = db.get(DBStoreGrn, doc.grn_id)
         lines = svc.return_lines(db, doc)
-        out.update({"grn_id": doc.grn_id, "grn_number": grn.number if grn else "", "supplier_name": doc.supplier_name or "", "reason": doc.reason or "", "line_count": len(lines)})
+        debit, tax = Decimal(str(doc.debit_value or 0)), Decimal(str(doc.tax_value or 0))
+        out.update({"grn_id": doc.grn_id, "grn_number": grn.number if grn else "", "supplier_name": doc.supplier_name or "", "reason": doc.reason or "", "line_count": len(lines),
+                    "debit_value": svc.s2(debit), "tax_value": svc.s2(tax), "debit_total": svc.s2(debit + tax), "po_id": grn.po_id if grn else None,
+                    "po_number": (db.get(models.DBPurchaseOrder, grn.po_id).number if grn and grn.po_id and db.get(models.DBPurchaseOrder, grn.po_id) else "")})
         if detail:
             items = _items(db, [l.item_id for l in lines])
-            out["lines"] = [_line_common(db, l, items.get(l.item_id), {"grn_line_id": l.grn_line_id, "qty": svc.s3(l.qty), "reason": l.reason or ""}) for l in lines]
+            out["lines"] = [_line_common(db, l, items.get(l.item_id), {"grn_line_id": l.grn_line_id, "qty": svc.s3(l.qty), "reason": l.reason or "", "rate": svc.s4(l.rate or 0),
+                                                                       "value": svc.s2(l.value or 0), "tax_pct": svc.s2(l.tax_pct or 0), "tax_value": svc.s2(l.tax_value or 0)}) for l in lines]
     elif kind.key == "client-supply":
         job = db.get(models.DBJob, doc.project_id)
         lines = svc.supply_lines(db, doc)
@@ -266,6 +290,19 @@ def po_summary(po_id: int, request: Request, db: Session = Depends(get_db)):
     return {"po_id": po.id, "number": po.number, "lines": [{"po_line_id": s.po_line_id, "item_id": s.item_id, "ordered_qty": svc.s3(s.ordered_qty), "received_qty": svc.s3(s.received_qty),
                                                               "accepted_qty": svc.s3(s.accepted_qty), "rejected_qty": svc.s3(s.rejected_qty), "pending_qty": svc.s3(s.pending_qty)}
                                                              for s in svc.get_po_receipt_summary(db, po.id)]}
+
+
+@router.post("/po-line/{po_line_id}/item")
+def set_po_line_item(po_line_id: int, body: PoLineItemIn, request: Request, db: Session = Depends(get_db)):
+    """Say which stock item a purchase-order line is for, from the receipt screen, when its item code names none (or the wrong
+    one). From then on the line is received as that item."""
+    actor = store_actor(request, db, "store.inward.create")
+    pl = svc.link_po_line_item(db, actor, po_line_id, body.item_id)
+    item = db.get(models.DBItem, pl.item_id)
+    log_audit(db, actor.client.id, "store_po_line_mapped", "purchase_order_line", pl.id, item.item_code, pl.description or "", request=request,
+              user_type="employee" if actor.employee is not None else "client", user_name=actor.name)
+    db.commit()
+    return {"po_line_id": pl.id, "item_id": item.id, "item_code": item.item_code, "item_name": item.item_name}
 
 
 @router.get("/grn-lines/{grn_id}")
@@ -372,6 +409,7 @@ def _grn_header(db, actor, body, grn=None):
         svc.gate_rates(db, actor.client.id, store.id, body.lines)
     lines = svc.build_grn_lines(db, actor.client.id, po, body.lines)
     svc.check_over_receipt(db, po, lines, exclude_grn=grn.id if grn else None)
+    svc.open_date(db, actor.client.id, on)
     return store, on, po, supplier, project, challan_date, lines
 
 
@@ -381,6 +419,8 @@ def _fill_grn(grn, body, on, po, supplier, project, challan_date):
     grn.remarks = svc.text(body.remarks, "remarks", 500)
     grn.gate_delivery = 1 if body.gate_delivery else 0
     grn.driver_remarks = svc.text(body.driver_remarks, "driver remarks", 300) if body.gate_delivery else ""
+    charges, total = svc.build_charges(body.charges)
+    grn.charges, grn.charges_total = json.dumps(charges), total
 
 
 @router.post("/grn")
@@ -440,6 +480,7 @@ def create_return(body: ReturnIn, request: Request, db: Session = Depends(get_db
     actor = store_actor(request, db, "store.inward.create")
     grn = _doc(db, actor, svc.KINDS["grn"], body.grn_id)
     on = svc.day(body.return_date, "Return date")
+    svc.open_date(db, actor.client.id, on)
     lines = svc.build_return_lines(db, actor.client.id, grn, body.lines)
     ret = DBStorePurchaseReturn(client_id=actor.client.id, store_id=grn.store_id, number=svc.numbered(db, PURCHASE_RETURN, grn.store_id, on), status=DocStatus.DRAFT.value,
                                 return_date=on, grn_id=grn.id, supplier_name=grn.supplier_name or "", reason=svc.text(body.reason, "reason", 200), remarks=svc.text(body.remarks, "remarks", 500))

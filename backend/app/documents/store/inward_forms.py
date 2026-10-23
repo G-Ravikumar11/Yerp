@@ -71,11 +71,17 @@ def return_form(db, client, ret):
     lines = svc.return_lines(db, ret)
     items, store = _lookup(db, ret, lines)
     grn = db.get(DBStoreGrn, ret.grn_id)
-    rows = [[str(i), items[l.item_id].item_code, items[l.item_id].item_name, svc.base_uom_of(db, items[l.item_id]), _n(l.qty), l.reason or ""] for i, l in enumerate(lines, 1)]
+    # The debit note: what the supplier owes back, at the rate on the receipt, with the order's GST.
+    rows = [[str(i), items[l.item_id].item_name + ((" - " + l.reason) if l.reason else ""), svc.base_uom_of(db, items[l.item_id]), _n(l.qty), _money(l.rate or 0),
+             _money(l.value or 0), "%s%%" % svc.s2(l.tax_pct or 0), _money(l.tax_value or 0)] for i, l in enumerate(lines, 1)]
+    debit, tax = float(ret.debit_value or 0), float(ret.tax_value or 0)
+    po = db.get(models.DBPurchaseOrder, grn.po_id) if grn is not None and grn.po_id else None
     blocks = [
-        _head(db, client, ret, "PURCHASE RETURN (DEBIT NOTE ADVICE)", [("Date", form_pdf.date_text(ret.return_date)), ("Against GRN", grn.number if grn else "")], store),
-        {"type": "pairs", "cols": 2, "rows": [("Supplier", ret.supplier_name or "-"), ("Reason", ret.reason or "-"), ("Remarks", ret.remarks or "-")]},
-        {"type": "table", "columns": [("#", 7, "C"), ("Item Code", 28, "L"), ("Item", 62, "L"), ("Unit", 14, "C"), ("Qty returned", 24, "R"), ("Reason", 47, "L")], "rows": rows},
+        _head(db, client, ret, "DEBIT NOTE (PURCHASE RETURN)", [("Date", form_pdf.date_text(ret.return_date)), ("Against GRN", grn.number if grn else "")], store),
+        {"type": "pairs", "cols": 2, "rows": [("Supplier", ret.supplier_name or "-"), ("Purchase order", po.number if po else "-"), ("Challan", (grn.challan_no if grn else "") or "-"),
+                                              ("Reason", ret.reason or "-"), ("Remarks", ret.remarks or "-")]},
+        {"type": "table", "columns": [("#", 7, "C"), ("Item", 60, "L"), ("Unit", 13, "C"), ("Qty", 20, "R"), ("Rate", 20, "R"), ("Value", 24, "R"), ("GST", 12, "R"), ("GST amt", 26, "R")],
+         "rows": rows, "totals": [("VALUE", _money(debit), False), ("GST", _money(tax), False), ("DEBIT NOTE TOTAL", _money(debit + tax), True)]},
     ]
     return _finish(db, client, ret, "Purchase Return", blocks, [("Prepared by (Storekeeper)", ""), ("Approved by", ""), ("Supplier's receipt", "")])
 

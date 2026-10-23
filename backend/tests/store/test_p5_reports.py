@@ -11,6 +11,7 @@ import pytest
 
 from app import db as database, models
 from app.models.store_core import (
+    DBStoreBatch, DBStoreBatchBalance, DBStoreLedgerBatch,
     DBStore, DBStoreItemSettings, DBStoreStockBalance, DBStoreStockLedger, DBStoreUomConversion, DBStoreUserAssignment, MovementType,
 )
 from app.models.store_reports import DBStoreMaterialNorm
@@ -30,6 +31,8 @@ def _leave_no_stock_behind():
     """The suite empties the item master between tests, freeing item ids for reuse: clear what points at them."""
     yield
     with database.SessionLocal() as s:
+        for model in (DBStoreLedgerBatch, DBStoreBatchBalance, DBStoreBatch):
+            s.query(model).delete(synchronize_session=False)
         s.query(DBStoreStockLedger).filter(DBStoreStockLedger.reversal_of_id.isnot(None)).delete(synchronize_session=False)
         for model in (DBStoreStockLedger, DBStoreStockBalance, DBStoreItemSettings, DBStoreUomConversion, DBStoreMaterialNorm):
             s.query(model).delete(synchronize_session=False)

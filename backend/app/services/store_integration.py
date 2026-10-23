@@ -260,3 +260,20 @@ def hub_transfer_lines(db, client_id, number):
                     "hsn": (item.hsn_code if item else "") or "", "qty": float(l.qty or 0),
                     "uom": (item.units_of_measure if item else "") or "", "value": float(l.value or 0)})
     return out
+
+
+def hub_debit_notes(db, po_ids):
+    """Posted purchase returns against purchase orders - the debit notes the supplier's bills are matched net of:
+    {po_id: [{number, date, value, tax, total}]}."""
+    from app.models.store_core import DocStatus
+    from app.models.store_inward import DBStoreGrn, DBStorePurchaseReturn
+    ids = list({i for i in (po_ids or []) if i})
+    if not ids:
+        return {}
+    out = {}
+    for r, po in (db.query(DBStorePurchaseReturn, DBStoreGrn.po_id).join(DBStoreGrn, DBStoreGrn.id == DBStorePurchaseReturn.grn_id)
+                  .filter(DBStoreGrn.po_id.in_(ids), DBStorePurchaseReturn.status == DocStatus.POSTED.value).order_by(DBStorePurchaseReturn.id).all()):
+        value, tax = float(r.debit_value or 0), float(r.tax_value or 0)
+        out.setdefault(po, []).append({"id": r.id, "number": r.number, "date": r.return_date.isoformat() if r.return_date else "",
+                                       "value": round(value, 2), "tax": round(tax, 2), "total": round(value + tax, 2)})
+    return out

@@ -35,11 +35,20 @@ export interface DocLine {
   expiry_date?: string
   shelf_state?: '' | 'OK' | 'NEAR' | 'EXPIRED'
   remarks?: string
+  /** This line's part of the receipt's charges, and the rate it goes (went) into stock at. */
+  charges_share?: string
+  landed_rate?: string
   // return
   grn_line_id?: number
   qty?: string
   reason?: string
+  value?: string
+  tax_pct?: string
+  tax_value?: string
 }
+export type ChargeKind = 'FREIGHT' | 'LOADING' | 'GST' | 'INSURANCE' | 'OTHER'
+export interface Charge { kind: ChargeKind; label: string; amount: string; basis: 'VALUE' | 'QTY' }
+export const CHARGE_KINDS: Record<ChargeKind, string> = { FREIGHT: 'Freight', LOADING: 'Loading and unloading', GST: 'GST not claimable', INSURANCE: 'Transit insurance', OTHER: 'Other charges' }
 export interface HistoryRow { action: string; from: string; to: string; by: string; at: string; note: string }
 export interface Doc {
   kind: InwardKind
@@ -73,6 +82,14 @@ export interface Doc {
   linked_by?: string
   /** Linked: what the order's rate comes to above (or below) the rate it was received at. */
   price_variance?: string
+  /** Landed cost: freight, loading, GST not claimable - spread into the stock value. */
+  charges?: Charge[]
+  charges_total?: string
+  landed_value?: string
+  /** A purchase return's debit note. */
+  debit_value?: string
+  tax_value?: string
+  debit_total?: string
   grn_id?: number
   grn_number?: string
   reason?: string
@@ -87,7 +104,8 @@ export interface PoOption {
   supplier_name: string
   project_id: number | null
   issue_date: string
-  lines: { po_line_id: number; item_id: number; item_code: string; item_name: string; description: string; po_uom: string; po_qty: string; price: string; base_uom: string; ordered: string; accepted: string; pending: string; category?: string | null; batch_tracked?: boolean }[]
+  /** needs_item: the order line names no stock item yet - say which it is before receiving it. */
+  lines: { po_line_id: number; item_id: number | null; needs_item?: boolean; item_code: string; item_name: string; description: string; po_uom: string; po_qty: string; price: string; base_uom: string; ordered: string; accepted: string; pending: string; category?: string | null; batch_tracked?: boolean }[]
 }
 export interface ReturnableLines {
   grn: { id: number; number: string; status: DocStatus; store_id: number; supplier_name: string }

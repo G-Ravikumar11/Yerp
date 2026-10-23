@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Trash2 } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { Link2, Plus, Trash2 } from 'lucide-react'
 import { Button, Field, Input, Select, Textarea } from '@/components/ui'
 import { useProjects, projectLabel } from '@/api/projects'
 import { useAction } from '@/lib/mutate'
 import { storePost, storePut, type StoreItemOption } from '@/api/store'
 import { ItemPicker, StorePicker, UomQtyInput } from '../shared'
-import { inwardKeys, money, num, today, usePoOptions, type Doc } from './api'
+import { CHARGE_KINDS, inwardKeys, money, num, today, usePoOptions, type Charge, type ChargeKind, type Doc } from './api'
 
 interface Row {
   key: number
@@ -23,6 +24,9 @@ interface Row {
   expiry: string
   /** The expiry was filled in from the manufacturing date (cement), not typed. */
   autoExpiry: boolean
+  /** The order line names no stock item yet: the person receiving says which it is. */
+  needsItem?: boolean
+  pick?: StoreItemOption | null
 }
 let seq = 1
 const blank = (): Row => ({ key: seq++, po_line_id: null, item: null, label: '', hint: '', qty: { qty: '', uom: '' }, rate: '', rejected: '', reason: '', batch: '', made: '', expiry: '', autoExpiry: false })
@@ -44,6 +48,10 @@ export default function GrnForm({ doc }: { doc?: Doc }) {
     gate_delivery: doc?.gate_delivery ?? false, driver_remarks: doc?.driver_remarks ?? '',
   })
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }))
+  const qc = useQueryClient()
+  const [charges, setCharges] = useState<Charge[]>(() => doc?.charges ?? [])
+  const updCharge = (i: number, patch: Partial<Charge>) => setCharges((cs) => cs.map((c, n) => (n === i ? { ...c, ...patch } : c)))
+  const chargeTotal = charges.reduce((s, c) => s + (Number(c.amount) || 0), 0)
   const pos = usePoOptions()
   const po = (pos.data ?? []).find((p) => p.id === f.po_id)
   const [rows, setRows] = useState<Row[]>(() =>
@@ -60,9 +68,22 @@ export default function GrnForm({ doc }: { doc?: Doc }) {
   const choose = (id: number) => {
     const p = (pos.data ?? []).find((x) => x.id === id)
     setF((x) => ({ ...x, po_id: id, gate_delivery: id ? false : x.gate_delivery, supplier_name: p ? p.supplier_name : x.supplier_name, project_id: p?.project_id ?? x.project_id }))
-    setRows(p ? p.lines.map((l) => ({ ...blank(), po_line_id: l.po_line_id, item: { id: l.item_id, code: l.item_code, name: l.item_name, base_uom: l.base_uom, uoms: [], category: l.category ?? null, batch_tracked: l.batch_tracked }, label: l.description || l.item_name,
-      hint: `Ordered ${num(l.po_qty)} ${l.po_uom} at ${money(l.price)}; ${num(l.pending)} ${l.base_uom} still to come`, qty: { qty: '', uom: l.po_uom }, rate: l.price })) : [])
+    setRows(p ? p.lines.map((l): Row => (l.needs_item || l.item_id == null
+      ? { ...blank(), po_line_id: l.po_line_id, needsItem: true, label: l.description || l.item_code || 'Order line', hint: `Ordered ${num(l.po_qty)} ${l.po_uom} at ${money(l.price)}${l.item_code ? ` - code ${l.item_code} is not a stock item` : ''}`, qty: { qty: '', uom: l.po_uom }, rate: l.price }
+      : { ...blank(), po_line_id: l.po_line_id, item: { id: l.item_id, code: l.item_code, name: l.item_name, base_uom: l.base_uom, uoms: [], category: l.category ?? null, batch_tracked: l.batch_tracked }, label: l.description || l.item_name,
+          hint: `Ordered ${num(l.po_qty)} ${l.po_uom} at ${money(l.price)}; ${num(l.pending)} ${l.base_uom} still to come`, qty: { qty: '', uom: l.po_uom }, rate: l.price })) : [])
   }
+  // Tie an order line to its stock item, here on the receipt; the order remembers it from then on.
+  const link = useAction(
+    (r: Row) => storePost<{ item_id: number; item_code: string; item_name: string }>('inward', `/po-line/${r.po_line_id}/item`, { item_id: r.pick?.id }),
+    {
+      success: (d) => `Order line tied to ${d.item_name}`,
+      onSuccess: (d, r) => {
+        upd(r.key, { needsItem: false, item: r.pick ? { ...r.pick, id: d.item_id } : null, hint: `${r.hint.split(' - code')[0]} - received as ${d.item_name}` })
+        qc.invalidateQueries({ queryKey: ['store', 'inward', 'po-options'] })
+      },
+    },
+  )
   // Editing a draft: the order line's figures come from the order, looked up as it is drawn.
   const hintOf = (r: Row) => {
     if (r.hint) return r.hint
@@ -73,11 +94,11 @@ export default function GrnForm({ doc }: { doc?: Doc }) {
   const madeOn = (r: Row, made: string) =>
     upd(r.key, isCement(r) && made && (!r.expiry || r.autoExpiry) ? { made, expiry: plusDays(made, CEMENT_DAYS), autoExpiry: true } : { made })
 
-  const filled = rows.filter((r) => r.qty.qty.trim() && Number(r.qty.qty) > 0)
+  const filled = rows.filter((r) => !r.needsItem && r.qty.qty.trim() && Number(r.qty.qty) > 0)
   const save = useAction(
     () => {
       const body = {
-        ...f, po_id: f.po_id || null, project_id: f.project_id || null,
+        ...f, po_id: f.po_id || null, project_id: f.project_id || null, charges: charges.filter((c) => Number(c.amount) > 0),
         lines: filled.map((r) => ({ po_line_id: r.po_line_id, item_id: r.po_line_id ? null : r.item?.id, qty: r.qty.qty, uom: r.qty.uom, rate: r.rate, rejected_qty: r.rejected, reject_reason: r.reason, batch_no: r.batch,
           manufacturing_date: hasShelfLife(r) ? r.made : '', expiry_date: hasShelfLife(r) ? r.expiry : '' })),
       }
@@ -120,6 +141,16 @@ export default function GrnForm({ doc }: { doc?: Doc }) {
         <div className="grid gap-3">
           {rows.map((r) => (
             <div key={r.key} className="grid gap-3 rounded-lg border border-border p-3 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1.2fr)_8rem_8rem_minmax(0,1fr)_auto]">
+              {r.needsItem ? (
+                <div className="grid gap-2 lg:col-span-6">
+                  <div><div className="text-sm font-medium">{r.label}</div><div className="text-xs text-muted-foreground">{r.hint}</div></div>
+                  <div className="flex flex-wrap items-center gap-2 rounded-md bg-amber-50 p-2 text-sm dark:bg-amber-950/30">
+                    <span className="text-amber-800 dark:text-amber-200">Which stock item is this?</span>
+                    <div className="min-w-56 flex-1"><ItemPicker value={r.pick ?? null} onChange={(pick) => upd(r.key, { pick })} /></div>
+                    <Button type="button" size="sm" disabled={!r.pick} loading={link.isPending} onClick={() => link.mutate(r)}><Link2 /> Tie to this item</Button>
+                  </div>
+                </div>
+              ) : <>
               <div>
                 {r.po_line_id || doc ? <><div className="text-sm font-medium">{r.label || r.item?.name}</div><div className="text-xs text-muted-foreground">{hintOf(r)}</div></> : <ItemPicker value={r.item} onChange={(item) => upd(r.key, { item, qty: { qty: '', uom: item?.base_uom ?? '' } })} />}
               </div>
@@ -136,10 +167,30 @@ export default function GrnForm({ doc }: { doc?: Doc }) {
                   <span className="text-xs text-muted-foreground">{r.autoExpiry ? `Cement: ${CEMENT_DAYS} days from manufacture.` : isCement(r) ? `Cement expires ${CEMENT_DAYS} days from manufacture if left empty.` : 'Optional - keeps expired stock off site.'}</span>
                 </div>
               )}
+              </>}
             </div>
           ))}
         </div>
         {f.po_id === 0 && <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => setRows((rs) => [...rs, blank()])}><Plus /> Add item</Button>}
+      </section>
+      <section aria-labelledby="g-charges">
+        <h3 id="g-charges" className="mb-2 border-b pb-1 text-sm font-semibold">Freight and other charges</h3>
+        <p className="mb-3 text-xs text-muted-foreground">What it cost to bring the goods in besides the rate - the lorry, unloading, GST that cannot be claimed back. Spread over the accepted lines when the receipt posts, so the stock is valued at its landed cost.</p>
+        <div className="grid gap-2">
+          {charges.map((c, i) => (
+            <div key={i} className="grid gap-2 sm:grid-cols-[12rem_minmax(0,1fr)_9rem_10rem_auto]">
+              <Select aria-label="Kind of charge" value={c.kind} onChange={(e) => updCharge(i, { kind: e.target.value as ChargeKind })} options={Object.entries(CHARGE_KINDS).map(([value, label]) => ({ value, label }))} />
+              <Input aria-label="Description" placeholder="Description (optional)" value={c.label} maxLength={80} onChange={(e) => updCharge(i, { label: e.target.value })} />
+              <Input aria-label="Amount" inputMode="decimal" placeholder="Amount" className="text-right" value={c.amount} onChange={(e) => updCharge(i, { amount: e.target.value })} />
+              <Select aria-label="Spread by" value={c.basis} onChange={(e) => updCharge(i, { basis: e.target.value as Charge['basis'] })} options={[{ value: 'VALUE', label: 'Spread by value' }, { value: 'QTY', label: 'Spread by quantity' }]} />
+              <Button type="button" variant="ghost" size="sm" aria-label="Remove charge" onClick={() => setCharges((cs) => cs.filter((_x, n) => n !== i))}><Trash2 /></Button>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <Button type="button" variant="outline" size="sm" onClick={() => setCharges((cs) => [...cs, { kind: 'FREIGHT', label: '', amount: '', basis: 'VALUE' }])}><Plus /> Add a charge</Button>
+          {chargeTotal > 0 && <span className="text-sm text-muted-foreground">Charges: <span className="font-medium text-foreground">{money(String(chargeTotal))}</span></span>}
+        </div>
       </section>
       <div className="flex justify-end gap-2 border-t border-border pt-4">
         <Button type="button" variant="ghost" onClick={() => nav(doc ? `/store/hub/inward/grn/${doc.id}` : '/store/hub/inward/grn')}>Cancel</Button>

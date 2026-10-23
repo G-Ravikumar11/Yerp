@@ -4,7 +4,7 @@ import uuid
 import pytest
 
 from app import db as database, models
-from app.models.store_core import DBStoreItemSettings, DBStoreStockBalance, DBStoreStockLedger, DBStoreUomConversion
+from app.models.store_core import DBStoreBatch, DBStoreBatchBalance, DBStoreLedgerBatch, DBStoreItemSettings, DBStoreStockBalance, DBStoreStockLedger, DBStoreUomConversion
 
 from conftest import make_employee
 from store.test_p1_foundation import E, M, seed, staff  # noqa: F401  - the same seed and staff helpers P1 uses
@@ -16,6 +16,8 @@ Q = E + "/quick"
 def _leave_no_stock_behind():
     yield
     with database.SessionLocal() as s:
+        for model in (DBStoreLedgerBatch, DBStoreBatchBalance, DBStoreBatch):
+            s.query(model).delete(synchronize_session=False)
         s.query(DBStoreStockLedger).filter(DBStoreStockLedger.reversal_of_id.isnot(None)).delete(synchronize_session=False)
         for model in (DBStoreStockLedger, DBStoreStockBalance, DBStoreItemSettings, DBStoreUomConversion):
             s.query(model).delete(synchronize_session=False)

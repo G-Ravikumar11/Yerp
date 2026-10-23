@@ -122,6 +122,7 @@ class DBStoreWriteoffRequest(Base):
     source_issue_line_id = Column(Integer, ForeignKey("store_issue_line.id"), nullable=True, index=True)
     source_return_id = Column(Integer, ForeignKey("store_issue_return.id"), nullable=True, index=True)
     status = Column(String, default="OPEN", index=True)                # OPEN | CLOSED | WITHDRAWN
+    requested_by_id = Column(Integer, nullable=True)                   # who raised it (employee); they do not approve its write-off
     created_at = Column(DateTime, default=datetime.now)
     closed_at = Column(DateTime, nullable=True)
     closed_ref_type = Column(String, default="")

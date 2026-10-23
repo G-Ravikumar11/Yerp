@@ -59,6 +59,8 @@ class DBPurchaseOrderLineItem(Base):
     description = Column(String, default="")
     # Named so the line can be received off a lorry and counted into stock.
     item_code = Column(String, default="")
+    # The stock item itself, once someone has said which it is (the code alone can be missing or typed differently).
+    item_id = Column(Integer, nullable=True, index=True)
     uom = Column(String, default="")
     qty = Column(Float, default=1.0)
     price = Column(Float, default=0.0)

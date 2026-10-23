@@ -40,12 +40,22 @@ def test_batches_are_listed_oldest_first_and_an_expired_one_is_not_issued(accoun
     res = _issue(t, central, w, "B-OLD")
     assert res.status_code == 409 and "expired" in res.json()["detail"]
     assert _issue(t, central, w, "B-NONE").status_code == 409
-    issued = ok(_issue(t, central, w, "B-MID", qty="120"))                             # 6000 kg
+    # A batch gives only what it holds: 120 bags is 6000 kg, and B-MID has 5000.
+    res = _issue(t, central, w, "B-MID", qty="120")
+    assert res.status_code == 409 and "only 5000" in res.json()["detail"].lower()
+    issued = ok(_issue(t, central, w, "B-MID", qty="80"))                              # 4000 kg, all of it from B-MID
     assert issued["lines"][0]["batch_no"] == "B-MID"
-
-    # First in, first out: what went is taken from the oldest lots, so 9000 kg is left in the two newest.
     lots = ok(t.get("/api/store/outward/batches", params={"store_id": central["id"], "item_id": w["item"]}))["batches"]
-    assert [(b["batch_no"], b["qty"]) for b in lots] == [("B-MID", "4000.000"), ("B-NEW", "5000.000")]
+    assert [(b["batch_no"], b["qty"]) for b in lots] == [("B-OLD", "5000.000"), ("B-MID", "1000.000"), ("B-NEW", "5000.000")]
+
+    # With no batch named, the earliest expiry that has not expired goes first; the expired lot is left for writing off.
+    issued = ok(_issue(t, central, w, "", qty="40"))                                   # 2000 kg: B-MID's 1000, then 1000 of B-NEW
+    assert issued["lines"][0]["batch_no"] == "B-MID, B-NEW"
+    lots = ok(t.get("/api/store/outward/batches", params={"store_id": central["id"], "item_id": w["item"]}))["batches"]
+    assert [(b["batch_no"], b["qty"], b["recommended"]) for b in lots] == [("B-OLD", "5000.000", False), ("B-NEW", "4000.000", True)]
+    # What has not expired is all that can go out unnamed.
+    res = _issue(t, central, w, "", qty="100")                                         # 5000 kg, but only 4000 kg is fit
+    assert res.status_code == 409 and "has not expired" in res.json()["detail"]
 
 
 def test_receipt_dates_are_checked(account):
