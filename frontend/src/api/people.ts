@@ -40,6 +40,8 @@ interface OnboardingItem {
 
 export interface EmployeeDetail extends Employee {
   address: string
+  /** Whether they have a password to sign in with. The password itself is never sent. */
+  has_password: boolean
   permissions: string[]
   role_permissions: string[]
   extra_permissions: string[]
@@ -145,6 +147,8 @@ export const updateEmployee = (id: number, b: Partial<EmployeeInput> & Record<st
 export const setAccess = (id: number, b: { permission_role: string; permissions: string[]; site_ids?: number[] }) => put<{ message: string }>(`/api/employees/${id}/permissions`, b)
 /** Removes the person for good, with their payslips, attendance, leave and documents. The Master only. */
 export const deleteEmployee = (id: number) => del<{ message: string }>(`/api/employees/${id}`)
+/** The Master gives somebody a password to sign in with (nothing is emailed). */
+export const setEmployeePassword = (id: number, password: string) => put<{ message?: string }>(`/api/employees/${id}/set-password`, { password })
 export const setEmployeeStatus = (id: number, to: 'onboard' | 'offboard' | 'terminate') => post<{ message: string; status: string; end_date?: string }>(`/api/employees/${id}/${to}`)
 
 export type DepartmentInput = { name: string; description: string; color: string; icon: string; site_ids?: number[] }

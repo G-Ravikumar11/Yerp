@@ -11,7 +11,7 @@ export const ERROR_CODES: Record<string, { title: string; help: string }> = {
   'YE-AUTH-03': { title: 'Too many sign-in attempts', help: 'Wait a few minutes before trying again.' },
   'YE-AUTH-04': { title: 'Signed out', help: 'The session ended. Sign in again.' },
   'YE-AUTH-05': { title: 'Access removed', help: 'Your access to this company was taken away. Ask the Master.' },
-  'YE-AUTH-06': { title: 'Password not set yet', help: 'Ask your administrator to send the set-password email.' },
+  'YE-AUTH-06': { title: 'Password not set yet', help: 'Ask your Master to give you a password. They set it from your record.' },
   'YE-AUTH-07': { title: 'Reset link invalid or expired', help: 'Ask for a new reset link.' },
   'YE-AUTH-08': { title: 'Email already registered', help: 'Sign in with it, or use "Forgot password".' },
   // Access

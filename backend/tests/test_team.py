@@ -21,7 +21,7 @@ def _reset_limiter():
 
 def invite(tenant, email=None, role="admin"):
     email = email or f"mate-{uuid.uuid4().hex[:8]}@example.com"
-    res = tenant.post("/api/team/invite", json={"email": email, "role": role, "name": "Colleague"})
+    res = tenant.post("/api/team/invite", json={"email": email, "role": role, "name": "Colleague", "password": "Colleague123"})
     assert res.status_code == 200, res.text
     return res.json(), email
 
@@ -58,13 +58,34 @@ def test_inviting_adds_them_to_the_list(tenant):
     assert [m["email"] for m in members if not m["is_account_owner"]] == [email]
 
 
-def test_an_invite_starts_unaccepted_and_with_no_password(tenant):
-    member, _ = invite(tenant)
-    assert member["accepted"] is False
+def test_the_master_gives_the_password_and_nothing_is_emailed(client, tenant, monkeypatch):
+    sent = []
+    monkeypatch.setattr("app.core.notifications.send_email_background", lambda *a, **k: sent.append(a))
     with main.SessionLocal() as db:
-        row = db.query(models.DBTeamMember).filter(
-            models.DBTeamMember.id == member["id"]).first()
-        assert row.password_hash == "", "an invite must not carry a password"
+        tokens = db.query(models.DBPasswordReset).count()
+    member, email = invite(tenant)
+    assert member["accepted"] is True and "Colleague123" not in str(member)
+    with main.SessionLocal() as db:
+        row = db.query(models.DBTeamMember).filter(models.DBTeamMember.id == member["id"]).first()
+        assert row.password_hash and "Colleague123" not in row.password_hash
+        assert db.query(models.DBPasswordReset).count() == tokens, "no emailed link is made"
+    assert sent == []
+    res = sign_in_as(client, email)
+    assert res.status_code == 200 and res.json()["role"] == "admin"
+
+
+def test_an_invite_needs_a_good_password(tenant):
+    email = f"mate-{uuid.uuid4().hex[:8]}@example.com"
+    assert tenant.post("/api/team/invite", json={"email": email}).status_code == 400
+    assert tenant.post("/api/team/invite", json={"email": email, "password": "short"}).status_code == 400
+
+
+def test_the_master_can_give_a_colleague_a_new_password(client, tenant):
+    member, email = invite(tenant)
+    assert tenant.put(f"/api/team/{member['id']}", json={"password": "weak"}).status_code == 400
+    assert tenant.put(f"/api/team/{member['id']}", json={"password": "Another456"}).status_code == 200
+    assert sign_in_as(client, email).status_code == 401
+    assert sign_in_as(client, email, "Another456").status_code == 200
 
 
 # --- accepting and signing in -------------------------------------------------

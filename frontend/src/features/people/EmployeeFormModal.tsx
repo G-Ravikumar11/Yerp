@@ -6,6 +6,7 @@ import { useAction } from '@/lib/mutate'
 import { today } from '@/lib/format'
 import { useSession } from '@/lib/session'
 import { AccessPicker } from './AccessPicker'
+import { PASSWORD_RULE, PasswordField, passwordProblem } from '@/features/auth/PasswordField'
 
 const blank = (): EmployeeInput => ({ first_name: '', last_name: '', email: '', org_email: '', password: '', phone: '', job_title: '', department_id: null, reports_to: null, level: '', role: '', permission_role: 'staff', site_ids: [], employment_type: 'full_time', pay_frequency: 'monthly', salary: 0, tax_rate: 0, start_date: today(), emergency_contact: '', emergency_phone: '' })
 
@@ -21,6 +22,7 @@ export function EmployeeFormModal({ open, onClose }: { open: boolean; onClose: (
 function Form({ onClose }: { onClose: () => void }) {
   const [f, setF] = useState<EmployeeInput>(blank)
   const [granted, setGranted] = useState<string[]>([])
+  const [confirm, setConfirm] = useState('')
   const [given, setGiven] = useState<{ id: string; email: string; password: string; sites: string } | null>(null)
   const cat = useHrCatalogue()
   const { isOwner } = useSession()
@@ -49,7 +51,11 @@ function Form({ onClose }: { onClose: () => void }) {
     if (isOwner) await setAccess(made.id, { permission_role: f.permission_role, permissions: granted })
     return made
   }, { invalidate: [peopleKeys.all], success: (r) => r.message || 'Employee created', onSuccess: (r) => setGiven({ id: r.employee_id, email: f.email, password: f.password ?? '', sites: (r.site_names ?? []).join(', ') || 'Every site' }) })
-  const ready = f.first_name.trim() && f.last_name.trim() && (!f.password?.trim() || f.email.trim())
+  const pass = f.password?.trim() ?? ''
+  // A login needs an email, a password that passes the rule, and the same password typed twice. Staff who never sign in need none of it.
+  const passError = pass ? passwordProblem(pass) : ''
+  const confirmError = pass && confirm !== pass ? 'Those two do not match.' : ''
+  const ready = f.first_name.trim() && f.last_name.trim() && (!pass || (f.email.trim() && !passError && !confirmError))
 
   if (given)
     return (
@@ -61,7 +67,7 @@ function Form({ onClose }: { onClose: () => void }) {
           <dt className="text-muted-foreground">Password</dt><dd className="font-semibold">{given.password || '(no login)'}</dd>
           <dt className="text-muted-foreground">Sites</dt><dd>{given.sites}</dd>
         </dl>
-        <p className="mt-3 text-xs text-muted-foreground">The password is stored hashed and cannot be shown again. If it is lost, reset it from their profile.</p>
+        <p className="mt-3 text-xs text-muted-foreground">The password is stored hashed and cannot be shown again. If it is lost, set a new one from their record (Set password).</p>
         <div className="mt-4 flex justify-end"><Button onClick={onClose}>Done</Button></div>
       </div>
     )
@@ -74,7 +80,8 @@ function Form({ onClose }: { onClose: () => void }) {
         <Field label="Employee ID" htmlFor="ef-eid" hint="Leave blank to number it."><Input id="ef-eid" value={f.employee_id ?? ''} onChange={set('employee_id')} /></Field>
         <Field label="Personal email" htmlFor="ef-email"><Input id="ef-email" type="email" value={f.email} onChange={(e) => { setTyped(true); set('email')(e) }} /></Field>
         <Field label="Organization email (Yahoo sign-in)" htmlFor="ef-org-email"><Input id="ef-org-email" type="email" value={f.org_email ?? ''} onChange={set('org_email')} /></Field>
-        <Field label="Password" htmlFor="ef-pass" hint="Leave blank for site staff who are paid without signing in."><Input id="ef-pass" type="text" autoComplete="off" value={f.password ?? ''} onChange={set('password')} /></Field>
+        <PasswordField id="ef-pass" autoComplete="off" label="Password" value={f.password ?? ''} onChange={(v) => setF((s) => ({ ...s, password: v }))} error={pass && passError ? passError : undefined} hint={`They sign in with their email and this password - nothing is emailed. ${PASSWORD_RULE} Leave blank for site staff who are paid without signing in.`} />
+        {pass && <PasswordField id="ef-pass2" label="Confirm password" value={confirm} onChange={setConfirm} error={confirm ? confirmError || undefined : undefined} placeholder="Type it again" />}
         <Field label="Phone" htmlFor="ef-phone"><Input id="ef-phone" type="tel" value={f.phone} onChange={set('phone')} /></Field>
         <Field label="Job title" htmlFor="ef-title"><Input id="ef-title" value={f.job_title} onChange={set('job_title')} /></Field>
         <Field label="Department" htmlFor="ef-dept" hint={isOwner ? undefined : 'Only the Master places people in departments.'}><Select id="ef-dept" disabled={!isOwner} value={f.department_id ?? ''} onChange={(e) => setF((s) => ({ ...s, department_id: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={(depts.data ?? []).filter((d) => d.site_ids.length > 0 || d.id === f.department_id).map((d) => ({ value: d.id, label: d.name }))} /></Field>

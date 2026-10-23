@@ -3,11 +3,12 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, ChevronDown } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Button, ConfirmDialog, Field, Input, NumField, Select, Skeleton, Tabs } from '@/components/ui'
-import { deleteEmployee, peopleKeys, setEmployeeStatus, updateEmployee, useDepartments, useEmployee, useEmployees, useHrCatalogue, type EmployeeDetail } from '@/api/people'
+import { deleteEmployee, peopleKeys, setEmployeePassword, setEmployeeStatus, updateEmployee, useDepartments, useEmployee, useEmployees, useHrCatalogue, type EmployeeDetail } from '@/api/people'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { EmployeeAccess } from './EmployeeAccess'
+import { SetPasswordModal } from './SetPasswordModal'
 import { EMPLOYEE_TONE } from './EmployeesPage'
 
 type Tab = 'profile' | 'access'
@@ -139,6 +140,7 @@ export default function EmployeePage() {
   const [tab, setTab] = useState<Tab | null>(null)
   const e = q.data
   const { isOwner } = useSession()
+  const [givingPassword, setGivingPassword] = useState(false)
   const shown: Tab = isOwner ? (tab ?? 'profile') : 'profile'
   if (q.isPending) return <Skeleton className="h-64 w-full" />
   if (!e) return <p role="alert" className="py-10 text-center text-sm text-danger">Could not open that employee.</p>
@@ -148,10 +150,11 @@ export default function EmployeePage() {
       <PageHeader eyebrow={e.employee_id} title={e.full_name} description={[e.job_title, e.department_name, e.manager_name && `reports to ${e.manager_name}`].filter(Boolean).join(' · ') || undefined} actions={<Badge tone={EMPLOYEE_TONE[e.status] ?? 'neutral'}>{e.status}</Badge>} />
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <Tabs label="Section" value={shown} onChange={setTab} items={isOwner ? [{ value: 'profile', label: 'Profile' }, { value: 'access', label: 'Access' }] : [{ value: 'profile', label: 'Profile' }]} />
-        {isOwner && <StatusMenu e={e} />}
+        {isOwner && <div className="flex items-center gap-2"><Button variant="outline" onClick={() => setGivingPassword(true)} disabled={!e.email} title={e.email ? undefined : 'Give them an email address first - they sign in with it'}>{e.has_password ? 'Change password' : 'Set password'}</Button><StatusMenu e={e} /></div>}
       </div>
       {shown === 'profile' && <Profile key={e.id} e={e} />}
       {shown === 'access' && <EmployeeAccess key={e.id} e={e} />}
+      {givingPassword && <SetPasswordModal who={e.full_name} email={e.email} hasPassword={e.has_password} save={(password) => setEmployeePassword(e.id, password)} invalidate={[peopleKeys.all]} onClose={() => setGivingPassword(false)} />}
     </>
   )
 }

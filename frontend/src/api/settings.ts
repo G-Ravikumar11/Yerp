@@ -98,8 +98,8 @@ export interface TeamMember {
   is_account_owner: boolean
 }
 export const useTeam = () => useQuery({ queryKey: k('team'), queryFn: () => get<{ members: TeamMember[]; your_role: string }>('/api/team') })
-export const inviteMember = (b: { email: string; name: string; role: string }) => post<{ message?: string }>('/api/team/invite', b)
-export const updateMember = (id: number, b: { role?: string; is_active?: boolean }) => put<{ message?: string }>(`/api/team/${id}`, b)
+export const inviteMember = (b: { email: string; name: string; role: string; password: string }) => post<{ message?: string }>('/api/team/invite', b)
+export const updateMember = (id: number, b: { role?: string; is_active?: boolean; password?: string }) => put<{ message?: string }>(`/api/team/${id}`, b)
 export const removeMember = (id: number) => del<{ message?: string }>(`/api/team/${id}`)
 
 export interface PortalUser {

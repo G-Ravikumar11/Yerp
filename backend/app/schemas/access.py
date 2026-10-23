@@ -8,12 +8,14 @@ class TeamInvite(BaseModel):
     email: str
     name: Optional[str] = ""
     role: Optional[str] = "admin"
+    password: Optional[str] = ""
 
 
 class TeamUpdate(BaseModel):
     role: Optional[str] = None
     is_active: Optional[bool] = None
     name: Optional[str] = None
+    password: Optional[str] = None
 
 
 class PortalInviteIn(BaseModel):

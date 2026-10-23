@@ -548,6 +548,8 @@ def get_employee(emp_id: int, request: Request, db: Session = Depends(get_db)):
         "first_name": emp.first_name, "last_name": emp.last_name,
         "full_name": f"{emp.first_name} {emp.last_name}",
         "email": emp.email, "phone": emp.phone, "address": emp.address,
+        # Whether they can sign in yet; the password itself (or its hash) is never sent.
+        "has_password": bool(emp.password_hash),
         "department_id": emp.department_id, "department_name": dept_name,
         "reports_to": emp.reports_to, "manager_name": manager_name,
         "job_title": emp.job_title, "role": emp.role, "level": emp.level or "",
@@ -1251,10 +1253,13 @@ def set_employee_password(emp_id: int, request: Request, body: dict = None, db: 
         raise HTTPException(status_code=404, detail="Employee not found")
     if not body or not body.get("password"):
         raise HTTPException(status_code=400, detail="Password required")
+    if not emp.email:
+        raise HTTPException(status_code=400, detail="Give them an email address first - they sign in with it")
     validate_password_strength(body["password"])
     emp.password_hash = passwords.hash_password(body["password"])
+    log_audit(db, client.id, "employee_password_set", "employee", emp.id, emp.email, "", request)
     db.commit()
-    return {"message": "Password set successfully"}
+    return {"message": "Password set. They can sign in with their email and this password."}
 
 
 @router.get("/api/onboarding/requirements")
