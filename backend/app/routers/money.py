@@ -1,4 +1,5 @@
 """The money endpoints."""
+import re
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
@@ -17,11 +18,12 @@ from app.core.currency import amount_in_words, inr, money
 from app.core.dates import ageing_bucket, days_after
 from app.core.notifications import notify
 from app.core.sheets import sheet_response
+from app.core.tenant_settings import tenant_setting
 from app.documents.forms import _pre, form_pdf_response, money_voucher_spec, statement_form_spec
 from app.documents.letterhead import our_party
 from app.schemas.money import (BankAccountIn, CashBoxIn, ClearIn, LineBookIn, LineMatchIn, MoneyIn, PaymentDecisionIn,
-                               PaymentRulesIn, RequestPayIn, SiteCashExpenseIn, TransferIn)
-from app.services import bank_reco, site_cash
+                               PaymentRulesIn, RequestPayIn, SiteCashExpenseIn, TallySettingsIn, TransferIn)
+from app.services import bank_reco, site_cash, tally
 from app.services import payment_requests as preq
 from app.services.credit_notes import credit_totals_by_bill, credits_by_job
 from app.services.crm import (
@@ -1198,6 +1200,79 @@ def cheque_register(request: Request, status: str = "", account_id: int = 0, db:
         "received_pending": money(sum(r["amount"] for r in live if r["direction"] == "IN")),
         "stale": len([r for r in rows if r["status"] == "STALE"]),
         "bounced": len([r for r in rows if r["status"] == "BOUNCED"])}}
+
+
+# --- Tally ------------------------------------------------------------------------------------------------------------
+
+def _tally_period(date_from, date_to):
+    for d in (date_from, date_to):
+        if d and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
+            raise HTTPException(400, "Dates as 2026-04-01.")
+    if date_from and date_to and date_to < date_from:
+        raise HTTPException(400, "The period ends before it starts.")
+    return date_from or "", date_to or ""
+
+
+@router.get("/api/tally/settings")
+def tally_settings(request: Request, db: Session = Depends(get_db)):
+    client = require_items_access(request, db, "bills.view_all")
+    names = tally.ledger_names(db, client.id)
+    return {"company": tenant_setting(db, client.id, "tally_company", "") or "",
+            "ledgers": [{"key": k, "label": tally.LABELS[k], "name": names[k], "default": d, "group": g}
+                        for k, (d, g, _) in tally.LEDGERS.items()]}
+
+
+@router.put("/api/tally/settings")
+def save_tally_settings(body: TallySettingsIn, request: Request, db: Session = Depends(get_db)):
+    """The ledger names as they are in the company's Tally, so what is imported lands on the ledgers already there."""
+    client, _, _ = wo_actor(request, db, "accounts.manage")
+    if body.ledgers is not None:
+        tally.save_ledger_names(db, client.id, body.ledgers)
+    company = re.sub(r"\s+", " ", body.company or "").strip()[:120]
+    row = db.query(models.DBSettings).filter(models.DBSettings.client_id == client.id, models.DBSettings.key == "tally_company").first()
+    if row:
+        row.value = company
+    elif company:
+        db.add(models.DBSettings(client_id=client.id, key="tally_company", value=company, description="Company name in Tally"))
+    db.commit()
+    return {"ok": True, "message": "Tally ledger names saved."}
+
+
+@router.get("/api/tally/summary")
+def tally_summary(request: Request, date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+    """What a period's export holds: vouchers by type, the ledgers and cost centres it names, anything left out."""
+    client = require_items_access(request, db, "bills.view_all")
+    f, t = _tally_period(date_from, date_to)
+    return tally.Books(db, client, f, t).summary()
+
+
+def _tally_file(xml, name):
+    from fastapi.responses import Response
+    return Response(content=xml.encode("utf-8"), media_type="application/xml",
+                    headers={"Content-Disposition": 'attachment; filename="%s"' % name})
+
+
+@router.get("/api/tally/masters.xml")
+def tally_masters(request: Request, date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+    """The ledgers and cost centres the period's vouchers use - imported first (Import > Masters)."""
+    client = require_items_access(request, db, "bills.view_all")
+    f, t = _tally_period(date_from, date_to)
+    books = tally.Books(db, client, f, t)
+    log_audit(db, client.id, "tally_export", "tally", None, "masters", "%s to %s" % (f or "start", t or "today"), request)
+    return _tally_file(tally.masters_xml(books, tenant_setting(db, client.id, "tally_company", "")),
+                       "yerp_masters_%s_%s.xml" % (f or "start", t or "today"))
+
+
+@router.get("/api/tally/vouchers.xml")
+def tally_vouchers(request: Request, date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+    """The period's vouchers - imported after the masters (Import > Transactions)."""
+    client = require_items_access(request, db, "bills.view_all")
+    f, t = _tally_period(date_from, date_to)
+    books = tally.Books(db, client, f, t)
+    log_audit(db, client.id, "tally_export", "tally", None, "vouchers",
+              "%d vouchers, %s to %s" % (len(books.vouchers), f or "start", t or "today"), request)
+    return _tally_file(tally.vouchers_xml(books, tenant_setting(db, client.id, "tally_company", "")),
+                       "yerp_vouchers_%s_%s.xml" % (f or "start", t or "today"))
 
 
 @router.get("/api/money/heads")

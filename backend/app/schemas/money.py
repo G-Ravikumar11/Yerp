@@ -82,6 +82,12 @@ class ClearIn(BaseModel):
     cleared_on: Optional[str] = ""          # blank: not cleared after all
 
 
+class TallySettingsIn(BaseModel):
+    """The company's own Tally ledger names (by key), and the name of the company in Tally."""
+    ledgers: Optional[dict] = None
+    company: Optional[str] = ""
+
+
 class PaymentDecisionIn(BaseModel):
     decision: str                       # approve | reject
     note: Optional[str] = ""
