@@ -538,6 +538,7 @@ def reset_password(body: ResetPasswordIn, request: Request, db: Session = Depend
             raise HTTPException(status_code=400,
                                 detail="That reset link is invalid or has expired")
         subject.password_hash = passwords.hash_password(body.password)
+        subject.must_change_password = False          # they have just chosen it
         client_id, who = subject.client_id, subject.email
     else:
         subject = db.query(models.DBClient).filter(

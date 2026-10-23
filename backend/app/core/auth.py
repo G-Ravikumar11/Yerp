@@ -225,6 +225,15 @@ def require_owner(request: Request, db: Session):
                             detail="Only the account Master can do that")
 
 
+# What a member of staff may still reach while their first password is waiting to be changed.
+PASSWORD_CHANGE_PATHS = ("/api/auth/change-password", "/api/employee/auth/me", "/api/employee/auth/logout")
+
+
+def first_password_enforced():
+    """On unless FORCE_FIRST_PASSWORD_CHANGE=0: a password the Master chose must be replaced at the first sign-in."""
+    return os.getenv("FORCE_FIRST_PASSWORD_CHANGE", "1") != "0"
+
+
 def get_employee_user(request: Request, db: Session):
     """The employee behind an employee-portal session.
 
@@ -243,6 +252,11 @@ def get_employee_user(request: Request, db: Session):
     client = db.query(models.DBClient).filter(models.DBClient.id == emp.client_id).first()
     if not client or not client.is_active:
         raise HTTPException(status_code=403, detail="Account disabled")
+    # A password the Master chose is only for the first sign-in: until the person has chosen their own, the one
+    # thing they can do is change it.
+    if first_password_enforced() and emp.must_change_password and request.url.path not in PASSWORD_CHANGE_PATHS:
+        raise HTTPException(status_code=403, detail="Choose a new password before you continue.",
+                            headers={"X-Password-Change-Required": "1"})
     # Head office looks after every site, so it sees every order and bill, as the owner does;
     # anybody else sees the ones they have a hand in.
     STAFF_VIEWER.set(None if employee_can(emp, "ho.view_all") else emp.id)

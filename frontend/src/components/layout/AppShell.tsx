@@ -1,5 +1,5 @@
 import { Suspense, useEffect } from 'react'
-import { Outlet, useLocation } from 'react-router-dom'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { trailFor } from '@/lib/nav'
 import { useSession } from '@/lib/session'
@@ -22,6 +22,7 @@ import { ApiError } from '@/lib/api'
  */
 export function AppShell() {
   const { pathname } = useLocation()
+  const navigate = useNavigate()
   const collapsed = useUI((s) => s.sidebarCollapsed)
   const { isLoading, isAnonymous, error, user } = useSession()
   // The tab and the history say where you are, and a screen reader hears the change.
@@ -36,6 +37,12 @@ export function AppShell() {
       window.location.assign(appUrl('login'))
     }
   }, [isAnonymous])
+
+  // A password the Master chose is for the first sign-in only: until they have chosen their own, this is the one page.
+  const mustChange = !!user?.mustChangePassword
+  useEffect(() => {
+    if (mustChange && pathname !== '/account/password') navigate('/account/password', { replace: true })
+  }, [mustChange, pathname, navigate])
 
   // In the native app, a signed-in phone is offered notifications.
   useEffect(() => {

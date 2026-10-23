@@ -38,6 +38,8 @@ os.environ.setdefault("PASSWORD_ITERATIONS", "1000")
 # Tests drive run_due_jobs() directly; a loop ticking in the background would
 # race them and claim periods out from under the assertions.
 os.environ.setdefault("SCHEDULER_ENABLED", "0")
+# Most tests sign staff in with the password the Master gave them; the forced first change has its own tests.
+os.environ["FORCE_FIRST_PASSWORD_CHANGE"] = "0"
 # The suite must never send real mail: .env holds the live SMTP account, and load_dotenv keeps anything already set.
 for _k in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM"):
     os.environ[_k] = ""
@@ -61,7 +63,10 @@ def _create_schema():
 
 
 @pytest.fixture(autouse=True)
-def _no_real_mail(monkeypatch):
+def _no_real_mail(monkeypatch, request):
+    if request.node.fspath.basename == "test_smtp_fallback.py":
+        yield       # these put a fake smtplib in place themselves, so nothing can leave
+        return
     from app.core import notifications
     monkeypatch.setattr(notifications, "_send_via_smtp", lambda to_email, raw_msg: (True, "not sent in tests"))
     yield

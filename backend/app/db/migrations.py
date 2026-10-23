@@ -56,6 +56,8 @@ SUBCONTRACT_CONTROL_COLUMNS = (
     ("subcontract_orders", "close_reason", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
     ("project_budgets", "set_by_name", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
     ("project_budgets", "confirmed", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
+    # Set when the Master chose a staff member's password, until they choose their own.
+    ("employees", "must_change_password", "BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"),
     ("project_budgets", "confirmed_by_name", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
     ("sub_bills", "ld_amount", "DOUBLE PRECISION DEFAULT 0", "FLOAT DEFAULT 0"),
     ("sub_bills", "ld_note", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),

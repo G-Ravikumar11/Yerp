@@ -1,6 +1,6 @@
 import { Fragment } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { ChevronRight, Download, LogOut, Menu, Monitor, Moon, Sun } from 'lucide-react'
+import { ChevronRight, Download, KeyRound, LogOut, Menu, Monitor, Moon, Sun } from 'lucide-react'
 import { post } from '@/lib/api'
 import { useInstall } from '@/lib/install'
 import { forgetLocalData } from '@/lib/query'
@@ -111,6 +111,13 @@ function UserChip() {
         <span className="block max-w-36 truncate text-[13px] font-medium">{user?.name ?? 'Guest'}</span>
         <span className="block text-[11px] text-muted-foreground">{user ? [user.roleLabel, user.department].filter(Boolean).join(' · ') : 'Not signed in'}</span>
       </span>
+      {user?.type === 'employee' && (
+        <Tooltip content="Change password" side="bottom">
+          <Link to="/account/password" aria-label="Change password" className="grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+            <KeyRound className="size-4" />
+          </Link>
+        </Tooltip>
+      )}
       {user && (
         <Tooltip content="Sign out" side="bottom">
           <button type="button" onClick={() => (unsent ? setAsking(true) : void signOut())} aria-label="Sign out" className="grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
