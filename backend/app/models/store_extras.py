@@ -72,3 +72,55 @@ class DBStoreReorderAlert(Base):
     item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
     alerted_at = Column(DateTime, default=datetime.now)
     cleared_at = Column(DateTime, nullable=True)
+
+
+TOOL_AVAILABLE, TOOL_ISSUED, TOOL_IN_SERVICE, TOOL_LOST, TOOL_RETIRED = "AVAILABLE", "ISSUED", "IN_SERVICE", "LOST", "RETIRED"
+
+
+class DBStoreTool(Base):
+    """One tool, by serial number: where it is, who holds it, what condition it is in and when it is next due for service. The stock ledger
+    counts tools by quantity; this is the register of the individual ones."""
+    __tablename__ = "store_tool"
+    __table_args__ = (UniqueConstraint("client_id", "item_id", "serial_no", name="uq_store_tool_serial"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
+    store_id = Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)       # where it lives when it is not out
+    serial_no = Column(String, nullable=False)
+    status = Column(String, nullable=False, default=TOOL_AVAILABLE, index=True)
+    condition = Column(String, default="GOOD")                                                  # GOOD | DAMAGED
+    holder_name = Column(String, default="")
+    project_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
+    issue_id = Column(Integer, ForeignKey("store_issue.id"), nullable=True)
+    due_back = Column(Date, nullable=True)
+    last_service = Column(Date, nullable=True)
+    next_service = Column(Date, nullable=True)
+    notes = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class DBStoreToolEvent(Base):
+    __tablename__ = "store_tool_event"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tool_id = Column(Integer, ForeignKey("store_tool.id"), nullable=False, index=True)
+    event = Column(String, nullable=False)           # REGISTERED | ISSUED | RETURNED | SERVICE_OUT | SERVICE_DONE | LOST | RETIRED
+    condition = Column(String, default="")
+    holder_name = Column(String, default="")
+    note = Column(String, default="")
+    by_name = Column(String, default="")
+    at = Column(DateTime, default=datetime.now)
+
+
+class DBStoreReminder(Base):
+    """When a reminder about one thing (a returnable issue line that is overdue, a tool due for service) was last sent, so it is repeated weekly
+    and not every day."""
+    __tablename__ = "store_reminder"
+    __table_args__ = (UniqueConstraint("client_id", "kind", "ref_id", name="uq_store_reminder"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    kind = Column(String, nullable=False)            # RETURN_OVERDUE | TOOL_RETURN_OVERDUE | TOOL_SERVICE_DUE
+    ref_id = Column(Integer, nullable=False)
+    last_sent_at = Column(DateTime, default=datetime.now)

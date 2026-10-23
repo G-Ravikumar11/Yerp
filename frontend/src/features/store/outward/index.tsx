@@ -12,6 +12,7 @@ import { IndentForm, IndentListPage, IndentPage } from './IndentPages'
 import IssueForm from './IssueForm'
 import { RecoveryPage, ReturnablesPage, WriteoffsPage } from './Reports'
 import ReturnForm from './ReturnForm'
+import Tools from './Tools'
 
 const tab = ({ isActive }: { isActive: boolean }) =>
   cn('whitespace-nowrap rounded-lg px-3.5 py-1.5 text-[13px] font-medium', isActive ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground')
@@ -23,6 +24,7 @@ function Tabs() {
       {KINDS.map((k) => <NavLink key={k.key} to={`/store/hub/outward/${k.key}`} className={tab}>{k.plural}</NavLink>)}
       <NavLink to="/store/hub/outward/gate-pass" className={tab}>Gate passes</NavLink>
       <NavLink to="/store/hub/outward/returnables" className={tab}>Returnables out</NavLink>
+      <NavLink to="/store/hub/outward/tools" className={tab}>Tool register</NavLink>
       <NavLink to="/store/hub/outward/writeoffs" className={tab}>Write-offs</NavLink>
       <NavLink to="/store/hub/outward/recoveries" className={tab}>Recoveries</NavLink>
       <NavLink to="/store/hub/outward/recovery" className={tab}>Subcontractor statement</NavLink>
@@ -93,6 +95,7 @@ export default function OutwardIndex() {
         <Route path="gate-pass/new" element={<div>{backTo('/store/hub/outward/gate-pass', 'Gate passes')}<h2 className="mb-4 text-lg font-semibold">New gate pass</h2><GatePassForm /></div>} />
         <Route path="gate-pass/:id" element={<GatePassPage />} />
         <Route path="returnables" element={<Page blurb="Returnable items and tools issued and not yet back, who holds them and how late they are. Close what will not come back by charging for it or asking for a write-off."><ReturnablesPage /></Page>} />
+        <Route path="tools" element={<Page blurb="Tools by serial number: who holds each, its condition and service, and what is overdue to come back."><Tools /></Page>} />
         <Route path="writeoffs" element={<Page blurb="Returnables reported lost or written off, waiting to be dealt with under Control."><WriteoffsPage /></Page>} />
         <Route path="recoveries" element={<Page blurb="What has been charged to subcontractors and holders, to be recovered from their bills."><RecoveriesPage /></Page>} />
         <Route path="recovery" element={<Page blurb="Material issued to one subcontractor, what came back and what is to be recovered from their bill."><RecoveryPage /></Page>} />
