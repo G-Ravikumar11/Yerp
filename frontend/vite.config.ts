@@ -81,7 +81,20 @@ export default defineConfig(({ mode, command }) => {
             {
               urlPattern: ({ request, url }) => request.mode === 'navigate' && url.pathname.startsWith('/next'),
               handler: 'NetworkOnly',
-              options: { precacheFallback: { fallbackURL: '/next/index.html' } },
+              options: {
+                // No signal at all: the saved app shell opens. The server answering "bad gateway" / "unavailable" /
+                // "timed out" (it is restarting after an update): Railway's own error page would be shown, so ours is
+                // put in its place, from the saved copy, and reloads itself when the server is back.
+                precacheFallback: { fallbackURL: '/next/index.html' },
+                plugins: [{
+                  fetchDidSucceed: async ({ response }: { response: Response }) => {
+                    if (response.status !== 502 && response.status !== 503 && response.status !== 504) return response
+                    const store = (globalThis as unknown as { caches: { match: (url: string, o: object) => Promise<Response | undefined> } }).caches
+                    const saved = await store.match('/next/down.html', { ignoreSearch: true })
+                    return saved ?? response
+                  },
+                }],
+              },
             },
           ],
           maximumFileSizeToCacheInBytes: 3_000_000,
