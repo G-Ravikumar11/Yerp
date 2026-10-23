@@ -21,7 +21,7 @@ from app.db import get_db
 from app.models.store_core import (
     DBStore, DBStoreItemSettings, DBStoreStockBalance, DBStoreStockLedger, DBStoreUomConversion, MovementType,
 )
-from app.services import store_levels
+from app.services import store_levels, store_reservations
 from app.routers.store_masters import my_store, num, visible_store_ids
 
 router = APIRouter(prefix="/api/store/enquiry", tags=["store-enquiry"])
@@ -80,6 +80,7 @@ def _balance_query(db, actor, store_id=0, q="", category="", include_zero=False,
 def _balance_rows(db, rows, status=""):
     out = []
     over = store_levels.overrides(db, {r[1].id for r in rows})
+    held = store_reservations.reserved_map(db, {r[1].id for r in rows}, {r[2].id for r in rows})
     for bal, store, item, s in rows:
         o = over.get((store.id, item.id))
         level, low, high = store_levels.effective(s, o)
@@ -88,7 +89,7 @@ def _balance_rows(db, rows, status=""):
             continue
         out.append({"store_id": store.id, "store_code": store.code, "store_name": store.name, "item_id": item.id, "item_code": item.item_code,
                     "item_name": item.item_name, "category": s.category if s else None, "base_uom": (s.base_uom if s else item.units_of_measure) or "",
-                    "qty": num(bal.qty), "avg_rate": num(bal.avg_rate, "0.0001"), "value": num(bal.value, "0.01"), "status": st,
+                    "qty": num(bal.qty), "reserved": num(held.get((store.id, item.id), ZERO)), "available": num(max(ZERO, Decimal(str(bal.qty or 0)) - held.get((store.id, item.id), ZERO))), "avg_rate": num(bal.avg_rate, "0.0001"), "value": num(bal.value, "0.01"), "status": st,
                     "reorder_level": num(level), "min_qty": num(low), "max_qty": num(high)})
     return out
 

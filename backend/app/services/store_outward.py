@@ -23,6 +23,7 @@ from app.models.store_outward import (
 )
 from app.schemas.store_contracts import ReturnableOutstanding, SubconIssueLine, WriteOffRequest
 from app.services.stock_ledger import convert_to_base, get_balance, post_movement, reverse_document
+from app.services import store_reservations
 from app.services.store_batches import batches_on_hand
 from app.services.store_numbering import next_doc_number
 
@@ -325,17 +326,25 @@ def issue_lines(db, issue):
     return db.query(DBStoreIssueLine).filter(DBStoreIssueLine.issue_id == issue.id).order_by(DBStoreIssueLine.line_no, DBStoreIssueLine.id).all()
 
 
-def check_stock(db, store_id, lines):
-    """Everything asked for must be on hand now (posting checks again, in the same transaction as the movement)."""
+def check_stock(db, store_id, lines, exclude_indent_id=None, on_hand=True):
+    """Everything asked for must be on hand now and not promised to another indent (posting checks again, in the same transaction as the
+    movement). An issue filling an indent uses what that indent has reserved."""
     want = {}
     for l in lines:
         item_id = l.item_id if hasattr(l, "item_id") else l["item"].id
         want[item_id] = want.get(item_id, ZERO) + Decimal(str(l.qty if hasattr(l, "qty") else l["qty"]))
+    held = store_reservations.reserved_map(db, [store_id], list(want), exclude_indent_id)
     for item_id, qty in want.items():
         have = get_balance(db, store_id, item_id).qty
+        item = db.get(models.DBItem, item_id)
         if qty > have:
-            item = db.get(models.DBItem, item_id)
-            raise HTTPException(409, "Only %s %s of %s on hand in this store; %s was asked for." % (s3(have), base_uom_of(db, item), item.item_name, s3(qty)))
+            if on_hand:
+                raise HTTPException(409, "Only %s %s of %s on hand in this store; %s was asked for." % (s3(have), base_uom_of(db, item), item.item_name, s3(qty)))
+            continue                                # at posting the ledger itself refuses what is not there
+        promised = held.get((store_id, item_id), ZERO)
+        if qty > have - promised:
+            raise HTTPException(409, "Only %s %s of %s is free in this store - %s of the %s on hand is promised to approved indents; %s was asked for." % (
+                s3(max(ZERO, have - promised)), base_uom_of(db, item), item.item_name, s3(promised), s3(have), s3(qty)))
 
 
 def _recheck_issue(db, issue):
@@ -360,11 +369,12 @@ def _recheck_issue(db, issue):
 
 def issue_check_submit(db, actor, issue):
     _recheck_issue(db, issue)
-    check_stock(db, issue.store_id, issue_lines(db, issue))
+    check_stock(db, issue.store_id, issue_lines(db, issue), issue.indent_id)
 
 
 def issue_post(db, actor, issue):
     _recheck_issue(db, issue)
+    check_stock(db, issue.store_id, issue_lines(db, issue), issue.indent_id, on_hand=False)
     mtype = MovementType.SUBCON_ISSUE_OUT if issue.issue_type == SUBCONTRACTOR else MovementType.ISSUE_OUT
     for l in issue_lines(db, issue):
         entry = post_movement(db, movement_type=mtype, store_id=issue.store_id, item_id=l.item_id, qty=l.qty, rate=None, txn_date=issue.issue_date, project_id=issue.project_id,

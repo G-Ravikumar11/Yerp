@@ -26,7 +26,7 @@ from app.models.store_control import (
     COUNT, SCRAP, TRANSFER, WASTAGE, DBStoreControlLog, DBStoreCount, DBStoreCountLine, DBStoreScrap, DBStoreScrapLine, DBStoreTransfer, DBStoreTransferLine,
 )
 from app.schemas.store_contracts import CountVarianceLine, InTransitLine, ScrapLine
-from app.services import store_outward
+from app.services import store_outward, store_reservations
 from app.services.stock_ledger import convert_to_base, freeze_store, get_balance, post_movement, reverse_document, unfreeze_store
 from app.services.store_numbering import next_doc_number
 
@@ -149,16 +149,23 @@ def avg_value(db, store_id, item_id, qty: Decimal) -> Decimal:
     return v2(qty * get_balance(db, store_id, item_id).avg_rate)
 
 
-def check_stock(db, store_id, wants):
-    """`wants` is [(item_id, qty)]: every item must be on hand in the store (lines of the same item add up)."""
-    total = {}
+def check_stock(db, store_id, wants, on_hand=True):
+    """`wants` is [(item_id, qty)]: every item must be on hand in the store and not promised to an approved indent (lines of the same item add up)."""
+    want = {}
     for item_id, qty in wants:
-        total[item_id] = total.get(item_id, ZERO) + Decimal(str(qty))
-    for item_id, qty in total.items():
+        want[item_id] = want.get(item_id, ZERO) + Decimal(str(qty))
+    held = store_reservations.reserved_map(db, [store_id], list(want), None)
+    for item_id, qty in want.items():
         have = get_balance(db, store_id, item_id).qty
+        item = db.get(models.DBItem, item_id)
         if qty > have:
-            item = db.get(models.DBItem, item_id)
-            raise HTTPException(409, "Only %s %s of %s on hand in this store; %s was asked for." % (s3(have), base_uom_of(db, item), item.item_name, s3(qty)))
+            if on_hand:
+                raise HTTPException(409, "Only %s %s of %s on hand in this store; %s was asked for." % (s3(have), base_uom_of(db, item), item.item_name, s3(qty)))
+            continue                                # at posting the ledger itself refuses what is not there
+        promised = held.get((store_id, item_id), ZERO)
+        if qty > have - promised:
+            raise HTTPException(409, "Only %s %s of %s is free in this store - %s of the %s on hand is promised to approved indents; %s was asked for." % (
+                s3(max(ZERO, have - promised)), base_uom_of(db, item), item.item_name, s3(promised), s3(have), s3(qty)))
 
 
 # --- transfers ----------------------------------------------------------------------------------------------------------
@@ -210,6 +217,7 @@ def transfer_check_submit(db, actor, doc):
 def transfer_post(db, actor, doc):
     """Dispatch: the stock leaves the source and is in transit until it is received."""
     src = db.get(DBStore, doc.store_id)
+    check_stock(db, doc.store_id, [(l.item_id, l.qty) for l in transfer_lines(db, doc)], on_hand=False)
     for l in transfer_lines(db, doc):
         entry = post_movement(db, movement_type=MovementType.TRANSFER_OUT, store_id=doc.store_id, item_id=l.item_id, qty=l.qty, rate=None, txn_date=doc.transfer_date,
                               project_id=src.project_id, ref_doc_type=TRANSFER, ref_doc_id=doc.id, ref_line_id=l.id, user_id=actor.user_id,
@@ -439,6 +447,7 @@ def scrap_check_submit(db, actor, doc):
 def scrap_post(db, actor, doc):
     """Each line writes stock off at the average rate. A line that deals with an outward write-off request moves no stock: the tool or material it
     names was lost after it was issued, so it left the store at the issue; the line only records who dealt with it and closes the request."""
+    check_stock(db, doc.store_id, [(l.item_id, l.qty) for l in scrap_lines(db, doc) if not l.writeoff_request_id], on_hand=False)
     for l in scrap_lines(db, doc):
         if l.writeoff_request_id:
             store_outward.close_writeoff_request(db, l.writeoff_request_id, SCRAP, doc.id, actor.user_id)

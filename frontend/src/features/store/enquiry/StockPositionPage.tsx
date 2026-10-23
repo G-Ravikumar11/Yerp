@@ -23,6 +23,7 @@ export default function StockPositionPage() {
     { id: 'item', header: 'Item', sort: (r) => r.item_name, cell: (r) => <div><div className="font-medium">{r.item_name}</div><div className="font-mono text-xs text-muted-foreground">{r.item_code}</div></div> },
     { id: 'cat', header: 'Category', width: '8rem', hideBelow: 'md', cell: (r) => r.category ?? '-' },
     { id: 'qty', header: 'Quantity', align: 'right', width: '8rem', sort: (r) => Number(r.qty), cell: (r) => <span>{qty(r.qty)} <span className="text-muted-foreground">{r.base_uom}</span></span> },
+    { id: 'free', header: 'Free', align: 'right', width: '8rem', hideBelow: 'md', sort: (r) => Number(r.available ?? r.qty), cell: (r) => (Number(r.reserved ?? 0) > 0 ? <span title={`${qty(r.reserved ?? '0')} ${r.base_uom} is promised to approved indents`}>{qty(r.available ?? '0')} <span className="text-muted-foreground">({qty(r.reserved ?? '0')} reserved)</span></span> : <span className="text-muted-foreground">{qty(r.available ?? r.qty)}</span>) },
     { id: 'rate', header: 'Avg rate', align: 'right', width: '7rem', hideBelow: 'sm', sort: (r) => Number(r.avg_rate), cell: (r) => money(r.avg_rate) },
     { id: 'value', header: 'Value', align: 'right', width: '8rem', sort: (r) => Number(r.value), cell: (r) => money(r.value) },
     { id: 'status', header: 'Level', width: '9rem', cell: (r) => <Badge tone={STATUS_TONE[r.status]} dot>{STATUS_LABEL[r.status]}</Badge> },

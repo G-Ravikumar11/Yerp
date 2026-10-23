@@ -13,6 +13,9 @@ export interface BalanceRow {
   category: string | null
   base_uom: string
   qty: string
+  /** Promised to approved indents that are still to be issued, and what is left free. */
+  reserved?: string
+  available?: string
   avg_rate: string
   value: string
   status: StockStatus
