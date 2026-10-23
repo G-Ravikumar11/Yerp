@@ -21,6 +21,7 @@ from app.db import get_db
 from app.models.store_core import (
     DBStore, DBStoreItemSettings, DBStoreStockBalance, DBStoreStockLedger, DBStoreUomConversion, MovementType,
 )
+from app.services import store_levels
 from app.routers.store_masters import my_store, num, visible_store_ids
 
 router = APIRouter(prefix="/api/store/enquiry", tags=["store-enquiry"])
@@ -39,17 +40,17 @@ def _day(raw, what) -> Optional[date]:
         raise HTTPException(400, "%s is not a date (use YYYY-MM-DD)." % what) from None
 
 
-def _stock_status(qty, s):
-    """NIL / BELOW_MIN / REORDER / OVER_MAX / OK, from the item's settings."""
+def _stock_status(qty, s, override=None):
+    """NIL / BELOW_MIN / REORDER / OVER_MAX / OK, from the item's settings and the store's own levels where it has set any."""
     if qty <= 0:
         return "NIL"
-    if s is not None:
-        if (s.min_qty or 0) > 0 and qty < s.min_qty:
-            return "BELOW_MIN"
-        if (s.reorder_level or 0) > 0 and qty <= s.reorder_level:
-            return "REORDER"
-        if (s.max_qty or 0) > 0 and qty > s.max_qty:
-            return "OVER_MAX"
+    level, low, high = store_levels.effective(s, override)
+    if low > 0 and qty < low:
+        return "BELOW_MIN"
+    if level > 0 and qty <= level:
+        return "REORDER"
+    if high > 0 and qty > high:
+        return "OVER_MAX"
     return "OK"
 
 
@@ -76,16 +77,19 @@ def _balance_query(db, actor, store_id=0, q="", category="", include_zero=False,
     return query.order_by(DBStore.code, models.DBItem.item_name)
 
 
-def _balance_rows(rows, status=""):
+def _balance_rows(db, rows, status=""):
     out = []
+    over = store_levels.overrides(db, {r[1].id for r in rows})
     for bal, store, item, s in rows:
-        st = _stock_status(bal.qty or ZERO, s)
+        o = over.get((store.id, item.id))
+        level, low, high = store_levels.effective(s, o)
+        st = _stock_status(bal.qty or ZERO, s, o)
         if status and st != status.strip().upper():
             continue
         out.append({"store_id": store.id, "store_code": store.code, "store_name": store.name, "item_id": item.id, "item_code": item.item_code,
                     "item_name": item.item_name, "category": s.category if s else None, "base_uom": (s.base_uom if s else item.units_of_measure) or "",
                     "qty": num(bal.qty), "avg_rate": num(bal.avg_rate, "0.0001"), "value": num(bal.value, "0.01"), "status": st,
-                    "reorder_level": num(s.reorder_level if s else 0), "min_qty": num(s.min_qty if s else 0), "max_qty": num(s.max_qty if s else 0)})
+                    "reorder_level": num(level), "min_qty": num(low), "max_qty": num(high)})
     return out
 
 
@@ -100,7 +104,7 @@ def stock_position(request: Request, store_id: int = 0, q: str = "", category: s
                    limit: int = 200, offset: int = 0, db: Session = Depends(get_db)):
     """What is held, store by store and item by item, with its value and whether it is low."""
     actor = store_actor(request, db, "store.enquiry.view")
-    rows = _balance_rows(_balance_query(db, actor, store_id, q, category, include_zero).all(), status)
+    rows = _balance_rows(db, _balance_query(db, actor, store_id, q, category, include_zero).all(), status)
     value = sum((Decimal(r["value"]) for r in rows), ZERO)
     start = max(0, offset)
     page = rows[start:start + max(1, min(limit, 1000))]
@@ -112,7 +116,7 @@ def stock_position(request: Request, store_id: int = 0, q: str = "", category: s
 def export_balances(request: Request, store_id: int = 0, q: str = "", category: str = "", status: str = "", include_zero: bool = False,
                     db: Session = Depends(get_db)):
     actor = store_actor(request, db, "store.enquiry.view")
-    rows = _balance_rows(_balance_query(db, actor, store_id, q, category, include_zero).limit(MAX_EXPORT).all(), status)
+    rows = _balance_rows(db, _balance_query(db, actor, store_id, q, category, include_zero).limit(MAX_EXPORT).all(), status)
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Stock position"
@@ -154,7 +158,7 @@ def item_position(item_id: int, request: Request, db: Session = Depends(get_db))
     if item is None or item.client_id != actor.client.id:
         raise HTTPException(404, "Item not found")
     s = db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == item.id).first()
-    rows = _balance_rows(_balance_query(db, actor, 0, "", "", True).filter(models.DBItem.id == item.id).all())
+    rows = _balance_rows(db, _balance_query(db, actor, 0, "", "", True).filter(models.DBItem.id == item.id).all())
     base = (s.base_uom if s else item.units_of_measure) or ""
     convs = db.query(DBStoreUomConversion).filter(DBStoreUomConversion.item_id == item.id).order_by(DBStoreUomConversion.id).all()
     total = sum((Decimal(r["qty"]) for r in rows), ZERO)

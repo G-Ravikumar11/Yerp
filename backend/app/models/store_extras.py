@@ -45,3 +45,30 @@ class DBStorePoClosure(Base):
     reason = Column(String, default="")
     closed_by_name = Column(String, default="")
     closed_at = Column(DateTime, default=datetime.now)
+
+
+class DBStoreItemLevel(Base):
+    """An item's reorder, minimum and maximum levels for one store, where they differ from the item's own. An empty column uses the item's."""
+    __tablename__ = "store_item_level"
+    __table_args__ = (UniqueConstraint("store_id", "item_id", name="uq_store_item_level"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    store_id = Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
+    item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
+    reorder_level = Column(QTY, nullable=True)
+    min_qty = Column(QTY, nullable=True)
+    max_qty = Column(QTY, nullable=True)
+
+
+class DBStoreReorderAlert(Base):
+    """Whether an item in a store is at its reorder level and has been told to the company: one open alert until the stock is back above the
+    level, so it is raised once, not on every issue below it."""
+    __tablename__ = "store_reorder_alert"
+    __table_args__ = (UniqueConstraint("store_id", "item_id", name="uq_store_reorder_alert"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    store_id = Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
+    item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
+    alerted_at = Column(DateTime, default=datetime.now)
+    cleared_at = Column(DateTime, nullable=True)
