@@ -171,7 +171,7 @@ def guard(request, email="", body=None, always=False):
     if locked(email):
         raise HTTPException(429, "This account is locked for 15 minutes after too many wrong passwords. "
                                  "Wait, then sign in - or use Forgot password.")
-    if always or captcha_needed(request, email):
+    if mode() != "off" and (always or captcha_needed(request, email)):
         require_captcha(request, body or {})
 
 

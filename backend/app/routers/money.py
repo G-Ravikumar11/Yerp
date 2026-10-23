@@ -19,9 +19,9 @@ from app.core.notifications import notify
 from app.core.sheets import sheet_response
 from app.documents.forms import _pre, form_pdf_response, money_voucher_spec, statement_form_spec
 from app.documents.letterhead import our_party
-from app.schemas.money import (BankAccountIn, CashBoxIn, MoneyIn, PaymentDecisionIn, PaymentRulesIn, RequestPayIn,
-                               SiteCashExpenseIn, TransferIn)
-from app.services import site_cash
+from app.schemas.money import (BankAccountIn, CashBoxIn, ClearIn, LineBookIn, LineMatchIn, MoneyIn, PaymentDecisionIn,
+                               PaymentRulesIn, RequestPayIn, SiteCashExpenseIn, TransferIn)
+from app.services import bank_reco, site_cash
 from app.services import payment_requests as preq
 from app.services.credit_notes import credit_totals_by_bill, credits_by_job
 from app.services.crm import (
@@ -1022,6 +1022,184 @@ def cash_box_statement(account_id: int, request: Request, date_from: str = "", d
                                                  date_from, date_to), "cash_book_%s" % (box.name or "site"))
 
 
+# --- bank reconciliation and the cheque register ----------------------------------------------------------------------
+
+@router.get("/api/bank-reco/{account_id}")
+def bank_reco_view(account_id: int, request: Request, as_of: str = "", db: Session = Depends(get_db)):
+    """One bank account against its statement: the reconciliation on a day, the statement lines not yet matched (with
+    the entries each could be), and the entries the bank has not moved yet."""
+    client = require_items_access(request, db, "bills.view_all")
+    account = bank_reco.bank_account_or_404(db, client.id, account_id)
+    day = (as_of or date.today().isoformat())[:10]
+    lines = db.query(models.DBBankStatementLine).filter(
+        models.DBBankStatementLine.client_id == client.id, models.DBBankStatementLine.account_id == account.id,
+        models.DBBankStatementLine.status == "UNMATCHED").order_by(models.DBBankStatementLine.txn_date).limit(500).all()
+    counts = dict(db.query(models.DBBankStatementLine.status, sqlfunc_count(models.DBBankStatementLine.id)).filter(
+        models.DBBankStatementLine.client_id == client.id, models.DBBankStatementLine.account_id == account.id).group_by(
+        models.DBBankStatementLine.status).all())
+    return {"account": account_dict(account), "brs": bank_reco.brs(db, client.id, account, day),
+            "lines": [bank_reco.line_dict(l) for l in lines],
+            "suggestions": bank_reco.suggestions(db, client.id, account, lines),
+            "counts": {"matched": counts.get("MATCHED", 0), "unmatched": counts.get("UNMATCHED", 0),
+                       "ignored": counts.get("IGNORED", 0)}}
+
+
+def sqlfunc_count(col):
+    from sqlalchemy import func
+    return func.count(col)
+
+
+@router.post("/api/bank-reco/{account_id}/statement")
+def bank_statement_upload(account_id: int, request: Request, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """The bank's statement as downloaded from its site: read, stored (lines already in are not stored twice), and
+    matched to the books."""
+    client, _, actor_name = wo_actor(request, db, "bills.pay")
+    account = bank_reco.bank_account_or_404(db, client.id, account_id)
+    data = file.file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(413, "That statement is over 10 MB. Download a shorter period.")
+    lines = bank_reco.read_statement(data, file.filename or "")
+    added, again, matched = bank_reco.import_statement(db, client.id, account, lines, file.filename, actor_name)
+    log_audit(db, client.id, "bank_statement_imported", "bank_account", account.id, account.name or "",
+              "%d lines, %d matched" % (added, matched), request)
+    db.commit()
+    return {"ok": True, "added": added, "already_in": again, "matched": matched,
+            "message": "%d line%s read from the statement%s; %d matched to the books." % (
+                added, "" if added == 1 else "s", (" (%d already in)" % again) if again else "", matched)}
+
+
+def _line_or_404(db, client_id, line_id):
+    l = db.query(models.DBBankStatementLine).filter(models.DBBankStatementLine.id == line_id,
+                                                    models.DBBankStatementLine.client_id == client_id).first()
+    if l is None:
+        raise HTTPException(404, "Statement line not found")
+    return l
+
+
+@router.post("/api/bank-reco/lines/{line_id}/match")
+def bank_line_match(line_id: int, body: LineMatchIn, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db, "bills.pay")
+    l = _line_or_404(db, client.id, line_id)
+    e = db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.id == body.entry_id,
+                                             models.DBMoneyEntry.client_id == client.id).first()
+    if e is None or e.account_id != l.account_id or e.voided:
+        raise HTTPException(400, "That entry is not through this account.")
+    if (e.direction == "IN") != (l.credit > 0) or abs(money(e.amount) - money(l.credit or l.debit)) > 0.009:
+        raise HTTPException(400, "%s is %s %s; the bank's line is %s %s." % (
+            e.number, "in" if e.direction == "IN" else "out", inr(e.amount),
+            "in" if l.credit > 0 else "out", inr(l.credit or l.debit)))
+    if e.statement_line_id and e.statement_line_id != l.id:
+        raise HTTPException(409, "%s is already matched to another line of the statement." % e.number)
+    if l.status == "MATCHED":
+        bank_reco.unmatch(db, l)
+    bank_reco.match(l, e)
+    db.commit()
+    return {"ok": True, "message": "Matched to %s; cleared on %s." % (e.number, l.txn_date)}
+
+
+@router.post("/api/bank-reco/lines/{line_id}/unmatch")
+def bank_line_unmatch(line_id: int, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db, "bills.pay")
+    l = _line_or_404(db, client.id, line_id)
+    bank_reco.unmatch(db, l)
+    db.commit()
+    return {"ok": True, "message": "Line put back as not matched."}
+
+
+@router.post("/api/bank-reco/lines/{line_id}/ignore")
+def bank_line_ignore(line_id: int, request: Request, db: Session = Depends(get_db)):
+    """A line that is nothing for the books (a reversal and its correction, both by the bank)."""
+    client, _, _ = wo_actor(request, db, "bills.pay")
+    l = _line_or_404(db, client.id, line_id)
+    if l.status == "MATCHED":
+        bank_reco.unmatch(db, l)
+    l.status = "IGNORED"
+    db.commit()
+    return {"ok": True, "message": "Line set aside."}
+
+
+@router.post("/api/bank-reco/lines/{line_id}/book")
+def bank_line_book(line_id: int, body: LineBookIn, request: Request, db: Session = Depends(get_db)):
+    """What the bank booked on its own - charges out, interest in - booked in the books from its line, and matched."""
+    client, _, actor_name = wo_actor(request, db, "bills.pay")
+    l = _line_or_404(db, client.id, line_id)
+    if l.status != "UNMATCHED":
+        raise HTTPException(409, "That line is already %s." % l.status.lower())
+    out = l.debit > 0
+    heads = EXPENSE_HEADS if out else INCOME_HEADS
+    head = next((h for h in heads if h.lower() == (body.head or "").strip().lower()), "")
+    if not head:
+        raise HTTPException(400, "Book it under one of: %s." % ", ".join(heads))
+    e = models.DBMoneyEntry(
+        client_id=client.id, number=next_money_number(db, client.id, "OUT" if out else "IN"),
+        direction="OUT" if out else "IN", party_type="other", party_name="Bank",
+        doc_type="expense" if out else "income", account_id=l.account_id, amount=money(l.debit or l.credit),
+        paid_on=l.txn_date, mode="Bank transfer", reference=(l.reference or "")[:80],
+        note=((body.note or "").strip() or l.narration or "")[:300], head=head, recorded_by_name=actor_name)
+    db.add(e)
+    db.flush()
+    bank_reco.match(l, e)
+    log_audit(db, client.id, "bank_line_booked", "bank_account", l.account_id, e.number, "%s %s" % (head, inr(e.amount)), request)
+    db.commit()
+    return {"ok": True, "entry": money_entry_dict(e), "message": "%s booked: %s %s." % (e.number, head, inr(e.amount))}
+
+
+@router.post("/api/money/entries/{entry_id}/clear")
+def clear_entry(entry_id: int, body: ClearIn, request: Request, db: Session = Depends(get_db)):
+    """A cheque cleared (or not after all), by hand - from the passbook, without a statement to read in."""
+    client, _, _ = wo_actor(request, db, "bills.pay")
+    e = db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.id == entry_id, models.DBMoneyEntry.client_id == client.id).first()
+    if e is None:
+        raise HTTPException(404, "Entry not found")
+    if e.statement_line_id:
+        raise HTTPException(409, "%s is matched to the bank's statement; unmatch the line instead." % e.number)
+    on = (body.cleared_on or "").strip()[:10]
+    if on:
+        if on < (e.paid_on or "")[:10]:
+            raise HTTPException(400, "It cannot have cleared before it was written.")
+        if on > date.today().isoformat():
+            raise HTTPException(400, "It cannot have cleared on a day still to come.")
+    e.cleared_on = on
+    db.commit()
+    return {"ok": True, "message": ("%s cleared on %s." % (e.number, on)) if on else "%s marked not cleared." % e.number}
+
+
+@router.get("/api/bank-reco/{account_id}/brs.pdf")
+def brs_pdf(account_id: int, request: Request, as_of: str = "", db: Session = Depends(get_db)):
+    """The bank reconciliation statement on a day, on the letterhead, for the auditor's file."""
+    from app.documents.forms import brs_spec
+    client = require_items_access(request, db, "bills.view_all")
+    account = bank_reco.bank_account_or_404(db, client.id, account_id)
+    day = (as_of or date.today().isoformat())[:10]
+    return form_pdf_response(brs_spec(db, client, account, bank_reco.brs(db, client.id, account, day)),
+                             "BRS_%s_%s" % (account.name or "bank", day))
+
+
+@router.get("/api/cheques")
+def cheque_register(request: Request, status: str = "", account_id: int = 0, db: Session = Depends(get_db)):
+    """Every cheque written or received: number, date, party, amount, account, and where it stands."""
+    client = require_items_access(request, db, "bills.view_all")
+    q = db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.client_id == client.id, models.DBMoneyEntry.mode == "Cheque")
+    if account_id:
+        q = q.filter(models.DBMoneyEntry.account_id == account_id)
+    accounts = {a.id: a for a in db.query(models.DBBankAccount).filter(models.DBBankAccount.client_id == client.id).all()}
+    today = date.today()
+    rows = []
+    for e in q.order_by(models.DBMoneyEntry.paid_on.desc(), models.DBMoneyEntry.id.desc()).limit(1000).all():
+        if e.doc_type == "contra" and e.direction == "IN":
+            continue                                         # a cheque between our own accounts is one cheque, not two
+        st = bank_reco.cheque_status(e, today)
+        if status and st != status.upper():
+            continue
+        rows.append(dict(money_entry_dict(e, accounts), status=st))
+    live = [r for r in rows if r["status"] in ("PENDING", "STALE")]
+    return {"cheques": rows, "summary": {
+        "issued_pending": money(sum(r["amount"] for r in live if r["direction"] == "OUT")),
+        "received_pending": money(sum(r["amount"] for r in live if r["direction"] == "IN")),
+        "stale": len([r for r in rows if r["status"] == "STALE"]),
+        "bounced": len([r for r in rows if r["status"] == "BOUNCED"])}}
+
+
 @router.get("/api/money/heads")
 def money_heads(request: Request, db: Session = Depends(get_db)):
     """The heads an expense voucher or a sundry receipt is booked under."""
@@ -1081,6 +1259,11 @@ def void_money(entry_id: int, request: Request, body: dict = None,
     if e.voided:
         raise HTTPException(409, "%s is already void." % e.number)
     e.voided, e.void_reason = True, reason[:300]
+    if e.statement_line_id:
+        # Its line on the bank's statement is unmatched again: the money the bank moved is still to be accounted for.
+        line = db.query(models.DBBankStatementLine).filter(models.DBBankStatementLine.id == e.statement_line_id).first()
+        if line is not None:
+            bank_reco.unmatch(db, line)
     booked = site_cash.expense_for_entry(db, e.id)
     if booked is not None and booked.status == "APPROVED":
         booked.status, booked.entry_id, booked.checked_by_name, booked.checked_at = "SUBMITTED", None, "", ""

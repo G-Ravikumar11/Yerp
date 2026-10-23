@@ -74,6 +74,8 @@ ACCOUNTS_COLUMNS = (
     # A site's cash box: its site, who holds it, and its float.
     ("bank_accounts", "job_id", "INTEGER"), ("bank_accounts", "custodian_id", "INTEGER"),
     ("bank_accounts", "imprest_amount", "FLOAT DEFAULT 0"),
+    # Bank reconciliation: when the bank moved it, and the statement line it was matched to.
+    ("money_entries", "cleared_on", "VARCHAR DEFAULT ''"), ("money_entries", "statement_line_id", "INTEGER"),
 )
 
 QUALITY_COLUMNS = (
