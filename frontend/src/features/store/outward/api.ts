@@ -154,7 +154,7 @@ export { today } from '@/lib/format'
 export const headLabel = (h: string | null) => (h ? h.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase()) : '')
 
 /** Indents: a site engineer's request for material, approved by the project manager, then filled by issues. */
-export interface IndentLine { id: number; item_id: number; item_code: string; item_name: string; base_uom: string; entry_uom: string; entry_qty: string; qty: string; approved_qty: string | null; fulfilled: string; pending: string | null; purpose: string }
+export interface IndentLine { id: number; item_id: number; item_code: string; item_name: string; base_uom: string; entry_uom: string; entry_qty: string; qty: string; approved_qty: string | null; fulfilled: string; pending: string | null; purpose: string; reason?: string; substitute_for_line_id?: number | null }
 export interface Indent {
   id: number; number: string; status: 'DRAFT' | 'SUBMITTED' | 'OPEN' | 'PARTIAL' | 'CLOSED' | 'CANCELLED'; store_id: number; store_code: string; store_name: string; date: string; required_by: string
   project_id: number; project: string; work_order_id: number | null; work_order: string; boq_item_id: number | null; boq_item: string; activity: string; remarks: string; requested_by: string

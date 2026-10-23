@@ -131,7 +131,7 @@ export function IndentPage() {
     { id: 'app', header: 'Approved', align: 'right', width: '8rem', cell: (l) => (l.approved_qty == null ? '-' : <span className={Number(l.approved_qty) < Number(l.qty) ? 'text-warning' : ''}>{num(l.approved_qty)} {l.base_uom}</span>) },
     { id: 'iss', header: 'Issued', align: 'right', width: '8rem', cell: (l) => `${num(l.fulfilled)} ${l.base_uom}` },
     { id: 'pen', header: 'Pending', align: 'right', width: '8rem', cell: (l) => (l.pending == null ? '-' : `${num(l.pending)} ${l.base_uom}`) },
-    { id: 'why', header: 'Purpose', hideBelow: 'md', cell: (l) => l.purpose || '-' },
+    { id: 'why', header: 'Purpose', hideBelow: 'md', cell: (l) => <div>{l.purpose || '-'}{l.reason && <div className="text-xs text-warning">{l.substitute_for_line_id ? 'Substituted: ' : 'Cut back: '}{l.reason}</div>}</div> },
   ]
   const facts: [string, string][] = [['Store', `${d.store_code} - ${d.store_name}`], ['Raised', `${dmy(d.date)} by ${d.requested_by}`], ['Needed by', d.required_by ? dmy(d.required_by) : '-'], ['Project', d.project], ['Work order', d.work_order || '-'],
     ['BOQ item', d.boq_item || '-'], ['Activity', d.activity || '-'], ['Approved', d.approved_by ? `${d.approved_by} on ${dmy(d.approved_at)}${d.approver_remarks ? ' - ' + d.approver_remarks : ''}` : '-'], ['Remarks', d.remarks || '-']]
@@ -172,21 +172,41 @@ export function IndentPage() {
 function ApproveModal({ indent, onClose }: { indent: Indent; onClose: () => void }) {
   const lines = indent.lines ?? []
   const [qty, setQty] = useState<Record<number, string>>(() => Object.fromEntries(lines.map((l) => [l.id, String(Number(l.entry_qty))])))
+  const [why, setWhy] = useState<Record<number, string>>({})
+  const [sub, setSub] = useState<Record<number, { item: StoreItemOption | null; qty: string; uom: string }>>({})
   const [remarks, setRemarks] = useState('')
-  const save = useAction(() => storePost<Indent>('outward', `/indent/${indent.id}/approve`, { lines: lines.map((l) => ({ line_id: l.id, approved_qty: qty[l.id] ?? '0', uom: l.entry_uom })), remarks }),
-    { invalidate: [[...outwardKeys.all]], success: (d) => `${d.number} approved`, onSuccess: onClose })
+  const cut = (l: IndentLine) => Number(qty[l.id] ?? l.entry_qty) < Number(l.entry_qty)
+  const body = () => ({
+    remarks,
+    lines: lines.map((l) => {
+      const s = sub[l.id]
+      return { line_id: l.id, approved_qty: qty[l.id] ?? '0', uom: l.entry_uom, reason: why[l.id] ?? '', ...(cut(l) && s?.item ? { substitute_item_id: s.item.id, substitute_qty: s.qty, substitute_uom: s.uom || s.item.base_uom } : {}) }
+    }),
+  })
+  const save = useAction(() => storePost<Indent>('outward', `/indent/${indent.id}/approve`, body()), { invalidate: [[...outwardKeys.all]], success: (d) => `${d.number} approved`, onSuccess: onClose })
   return (
-    <Modal open onOpenChange={(o) => !o && onClose()} size="lg" title={`Approve ${indent.number}`} description="You can reduce what was asked for, to nothing if need be, but not raise it.">
+    <Modal open onOpenChange={(o) => !o && onClose()} size="lg" title={`Approve ${indent.number}`} description="You can reduce what was asked for, to nothing if need be, but not raise it. Say why a line is cut, and give another item in its place if you can.">
       <form onSubmit={(e) => { e.preventDefault(); save.mutate() }} className="grid gap-4">
         <ul className="divide-y rounded-lg border">
           {lines.map((l) => (
-            <li key={l.id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 text-sm">
-              <span><span className="font-medium">{l.item_name}</span> <span className="text-muted-foreground">asked {num(l.entry_qty)} {l.entry_uom}</span></span>
-              <span className="flex items-center gap-2"><Input aria-label={`Approved quantity of ${l.item_name}`} inputMode="decimal" className="h-9 w-28 text-right" value={qty[l.id] ?? ''} onChange={(e) => setQty((q) => ({ ...q, [l.id]: e.target.value }))} /> {l.entry_uom}</span>
+            <li key={l.id} className="grid gap-2 px-3 py-2 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span><span className="font-medium">{l.item_name}</span> <span className="text-muted-foreground">asked {num(l.entry_qty)} {l.entry_uom}</span></span>
+                <span className="flex items-center gap-2"><Input aria-label={`Approved quantity of ${l.item_name}`} inputMode="decimal" className="h-9 w-28 text-right" value={qty[l.id] ?? ''} onChange={(e) => setQty((q) => ({ ...q, [l.id]: e.target.value }))} /> {l.entry_uom}</span>
+              </div>
+              {cut(l) && (
+                <div className="grid gap-2 rounded-lg bg-muted/50 p-2">
+                  <Input aria-label={`Why ${l.item_name} was cut`} placeholder="Why this was cut back" maxLength={200} value={why[l.id] ?? ''} onChange={(e) => setWhy((w) => ({ ...w, [l.id]: e.target.value }))} />
+                  <div className="grid gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+                    <ItemPicker value={sub[l.id]?.item ?? null} placeholder="Give another item in its place (optional)" onChange={(item) => setSub((s) => ({ ...s, [l.id]: { item, qty: s[l.id]?.qty ?? '', uom: item?.base_uom ?? '' } }))} />
+                    {sub[l.id]?.item && <Input aria-label={`Quantity of ${sub[l.id]?.item?.name}`} inputMode="decimal" className="text-right" placeholder={`Quantity (${sub[l.id]?.item?.base_uom})`} value={sub[l.id]?.qty ?? ''} onChange={(e) => setSub((s) => ({ ...s, [l.id]: { ...s[l.id], qty: e.target.value } }))} />}
+                  </div>
+                </div>
+              )}
             </li>
           ))}
         </ul>
-        <Field label="Remarks" htmlFor="ap-rem"><Input id="ap-rem" value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Why quantities were reduced, if they were" maxLength={200} /></Field>
+        <Field label="Remarks" htmlFor="ap-rem"><Input id="ap-rem" value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Taken as the reason for any line without its own" maxLength={200} /></Field>
         <div className="flex justify-end gap-2 border-t border-border pt-4"><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" loading={save.isPending}>Approve</Button></div>
       </form>
     </Modal>

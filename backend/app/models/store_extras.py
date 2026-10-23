@@ -153,3 +153,14 @@ class DBStoreCountRecount(Base):
     recount_qty = Column(QTY, nullable=False, default=0)
     by_name = Column(String, default="")
     at = Column(DateTime, default=datetime.now)
+
+
+class DBStoreIndentLineNote(Base):
+    """Why an approver cut an indent line back, or that a line is the substitute the approver gave in place of another item's."""
+    __tablename__ = "store_indent_line_note"
+    __table_args__ = (UniqueConstraint("indent_line_id", name="uq_store_indent_line_note"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    indent_line_id = Column(Integer, ForeignKey("store_indent_line.id"), nullable=False)
+    reason = Column(String, default="")
+    substitute_for_line_id = Column(Integer, ForeignKey("store_indent_line.id"), nullable=True)

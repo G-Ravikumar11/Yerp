@@ -23,6 +23,7 @@ from app.models.store_outward import (
 )
 from app.schemas.store_contracts import ReturnableOutstanding, SubconIssueLine, WriteOffRequest
 from app.services.stock_ledger import convert_to_base, get_balance, post_movement, reverse_document
+from app.models.store_extras import DBStoreIndentLineNote
 from app.services import store_reservations
 from app.services.store_batches import batches_on_hand
 from app.services.store_numbering import next_doc_number
@@ -806,12 +807,15 @@ def can_approve_indent(db, actor, indent, has_admin):
 
 
 def indent_approve(db, actor, indent, rows, remarks, has_admin):
-    """Approve an indent, with the quantities the approver allows: each can be cut back (to nothing) but never raised."""
+    """Approve an indent, with the quantities the approver allows: each can be cut back (to nothing) but never raised. A line cut back says why
+    (its own reason, or the approval's remarks), and may be replaced by another item - the substitute becomes a line of the indent in its own right,
+    so it is reserved, issued against and closed like any other."""
     if indent.status != "SUBMITTED":
         raise HTTPException(409, "It is %s, so it cannot be approved now." % indent.status.lower())
     can_approve_indent(db, actor, indent, has_admin)
     lines = {l.id: l for l in indent_lines(db, indent)}
-    given = {}
+    overall = text(remarks, "remarks", 200)
+    given, why, subs = {}, {}, []
     for r in rows or []:
         if r.line_id not in lines:
             raise HTTPException(400, "Line %s is not on this indent." % r.line_id)
@@ -824,12 +828,38 @@ def indent_approve(db, actor, indent, rows, remarks, has_admin):
         given[r.line_id] = to_base(db, item.id, entry, uom) if entry > 0 else ZERO
         if given[r.line_id] > Decimal(str(line.qty)):
             raise HTTPException(409, "%s: the approver can reduce what was asked for (%s %s), not raise it." % (item.item_name, s3(line.qty), base_uom_of(db, item)))
+        reason = text(getattr(r, "reason", ""), "reason", 200) or overall
+        if given[r.line_id] < Decimal(str(line.qty)):
+            if len(reason) < 3:
+                raise HTTPException(400, "%s: say why it was cut back." % item.item_name)
+            why[r.line_id] = reason
+        sub_id = getattr(r, "substitute_item_id", None)
+        if sub_id:
+            if given[r.line_id] >= Decimal(str(line.qty)):
+                raise HTTPException(400, "%s: cut the original quantity back before giving a substitute for it." % item.item_name)
+            sub = item_of(db, indent.client_id, sub_id)
+            if sub.id == item.id:
+                raise HTTPException(400, "%s: the substitute must be a different item." % item.item_name)
+            sub_uom = text(getattr(r, "substitute_uom", ""), "unit", 20) or base_uom_of(db, sub)
+            sub_entry = dec(getattr(r, "substitute_qty", ""), "%s substitute quantity" % sub.item_name, allow_zero=False)
+            subs.append((line, sub, sub_uom, sub_entry, to_base(db, sub.id, sub_entry, sub_uom)))
     for l in lines.values():
         l.approved_qty = given.get(l.id, Decimal(str(l.qty)))
-    if not any(Decimal(str(l.approved_qty)) > 0 for l in lines.values()):
+    next_no = max([l.line_no or 0 for l in lines.values()] or [0])
+    for line, sub, sub_uom, sub_entry, sub_base in subs:
+        next_no += 1
+        extra = DBStoreIndentLine(indent_id=indent.id, line_no=next_no, item_id=sub.id, entry_uom=sub_uom, entry_qty=q3(sub_entry), qty=sub_base, approved_qty=sub_base,
+                                  purpose="Substitute for %s" % db.get(models.DBItem, line.item_id).item_name)
+        db.add(extra)
+        db.flush()
+        db.add(DBStoreIndentLineNote(indent_line_id=extra.id, reason=why.get(line.id, overall), substitute_for_line_id=line.id))
+    for line_id, reason in why.items():
+        db.add(DBStoreIndentLineNote(indent_line_id=line_id, reason=reason))
+    db.flush()
+    if not any(Decimal(str(l.approved_qty)) > 0 for l in indent_lines(db, indent)):
         raise HTTPException(400, "Everything was cut to nothing. Cancel the indent instead.")
     indent.status, indent.approved_by_name, indent.approved_at = "OPEN", actor.name, datetime.now()
-    indent.approver_remarks = text(remarks, "remarks", 200)
+    indent.approver_remarks = overall
     log(db, actor, INDENT, indent.id, "approve", "SUBMITTED", "OPEN", indent.approver_remarks)
 
 
