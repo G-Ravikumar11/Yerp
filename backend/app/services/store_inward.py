@@ -24,6 +24,7 @@ from app.schemas.store_contracts import PoLineReceipt
 from app.services.stock_ledger import convert_to_base, post_movement, reverse_document
 from app.services.store_batches import default_expiry
 from app.services.store_integration import old_received_in_base
+from app.models.store_extras import DBStorePoClosure
 from app.services import store_rejections
 from app.services.store_numbering import next_doc_number
 
@@ -146,6 +147,11 @@ def po_item(db, po, po_line) -> Optional[models.DBItem]:
                                           models.DBItem.kind == "RM").first()
 
 
+def short_closed(db, po_id) -> bool:
+    """Whether the store has short-closed this order: nothing more is received against it."""
+    return bool(po_id) and db.query(DBStorePoClosure.id).filter(DBStorePoClosure.po_id == po_id).first() is not None
+
+
 def _ordered_base(db, po_line, item) -> Decimal:
     """What a PO line ordered, in the item's base unit; zero when the line's unit cannot be converted."""
     try:
@@ -215,6 +221,7 @@ def _category_of(db, item_id):
 def open_purchase_orders(db, client_id, visible_projects=None, q=""):
     """Approved purchase orders that still have something to receive, with each line's pending quantity."""
     query = db.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.client_id == client_id, models.DBPurchaseOrder.status.in_(PO_OPEN))
+    query = query.filter(~models.DBPurchaseOrder.id.in_(db.query(DBStorePoClosure.po_id).filter(DBStorePoClosure.client_id == client_id)))
     term = (q or "").strip()
     if term:
         like = "%" + term.replace("%", "").replace("_", "") + "%"
@@ -245,6 +252,8 @@ def _po_for(db, client_id, po_id):
         raise HTTPException(400, "That purchase order does not exist.")
     if po.status not in PO_OPEN:
         raise HTTPException(409, "Purchase order %s is %s, so nothing can be received against it." % (po.number, (po.status or "not approved").lower()))
+    if short_closed(db, po.id):
+        raise HTTPException(409, "Purchase order %s has been short-closed, so nothing more can be received against it." % po.number)
     return po
 
 
@@ -356,6 +365,8 @@ def _recheck_grn(db, grn, lines):
     po = db.get(models.DBPurchaseOrder, grn.po_id) if grn.po_id else None
     if po is not None and po.status not in PO_OPEN:
         raise HTTPException(409, "Purchase order %s is %s, so nothing can be received against it." % (po.number, (po.status or "not approved").lower()))
+    if po is not None and short_closed(db, po.id) and grn.status != DocStatus.POSTED.value:
+        raise HTTPException(409, "Purchase order %s has been short-closed, so nothing more can be received against it." % po.number)
     items = {i.id: i for i in db.query(models.DBItem).filter(models.DBItem.id.in_([l.item_id for l in lines])).all()}
     rows = [{"po_line": db.get(models.DBPurchaseOrderLineItem, l.po_line_id) if l.po_line_id else None, "item": items[l.item_id], "received": Decimal(str(l.received_qty)),
              "rejected": Decimal(str(l.rejected_qty)), "accepted": Decimal(str(l.accepted_qty)), "qc_status": l.qc_status, "label": "Line %d" % (l.line_no or 0)} for l in lines]

@@ -31,3 +31,17 @@ class DBStoreRejection(Base):
     resolved_by_name = Column(String, default="")
     vehicle_no = Column(String, default="")
     resolution_note = Column(Text, default="")
+
+
+class DBStorePoClosure(Base):
+    """A purchase order the store has short-closed: what is still undelivered will not now come, so nothing more is received against it.
+    The order itself (purchasing's record) is not touched; removing this row reopens it for receiving."""
+    __tablename__ = "store_po_closure"
+    __table_args__ = (UniqueConstraint("po_id", name="uq_store_po_closure_po"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    po_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=False)
+    reason = Column(String, default="")
+    closed_by_name = Column(String, default="")
+    closed_at = Column(DateTime, default=datetime.now)

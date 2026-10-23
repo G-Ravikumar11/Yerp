@@ -4,6 +4,7 @@ import { Skeleton } from '@/components/ui'
 import { cn } from '@/lib/utils'
 import { StoreShell } from '../StoreShell'
 import { kindOf, KINDS, useDoc, type InwardKind } from './api'
+import Deliveries from './Deliveries'
 import DocListPage from './DocListPage'
 import DocPage from './DocPage'
 import GrnForm from './GrnForm'
@@ -19,6 +20,7 @@ function InwardTabs() {
     <nav aria-label="Inward documents" className="mb-4 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-muted p-1">
       {KINDS.map((k) => <NavLink key={k.key} to={`/store/hub/inward/${k.key}`} className={tab}>{k.plural}</NavLink>)}
       <NavLink to="/store/hub/inward/rejected" className={tab}>Rejected goods</NavLink>
+      <NavLink to="/store/hub/inward/deliveries" className={tab}>Deliveries</NavLink>
     </nav>
   )
 }
@@ -67,6 +69,7 @@ export default function InwardIndex() {
       <Routes>
         <Route index element={<List />} />
         <Route path="rejected" element={<><InwardTabs /><RejectedGoods /></>} />
+        <Route path="deliveries" element={<><InwardTabs /><Deliveries /></>} />
         <Route path=":kind" element={<List />} />
         <Route path=":kind/new" element={<FormPage editing={false} />} />
         <Route path=":kind/:id" element={<DocPage />} />

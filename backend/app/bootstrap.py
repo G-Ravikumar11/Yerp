@@ -191,6 +191,7 @@ from app.routers import (
     store_control,
     store_reports,
     store_rejections,
+    store_deliveries,
 )
 
 for _module in (
@@ -249,6 +250,7 @@ for _module in (
     store_control,
     store_reports,
     store_rejections,
+    store_deliveries,
 ):
     app.include_router(_module.router)
 
