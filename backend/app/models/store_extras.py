@@ -124,3 +124,32 @@ class DBStoreReminder(Base):
     kind = Column(String, nullable=False)            # RETURN_OVERDUE | TOOL_RETURN_OVERDUE | TOOL_SERVICE_DUE
     ref_id = Column(Integer, nullable=False)
     last_sent_at = Column(DateTime, default=datetime.now)
+
+
+class DBStoreCycleSetting(Base):
+    """A company's rules for cycle counting: how often each ABC class is counted, and how far a count may be from the books before it must be
+    counted again."""
+    __tablename__ = "store_cycle_setting"
+    __table_args__ = (UniqueConstraint("client_id", name="uq_store_cycle_setting_client"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    days_a = Column(Integer, default=30)
+    days_b = Column(Integer, default=90)
+    days_c = Column(Integer, default=180)
+    recount_value = Column(QTY, default=25000)       # a difference worth this much or more is counted again (0 = never on value)
+    recount_pct = Column(QTY, default=20)            # ... or this percent of the books, once it is worth at least recount_min_value (0 = never on percent)
+    recount_min_value = Column(QTY, default=1000)
+
+
+class DBStoreCountRecount(Base):
+    """The second, blind count of a line whose first count was far from the books. The line then carries the second count; the first is kept here."""
+    __tablename__ = "store_count_recount"
+    __table_args__ = (UniqueConstraint("count_line_id", name="uq_store_count_recount_line"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    count_line_id = Column(Integer, ForeignKey("store_count_line.id"), nullable=False)
+    first_qty = Column(QTY, nullable=False, default=0)
+    recount_qty = Column(QTY, nullable=False, default=0)
+    by_name = Column(String, default="")
+    at = Column(DateTime, default=datetime.now)

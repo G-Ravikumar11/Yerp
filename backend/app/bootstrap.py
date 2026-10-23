@@ -194,6 +194,7 @@ from app.routers import (
     store_deliveries,
     store_levels,
     store_tools,
+    store_cycle,
 )
 
 for _module in (
@@ -255,6 +256,7 @@ for _module in (
     store_deliveries,
     store_levels,
     store_tools,
+    store_cycle,
 ):
     app.include_router(_module.router)
 

@@ -405,6 +405,7 @@ def test_cancelling_an_open_count_lets_the_store_move_and_a_second_count_waits(a
 def test_a_high_value_count_needs_the_right_to_approve_it(account, portal):
     tenant = account["client"]
     w = world(account)
+    tenant.put("/api/store/cycle/settings", json={"recount_value": "0", "recount_pct": "0"})           # this is about who approves, not about counting again
     c = make_count(tenant, w, count_type="PARTIAL", item_ids=[w.item["steel"]])
     tenant.post("%s/count/%d/start" % (API, c["id"]))
     sheet(tenant, c, w, {"steel": ("1000", "stolen from the yard")})                                   # 1000 kg short = 62,000

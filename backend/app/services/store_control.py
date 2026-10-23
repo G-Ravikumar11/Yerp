@@ -26,7 +26,7 @@ from app.models.store_control import (
     COUNT, SCRAP, TRANSFER, WASTAGE, DBStoreControlLog, DBStoreCount, DBStoreCountLine, DBStoreScrap, DBStoreScrapLine, DBStoreTransfer, DBStoreTransferLine,
 )
 from app.schemas.store_contracts import CountVarianceLine, InTransitLine, ScrapLine
-from app.services import store_outward, store_reservations
+from app.services import store_cycle, store_outward, store_reservations
 from app.services.stock_ledger import convert_to_base, freeze_store, get_balance, post_movement, reverse_document, unfreeze_store
 from app.services.store_numbering import next_doc_number
 
@@ -334,6 +334,7 @@ def count_sheet(db, actor, doc, rows):
             line = DBStoreCountLine(count_id=doc.id, item_id=item.id, system_qty=ZERO, avg_rate=r4(rate), in_snapshot=0)
             db.add(line)
         line.counted_qty = counted
+        store_cycle.clear_recount(db, line)
         line.reason = text(r.reason, "reason", 200)        # a reason for each difference is asked for at submit, once everything is counted
     db.flush()
 
@@ -346,6 +347,7 @@ def count_check_submit(db, actor, doc):
     if missing:
         names = ", ".join(db.get(models.DBItem, l.item_id).item_name for l in missing[:3])
         raise HTTPException(409, "%d item%s still to count (%s%s)." % (len(missing), "" if len(missing) == 1 else "s", names, ", ..." if len(missing) > 3 else ""))
+    store_cycle.assert_recounted(db, doc)
     unexplained = [l for l in lines if count_variance(l) != 0 and not (l.reason or "").strip()]
     if unexplained:
         raise HTTPException(409, "Say why %s differs from the books." % db.get(models.DBItem, unexplained[0].item_id).item_name)

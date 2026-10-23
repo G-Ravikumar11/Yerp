@@ -6,6 +6,7 @@ import { StoreShell } from '../StoreShell'
 import { kindOf, KINDS, useDoc, type ControlKind } from './api'
 import DocListPage from './DocListPage'
 import DocPage from './DocPage'
+import CycleCounting from './CycleCounting'
 import { CountForm, ScrapForm, TransferForm } from './Forms'
 import { InTransitPage, RealisationPage, VariancesPage } from './Reports'
 
@@ -16,6 +17,7 @@ function Tabs() {
   return (
     <nav aria-label="Control" className="mb-4 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-muted p-1">
       {KINDS.map((k) => <NavLink key={k.key} to={`/store/hub/control/${k.key}`} className={tab}>{k.plural}</NavLink>)}
+      <NavLink to="/store/hub/control/cycle" className={tab}>Cycle counting</NavLink>
       <NavLink to="/store/hub/control/in-transit" className={tab}>In transit</NavLink>
       <NavLink to="/store/hub/control/variances" className={tab}>Count differences</NavLink>
       <NavLink to="/store/hub/control/realisation" className={tab}>Scrap realised</NavLink>
@@ -66,6 +68,7 @@ export default function ControlIndex() {
     <StoreShell slice="control">
       <Routes>
         <Route index element={<List />} />
+        <Route path="cycle" element={<Page blurb="Count a little all the time: items ranked A, B, C by what they are worth, and the ones now due for counting."><CycleCounting /></Page>} />
         <Route path="in-transit" element={<Page blurb="Stock sent from one store and not yet received at the other."><InTransitPage /></Page>} />
         <Route path="variances" element={<Page blurb="What posted stock counts found against the books."><VariancesPage /></Page>} />
         <Route path="realisation" element={<Page blurb="Scrap sold or written off: what it was worth in the books against what it fetched."><RealisationPage /></Page>} />
