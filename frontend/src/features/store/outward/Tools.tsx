@@ -7,7 +7,7 @@ import { get, post } from '@/lib/api'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { storePerm, type StoreItemOption } from '@/api/store'
-import { ItemPicker, StorePicker } from '../shared'
+import { AttachButton, ItemPicker, StorePicker } from '../shared'
 
 interface Tool {
   id: number; item_id: number; item_code: string; item_name: string; store_id: number; store_code: string; serial_no: string
@@ -126,6 +126,7 @@ function ToolModal({ id, canEdit, onClose }: { id: number; canEdit: boolean; onC
               </div>
             </div>
           )}
+          <div><AttachButton type="store_tool" id={t.id} title={`${t.item_name} ${t.serial_no}`} /></div>
           <section>
             <h3 className="mb-2 border-b pb-1 text-sm font-semibold">History</h3>
             <ul className="divide-y rounded-lg border text-sm">

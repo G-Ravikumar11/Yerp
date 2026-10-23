@@ -7,7 +7,7 @@ import { get, post } from '@/lib/api'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { storePerm } from '@/api/store'
-import { StorePicker } from '../shared'
+import { AttachButton, StorePicker } from '../shared'
 import { dmy, num, qs, today } from './api'
 
 interface Rejection {
@@ -87,7 +87,8 @@ function CloseModal({ row, onClose }: { row: Rejection; onClose: () => void }) {
         {outcome === 'RETURNED' && <Field label="Vehicle number" htmlFor="rj-veh"><Input id="rj-veh" value={vehicle} onChange={(e) => setVehicle(e.target.value)} maxLength={30} /></Field>}
         <Field label="Note" htmlFor="rj-note" hint={outcome === 'DISPOSED' ? 'Required: say how it was disposed of.' : undefined}><Input id="rj-note" value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} /></Field>
         <Field label="Date" htmlFor="rj-on"><Input id="rj-on" type="date" max={today()} value={on} onChange={(e) => setOn(e.target.value)} /></Field>
-        <div className="flex justify-end gap-2 border-t border-border pt-4">
+        <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4">
+          <span className="mr-auto"><AttachButton type="store_rejection" id={row.id} title={`${row.item_name} - ${row.grn_number}`} /></span>
           <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
           <Button type="submit" loading={save.isPending}>Close</Button>
         </div>

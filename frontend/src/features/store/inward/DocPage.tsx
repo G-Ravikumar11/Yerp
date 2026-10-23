@@ -7,7 +7,7 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { useSession } from '@/lib/session'
 import { useAction } from '@/lib/mutate'
 import { storeDelete, storePerm, storePost } from '@/api/store'
-import { DocActionsBar, DocStatusBadge, type DocAction } from '../shared'
+import { ATTACH_TYPE, AttachButton, DocActionsBar, DocStatusBadge, type DocAction } from '../shared'
 import { dmy, inwardKeys, kindOf, money, num, useDoc, usePoOptions, type Doc, type DocLine, type InwardKind } from './api'
 
 const QC_TONE = { NOT_REQUIRED: 'neutral', PENDING: 'warning', PASSED: 'success', FAILED: 'danger' } as const
@@ -92,6 +92,7 @@ export default function DocPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {isGrn && doc.gate_delivery && !doc.po_id && doc.status === 'POSTED' && can(storePerm('inward', 'create')) && <Button onClick={() => setLinking(true)}><Link2 /> Link to purchase order</Button>}
+          <AttachButton type={(ATTACH_TYPE.inward as Record<string, string>)[kind.key]} id={doc.id} title={doc.number} />
           <Button variant="outline" asChild><a href={`/api/store/inward/${kind.key}/${doc.id}/print`} target="_blank" rel="noreferrer"><Printer /> Print</a></Button>
           {doc.status === 'DRAFT' && can(storePerm('inward', 'create')) && (
             <>

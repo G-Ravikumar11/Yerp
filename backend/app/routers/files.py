@@ -251,8 +251,20 @@ def upload_file(request: Request, file: UploadFile = File(...), thumb: Optional[
                 kind: str = Form(""), caption: str = Form(""), taken_on: str = Form(""),
                 db: Session = Depends(get_db)):
     """A photo or a document, kept against the record it proves."""
-    client, _, actor_name = wo_actor(request, db, "site.record")
-    job_id, _locked = attachment_target(db, client.id, attached_type, attached_id)
+    if (attached_type or "").startswith("store_"):
+        # A store record: the right is the Store's own, and the person must work in the store it belongs to.
+        from app.core.store_auth import store_actor
+        from app.services import store_files
+        from app.services.stock_ledger import assert_store_access
+        if not store_files.is_store_type(attached_type):
+            raise HTTPException(400, "That is not something the Store keeps files against.")
+        who = store_actor(request, db, store_files.right_for(attached_type))
+        client, actor_name = who.client, who.name
+        job_id, _locked, store_id = store_files.target(db, client.id, attached_type, attached_id)
+        assert_store_access(who.user, store_id)
+    else:
+        client, _, actor_name = wo_actor(request, db, "site.record")
+        job_id, _locked = attachment_target(db, client.id, attached_type, attached_id)
     data = file.file.read()
     small = thumb.file.read() if thumb is not None else None
     ctype = (file.content_type or "").lower()
@@ -387,7 +399,15 @@ def get_file_thumb(fid: int, request: Request, db: Session = Depends(get_db)):
 
 @router.delete("/api/files/{fid}")
 def delete_file(fid: int, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    mine = db.query(models.DBFile.attached_type).filter(models.DBFile.id == fid).first()
+    if mine is not None and (mine[0] or "").startswith("store_"):
+        from app.core.store_auth import store_actor
+        from app.services import store_files
+        if not store_files.is_store_type(mine[0]):
+            raise HTTPException(404, "File not found")
+        client = store_actor(request, db, store_files.right_for(mine[0])).client
+    else:
+        client, _, _ = wo_actor(request, db)
     f = _file_or_404(db, client.id, fid)
     if f.attached_id:
         _, locked = attachment_target(db, client.id, f.attached_type, f.attached_id)

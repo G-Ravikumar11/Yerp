@@ -1,3 +1,4 @@
+export * from './AttachButton'
 export * from './DocActionsBar'
 export * from './DocStatusBadge'
 export * from './ItemPicker'

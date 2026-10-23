@@ -6,7 +6,7 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { useSession } from '@/lib/session'
 import { useAction } from '@/lib/mutate'
 import { storeDelete, storePerm, storePost } from '@/api/store'
-import { DocActionsBar, DocStatusBadge, type DocAction } from '../shared'
+import { ATTACH_TYPE, AttachButton, DocActionsBar, DocStatusBadge, type DocAction } from '../shared'
 import { dmy, headLabel, kindOf, num, outwardKeys, useDoc, type Doc, type OutwardKind } from './api'
 
 type Line = NonNullable<Doc['lines']>[number]
@@ -68,6 +68,7 @@ export default function DocPage() {
           <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground"><DocStatusBadge status={doc.status} /> {kind.label}{doc.direct && <Badge tone="warning">Direct issue</Badge>}</div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <AttachButton type={(ATTACH_TYPE.outward as Record<string, string>)[kind.key]} id={doc.id} title={doc.number} />
           <Button variant="outline" asChild><a href={`/api/store/outward/${kind.key}/${doc.id}/print`} target="_blank" rel="noreferrer"><Printer /> Print</a></Button>
           {isIssue && doc.status === 'POSTED' && can(storePerm('outward', 'create')) && <Button variant="outline" onClick={() => nav(`/store/hub/outward/returns/new?issue=${doc.id}`)}><CornerDownLeft /> Return material</Button>}
           {isIssue && doc.status === 'POSTED' && can(storePerm('outward', 'create')) && <Button variant="outline" onClick={() => nav(`/store/hub/outward/gate-pass/new?issue=${doc.id}`)}><DoorOpen /> Gate pass</Button>}

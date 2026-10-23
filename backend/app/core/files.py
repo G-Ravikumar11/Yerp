@@ -96,6 +96,10 @@ def attachment_target(db, client_id, attached_type, attached_id):
     """(job_id, locked) for what a file is being kept against - refused if
     it is not this company's."""
     t = attached_type or "job"
+    if t.startswith("store_"):
+        from app.services import store_files
+        job_id, locked, _store = store_files.target(db, client_id, t, attached_id)
+        return job_id, locked
     if t == "job":
         job = job_or_404(db, client_id, attached_id)
         return job.id, False
