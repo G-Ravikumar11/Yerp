@@ -376,6 +376,7 @@ def _apply(db, *, store, item_id, mtype, qty, rate, txn_date, user_id, ref_doc_t
         avg = _q(new_value / new_qty, _RATE)
         entry_rate = rate
         moved = _put_lots(db, store, item_id, qty, lots, rows)
+        _note_restock(db, store, item_id, new_qty)
     else:
         if qty > old_qty:
             raise InsufficientStockError(store.id, item_id, old_qty, qty)
@@ -603,38 +604,73 @@ def unfreeze_store(db, store_id, user_id):
 
 
 # --- reorder alerts ------------------------------------------------------------------------------------------------------
-# Stock that goes out and takes a store down to an item's reorder level puts an alert on the dashboard (the bell, and email
-# or WhatsApp where the company has asked for them) - once, as it crosses the level, not on every issue below it. The
-# ledger never commits, and an alert is saved and sent on its own, so it is only noted here and goes out once the posting
-# itself is saved; a posting rolled back sends nothing.
+# Stock that goes out and leaves a store at or below an item's reorder level for that store (the store's own level where it has set one,
+# else the item's) puts an alert on the dashboard (the bell, and email or WhatsApp where the company has asked for them). One alert stays open
+# until stock comes back above the level, so it is raised once, not on every issue below it. The ledger never commits, and an alert is saved
+# and sent on its own, so it is only noted here and goes out once the posting itself is saved; a posting rolled back sends nothing.
 
 REORDER_KEY = "store_reorder_alerts"
 
 
+def _level(db, store, item_id):
+    from app.services.store_levels import levels_for
+    return levels_for(db, store.id, item_id)[0]
+
+
 def _note_reorder(db, store, item_id, before, after):
-    s = db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == item_id).first()
-    level = _dec(s.reorder_level) if s is not None and s.reorder_level else ZERO
-    if level > 0 and before > level >= after:
-        db.info.setdefault(REORDER_KEY, []).append((store.client_id, store.id, item_id, after, level))
+    level = _level(db, store, item_id)
+    if level > 0 and after <= level:
+        db.info.setdefault(REORDER_KEY, []).append(("out", store.client_id, store.id, item_id, after, level))
+
+
+def _note_restock(db, store, item_id, after):
+    level = _level(db, store, item_id)
+    if level > 0 and after > level:
+        db.info.setdefault(REORDER_KEY, []).append(("in", store.client_id, store.id, item_id, after, level))
+
+
+def raise_reorder_alert(s, client_id, store, item, left, level):
+    """One open alert per store and item: raised (and told) only if there is none open. Returns whether it was raised."""
+    from datetime import datetime as _dt
+    from app.core.notifications import notify
+    from app.models.store_extras import DBStoreReorderAlert
+    row = s.query(DBStoreReorderAlert).filter(DBStoreReorderAlert.store_id == store.id, DBStoreReorderAlert.item_id == item.id).first()
+    if row is not None and row.cleared_at is None:
+        return False
+    if row is None:
+        s.add(DBStoreReorderAlert(client_id=client_id, store_id=store.id, item_id=item.id))
+    else:
+        row.alerted_at, row.cleared_at = _dt.now(), None
+    settings = s.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == item.id).first()
+    unit = (settings.base_uom if settings else item.units_of_measure) or ""
+    notify(s, client_id, "store_reorder", "%s is at its reorder level in %s" % (item.item_name, store.code),
+           "%s %s left in %s - %s; the reorder level is %s. Raise a purchase enquiry for it from the Reorder report."
+           % (format(_q(left, _QTY).normalize(), "f"), unit, store.code, store.name, format(_q(level, _QTY).normalize(), "f")),
+           view="reorder-view", ref_type="store_item", ref_id=item.id, severity="action")
+    return True
 
 
 def _send_reorder_alerts(session):
     pending = session.info.pop(REORDER_KEY, None)
     if not pending:
         return
-    from app.core.notifications import notify
+    from datetime import datetime as _dt
     from app.db.session import SessionLocal
+    from app.models.store_extras import DBStoreReorderAlert
     with SessionLocal() as s:
-        for client_id, store_id, item_id, left, level in pending:
+        for kind, client_id, store_id, item_id, left, level in pending:
+            if kind == "in":
+                row = s.query(DBStoreReorderAlert).filter(DBStoreReorderAlert.store_id == store_id, DBStoreReorderAlert.item_id == item_id,
+                                                          DBStoreReorderAlert.cleared_at.is_(None)).first()
+                if row is not None:
+                    row.cleared_at = _dt.now()
+                continue
             store, item = s.get(DBStore, store_id), s.get(models.DBItem, item_id)
             if store is None or item is None:
                 continue
-            settings = s.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == item_id).first()
-            unit = (settings.base_uom if settings else item.units_of_measure) or ""
-            notify(s, client_id, "store_reorder", "%s is at its reorder level in %s" % (item.item_name, store.code),
-                   "%s %s left in %s - %s; the reorder level is %s. Raise a purchase enquiry for it from the Reorder report."
-                   % (format(_q(left, _QTY).normalize(), "f"), unit, store.code, store.name, format(_q(level, _QTY).normalize(), "f")),
-                   view="reorder-view", ref_type="store_item", ref_id=item_id, severity="action")
+            raise_reorder_alert(s, client_id, store, item, left, level)
+            s.flush()
+        s.commit()
 
 
 def _drop_reorder_alerts(session):

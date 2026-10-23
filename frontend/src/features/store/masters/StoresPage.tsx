@@ -6,6 +6,7 @@ import { useProjects, projectLabel } from '@/api/projects'
 import { useSession } from '@/lib/session'
 import { useAction } from '@/lib/mutate'
 import { storeDelete, storePerm, storePost, storePut, useScanning, useStoreMeta } from '@/api/store'
+import StoreLevels from './StoreLevels'
 import { mastersInvalidate, useAssignments, useBins, useEmployeeOptions, useStores, type AssignRow, type BinRow, type StoreRow } from './api'
 
 const money = (v: string) => Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -183,6 +184,7 @@ function StoreDetailModal({ store, canEdit, canClose, onEdit, onToggle, onClose 
             </form>
           )}
         </section>
+        <StoreLevels storeId={store.id} canEdit={canEdit} />
         <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4">
           {canClose && <Button variant="outline" onClick={onToggle}>{store.is_active ? 'Take out of use' : 'Bring back into use'}</Button>}
           {canEdit && <Button onClick={onEdit}>Edit store</Button>}

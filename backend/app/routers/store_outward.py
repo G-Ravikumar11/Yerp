@@ -28,6 +28,7 @@ from app.models.store_core import DBStore, DBStoreBin, DBStoreUserAssignment, Do
 from app.models.store_outward import (
     INDENT, ISSUE, ISSUE_RETURN, SITE, DBStoreGatePass, DBStoreIndent, DBStoreIndentLine, DBStoreIssue, DBStoreIssueLine, DBStoreIssueReturn, DBStoreOutwardLog, DBStoreWriteoffRequest,
 )
+from app.models.store_extras import DBStoreIndentLineNote
 from app.services import store_outward as svc
 from app.services.store_batches import batches_on_hand
 from app.services.stock_ledger import assert_store_access
@@ -113,6 +114,10 @@ class ApproveLineIn(BaseModel):
     line_id: int
     approved_qty: str
     uom: str = ""
+    reason: str = ""                          # why it was cut back (or the approval's remarks are taken)
+    substitute_item_id: Optional[int] = None  # another item given in place of what was cut
+    substitute_qty: str = ""
+    substitute_uom: str = ""
 
 
 class ApproveIn(BaseModel):
@@ -560,10 +565,12 @@ def indent_dict(db, indent, detail=False):
            "overdue": bool(indent.required_by and indent.required_by < date.today() and indent.status in ("OPEN", "PARTIAL")), "created_at": indent.created_at.isoformat(timespec="seconds") if indent.created_at else ""}
     if detail:
         items = _items(db, [l.item_id for l in lines])
+        notes = {n.indent_line_id: n for n in db.query(DBStoreIndentLineNote).filter(DBStoreIndentLineNote.indent_line_id.in_([l.id for l in lines] or [0])).all()}
         out["lines"] = [{"id": l.id, "item_id": l.item_id, "item_code": items[l.item_id].item_code, "item_name": items[l.item_id].item_name, "base_uom": svc.base_uom_of(db, items[l.item_id]),
                          "entry_uom": l.entry_uom or "", "entry_qty": svc.s3(l.entry_qty), "qty": svc.s3(l.qty), "approved_qty": None if l.approved_qty is None else svc.s3(l.approved_qty),
                          "fulfilled": svc.s3(done.get(l.id, ZERO)), "pending": svc.s3(max(ZERO, Decimal(str(l.approved_qty or 0)) - done.get(l.id, ZERO))) if l.approved_qty is not None else None,
-                         "purpose": l.purpose or ""} for l in lines]
+                         "purpose": l.purpose or "", "reason": notes[l.id].reason or "" if l.id in notes else "", "substitute_for_line_id": notes[l.id].substitute_for_line_id if l.id in notes else None}
+                        for l in lines]
         out["history"] = [{"action": h.action, "from": h.from_status, "to": h.to_status, "by": h.user_name, "at": h.at.isoformat(timespec="seconds") if h.at else "", "note": h.note or ""}
                           for h in db.query(DBStoreOutwardLog).filter(DBStoreOutwardLog.doc_type == INDENT, DBStoreOutwardLog.doc_id == indent.id).order_by(DBStoreOutwardLog.id).all()]
         out["issues"] = [{"id": i.id, "number": i.number, "status": i.status} for i in db.query(DBStoreIssue).filter(DBStoreIssue.indent_id == indent.id).order_by(DBStoreIssue.id).all()]

@@ -5,6 +5,7 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { useAction } from '@/lib/mutate'
 import { storePut, type StoreItemOption } from '@/api/store'
 import { ItemPicker } from '../shared'
+import { RecountPanel } from './CycleCounting'
 import { controlKeys, money, num, type Doc, type DocLine } from './api'
 
 /**
@@ -48,6 +49,7 @@ export default function CountSheet({ doc, editable }: { doc: Doc; editable: bool
       {doc.status === 'DRAFT' && !doc.started && <p className="mb-3 text-sm text-muted-foreground">Start the count to freeze the store and list what the books say is there. Nothing is counted until then.</p>}
       {doc.started && !reveal && <p role="status" className="mb-3 rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">This is a blind count: the books are hidden while you count, so count what is really there.</p>}
       <DataTable label="Count sheet" rows={lines} columns={columns} rowKey={(l) => l.id} empty={doc.started ? 'Nothing to count.' : 'The lines appear once the count is started.'} />
+      {editable && doc.started && <RecountPanel countId={doc.id} />}
       {editable && (
         <>
           <div className="mt-3 flex justify-end">

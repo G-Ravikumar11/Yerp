@@ -17,7 +17,7 @@ from app.models.store_core import (
     DBStore, DBStoreItemSettings, DBStoreStockBalance, DBStoreStockLedger, MovementType,
 )
 from app.models.store_reports import DBStoreMaterialNorm
-from app.services import store_integration
+from app.services import store_integration, store_levels
 
 ZERO = Decimal("0")
 _Q, _V, _R = Decimal("0.001"), Decimal("0.01"), Decimal("0.0001")
@@ -293,19 +293,26 @@ def slow_moving(db, client_id, store_ids, days=90):
 
 
 def reorder(db, client_id, store_ids):
-    """Items at or below their reorder level in a store, with a suggested quantity to bring them back up (to the maximum, or to twice the reorder level)."""
+    """Items at or below their reorder level in a store (the store's own level where it has set one, else the item's), with a suggested quantity to
+    bring them back up (to the maximum, or to twice the reorder level)."""
     stores = _stores(db, client_id, store_ids)
     if not stores:
         return {"rows": []}
-    q = (db.query(DBStoreStockBalance, DBStoreItemSettings).join(DBStoreItemSettings, DBStoreItemSettings.item_id == DBStoreStockBalance.item_id)
-         .filter(DBStoreStockBalance.store_id.in_(list(stores)), DBStoreItemSettings.reorder_level > 0, DBStoreStockBalance.qty <= DBStoreItemSettings.reorder_level))
-    pairs = q.all()
-    items = _items(db, [b.item_id for b, _s in pairs])
-    rows = []
+    over = store_levels.overrides(db, list(stores))
+    pairs = (db.query(DBStoreStockBalance, DBStoreItemSettings).outerjoin(DBStoreItemSettings, DBStoreItemSettings.item_id == DBStoreStockBalance.item_id)
+             .filter(DBStoreStockBalance.store_id.in_(list(stores))).all())
+    hits = []
     for b, s in pairs:
-        qty, level = Decimal(str(b.qty)), Decimal(str(s.reorder_level))
-        target = Decimal(str(s.max_qty)) if s.max_qty and Decimal(str(s.max_qty)) > level else level * 2
+        level, low, high = store_levels.effective(s, over.get((b.store_id, b.item_id)))
+        if level > 0 and Decimal(str(b.qty)) <= level:
+            hits.append((b, s, level, low, high))
+    items = _items(db, [h[0].item_id for h in hits])
+    rows = []
+    for b, s, level, low, high in hits:
+        qty = Decimal(str(b.qty))
+        target = high if high > level else level * 2
         rows.append({"store_id": b.store_id, "store_code": stores[b.store_id].code, "item_id": b.item_id, "item_code": items[b.item_id].item_code, "item_name": items[b.item_id].item_name,
-                     "base_uom": s.base_uom or "", "qty": q3(qty), "reorder_level": q3(level), "min_qty": q3(s.min_qty), "suggested_qty": q3(max(ZERO, target - qty)), "below_minimum": bool(s.min_qty and qty < Decimal(str(s.min_qty)))})
+                     "base_uom": (s.base_uom if s else items[b.item_id].units_of_measure) or "", "qty": q3(qty), "reorder_level": q3(level), "min_qty": q3(low),
+                     "suggested_qty": q3(max(ZERO, target - qty)), "below_minimum": bool(low and qty < low)})
     rows.sort(key=lambda r: (r["store_code"], r["item_name"]))
     return {"rows": rows}

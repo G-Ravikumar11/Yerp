@@ -6,7 +6,7 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { useSession } from '@/lib/session'
 import { useAction } from '@/lib/mutate'
 import { storeDelete, storePerm, storePost } from '@/api/store'
-import { DocActionsBar, DocStatusBadge, type DocAction } from '../shared'
+import { ATTACH_TYPE, AttachButton, DocActionsBar, DocStatusBadge, type DocAction } from '../shared'
 import CountSheet from './CountSheet'
 import { controlKeys, dmy, headLabel, kindOf, money, num, useDoc, type ControlKind, type Doc, type DocLine } from './api'
 
@@ -68,6 +68,7 @@ export default function DocPage() {
           <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground"><DocStatusBadge status={doc.status} /> {kind.label}{doc.frozen && <Badge tone="warning" dot>Store frozen</Badge>}{doc.receipt_status === 'IN_TRANSIT' && <Badge tone="warning" dot>In transit</Badge>}</div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <AttachButton type={(ATTACH_TYPE.control as Record<string, string>)[kind.key]} id={doc.id} title={doc.number} />
           <Button variant="outline" asChild><a href={`/api/store/control/${kind.key}/${doc.id}/print`} target="_blank" rel="noreferrer"><Printer /> {kind.key === 'count' ? 'Print count sheet' : 'Print'}</a></Button>
           {kind.key === 'count' && doc.status === 'DRAFT' && !doc.started && canCreate && <Button loading={start.isPending} onClick={() => { if (!(doc.in_transit ?? []).length || window.confirm(`${doc.in_transit!.length} transfer(s) to this store are still in transit. Start the count anyway?`)) start.mutate() }}><Play /> Start count (freezes the store)</Button>}
           {kind.key === 'transfer' && doc.status === 'POSTED' && doc.receipt_status === 'IN_TRANSIT' && can(storePerm('control', 'post')) && <Button loading={receive.isPending} onClick={() => receive.mutate()}><PackageCheck /> Receive</Button>}
