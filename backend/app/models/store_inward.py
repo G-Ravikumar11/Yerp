@@ -12,7 +12,7 @@ from sqlalchemy import Column, Date, DateTime, ForeignKey, Index, Integer, Strin
 from sqlalchemy.orm import declared_attr
 
 from app.db.session import Base
-from app.models.store_core import QTY, RATE, VALUE, DocStatus
+from app.models.store_core import PERCENT, QTY, RATE, VALUE, DocStatus
 
 # What the ledger calls each document (ref_doc_type) and what its number starts with.
 GRN, PURCHASE_RETURN, CLIENT_SUPPLY, OPENING = "GRN", "PRTN", "CSUP", "OSTK"
@@ -60,6 +60,11 @@ class DBStoreGrn(_Header, Base):
     linked_at = Column(DateTime, nullable=True)
     linked_by_name = Column(String, default="")
     price_variance = Column(VALUE, default=0)
+    # Landed cost: freight, loading, GST that cannot be claimed back and the like, on the supplier's bill or the transporter's.
+    # A JSON list of {kind, label, amount, basis}; spread over the accepted lines (by value, or by quantity) when it posts, so
+    # the stock is valued at what it cost to bring in, not only at the invoice rate.
+    charges = Column(Text, default="[]")
+    charges_total = Column(VALUE, default=0)
 
 
 class DBStoreGrnLine(Base):
@@ -85,6 +90,8 @@ class DBStoreGrnLine(Base):
     expiry_date = Column(Date, nullable=True)
     bin_id = Column(Integer, ForeignKey("store_bin.id"), nullable=True)
     remarks = Column(String, default="")
+    charges_share = Column(VALUE, default=0)                 # this line's part of the receipt's charges, set when it posts
+    landed_rate = Column(RATE, nullable=True)                # per base unit, rate plus its charges: what it went into stock at
 
 
 class DBStorePurchaseReturn(_Header, Base):
@@ -96,6 +103,9 @@ class DBStorePurchaseReturn(_Header, Base):
     grn_id = Column(Integer, ForeignKey("store_grn.id"), nullable=False, index=True)
     supplier_name = Column(String, default="")
     reason = Column(String, default="")
+    # The debit note: what the supplier owes back, at the rate on the receipt, with the GST of the order line. Fixed when it posts.
+    debit_value = Column(VALUE, default=0)
+    tax_value = Column(VALUE, default=0)
 
 
 class DBStorePurchaseReturnLine(Base):
@@ -109,6 +119,10 @@ class DBStorePurchaseReturnLine(Base):
     entry_qty = Column(QTY, default=0)
     qty = Column(QTY, nullable=False, default=0)             # base unit
     reason = Column(String, default="")
+    rate = Column(RATE, default=0)                           # per base unit: the receipt line's invoice rate
+    value = Column(VALUE, default=0)
+    tax_pct = Column(PERCENT, default=0)
+    tax_value = Column(VALUE, default=0)
 
 
 class DBStoreClientSupply(_Header, Base):

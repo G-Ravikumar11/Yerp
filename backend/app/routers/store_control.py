@@ -186,12 +186,16 @@ def doc_dict(db, kind, doc, actor, detail=False):
                     "variance_value": svc.s2(sum((svc.v2(svc.count_variance(l) * Decimal(str(l.avg_rate))) for l in lines), ZERO)) if reveal else None,
                     "frozen": bool(doc.freeze_id and doc.status not in (DocStatus.POSTED.value, DocStatus.CANCELLED.value))})
         if detail:
+            # Not started yet: what is on its way to the store, which the count will not see. Started: what has come in since.
+            out["in_transit"] = svc.in_transit_to(db, doc.store_id) if doc.status == DocStatus.DRAFT.value and doc.started_at is None else []
+            live = out["frozen"] and doc.started_at is not None
             items = _items(db, [l.item_id for l in lines])
             out["lines"] = [{"id": l.id, "item_id": l.item_id, "item_code": items[l.item_id].item_code, "item_name": items[l.item_id].item_name, "base_uom": svc.base_uom_of(db, items[l.item_id]),
                              "in_snapshot": bool(l.in_snapshot), "counted_qty": None if l.counted_qty is None else svc.s3(l.counted_qty), "reason": l.reason or "",
                              "system_qty": svc.s3(l.system_qty) if reveal else None, "avg_rate": svc.s4(l.avg_rate) if reveal else None,
                              "variance_qty": svc.s3(svc.count_variance(l)) if reveal and l.counted_qty is not None else None,
-                             "variance_value": svc.s2(svc.count_variance(l) * Decimal(str(l.avg_rate))) if reveal and l.counted_qty is not None else None} for l in lines]
+                             "variance_value": svc.s2(svc.count_variance(l) * Decimal(str(l.avg_rate))) if reveal and l.counted_qty is not None else None,
+                             "arrived_since": svc.s3(max(ZERO, svc.get_balance(db, doc.store_id, l.item_id).qty - Decimal(str(l.system_qty)))) if reveal and live else None} for l in lines]
     else:
         job = db.get(models.DBJob, doc.project_id) if doc.project_id else None
         lines = svc.scrap_lines(db, doc)
@@ -446,7 +450,8 @@ def create_count(body: CountIn, request: Request, db: Session = Depends(get_db))
 
 @router.post("/count/{doc_id}/start")
 def start_count(doc_id: int, request: Request, db: Session = Depends(get_db)):
-    """Freeze the store and take the snapshot of the books. Nothing moves in or out of the store until the count is posted or cancelled."""
+    """Freeze the store and take the snapshot of the books. Nothing leaves the store until the count is posted or cancelled; deliveries are
+    still received, apart from the count."""
     actor = store_actor(request, db, "store.control.create")
     kind = svc.KINDS["count"]
     doc = _doc(db, actor, kind, doc_id)

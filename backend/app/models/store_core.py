@@ -253,3 +253,70 @@ class DBStoreStockBalance(Base):
     qty = Column(QTY, nullable=False, default=0)
     value = Column(VALUE, nullable=False, default=0)
     avg_rate = Column(RATE, nullable=False, default=0)
+
+
+# --- lots ------------------------------------------------------------------------------------------------------------------
+# A lot is one batch of an item: the number the maker printed on it, or - for a receipt that gave a shelf life but no number -
+# the receipt line itself. Lots are known company-wide, so a batch keeps its identity when it is moved to another store.
+# What each store holds of each lot is kept by the ledger alongside the store's total, and always adds up to it; each ledger
+# entry records which lots it moved. Stock with no batch is lot 0.
+
+NO_BATCH = 0
+
+
+class DBStoreBatch(Base):
+    """One lot of an item, with the dates its shelf life is judged by."""
+    __tablename__ = "store_batch"
+    __table_args__ = (UniqueConstraint("client_id", "item_id", "batch_no", name="uq_store_batch_item_no"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
+    batch_no = Column(String, nullable=False)
+    manufacturing_date = Column(Date, nullable=True)
+    expiry_date = Column(Date, nullable=True)
+    first_received = Column(Date, nullable=True)
+    source = Column(String, default="")                       # where it first came from: "Receipt GRN-0003"
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class DBStoreBatchBalance(Base):
+    """What a store holds of one lot of an item (batch_id 0: stock with no batch). Kept by stock_ledger alone."""
+    __tablename__ = "store_batch_balance"
+    __table_args__ = (
+        UniqueConstraint("store_id", "item_id", "batch_id", name="uq_store_batch_balance"),
+        CheckConstraint("qty >= 0", name="ck_store_batch_balance_not_negative"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    store_id = Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
+    item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
+    batch_id = Column(Integer, nullable=False, default=NO_BATCH, index=True)
+    qty = Column(QTY, nullable=False, default=0)
+
+
+class DBStoreLedgerBatch(Base):
+    """Which lots one ledger entry moved, and how much of each. Append-only, like the ledger."""
+    __tablename__ = "store_ledger_batch"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ledger_id = Column(Integer, ForeignKey("store_stock_ledger.id"), nullable=False, index=True)
+    batch_id = Column(Integer, nullable=False, default=NO_BATCH, index=True)
+    qty = Column(QTY, nullable=False, default=0)
+
+
+class DBStoreControlSetting(Base):
+    """The company's controls on what the store may post, and when.
+
+    books_locked_upto: nothing - no document, no cancellation - can be dated on or before it (a month that has been closed).
+    max_backdate_days: how far back a document may be dated (0 = no limit). Opening stock is exempt, being dated to the day
+    the store was taken on."""
+    __tablename__ = "store_control_setting"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, unique=True, index=True)
+    books_locked_upto = Column(Date, nullable=True)
+    max_backdate_days = Column(Integer, nullable=False, default=30)
+    separate_duties = Column(Integer, nullable=False, default=1)   # 1: staff may not approve what they made or submitted
+    updated_at = Column(DateTime, nullable=True)
+    updated_by_name = Column(String, default="")

@@ -59,3 +59,27 @@ def store_errors():
         raise HTTPException(400, str(exc)) from exc
     except StoreError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+def separate_duties(db, client_id) -> bool:
+    """Whether the company keeps making and approving apart (it does unless it has turned it off)."""
+    from app.models.store_core import DBStoreControlSetting
+    row = db.query(DBStoreControlSetting.separate_duties).filter(DBStoreControlSetting.client_id == client_id).first()
+    return True if row is None else bool(row[0])
+
+
+def check_not_own(db, actor, doc, log_model, doc_type, label, also=()):
+    """Approving is for someone other than whoever made or submitted the document (or, in `also`, raised what it settles).
+
+    Staff only: the account holder answers for the company and may approve anything. A company can turn the rule off in
+    the store controls."""
+    if actor.employee is None or not separate_duties(db, actor.client.id):
+        return
+    me = actor.employee.id
+    if getattr(doc, "created_by_id", None) == me:
+        raise HTTPException(403, "You made this %s, so someone else has to approve it." % label.lower())
+    if db.query(log_model.id).filter(log_model.doc_type == doc_type, log_model.doc_id == doc.id, log_model.action == "submit",
+                                     log_model.user_id == me).first():
+        raise HTTPException(403, "You submitted this %s, so someone else has to approve it." % label.lower())
+    if me in set(i for i in also if i):
+        raise HTTPException(403, "You raised what this %s settles, so someone else has to approve it." % label.lower())

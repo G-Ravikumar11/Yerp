@@ -31,6 +31,8 @@ export interface DocLine {
   avg_rate?: string | null
   variance_qty?: string | null
   variance_value?: string | null
+  /** Delivered into the store since the count started - kept apart from the count. */
+  arrived_since?: string | null
   // scrap
   disposal?: 'SCRAP' | 'WASTAGE'
   realised_value?: string
@@ -72,6 +74,8 @@ export interface Doc {
   revealed?: boolean
   variance_value?: string | null
   frozen?: boolean
+  /** Not started yet: transfers on their way to this store, which the count will not see. */
+  in_transit?: { id: number; number: string; from_store: string; dispatched_on: string; value: string }[]
   // scrap
   project_id?: number | null
   project?: string

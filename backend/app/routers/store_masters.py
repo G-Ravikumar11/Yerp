@@ -569,3 +569,60 @@ def remove_conversion(item_id: int, uom: str, request: Request, db: Session = De
     db.delete(row)
     db.commit()
     return {"message": "Conversion removed"}
+
+
+# --- the company's store controls -----------------------------------------------------------------------------------
+# The day the store books are closed up to (nothing may be dated on or before it, nor a document dated then cancelled), how
+# far back a new document may be dated, and whether staff may approve what they made themselves.
+
+class ControlsIn(BaseModel):
+    books_locked_upto: str = ""          # YYYY-MM-DD, or empty for none
+    max_backdate_days: int = 30          # 0 = no limit
+    separate_duties: bool = True
+
+
+def _controls_dict(row, actor):
+    from app.services.stock_ledger import DEFAULT_BACKDATE_DAYS
+    return {"books_locked_upto": row.books_locked_upto.isoformat() if row is not None and row.books_locked_upto else "",
+            "max_backdate_days": int(row.max_backdate_days) if row is not None else DEFAULT_BACKDATE_DAYS,
+            "separate_duties": bool(row.separate_duties) if row is not None else True,
+            "updated_by": (row.updated_by_name or "") if row is not None else "", "updated_at": row.updated_at.isoformat(timespec="seconds") if row is not None and row.updated_at else "",
+            "can_edit": actor.employee is None or "store.admin" in permissions_for(actor.employee)}
+
+
+@router.get("/controls")
+def get_controls(request: Request, db: Session = Depends(get_db)):
+    from app.models.store_core import DBStoreControlSetting
+    actor = store_actor(request, db, ("store.masters.view", "store.inward.view", "store.outward.view", "store.control.view"))
+    return _controls_dict(db.query(DBStoreControlSetting).filter(DBStoreControlSetting.client_id == actor.client.id).first(), actor)
+
+
+@router.put("/controls")
+def set_controls(body: ControlsIn, request: Request, db: Session = Depends(get_db)):
+    """Close the store books up to a day (or reopen them), set how far back documents may be dated, and whether making and
+    approving are kept apart. The account holder or store.admin only."""
+    from datetime import date, datetime
+    from app.models.store_core import DBStoreControlSetting
+    actor = store_actor(request, db, "store.admin")
+    locked = None
+    if (body.books_locked_upto or "").strip():
+        try:
+            locked = datetime.strptime(body.books_locked_upto.strip()[:10], "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(400, "The lock date is not a date (use YYYY-MM-DD).") from None
+        if locked >= date.today():
+            raise HTTPException(400, "The books can be closed up to yesterday at the latest.")
+    if body.max_backdate_days < 0 or body.max_backdate_days > 3650:
+        raise HTTPException(400, "Back-dating is 0 (no limit) to 3650 days.")
+    row = db.query(DBStoreControlSetting).filter(DBStoreControlSetting.client_id == actor.client.id).first()
+    if row is None:
+        row = DBStoreControlSetting(client_id=actor.client.id)
+        db.add(row)
+    before = "%s/%s/%s" % (row.books_locked_upto or "-", row.max_backdate_days, row.separate_duties)
+    row.books_locked_upto, row.max_backdate_days, row.separate_duties = locked, body.max_backdate_days, 1 if body.separate_duties else 0
+    row.updated_at, row.updated_by_name = datetime.now(), actor.name
+    db.flush()
+    log_audit(db, actor.client.id, "store_controls_changed", "store_controls", row.id, "", "%s -> %s/%s/%s" % (before, locked or "-", row.max_backdate_days, row.separate_duties),
+              **_who(actor, request))
+    db.commit()
+    return _controls_dict(row, actor)

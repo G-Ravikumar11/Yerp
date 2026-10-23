@@ -22,8 +22,9 @@ from app.models.store_outward import (
     DBStoreWriteoffRequest,
 )
 from app.schemas.store_contracts import ReturnableOutstanding, SubconIssueLine, WriteOffRequest
-from app.services.stock_ledger import convert_to_base, get_balance, post_movement, reverse_document
-from app.services.store_batches import batches_on_hand
+from app.core.store_auth import check_not_own
+from app.services.stock_ledger import check_date, convert_to_base, entry_lots, get_balance, lot_label, post_movement, reverse_document
+from app.services.store_batches import batches_on_hand, find_lot, usable_qty
 from app.services.store_numbering import next_doc_number
 
 ZERO = Decimal("0")
@@ -299,17 +300,31 @@ def build_issue_lines(db, client_id, body, head, on_date, issue_id=None):
         if due is not None and due < on_date:
             raise HTTPException(400, "%s: the return date is before the issue date." % label)
         batch = text(getattr(r, "batch_no", ""), "batch", 40)
-        if batch:
-            # Taken from a batch the store holds, and not one past its expiry: expired cement or admixture is not used on site.
-            lot = next((b for b in batches_on_hand(db, body.store_id, item.id, on_date) if b["batch_no"] == batch), None)
-            if lot is None:
-                raise HTTPException(409, "%s: the store holds no batch %s of %s." % (label, batch, item.item_name))
-            if lot["state"] == "EXPIRED":
-                raise HTTPException(409, "%s: batch %s of %s expired on %s and is not issued. Write it off under Control, or choose another batch." % (
-                    label, batch, item.item_name, lot["expiry_date"]))
+        _check_batch(db, body.store_id, item, batch, qty, on_date, label)
         out.append({"item": item, "batch_no": batch, "entry_uom": uom, "entry_qty": q3(entry), "qty": qty, "boq_item_id": boq_id, "cost_head": head_name, "chargeable": 1 if chargeable else 0,
                     "recovery_rate": q3(rate), "recovery_basis": basis, "handling_pct": handling, "due": due, "remarks": text(r.remarks, "remarks", 200), "label": label, "indent_line_id": il_id})
     return out
+
+
+def _check_batch(db, store_id, item, batch, qty, on_date, label):
+    """An issue takes from a batch the store holds enough of, and not one past its expiry: expired cement or admixture is not
+    used on site. With no batch named it takes the earliest expiry first, passing over expired stock - so there must be enough
+    that has not expired."""
+    if batch:
+        lot = next((b for b in batches_on_hand(db, store_id, item.id, on_date) if b["batch_no"] == batch), None)
+        if lot is None:
+            raise HTTPException(409, "%s: the store holds no batch %s of %s." % (label, batch, item.item_name))
+        if lot["state"] == "EXPIRED":
+            raise HTTPException(409, "%s: batch %s of %s expired on %s and is not issued. Write it off under Control, or choose another batch." % (
+                label, batch, item.item_name, lot["expiry_date"]))
+        if qty > Decimal(lot["qty"]):
+            raise HTTPException(409, "%s: only %s %s of batch %s is on hand; %s was asked for. Split the line over another batch." % (
+                label, lot["qty"], base_uom_of(db, item), batch, s3(qty)))
+        return
+    held, fit = get_balance(db, store_id, item.id).qty, usable_qty(db, store_id, item.id, on_date)
+    if fit < held and qty > fit:
+        raise HTTPException(409, "%s: only %s %s of %s has not expired (%s %s has). Write the expired stock off under Control." % (
+            label, s3(fit), base_uom_of(db, item), item.item_name, s3(held - fit), base_uom_of(db, item)))
 
 
 def write_issue_lines(db, issue, lines):
@@ -360,16 +375,28 @@ def _recheck_issue(db, issue):
 
 def issue_check_submit(db, actor, issue):
     _recheck_issue(db, issue)
-    check_stock(db, issue.store_id, issue_lines(db, issue))
+    lines = issue_lines(db, issue)
+    check_stock(db, issue.store_id, lines)
+    for l in lines:
+        _check_batch(db, issue.store_id, db.get(models.DBItem, l.item_id), l.batch_no or "", Decimal(str(l.qty)), issue.issue_date, "Line %d" % (l.line_no or 0))
 
 
 def issue_post(db, actor, issue):
     _recheck_issue(db, issue)
     mtype = MovementType.SUBCON_ISSUE_OUT if issue.issue_type == SUBCONTRACTOR else MovementType.ISSUE_OUT
     for l in issue_lines(db, issue):
+        item = db.get(models.DBItem, l.item_id)
+        _check_batch(db, issue.store_id, item, l.batch_no or "", Decimal(str(l.qty)), issue.issue_date, "Line %d" % (l.line_no or 0))
+        # The batch named comes out of that batch; with none named, the earliest expiry that has not expired.
+        lot = find_lot(db, issue.store_id, l.item_id, l.batch_no) if (l.batch_no or "").strip() else None
         entry = post_movement(db, movement_type=mtype, store_id=issue.store_id, item_id=l.item_id, qty=l.qty, rate=None, txn_date=issue.issue_date, project_id=issue.project_id,
                               work_order_id=issue.work_order_id, boq_item_id=l.boq_item_id, cost_head=l.cost_head, subcontractor_id=issue.subcontractor_id, ref_doc_type=ISSUE,
-                              ref_doc_id=issue.id, ref_line_id=l.id, user_id=actor.user_id, remarks=issue.number + ((" - " + issue.purpose) if issue.purpose else ""))
+                              ref_doc_id=issue.id, ref_line_id=l.id, user_id=actor.user_id, remarks=issue.number + ((" - " + issue.purpose) if issue.purpose else ""),
+                              lots=[(lot[0], l.qty)] if lot else None)
+        if not (l.batch_no or "").strip():      # say on the line which batches it took, for tracing a bad lot to where it went
+            from app.models.store_core import DBStoreBatch
+            names = [lot_label(db.get(DBStoreBatch, b)) for b, _q in entry_lots(db, entry.id) if b]
+            l.batch_no = ", ".join(n for n in names if n)[:120]
         if l.chargeable:                      # the record P5 reads into the subcontractor's bill: the rate is fixed now, at the cost the stock left at or the contract rate
             base = Decimal(str(entry.rate)) if l.recovery_basis == AVERAGE_COST else Decimal(str(l.recovery_rate))
             handling = Decimal(str(l.handling_pct or 0))
@@ -497,13 +524,17 @@ def return_check_submit(db, actor, ret):
     build_return_lines(db, ret.client_id, issue, [_R(l) for l in return_lines(db, ret)], return_id=ret.id)
 
 
-def _issue_rate(db, issue, line):
-    """What a line left at: the rate of its posted (not reversed) ledger entry."""
+def _issue_entry(db, issue, line):
     row = (db.query(DBStoreStockLedger).filter(DBStoreStockLedger.ref_doc_type == ISSUE, DBStoreStockLedger.ref_doc_id == issue.id, DBStoreStockLedger.ref_line_id == line.id,
                                                DBStoreStockLedger.reversal_of_id.is_(None)).order_by(DBStoreStockLedger.id).first())
     if row is None:
         raise HTTPException(409, "Issue %s has no stock entry for that line, so it cannot be returned." % issue.number)
-    return Decimal(str(row.rate))
+    return row
+
+
+def _issue_rate(db, issue, line):
+    """What a line left at: the rate of its posted (not reversed) ledger entry."""
+    return Decimal(str(_issue_entry(db, issue, line).rate))
 
 
 def _recovery_rows(db, issue_line_id):
@@ -518,14 +549,16 @@ def return_post(db, actor, ret):
     for rl in return_lines(db, ret):
         il = lines[rl.issue_line_id]
         if Decimal(str(rl.qty_returned)) > 0:
-            post_movement(db, movement_type=mtype, store_id=ret.store_id, item_id=rl.item_id, qty=rl.qty_returned, rate=_issue_rate(db, issue, il), txn_date=ret.return_date,
+            went = _issue_entry(db, issue, il)          # it comes back at the rate it left at, into the batches it left from
+            post_movement(db, movement_type=mtype, store_id=ret.store_id, item_id=rl.item_id, qty=rl.qty_returned, rate=Decimal(str(went.rate)), txn_date=ret.return_date,
                           project_id=issue.project_id, work_order_id=issue.work_order_id, boq_item_id=il.boq_item_id, cost_head=il.cost_head, subcontractor_id=issue.subcontractor_id,
                           ref_doc_type=ISSUE_RETURN, ref_doc_id=ret.id, ref_line_id=rl.id, user_id=actor.user_id,
-                          remarks="%s - against %s%s" % (ret.number, issue.number, " (damaged)" if rl.condition == "DAMAGED" else ""))
+                          remarks="%s - against %s%s" % (ret.number, issue.number, " (damaged)" if rl.condition == "DAMAGED" else ""),
+                          lots=entry_lots(db, went.id) or None)
             for rec in _recovery_rows(db, il.id):         # what is recovered is only what stayed out
                 rec.qty_returned = min(Decimal(str(rec.qty)), Decimal(str(rec.qty_returned)) + Decimal(str(rl.qty_returned)))
         if Decimal(str(rl.qty_lost)) > 0:
-            db.add(DBStoreWriteoffRequest(client_id=ret.client_id, store_id=ret.store_id, item_id=rl.item_id, qty=rl.qty_lost, reason=rl.reason or "Lost",
+            db.add(DBStoreWriteoffRequest(client_id=ret.client_id, store_id=ret.store_id, item_id=rl.item_id, qty=rl.qty_lost, reason=rl.reason or "Lost", requested_by_id=ret.created_by_id,
                                           source_issue_line_id=il.id, source_return_id=ret.id, status="OPEN"))
     db.flush()
 
@@ -567,9 +600,10 @@ KINDS = {
 }
 
 
-def advance(db, actor, kind, doc, action, reason=""):
+def advance(db, actor, kind, doc, action, reason="", direct=False):
     """Move a document one step: submit, approve, post, or cancel (with a reason). Posting and cancelling a posted document move
-    stock: the caller wraps this in store_errors() and commits once, and rolls back on any error."""
+    stock: the caller wraps this in store_errors() and commits once, and rolls back on any error. Approving is for someone other
+    than whoever made or submitted it - except a `direct` issue, made, approved and posted in one step under its own right."""
     now = doc.status
     if action == "cancel":
         reason = text(reason, "reason", 200)
@@ -606,6 +640,13 @@ def advance(db, actor, kind, doc, action, reason=""):
             raise HTTPException(400, "Add at least one line before submitting.")
         if kind.check_submit:
             kind.check_submit(db, actor, doc)
+    if action in ("submit", "post"):
+        try:
+            check_date(db, actor.client.id, getattr(doc, kind.date_attr))
+        except InvalidMovementError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    if action == "approve" and not direct:
+        check_not_own(db, actor, doc, DBStoreOutwardLog, kind.ref, kind.label)
     if action == "post":
         kind.post(db, actor, doc)
         doc.posted_at = datetime.now()
@@ -894,7 +935,8 @@ def writeoff_returnable(db, actor, issue_line_id, qty_text, uom, reason):
     line, issue = _returnable_line(db, actor, issue_line_id)
     item, qty = _closing_qty(db, line, issue, qty_text, uom)
     reason = text(reason, "reason", 200, required=True)
-    req = DBStoreWriteoffRequest(client_id=actor.client.id, store_id=issue.store_id, item_id=item.id, qty=qty, reason=reason, source_issue_line_id=line.id, status="OPEN")
+    req = DBStoreWriteoffRequest(client_id=actor.client.id, store_id=issue.store_id, item_id=item.id, qty=qty, reason=reason, source_issue_line_id=line.id, status="OPEN",
+                                 requested_by_id=actor.user_id)
     db.add(req)
     db.flush()
     closure = DBStoreReturnableClosure(client_id=actor.client.id, issue_line_id=line.id, kind="WRITEOFF", qty=qty, reason=reason, writeoff_request_id=req.id, created_by_name=actor.name)

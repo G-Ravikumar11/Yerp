@@ -19,8 +19,8 @@ import pytest
 
 from app import db as database, models
 from app.models.store_core import (
-    DBStore, DBStoreBin, DBStoreDocSequence, DBStoreFreeze, DBStoreItemSettings, DBStoreStockBalance, DBStoreStockLedger,
-    DBStoreUomConversion, DBStoreUserAssignment, MovementType,
+    DBStore, DBStoreBatch, DBStoreBatchBalance, DBStoreBin, DBStoreControlSetting, DBStoreDocSequence, DBStoreFreeze, DBStoreItemSettings,
+    DBStoreLedgerBatch, DBStoreStockBalance, DBStoreStockLedger, DBStoreUomConversion, DBStoreUserAssignment, MovementType,
 )
 from app.services.stock_ledger import post_movement
 
@@ -157,6 +157,8 @@ def drop_store_world(db, w: StoreWorld):
     stores = [w.central_id, w.site_id]
     items = list(w.item.values())
     led = db.query(DBStoreStockLedger).filter(DBStoreStockLedger.store_id.in_(stores))
+    db.query(DBStoreLedgerBatch).filter(DBStoreLedgerBatch.ledger_id.in_(led.with_entities(DBStoreStockLedger.id))).delete(synchronize_session=False)
+    db.query(DBStoreBatchBalance).filter(DBStoreBatchBalance.store_id.in_(stores)).delete(synchronize_session=False)
     led.filter(DBStoreStockLedger.reversal_of_id.isnot(None)).delete(synchronize_session=False)
     led.delete(synchronize_session=False)
     for model, col in ((DBStoreStockBalance, DBStoreStockBalance.store_id), (DBStoreFreeze, DBStoreFreeze.store_id),
@@ -166,6 +168,8 @@ def drop_store_world(db, w: StoreWorld):
     db.query(DBStoreUomConversion).filter(DBStoreUomConversion.item_id.in_(items)).delete(synchronize_session=False)
     db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id.in_(items)).delete(synchronize_session=False)
     db.query(DBStore).filter(DBStore.id.in_(stores)).delete(synchronize_session=False)
+    db.query(DBStoreBatch).filter(DBStoreBatch.client_id == w.client_id).delete(synchronize_session=False)
+    db.query(DBStoreControlSetting).filter(DBStoreControlSetting.client_id == w.client_id).delete(synchronize_session=False)
     db.query(models.DBPurchaseOrderLineItem).filter(models.DBPurchaseOrderLineItem.order_id == w.po_id).delete(synchronize_session=False)
     db.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.id == w.po_id).delete(synchronize_session=False)
     db.query(models.DBItem).filter(models.DBItem.id.in_(items)).delete(synchronize_session=False)

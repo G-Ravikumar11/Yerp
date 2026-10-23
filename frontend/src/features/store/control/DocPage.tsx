@@ -69,7 +69,7 @@ export default function DocPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" asChild><a href={`/api/store/control/${kind.key}/${doc.id}/print`} target="_blank" rel="noreferrer"><Printer /> {kind.key === 'count' ? 'Print count sheet' : 'Print'}</a></Button>
-          {kind.key === 'count' && doc.status === 'DRAFT' && !doc.started && canCreate && <Button loading={start.isPending} onClick={() => start.mutate()}><Play /> Start count (freezes the store)</Button>}
+          {kind.key === 'count' && doc.status === 'DRAFT' && !doc.started && canCreate && <Button loading={start.isPending} onClick={() => { if (!(doc.in_transit ?? []).length || window.confirm(`${doc.in_transit!.length} transfer(s) to this store are still in transit. Start the count anyway?`)) start.mutate() }}><Play /> Start count (freezes the store)</Button>}
           {kind.key === 'transfer' && doc.status === 'POSTED' && doc.receipt_status === 'IN_TRANSIT' && can(storePerm('control', 'post')) && <Button loading={receive.isPending} onClick={() => receive.mutate()}><PackageCheck /> Receive</Button>}
           {doc.status === 'DRAFT' && canCreate && kind.key !== 'count' && (
             <>
@@ -88,7 +88,14 @@ export default function DocPage() {
         </div>
       </div>
       {doc.status === 'CANCELLED' && <p role="status" className="mb-4 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">Cancelled{doc.cancel_reason ? `: ${doc.cancel_reason}` : ''}.</p>}
-      {doc.frozen && <p role="status" className="mb-4 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">{doc.store_code} is frozen: nothing can move in or out until this count is posted or cancelled.</p>}
+      {doc.frozen && <p role="status" className="mb-4 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">{doc.store_code} is frozen: nothing leaves it until this count is posted or cancelled. Deliveries - receipts, transfers in, returns from site - are still received; keep them apart and do not count them.</p>}
+      {(doc.in_transit ?? []).length > 0 && (
+        <div role="alert" className="mb-4 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">
+          <div className="font-medium">{doc.in_transit!.length} transfer{doc.in_transit!.length === 1 ? ' is' : 's are'} on the way to {doc.store_code} and will not be in this count:</div>
+          <ul className="mt-1 list-disc pl-5">{doc.in_transit!.map((t) => <li key={t.id}>{t.number} from {t.from_store}, sent {dmy(t.dispatched_on)} ({money(t.value)})</li>)}</ul>
+          <div className="mt-1">They can still be received while the count is on. Keep them apart from what is counted.</div>
+        </div>
+      )}
       <dl className="mb-5 grid gap-x-6 gap-y-2 rounded-xl border border-border bg-card p-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
         {facts.map(([k, v]) => <div key={k}><dt className="text-xs uppercase tracking-wide text-muted-foreground">{k}</dt><dd className="font-medium">{v}</dd></div>)}
       </dl>

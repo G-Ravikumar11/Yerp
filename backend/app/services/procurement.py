@@ -12,7 +12,7 @@ from app.core.auth import wo_actor
 from app.core.currency import lines_money, money, unit_rate
 from app.core.gst import state_from_gstin
 from app.core.units import canonical_unit
-from app.services.store_integration import hub_received_on_orders
+from app.services.store_integration import hub_debit_notes, hub_received_on_orders
 from app.services.stores import stock_movement
 
 
@@ -117,6 +117,7 @@ class OrderPrefetch:
             slot[gl.po_line_id] = slot.get(gl.po_line_id, 0.0) + (gl.accepted_qty or 0.0)
         # What the Store Hub has received against the same orders, in the order line's unit.
         hub, self.hub_receipts = hub_received_on_orders(db, ids)
+        self.debit_notes = hub_debit_notes(db, ids)
         for po_id, got in hub.items():
             slot = self._received.setdefault(po_id, {})
             for line_id, qty in got.items():
@@ -187,6 +188,10 @@ def purchase_order_to_dict(db, o, include_chain=False, pre=None):
             models.DBGoodsReceipt.purchase_order_id == o.id,
             models.DBGoodsReceipt.status != "CANCELLED").count() + hub_received_on_orders(db, [o.id])[1].get(o.id, 0)
     row["received_total"] = money(sum(got.get(l.id, 0.0) * (l.price or 0) for l in lines))
+    # Goods sent back to the supplier: their debit notes, which the bills are matched net of.
+    notes = pre.debit_notes.get(o.id, []) if pre is not None else hub_debit_notes(db, [o.id]).get(o.id, [])
+    row["debit_notes"] = notes
+    row["debit_note_total"] = money(sum(n["total"] for n in notes))
     row["line_items"] = [{
         "id": l.id, "description": l.description or "",
         "item_code": getattr(l, "item_code", "") or "",
