@@ -456,8 +456,6 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
         emergency_contact=body.emergency_contact, emergency_phone=body.emergency_phone,
         start_date=body.start_date, status="onboarding",
         password_hash=passwords.hash_password(validated_staff_password(body.password)) if body.password else "",
-        # The Master chose it, so the person it was given to chooses their own before anything else.
-        must_change_password=bool(body.password),
     )
     db.add(emp)
     db.flush()
@@ -1255,7 +1253,6 @@ def set_employee_password(emp_id: int, request: Request, body: dict = None, db: 
         raise HTTPException(status_code=400, detail="Password required")
     validate_password_strength(body["password"])
     emp.password_hash = passwords.hash_password(body["password"])
-    emp.must_change_password = True
     db.commit()
     return {"message": "Password set successfully"}
 

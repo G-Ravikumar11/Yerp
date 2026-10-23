@@ -20,7 +20,7 @@ from app.core.dates import _parse_date
 from app.core.files import ALLOWED_DOCUMENT_EXTENSIONS, MAX_DOCUMENT_BYTES
 from app.core.notifications import default_from_email, notify_employee, send_email_background
 from app.core.permissions import DEFAULT_PERMISSION_ROLE, PERMISSION_ROLES, employee_can, is_head_office, permissions_for
-from app.core.security import RESET_TOKEN_TTL_MINUTES, issue_reset_token, rate_limiter, upgrade_password_hash, validate_password_strength
+from app.core.security import RESET_TOKEN_TTL_MINUTES, issue_reset_token, rate_limiter, upgrade_password_hash
 from app.core.serials import allocate_bill_number, allocate_po_number
 from app.schemas.auth import ForgotPasswordIn
 from app.schemas.employee_portal import EmployeeDocumentUpload
@@ -148,7 +148,6 @@ def employee_login(request: Request, body: dict = None, db: Session = Depends(ge
     request.session.pop('portal_user_id', None)
     request.session['employee_id'] = emp.id
     request.session['employee_client_id'] = emp.client_id
-    request.session['must_change_pw'] = bool(emp.must_change_password)
     set_session_lifetime(request, body.get('rememberMe') is True)
     # Signing in is not clocking in. A shift starts when the person presses
     # Clock in, each one for themselves; opening the portal to read a payslip,
@@ -164,36 +163,6 @@ def employee_login(request: Request, body: dict = None, db: Session = Depends(ge
         "employee": {"id": emp.id, "name": f"{emp.first_name} {emp.last_name}", "email": emp.email},
         "clock_in": (existing.clock_in if existing else "") or "",
     }
-
-
-@router.post("/api/auth/change-password")
-def change_password(request: Request, body: dict = None, db: Session = Depends(get_db)):
-    """A member of staff changes their own password. Who they are comes from the session, never from the request, so
-    there is no way to name somebody else's account here."""
-    emp_id = request.session.get("employee_id")
-    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id).first() if emp_id else None
-    if not emp or emp.status == "terminated":
-        raise HTTPException(status_code=401, detail="Not signed in")
-    ip = request.client.host if request.client else "unknown"
-    if rate_limiter.is_rate_limited(f"emp_change_pw:{emp.id}:{ip}", max_requests=8, window=300):
-        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
-    body = body or {}
-    current, new, confirm = body.get("current_password") or "", body.get("new_password") or "", body.get("confirm_password")
-    if not current or not new:
-        raise HTTPException(status_code=400, detail="Enter your current password and a new one")
-    if not passwords.verify_password(current, emp.password_hash):
-        raise HTTPException(status_code=400, detail="Your current password is not right")
-    if confirm is not None and confirm != new:
-        raise HTTPException(status_code=400, detail="The new password and its confirmation do not match")
-    if new == current:
-        raise HTTPException(status_code=400, detail="Choose a password different from the current one")
-    validate_password_strength(new)
-    emp.password_hash = passwords.hash_password(new)
-    emp.must_change_password = False
-    request.session.pop('must_change_pw', None)
-    log_audit(db, emp.client_id, "password_changed", "employee", emp.id, emp.email, "", request)
-    db.commit()
-    return {"message": "Password changed. Use the new one next time you sign in."}
 
 
 @router.post("/api/employee/auth/logout")
@@ -238,7 +207,6 @@ def employee_me(request: Request, db: Session = Depends(get_db)):
         "email": emp.email, "job_title": emp.job_title,
         "department": dept_name, "phone": emp.phone,
         "status": emp.status, "work_location": emp.work_location,
-        "must_change_password": bool(emp.must_change_password),
         # The single portal builds its navigation from these, so a person is
         # never shown a section they would be refused at.
         "permission_role": role_code,

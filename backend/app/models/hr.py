@@ -78,7 +78,6 @@ class DBEmployee(Base):
     sick_leave_entitlement = Column(Float, default=10.0)
 
     password_hash = Column(String, default="")
-    must_change_password = Column(Boolean, default=False)
     work_location = Column(String, default="")
     latitude = Column(Float, default=0.0)
     longitude = Column(Float, default=0.0)

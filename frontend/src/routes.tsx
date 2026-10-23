@@ -27,7 +27,6 @@ export const SCREENS: Screen[] = [
   { path: '/store/items', Component: lazy(() => import('@/features/items/ItemMasterPage')) },
   { path: '/subcontractors/work-orders', Component: lazy(() => import('@/features/orders/OrdersPage')) },
   { path: '/subcontractors/measurement-book', Component: lazy(() => import('@/features/measurement/MeasurementBookPage')) },
-  { path: '/account/password', Component: lazy(() => import('@/features/account/ChangePasswordPage')) },
   { path: '/settings', Component: lazy(() => import('@/features/settings/SettingsPage')) },
   { path: '/approvals', Component: lazy(() => import('@/features/approvals/ApprovalsPage')) },
   { path: '/subcontractors/vendors', Component: lazy(() => import('@/features/vendors/VendorsPage')) },

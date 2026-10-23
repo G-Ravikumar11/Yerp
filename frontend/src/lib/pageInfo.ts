@@ -85,7 +85,6 @@ export const PAGE_INFO: Record<string, string> = {
   '/people/leave': 'Leave requests waiting for you, and the leave taken across the business. Approve or decline with a reason.',
   '/people/payroll': 'Run the month\'s payroll: working days, earnings and deductions for each person, then payslips.',
 
-  '/account/password': 'Change your own password. A first password given to you by the Master is replaced here.',
   '/settings': 'The business\'s own settings: company details, numbering, approval rules, notifications and the Master\'s controls.',
 }
 

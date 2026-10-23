@@ -18,8 +18,6 @@ type SessionUser = {
   headOffice: boolean
   /** The department the owner has put this person in; staff see it on their own sign-in. */
   department: string
-  /** The Master chose this person's password and they have not yet chosen their own. */
-  mustChangePassword?: boolean
 }
 
 type OwnerMe = { email: string; contact_name?: string; company_name?: string; role?: string }
@@ -32,7 +30,6 @@ type StaffMe = {
   permission_role_label?: string
   head_office?: boolean
   department?: string
-  must_change_password?: boolean
 }
 
 /**
@@ -84,7 +81,6 @@ async function resolveSession(): Promise<SessionUser | null> {
         roleCode: staff.permission_role || 'staff',
         headOffice: !!staff.head_office,
         department: staff.department ?? '',
-        mustChangePassword: !!staff.must_change_password,
       }
     }
   } catch (e) {

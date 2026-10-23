@@ -4,8 +4,7 @@ import os
 import threading
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException
-from starlette.requests import HTTPConnection
+from fastapi import FastAPI
 
 from app import models
 from app.db import SessionLocal, engine, ensure_columns, migrate_sqlite
@@ -68,13 +67,4 @@ async def lifespan(app: FastAPI):
             task.cancel()
 
 
-def require_password_changed(request: HTTPConnection):
-    """Every API call: a member of staff whose first password is still the Master's may only change it. Read from the
-    signed session, which the sign-in set, so most staff routes (which read the session themselves) are covered too."""
-    from app.core.auth import PASSWORD_CHANGE_PATHS, first_password_enforced
-    if first_password_enforced() and request.session.get("employee_id") and request.session.get("must_change_pw")             and request.url.path.startswith("/api/") and request.url.path not in PASSWORD_CHANGE_PATHS:
-        raise HTTPException(status_code=403, detail="Choose a new password before you continue.",
-                            headers={"X-Password-Change-Required": "1"})
-
-
-app = FastAPI(title="Y ERP", lifespan=lifespan, dependencies=[Depends(require_password_changed)])
+app = FastAPI(title="Y ERP", lifespan=lifespan)
