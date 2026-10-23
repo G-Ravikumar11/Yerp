@@ -1174,8 +1174,8 @@ def _cell_text(v):
     return text
 
 
-def sheet_report_spec(headers, rows, filename, preamble=None, closing=None, client=None, logo_watermark=False):
-    """A workbook's rows as a ruled report."""
+def sheet_report_spec(headers, rows, filename, preamble=None, closing=None, client=None, logo_watermark=False, portrait=False):
+    """A workbook's rows as a ruled report. portrait: keep it upright on A4 however wide it is."""
     pre = [list(r) for r in (preamble or []) if r and any(str(x).strip() for x in r)]
     title = str(pre[0][0]).strip() if pre else re.sub(r"[_\-]+", " ", filename.rsplit(".", 1)[0]).upper()
     facts, notes = [], []
@@ -1199,7 +1199,7 @@ def sheet_report_spec(headers, rows, filename, preamble=None, closing=None, clie
         pref.append(max(6, min(longest, 46)))
     numeric = [all((not r[i]) or re.match(r"^[\(\-]?[\d,]+(\.\d+)?\)?%?$", r[i]) for r in body[:300] if i < len(r))
                for i in range(n)]
-    landscape = n > 7 or sum(pref) > 110
+    landscape = not portrait and (n > 7 or sum(pref) > 110)
     columns = [(str(h), p, "R" if numeric[i] and body else "L") for i, (h, p) in enumerate(zip(headers, pref))]
     foot = []
     for r in closing or []:
