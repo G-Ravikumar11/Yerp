@@ -21,6 +21,18 @@ def verify_password(password: str, stored: str) -> bool:
     wrote ("salt:hash"), and the bare sha256 older still; an empty or unreadable value is simply a no."""
     if not stored or not password:
         return False
+    if stored.startswith("$argon2"):
+        # A short-lived release stored some passwords as Argon2id. They are still checked, and needs_rehash() sends
+        # them back to today's form the next time the person signs in, so nobody is locked out by the change.
+        try:
+            from argon2 import PasswordHasher
+            from argon2.exceptions import InvalidHashError, VerificationError
+        except ImportError:
+            return False
+        try:
+            return bool(PasswordHasher().verify(stored, password))
+        except (VerificationError, InvalidHashError):
+            return False
     try:
         if stored.startswith(_HASH_PREFIX):
             _, rounds, salt_hex, want = stored.split("$")

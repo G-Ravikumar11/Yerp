@@ -251,3 +251,29 @@ def test_the_meeting_room_is_for_signed_in_people_and_a_place_cannot_be_taken(te
         with pytest.raises(WebSocketDisconnect):
             with tenant.websocket_connect("/ws/meeting/room2?user_id=host&name=Impostor") as second:
                 second.receive_json()
+
+
+def test_a_password_stored_as_argon2id_still_signs_in_and_is_stored_the_usual_way_after(account, client):
+    """A short-lived release stored passwords as Argon2id; reverting it must not lock those accounts out."""
+    from argon2 import PasswordHasher
+    with main.SessionLocal() as db:
+        c = db.query(models.DBClient).filter(models.DBClient.email == account["email"]).first()
+        c.password_hash = PasswordHasher(time_cost=1, memory_cost=1024, parallelism=1).hash(account["password"])
+        db.commit()
+        cid = c.id
+    assert client.post("/api/client/login", json={"email": account["email"], "password": "Wrong1234"}).status_code == 401
+    assert client.post("/api/client/login", json={"email": account["email"], "password": account["password"]}).status_code == 200
+    with main.SessionLocal() as db:
+        assert db.query(models.DBClient).get(cid).password_hash.startswith("pbkdf2_sha256$")
+    assert client.post("/api/client/login", json={"email": account["email"], "password": account["password"]}).status_code == 200
+
+
+def test_an_employee_password_stored_as_argon2id_still_signs_in(tenant, portal):
+    from argon2 import PasswordHasher
+    from tests.conftest import make_employee
+    e = make_employee(tenant, password="Given1Pass")
+    with main.SessionLocal() as db:
+        db.query(models.DBEmployee).filter(models.DBEmployee.id == e["id"]).update(
+            {"password_hash": PasswordHasher(time_cost=1, memory_cost=1024, parallelism=1).hash("Given1Pass")})
+        db.commit()
+    assert portal.post("/api/employee/auth/login", json={"email": e["email"], "password": "Given1Pass"}).status_code == 200
