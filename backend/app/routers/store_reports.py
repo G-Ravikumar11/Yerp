@@ -78,6 +78,20 @@ def _project(db, actor, project_id):
     return job
 
 
+def _may_see_project_cost(db, actor, job) -> bool:
+    """A project's material cost is the company's figure: open to whoever holds the company reports (or all bills), the project's own
+    manager, and the people who work in that project's stores - not to every storekeeper with a reports right."""
+    if actor.employee is None:
+        return True
+    held = permissions_for(actor.employee)
+    if held & {"store.admin", "reports.view", "bills.view_all"}:
+        return True
+    if job is not None and job.manager_id and job.manager_id == actor.employee.id:
+        return True
+    mine = _visible(db, actor) or set()
+    return job is not None and db.query(DBStore.id).filter(DBStore.id.in_(mine or {0}), DBStore.project_id == job.id).first() is not None
+
+
 def jsonable(x):
     """Decimals travel as plain strings, dates as ISO text."""
     if isinstance(x, Decimal):
@@ -309,7 +323,9 @@ def pick_boq_items(project_id: int, request: Request, q: str = "", db: Session =
 def project_cost(project_id: int, request: Request, from_date: str = "", to_date: str = "", db: Session = Depends(get_db)):
     """Material the stores issued to a project, by cost head, work order and BOQ item: the same figures the project's costing reads."""
     actor = store_actor(request, db, "store.reports.view")
-    _project(db, actor, project_id)
+    job = _project(db, actor, project_id)
+    if not _may_see_project_cost(db, actor, job):
+        raise HTTPException(403, "A project's material cost is for its manager, its stores and those who see the company's reports.")
     start, end = svc.parse_day(from_date, "From date"), svc.parse_day(to_date, "To date")
     lines = store_integration.get_project_material_cost(db, project_id, start or date(2000, 1, 1), end or date.today())
     items = {i.id: i for i in db.query(models.DBItem).filter(models.DBItem.id.in_([l.item_id for l in lines] or [0])).all()}

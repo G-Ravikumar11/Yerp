@@ -110,3 +110,28 @@ def test_someone_who_leaves_is_taken_out_of_their_stores(account):
     ok(t.put("/api/employees/%d" % b["id"], json={"status": "active"}))         # coming back does not put them back on its own
     assert ok(t.get("/api/store/masters/stores/%d" % central["id"]))["staff"] == 0
     assert ok(t.post(url, json={"employee_id": b["id"], "role": "STOREKEEPER"}))["is_active"] is True
+
+
+def test_a_projects_material_cost_is_for_its_stores_manager_and_reports(account):
+    t, tag = account["client"], uuid.uuid4().hex[:6]
+    w = _company(account, tag)
+    central = _hub(t, w, tag)
+    site = ok(t.post("/api/store/masters/stores", json={"code": "SI" + tag[:3].upper(), "name": "Site", "type": "SITE", "project_id": w["job"]}))
+    url = "/api/store/reports/project-cost/%d" % w["job"]
+    logins, emps = {}, {}
+    for key, role in (("keeper", "stores"), ("accounts", "accounts")):
+        email = "%s-%s@example.com" % (key, tag)
+        emps[key] = make_employee(t, email=email, password="Crew1234", permission_role=role, status="active")
+        c = TestClient(main.app)
+        c.__enter__()
+        assert c.post("/api/employee/auth/login", json={"email": email, "password": "Crew1234"}).status_code == 200
+        logins[key] = c
+    try:
+        ok(t.post("/api/store/masters/stores/%d/assignments" % central["id"], json={"employee_id": emps["keeper"]["id"], "role": "STOREKEEPER"}))
+        assert logins["keeper"].get(url).status_code == 403                    # a storekeeper elsewhere does not see this project's cost
+        ok(t.post("/api/store/masters/stores/%d/assignments" % site["id"], json={"employee_id": emps["keeper"]["id"], "role": "STOREKEEPER"}))
+        assert logins["keeper"].get(url).status_code == 200                    # working in the project's own store, they do
+        assert logins["accounts"].get(url).status_code == 200                  # the company's reports, whatever store
+    finally:
+        for c in logins.values():
+            c.__exit__(None, None, None)
