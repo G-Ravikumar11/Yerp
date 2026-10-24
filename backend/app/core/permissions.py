@@ -41,7 +41,7 @@ EMPLOYEE_ROLES = [
     {"code": "ho_qs", "label": "HO QS", "level": "L3", "department": "Head office",
      "reports_to": "md", "access": "ho_qs"},
     {"code": "store_coordinator", "label": "Coordinator Store / Sr. Store", "level": "L3",
-     "department": "Store", "reports_to": "hod", "access": "stores"},
+     "department": "Store", "reports_to": "hod", "access": "store_incharge"},
     {"code": "project_manager", "label": "Project Manager", "level": "L4", "department": "Projects",
      "reports_to": "ho_planning_head", "access": "project_manager"},
     {"code": "safety_head", "label": "Safety Head", "level": "L4", "department": "Site",
@@ -229,6 +229,24 @@ _SPLIT_OUT = ["billing.manage", "purchase.manage", "stores.manage", "accounts.ma
 # sight, and the right to keep them up to date.
 _HEAD_OFFICE = ["self.service", "bills.submit", "bills.view_all", "reports.view",
                 "workorders.manage", "billing.manage", "customers.manage", "ho.view_all"] + _ALL_PORTALS
+# THE STORE HUB, BY JOB. Every Hub screen asks for store.<slice>.<action>; the old store's rights (stores.receive,
+# stores.manage) open none of them. Each bundle is what that job does in the Hub - and staff still work only in the
+# stores they are assigned to.
+_STORE_VIEW = ["store.%s.view" % s for s in STORE_SLICES]
+# Asks for material and looks up stock: raises an indent (a draft issue too, which somebody else posts).
+_STORE_REQUEST = ["store.enquiry.view", "store.outward.view", "store.outward.create"]
+# Keeps a store: receives, issues, returns, moves and counts stock and posts it - but approves nothing.
+_STORE_KEEPER = _STORE_VIEW + ["store.inward.create", "store.inward.post", "store.outward.create", "store.outward.post",
+                               "store.control.create", "store.control.post"]
+# Runs the stores: approves and cancels what the keepers raise, sets up stores and items, and the counts' controls.
+_STORE_INCHARGE = _STORE_KEEPER + ["store.%s.%s" % (s, a) for s in ("inward", "outward", "control") for a in ("approve", "cancel")] + [
+    "store.masters.create", "store.masters.approve", "store.reports.create", "store.outward.direct_issue",
+    "store.control.reveal_count", "store.control.approve_high_value"]
+# Approves the indents and issues of a project and reads its material cost.
+_STORE_APPROVE_PROJECT = ["store.enquiry.view", "store.inward.view", "store.outward.view", "store.outward.create",
+                          "store.outward.approve", "store.reports.view"]
+_PROJECT_MANAGER = _PROJECT_MANAGER + _STORE_APPROVE_PROJECT
+_HEAD_OFFICE = _HEAD_OFFICE + _STORE_VIEW
 PERMISSION_ROLES = [
     {
         "code": "staff", "label": "Site staff", "rank": 1,
@@ -244,7 +262,7 @@ PERMISSION_ROLES = [
         "permissions": ["self.service", "bills.submit", "bills.approve",
                         "attendance.view_team", "leave.approve", "stores.receive",
                         "site.record", "site.signoff",
-                        "projects.view", "subcontractors.view", "store.view"],
+                        "projects.view", "subcontractors.view", "store.view"] + _STORE_REQUEST,
     },
     {
         "code": "planning_billing", "label": "Planning & Billing", "rank": 2,
@@ -255,14 +273,14 @@ PERMISSION_ROLES = [
         "permissions": ["self.service", "bills.submit", "billing.manage",
                         "workorders.manage", "items.manage", "customers.manage",
                         "reports.view", "projects.view", "clients.view",
-                        "subcontractors.view", "store.view"] + _SITE,
+                        "subcontractors.view", "store.view", "store.enquiry.view", "store.reports.view"] + _SITE,
     },
     {
         "code": "purchase", "label": "Purchase", "rank": 2,
         "description": "Enquiries, quote comparison, purchase orders and suppliers. "
                        "An order goes for approval before it is placed.",
         "permissions": ["self.service", "bills.submit", "purchase.manage", "items.manage",
-                        "projects.view", "store.view"],
+                        "projects.view", "store.view", "store.enquiry.view", "store.inward.view", "store.reports.view"],
     },
     {
         "code": "stores", "label": "Stores", "rank": 2,
@@ -271,7 +289,16 @@ PERMISSION_ROLES = [
                        "plant register.",
         "permissions": ["self.service", "bills.submit", "stores.receive",
                         "stores.manage", "items.manage",
-                        "projects.view", "store.view"] + _SITE,
+                        "projects.view", "store.view"] + _SITE + _STORE_KEEPER,
+    },
+    {
+        "code": "store_incharge", "label": "Store in-charge", "rank": 2,
+        "description": "Runs the stores: everything a storekeeper does, plus approving and cancelling "
+                       "receipts, issues, transfers, counts and scrap, setting up stores and items, and "
+                       "the stock-count controls.",
+        "permissions": ["self.service", "bills.submit", "stores.receive",
+                        "stores.manage", "items.manage",
+                        "projects.view", "store.view"] + _SITE + _STORE_INCHARGE,
     },
     {
         "code": "accounts", "label": "Accounts", "rank": 2,
@@ -281,7 +308,8 @@ PERMISSION_ROLES = [
         "permissions": ["self.service", "bills.submit", "bills.view_all", "bills.pay",
                         "invoices.manage", "reports.view", "accounts.manage",
                         "customers.manage",
-                        "projects.view", "clients.view", "subcontractors.view", "store.view", "money.view"],
+                        "projects.view", "clients.view", "subcontractors.view", "store.view", "money.view",
+                        "store.enquiry.view", "store.inward.view", "store.reports.view"],
     },
     {
         "code": "hr_admin", "label": "HR admin", "rank": 2,
