@@ -114,6 +114,8 @@ def update_member(member_id: int, body: TeamUpdate, request: Request,
         member.password_hash = hash_password(body.password)
         member.accepted_at = member.accepted_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_audit(db, client.id, "team_password_set", "team", member.id, member.email, "", request)
+        from app.core import login_guard
+        login_guard.clear_account(member.email)       # the Master has just given them a new password
 
     log_audit(db, client.id, "team_updated", "team", member.id, member.email,
               member.role, request)
