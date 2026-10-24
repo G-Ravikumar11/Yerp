@@ -67,7 +67,7 @@ export function CaptchaBox({ round, onChange }: { round: number; onChange: (v: C
   if (!challenge || challenge.provider === 'off') return null
   if (challenge.provider === 'turnstile') return <div ref={widget} aria-label="Check that you are a person" className="min-h-[65px]" />
   return (
-    <Field label="Type the 5 characters you see" htmlFor="captcha-answer" hint="Capital or small letters both work. Hard to read? Press ↻ for new ones.">
+    <Field label="Type the 5 characters you see" htmlFor="captcha-answer">
       <div className="flex items-center gap-2">
         <img src={challenge.image} alt="Five characters to type" width={176} height={56} draggable={false}
           className="block h-14 w-44 shrink-0 select-none rounded-lg border border-border shadow-sm" />
@@ -75,8 +75,8 @@ export function CaptchaBox({ round, onChange }: { round: number; onChange: (v: C
           className="grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground transition hover:rotate-90 hover:bg-accent hover:text-foreground">
           <RefreshCw className="size-4" />
         </button>
-        <Input id="captcha-answer" autoComplete="off" autoCapitalize="characters" spellCheck={false} maxLength={5} placeholder="•••••"
-          className="h-14 min-w-0 flex-1 text-center font-mono text-lg font-semibold uppercase tracking-[0.35em]"
+        <Input id="captcha-answer" autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false} maxLength={5} placeholder="•••••"
+          className="h-14 min-w-0 flex-1 text-center font-mono text-lg font-semibold tracking-[0.35em]"
           value={answer} onChange={(e) => { setAnswer(e.target.value); changed.current(e.target.value.trim() ? { captcha_token: challenge.token, captcha_answer: e.target.value.trim() } : null) }} />
       </div>
     </Field>
