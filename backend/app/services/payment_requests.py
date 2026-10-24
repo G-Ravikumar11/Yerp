@@ -209,7 +209,7 @@ def lock_to_request(db, client_id, body):
     return r
 
 
-def use_for_payment(db, client_id, request_id, doc_type, doc_id, amount, party_name=None, job_id=None):
+def use_for_payment(db, client_id, request_id, doc_type, doc_id, amount, party_name=None, job_id=None, head=None):
     """The approved request a payment settles: the same bill (or the same kind of payment), the same payee and project,
     no more than was approved. A bill's payee or project changed since the approval stops the payment."""
     r = request_or_404(db, client_id, request_id)
@@ -219,6 +219,8 @@ def use_for_payment(db, client_id, request_id, doc_type, doc_id, amount, party_n
         raise HTTPException(400, "%s was approved for something else." % r.number)
     if party_name is not None and not _same_name(party_name, r.party_name):
         raise HTTPException(409, "%s was approved to pay %s, not %s. Raise a new request." % (r.number, r.party_name, party_name))
+    if head is not None and (head or "").strip().lower() != (r.head or "").strip().lower():
+        raise HTTPException(409, "%s was approved as %s, not %s. Raise a new request." % (r.number, r.head or "no head", head or "no head"))
     if job_id is not None and (job_id or None) != (r.job_id or None):
         raise HTTPException(409, "%s was approved for another project. Raise a new request." % r.number)
     if money(amount) > money(r.amount) + 0.009:

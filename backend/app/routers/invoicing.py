@@ -22,7 +22,7 @@ from app.constants.invoicing import (
     VEHICLE_NO,
 )
 from app.core.audit import log_audit
-from app.core.auth import get_client_user, require_erp_read, require_items_access, session_employee, wo_actor
+from app.core.auth import current_member, get_client_user, require_erp_read, require_items_access, session_employee, wo_actor
 from app.core.currency import (
     DEFAULT_CURRENCY,
     compute_invoice_totals,
@@ -689,7 +689,8 @@ def mark_bill_paid(bill_id: int, request: Request, body: dict = None, db: Sessio
     if bill.approval_status and bill.approval_status not in ("none", "approved", ""):
         raise HTTPException(status_code=403, detail=f"Cannot mark bill paid: approval status is '{bill.approval_status}'.")
     from app.services.payment_requests import needs_request
-    if needs_request(db, client.id, session_employee(request, db), (bill.total or bill.amount or 0.0) - (bill.amount_paid or 0.0)):
+    if needs_request(db, client.id, session_employee(request, db), (bill.total or bill.amount or 0.0) - (bill.amount_paid or 0.0),
+                     member=current_member(request, db)):
         # Where payments wait for approval, marking a bill paid would skip it: it is paid from an approved request.
         raise HTTPException(status_code=409, detail="Payments are approved before they are made: send this bill for approval "
                                                     "(a payment request), and pay it once it is approved.")

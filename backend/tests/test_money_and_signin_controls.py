@@ -51,6 +51,36 @@ def test_a_colleague_waits_for_approval_and_cannot_turn_it_off(tenant):
     assert tenant.get("/api/payment-requests/rules").json()["on"] is True      # still on: nobody but the Master turns it off
 
 
+def test_a_colleague_cannot_mark_a_bill_paid_to_skip_the_approval(tenant):
+    from test_finance_ledger import supplier_bill
+    assert tenant.put("/api/payment-requests/rules", json={"on": True, "free_below": 1000, "md_above": 100000}).status_code == 200
+    bill = supplier_bill(tenant, amount=50000, tax=0)
+    mate = _colleague(tenant)
+    try:
+        res = mate.post("/api/bills/%d/pay" % bill["id"], json={})
+        assert res.status_code == 409 and "approv" in res.json()["detail"]
+    finally:
+        mate.__exit__(None, None, None)
+    assert tenant.post("/api/bills/%d/pay" % bill["id"], json={}).status_code == 200          # the Master pays without asking
+
+
+def test_an_approved_expense_is_paid_under_the_head_it_was_approved_for(tenant):
+    assert tenant.put("/api/payment-requests/rules", json={"on": True, "free_below": 1000, "md_above": 100000}).status_code == 200
+    mate = _colleague(tenant)
+    try:
+        r = mate.post("/api/payment-requests", json={"doc_type": "expense", "head": "Machinery hire", "party_name": "Sai Earthmovers",
+                                                     "amount": 20000}).json()["request"]
+        assert tenant.post("/api/payment-requests/%d/decide" % r["id"], json={"decision": "approve"}).status_code == 200
+        swapped = mate.post("/api/money/entries", json={"doc_type": "expense", "head": "Rent", "party_name": "Sai Earthmovers",
+                                                        "amount": 20000, "request_id": r["id"]})
+        assert swapped.status_code == 409 and "Machinery hire" in swapped.json()["detail"]
+        ok = mate.post("/api/money/entries", json={"doc_type": "expense", "head": "Machinery hire", "party_name": "Sai Earthmovers",
+                                                   "amount": 20000, "request_id": r["id"]})
+        assert ok.status_code == 200, ok.text
+    finally:
+        mate.__exit__(None, None, None)
+
+
 # --- 3. a lock that keeps the guesser out, not the Master -------------------------------------------------------------------
 
 def test_wrong_passwords_from_one_address_do_not_lock_the_master_out_elsewhere(account, monkeypatch):

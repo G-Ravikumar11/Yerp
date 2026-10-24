@@ -221,10 +221,12 @@ def auto_match(db, client_id, account):
         models.DBBankStatementLine.client_id == client_id, models.DBBankStatementLine.account_id == account.id,
         models.DBBankStatementLine.status == "UNMATCHED").order_by(models.DBBankStatementLine.txn_date,
                                                                     models.DBBankStatementLine.id).all()
-    entries = _candidates(db, client_id, account)
+    by_money = {}                       # an entry can only be a line's if direction and amount agree: look in that bucket
+    for e in _candidates(db, client_id, account):
+        by_money.setdefault((e.direction == "IN", round(money(e.amount) * 100)), []).append(e)
     pairs = []
     for l in lines:
-        for e in entries:
+        for e in by_money.get((l.credit > 0, round(money(l.credit or l.debit) * 100)), ()):
             s = score(l, e)
             if s is not None:
                 pairs.append((s, l.id, e.id, l, e))

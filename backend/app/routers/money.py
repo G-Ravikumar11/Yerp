@@ -3,6 +3,7 @@ import re
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models
@@ -751,7 +752,8 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
 
     approved = None
     if body.request_id:
-        approved = preq.use_for_payment(db, client.id, body.request_id, doc_type, doc.id if doc else None, amount, party_name, job_id)
+        approved = preq.use_for_payment(db, client.id, body.request_id, doc_type, doc.id if doc else None, amount, party_name, job_id,
+                                    head=head if doc_type == "expense" else None)
     elif direction == "OUT" and preq.needs_request(db, client.id, session_employee(request, db), amount):
         raise HTTPException(409, "Payments are approved before they are made: send it for approval "
                                  "(a payment request), and pay it once it is approved.")
@@ -1056,7 +1058,7 @@ def bank_reco_view(account_id: int, request: Request, as_of: str = "", db: Sessi
     lines = db.query(models.DBBankStatementLine).filter(
         models.DBBankStatementLine.client_id == client.id, models.DBBankStatementLine.account_id == account.id,
         models.DBBankStatementLine.status == "UNMATCHED").order_by(models.DBBankStatementLine.txn_date).limit(500).all()
-    counts = dict(db.query(models.DBBankStatementLine.status, sqlfunc_count(models.DBBankStatementLine.id)).filter(
+    counts = dict(db.query(models.DBBankStatementLine.status, func.count(models.DBBankStatementLine.id)).filter(
         models.DBBankStatementLine.client_id == client.id, models.DBBankStatementLine.account_id == account.id).group_by(
         models.DBBankStatementLine.status).all())
     return {"account": account_dict(account), "brs": bank_reco.brs(db, client.id, account, day),
@@ -1064,11 +1066,6 @@ def bank_reco_view(account_id: int, request: Request, as_of: str = "", db: Sessi
             "suggestions": bank_reco.suggestions(db, client.id, account, lines),
             "counts": {"matched": counts.get("MATCHED", 0), "unmatched": counts.get("UNMATCHED", 0),
                        "ignored": counts.get("IGNORED", 0)}}
-
-
-def sqlfunc_count(col):
-    from sqlalchemy import func
-    return func.count(col)
 
 
 @router.post("/api/bank-reco/{account_id}/statement")
