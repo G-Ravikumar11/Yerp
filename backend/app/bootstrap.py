@@ -193,6 +193,7 @@ from app.routers import (
     store_rejections,
     store_deliveries,
     store_levels,
+    store_dashboard,
     store_tools,
     store_cycle,
 )
@@ -255,6 +256,7 @@ for _module in (
     store_rejections,
     store_deliveries,
     store_levels,
+    store_dashboard,
     store_tools,
     store_cycle,
 ):

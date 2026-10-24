@@ -7,28 +7,34 @@ import { get } from '@/lib/api'
 import { useSession } from '@/lib/session'
 import { storePerm } from '@/api/store'
 import { OldStoreCard } from './OldStore'
+import { OverviewBudgets, OverviewMovements, OverviewStats, OverviewWork, useStoreDashboard } from './Overview'
 import { SLICES, StoreShell } from './StoreShell'
 
 /** The things people do most, each opening the right form directly. Shown only when the person holds the right to do it. */
 const TASKS = [
   { label: 'Receive goods', hint: 'Book a delivery against a purchase order', to: '/store/hub/inward/grn/new', perm: storePerm('inward', 'create'), Icon: ArrowDownToLine },
-  { label: 'Issue material', hint: 'Give stock to a site or subcontractor', to: '/store/hub/outward/issues/new', perm: storePerm('outward', 'create'), Icon: ArrowUpFromLine },
-  { label: 'Request material', hint: 'Raise a requisition for a site', to: '/store/hub/outward/requisitions/new', perm: storePerm('outward', 'create'), Icon: ClipboardCheck },
+  { label: 'Issue material', hint: 'Give stock to a site or subcontractor', to: '/store/hub/outward/issue/new', perm: storePerm('outward', 'create'), Icon: ArrowUpFromLine },
+  { label: 'Request material', hint: 'Raise an indent for a site', to: '/store/hub/outward/indent/new', perm: storePerm('outward', 'create'), Icon: ClipboardCheck },
   { label: 'Return material', hint: 'Take back unused issued stock', to: '/store/hub/outward/returns/new', perm: storePerm('outward', 'create'), Icon: Undo2 },
-  { label: 'Transfer stock', hint: 'Move stock between stores', to: '/store/hub/control/transfers/new', perm: storePerm('control', 'create'), Icon: Repeat },
-  { label: 'Count stock', hint: 'Start a physical stock count', to: '/store/hub/control/counts/new', perm: storePerm('control', 'create'), Icon: ClipboardCheck },
+  { label: 'Transfer stock', hint: 'Move stock between stores', to: '/store/hub/control/transfer/new', perm: storePerm('control', 'create'), Icon: Repeat },
+  { label: 'Count stock', hint: 'Start a physical stock count', to: '/store/hub/control/count/new', perm: storePerm('control', 'create'), Icon: ClipboardCheck },
   { label: 'Reports', hint: 'Stock, consumption and cost', to: '/store/hub/reports', perm: storePerm('reports'), Icon: FileBarChart },
 ]
 
-/** The Store front page: find stock, do the common jobs in one click, or open any part this person may use. */
+/** The Store front page: find stock, see where things stand, do the common jobs in one click, or open any part this person may use. */
 export default function StorePage() {
   const { can } = useSession()
   const tasks = TASKS.filter((t) => can(t.perm))
+  const any = SLICES.some((s) => can(storePerm(s.slice)))
+  const dash = useStoreDashboard(any)
   return (
     <StoreShell slice={null}>
       <OldStoreCard />
       <div className="space-y-8">
         <QuickFind allowed={can(storePerm('enquiry'))} />
+        {any && (dash.isError
+          ? <p role="alert" className="text-sm text-danger">The store figures could not be loaded. <button type="button" className="underline" onClick={() => void dash.refetch()}>Try again</button></p>
+          : <><OverviewStats d={dash.data} /><OverviewWork d={dash.data} /></>)}
         {tasks.length > 0 && (
           <section>
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Do something</h2>
@@ -44,6 +50,7 @@ export default function StorePage() {
             </div>
           </section>
         )}
+        {any && !dash.isError && <><OverviewMovements d={dash.data} /><OverviewBudgets d={dash.data} /></>}
         <section>
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Browse</h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
