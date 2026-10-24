@@ -173,13 +173,52 @@ def cancel(db, client, emp, r):
     return "%s withdrawn." % r.number
 
 
-def use_for_payment(db, client_id, request_id, doc_type, doc_id, amount):
-    """The approved request a payment settles: the same bill (or the same kind of payment), no more than was approved."""
+def _same_name(a, b):
+    return " ".join((a or "").lower().split()) == " ".join((b or "").lower().split())
+
+
+def lock_to_request(db, client_id, body):
+    """Paying an approved request: what is paid, to whom, for which project and under which head are what was approved.
+    The payer chooses only how and when (date, mode, reference, account) and may pay less, never more. A payee, project
+    or head sent that differs from the approval is refused rather than quietly replaced, so nobody believes they paid
+    someone else; the approved ones are then filled in for whatever was left out."""
+    r = request_or_404(db, client_id, body.request_id)
+    if r.status != "APPROVED":
+        raise HTTPException(409, "%s is %s, not approved to pay." % (r.number, STATUS_LABEL.get(r.status, r.status).lower()))
+    approved_type = r.doc_type or "on_account"
+    if (body.doc_type or "on_account").strip() != approved_type or (body.doc_id or None) != (r.doc_id or None):
+        raise HTTPException(400, "%s was approved for something else." % r.number)
+    changed = []
+    if (body.party_name or "").strip() and not _same_name(body.party_name, r.party_name):
+        changed.append("payee")
+    elif approved_type == "on_account" and (body.party_type or "").strip() and body.party_type != (r.party_type or "other"):
+        changed.append("payee")
+    if body.job_id and body.job_id != r.job_id:
+        changed.append("project")
+    if (body.head or "").strip() and not _same_name(body.head, r.head):
+        changed.append("head")
+    if (body.direction or "").strip() and body.direction.strip().upper() != "OUT":
+        changed.append("direction")
+    if changed:
+        what = " and ".join(changed)
+        raise HTTPException(409, "%s was approved to pay %s%s. The %s cannot be changed when it is paid - raise a new request for that."
+                                 % (r.number, r.party_name or "the payee", (" under " + r.head) if r.head else "", what))
+    body.party_name, body.party_type, body.job_id, body.head, body.direction = r.party_name, r.party_type or "other", r.job_id, r.head, "OUT"
+    return r
+
+
+def use_for_payment(db, client_id, request_id, doc_type, doc_id, amount, party_name=None, job_id=None):
+    """The approved request a payment settles: the same bill (or the same kind of payment), the same payee and project,
+    no more than was approved. A bill's payee or project changed since the approval stops the payment."""
     r = request_or_404(db, client_id, request_id)
     if r.status != "APPROVED":
         raise HTTPException(409, "%s is %s, not approved to pay." % (r.number, STATUS_LABEL.get(r.status, r.status).lower()))
     if (r.doc_type or "") != (doc_type or "on_account") or (r.doc_id or None) != (doc_id or None):
         raise HTTPException(400, "%s was approved for something else." % r.number)
+    if party_name is not None and not _same_name(party_name, r.party_name):
+        raise HTTPException(409, "%s was approved to pay %s, not %s. Raise a new request." % (r.number, r.party_name, party_name))
+    if job_id is not None and (job_id or None) != (r.job_id or None):
+        raise HTTPException(409, "%s was approved for another project. Raise a new request." % r.number)
     if money(amount) > money(r.amount) + 0.009:
         raise HTTPException(400, "%s approved %s; %s is more than that." % (r.number, inr(r.amount), inr(amount)))
     return r

@@ -676,6 +676,9 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
     ledger and the bank book, which is the point.
     """
     client, actor_id, actor_name = wo_actor(request, db, "bills.pay")
+    if body.request_id:
+        # Paying an approved request: the payee, project and head are the approved ones and cannot be changed here.
+        preq.lock_to_request(db, client.id, body)
     amount = money(body.amount or 0)
     if amount <= 0:
         raise HTTPException(400, "How much?")
@@ -739,7 +742,7 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
 
     approved = None
     if body.request_id:
-        approved = preq.use_for_payment(db, client.id, body.request_id, doc_type, doc.id if doc else None, amount)
+        approved = preq.use_for_payment(db, client.id, body.request_id, doc_type, doc.id if doc else None, amount, party_name, job_id)
     elif direction == "OUT" and preq.needs_request(db, client.id, session_employee(request, db), amount):
         raise HTTPException(409, "Payments are approved before they are made: send it for approval "
                                  "(a payment request), and pay it once it is approved.")
