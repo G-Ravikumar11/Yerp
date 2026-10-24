@@ -32,6 +32,7 @@ def send(monkeypatch, host="smtp.example.com"):
     monkeypatch.setattr(smtplib, "SMTP", FakeSMTP)
     monkeypatch.setattr(notifications, "get_stored_refresh_token", lambda db, client_id=None: "")
     monkeypatch.setenv("SMTP_HOST", host)
+    monkeypatch.setenv("SMTP_PORT", "587")
     monkeypatch.setenv("SMTP_USER", "sender@example.com")
     monkeypatch.setenv("SMTP_PASSWORD", "app-password")
 
