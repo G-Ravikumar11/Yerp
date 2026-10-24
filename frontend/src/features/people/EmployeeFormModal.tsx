@@ -54,12 +54,16 @@ function Form({ onClose }: { onClose: () => void }) {
     })
     giveAccess(r?.access)
   }
-  // A level on its own gives access when every role at that level carries the same one (L5, say); where they differ, choosing the role decides.
+  // A level on its own gives access too: the level is named for its main role ("L4 - Project Manager", "L6 - Site Engineer"),
+  // so that role's access is used; the role can then be chosen to refine it. Where no role fits the name, an access every
+  // role at the level shares is used, and otherwise nothing is guessed.
   const pickLevel = (level: string) => {
     const here = (cat.data?.roles ?? []).filter((r) => r.level === level)
     setF((s) => ({ ...s, level, role: here.some((r) => r.code === s.role) ? s.role : '' }))
-    const access = [...new Set(here.map((r) => r.access).filter(Boolean))]
-    if (access.length === 1) giveAccess(access[0])
+    const name = (cat.data?.levels.find((l) => l.code === level)?.label ?? '').toLowerCase()
+    const main = here.find((r) => name.includes(r.label.toLowerCase()))
+    const shared = [...new Set(here.map((r) => r.access).filter(Boolean))]
+    giveAccess(main?.access ?? (shared.length === 1 ? shared[0] : undefined))
   }
   const num = (k: keyof EmployeeInput) => (n: number) => setF((s) => ({ ...s, [k]: n }))
   // Their own address follows their name until somebody types one.

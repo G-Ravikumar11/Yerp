@@ -66,7 +66,7 @@ describe('Add an employee: access follows the role and the level', () => {
     expect(access()).toBe('construction|self.service,site.record')
   })
 
-  it('gives the access of a level on its own when every role at it carries the same one', async () => {
+  it('gives the access of a level on its own', async () => {
     const user = userEvent.setup()
     mount()
     await waitFor(() => screen.getByTestId('access'))
@@ -76,12 +76,16 @@ describe('Add an employee: access follows the role and the level', () => {
     expect(screen.queryByRole('option', { name: 'Store Executive' })).toBeNull()
   })
 
-  it('leaves the choice to the role when the roles at a level carry different access', async () => {
+  it('uses the access of the role a level is named for, and the role refines it', async () => {
     const user = userEvent.setup()
     mount()
     await waitFor(() => screen.getByTestId('access'))
-    await user.selectOptions(screen.getByLabelText('Level'), 'L6')
+    await user.selectOptions(screen.getByLabelText('Level'), 'L4')
+    expect(access()).toBe('project_manager|projects.view,self.service,site.record')
+    await user.selectOptions(screen.getByLabelText('Reporting role'), 'tpt')
     expect(access()).toBe('staff|self.service')
+    await user.selectOptions(screen.getByLabelText('Level'), 'L6')
+    expect(access()).toBe('construction|self.service,site.record')
     await user.selectOptions(screen.getByLabelText('Reporting role'), 'store_executive')
     expect(access()).toBe('stores|self.service,store.view')
   })
