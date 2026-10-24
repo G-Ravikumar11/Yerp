@@ -117,15 +117,19 @@ def test_assignments_give_and_take_away_a_store(account):
     s = tenant.post(M + "/stores", json={"code": "AS01", "name": "Assigned", "type": "SITE"}).json()
     emp = make_employee(tenant, email="as-%s@example.com" % uuid.uuid4().hex[:6])
     r = tenant.post(M + "/stores/%d/assignments" % s["id"], json={"employee_id": emp["id"], "role": "store keeper"})
-    assert r.status_code == 200 and r.json()["role"] == "STORE_KEEPER"
+    assert r.status_code == 200 and r.json()["role"] == "STOREKEEPER"                      # the same job, however it was typed
     assert tenant.post(M + "/stores/%d/assignments" % s["id"], json={"employee_id": emp["id"]}).status_code == 409
     assert tenant.post(M + "/stores/%d/assignments" % s["id"], json={"employee_id": 999999}).status_code == 400
     assert tenant.get(M + "/stores/%d" % s["id"]).json()["staff"] == 1
     assert tenant.delete(M + "/stores/%d/assignments/%d" % (s["id"], emp["id"])).status_code == 200
     assert tenant.delete(M + "/stores/%d/assignments/%d" % (s["id"], emp["id"])).status_code == 404
     assert tenant.get(M + "/stores/%d" % s["id"]).json()["staff"] == 0
-    assert tenant.post(M + "/stores/%d/assignments" % s["id"], json={"employee_id": emp["id"], "role": "Incharge"}).json()["is_active"] is True
+    again = tenant.post(M + "/stores/%d/assignments" % s["id"], json={"employee_id": emp["id"], "role": "Incharge"}).json()
+    assert again["is_active"] is True and again["role"] == "STORE_INCHARGE"
     assert emp["id"] in [e["id"] for e in tenant.get(M + "/employees").json()["items"]]
+    tenant.delete(M + "/stores/%d/assignments/%d" % (s["id"], emp["id"]))
+    bad = tenant.post(M + "/stores/%d/assignments" % s["id"], json={"employee_id": emp["id"], "role": "Boss"})
+    assert bad.status_code == 400 and "Storekeeper" in bad.json()["detail"]                 # a job from the list, not free text
 
 
 # --- item settings and conversions ----------------------------------------------------------------------------------

@@ -164,3 +164,32 @@ class DBStoreIndentLineNote(Base):
     indent_line_id = Column(Integer, ForeignKey("store_indent_line.id"), nullable=False)
     reason = Column(String, default="")
     substitute_for_line_id = Column(Integer, ForeignKey("store_indent_line.id"), nullable=True)
+
+
+class DBStoreCrossCharge(Base):
+    """Stock moved between two projects' stores: the cost leaves one project and lands on the other, and accounts must charge it across. One row per
+    received inter-project transfer, PENDING until accounts say they have adjusted the two projects' costs."""
+    __tablename__ = "store_cross_charge"
+    __table_args__ = (UniqueConstraint("transfer_id", name="uq_store_cross_charge_transfer"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    transfer_id = Column(Integer, ForeignKey("store_transfer.id"), nullable=False)
+    from_project_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
+    to_project_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
+    amount = Column(QTY, nullable=False, default=0)
+    status = Column(String, nullable=False, default="PENDING", index=True)     # PENDING | ADJUSTED | VOID | REVERSE (cancelled after it was adjusted)
+    adjusted_on = Column(Date, nullable=True)
+    adjusted_by_name = Column(String, default="")
+    note = Column(String, default="")
+
+
+class DBStoreScrapReceipt(Base):
+    """Money received for a scrap sale, linked to the receipt in the bank book (money_entries) that recorded it."""
+    __tablename__ = "store_scrap_receipt"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    scrap_id = Column(Integer, ForeignKey("store_scrap.id"), nullable=False, index=True)
+    money_entry_id = Column(Integer, ForeignKey("money_entries.id"), nullable=False)
+    amount = Column(QTY, nullable=False, default=0)

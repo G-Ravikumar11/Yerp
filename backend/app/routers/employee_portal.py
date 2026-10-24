@@ -4,13 +4,13 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy import func, func as sqlfunc, or_
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, undefer
 
 from app import models
 from app.core import login_guard
 from app.core import passwords
 from app.core.queries import by_id, prime
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.approvals import GONE_STATUSES
 from app.constants.projects import JOB_CLOSED_STATUSES
@@ -50,7 +50,7 @@ from app.services.employee_portal import (
     target_hours_for,
     working_days_between,
 )
-from app.services.hr import employee_name, employee_site_ids, request_to_dict, resolve_employee_job_id
+from app.services.hr import employee_name, employee_site_ids, request_to_dict, resolve_employee_job_id, with_request_links
 from app.services.holidays import custom_holidays
 from app.services.procurement import (
     apply_order_fields,
@@ -910,7 +910,7 @@ def employee_document_requests(request: Request, db: Session = Depends(get_db)):
     emp_id = request.session.get('employee_id')
     if not emp_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    rows = db.query(models.DBDocumentRequest).options(selectinload(models.DBDocumentRequest.requirement)).filter(
+    rows = with_request_links(db.query(models.DBDocumentRequest)).filter(
         models.DBDocumentRequest.employee_id == emp_id
     ).order_by(models.DBDocumentRequest.id.asc()).all()
     outstanding = sum(1 for r in rows if r.status in ("pending", "rejected"))
@@ -1127,7 +1127,8 @@ def download_document(doc_id: int, request: Request, db: Session = Depends(get_d
     emp_id = request.session.get('employee_id')
     if not emp_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    doc = db.query(models.DBDocument).filter(models.DBDocument.id == doc_id, models.DBDocument.employee_id == emp_id).first()
+    doc = db.query(models.DBDocument).options(undefer(models.DBDocument.file_data)).filter(
+        models.DBDocument.id == doc_id, models.DBDocument.employee_id == emp_id).first()
     if not doc or not doc.file_data:
         raise HTTPException(status_code=404, detail="Document not found")
     return {"file_name": doc.file_name, "file_type": doc.file_type, "file_data": doc.file_data}
@@ -1323,7 +1324,7 @@ def get_pending_department_goals(request: Request, db: Session = Depends(get_db)
 
 
 @router.get("/api/leave/requests")
-def get_all_leave_requests(request: Request, db: Session = Depends(get_db)):
+def get_all_leave_requests(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     leaves = db.query(models.DBLeaveRequest).filter(models.DBLeaveRequest.client_id == client.id).order_by(models.DBLeaveRequest.created_at.desc()).all()
     prime(db, models.DBEmployee, [l.employee_id for l in leaves])

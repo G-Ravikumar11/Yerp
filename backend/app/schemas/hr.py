@@ -53,6 +53,9 @@ class EmployeeCreate(BaseModel):
     start_date: Optional[str] = ""
     employee_id: Optional[str] = ""
     password: Optional[str] = ""
+    # The rights the Master ticked, saved with the employee rather than in a second
+    # request after it. None leaves them as the access level gives them.
+    permissions: Optional[List[str]] = None
 
 
 class DocumentRequirementIn(BaseModel):

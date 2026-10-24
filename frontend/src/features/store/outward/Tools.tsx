@@ -85,6 +85,8 @@ function AddModal({ onClose }: { onClose: () => void }) {
 }
 
 function ToolModal({ id, canEdit, onClose }: { id: number; canEdit: boolean; onClose: () => void }) {
+  const { can } = useSession()
+  const canWriteOff = can(storePerm('outward', 'approve'))      // a tool is written off by someone other than who handed it out
   const q = useQuery({ queryKey: [...KEY, 'one', id], queryFn: () => get<Tool>(`/api/store/tools/${id}`) })
   const [f, setF] = useState({ holder_name: '', due_back: '', condition: 'GOOD', next_service: '', note: '' })
   const set = (k: keyof typeof f, v: string) => setF((x) => ({ ...x, [k]: v }))
@@ -121,8 +123,8 @@ function ToolModal({ id, canEdit, onClose }: { id: number; canEdit: boolean; onC
               <Field label="Note" htmlFor="tm-note" hint="Required when it comes back damaged or is lost."><Input id="tm-note" value={f.note} onChange={(e) => set('note', e.target.value)} maxLength={200} /></Field>
               <div className="flex flex-wrap gap-2">
                 {t.status === 'AVAILABLE' && <Button size="sm" variant="outline" disabled={run.isPending} onClick={() => go('service-out')}>Send for service</Button>}
-                {t.status !== 'LOST' && <Button size="sm" variant="outline" disabled={run.isPending} onClick={() => go('lose')}>Mark lost</Button>}
-                {t.status !== 'ISSUED' && <Button size="sm" variant="outline" disabled={run.isPending} onClick={() => go('retire')}>Retire</Button>}
+                {canWriteOff && t.status !== 'LOST' && <Button size="sm" variant="outline" disabled={run.isPending} onClick={() => go('lose')}>Mark lost</Button>}
+                {canWriteOff && t.status !== 'ISSUED' && <Button size="sm" variant="outline" disabled={run.isPending} onClick={() => go('retire')}>Retire</Button>}
               </div>
             </div>
           )}

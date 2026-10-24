@@ -1183,6 +1183,10 @@ def gst_outward_export(request: Request, date_from: str = "", date_to: str = "",
                       s["sgst"], s["igst"], s["tax"])])
 
 
+# Who may read the e-way bills (what is moving, where, on which lorry): those who make them and those who send and receive the goods.
+EWAY_READ = ("accounts.manage", "stores.manage", "stores.receive", "bills.view_all", "store.inward.view", "store.outward.view")
+
+
 @router.get("/api/eway-places")
 def eway_place_list(request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
@@ -1192,7 +1196,7 @@ def eway_place_list(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/eway-bills")
 def list_eway_bills(request: Request, status: str = "", db: Session = Depends(get_db)):
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, EWAY_READ)
     q = db.query(models.DBEwayBill).filter(models.DBEwayBill.client_id == client.id)
     if status:
         q = q.filter(models.DBEwayBill.status == status.upper())
@@ -1248,7 +1252,7 @@ def create_eway_bill(body: EwayIn, request: Request, db: Session = Depends(get_d
 
 @router.get("/api/eway-bills/{eid}")
 def get_eway_bill(eid: int, request: Request, db: Session = Depends(get_db)):
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, EWAY_READ)
     return {"eway_bill": eway_dict(db, eway_or_404(db, client.id, eid), detail=True)}
 
 
@@ -1269,7 +1273,7 @@ def update_eway_bill(eid: int, body: EwayIn, request: Request, db: Session = Dep
 @router.get("/api/eway-bills/{eid}/json")
 def eway_bill_json(eid: int, request: Request, db: Session = Depends(get_db)):
     """The file for the portal's bulk generation."""
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, EWAY_READ)
     e = eway_or_404(db, client.id, eid)
     problems = eway_problems(db, e)
     if problems:

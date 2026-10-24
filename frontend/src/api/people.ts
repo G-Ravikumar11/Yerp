@@ -1,4 +1,4 @@
-import { useQuery, type QueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { del, get, post, put } from '@/lib/api'
 
 export interface Employee {
@@ -49,8 +49,9 @@ export interface EmployeeDetail extends Employee {
   site_ids: number[]
   site_names: string[]
   all_sites: boolean
-  onboarding_items: OnboardingItem[]
-  payslips: unknown[]
+  /** Only in the full record (without ?view=profile); the employee's page does not ask for them. */
+  onboarding_items?: OnboardingItem[]
+  payslips?: unknown[]
 }
 
 export interface Department {
@@ -71,6 +72,8 @@ interface Permission {
   label: string
   /** Held only by this access level (and the Master) - 'ho_qs' for opening vendor codes, work orders and BOQs. */
   only_role?: string
+  /** A right broad enough to be ticked only knowingly (the Store administrator): shown where it is switched on. */
+  warning?: string
 }
 
 interface PermissionRole {
@@ -100,7 +103,8 @@ export interface HrCatalogue {
   /** `rank` is higher for a more senior level: L1 is the top. */
   levels: { code: string; label: string; rank: number }[]
   /** `reports_to` is the role this one normally reports to; `level` is where it sits. */
-  roles: { code: string; label: string; level: string; reports_to: string | null; department: string }[]
+  /** `access` is the access level the role normally carries, which the Add form gives them straight away. */
+  roles: { code: string; label: string; level: string; reports_to: string | null; department: string; access?: string }[]
   permission_roles: PermissionRole[]
   permissions: Permission[]
 }
@@ -108,19 +112,43 @@ export interface HrCatalogue {
 export const peopleKeys = { all: ['people'] as const }
 const k = (...p: unknown[]) => ['people', ...p] as const
 
-export const useEmployees = (status: string) => useQuery({ queryKey: k('employees', status), queryFn: () => get<Employee[]>(`/api/employees${status ? `?status=${encodeURIComponent(status)}` : ''}`) })
-export const useEmployee = (id: number) => useQuery({ queryKey: k('employee', id), queryFn: () => get<EmployeeDetail>(`/api/employees/${id}`), enabled: id > 0 })
+export const employeesQuery = (status: string) => ({ queryKey: k('employees', status), queryFn: () => get<Employee[]>(`/api/employees${status ? `?status=${encodeURIComponent(status)}` : ''}`) })
+export const useEmployees = (status: string) => useQuery(employeesQuery(status))
+const employeeQuery = (id: number) => ({ queryKey: k('employee', id), queryFn: () => get<EmployeeDetail>(`/api/employees/${id}?view=profile`) })
+/**
+ * What the employee's page shows (profile, access, sites): three reads on the server rather than a dozen for everything
+ * about them. Until it arrives the page is drawn from their row in the employee list, so opening somebody is instant;
+ * `isPlaceholderData` says the access and actions are not loaded yet.
+ */
+export function useEmployee(id: number) {
+  const qc = useQueryClient()
+  return useQuery({
+    ...employeeQuery(id), enabled: id > 0,
+    placeholderData: () => {
+      for (const [, list] of qc.getQueriesData<Employee[]>({ queryKey: k('employees') })) {
+        const row = Array.isArray(list) ? list.find((e) => e.id === id) : undefined
+        if (row) return { ...row, address: '', has_password: false, permissions: [], role_permissions: [], extra_permissions: [], denied_permissions: [], site_ids: [], site_names: [], all_sites: true } satisfies EmployeeDetail
+      }
+      return undefined
+    },
+  })
+}
+/** Starts reading somebody's page before they are clicked (the pointer is on their row); a fresh copy is not read twice. */
+export const prefetchEmployee = (qc: QueryClient, id: number) => void qc.prefetchQuery({ ...employeeQuery(id), staleTime: 30_000 })
 /** Every site in the application, finished ones too: a department can be assigned to any of them. */
-export const useAllSites = () => useQuery({ queryKey: ['jobs', 'all-sites'], queryFn: async () => (await get<{ jobs: { id: number; number: string; name: string }[] }>('/api/jobs?costing=false')).jobs ?? [], staleTime: 5 * 60_000 })
-export const useDepartments = () => useQuery({ queryKey: k('departments'), queryFn: () => get<Department[]>('/api/departments') })
-export const useHrCatalogue = () => useQuery({ queryKey: k('catalogue', 'v2'), queryFn: () => get<HrCatalogue>('/api/hr/levels'), staleTime: 60_000 })
-export const useHrStats = () => useQuery({ queryKey: k('stats'), queryFn: () => get<{ total_employees: number; active: number; onboarding: number; offboarding: number; terminated: number; departments: number }>('/api/hr/stats') })
+export const allSitesQuery = () => ({ queryKey: ['jobs', 'all-sites'], queryFn: async () => (await get<{ jobs: { id: number; number: string; name: string }[] }>('/api/jobs?costing=false')).jobs ?? [], staleTime: 5 * 60_000 })
+export const useAllSites = () => useQuery(allSitesQuery())
+export const departmentsQuery = () => ({ queryKey: k('departments'), queryFn: () => get<Department[]>('/api/departments') })
+export const useDepartments = () => useQuery(departmentsQuery())
+/** Levels, roles, access levels and portals. They are fixed in the code, so they are read once and kept, and live outside the People keys: a save there does not read them again. */
+export const hrCatalogueQuery = () => ({ queryKey: ['hr-catalogue', 'v3'], queryFn: () => get<HrCatalogue>('/api/hr/levels'), staleTime: Infinity, gcTime: Infinity })
+export const useHrCatalogue = () => useQuery(hrCatalogueQuery())
+export const hrStatsQuery = () => ({ queryKey: k('stats'), queryFn: () => get<{ total_employees: number; active: number; onboarding: number; offboarding: number; terminated: number; departments: number }>('/api/hr/stats') })
+export const useHrStats = () => useQuery(hrStatsQuery())
 export const useSuggestedEmail = (first: string, last: string) =>
   useQuery({ queryKey: k('suggest', first, last), queryFn: async () => (await get<{ email?: string }>(`/api/hr/suggest-email?first_name=${encodeURIComponent(first)}&last_name=${encodeURIComponent(last)}`)).email ?? '', enabled: !!(first.trim() && last.trim()), staleTime: 60_000 })
 
 export interface EmployeeInput {
-  /** The rights the Master ticked: saved with the employee, in the same request. */
-  permissions?: string[]
   first_name: string
   last_name: string
   email: string
@@ -142,11 +170,42 @@ export interface EmployeeInput {
   start_date: string
   emergency_contact: string
   emergency_phone: string
+  /** The rights the Master ticked, saved with the employee in the same request. Left out, the access level's own apply. */
+  permissions?: string[]
 }
 
 export const createEmployee = (b: EmployeeInput) => post<{ id: number; employee_id: string; first_name: string; site_names?: string[]; message: string }>('/api/employees', b)
-export const updateEmployee = (id: number, b: Partial<EmployeeInput> & Record<string, unknown>) => put<{ message?: string }>(`/api/employees/${id}`, b)
-export const setAccess = (id: number, b: { permission_role: string; permissions: string[]; site_ids?: number[] }) => put<{ message: string }>(`/api/employees/${id}/permissions`, b)
+/** Both answer with the saved profile, so the page shows it without asking again. */
+export const updateEmployee = (id: number, b: Partial<EmployeeInput> & Record<string, unknown>) => put<EmployeeDetail & { message: string }>(`/api/employees/${id}`, b)
+export const setAccess = (id: number, b: { permission_role: string; permissions: string[]; site_ids?: number[] }) => put<EmployeeDetail & { message: string }>(`/api/employees/${id}/permissions`, b)
+/**
+ * Shows a change to one employee straight away - their page from `saved` (the server's answer), or gone from every list
+ * when `deletedId` - then reads the People lists again quietly behind it. Waiting for every list to reload first held
+ * each save open for seconds on a far-away database; the record just saved is not read again at all.
+ */
+export function showEmployeeChange(qc: QueryClient, change: { saved?: EmployeeDetail; deletedId?: number; patch?: { id: number } & Partial<EmployeeDetail> }) {
+  const { saved, deletedId, patch } = change
+  const id = saved?.id ?? patch?.id ?? deletedId
+  if (saved) qc.setQueryData<EmployeeDetail>(k('employee', saved.id), saved)
+  if (patch) qc.setQueryData<EmployeeDetail>(k('employee', patch.id), (old) => old && { ...old, ...patch })
+  if (deletedId) qc.removeQueries({ queryKey: k('employee', deletedId) })
+  const row = saved ?? patch
+  qc.setQueriesData<Employee[]>({ queryKey: k('employees') }, (list) => {
+    if (!Array.isArray(list)) return list
+    if (deletedId) return list.filter((e) => e.id !== deletedId)
+    return row ? list.map((e) => (e.id === row.id ? { ...e, ...pickListFields(row) } : e)) : list
+  })
+  void qc.invalidateQueries({ queryKey: peopleKeys.all, predicate: (q) => !(q.queryKey[1] === 'employee' && q.queryKey[2] === id) })
+}
+
+const LIST_FIELDS = ['first_name', 'last_name', 'full_name', 'email', 'org_email', 'phone', 'department_id', 'department_name', 'reports_to', 'manager_name', 'job_title', 'role', 'level', 'permission_role', 'employment_type', 'pay_frequency', 'salary', 'tax_rate', 'emergency_contact', 'emergency_phone', 'start_date', 'end_date', 'status'] as const
+function pickListFields(e: Partial<EmployeeDetail>): Partial<Employee> {
+  const out: Partial<Employee> = {}
+  for (const f of LIST_FIELDS) if (e[f] !== undefined) (out as Record<string, unknown>)[f] = e[f]
+  if (e.site_ids !== undefined) out.site_count = e.all_sites ? 0 : e.site_ids.length
+  return out
+}
+
 /** Removes the person for good, with their payslips, attendance, leave and documents. The Master only. */
 export const deleteEmployee = (id: number) => del<{ message: string }>(`/api/employees/${id}`)
 /** The Master gives somebody a password to sign in with (nothing is emailed). */

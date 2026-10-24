@@ -1,5 +1,6 @@
 """Store module - the tool register, under /api/store/tools: tools by serial number, giving one out and taking it back, damage, service, loss, and
-the reminders for what is overdue. store.outward.view reads; store.outward.create changes."""
+the reminders for what is overdue. store.outward.view reads; store.outward.create registers, gives out, takes back and services a tool; writing one off
+(lost or retired) needs store.outward.approve, so the person who handed it out does not also write it off."""
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -17,6 +18,7 @@ from app.services import store_tools as svc
 from app.services.stock_ledger import assert_store_access
 
 router = APIRouter(prefix="/api/store/tools", tags=["store-tools"])
+WRITE_OFFS, WRITE_OFF_RIGHT = ("lose", "retire"), "store.outward.approve"
 
 
 class RegisterIn(BaseModel):
@@ -109,7 +111,7 @@ def act(tool_id: int, action: str, body: ActionIn, request: Request, db: Session
     fn = svc.ACTIONS.get(action)
     if fn is None:
         raise HTTPException(404, "There is no such action.")
-    actor = store_actor(request, db, "store.outward.create")
+    actor = store_actor(request, db, WRITE_OFF_RIGHT if action in WRITE_OFFS else "store.outward.create")
     tool = _tool(db, actor, tool_id)
     try:
         if action == "assign":

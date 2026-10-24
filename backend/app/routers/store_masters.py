@@ -342,6 +342,26 @@ class AssignIn(BaseModel):
     role: str = "STOREKEEPER"
 
 
+# What a person does in a store, from a fixed list so the staff list reads the same everywhere. It describes the job; what they
+# may do is still decided by their access level (and they reach only the stores they are put in).
+STORE_JOBS = {"STOREKEEPER": "Storekeeper", "STORE_INCHARGE": "Store in-charge", "ASSISTANT": "Store assistant", "GATE": "Gate / security",
+              "SITE_ENGINEER": "Site engineer (asks for material)", "VIEWER": "Looks up stock"}
+STORE_JOB_ALIASES = {"STORE_KEEPER": "STOREKEEPER", "KEEPER": "STOREKEEPER", "INCHARGE": "STORE_INCHARGE", "IN_CHARGE": "STORE_INCHARGE",
+                     "STORE_ASSISTANT": "ASSISTANT", "SECURITY": "GATE", "ENGINEER": "SITE_ENGINEER"}
+
+
+# Who works in a store decides who reaches its stock, so putting someone in (or taking them out) is an approval, not an edit.
+STAFF_RIGHT = "store.masters.approve"
+
+
+def store_job(raw) -> str:
+    code = "_".join((raw or "").upper().replace("-", " ").split()) or "STOREKEEPER"
+    code = STORE_JOB_ALIASES.get(code, code)
+    if code not in STORE_JOBS:
+        raise HTTPException(400, "The job in the store is one of: %s." % ", ".join(STORE_JOBS.values()))
+    return code
+
+
 def _employee_name(e):
     return ("%s %s" % (e.first_name or "", e.last_name or "")).strip()
 
@@ -376,12 +396,12 @@ def list_assignments(store_id: int, request: Request, db: Session = Depends(get_
 @router.post("/stores/{store_id}/assignments")
 def assign(store_id: int, body: AssignIn, request: Request, db: Session = Depends(get_db)):
     """Put a member of staff in a store (or bring back one who was taken out, with the new role label)."""
-    actor = store_actor(request, db, "store.masters.create")
+    actor = store_actor(request, db, STAFF_RIGHT)
     store = my_store(db, actor, store_id)
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == body.employee_id, models.DBEmployee.client_id == actor.client.id).first()
     if emp is None:
         raise HTTPException(400, "That employee does not exist.")
-    role = _clean(body.role, "role", 30).upper().replace(" ", "_")
+    role = store_job(body.role)
     row = db.query(DBStoreUserAssignment).filter(DBStoreUserAssignment.store_id == store.id, DBStoreUserAssignment.employee_id == emp.id).first()
     if row is not None and row.is_active:
         raise HTTPException(409, "%s already works in %s." % (_employee_name(emp), store.code))
@@ -399,7 +419,7 @@ def assign(store_id: int, body: AssignIn, request: Request, db: Session = Depend
 @router.delete("/stores/{store_id}/assignments/{employee_id}")
 def unassign(store_id: int, employee_id: int, request: Request, db: Session = Depends(get_db)):
     """Take a member of staff out of a store. The row stays, switched off, so the history of who worked there is kept."""
-    actor = store_actor(request, db, "store.masters.create")
+    actor = store_actor(request, db, STAFF_RIGHT)
     store = my_store(db, actor, store_id)
     row = db.query(DBStoreUserAssignment).filter(DBStoreUserAssignment.store_id == store.id, DBStoreUserAssignment.employee_id == employee_id,
                                                   DBStoreUserAssignment.is_active.is_(True)).first()

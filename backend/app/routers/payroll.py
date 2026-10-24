@@ -8,7 +8,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.common import PAYROLL_EXCLUDED_STATUSES, PAYSLIP_META_FIELDS, PAYSLIP_PAY_INPUTS
 from app.core.audit import log_audit
@@ -18,7 +18,7 @@ from app.core.currency import esc, money
 from app.core.dates import _parse_date
 from app.core.notifications import default_from_email, send_email_background
 from app.core.serials import next_sequence_number
-from app.routers.hr import employee_ytd
+from app.services.hr import ytd_totals
 from app.schemas.invoicing import SendInvoiceEmail
 from app.schemas.payroll import PayrollRunRequest, PayslipCreate
 from app.services.email import TRACKING_PIXEL
@@ -31,7 +31,7 @@ router = APIRouter()
 
 
 @router.get("/api/payslips")
-def get_payslips(request: Request, status: str = "", db: Session = Depends(get_db)):
+def get_payslips(request: Request, status: str = "", db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     query = db.query(models.DBPayslip).filter(models.DBPayslip.client_id == client.id)
     if status:
@@ -123,7 +123,7 @@ def run_payroll(request: Request, body: PayrollRunRequest, db: Session = Depends
 
 
 @router.get("/api/payroll/auto")
-def get_auto_payroll(request: Request, db: Session = Depends(get_db)):
+def get_auto_payroll(request: Request, db: Session = Depends(get_read_db)):
     """Whether payslips are drafted by themselves when a month ends."""
     client = get_client_user(request, db)
     return {"enabled": auto_payroll_enabled(db, client.id)}
@@ -143,19 +143,20 @@ def put_auto_payroll(request: Request, body: dict = None, db: Session = Depends(
 
 
 @router.get("/api/payslips/{ps_id}")
-def get_payslip(ps_id: int, request: Request, db: Session = Depends(get_db)):
+def get_payslip(ps_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     ps = db.query(models.DBPayslip).filter(models.DBPayslip.id == ps_id, models.DBPayslip.client_id == client.id).first()
     if not ps:
         raise HTTPException(status_code=404, detail="Payslip not found")
-    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == ps.employee_id).first()
-    settings_rows = db.query(models.DBSettings).filter(models.DBSettings.client_id == client.id).all()
-    settings_map = {s.key: s.value for s in settings_rows}
-    dept_name = ""
-    if emp and emp.department_id:
-        dept = db.query(models.DBDepartment).filter(models.DBDepartment.id == emp.department_id).first()
-        dept_name = dept.name if dept else ""
-    ytd = employee_ytd(ps.employee_id, request, (ps.period_end or ps.pay_date or "")[:4], db) if emp else {}
+    # The employee with their department's name in one read, the totals straight from the payslips: this page made
+    # fourteen round trips to the database, several of them the same lookup twice.
+    row = db.query(models.DBEmployee, models.DBDepartment.name).outerjoin(
+        models.DBDepartment, models.DBDepartment.id == models.DBEmployee.department_id).filter(
+        models.DBEmployee.id == ps.employee_id).first()
+    emp, dept_name = (row[0], row[1] or "") if row else (None, "")
+    settings_rows = db.query(models.DBSettings.key, models.DBSettings.value).filter(models.DBSettings.client_id == client.id).all()
+    settings_map = {k: v for k, v in settings_rows}
+    ytd = ytd_totals(db, client.id, ps.employee_id, (ps.period_end or ps.pay_date or "")[:4]) if emp else {}
     return {
         "id": ps.id, "number": ps.number,
         "employee_id": ps.employee_id,

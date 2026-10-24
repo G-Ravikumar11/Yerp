@@ -51,6 +51,12 @@ async def lifespan(app: FastAPI):
             for year in (datetime.now().year, datetime.now().year + 1):
                 holidays_for(year)
         _boot_step("work out this year's holidays", lambda: threading.Thread(target=warm_holidays, daemon=True).start())
+        if engine.dialect.name == "postgresql":
+            # Every round trip to a far-away database counts: a few connections ready for the first screen's requests,
+            # and the next one kept warm while the app is in use.
+            from app.db.session import keep_warm, open_spare_connections
+            _boot_step("open spare database connections", lambda: open_spare_connections(engine))
+            _boot_step("keep a database connection warm", lambda: keep_warm(engine))
         DB_READY["error"] = ""
         logger.info("Database initialized successfully")
     else:

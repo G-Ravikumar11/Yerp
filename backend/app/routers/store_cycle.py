@@ -1,5 +1,6 @@
 """Store module - cycle counting, under /api/store/cycle: items ranked A, B, C; what is due for counting; the company's counting rules; and the blind
-second count of any line whose first count was far from the books. store.control.view reads; store.control.create counts and changes the rules."""
+second count of any line whose first count was far from the books. store.control.view reads; store.control.create counts; changing the rules needs store.control.approve, so those who count
+cannot loosen the check on their own counts."""
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -69,7 +70,7 @@ def get_settings(request: Request, db: Session = Depends(get_db)):
 
 @router.put("/settings")
 def put_settings(body: SettingsIn, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.control.create")
+    actor = store_actor(request, db, "store.control.approve")
     try:
         row = svc.save_settings(db, actor.client.id, body)
         log_audit(db, actor.client.id, "store_cycle_settings", "company", actor.client.id, "cycle counting", str(svc.settings_dict(row))[:200], request=request,

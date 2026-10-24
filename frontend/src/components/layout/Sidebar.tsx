@@ -1,9 +1,11 @@
 import { useEffect, useMemo } from 'react'
 import { NavLink, useLocation, useMatch } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDown, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { groupFor, visibleNav, type NavGroup } from '@/lib/nav'
+import { prefetchPage } from '@/lib/prefetch'
 import { useSession } from '@/lib/session'
 import { useInbox } from '@/api/approvals'
 import { useUI } from '@/stores/ui'
@@ -75,6 +77,7 @@ function LinkItem({ to, label, icon: Icon, collapsed }: { to: string; label: str
 
 function Group({ group, collapsed }: { group: NavGroup; collapsed: boolean }) {
   const { pathname } = useLocation()
+  const qc = useQueryClient()
   const { openGroups, toggleGroup, setGroup, toggleSidebar } = useUI()
   const active = groupFor(pathname) === group.id
   const open = !!openGroups[group.id]
@@ -132,6 +135,9 @@ function Group({ group, collapsed }: { group: NavGroup; collapsed: boolean }) {
                   <NavLink
                     to={item.path}
                     end
+                    // The page's data starts loading as the pointer arrives, not after the click.
+                    onMouseEnter={() => prefetchPage(qc, item.path)}
+                    onFocus={() => prefetchPage(qc, item.path)}
                     className={({ isActive }) =>
                       cn(
                         'relative flex h-8 items-center rounded-md px-2.5 text-[13px] transition-colors duration-150',

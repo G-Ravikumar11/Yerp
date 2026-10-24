@@ -529,6 +529,7 @@ def _apply_reversal(db, e, store, user_id, reason):
         avg = _q(new_value / new_qty, _RATE)
         qty_in, qty_out = qty, ZERO
         moved = _put_lots(db, store, e.item_id, qty, original, rows)
+        _note_restock(db, store, e.item_id, new_qty)
     bal.qty, bal.value, bal.avg_rate = new_qty, new_value, avg
     entry = DBStoreStockLedger(
         txn_date=e.txn_date, store_id=store.id, item_id=e.item_id, movement_type=mtype.value,

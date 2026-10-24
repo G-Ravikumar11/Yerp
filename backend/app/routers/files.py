@@ -262,6 +262,8 @@ def upload_file(request: Request, file: UploadFile = File(...), thumb: Optional[
         client, actor_name = who.client, who.name
         job_id, _locked, store_id = store_files.target(db, client.id, attached_type, attached_id)
         assert_store_access(who.user, store_id)
+        if _locked:
+            raise HTTPException(409, "That document is posted, closed or cancelled, so its papers are kept as they are.")
     else:
         client, _, actor_name = wo_actor(request, db, "site.record")
         job_id, _locked = attachment_target(db, client.id, attached_type, attached_id)

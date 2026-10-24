@@ -76,12 +76,12 @@ export interface JobOption {
   number: string
   name: string
 }
-export const useJobOptions = (staff: boolean) =>
-  useQuery({
-    queryKey: ['jobs', 'options', staff],
-    queryFn: async () => (await get<{ jobs: JobOption[] }>(staff ? '/api/employee/jobs' : '/api/jobs?open_only=true&costing=false')).jobs ?? [],
-    staleTime: 5 * 60_000,
-  })
+export const jobOptionsQuery = (staff: boolean) => ({
+  queryKey: ['jobs', 'options', staff],
+  queryFn: async () => (await get<{ jobs: JobOption[] }>(staff ? '/api/employee/jobs' : '/api/jobs?open_only=true&costing=false')).jobs ?? [],
+  staleTime: 5 * 60_000,
+})
+export const useJobOptions = (staff: boolean) => useQuery(jobOptionsQuery(staff))
 
 /* --- Building an order from codes already in the item master ------------------ */
 

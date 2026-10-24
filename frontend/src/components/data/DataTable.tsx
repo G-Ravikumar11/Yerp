@@ -38,6 +38,7 @@ export function DataTable<T>({
   columns,
   rowKey,
   onRowClick,
+  onRowHover,
   loading,
   empty = 'Nothing here yet.',
   footer,
@@ -50,6 +51,8 @@ export function DataTable<T>({
   columns: readonly TableColumn<T>[]
   rowKey: (row: T, index: number) => string | number
   onRowClick?: (row: T) => void
+  /** The pointer or the keyboard reached a row: a page can start loading what a click would open. */
+  onRowHover?: (row: T) => void
   loading?: boolean
   empty?: React.ReactNode
   footer?: React.ReactNode
@@ -148,6 +151,8 @@ export function DataTable<T>({
                 key={rowKey(row, i)}
                 tabIndex={onRowClick ? 0 : undefined}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
+                onMouseEnter={onRowHover ? () => onRowHover(row) : undefined}
+                onFocus={onRowHover ? () => onRowHover(row) : undefined}
                 onKeyDown={
                   onRowClick
                     ? (e) => {

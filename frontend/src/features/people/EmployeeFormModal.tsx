@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Button, Field, Input, Modal, NumField, Select } from '@/components/ui'
 import { createEmployee, peopleKeys, useDepartments, useEmployees, useHrCatalogue, useSuggestedEmail, type EmployeeInput } from '@/api/people'
 import { useJobOptions } from '@/api/clientOrders'
 import { useAction } from '@/lib/mutate'
 import { today } from '@/lib/format'
 import { useSession } from '@/lib/session'
+import { useDebounced } from '@/lib/hooks'
 import { AccessPicker } from './AccessPicker'
 import { PASSWORD_RULE, PasswordField, passwordProblem } from '@/features/auth/PasswordField'
 
@@ -29,25 +31,56 @@ function Form({ onClose }: { onClose: () => void }) {
   const depts = useDepartments()
   const people = useEmployees('')
   const jobs = useJobOptions(false)
-  const suggested = useSuggestedEmail(f.first_name, f.last_name)
+  // Not on every letter: the address is asked for once the name has stopped changing.
+  const suggested = useSuggestedEmail(useDebounced(f.first_name, 400), useDebounced(f.last_name, 400))
   const set = (k: keyof EmployeeInput) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((s) => ({ ...s, [k]: e.target.value }))
   // The reporting line runs up the levels: somebody can report to the same level or above, never below. People with no level yet are not ruled out.
   const rank = (code: string) => cat.data?.levels.find((l) => l.code === code)?.rank ?? 0
   const managers = (people.data ?? []).filter((p) => !f.level || !p.level || rank(p.level) >= rank(f.level))
   // Choosing a role fills in its level. The reporting line follows the role too: the Master sees who it will be and may pick somebody else; for everyone else the server sets it when the employee is saved.
-  const pickRole = (code: string) => setF((s) => {
+  // Access follows the role and the level, so the Master does not tick it all again: the access level the role carries is
+  // chosen and its rights ticked at once, and can still be changed below. Only the Master gives access; for anybody else the server's default stands.
+  const giveAccess = (access?: string) => {
+    const level = isOwner && access ? cat.data?.permission_roles.find((x) => x.code === access) : undefined
+    if (!level) return
+    setF((s) => ({ ...s, permission_role: level.code }))
+    setGranted(level.permissions)
+  }
+  const pickRole = (code: string) => {
     const r = cat.data?.roles.find((x) => x.code === code)
-    const boss = isOwner && r?.reports_to ? (people.data ?? []).find((p) => p.role === r.reports_to) : undefined
-    return { ...s, role: code, level: s.level || r?.level || '', reports_to: boss?.id ?? s.reports_to }
-  })
+    setF((s) => {
+      const boss = isOwner && r?.reports_to ? (people.data ?? []).find((p) => p.role === r.reports_to) : undefined
+      return { ...s, role: code, level: r?.level || s.level, reports_to: boss?.id ?? s.reports_to }
+    })
+    giveAccess(r?.access)
+  }
+  // A level on its own gives access too: the level is named for its main role ("L4 - Project Manager", "L6 - Site Engineer"),
+  // so that role's access is used; the role can then be chosen to refine it. Where no role fits the name, an access every
+  // role at the level shares is used, and otherwise nothing is guessed.
+  const pickLevel = (level: string) => {
+    const here = (cat.data?.roles ?? []).filter((r) => r.level === level)
+    setF((s) => ({ ...s, level, role: here.some((r) => r.code === s.role) ? s.role : '' }))
+    const name = (cat.data?.levels.find((l) => l.code === level)?.label ?? '').toLowerCase()
+    const main = here.find((r) => name.includes(r.label.toLowerCase()))
+    const shared = [...new Set(here.map((r) => r.access).filter(Boolean))]
+    giveAccess(main?.access ?? (shared.length === 1 ? shared[0] : undefined))
+  }
   const num = (k: keyof EmployeeInput) => (n: number) => setF((s) => ({ ...s, [k]: n }))
   // Their own address follows their name until somebody types one.
   const [typed, setTyped] = useState(false)
   useEffect(() => { if (!typed && suggested.data) setF((s) => ({ ...s, email: suggested.data })) }, [suggested.data, typed])
   useEffect(() => { const r = cat.data?.permission_roles.find((x) => x.code === f.permission_role); if (r && granted.length === 0) setGranted(r.permissions) }, [cat.data]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // One request: the employee and, for the Master, the access ticked - not a second call waiting on the first.
-  const save = useAction(() => createEmployee({ ...f, password: f.password?.trim(), ...(isOwner ? { permissions: granted } : {}) }), { invalidate: [peopleKeys.all], success: (r) => r.message || 'Employee created', onSuccess: (r) => setGiven({ id: r.employee_id, email: f.email, password: f.password ?? '', sites: (r.site_names ?? []).join(', ') || 'Every site' }) })
+  const qc = useQueryClient()
+  // One request: the access the Master ticked is saved with the employee. The People lists then
+  // refresh behind the details screen rather than holding it until every one has reloaded.
+  const save = useAction(() => createEmployee({ ...f, password: f.password?.trim(), ...(isOwner ? { permissions: granted } : {}) }), {
+    success: (r) => r.message || 'Employee created',
+    onSuccess: (r) => {
+      setGiven({ id: r.employee_id, email: f.email, password: f.password ?? '', sites: (r.site_names ?? []).join(', ') || 'Every site' })
+      void qc.invalidateQueries({ queryKey: peopleKeys.all })
+    },
+  })
   const pass = f.password?.trim() ?? ''
   // A login needs an email, a password that passes the rule, and the same password typed twice. Staff who never sign in need none of it.
   const passError = pass ? passwordProblem(pass) : ''
@@ -83,8 +116,8 @@ function Form({ onClose }: { onClose: () => void }) {
         <Field label="Job title" htmlFor="ef-title"><Input id="ef-title" value={f.job_title} onChange={set('job_title')} /></Field>
         <Field label="Department" htmlFor="ef-dept" hint={isOwner ? undefined : 'Only the Master places people in departments.'}><Select id="ef-dept" disabled={!isOwner} value={f.department_id ?? ''} onChange={(e) => setF((s) => ({ ...s, department_id: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={(depts.data ?? []).filter((d) => d.site_ids.length > 0 || d.id === f.department_id).map((d) => ({ value: d.id, label: d.name }))} /></Field>
         <Field label="Reports to" htmlFor="ef-mgr" hint={isOwner ? 'Follows the role; change it if needed.' : 'Set automatically from the role. Only the Master can change it.'}><Select id="ef-mgr" disabled={!isOwner} value={f.reports_to ?? ''} onChange={(e) => setF((s) => ({ ...s, reports_to: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={managers.map((p) => ({ value: p.id, label: p.level ? `${p.full_name} (${p.level})` : p.full_name }))} /></Field>
-        <Field label="Level" htmlFor="ef-level"><Select id="ef-level" value={f.level} onChange={set('level')} placeholder="Not set" options={(cat.data?.levels ?? []).map((l) => ({ value: l.code, label: l.label }))} /></Field>
-        <Field label="Reporting role" htmlFor="ef-role"><Select id="ef-role" value={f.role} onChange={(e) => pickRole(e.target.value)} placeholder="Not set" options={(cat.data?.roles ?? []).map((r) => ({ value: r.code, label: r.label }))} /></Field>
+        <Field label="Level" htmlFor="ef-level"><Select id="ef-level" value={f.level} onChange={(e) => pickLevel(e.target.value)} placeholder="Not set" options={(cat.data?.levels ?? []).map((l) => ({ value: l.code, label: l.label }))} /></Field>
+        <Field label="Reporting role" htmlFor="ef-role"><Select id="ef-role" value={f.role} onChange={(e) => pickRole(e.target.value)} placeholder="Not set" options={(cat.data?.roles ?? []).filter((r) => !f.level || r.level === f.level).map((r) => ({ value: r.code, label: r.label }))} /></Field>
         <Field label="Start date" htmlFor="ef-start"><Input id="ef-start" type="date" value={f.start_date} onChange={set('start_date')} /></Field>
         <Field label="Type" htmlFor="ef-type"><Select id="ef-type" value={f.employment_type} onChange={set('employment_type')} options={[['full_time', 'Full time'], ['part_time', 'Part time'], ['contract', 'Contract'], ['intern', 'Intern']].map(([v, l]) => ({ value: v, label: l }))} /></Field>
         <Field label="Paid" htmlFor="ef-freq"><Select id="ef-freq" value={f.pay_frequency} onChange={set('pay_frequency')} options={[['monthly', 'Monthly'], ['biweekly', 'Every two weeks'], ['weekly', 'Weekly'], ['hourly', 'Hourly']].map(([v, l]) => ({ value: v, label: l }))} /></Field>

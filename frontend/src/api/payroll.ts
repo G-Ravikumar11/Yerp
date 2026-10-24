@@ -82,7 +82,8 @@ export interface PayslipInput {
 export interface RunResult { created: { number: string }[]; skipped: unknown[]; total_net: number; warnings?: { name: string; number: string; reason: string }[] }
 export interface Anomaly { employee_name: string; previous_net: number; current_net: number; change_pct: number; direction: string }
 
-export const usePayslips = () => useQuery({ queryKey: k('list'), queryFn: () => get<PayslipRow[]>('/api/payslips') })
+export const payslipsQuery = () => ({ queryKey: k('list'), queryFn: () => get<PayslipRow[]>('/api/payslips') })
+export const usePayslips = () => useQuery(payslipsQuery())
 export const usePayslip = (id: number | null) => useQuery({ queryKey: k('one', id), queryFn: () => get<PayslipDetail>(`/api/payslips/${id}`), enabled: !!id })
 export const usePayDetails = (emp: number | null, start: string, end: string) =>
   useQuery({ queryKey: k('pay-details', emp, start, end), queryFn: () => get<PayDetails>(`/api/employees/${emp}/pay-details?period_start=${start}&period_end=${end}`), enabled: !!emp && !!start && !!end })
@@ -95,5 +96,6 @@ export const reopenPayslip = (id: number) => post<{ message?: string }>(`/api/pa
 export const deletePayslip = (id: number, force: boolean) => del<{ message?: string }>(`/api/payslips/${id}${force ? '?force=true' : ''}`)
 export const emailPayslip = (id: number) => post<{ message?: string }>(`/api/payslips/${id}/send`)
 
-export const useAutoPayroll = () => useQuery({ queryKey: k('auto'), queryFn: () => get<{ enabled: boolean }>('/api/payroll/auto') })
+export const autoPayrollQuery = () => ({ queryKey: k('auto'), queryFn: () => get<{ enabled: boolean }>('/api/payroll/auto') })
+export const useAutoPayroll = () => useQuery(autoPayrollQuery())
 export const setAutoPayroll = (enabled: boolean) => put<{ enabled: boolean; message: string }>('/api/payroll/auto', { enabled })
