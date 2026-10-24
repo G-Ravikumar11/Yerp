@@ -120,10 +120,11 @@ def scan(request: Request, db: Session = Depends(get_db)):
     if not stores:
         return {"raised": 0}
     over = store_levels.overrides(db, list(stores))
-    sets = {s.item_id: s for s in db.query(DBStoreItemSettings).all()}
+    held = db.query(DBStoreStockBalance).filter(DBStoreStockBalance.store_id.in_(list(stores))).all()
+    sets = {s.item_id: s for s in db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id.in_([b.item_id for b in held] or [0])).all()}
     raised = 0
     try:
-        for bal in db.query(DBStoreStockBalance).filter(DBStoreStockBalance.store_id.in_(list(stores))).all():
+        for bal in held:
             level = store_levels.effective(sets.get(bal.item_id), over.get((bal.store_id, bal.item_id)))[0]
             if level > 0 and Decimal(str(bal.qty)) <= level:
                 item = db.get(models.DBItem, bal.item_id)

@@ -190,7 +190,7 @@ def send_reminders(db, client_id):
     lines, count = [], 0
 
     items = {i.id: i for i in db.query(models.DBItem).filter(models.DBItem.client_id == client_id, models.DBItem.kind == "RM").all()}
-    overdue = [r for r in store_outward.get_outstanding_returnables(db) if r.item_id in items and r.overdue_days > 0]
+    overdue = [r for r in store_outward.get_outstanding_returnables(db, client_id=client_id) if r.item_id in items and r.overdue_days > 0]
     for ref in _due_for_reminder(db, client_id, "RETURN_OVERDUE", [r.issue_line_id for r in overdue]):
         r = next(x for x in overdue if x.issue_line_id == ref)
         lines.append("- %s x %s is %d day%s overdue to come back" % (store_outward.s3(r.qty_outstanding).rstrip("0").rstrip("."), items[r.item_id].item_name, r.overdue_days, "" if r.overdue_days == 1 else "s"))

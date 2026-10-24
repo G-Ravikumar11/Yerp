@@ -230,10 +230,12 @@ def _apply_reversal(db, e, store, user_id, reason):
         # last average is kept, as an issue that empties the bin keeps it.)
         avg = _q(new_value / new_qty, _RATE) if new_qty else _dec(bal.avg_rate)
         qty_in, qty_out, value = ZERO, qty, taken
+        _note_reorder(db, store, e.item_id, old_qty, new_qty)
     else:                                       # bring it back in
         new_qty, new_value = old_qty + qty, old_value + value
         avg = _q(new_value / new_qty, _RATE)
         qty_in, qty_out = qty, ZERO
+        _note_restock(db, store, e.item_id, new_qty)
     bal.qty, bal.value, bal.avg_rate = new_qty, new_value, avg
     entry = DBStoreStockLedger(
         txn_date=date.today(), store_id=store.id, item_id=e.item_id, movement_type=mtype.value,

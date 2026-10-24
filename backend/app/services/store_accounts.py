@@ -6,6 +6,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import HTTPException
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from app import models
 from app.models.store_control import DBStoreScrap, DBStoreScrapLine, DBStoreTransfer, DBStoreTransferLine
@@ -139,8 +140,13 @@ def sync_cross_charges(db, client_id):
         live.add(t.id)
         if t.id not in have:
             src, dest = stores.get(t.store_id), stores.get(t.to_store_id)
-            db.add(DBStoreCrossCharge(client_id=client_id, transfer_id=t.id, from_project_id=src.project_id if src else None, to_project_id=dest.project_id if dest else None,
-                                      amount=worth.get(t.id, ZERO), status="PENDING"))
+            try:
+                with db.begin_nested():                       # two screens opening at once may both make it: the second finds it there
+                    db.add(DBStoreCrossCharge(client_id=client_id, transfer_id=t.id, from_project_id=src.project_id if src else None,
+                                              to_project_id=dest.project_id if dest else None, amount=worth.get(t.id, ZERO), status="PENDING"))
+                    db.flush()
+            except IntegrityError:
+                pass
     for tid, row in have.items():
         if tid not in live:
             if row.status == "PENDING":

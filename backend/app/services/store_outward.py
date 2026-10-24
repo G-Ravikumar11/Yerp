@@ -672,12 +672,14 @@ def get_subcon_issues(db, subcontractor_id, upto_date) -> List[SubconIssueLine]:
     return out
 
 
-def get_outstanding_returnables(db, project_id=None, store_id=None) -> List[ReturnableOutstanding]:
+def get_outstanding_returnables(db, project_id=None, store_id=None, client_id=None) -> List[ReturnableOutstanding]:
     """Returnable items and tools issued and not yet back: issued less what has been returned, reported lost, converted to a recovery or handed to a
     write-off request, per issue line."""
     q = (db.query(DBStoreIssueLine, DBStoreIssue).join(DBStoreIssue, DBStoreIssue.id == DBStoreIssueLine.issue_id)
          .join(DBStoreItemSettings, DBStoreItemSettings.item_id == DBStoreIssueLine.item_id)
          .filter(DBStoreIssue.status == DocStatus.POSTED.value, DBStoreItemSettings.category.in_(RETURNABLE_CATEGORIES)))
+    if client_id:
+        q = q.filter(DBStoreIssue.client_id == client_id)
     if project_id:
         q = q.filter(DBStoreIssue.project_id == project_id)
     if store_id:
