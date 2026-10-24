@@ -34,7 +34,15 @@ def calm():
 def solve(c):
     ch = c.get("/api/captcha").json()
     assert ch["provider"] == "builtin" and ch["image"].startswith("data:image/png;base64,")
-    return {"captcha_token": ch["token"], "captcha_answer": "aaaaa"}       # case does not matter
+    return {"captcha_token": ch["token"], "captcha_answer": "AAAAA"}
+
+
+def test_the_captcha_answer_must_match_capital_and_small_letters(client, captcha_on, monkeypatch):
+    letters = iter("AbAbA")
+    monkeypatch.setattr(login_guard.secrets, "choice", lambda alphabet: next(letters))
+    drawn = login_guard._signer().loads(client.get("/api/captcha").json()["token"])["d"]
+    assert login_guard._digest("AbAbA") == drawn
+    assert login_guard._digest("ababa") != drawn and login_guard._digest("ABABA") != drawn
 
 
 # --- the address -----------------------------------------------------------------------------------------------------

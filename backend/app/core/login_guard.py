@@ -45,7 +45,9 @@ CAPTCHA_AFTER = 3                 # failures (per address or per account) before
 LOCK_AFTER = 10                   # failures against one account before it is locked
 CAPTCHA_TTL = 10 * 60             # how long a drawn CAPTCHA can be answered
 CREDITS = 2                       # requests one solved CAPTCHA covers: the owner's door, then the staff door
-ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no 0/O, 1/I: a CAPTCHA is not an eye test
+# Capital and small letters both, and the answer must match them: only letters whose capital and small forms look
+# different (no C/c, K/k, O/o, P/p, S/s, U/u, V/v, W/w, X/x, Z/z), and none that pass for one another (0/O, 1/I/l).
+ALPHABET = "ABDEFGHJLMNQRTY" + "abdefghjmnqrty" + "23456789"
 
 
 def mode():
@@ -263,7 +265,7 @@ def _picture(text):
 
 def _digest(answer):
     from app.core.config import SECRET_KEY
-    return hashlib.sha256(("%s|%s" % (SECRET_KEY, (answer or "").strip().upper())).encode()).hexdigest()
+    return hashlib.sha256(("%s|%s" % (SECRET_KEY, (answer or "").strip())).encode()).hexdigest()
 
 
 def challenge():
