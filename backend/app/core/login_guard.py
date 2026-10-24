@@ -27,6 +27,7 @@ import base64
 import hashlib
 import io
 import json
+import math
 import os
 import random
 import secrets
@@ -221,31 +222,40 @@ def _spend(token):
 
 def _picture(text):
     """The letters on a noisy background, each turned a little: easy for a person, not for a script reading pixels."""
-    from PIL import Image, ImageDraw, ImageFilter, ImageFont
-    w, h = 220, 70
-    img = Image.new("RGB", (w, h), (246, 247, 250))
+    from PIL import Image, ImageDraw, ImageFont
+    # Drawn at twice the size it is shown, so it stays sharp on any screen. Pillow's own font, not one from the
+    # machine: the main site (Linux) and a laptop (Windows) have different fonts, and the picture must look the same.
+    s = 2
+    w, h = 220 * s, 70 * s
+    img = Image.new("RGB", (w, h))
     d = ImageDraw.Draw(img)
-    for _ in range(9):
-        d.line([(random.randint(0, w), random.randint(0, h)) for _ in range(2)],
-               fill=(random.randint(120, 200), random.randint(120, 200), random.randint(120, 200)), width=2)
-    try:
-        font = ImageFont.truetype("DejaVuSans-Bold.ttf", 38)
-    except OSError:
-        try:
-            font = ImageFont.truetype("arialbd.ttf", 38)
-        except OSError:
-            font = ImageFont.load_default()
-    x = 14
-    for ch in text:
-        tile = Image.new("RGBA", (46, 60), (0, 0, 0, 0))
-        ImageDraw.Draw(tile).text((6, 4), ch, font=font,
-                                  fill=(random.randint(10, 70), random.randint(30, 90), random.randint(90, 160), 255))
-        tile = tile.rotate(random.randint(-25, 25), resample=Image.BICUBIC, expand=False)
-        img.paste(tile, (x, random.randint(0, 10)), tile)
-        x += random.randint(36, 42)
-    for _ in range(260):
-        d.point((random.randint(0, w - 1), random.randint(0, h - 1)), fill=(random.randint(80, 200),) * 3)
-    img = img.filter(ImageFilter.SMOOTH)
+    for y in range(h):                       # a soft wash from pale blue to pale lavender
+        t = y / h
+        d.line([(0, y), (w, y)], fill=(int(238 + 6 * t), int(243 - 3 * t), 255))
+    for _ in range(140):                     # faint speckle, lighter than any letter
+        x0, y0, r = random.randint(0, w), random.randint(0, h), random.randint(1, 3)
+        d.ellipse([x0 - r, y0 - r, x0 + r, y0 + r], fill=(random.randint(185, 215), random.randint(195, 220), 240))
+    for _ in range(2):                       # two gentle waves behind the letters
+        amp, phase, base = random.uniform(8, 16) * s, random.uniform(0, 6.3), random.uniform(0.3, 0.7) * h
+        d.line([(x, base + amp * math.sin(x / (34 * s) + phase)) for x in range(0, w + 1, 4)],
+               fill=(172, 186, 230), width=2 * s, joint="curve")
+    font = ImageFont.load_default(size=40 * s)
+    colours = [(30, 58, 138), (55, 48, 163), (29, 78, 216), (91, 33, 182), (15, 118, 110)]
+    step = (w - 36 * s) / len(text)
+    for i, ch in enumerate(text):
+        tile = Image.new("RGBA", (60 * s, 64 * s), (0, 0, 0, 0))
+        td = ImageDraw.Draw(tile)
+        box = td.textbbox((0, 0), ch, font=font, stroke_width=s)
+        colour = random.choice(colours) + (255,)
+        td.text(((tile.width - box[2] - box[0]) / 2, (tile.height - box[3] - box[1]) / 2), ch, font=font,
+                fill=colour, stroke_width=s, stroke_fill=colour)
+        tile = tile.rotate(random.randint(-14, 14), resample=Image.BICUBIC)
+        img.paste(tile, (int(18 * s + i * step + random.randint(-3, 3) * s - 8 * s),
+                         int((h - tile.height) / 2 + random.randint(-5, 5) * s)), tile)
+    # one thin line across the letters themselves, so they cannot be lifted off a clean background
+    y0 = random.uniform(0.4, 0.6) * h
+    d.line([(12 * s, y0), (w - 12 * s, y0 + random.uniform(-0.2, 0.2) * h)], fill=(99, 102, 241), width=s)
+    img = img.resize((220, 70), Image.LANCZOS)
     buf = io.BytesIO()
     img.save(buf, "PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
