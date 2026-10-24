@@ -103,8 +103,9 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
     # Emails are not case-sensitive and a stray space from a paste or autofill is not part of one.
     email = (body.email or "").strip().lower()
-    login_guard.guard(request, email, login_guard.body_of(body))
     client = db.query(models.DBClient).filter(sqlfunc.lower(models.DBClient.email) == email).first()
+    # The company's Master is never locked out - otherwise anybody who knew their email could keep them out.
+    login_guard.guard(request, email, login_guard.body_of(body), lockable=client is None)
     if client and verify_password(body.password, client.password_hash):
         upgrade_password_hash(client, "password_hash", body.password)
     if not client or not verify_password(body.password, client.password_hash):
@@ -587,4 +588,6 @@ def reset_password(body: ResetPasswordIn, request: Request, db: Session = Depend
     log_audit(db, client_id, "password_reset", row.user_type,
               row.employee_id or row.client_id, who, "", request)
     db.commit()
+    # A new password, proved by the emailed link: whatever was counted against the account no longer stands.
+    login_guard.clear_account(who)
     return {"message": "Password updated. You can sign in now."}

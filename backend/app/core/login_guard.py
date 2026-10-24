@@ -17,9 +17,14 @@ The CAPTCHA
     two requests - and no more: a solved CAPTCHA is not a licence to keep guessing.
 
 The lock
-    Ten wrong passwords against one account in fifteen minutes and it stops answering, even to the right password,
-    until fifteen minutes have passed since the last; the company's Master is told once. With the CAPTCHA in front, a
-    lock-out costs an attacker ten solved CAPTCHAs.
+    Ten wrong passwords against one account from one address in fifteen minutes, and that account stops answering
+    that address - even to the right password - until fifteen minutes have passed since the last. It is the guesser
+    who is shut out, not the person: the same account still signs in from anywhere else. A lock on the account itself
+    let anybody who knew an email keep its owner out for good, fifteen minutes at a time.
+    The company's Master is never locked out at all: what stands in front of their account is the CAPTCHA, which every
+    attempt needs once it has been guessed at, and the limit on how fast one address may try. When their account (or
+    anybody's) has been guessed at ten times in fifteen minutes, from wherever, the Master is told once.
+    Setting a new password - a reset link, or the Master giving one - clears what was counted against the account.
 
 All of it is kept in memory: a restart forgets it, which is the right way round for a lock.
 """
@@ -136,6 +141,12 @@ class _Failures:
         with self._lock:
             self._hits.pop(key, None)
 
+    def clear_prefix(self, key):
+        """The key and every key built on it ("acct:x" and each "acct:x|ip:...")."""
+        with self._lock:
+            for k in [k for k in self._hits if k == key or k.startswith(key + "|")]:
+                self._hits.pop(k, None)
+
     def first_lock(self, email):
         """True once per lock-out, so the Master is told once and not at every attempt."""
         now = time.time()
@@ -165,38 +176,56 @@ def captcha_needed(request, email=""):
             or bool(email) and failures.count(_email_key(email)) >= CAPTCHA_AFTER)
 
 
-def locked(email):
-    return bool(email) and failures.count(_email_key(email)) >= LOCK_AFTER
+def _pair_key(email, request):
+    """One account as tried from one address: what a lock is counted on."""
+    return "%s|ip:%s" % (_email_key(email), client_ip(request))
 
 
-def guard(request, email="", body=None, always=False):
-    """Before a sign-in is tried: refuse a locked account, and ask for a CAPTCHA where there is reason to."""
-    if locked(email):
-        raise HTTPException(429, "This account is locked for 15 minutes after too many wrong passwords. "
-                                 "Wait, then sign in - or use Forgot password.")
+def locked(email, request=None):
+    """Whether this address is shut out of this account. Without a request there is no address to lock, so nothing is."""
+    return bool(email) and request is not None and failures.count(_pair_key(email, request)) >= LOCK_AFTER
+
+
+def guard(request, email="", body=None, always=False, lockable=True):
+    """Before a sign-in is tried: refuse an address that has guessed too often at this account, and ask for a CAPTCHA
+    where there is reason to. `lockable` is False for the company's Master, who is never locked out."""
+    if lockable and locked(email, request):
+        raise HTTPException(429, "Sign-in to this account is locked from here for 15 minutes after too many wrong passwords. "
+                                 "Try again later, from another device, or use Forgot password.")
     if mode() != "off" and (always or captcha_needed(request, email)):
         require_captcha(request, body or {})
 
 
 def failed(request, email="", db=None, client_id=None):
-    """A wrong password (or an address trying accounts that do not exist). Counted against the address, and against
-    the account when there is one - and the Master told when the account is locked."""
+    """A wrong password (or an address trying accounts that do not exist). Counted against the address, against the
+    account (which asks for a CAPTCHA and tells the Master), and against the account from this address (the lock)."""
     failures.add("ip:" + client_ip(request))
     if not email:
         return
     failures.add(_email_key(email))
-    if locked(email) and failures.first_lock(email.strip().lower()) and db is not None and client_id:
+    failures.add(_pair_key(email, request))
+    if (failures.count(_email_key(email)) >= LOCK_AFTER and failures.first_lock(email.strip().lower())
+            and db is not None and client_id):
         from app.core.notifications import notify
-        notify(db, client_id, "security_lock", "Sign-in locked for %s" % email,
-               "Ten wrong passwords in fifteen minutes, the last from %s. The account will not sign in for 15 minutes. "
-               "If it was not them, change their password." % client_ip(request), severity="danger")
+        notify(db, client_id, "security_lock", "Repeated wrong passwords for %s" % email,
+               "Ten wrong passwords in fifteen minutes, the last from %s. Sign-ins from where they came are paused "
+               "for 15 minutes; the account itself still signs in. If it was not them, change their password."
+               % client_ip(request), severity="danger")
 
 
 def succeeded(request, email=""):
-    """The right password: the account's count starts again. The address's does not - one right password among many
-    wrong ones for other accounts is no reason to stop asking."""
+    """The right password: the account's count starts again, and so does this address's against it. The address's
+    own count does not - one right password among many wrong ones for other accounts is no reason to stop asking."""
     if email:
         failures.clear(_email_key(email))
+        failures.clear(_pair_key(email, request))
+
+
+def clear_account(email):
+    """A new password has been set (a reset link, or the Master giving one): nothing counted against the account,
+    from any address, still stands."""
+    if email:
+        failures.clear_prefix(_email_key(email))
 
 
 # --- the CAPTCHA ------------------------------------------------------------------------------------------------------
