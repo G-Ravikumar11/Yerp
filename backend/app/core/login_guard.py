@@ -17,9 +17,12 @@ The CAPTCHA
     two requests - and no more: a solved CAPTCHA is not a licence to keep guessing.
 
 The lock
-    Ten wrong passwords against one account in fifteen minutes and it stops answering, even to the right password,
-    until fifteen minutes have passed since the last; the company's Master is told once. With the CAPTCHA in front, a
-    lock-out costs an attacker ten solved CAPTCHAs.
+    Ten wrong passwords against one account from one address in fifteen minutes and that address can no longer sign in
+    to it, even with the right password, until fifteen minutes have passed since the last; the company's Master is told
+    once. The account itself stays open to everybody else: a lock on the whole account let anybody who knew the
+    Master's email keep them out, fifteen minutes at a time, for as long as they liked. Guessing from address after
+    address is met by the CAPTCHA instead, which the account asks for on every try once it has seen three failures.
+    Setting a new password through Forgot password lifts every lock on the account.
 
 All of it is kept in memory: a restart forgets it, which is the right way round for a lock.
 """
@@ -136,6 +139,15 @@ class _Failures:
         with self._lock:
             self._hits.pop(key, None)
 
+    def clear_prefix(self, prefix):
+        with self._lock:
+            for k in [k for k in self._hits if k.startswith(prefix)]:
+                self._hits.pop(k, None)
+
+    def forget_notice(self, email):
+        with self._lock:
+            self._notified.pop(email, None)
+
     def first_lock(self, email):
         """True once per lock-out, so the Master is told once and not at every attempt."""
         now = time.time()
@@ -158,6 +170,11 @@ def _email_key(email):
     return "acct:" + (email or "").strip().lower()
 
 
+def _pair_key(email, request):
+    """One account as tried from one address: what the lock counts."""
+    return "pair:%s|%s" % ((email or "").strip().lower(), client_ip(request))
+
+
 def captcha_needed(request, email=""):
     if mode() == "off":
         return False
@@ -165,13 +182,21 @@ def captcha_needed(request, email=""):
             or bool(email) and failures.count(_email_key(email)) >= CAPTCHA_AFTER)
 
 
-def locked(email):
-    return bool(email) and failures.count(_email_key(email)) >= LOCK_AFTER
+def locked(email, request=None):
+    """Whether this address may no longer try this account. Without a request, whether any address is locked out of it."""
+    if not email:
+        return False
+    if request is None:
+        prefix = "pair:%s|" % email.strip().lower()
+        with failures._lock:
+            keys = [k for k in failures._hits if k.startswith(prefix)]
+        return any(failures.count(k) >= LOCK_AFTER for k in keys)
+    return failures.count(_pair_key(email, request)) >= LOCK_AFTER
 
 
 def guard(request, email="", body=None, always=False):
-    """Before a sign-in is tried: refuse a locked account, and ask for a CAPTCHA where there is reason to."""
-    if locked(email):
+    """Before a sign-in is tried: refuse an address locked out of the account, and ask for a CAPTCHA where there is reason to."""
+    if locked(email, request):
         raise HTTPException(429, "This account is locked for 15 minutes after too many wrong passwords. "
                                  "Wait, then sign in - or use Forgot password.")
     if mode() != "off" and (always or captcha_needed(request, email)):
@@ -184,8 +209,9 @@ def failed(request, email="", db=None, client_id=None):
     failures.add("ip:" + client_ip(request))
     if not email:
         return
-    failures.add(_email_key(email))
-    if locked(email) and failures.first_lock(email.strip().lower()) and db is not None and client_id:
+    failures.add(_email_key(email))                  # the account's own count: the CAPTCHA, from any address
+    failures.add(_pair_key(email, request))          # this address against this account: the lock
+    if locked(email, request) and failures.first_lock(email.strip().lower()) and db is not None and client_id:
         from app.core.notifications import notify
         notify(db, client_id, "security_lock", "Sign-in locked for %s" % email,
                "Ten wrong passwords in fifteen minutes, the last from %s. The account will not sign in for 15 minutes. "
@@ -197,6 +223,17 @@ def succeeded(request, email=""):
     wrong ones for other accounts is no reason to stop asking."""
     if email:
         failures.clear(_email_key(email))
+        failures.clear(_pair_key(email, request))
+
+
+def unlock(email):
+    """A new password set through Forgot password: every lock on the account, and its count, are lifted."""
+    email = (email or "").strip().lower()
+    if not email:
+        return
+    failures.clear(_email_key(email))
+    failures.clear_prefix("pair:%s|" % email)
+    failures.forget_notice(email)
 
 
 # --- the CAPTCHA ------------------------------------------------------------------------------------------------------

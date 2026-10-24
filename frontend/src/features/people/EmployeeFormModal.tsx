@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Button, Field, Input, Modal, NumField, Select } from '@/components/ui'
-import { createEmployee, peopleKeys, setAccess, useDepartments, useEmployees, useHrCatalogue, useSuggestedEmail, type EmployeeInput } from '@/api/people'
+import { createEmployee, peopleKeys, useDepartments, useEmployees, useHrCatalogue, useSuggestedEmail, type EmployeeInput } from '@/api/people'
 import { useJobOptions } from '@/api/clientOrders'
 import { useAction } from '@/lib/mutate'
 import { today } from '@/lib/format'
@@ -46,11 +46,8 @@ function Form({ onClose }: { onClose: () => void }) {
   useEffect(() => { if (!typed && suggested.data) setF((s) => ({ ...s, email: suggested.data })) }, [suggested.data, typed])
   useEffect(() => { const r = cat.data?.permission_roles.find((x) => x.code === f.permission_role); if (r && granted.length === 0) setGranted(r.permissions) }, [cat.data]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const save = useAction(async () => {
-    const made = await createEmployee({ ...f, password: f.password?.trim() })
-    if (isOwner) await setAccess(made.id, { permission_role: f.permission_role, permissions: granted })
-    return made
-  }, { invalidate: [peopleKeys.all], success: (r) => r.message || 'Employee created', onSuccess: (r) => setGiven({ id: r.employee_id, email: f.email, password: f.password ?? '', sites: (r.site_names ?? []).join(', ') || 'Every site' }) })
+  // One request: the employee and, for the Master, the access ticked - not a second call waiting on the first.
+  const save = useAction(() => createEmployee({ ...f, password: f.password?.trim(), ...(isOwner ? { permissions: granted } : {}) }), { invalidate: [peopleKeys.all], success: (r) => r.message || 'Employee created', onSuccess: (r) => setGiven({ id: r.employee_id, email: f.email, password: f.password ?? '', sites: (r.site_names ?? []).join(', ') || 'Every site' }) })
   const pass = f.password?.trim() ?? ''
   // A login needs an email, a password that passes the rule, and the same password typed twice. Staff who never sign in need none of it.
   const passError = pass ? passwordProblem(pass) : ''

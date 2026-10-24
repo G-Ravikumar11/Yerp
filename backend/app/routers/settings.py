@@ -19,6 +19,7 @@ from app.core.auth import get_client_user, get_employee_user, require_erp_read, 
 from app.core.currency import DEFAULT_CURRENCY
 from app.core.files import file_bytes
 from app.core.gst import state_from_gstin
+from app.core.identity import logo_link
 from app.core.notifications import NOTIFY_KINDS, get_stored_refresh_token, notify, notify_settings
 from app.core.security import rate_limiter
 from app.schemas.settings import NotificationReadIn, NotificationSettingsIn, TaxRatesIn
@@ -531,4 +532,7 @@ def company_identity_api(request: Request, db: Session = Depends(get_db)):
     if client is None:
         emp = get_employee_user(request, db)
         client = db.query(models.DBClient).filter(models.DBClient.id == emp.client_id).first()
-    return company_identity(db, client)
+    out = company_identity(db, client)
+    # On every page (the company mark): a link the browser keeps, not the image itself every time.
+    out["logo_url"] = logo_link(client.id, out.get("logo_url"), "letterhead")
+    return out

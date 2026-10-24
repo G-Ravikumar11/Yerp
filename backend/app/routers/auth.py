@@ -8,8 +8,7 @@ from sqlalchemy import func as sqlfunc
 from sqlalchemy.orm import Session
 
 from app import models
-from app.core import login_guard
-from app.core import passwords
+from app.core import identity as identity_core, login_guard, passwords
 from app.db import get_db
 
 from app.constants.common import ALLOW_SELF_REGISTRATION, GOOGLE_SIGNIN_SCOPES
@@ -175,7 +174,7 @@ def client_me(request: Request, db: Session = Depends(get_db)):
         "company_name": client.company_name,
         "contact_name": client.contact_name,
         "phone_number": client.phone_number,
-        "logo_url": client.logo_url,
+        "logo_url": identity_core.logo_link(client.id, client.logo_url),
         "address": client.address,
         "website": client.website,
         "abn": client.abn,
@@ -197,7 +196,7 @@ def client_onboard(body: ClientOnboard, request: Request, db: Session = Depends(
     client.website = body.website or client.website
     client.abn = body.abn or client.abn
     client.industry = body.industry or client.industry
-    if body.logo_url:
+    if body.logo_url and not identity_core.is_logo_link(body.logo_url):
         client.logo_url = body.logo_url
     client.is_onboarded = True
     db.commit()
@@ -220,7 +219,8 @@ def get_logo(request: Request, db: Session = Depends(get_db)):
 @router.put("/api/client/logo")
 def save_logo(body: LogoUpdate, request: Request, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
-    client.logo_url = body.logo_url
+    if not identity_core.is_logo_link(body.logo_url):      # the link to the logo already kept is not a new one
+        client.logo_url = body.logo_url
     db.commit()
     return {"message": "Logo saved"}
 
@@ -568,6 +568,8 @@ def reset_password(body: ResetPasswordIn, request: Request, db: Session = Depend
         subject.password_hash = hash_password(body.password)
         client_id, who = subject.id, subject.email
 
+    # A new password is the way back in for somebody locked out: the lock goes with the old one.
+    login_guard.unlock(who)
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     row.used_at = now
     # Spend every other outstanding link for the same account as well.

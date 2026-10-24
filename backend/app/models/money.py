@@ -199,6 +199,7 @@ class DBPaymentRequest(Base):
     # PENDING (with the accounts head) -> AWAITING_MD (over the limit) -> APPROVED -> PAID; or REJECTED / CANCELLED
     status = Column(String, default="PENDING", index=True)
     requested_by = Column(Integer, nullable=True)                 # the member of staff; None for the Master
+    requested_by_member = Column(Integer, nullable=True)          # a colleague of the Master's (team_members), who signs in as the company
     requested_by_name = Column(String, default="")
     requested_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     checked_by_name = Column(String, default="")

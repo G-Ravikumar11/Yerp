@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api } from '@/lib/api'
+import { api, apiUrl } from '@/lib/api'
 import { appUrl } from '@/lib/paths'
 
 interface Job {
@@ -35,7 +35,7 @@ export default function JobsPage() {
   return (
     <main className="mx-auto min-h-screen max-w-3xl bg-background px-4 py-10">
       <header className="mb-6 flex items-center gap-4">
-        {board?.logo_url && <img src={board.logo_url} alt={board.company ?? ''} className="size-14 rounded-lg object-contain" />}
+        {board?.logo_url && <img src={apiUrl(board.logo_url)} alt={board.company ?? ''} className="size-14 rounded-lg object-contain" />}
         <div><h1 className="text-2xl font-bold">{board?.company || 'Careers'}</h1><p className="text-sm text-muted-foreground">Open roles</p></div>
       </header>
       {error && <p role="alert" className="py-10 text-center text-muted-foreground">{error}</p>}

@@ -465,12 +465,21 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     # Create default onboarding checklist
     start_onboarding(db, client.id, emp)
 
-    db.commit()
-    db.refresh(emp)
-    set_employee_sites(db, client.id, emp, body.site_ids)
+    # Everything is saved in one transaction, committed once at the end: on the hosted database every commit, and every
+    # read of the record back after one, is another round trip - and the screen waits for all of them.
+    if body.site_ids:                       # a new starter has no sites to clear first
+        set_employee_sites(db, client.id, emp, body.site_ids)
     log_audit(db, client.id, "employee_created", "employee", emp.id, f"{emp.first_name} {emp.last_name}", f"Dept: {body.department_id or 'None'}", request)
-    db.commit()
-    return {
+    if body.permissions is not None:        # the Master's ticks, measured against the role (as set_employee_permissions does)
+        require_owner(request, db)
+        wanted = {p for p in body.permissions if p in PERMISSION_KEYS}
+        from_role = set(ROLE_PERMISSIONS.get(permission_role, set()))
+        emp.extra_permissions = ",".join(sorted(wanted - from_role))
+        emp.denied_permissions = ",".join(sorted(from_role - wanted))
+        log_audit(db, client.id, "employee_permissions_changed", "employee", emp.id, f"{emp.first_name} {emp.last_name}",
+                  "Access set to %s on creation: %s" % (permission_role, ", ".join(sorted(permissions_for(emp))) or "none"), request)
+    db.flush()
+    out = {
         **employee_sites_payload(db, emp),
         "id": emp.id, "employee_id": emp.employee_id,
         "first_name": emp.first_name, "last_name": emp.last_name,
@@ -479,6 +488,8 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
         "department_id": emp.department_id, "reports_to": emp.reports_to,
         "message": "Employee created. Onboarding checklist generated.",
     }
+    db.commit()
+    return out
 
 
 @router.get("/api/employees/{emp_id}")

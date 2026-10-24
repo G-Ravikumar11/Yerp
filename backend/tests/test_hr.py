@@ -211,3 +211,19 @@ def test_employee_endpoints_require_employee_session(portal, client):
     client.post("/api/client/logout")
     assert portal.get("/api/employee/leave").status_code == 401
     assert portal.post("/api/employee/attendance/clock-in", json={}).status_code == 401
+
+
+def test_an_employee_is_created_with_the_access_ticked_in_one_request(tenant):
+    """The form sends the Master's ticks with the employee: one request, saved as the separate access screen saves them."""
+    from app import db as database, models
+    from app.core.permissions import ROLE_PERMISSIONS, permissions_for
+    base = sorted(ROLE_PERMISSIONS.get("staff", set()))
+    want = base[1:] + ["store.inward.view"]                 # one of the role's rights taken away, one added
+    res = tenant.post("/api/employees", json={"first_name": "Asha", "last_name": "Rao", "start_date": "2026-10-01", "site_ids": [],
+                                              "permission_role": "staff", "permissions": want})
+    assert res.status_code == 200, res.text
+    with database.SessionLocal() as s:
+        e = s.get(models.DBEmployee, res.json()["id"])
+        assert sorted(permissions_for(e)) == sorted(set(want))
+        assert e.denied_permissions == base[0] and "store.inward.view" in e.extra_permissions
+        assert s.query(models.DBOnboardingItem).filter_by(employee_id=e.id).count() > 0

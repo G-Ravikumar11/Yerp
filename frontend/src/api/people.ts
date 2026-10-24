@@ -119,6 +119,8 @@ export const useSuggestedEmail = (first: string, last: string) =>
   useQuery({ queryKey: k('suggest', first, last), queryFn: async () => (await get<{ email?: string }>(`/api/hr/suggest-email?first_name=${encodeURIComponent(first)}&last_name=${encodeURIComponent(last)}`)).email ?? '', enabled: !!(first.trim() && last.trim()), staleTime: 60_000 })
 
 export interface EmployeeInput {
+  /** The rights the Master ticked: saved with the employee, in the same request. */
+  permissions?: string[]
   first_name: string
   last_name: string
   email: string

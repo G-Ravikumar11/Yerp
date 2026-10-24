@@ -5,7 +5,8 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
 import { Badge, Button, Stat, StatGrid, Tabs } from '@/components/ui'
-import { useEmployees, useHrStats, type Employee } from '@/api/people'
+import { useDepartments, useEmployees, useHrCatalogue, useHrStats, type Employee } from '@/api/people'
+import { useJobOptions } from '@/api/clientOrders'
 import { formatDate } from '@/lib/format'
 import { EmployeeFormModal } from './EmployeeFormModal'
 
@@ -18,6 +19,10 @@ export default function EmployeesPage() {
   const q = useEmployees(tab)
   const stats = useHrStats()
   const [creating, setCreating] = useState(false)
+  // What the Add-an-employee form fills its lists from, read while this page is open, so the form is complete the moment it is clicked.
+  useDepartments()
+  useHrCatalogue()
+  useJobOptions(false)
   const filters = useListFilters(q.data, { search: (e) => [e.full_name, e.email, e.employee_id, e.job_title, e.department_name].join(' ') })
   const s = stats.data
 
