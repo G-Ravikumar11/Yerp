@@ -61,3 +61,30 @@ def test_a_storekeeper_can_now_work_in_the_hub_but_only_in_their_store(account):
         assert c.post("/api/store/inward/grn", json=dict(body, store_id=other["id"])).status_code == 403      # nor work in a store not theirs
     finally:
         c.__exit__(None, None, None)
+
+
+def test_putting_people_in_a_store_needs_the_approve_right(account):
+    t, tag = account["client"], uuid.uuid4().hex[:6]
+    w = _company(account, tag)
+    central = _hub(t, w, tag)
+    url = "/api/store/masters/stores/%d/assignments" % central["id"]
+    colleague = make_employee(t, email="col-%s@example.com" % tag, password="Crew1234", permission_role="staff", status="active")
+    logins = {}
+    for role, extra in (("stores", "store.masters.create"), ("store_incharge", "")):
+        email = "%s-%s@example.com" % (role, tag)
+        emp = make_employee(t, email=email, password="Crew1234", permission_role=role, status="active")
+        if extra:
+            t.put("/api/employees/%d" % emp["id"], json={"extra_permissions": extra})
+        ok(t.post(url, json={"employee_id": emp["id"], "role": "STOREKEEPER"}))
+        c = TestClient(main.app)
+        c.__enter__()
+        assert c.post("/api/employee/auth/login", json={"email": email, "password": "Crew1234"}).status_code == 200
+        logins[role] = c
+    try:
+        assert logins["stores"].post(url, json={"employee_id": colleague["id"], "role": "ASSISTANT"}).status_code == 403      # edits masters, cannot hand out a store
+        assert ok(logins["store_incharge"].post(url, json={"employee_id": colleague["id"], "role": "ASSISTANT"}))["role"] == "ASSISTANT"
+        assert logins["stores"].delete(url + "/%d" % colleague["id"]).status_code == 403
+        assert logins["store_incharge"].delete(url + "/%d" % colleague["id"]).status_code == 200
+    finally:
+        for c in logins.values():
+            c.__exit__(None, None, None)

@@ -346,6 +346,10 @@ STORE_JOB_ALIASES = {"STORE_KEEPER": "STOREKEEPER", "KEEPER": "STOREKEEPER", "IN
                      "STORE_ASSISTANT": "ASSISTANT", "SECURITY": "GATE", "ENGINEER": "SITE_ENGINEER"}
 
 
+# Who works in a store decides who reaches its stock, so putting someone in (or taking them out) is an approval, not an edit.
+STAFF_RIGHT = "store.masters.approve"
+
+
 def store_job(raw) -> str:
     code = "_".join((raw or "").upper().replace("-", " ").split()) or "STOREKEEPER"
     code = STORE_JOB_ALIASES.get(code, code)
@@ -388,7 +392,7 @@ def list_assignments(store_id: int, request: Request, db: Session = Depends(get_
 @router.post("/stores/{store_id}/assignments")
 def assign(store_id: int, body: AssignIn, request: Request, db: Session = Depends(get_db)):
     """Put a member of staff in a store (or bring back one who was taken out, with the new role label)."""
-    actor = store_actor(request, db, "store.masters.create")
+    actor = store_actor(request, db, STAFF_RIGHT)
     store = my_store(db, actor, store_id)
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == body.employee_id, models.DBEmployee.client_id == actor.client.id).first()
     if emp is None:
@@ -411,7 +415,7 @@ def assign(store_id: int, body: AssignIn, request: Request, db: Session = Depend
 @router.delete("/stores/{store_id}/assignments/{employee_id}")
 def unassign(store_id: int, employee_id: int, request: Request, db: Session = Depends(get_db)):
     """Take a member of staff out of a store. The row stays, switched off, so the history of who worked there is kept."""
-    actor = store_actor(request, db, "store.masters.create")
+    actor = store_actor(request, db, STAFF_RIGHT)
     store = my_store(db, actor, store_id)
     row = db.query(DBStoreUserAssignment).filter(DBStoreUserAssignment.store_id == store.id, DBStoreUserAssignment.employee_id == employee_id,
                                                   DBStoreUserAssignment.is_active.is_(True)).first()

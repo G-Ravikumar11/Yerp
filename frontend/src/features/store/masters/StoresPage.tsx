@@ -168,18 +168,18 @@ function StoreDetailModal({ store, canEdit, canClose, onEdit, onToggle, onClose 
         </section>
         <section aria-labelledby="sd-staff">
           <h3 id="sd-staff" className="mb-2 border-b pb-1 text-sm font-semibold">Who works here</h3>
-          <p className="mb-2 text-xs text-muted-foreground">Staff can only see and work in the stores they are assigned to, whatever else they are allowed to do.</p>
+          <p className="mb-2 text-xs text-muted-foreground">Staff can only see and work in the stores they are assigned to, whatever else they are allowed to do. Adding or removing someone needs the right to approve store masters.</p>
           {staff.isPending ? <p className="text-sm text-muted-foreground">Loading...</p> : working.length === 0 ? <p className="text-sm text-muted-foreground">Nobody is assigned yet.</p> : (
             <ul className="divide-y rounded-lg border">
               {working.map((a) => (
                 <li key={a.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
                   <span><span className="font-medium">{a.name}</span> <span className="text-muted-foreground">{a.email}</span> <Badge>{STORE_JOBS[a.role] ?? a.role}</Badge></span>
-                  {canEdit && <Button size="sm" variant="ghost" aria-label={`Remove ${a.name}`} onClick={() => unassign.mutate(a.employee_id)}>Remove</Button>}
+                  {canClose && <Button size="sm" variant="ghost" aria-label={`Remove ${a.name}`} onClick={() => unassign.mutate(a.employee_id)}>Remove</Button>}
                 </li>
               ))}
             </ul>
           )}
-          {canEdit && (
+          {canClose && (
             <form className="mt-2 flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); if (who) assign.mutate() }}>
               <Field label="Employee" htmlFor="sd-emp" className="min-w-48 flex-1"><Select id="sd-emp" value={who} placeholder="Choose a person" onChange={(e) => setWho(e.target.value)} options={free.map((e) => ({ value: e.id, label: `${e.name}${e.job_title ? ' - ' + e.job_title : ''}` }))} /></Field>
               <Field label="Job in this store" htmlFor="sd-role" className="w-56"><Select id="sd-role" value={role} onChange={(e) => setRole(e.target.value)} options={Object.entries(STORE_JOBS).map(([value, label]) => ({ value, label }))} /></Field>
