@@ -1,6 +1,9 @@
 """Store module - what accounts need from the stores, under /api/store/accounts: stock value, goods received and not billed, scrap sales to collect
-(and receiving the money), inter-project transfers to charge across, and gate-delivery price differences. store.reports.view reads;
-store.reports.create marks a cross-charge adjusted; receiving scrap money also needs the right to record money (bills.pay)."""
+(and receiving the money), inter-project transfers to charge across, and gate-delivery price differences.
+
+store.reports.view opens the tab: stock value and the scrap sales of the person's own stores. What suppliers have billed, the cost
+charged across projects and the price differences are accounts' figures, so they also need an accounts right (ACCOUNTS_VIEW);
+marking a cross-charge adjusted needs accounts.manage or bills.pay, and receiving scrap money bills.pay."""
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -8,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.audit import log_audit
-from app.core.auth import wo_actor
+from app.core.auth import require_items_access, wo_actor
 from app.core.permissions import permissions_for
 from app.core.store_auth import store_actor
 from app.db import get_db
@@ -19,6 +22,16 @@ from app.services.store_inward import day
 from app.services.stock_ledger import assert_store_access
 
 router = APIRouter(prefix="/api/store/accounts", tags=["store-accounts"])
+ACCOUNTS_VIEW = ("bills.view_all", "accounts.manage", "bills.pay")
+ACCOUNTS_ACT = ("accounts.manage", "bills.pay")
+MONEY_KEYS = ("not_billed", "not_billed_orders", "over_billed", "over_billed_orders", "cross_charges_pending", "cross_charges_open", "price_variance")
+
+
+def _sees_money(actor) -> bool:
+    if actor.employee is None:
+        return True
+    held = permissions_for(actor.employee)
+    return "store.admin" in held or any(k in held for k in ACCOUNTS_VIEW)
 
 
 class ReceiveIn(BaseModel):
@@ -44,12 +57,17 @@ def get_summary(request: Request, as_on: str = "", db: Session = Depends(get_db)
     actor = store_actor(request, db, "store.reports.view")
     out = svc.summary(db, actor.client.id, _visible(db, actor), day(as_on, "date", required=False))
     db.commit()
+    out["accounts_view"] = _sees_money(actor)
+    if not out["accounts_view"]:
+        for k in MONEY_KEYS:
+            out[k] = None
     return out
 
 
 @router.get("/not-billed")
 def get_not_billed(request: Request, db: Session = Depends(get_db)):
     actor = store_actor(request, db, "store.reports.view")
+    require_items_access(request, db, ACCOUNTS_VIEW)
     return {"items": svc.grni(db, actor.client.id)}
 
 
@@ -81,6 +99,7 @@ def receive_scrap(scrap_id: int, body: ReceiveIn, request: Request, db: Session 
 @router.get("/cross-charges")
 def get_cross_charges(request: Request, status: str = "", db: Session = Depends(get_db)):
     actor = store_actor(request, db, "store.reports.view")
+    require_items_access(request, db, ACCOUNTS_VIEW)
     out = svc.cross_charges(db, actor.client.id, status)
     db.commit()
     return {"items": out}
@@ -88,7 +107,8 @@ def get_cross_charges(request: Request, status: str = "", db: Session = Depends(
 
 @router.post("/cross-charges/{charge_id}/adjust")
 def adjust_cross_charge(charge_id: int, body: AdjustIn, request: Request, db: Session = Depends(get_db)):
-    actor = store_actor(request, db, "store.reports.create")
+    actor = store_actor(request, db, "store.reports.view")
+    require_items_access(request, db, ACCOUNTS_ACT)                     # an accounts decision, not a storekeeper's
     try:
         row = svc.mark_adjusted(db, actor, charge_id, body.note)
         log_audit(db, actor.client.id, "store_cross_charge_adjusted", "store_cross_charge", row.id, str(row.id), row.status, request=request,
@@ -103,4 +123,5 @@ def adjust_cross_charge(charge_id: int, body: AdjustIn, request: Request, db: Se
 @router.get("/price-variances")
 def get_variances(request: Request, db: Session = Depends(get_db)):
     actor = store_actor(request, db, "store.reports.view")
+    require_items_access(request, db, ACCOUNTS_VIEW)
     return {"items": svc.price_variances(db, actor.client.id)}

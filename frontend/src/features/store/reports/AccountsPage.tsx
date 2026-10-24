@@ -5,22 +5,24 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { get, post } from '@/lib/api'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
-import { storePerm } from '@/api/store'
 import { useBankAccounts } from '@/api/money'
 import { cn } from '@/lib/utils'
 
 interface Summary {
   as_on: string; stock_value: string; by_category: { category: string; lines: number; value: string }[]
-  not_billed: string; not_billed_orders: number; over_billed: string; over_billed_orders: number
-  scrap_to_collect: string; scrap_sales_open: number; cross_charges_pending: string; cross_charges_open: number; price_variance: string
+  // Accounts' own figures: empty (null) unless the person holds an accounts right.
+  not_billed: string | null; not_billed_orders: number | null; over_billed: string | null; over_billed_orders: number | null
+  scrap_to_collect: string; scrap_sales_open: number; cross_charges_pending: string | null; cross_charges_open: number | null; price_variance: string | null
+  accounts_view: boolean
 }
+const ACCOUNTS_VIEW = 'bills.view_all|accounts.manage|bills.pay'
 interface NotBilled { po_id: number; po_number: string; supplier_name: string; project: string; received_value: string; billed_value: string; difference: string; last_received: string; status: 'NOT_BILLED' | 'OVER_BILLED' }
 interface Sale { scrap_id: number; number: string; date: string; store_code: string; buyer: string; reference: string; realised: string; received: string; outstanding: string; settled: boolean }
 interface Charge { id: number; transfer_number: string; date: string; from_project: string; to_project: string; amount: string; status: 'PENDING' | 'ADJUSTED' | 'VOID' | 'REVERSE'; adjusted_on: string; adjusted_by: string; note: string }
 interface Variance { grn_id: number; grn_number: string; supplier_name: string; po_number: string; linked_at: string; variance: string }
 
 const KEY = ['store', 'accounts'] as const
-const money = (v: string | undefined) => Number(v ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const money = (v: string | null | undefined) => Number(v ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const dmy = (iso: string) => (iso ? new Date(iso.slice(0, 10) + 'T00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '-')
 const today = () => new Date().toLocaleDateString('en-CA')
 type View = 'not-billed' | 'scrap' | 'cross' | 'variance'
@@ -29,7 +31,10 @@ const pill = (on: boolean) => cn('whitespace-nowrap rounded-lg px-3 py-1.5 text-
 
 /** What accounts take from the stores: stock value, what was received and not billed, scrap money to collect, and cost to charge across projects. */
 export default function AccountsPage() {
-  const [view, setView] = useState<View>('not-billed')
+  const { can } = useSession()
+  const seesMoney = can(ACCOUNTS_VIEW)
+  const views = VIEWS.filter((v) => seesMoney || v.key === 'scrap')
+  const [view, setView] = useState<View>(seesMoney ? 'not-billed' : 'scrap')
   const sum = useQuery({ queryKey: [...KEY, 'summary'], queryFn: () => get<Summary>('/api/store/accounts/summary') })
   const s = sum.data
   const tile = (label: string, value: string, hint?: string, tone?: string) => (
@@ -40,15 +45,15 @@ export default function AccountsPage() {
       {sum.isError ? <p role="alert" className="mb-4 text-sm text-danger">Could not load the figures.</p> : (
         <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           {tile('Stock held', s ? money(s.stock_value) : '-', s ? `as on ${dmy(s.as_on)}` : undefined)}
-          {tile('Received, not billed', s ? money(s.not_billed) : '-', s ? `${s.not_billed_orders} order${s.not_billed_orders === 1 ? '' : 's'}` : undefined)}
+          {s?.accounts_view && tile('Received, not billed', money(s.not_billed ?? '0'), `${s.not_billed_orders} order${s.not_billed_orders === 1 ? '' : 's'}`)}
           {tile('Scrap to collect', s ? money(s.scrap_to_collect) : '-', s ? `${s.scrap_sales_open} sale${s.scrap_sales_open === 1 ? '' : 's'}` : undefined)}
-          {tile('To charge across projects', s ? money(s.cross_charges_pending) : '-', s ? `${s.cross_charges_open} open` : undefined)}
-          {tile('Gate-delivery price difference', s ? money(s.price_variance) : '-', undefined, s && Number(s.price_variance) > 0 ? 'text-warning' : undefined)}
+          {s?.accounts_view && tile('To charge across projects', money(s.cross_charges_pending ?? '0'), `${s.cross_charges_open} open`)}
+          {s?.accounts_view && tile('Gate-delivery price difference', money(s.price_variance ?? '0'), undefined, Number(s.price_variance) > 0 ? 'text-warning' : undefined)}
         </div>
       )}
-      {s && s.by_category.length > 0 && <p className="mb-4 text-sm text-muted-foreground">Stock by category: {s.by_category.map((c) => `${c.category.toLowerCase()} ${money(c.value)}`).join(' - ')}.{Number(s.over_billed) > 0 && <span className="text-danger"> Suppliers have billed {money(s.over_billed)} more than was received on {s.over_billed_orders} order{s.over_billed_orders === 1 ? '' : 's'}.</span>}</p>}
+      {s && s.by_category.length > 0 && <p className="mb-4 text-sm text-muted-foreground">Stock by category: {s.by_category.map((c) => `${c.category.toLowerCase()} ${money(c.value)}`).join(' - ')}.{s.accounts_view && Number(s.over_billed) > 0 && <span className="text-danger"> Suppliers have billed {money(s.over_billed)} more than was received on {s.over_billed_orders} order{s.over_billed_orders === 1 ? '' : 's'}.</span>}</p>}
       <div className="mb-4 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-muted p-1" role="tablist">
-        {VIEWS.map((v) => <button key={v.key} type="button" role="tab" aria-selected={view === v.key} className={pill(view === v.key)} onClick={() => setView(v.key)}>{v.label}</button>)}
+        {views.map((v) => <button key={v.key} type="button" role="tab" aria-selected={view === v.key} className={pill(view === v.key)} onClick={() => setView(v.key)}>{v.label}</button>)}
       </div>
       {view === 'not-billed' ? <NotBilledList /> : view === 'scrap' ? <ScrapList /> : view === 'cross' ? <CrossList /> : <VarianceList />}
     </div>
@@ -84,7 +89,7 @@ function ScrapList() {
     { id: 'buyer', header: 'Buyer', cell: (r) => r.buyer || '-' },
     { id: 'real', header: 'Sold for', align: 'right', width: '9rem', cell: (r) => money(r.realised) },
     { id: 'got', header: 'Received', align: 'right', width: '9rem', hideBelow: 'sm', cell: (r) => money(r.received) },
-    { id: 'out', header: 'To collect', align: 'right', width: '12rem', cell: (r) => r.settled ? <Badge tone="success" dot>Paid</Badge> : <span className="flex items-center justify-end gap-2">{money(r.outstanding)}{can(storePerm('reports')) && <Button size="sm" variant="outline" onClick={() => setReceiving(r)}>Receive</Button>}</span> },
+    { id: 'out', header: 'To collect', align: 'right', width: '12rem', cell: (r) => r.settled ? <Badge tone="success" dot>Paid</Badge> : <span className="flex items-center justify-end gap-2">{money(r.outstanding)}{can('bills.pay') && <Button size="sm" variant="outline" onClick={() => setReceiving(r)}>Receive</Button>}</span> },
   ]
   return (
     <div>
@@ -125,7 +130,7 @@ function CrossList() {
     { id: 'to', header: 'To project', cell: (r) => r.to_project || '-' },
     { id: 'amt', header: 'Amount', align: 'right', width: '9rem', cell: (r) => money(r.amount) },
     { id: 'st', header: 'Status', width: '13rem', cell: (r) => r.status === 'PENDING' || r.status === 'REVERSE'
-      ? <span className="flex items-center gap-2"><Badge tone={r.status === 'REVERSE' ? 'danger' : 'warning'} dot>{r.status === 'REVERSE' ? 'Put back' : 'To charge'}</Badge>{can(storePerm('reports', 'create')) && <Button size="sm" variant="outline" onClick={() => setAdjusting(r)}>{r.status === 'REVERSE' ? 'Done' : 'Adjusted'}</Button>}</span>
+      ? <span className="flex items-center gap-2"><Badge tone={r.status === 'REVERSE' ? 'danger' : 'warning'} dot>{r.status === 'REVERSE' ? 'Put back' : 'To charge'}</Badge>{can('accounts.manage|bills.pay') && <Button size="sm" variant="outline" onClick={() => setAdjusting(r)}>{r.status === 'REVERSE' ? 'Done' : 'Adjusted'}</Button>}</span>
       : <span className="text-muted-foreground">{r.status === 'ADJUSTED' ? `Adjusted ${dmy(r.adjusted_on)}` : 'Void'}</span> },
   ]
   return (

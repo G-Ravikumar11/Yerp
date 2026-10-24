@@ -126,3 +126,37 @@ def test_an_inter_project_transfer_is_charged_across_once(account):
     [c] = ok(t.get("/api/store/accounts/cross-charges"))["items"]
     assert c["status"] == "REVERSE"
     assert ok(t.post(url, json={}))["status"] == "VOID"
+
+
+def test_suppliers_billing_and_cross_charges_are_for_accounts_only(account):
+    from fastapi.testclient import TestClient
+    import main
+    from conftest import make_employee
+    t, tag = account["client"], uuid.uuid4().hex[:6]
+    w = _company(account, tag)
+    central = _hub(t, w, tag)
+    _receive(t, central, w, 10)
+    people = {}
+    for role in ("stores", "accounts"):
+        email = "%s-%s@example.com" % (role, tag)
+        emp = make_employee(t, email=email, password="Crew1234", permission_role=role, status="active")
+        ok(t.post("/api/store/masters/stores/%d/assignments" % central["id"], json={"employee_id": emp["id"], "role": "STOREKEEPER"}))
+        c = TestClient(main.app)
+        c.__enter__()
+        assert c.post("/api/employee/auth/login", json={"email": email, "password": "Crew1234"}).status_code == 200
+        people[role] = c
+    try:
+        keeper, accounts = people["stores"], people["accounts"]
+        s = ok(keeper.get("/api/store/accounts/summary"))
+        assert s["accounts_view"] is False and s["not_billed"] is None and s["cross_charges_pending"] is None and s["stock_value"] == "3500.00"
+        for path in ("/api/store/accounts/not-billed", "/api/store/accounts/cross-charges", "/api/store/accounts/price-variances"):
+            assert keeper.get(path).status_code == 403, path
+        assert ok(keeper.get("/api/store/accounts/scrap"))["items"] == []                         # their own stores' scrap sales they see
+
+        s = ok(accounts.get("/api/store/accounts/summary"))
+        assert s["accounts_view"] is True and s["not_billed"] == "3500.00"
+        assert len(ok(accounts.get("/api/store/accounts/not-billed"))["items"]) == 1
+        assert keeper.post("/api/store/accounts/cross-charges/1/adjust", json={}).status_code == 403
+    finally:
+        for c in people.values():
+            c.__exit__(None, None, None)
