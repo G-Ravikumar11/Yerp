@@ -103,7 +103,8 @@ export interface HrCatalogue {
   /** `rank` is higher for a more senior level: L1 is the top. */
   levels: { code: string; label: string; rank: number }[]
   /** `reports_to` is the role this one normally reports to; `level` is where it sits. */
-  roles: { code: string; label: string; level: string; reports_to: string | null; department: string }[]
+  /** `access` is the access level the role normally carries, which the Add form gives them straight away. */
+  roles: { code: string; label: string; level: string; reports_to: string | null; department: string; access?: string }[]
   permission_roles: PermissionRole[]
   permissions: Permission[]
 }
