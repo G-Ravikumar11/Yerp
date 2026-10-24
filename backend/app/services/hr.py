@@ -302,11 +302,11 @@ def move_to_department(db, client_id, emp, dept_id, *, checked=False, goals=None
     fetched again for every person.
     """
     dept_id = dept_id or None
-    if dept_id is not None and not checked:
-        department_or_404(db, client_id, dept_id)
     old = emp.department_id
     if old == dept_id:
-        return old
+        return old                     # staying put: nothing to look up
+    if dept_id is not None and not checked:
+        department_or_404(db, client_id, dept_id)
     emp.department_id = dept_id
     if dept_id is None:
         return old

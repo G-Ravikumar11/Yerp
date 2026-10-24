@@ -169,3 +169,85 @@ def test_the_hr_counts_are_one_grouped_read(tenant):
     assert len(sent) <= 4, sent
     stats = res.json()
     assert stats["total_employees"] == 3 and stats["onboarding"] == 3 and stats["active"] == 0
+
+
+def test_the_employee_page_is_three_reads_and_carries_what_the_form_needs(tenant):
+    dept, sites = setup(tenant)
+    _, res = new_starter(tenant, dept, sites, org_email="ns-%s@acme.example" % uuid.uuid4().hex[:6])
+    eid = res.json()["id"]
+    sent, page = statements(tenant, "get", "/api/employees/%d?view=profile" % eid)
+    assert len(sent) <= 3, sent
+    p = page.json()
+    assert p["org_email"].endswith("@acme.example") and p["department_name"] == "Ops"
+    assert p["site_ids"] == sorted(sites) and "permissions" in p and "payslips" not in p
+    # The full record is unchanged for the screens that want everything, and carries the same profile.
+    full = tenant.get("/api/employees/%d" % eid).json()
+    assert "payslips" in full and "document_requests" in full
+    assert {k: full[k] for k in p} == p
+
+
+def test_saving_a_profile_answers_with_it_and_does_not_recheck_what_did_not_change(tenant):
+    dept, sites = setup(tenant)
+    org = "keep-%s@acme.example" % uuid.uuid4().hex[:6]
+    _, res = new_starter(tenant, dept, sites, org_email=org)
+    eid = res.json()["id"]
+    page = tenant.get("/api/employees/%d?view=profile" % eid).json()
+    form = {k: page[k] for k in ("first_name", "last_name", "email", "org_email", "phone", "job_title", "department_id",
+                                 "reports_to", "level", "role", "employment_type", "pay_frequency", "salary",
+                                 "tax_rate", "start_date", "emergency_contact", "emergency_phone")}
+    form.update(phone="0123", job_title="Lead")
+    sent, saved = statements(tenant, "put", "/api/employees/%d" % eid, json=form)
+    # Signed-in check, the person, the change and its audit line, the profile back, one commit.
+    assert len(sent) <= 7, "%d statements:\n%s" % (len(sent), "\n".join(s[:120] for s in sent))
+    out = saved.json()
+    assert out["job_title"] == "Lead" and out["phone"] == "0123" and out["department_name"] == "Ops"
+    # The organisation address the form sends back is kept - it used to be missing from the page, so a save wiped it.
+    assert out["org_email"] == org
+    assert tenant.get("/api/employees/%d?view=profile" % eid).json() == {k: v for k, v in out.items() if k != "message"}
+
+
+def test_saving_access_answers_with_the_profile(tenant):
+    dept, sites = setup(tenant)
+    _, res = new_starter(tenant, dept, [])
+    eid = res.json()["id"]
+    out = tenant.put("/api/employees/%d/permissions" % eid,
+                     json={"permission_role": "staff", "permissions": ["projects.view"], "site_ids": sites[:1]}).json()
+    assert out["permissions"] == ["projects.view"] and out["site_ids"] == sites[:1] and out["all_sites"] is False
+    assert out["message"] == "Access updated" and out["full_name"].startswith("New ")
+
+
+def test_the_employee_list_and_counts_are_one_read_each(tenant):
+    dept, sites = setup(tenant)
+    for _ in range(3):
+        new_starter(tenant, dept, sites)
+    sent, res = statements(tenant, "get", "/api/employees")
+    assert len(sent) <= 2, sent
+    rows = {r["id"]: r for r in res.json()}
+    starters = [r for r in rows.values() if r["department_id"] == dept]
+    assert len(starters) == 3 and all(r["department_name"] == "Ops" and r["site_count"] == 2 for r in starters)
+    sent, _ = statements(tenant, "get", "/api/hr/stats")
+    assert len(sent) <= 2, sent
+
+
+def test_deleting_an_employee_still_clears_everything_that_points_at_them(tenant):
+    dept, sites = setup(tenant)
+    _, boss = new_starter(tenant, dept, sites)
+    _, res = new_starter(tenant, dept, sites, reports_to=boss.json()["id"])
+    boss_id, eid = boss.json()["id"], res.json()["id"]
+    assert tenant.delete("/api/employees/%d" % boss_id).status_code == 200
+    assert tenant.get("/api/employees/%d" % boss_id).status_code == 404
+    assert tenant.get("/api/employees/%d?view=profile" % eid).json()["reports_to"] is None
+    s = database.SessionLocal()
+    try:
+        for model in (models.DBOnboardingItem, models.DBDocumentRequest, models.DBEmployeeSite):
+            assert s.query(model).filter(model.employee_id == boss_id).count() == 0, model.__name__
+    finally:
+        s.close()
+
+
+def test_deleting_a_department_lets_its_people_go_in_one_go(tenant):
+    dept, sites = setup(tenant)
+    _, res = new_starter(tenant, dept, sites)
+    assert tenant.delete("/api/departments/%d" % dept).status_code == 200
+    assert tenant.get("/api/employees/%d?view=profile" % res.json()["id"]).json()["department_id"] is None
+    assert all(d["id"] != dept for d in tenant.get("/api/departments").json())

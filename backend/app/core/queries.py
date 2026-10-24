@@ -69,3 +69,33 @@ def chain_rows(db, entity_type, entity_id):
 
 def forget_chain(db, entity_type, entity_id):
     (db.info.get("chains") or {}).pop((entity_type, entity_id), None)
+
+
+def execute_together(db, statements):
+    """Run these write statements in order, in one trip to the database.
+
+    Each is still its own statement - checked, and failing, exactly as when sent one by one - but on Postgres they
+    travel together, so thirty of them cost one round trip across the ocean instead of thirty. SQLite takes one
+    statement at a time, so there they are sent in turn. An error comes back as SQLAlchemy's, as `db.execute`'s would.
+    """
+    statements = list(statements)
+    if not statements:
+        return
+    if db.bind.dialect.name != "postgresql":
+        for statement in statements:
+            db.execute(statement)
+        return
+    conn = db.connection()
+    raw = conn.connection.dbapi_connection
+    cursor = raw.cursor()
+    sql = None
+    try:
+        # psycopg2 quotes every value itself (mogrify), so the joined text carries no placeholders to fill.
+        sql = ";\n".join(cursor.mogrify(str(c), c.params).decode()
+                         for c in (s.compile(dialect=conn.dialect) for s in statements))
+        cursor.execute(sql)
+    except conn.dialect.loaded_dbapi.Error as error:
+        from sqlalchemy import exc
+        raise exc.DBAPIError.instance(sql, None, error, conn.dialect.loaded_dbapi.Error, dialect=conn.dialect) from error
+    finally:
+        cursor.close()

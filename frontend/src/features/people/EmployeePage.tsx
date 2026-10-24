@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, ChevronDown } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Button, ConfirmDialog, Field, Input, NumField, Select, Skeleton, Tabs } from '@/components/ui'
-import { deleteEmployee, peopleKeys, setEmployeePassword, setEmployeeStatus, updateEmployee, useDepartments, useEmployee, useEmployees, useHrCatalogue, type EmployeeDetail } from '@/api/people'
+import { deleteEmployee, setEmployeePassword, setEmployeeStatus, showEmployeeChange, updateEmployee, useDepartments, useEmployee, useEmployees, useHrCatalogue, type EmployeeDetail } from '@/api/people'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
@@ -13,7 +13,7 @@ import { EMPLOYEE_TONE } from './EmployeesPage'
 
 type Tab = 'profile' | 'access'
 
-function Profile({ e }: { e: EmployeeDetail }) {
+function Profile({ e, ready }: { e: EmployeeDetail; ready: boolean }) {
   const { isOwner } = useSession()
   const [editing, setEditing] = useState(false)
   const cat = useHrCatalogue()
@@ -28,7 +28,7 @@ function Profile({ e }: { e: EmployeeDetail }) {
   if (editing) return <ProfileForm e={e} onDone={() => setEditing(false)} />
   return (
     <div>
-      {isOwner && <div className="mb-4 flex justify-end"><Button variant="outline" onClick={() => setEditing(true)}>Edit</Button></div>}
+      {isOwner && <div className="mb-4 flex justify-end"><Button variant="outline" disabled={!ready} onClick={() => setEditing(true)}>Edit</Button></div>}
       <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
         {rows.map(([label, value]) => (
           <div key={label}>
@@ -54,7 +54,9 @@ function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
   const roleOptions = [...(cat.data?.roles ?? []), ...(e.role && !cat.data?.roles.some((r) => r.code === e.role) ? [{ code: e.role, label: e.role }] : [])]
   const pickRole = (code: string) => setF((s) => ({ ...s, role: code, level: s.level || cat.data?.roles.find((r) => r.code === code)?.level || '' }))
   const set = (k: keyof typeof f) => (ev: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((s) => ({ ...s, [k]: ev.target.value }))
-  const save = useAction(() => updateEmployee(e.id, f), { invalidate: [peopleKeys.all], success: 'Saved', onSuccess: onDone })
+  const qc = useQueryClient()
+  // The server answers with the saved profile: shown at once, the lists refreshed behind it.
+  const save = useAction(() => updateEmployee(e.id, f), { success: 'Saved', onSuccess: (r) => { showEmployeeChange(qc, { saved: r }); onDone() } })
   return (
     <div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -101,13 +103,12 @@ function StatusMenu({ e }: { e: EmployeeDetail }) {
       void qc.invalidateQueries({ queryKey: ['people', 'departments'] })
     },
   })
-  // Gone from every list, department and count, so those are read again; this page's own record is dropped first so it is not asked for.
+  // Gone from every list at once and back to the list straight away; the departments and counts are read again behind it.
   const del = useAction(() => deleteEmployee(e.id), {
     success: `${e.full_name} was deleted`,
-    onSuccess: async () => {
-      qc.removeQueries({ queryKey: ['people', 'employee', e.id] })
-      await qc.invalidateQueries({ queryKey: peopleKeys.all })
+    onSuccess: () => {
       navigate('/people/employees')
+      showEmployeeChange(qc, { deletedId: e.id })
     },
     onError: () => setDeleting(false),
   })
@@ -135,13 +136,16 @@ function StatusMenu({ e }: { e: EmployeeDetail }) {
 }
 
 export default function EmployeePage() {
+  const qc = useQueryClient()
   const id = Number(useParams().id)
   const q = useEmployee(id)
   const [tab, setTab] = useState<Tab | null>(null)
   const e = q.data
   const { isOwner } = useSession()
   const [givingPassword, setGivingPassword] = useState(false)
-  const shown: Tab = isOwner ? (tab ?? 'profile') : 'profile'
+  // Drawn from their list row until the record arrives: the profile shows at once, editing waits for the real thing.
+  const ready = !q.isPlaceholderData
+  const shown: Tab = isOwner && ready ? (tab ?? 'profile') : 'profile'
   if (q.isPending) return <Skeleton className="h-64 w-full" />
   if (!e) return <p role="alert" className="py-10 text-center text-sm text-danger">Could not open that employee.</p>
   return (
@@ -149,12 +153,12 @@ export default function EmployeePage() {
       <Link to="/people/employees" className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Employees</Link>
       <PageHeader eyebrow={e.employee_id} title={e.full_name} description={[e.job_title, e.department_name, e.manager_name && `reports to ${e.manager_name}`].filter(Boolean).join(' · ') || undefined} actions={<Badge tone={EMPLOYEE_TONE[e.status] ?? 'neutral'}>{e.status}</Badge>} />
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <Tabs label="Section" value={shown} onChange={setTab} items={isOwner ? [{ value: 'profile', label: 'Profile' }, { value: 'access', label: 'Access' }] : [{ value: 'profile', label: 'Profile' }]} />
-        {isOwner && <div className="flex items-center gap-2"><Button variant="outline" onClick={() => setGivingPassword(true)} disabled={!e.email} title={e.email ? undefined : 'Give them an email address first - they sign in with it'}>{e.has_password ? 'Change password' : 'Set password'}</Button><StatusMenu e={e} /></div>}
+        <Tabs label="Section" value={shown} onChange={setTab} items={isOwner && ready ? [{ value: 'profile', label: 'Profile' }, { value: 'access', label: 'Access' }] : [{ value: 'profile', label: 'Profile' }]} />
+        {isOwner && ready && <div className="flex items-center gap-2"><Button variant="outline" onClick={() => setGivingPassword(true)} disabled={!e.email} title={e.email ? undefined : 'Give them an email address first - they sign in with it'}>{e.has_password ? 'Change password' : 'Set password'}</Button><StatusMenu e={e} /></div>}
       </div>
-      {shown === 'profile' && <Profile key={e.id} e={e} />}
+      {shown === 'profile' && <Profile key={e.id} e={e} ready={ready} />}
       {shown === 'access' && <EmployeeAccess key={e.id} e={e} />}
-      {givingPassword && <SetPasswordModal who={e.full_name} email={e.email} hasPassword={e.has_password} save={(password) => setEmployeePassword(e.id, password)} invalidate={[peopleKeys.all]} onClose={() => setGivingPassword(false)} />}
+      {givingPassword && <SetPasswordModal who={e.full_name} email={e.email} hasPassword={e.has_password} save={async (password) => { const r = await setEmployeePassword(e.id, password); showEmployeeChange(qc, { patch: { id: e.id, has_password: true } }); return r }} invalidate={[]} onClose={() => setGivingPassword(false)} />}
     </>
   )
 }

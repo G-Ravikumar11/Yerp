@@ -1,11 +1,12 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
 import { Badge, Button, Stat, StatGrid, Tabs } from '@/components/ui'
-import { useEmployees, useHrStats, type Employee } from '@/api/people'
+import { prefetchEmployee, useEmployees, useHrStats, type Employee } from '@/api/people'
 import { formatDate } from '@/lib/format'
 import { EmployeeFormModal } from './EmployeeFormModal'
 
@@ -15,10 +16,13 @@ export const EMPLOYEE_TONE: Record<string, 'success' | 'warning' | 'neutral' | '
 export default function EmployeesPage() {
   const nav = useNavigate()
   const [tab, setTab] = useState<Tab>('')
-  const q = useEmployees(tab)
+  const qc = useQueryClient()
+  // Everybody in one read; the tabs filter it here, so switching tab is instant rather than another trip.
+  const q = useEmployees('')
+  const rows = useMemo(() => (tab ? q.data?.filter((e) => e.status === tab) : q.data), [q.data, tab])
   const stats = useHrStats()
   const [creating, setCreating] = useState(false)
-  const filters = useListFilters(q.data, { search: (e) => [e.full_name, e.email, e.employee_id, e.job_title, e.department_name].join(' ') })
+  const filters = useListFilters(rows, { search: (e) => [e.full_name, e.email, e.employee_id, e.job_title, e.department_name].join(' ') })
   const s = stats.data
 
   const columns: TableColumn<Employee>[] = [
@@ -43,7 +47,7 @@ export default function EmployeesPage() {
       </StatGrid>
       <div className="mb-4"><Tabs label="Status" value={tab} onChange={setTab} items={[{ value: '', label: 'All' }, { value: 'active', label: 'Active' }, { value: 'onboarding', label: 'Onboarding' }, { value: 'offboarding', label: 'Offboarding' }, { value: 'terminated', label: 'Terminated' }]} /></div>
       <FilterBar filters={filters} placeholder="Search by name, email, ID, title or department..." />
-      <DataTable label="Employees" rows={filters.filtered} columns={columns} rowKey={(e) => e.id} loading={q.isPending} onRowClick={(e) => nav(`/people/employees/${e.id}`)} empty={filters.active ? 'Nothing matches those filters.' : 'No employees found.'} />
+      <DataTable label="Employees" rows={filters.filtered} columns={columns} rowKey={(e) => e.id} loading={q.isPending} onRowClick={(e) => nav(`/people/employees/${e.id}`)} onRowHover={(e) => prefetchEmployee(qc, e.id)} empty={filters.active ? 'Nothing matches those filters.' : 'No employees found.'} />
       <EmployeeFormModal open={creating} onClose={() => setCreating(false)} />
     </>
   )

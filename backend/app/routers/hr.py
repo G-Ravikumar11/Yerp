@@ -4,12 +4,12 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import case, func, func as sqlfunc, or_
+from sqlalchemy import and_, case, delete as sa_delete, func, func as sqlfunc, or_, select, update
 from sqlalchemy.orm import Session, aliased, joinedload, undefer
 
 from app import models
 from app.core import passwords
-from app.core.queries import by_id, prime
+from app.core.queries import by_id, execute_together, prime
 from app.db import get_db
 
 from app.constants.hr import ONBOARDING_STAGES, ORG_DOMAIN_KEY
@@ -274,8 +274,9 @@ def update_department(dept_id: int, request: Request, body: DepartmentCreate, db
     dept = department_or_404(db, client.id, dept_id)
     name = clean_department_name(body.name)
     # Create checked for duplicates but update did not, so a rename could
-    # produce two departments with the same name.
-    assert_department_name_free(db, client.id, name, exclude_id=dept.id)
+    # produce two departments with the same name. Kept as it is, it is still its own.
+    if name.lower() != (dept.name or "").lower():
+        assert_department_name_free(db, client.id, name, exclude_id=dept.id)
     dept.name = name
     dept.description = body.description
     dept.color = body.color
@@ -293,21 +294,18 @@ def delete_department(dept_id: int, request: Request, db: Session = Depends(get_
     client = get_client_user(request, db)
     require_owner(request, db)
     dept = department_or_404(db, client.id, dept_id)
-    db.query(models.DBEmployee).filter(models.DBEmployee.department_id == dept_id).update(
-        {"department_id": None}, synchronize_session=False
-    )
-    # Goals hang off departments too and would block the delete on Postgres.
-    db.query(models.DBDepartmentGoal).filter(models.DBDepartmentGoal.department_id == dept_id).delete(
-        synchronize_session=False
-    )
-    db.query(models.DBDepartmentSite).filter(models.DBDepartmentSite.department_id == dept_id).delete(
-        synchronize_session=False
-    )
-    db.query(models.DBEmployeeGoal).filter(models.DBEmployeeGoal.department_id == dept_id).update(
-        {"department_id": None}, synchronize_session=False
-    )
     log_audit(db, client.id, "department_deleted", "department", dept.id, dept.name, "", request)
-    db.delete(dept)
+    # In one trip: its people leave it, goals that hang off it (which would block the delete on Postgres) go or
+    # let go, then the department itself - rather than a trip each and a read of its members first.
+    E, G, S, EG, D = (m.__table__ for m in (models.DBEmployee, models.DBDepartmentGoal, models.DBDepartmentSite,
+                                            models.DBEmployeeGoal, models.DBDepartment))
+    execute_together(db, [
+        update(E).where(E.c.department_id == dept_id).values(department_id=None),
+        sa_delete(G).where(G.c.department_id == dept_id),
+        sa_delete(S).where(S.c.department_id == dept_id),
+        update(EG).where(EG.c.department_id == dept_id).values(department_id=None),
+        sa_delete(D).where(D.c.id == dept_id),
+    ])
     db.commit()
     return {"message": "Department deleted"}
 
@@ -377,7 +375,16 @@ def remove_from_department(dept_id: int, emp_id: int, request: Request, db: Sess
 @router.get("/api/employees")
 def get_employees(request: Request, q: str = "", status: str = "", db: Session = Depends(get_db)):
     client = get_client_user(request, db)
-    query = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id)
+    # Each person's department, manager and site count come in the same read as the person: on the hosted
+    # database every separate query is a trip across the ocean.
+    mgr = aliased(models.DBEmployee)
+    site_count = select(sqlfunc.count(models.DBEmployeeSite.id)).where(
+        models.DBEmployeeSite.employee_id == models.DBEmployee.id).correlate(models.DBEmployee).scalar_subquery()
+    query = db.query(models.DBEmployee, models.DBDepartment.name, mgr.first_name, mgr.last_name, site_count).outerjoin(
+        models.DBDepartment, and_(models.DBDepartment.id == models.DBEmployee.department_id,
+                                  models.DBDepartment.client_id == client.id)).outerjoin(
+        mgr, and_(mgr.id == models.DBEmployee.reports_to, mgr.client_id == client.id)).filter(
+        models.DBEmployee.client_id == client.id)
     if status:
         query = query.filter(models.DBEmployee.status == status)
     if q:
@@ -387,24 +394,13 @@ def get_employees(request: Request, q: str = "", status: str = "", db: Session =
             models.DBEmployee.email.ilike(f"%{q}%"),
             models.DBEmployee.job_title.ilike(f"%{q}%"),
         ))
-    employees = query.order_by(models.DBEmployee.created_at.desc()).all()
-    # Each person's department, manager and site count were three queries
-    # apiece - a hundred staff was three hundred trips to the database.
-    dept_names = {d.id: d.name for d in db.query(models.DBDepartment.id, models.DBDepartment.name).filter(
-        models.DBDepartment.client_id == client.id).all()}
-    manager_ids = {e.reports_to for e in employees if e.reports_to}
-    managers = {m.id: f"{m.first_name} {m.last_name}" for m in db.query(
-        models.DBEmployee.id, models.DBEmployee.first_name, models.DBEmployee.last_name).filter(
-        models.DBEmployee.client_id == client.id, models.DBEmployee.id.in_(manager_ids)).all()} if manager_ids else {}
-    site_counts = dict(db.query(models.DBEmployeeSite.employee_id, sqlfunc.count(models.DBEmployeeSite.id)).filter(
-        models.DBEmployeeSite.employee_id.in_([e.id for e in employees])).group_by(
-        models.DBEmployeeSite.employee_id).all()) if employees else {}
+    rows = query.order_by(models.DBEmployee.created_at.desc()).all()
     result = []
-    for e in employees:
-        dept_name = dept_names.get(e.department_id, "") if e.department_id else ""
-        manager_name = managers.get(e.reports_to, "") if e.reports_to else ""
+    for e, dept_name, mgr_first, mgr_last, sites in rows:
+        dept_name = (dept_name or "") if e.department_id else ""
+        manager_name = f"{mgr_first} {mgr_last}" if e.reports_to and mgr_first is not None else ""
         result.append({
-            "site_count": site_counts.get(e.id, 0),
+            "site_count": sites or 0,
             "id": e.id, "employee_id": e.employee_id,
             "first_name": e.first_name, "last_name": e.last_name,
             "full_name": f"{e.first_name} {e.last_name}",
@@ -529,20 +525,70 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     return out
 
 
-@router.get("/api/employees/{emp_id}")
-def get_employee(emp_id: int, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
-    # The person, their department and their manager in one read: each is a trip across the ocean.
+def _employee_with_names(db, client_id, emp_id):
+    """(employee, department name, manager name) in one read - each separately is a trip across the ocean."""
     mgr = aliased(models.DBEmployee)
     row = db.query(models.DBEmployee, models.DBDepartment.name, mgr.first_name, mgr.last_name).outerjoin(
         models.DBDepartment, models.DBDepartment.id == models.DBEmployee.department_id).outerjoin(
         mgr, mgr.id == models.DBEmployee.reports_to).filter(
-        models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+        models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Employee not found")
     emp, dept_name, mgr_first, mgr_last = row
-    dept_name = dept_name or ""
-    manager_name = f"{mgr_first} {mgr_last}" if emp.reports_to and mgr_first is not None else ""
+    return emp, dept_name or "", (f"{mgr_first} {mgr_last}" if emp.reports_to and mgr_first is not None else "")
+
+
+def _profile(emp, dept_name, manager_name, sites):
+    """What the employee's page shows: who they are, their place, their pay terms and their access.
+    `sites` is the site part (sites_payload)."""
+    return {
+        **sites,
+        "id": emp.id, "employee_id": emp.employee_id,
+        "first_name": emp.first_name, "last_name": emp.last_name,
+        "full_name": f"{emp.first_name} {emp.last_name}",
+        "email": emp.email, "org_email": emp.org_email or "", "phone": emp.phone, "address": emp.address,
+        # Whether they can sign in yet; the password itself (or its hash) is never sent.
+        "has_password": bool(emp.password_hash),
+        "department_id": emp.department_id, "department_name": dept_name,
+        "reports_to": emp.reports_to, "manager_name": manager_name,
+        "job_title": emp.job_title, "role": emp.role, "level": emp.level or "",
+        "permission_role": emp.permission_role or DEFAULT_PERMISSION_ROLE,
+        "permissions": sorted(permissions_for(emp)),
+        # What the role gives, so a screen can show which boxes were ticked by
+        # the role and which by hand, rather than one undifferentiated list.
+        "role_permissions": sorted(ROLE_PERMISSIONS.get(
+            (emp.permission_role or DEFAULT_PERMISSION_ROLE).lower(), set())),
+        "extra_permissions": sorted(permission_list(emp.extra_permissions)),
+        "denied_permissions": sorted(permission_list(emp.denied_permissions)),
+        "employment_type": emp.employment_type, "pay_frequency": emp.pay_frequency,
+        "salary": emp.salary, "hourly_rate": emp.hourly_rate,
+        "tax_rate": emp.tax_rate, "deductions": emp.deductions,
+        "allowances": emp.allowances, "bonus": emp.bonus,
+        "bank_name": emp.bank_name, "bank_account": emp.bank_account, "tax_id": emp.tax_id,
+        "emergency_contact": emp.emergency_contact, "emergency_phone": emp.emergency_phone,
+        "start_date": emp.start_date, "end_date": emp.end_date,
+        "status": emp.status, "onboarding_complete": emp.onboarding_complete,
+        "offboarding_complete": emp.offboarding_complete,
+        "created_at": emp.created_at,
+    }
+
+
+def _profile_now(db, client_id, emp_id, sites=None):
+    """The profile as this transaction has left it, read before the commit expires everything.
+    `sites` is the (id, number, name) list when the caller has just set it."""
+    db.flush()
+    emp, dept_name, manager_name = _employee_with_names(db, client_id, emp_id)
+    return _profile(emp, dept_name, manager_name, sites_payload(sites) if sites is not None else employee_sites_payload(db, emp))
+
+
+@router.get("/api/employees/{emp_id}")
+def get_employee(emp_id: int, request: Request, view: str = "", db: Session = Depends(get_db)):
+    """One employee. `?view=profile` is what their page shows - three reads; without it, everything about
+    them (payslips, leave, attendance, goals, documents, reports) for the screens that want the lot."""
+    client = get_client_user(request, db)
+    emp, dept_name, manager_name = _employee_with_names(db, client.id, emp_id)
+    if view == "profile":
+        return _profile(emp, dept_name, manager_name, employee_sites_payload(db, emp))
     payslips = db.query(models.DBPayslip).filter(models.DBPayslip.employee_id == emp.id).order_by(models.DBPayslip.created_at.desc()).limit(12).all()
     onboarding = db.query(models.DBOnboardingItem).filter(models.DBOnboardingItem.employee_id == emp.id).all()
 
@@ -593,34 +639,7 @@ def get_employee(emp_id: int, request: Request, db: Session = Depends(get_db)):
     ).all()
 
     return {
-        **employee_sites_payload(db, emp),
-        "id": emp.id, "employee_id": emp.employee_id,
-        "first_name": emp.first_name, "last_name": emp.last_name,
-        "full_name": f"{emp.first_name} {emp.last_name}",
-        "email": emp.email, "phone": emp.phone, "address": emp.address,
-        # Whether they can sign in yet; the password itself (or its hash) is never sent.
-        "has_password": bool(emp.password_hash),
-        "department_id": emp.department_id, "department_name": dept_name,
-        "reports_to": emp.reports_to, "manager_name": manager_name,
-        "job_title": emp.job_title, "role": emp.role, "level": emp.level or "",
-        "permission_role": emp.permission_role or DEFAULT_PERMISSION_ROLE,
-        "permissions": sorted(permissions_for(emp)),
-        # What the role gives, so a screen can show which boxes were ticked by
-        # the role and which by hand, rather than one undifferentiated list.
-        "role_permissions": sorted(ROLE_PERMISSIONS.get(
-            (emp.permission_role or DEFAULT_PERMISSION_ROLE).lower(), set())),
-        "extra_permissions": sorted(permission_list(emp.extra_permissions)),
-        "denied_permissions": sorted(permission_list(emp.denied_permissions)),
-        "employment_type": emp.employment_type, "pay_frequency": emp.pay_frequency,
-        "salary": emp.salary, "hourly_rate": emp.hourly_rate,
-        "tax_rate": emp.tax_rate, "deductions": emp.deductions,
-        "allowances": emp.allowances, "bonus": emp.bonus,
-        "bank_name": emp.bank_name, "bank_account": emp.bank_account, "tax_id": emp.tax_id,
-        "emergency_contact": emp.emergency_contact, "emergency_phone": emp.emergency_phone,
-        "start_date": emp.start_date, "end_date": emp.end_date,
-        "status": emp.status, "onboarding_complete": emp.onboarding_complete,
-        "offboarding_complete": emp.offboarding_complete,
-        "created_at": emp.created_at,
+        **_profile(emp, dept_name, manager_name, employee_sites_payload(db, emp)),
         "payslips": [{"id": p.id, "number": p.number, "period_start": p.period_start, "period_end": p.period_end,
                        "pay_date": p.pay_date, "gross_pay": p.gross_pay, "net_pay": p.net_pay,
                        "status": p.status, "sent": p.sent} for p in payslips],
@@ -671,6 +690,9 @@ def get_employee(emp_id: int, request: Request, db: Session = Depends(get_db)):
 
 @router.put("/api/employees/{emp_id}")
 def update_employee(emp_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """Change somebody's details. The page sends every field back on each save, so what has not changed is not
+    checked again (each check is a trip across the ocean), and the answer is the saved profile, so the page
+    shows it without asking a second time."""
     client = get_client_user(request, db)
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
     if not emp:
@@ -682,10 +704,18 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
     if "last_name" in body:
         body["last_name"] = clean_person_name(body["last_name"], "Last name")
     if "email" in body:
-        body["email"] = clean_employee_email(db, client.id, body["email"], exclude_id=emp.id,
-                                             required=bool(emp.password_hash or body.get("password")))
+        given = (body["email"] or "").strip().lower()
+        if given and given == (emp.email or "").lower():
+            body["email"] = given          # their own address, already checked when it was set
+        else:
+            body["email"] = clean_employee_email(db, client.id, body["email"], exclude_id=emp.id,
+                                                 required=bool(emp.password_hash or body.get("password")))
     if "org_email" in body:
-        body["org_email"] = clean_org_email(db, client.id, body["org_email"], exclude_id=emp.id)
+        given = (body["org_email"] or "").strip().lower()
+        if given and given == (emp.org_email or "").lower():
+            body["org_email"] = given
+        else:
+            body["org_email"] = clean_org_email(db, client.id, body["org_email"], exclude_id=emp.id)
     validate_employee_money(body)
     # Hierarchy fields go through the same checks as on create; a blind
     # setattr let callers set an unknown level or build a reporting loop.
@@ -707,10 +737,13 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
     if "permission_role" in body:
         body["permission_role"] = validate_permission_role(body["permission_role"])
     if "reports_to" in body:
-        if (body["reports_to"] or None) != emp.reports_to:
+        line, level_now = body["reports_to"] or None, body.get("level") or emp.level or ""
+        if line != emp.reports_to:
             require_owner(request, db)  # the reporting line is the Master's to change
-        body["reports_to"] = validate_manager(db, client.id, emp.id, body["reports_to"],
-                                              body.get("level") or emp.level or "")
+        if line == emp.reports_to and level_now == (emp.level or ""):
+            body["reports_to"] = line      # the same manager at the same level: nothing new to check
+        else:
+            body["reports_to"] = validate_manager(db, client.id, emp.id, body["reports_to"], level_now)
     # A new role moves the line to the role above it, unless the Master has just set the line by hand.
     if "role" in body and body["role"] != (emp.role or "") and body.get("reports_to", emp.reports_to) == emp.reports_to:
         auto = automatic_reports_to(db, client.id, body["role"], body.get("department_id", emp.department_id), emp.id)
@@ -723,15 +756,16 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
     for key, val in body.items():
         if hasattr(emp, key) and key not in ("id", "client_id", "created_at", "password_hash", "employee_id"):
             setattr(emp, key, val)
-    set_employee_sites(db, client.id, emp, site_ids)
+    sites = set_employee_sites(db, client.id, emp, site_ids)
     if "status" in body:
         release_on_leaving(db, emp)
     if move_to_department(db, client.id, emp, new_dept) != new_dept:
         log_audit(db, client.id, "employee_department_changed", "employee", emp.id,
                   f"{emp.first_name} {emp.last_name}", "Department set to %s" % (new_dept or "none"), request)
     log_audit(db, client.id, "employee_updated", "employee", emp.id, f"{emp.first_name} {emp.last_name}", f"Fields: {', '.join(body.keys()) if body else 'none'}", request)
+    out = {**_profile_now(db, client.id, emp.id, sites), "message": "Employee updated"}
     db.commit()
-    return {"message": "Employee updated"}
+    return out
 
 
 @router.delete("/api/employees/{emp_id}")
@@ -748,9 +782,11 @@ def delete_employee(emp_id: int, request: Request, db: Session = Depends(get_db)
     # (on Postgres - SQLite would let it through). Their own records (payslips, attendance, leave, documents, sites)
     # go with them; records that only name them (the bills they submitted, the jobs they managed, anyone reporting to
     # them) stay, with nobody against them.
-    release_references(db, "employees", emp_id)
+    # The row itself goes in the same trip as everything pointing at it. Through the session it was read back
+    # first - its payslips, checklist and attendance, all just cleared - one more trip each.
     log_audit(db, client.id, "employee_deleted", "employee", emp.id, emp_name, "", request)
-    db.delete(emp)
+    release_references(db, "employees", emp_id, then=[
+        sa_delete(models.DBEmployee.__table__).where(models.DBEmployee.__table__.c.id == emp_id)])
     db.commit()
     return {"message": "Employee deleted"}
 
@@ -870,21 +906,19 @@ def set_employee_permissions(emp_id: int, request: Request, body: dict = None,
 
     # Sites are part of access too, so they save together with the rights;
     # an empty list means every site, and leaving the key out changes nothing.
+    sites = None
     if "site_ids" in body:
         if not isinstance(body["site_ids"], list):
             raise HTTPException(status_code=400, detail="site_ids must be a list")
-        set_employee_sites(db, client.id, emp, body["site_ids"])
+        sites = set_employee_sites(db, client.id, emp, body["site_ids"])
 
     after = sorted(permissions_for(emp))
     log_audit(db, client.id, "employee_permissions_changed", "employee", emp.id,
               f"{emp.first_name} {emp.last_name}", _access_detail(old_role, new_role, before, after), request)
+    # The whole profile as saved, so the page shows it without asking again.
+    out = {**_profile_now(db, client.id, emp.id, sites), "message": "Access updated"}
     db.commit()
-    return {
-        "message": "Access updated",
-        "permission_role": new_role,
-        "permissions": after,
-        "role_permissions": sorted(ROLE_PERMISSIONS.get(new_role, set())),
-    }
+    return out
 
 
 def _set_status(emp_id: int, request: Request, db: Session, status: str, message: str, **fields):
@@ -900,8 +934,9 @@ def _set_status(emp_id: int, request: Request, db: Session, status: str, message
         setattr(emp, k, v)
     release_on_leaving(db, emp)                       # someone who has left works in no store
     log_audit(db, client.id, "employee_status_changed", "employee", emp.id, "%s: %s -> %s" % (emp.full_name if hasattr(emp, "full_name") else emp.id, before, status), "", request)
+    out = {"message": message, "status": emp.status, "end_date": emp.end_date or ""}   # before the commit expires it
     db.commit()
-    return {"message": message, "status": emp.status, "end_date": emp.end_date or ""}
+    return out
 
 
 @router.post("/api/employees/{emp_id}/onboard")
@@ -1274,18 +1309,24 @@ def get_org_chart(request: Request, db: Session = Depends(get_db)):
 @router.get("/api/hr/stats")
 def get_hr_stats(request: Request, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
-    # One count per status in a single grouped read, rather than five separate counts.
-    by_status = dict(db.query(models.DBEmployee.status, sqlfunc.count(models.DBEmployee.id)).filter(
-        models.DBEmployee.client_id == client.id).group_by(models.DBEmployee.status).all())
-    depts = db.query(models.DBDepartment).filter(models.DBDepartment.client_id == client.id).count()
-    total_payroll, pending_payroll = db.query(
-        sqlfunc.coalesce(sqlfunc.sum(case((models.DBPayslip.status == "Paid", models.DBPayslip.net_pay), else_=0)), 0),
-        sqlfunc.coalesce(sqlfunc.sum(case((models.DBPayslip.status != "Paid", models.DBPayslip.net_pay), else_=0)), 0),
-    ).filter(models.DBPayslip.client_id == client.id).one()
+    E, P = models.DBEmployee, models.DBPayslip
+
+    def count(*where):
+        return select(sqlfunc.count(E.id)).where(E.client_id == client.id, *where).scalar_subquery()
+
+    def paid(cond):
+        return select(sqlfunc.coalesce(sqlfunc.sum(case((cond, P.net_pay), else_=0)), 0)).where(
+            P.client_id == client.id).scalar_subquery()
+    # Every figure in one read: they were eight separate trips across the ocean.
+    (total, active, onboarding, offboarding, terminated, depts, total_payroll, pending_payroll) = db.query(
+        count(), count(E.status == "active"), count(E.status == "onboarding"), count(E.status == "offboarding"),
+        count(E.status == "terminated"),
+        select(sqlfunc.count(models.DBDepartment.id)).where(models.DBDepartment.client_id == client.id).scalar_subquery(),
+        paid(P.status == "Paid"), paid(P.status != "Paid"),
+    ).one()
     return {
-        "total_employees": sum(by_status.values()), "active": by_status.get("active", 0),
-        "onboarding": by_status.get("onboarding", 0),
-        "offboarding": by_status.get("offboarding", 0), "terminated": by_status.get("terminated", 0),
+        "total_employees": total, "active": active, "onboarding": onboarding,
+        "offboarding": offboarding, "terminated": terminated,
         "departments": depts,
         "total_payroll": round(float(total_payroll), 2),
         "pending_payroll": round(float(pending_payroll), 2),
