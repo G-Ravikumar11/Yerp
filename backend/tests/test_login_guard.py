@@ -89,6 +89,22 @@ def test_a_solved_captcha_covers_one_sign_in_and_cannot_be_used_again(account, c
         assert login(other, email, PASSWORD, **answer).status_code == 428
 
 
+def test_an_old_cookie_cannot_bring_a_spent_captcha_back(account, captcha_on):
+    c, email = account["client"], account["email"]
+    for _ in range(3):
+        login(c, email, "wrong")
+    answer = solve(c)
+    first = login(c, email, "wrong", **answer)                             # solved: this try, and the staff door's
+    assert first.status_code == 401
+    kept = first.headers["set-cookie"].split(";")[0]                       # the cookie as it was handed back
+    assert c.post("/api/employee/auth/login", json={"email": email, "password": "wrong"}).status_code == 401
+    # Whoever kept that cookie and sends it again, over and over, is not let through without a new CAPTCHA.
+    with TestClient(main.app) as replay:
+        replay.headers["cookie"] = kept
+        codes = [login(replay, email, "wrong").status_code for _ in range(4)]
+    assert codes[-1] == 428 and codes.count(401) <= 1
+
+
 def test_trying_address_after_address_needs_the_captcha_too(client, captcha_on):
     for i in range(3):
         assert client.post("/api/employee/auth/login",

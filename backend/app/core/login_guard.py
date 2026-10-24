@@ -278,12 +278,38 @@ def _turnstile_ok(response, ip):
         return False
 
 
+# What a solved CAPTCHA still covers, kept HERE and not in the session: the session is a signed cookie the visitor holds,
+# so a count kept in it could be put back by sending the old cookie again - one solved CAPTCHA, unlimited guesses.
+# The cookie carries only an id; how many tries it has left is this process's to say.
+_passes = {}                      # id -> [tries left, expires at]
+_passes_lock = threading.Lock()
+
+
+def _use_pass(pid):
+    now = time.time()
+    with _passes_lock:
+        for k in [k for k, (_, until) in _passes.items() if until < now]:
+            _passes.pop(k, None)
+        held = _passes.get(pid) if pid else None
+        if not held or held[0] <= 0:
+            return False
+        held[0] -= 1
+        if held[0] <= 0:
+            _passes.pop(pid, None)
+        return True
+
+
+def _grant_pass(request):
+    pid = secrets.token_urlsafe(16)
+    with _passes_lock:
+        _passes[pid] = [CREDITS - 1, time.time() + CAPTCHA_TTL]     # this request is the first of its CREDITS
+    request.session["captcha_pass"] = pid
+
+
 def require_captcha(request, body):
     """Passed, or refused with 428 for the page to show the CAPTCHA. A solved one covers this sign-in and no more."""
     session = request.session
-    credits = int(session.get("captcha_credits") or 0)
-    if credits > 0:
-        session["captcha_credits"] = credits - 1
+    if _use_pass(session.get("captcha_pass")):
         return
     token = (body.get("captcha_token") or "").strip() if isinstance(body, dict) else ""
     answer = (body.get("captcha_answer") or "").strip() if isinstance(body, dict) else ""
@@ -300,7 +326,7 @@ def require_captcha(request, body):
             ok = False
     if not ok:
         raise HTTPException(428, "That check did not match. Try the new one below.")
-    session["captcha_credits"] = CREDITS - 1
+    _grant_pass(request)
 
 
 def body_of(body):
