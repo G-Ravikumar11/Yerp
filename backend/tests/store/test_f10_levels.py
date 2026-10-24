@@ -99,3 +99,27 @@ def test_cancelling_an_issue_or_a_receipt_moves_the_alert_too(account):
         assert s.query(DBStoreReorderAlert).filter(DBStoreReorderAlert.client_id == w["client_id"], DBStoreReorderAlert.cleared_at.is_(None)).count() == 0
     _issue(t, central, w, 60)                          # low again: told again
     assert _alerts(w["client_id"]) == 2
+
+
+def test_the_scan_covers_only_the_stores_the_person_works_in(account):
+    from fastapi.testclient import TestClient
+    import main
+    from conftest import make_employee
+    t, tag = account["client"], uuid.uuid4().hex[:6]
+    w = _company(account, tag)
+    central = _hub(t, w, tag)
+    other = ok(t.post("/api/store/masters/stores", json={"code": "OT" + tag[:3].upper(), "name": "Other", "type": "CENTRAL"}))
+    _receive(t, central, w, 100)                       # 5000 kg in the central store only
+    ok(t.put("/api/store/masters/items/%d/settings" % w["item"], json={"category": "CONSUMABLE", "base_uom": "kg", "reorder_level": "6000"}))
+    email = "incharge-%s@example.com" % tag
+    emp = make_employee(t, email=email, password="Crew1234", permission_role="store_incharge", status="active")
+    ok(t.post("/api/store/masters/stores/%d/assignments" % other["id"], json={"employee_id": emp["id"], "role": "STOREKEEPER"}))
+    c = TestClient(main.app)
+    c.__enter__()
+    try:
+        assert c.post("/api/employee/auth/login", json={"email": email, "password": "Crew1234"}).status_code == 200
+        assert ok(c.post("/api/store/levels/scan"))["raised"] == 0                     # the low stock is in a store not theirs
+        assert _alerts(w["client_id"]) == 0
+        assert ok(t.post("/api/store/levels/scan"))["raised"] == 1                     # the Master's scan covers every store
+    finally:
+        c.__exit__(None, None, None)

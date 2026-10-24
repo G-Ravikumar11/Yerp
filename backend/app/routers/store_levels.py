@@ -13,6 +13,7 @@ from app.core.store_auth import store_actor
 from app.db import get_db
 from app.models.store_core import DBStore, DBStoreItemSettings, DBStoreStockBalance
 from app.models.store_extras import DBStoreItemLevel
+from app.routers.store_masters import visible_store_ids
 from app.services import store_levels
 from app.services.stock_ledger import assert_store_access, raise_reorder_alert
 
@@ -114,9 +115,10 @@ def remove_level(store_id: int, item_id: int, request: Request, db: Session = De
 @router.post("/scan")
 def scan(request: Request, db: Session = Depends(get_db)):
     """Raise the alert for every item already at or below its reorder level in a store with none open - stock that fell below before alerts
-    were kept, or whose level was raised afterwards."""
+    were kept, or whose level was raised afterwards. Only the stores this person works in."""
     actor = store_actor(request, db, "store.masters.create")
-    stores = {s.id: s for s in db.query(DBStore).filter(DBStore.client_id == actor.client.id, DBStore.is_active.is_(True)).all()}
+    seen = visible_store_ids(db, actor)                                 # the stores this person works in (all of them for an administrator)
+    stores = {s.id: s for s in db.query(DBStore).filter(DBStore.client_id == actor.client.id, DBStore.is_active.is_(True)).all() if seen is None or s.id in seen}
     if not stores:
         return {"raised": 0}
     over = store_levels.overrides(db, list(stores))
