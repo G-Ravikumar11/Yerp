@@ -1,6 +1,6 @@
-"""Four holes closed: an approved payment paid to someone else, a colleague of the Master's treated as the Master for
-payment approval, the Master locked out by anybody who knew their email, and the bank reconciliation losing track of a
-voided transfer's other leg and of genuinely repeated statement lines."""
+"""Three holes closed: a colleague of the Master's treated as the Master for payment approval, the Master locked out by
+anybody who knew their email, and the bank reconciliation losing track of a voided transfer's other leg and of genuinely
+repeated statement lines. (An approved payment paid to someone else is closed on its own branch, with its tests.)"""
 import uuid
 from datetime import datetime, timedelta
 
@@ -11,7 +11,6 @@ import main
 from app import models
 from app.core import login_guard
 from test_bank_reco import day, dmy, statement
-from test_payment_approval import office, person  # noqa: F401  (office is a fixture)
 
 PASSWORD = "Passw0rdTest"
 
@@ -22,41 +21,6 @@ def _calm():
     login_guard.failures.reset()
     yield
     login_guard.failures.reset()
-
-
-# --- 1. an approved payment is paid as approved ------------------------------------------------------------------------
-
-def _approved_advance(clerk, checker, **over):
-    body = {"doc_type": "on_account", "party_type": "contractor", "party_name": "Sai Steel Fixers", "amount": 25000, **over}
-    res = clerk.post("/api/payment-requests", json=body)
-    assert res.status_code == 200, res.text
-    r = res.json()["request"]
-    assert checker.post("/api/payment-requests/%d/decide" % r["id"], json={"decision": "approve"}).status_code == 200
-    return r
-
-
-def test_an_approved_advance_cannot_be_paid_to_someone_else_or_another_project(tenant, office):
-    clerk, head = office
-    job = tenant.post("/api/jobs", json={"name": "Tower A", "customer_name": "ACME"}).json()
-    r = _approved_advance(clerk, head, job_id=job["id"])
-    pay = lambda **kw: clerk.post("/api/money/entries", json={"doc_type": "on_account", "direction": "OUT", "party_type": "contractor",
-                                                              "party_name": "Sai Steel Fixers", "job_id": job["id"], "amount": 25000,
-                                                              "request_id": r["id"], **kw})
-    res = pay(party_name="Somebody Else")
-    assert res.status_code == 400 and "who it is paid to" in res.json()["detail"]
-    res = pay(job_id=None)
-    assert res.status_code == 400 and "the project" in res.json()["detail"]
-    assert pay().status_code == 200                                                # exactly as approved
-
-
-def test_an_approved_expense_keeps_its_head(tenant, office):
-    clerk, head = office
-    r = _approved_advance(clerk, head, doc_type="expense", head="Diesel & fuel", party_name="HP Petrol Pump", party_type="other")
-    body = {"doc_type": "expense", "head": "Rent", "party_name": "HP Petrol Pump", "amount": 25000, "request_id": r["id"]}
-    res = clerk.post("/api/money/entries", json=body)
-    assert res.status_code == 400 and "the head" in res.json()["detail"]
-    body["head"] = "Diesel & fuel"
-    assert clerk.post("/api/money/entries", json=body).status_code == 200
 
 
 # --- 2. a colleague is not the Master ---------------------------------------------------------------------------------------

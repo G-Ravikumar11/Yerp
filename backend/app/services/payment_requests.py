@@ -175,30 +175,13 @@ def cancel(db, client, emp, r):
     return "%s withdrawn." % r.number
 
 
-def use_for_payment(db, client_id, request_id, doc_type, doc_id, amount, direction="OUT", party_type=None, party_name=None,
-                    job_id=None, head=None):
-    """The approved request a payment settles: the same bill (or the same kind of payment), paid out to the same party, for
-    the same project and under the same head, and no more than was approved. An advance or an expense has no bill to tie it
-    down, so without the party, project and head being checked whoever paid it could send the approved money elsewhere."""
+def use_for_payment(db, client_id, request_id, doc_type, doc_id, amount):
+    """The approved request a payment settles: the same bill (or the same kind of payment), no more than was approved."""
     r = request_or_404(db, client_id, request_id)
     if r.status != "APPROVED":
         raise HTTPException(409, "%s is %s, not approved to pay." % (r.number, STATUS_LABEL.get(r.status, r.status).lower()))
     if (r.doc_type or "") != (doc_type or "on_account") or (r.doc_id or None) != (doc_id or None):
         raise HTTPException(400, "%s was approved for something else." % r.number)
-    if (direction or "OUT") != "OUT":
-        raise HTTPException(400, "%s approved a payment out, not money coming in." % r.number)
-
-    def same(a, b):
-        return " ".join((a or "").lower().split()) == " ".join((b or "").lower().split())
-    changed = [what for what, ok in (
-        ("who it is paid to", same(r.party_name, party_name) and (r.party_type or "other") == (party_type or "other")),
-        ("the project", (r.job_id or None) == (job_id or None)),
-        ("the head", same(r.head, head)),
-    ) if not ok]
-    if changed:
-        raise HTTPException(400, "%s was approved as %s to %s%s%s; %s cannot be changed when paying it. Raise a new request instead."
-                            % (r.number, inr(r.amount), r.party_name or "-", (" for project %s" % r.job_id) if r.job_id else "",
-                               (" under %s" % r.head) if r.head else "", " and ".join(changed)))
     if money(amount) > money(r.amount) + 0.009:
         raise HTTPException(400, "%s approved %s; %s is more than that." % (r.number, inr(r.amount), inr(amount)))
     return r

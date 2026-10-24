@@ -741,11 +741,15 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
             raise HTTPException(400, "Who is this from or to?")
         party_id, job_id, doc_number = None, owned_or_404(db, models.DBJob, client.id, body.job_id, "Project"), ""
 
+    # A colleague of the Master's signs in as the company but is not the Master: their payments are approved like anyone's.
+    if not body.request_id and direction == "OUT" and preq.needs_request(db, client.id, None, amount, member=_colleague(request, db)):
+        raise HTTPException(409, "Payments are approved before they are made: send it for approval "
+                                 "(a payment request), and pay it once it is approved.")
+
     approved = None
     if body.request_id:
-        approved = preq.use_for_payment(db, client.id, body.request_id, doc_type, doc.id if doc else None, amount, direction=direction,
-                                        party_type=party_type, party_name=party_name, job_id=job_id, head=head)
-    elif direction == "OUT" and preq.needs_request(db, client.id, session_employee(request, db), amount, member=_colleague(request, db)):
+        approved = preq.use_for_payment(db, client.id, body.request_id, doc_type, doc.id if doc else None, amount)
+    elif direction == "OUT" and preq.needs_request(db, client.id, session_employee(request, db), amount):
         raise HTTPException(409, "Payments are approved before they are made: send it for approval "
                                  "(a payment request), and pay it once it is approved.")
     e = models.DBMoneyEntry(
