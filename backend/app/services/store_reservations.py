@@ -52,5 +52,3 @@ def reserved_map(db, store_ids, item_ids=None, exclude_indent_id=None):
     return out
 
 
-def reserved_qty(db, store_id, item_id, exclude_indent_id=None) -> Decimal:
-    return reserved_map(db, [store_id], [item_id], exclude_indent_id).get((store_id, item_id), ZERO)

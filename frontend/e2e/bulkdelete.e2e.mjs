@@ -1,4 +1,4 @@
-import { api, approvedOrder, clickText, fill, launch, measure, open, signIn, sleep, waitForToast } from './lib.mjs'
+import { api, approvedOrder, clickText, fill, launch, measure, open, signIn, sleep } from './lib.mjs'
 
 // Clearing a lot at once: tick rows (or all of them), delete them together; filters narrow what "all" means.
 const { page, check, done } = await launch({ allow: [/^(403|404|409) /] })

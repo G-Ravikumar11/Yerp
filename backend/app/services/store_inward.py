@@ -262,7 +262,7 @@ def _category_of(db, item_id):
     return {"category": s[0] if s else None, "batch_tracked": bool(s[1]) if s else False}
 
 
-def open_purchase_orders(db, client_id, visible_projects=None, q=""):
+def open_purchase_orders(db, client_id, q=""):
     """Approved purchase orders that still have something to receive, with each line's pending quantity."""
     query = db.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.client_id == client_id, models.DBPurchaseOrder.status.in_(PO_OPEN))
     query = query.filter(~models.DBPurchaseOrder.id.in_(db.query(DBStorePoClosure.po_id).filter(DBStorePoClosure.client_id == client_id)))

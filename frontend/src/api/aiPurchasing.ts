@@ -17,15 +17,6 @@ export interface PoEmail {
   ai_message?: string
 }
 
-export interface QuoteRecommendation {
-  l1: string
-  l1_landed: number
-  flags: Flag[]
-  recommendation: string | null
-  ai_message?: string
-  ai: AiStatus
-}
-
 export interface ReadQuote {
   available: boolean
   message?: string
@@ -46,7 +37,6 @@ export interface ReadQuote {
 
 export const reviewPo = (id: number) => get<PoReview>(`/api/ai/purchase-orders/${id}/review`)
 export const draftPoEmail = (id: number) => post<PoEmail>(`/api/ai/purchase-orders/${id}/draft-email`)
-export const recommendQuote = (id: number) => get<QuoteRecommendation>(`/api/ai/rfqs/${id}/recommend`)
 export const readQuote = (id: number, input: { text?: string; file?: File | null }) => {
   const form = new FormData()
   if (input.file) form.append('file', input.file)

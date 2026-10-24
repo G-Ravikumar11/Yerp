@@ -1,4 +1,4 @@
-import { api, approvedOrder, clickText, fill, launch, measure, open, signIn, sleep } from './lib.mjs'
+import { api, approvedOrder, clickText, fill, launch, measure, open, signIn } from './lib.mjs'
 
 // Settings > Alerts & data > Delete all work orders: typed to confirm, then every work order is gone.
 const { page, check, done } = await launch({ allow: [/^400 /] })

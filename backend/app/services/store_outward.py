@@ -543,11 +543,6 @@ def _issue_entry(db, issue, line):
     return row
 
 
-def _issue_rate(db, issue, line):
-    """What a line left at: the rate of its posted (not reversed) ledger entry."""
-    return Decimal(str(_issue_entry(db, issue, line).rate))
-
-
 def _recovery_rows(db, issue_line_id):
     return db.query(DBStoreRecovery).filter(DBStoreRecovery.issue_line_id == issue_line_id, DBStoreRecovery.source == "ISSUE", DBStoreRecovery.status == "OPEN").all()
 

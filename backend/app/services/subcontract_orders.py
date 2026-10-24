@@ -570,7 +570,7 @@ def next_vendor_code(db, client_id):
     return "%s%04d" % (prefix, highest + 1)
 
 
-def contractor_form_fields(con, body, fill_blanks_only=False):
+def contractor_form_fields(con, body):
     """The registration form's own boxes from a request onto the record."""
     for key in REGISTRATION_FIELDS:
         v = getattr(body, key, None)

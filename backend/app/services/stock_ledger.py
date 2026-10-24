@@ -114,15 +114,6 @@ def check_date(db, client_id, day, *, backdate=True, today=None):
                                    % (limit, (today - timedelta(days=limit)).strftime("%d %b %Y"), day.strftime("%d %b %Y")))
 
 
-def date_problem(db, client_id, day, *, backdate=True) -> str:
-    """check_date as a message ('' when the date is fine), for screens that warn before anything is posted."""
-    try:
-        check_date(db, client_id, day, backdate=backdate)
-    except InvalidMovementError as exc:
-        return str(exc)
-    return ""
-
-
 # --- balances --------------------------------------------------------------------------------------------------------------
 
 def _balance_row(db, store_id, item_id) -> DBStoreStockBalance:
@@ -345,20 +336,6 @@ def lots_on_hand(db, store_id, item_id):
     held = [(r.batch_id, _dec(r.qty)) for r in rows if _dec(r.qty) > 0]
     batches = {b.id: b for b in db.query(DBStoreBatch).filter(DBStoreBatch.id.in_([b for b, _q in held if b] or [0])).all()}
     return [(batches.get(b), q) for b, q in held]
-
-
-def lot_split(db, store_id, item_id, qty, mtype=MovementType.ISSUE_OUT, on_date=None):
-    """[(DBStoreBatch or None, qty)] that taking `qty` out the usual way would take, without taking it."""
-    held = lots_on_hand(db, store_id, item_id)            # brings old stock into lots
-    order = _pick_order(db, [r for r in _lot_rows(db, store_id, item_id) if _dec(r.qty) > 0], mtype, on_date or date.today()) if held else []
-    out, left = [], _dec(qty)
-    for r in order:
-        if left <= 0:
-            break
-        q = min(_dec(r.qty), left)
-        out.append((db.get(DBStoreBatch, r.batch_id) if r.batch_id else None, q))
-        left -= q
-    return out
 
 
 # --- moving stock ------------------------------------------------------------------------------------------------------------

@@ -147,7 +147,7 @@ async def erp_items_analyse(request: Request, file: UploadFile = File(...),
             rows.append(row)
             continue
         row["_kind"] = row_kind
-        row["_repairs"] = repair_row(row, row_kind, set())
+        row["_repairs"] = repair_row(row, row_kind)
         repairs.extend(row["_repairs"])
         rows.append(row)
 

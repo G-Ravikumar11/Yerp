@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { api, clickText, fill, launch, open, signIn, sleep, waitForToast } from './lib.mjs'
+import { api, clickText, fill, launch, open, signIn, waitForToast } from './lib.mjs'
 
 // The project BOQ: started for a project, the client's sheet read into the grid, saved with item codes, lines taken
 // into a contractor order, and tracked.

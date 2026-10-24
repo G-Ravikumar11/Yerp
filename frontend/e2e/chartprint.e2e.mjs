@@ -1,5 +1,5 @@
 import { writeFileSync } from 'node:fs'
-import { api, clickText, launch, open, setValue, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
+import { api, clickText, launch, open, setValue, signIn } from './lib.mjs'
 
 // Project Chart print: a text report built from the project's own data, with the company logo, ready for the browser's
 // print dialog (and so for PDF). Print is stubbed to count the calls; the page is then rendered to PDF the way the dialog does.

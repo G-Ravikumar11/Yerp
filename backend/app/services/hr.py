@@ -474,12 +474,6 @@ def sites_payload(jobs):
     }
 
 
-def employee_sites_payload(db, emp):
-    return sites_payload(db.query(models.DBJob.id, models.DBJob.number, models.DBJob.name).join(
-        models.DBEmployeeSite, models.DBEmployeeSite.job_id == models.DBJob.id).filter(
-        models.DBEmployeeSite.employee_id == emp.id).order_by(models.DBJob.id).all())
-
-
 def requirement_to_dict(r):
     return {
         "id": r.id, "name": r.name, "description": r.description or "",
