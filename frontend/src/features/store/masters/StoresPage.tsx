@@ -38,7 +38,7 @@ export default function StoresPage() {
     { id: 'held', header: 'Items held', align: 'right', width: '6rem', hideBelow: 'md', sort: (s) => s.items_held, cell: (s) => s.items_held },
     { id: 'value', header: 'Stock value', align: 'right', width: '8rem', hideBelow: 'sm', sort: (s) => Number(s.stock_value), cell: (s) => money(s.stock_value) },
     { id: 'bins', header: 'Bins', align: 'right', width: '4rem', hideBelow: 'lg', cell: (s) => s.bins },
-    { id: 'staff', header: 'Staff', align: 'right', width: '4rem', hideBelow: 'lg', cell: (s) => s.staff },
+    { id: 'staff', header: 'Staff', align: 'right', width: '6rem', hideBelow: 'lg', cell: (s) => (s.is_active && s.staff === 0 ? <Badge tone="warning">Nobody</Badge> : s.staff) },
     {
       id: 'state',
       header: 'Status',
@@ -58,6 +58,15 @@ export default function StoresPage() {
         </Field>
         {canEdit && <Button className="ml-auto" onClick={() => setEditing('new')}><Plus /> New store</Button>}
       </div>
+      {(() => {
+        // A store in use with nobody in it: staff cannot work there, so only the Master and store administrators can.
+        const empty = (stores.data ?? []).filter((s) => s.is_active && s.staff === 0)
+        return empty.length > 0 && (
+          <p role="status" className="mb-3 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">
+            Nobody is assigned to {empty.map((s) => s.code).join(', ')}. Staff work only in the stores they are put in - open the store to add who works there.
+          </p>
+        )
+      })()}
       {stores.isError ? (
         <p role="alert" className="text-sm text-danger">Could not load the stores.</p>
       ) : (
