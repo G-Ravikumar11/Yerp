@@ -200,6 +200,7 @@ export function EmployeeAccess({ e }: { e: EmployeeDetail }) {
                     <div className="min-w-0">
                       <p className="text-[13px] leading-snug">{p.label}</p>
                       <p className="text-[11px] text-muted-foreground">{locked ? `${cat.data!.permission_roles.find((r) => r.code === p.only_role)?.label ?? p.only_role} only` : diff ? (isOn(p.key) ? 'Added for them' : 'Removed for them') : p.group}</p>
+                      {p.warning && !locked && isOn(p.key) && <p role="alert" className="mt-1 text-[11px] text-danger">{p.warning}</p>}
                     </div>
                     <Toggle on={!locked && isOn(p.key)} disabled={locked} label={p.label} onChange={(v) => setGranted((g) => v ? [...g, p.key] : g.filter((k) => k !== p.key))} />
                   </div>

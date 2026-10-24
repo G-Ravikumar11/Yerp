@@ -184,7 +184,11 @@ STORE_EXTRAS = [
     {"key": "store.outward.direct_issue", "group": "Store module", "label": "Issue material without a requisition"},
     {"key": "store.control.reveal_count", "group": "Store module", "label": "See system quantity during a stock count"},
     {"key": "store.control.approve_high_value", "group": "Store module", "label": "Approve high-value adjustments and transfers"},
-    {"key": "store.admin", "group": "Store module", "label": "Store administrator (every store, every right)"},
+    # One tick that opens every store and every Store right, whatever the stores the person is assigned to. The Master alone sets
+    # rights (hr.set_permissions); the warning is shown where it is ticked, so it is never given without being meant.
+    {"key": "store.admin", "group": "Store module", "label": "Store administrator (every store, every right)",
+     "warning": "Opens every store and every Store right - receiving, issuing, approving, cancelling and posting - whatever stores "
+                "this person is assigned to. Give it only to whoever runs the stores for the whole company."},
 ]
 STORE_KEYS = [f"store.{sl}.{act}" for sl in STORE_SLICES for act in STORE_ACTIONS]
 PORTAL_PERMISSIONS += [{"key": k, "group": "Store module", "label": "Store %s: %s" % (k.split(".")[1], k.split(".")[2])}

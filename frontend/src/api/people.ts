@@ -71,6 +71,8 @@ interface Permission {
   label: string
   /** Held only by this access level (and the Master) - 'ho_qs' for opening vendor codes, work orders and BOQs. */
   only_role?: string
+  /** A right broad enough to be ticked only knowingly (the Store administrator): shown where it is switched on. */
+  warning?: string
 }
 
 interface PermissionRole {

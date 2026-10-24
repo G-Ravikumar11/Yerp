@@ -135,3 +135,24 @@ def test_a_projects_material_cost_is_for_its_stores_manager_and_reports(account)
     finally:
         for c in logins.values():
             c.__exit__(None, None, None)
+
+
+def test_the_store_administrator_right_is_the_masters_to_give_and_says_what_it_opens(account):
+    t, tag = account["client"], uuid.uuid4().hex[:6]
+    from app.core.permissions import PORTAL_PERMISSIONS
+    admin = next(p for p in PORTAL_PERMISSIONS if p["key"] == "store.admin")
+    assert "every store" in admin["warning"]
+    for role in ROLE_PERMISSIONS:                                          # no access level carries it but the Master's
+        assert ("store.admin" in ROLE_PERMISSIONS[role]) == (role == "owner"), role
+    # A member of staff - even one who manages people - cannot hand it to anyone.
+    email = "hr-%s@example.com" % tag
+    make_employee(t, email=email, password="Crew1234", permission_role="hr_admin", status="active")
+    target = make_employee(t, email="tg-%s@example.com" % tag, password="Crew1234", permission_role="stores", status="active")
+    c = TestClient(main.app)
+    c.__enter__()
+    try:
+        assert c.post("/api/employee/auth/login", json={"email": email, "password": "Crew1234"}).status_code == 200
+        res = c.put("/api/employees/%d" % target["id"], json={"extra_permissions": "store.admin"})
+        assert res.status_code in (401, 403)
+    finally:
+        c.__exit__(None, None, None)
