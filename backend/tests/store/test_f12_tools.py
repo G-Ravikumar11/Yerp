@@ -86,3 +86,32 @@ def test_overdue_returnable_material_is_reminded(account):
     walk(t, "outward", "issue", doc["id"], "submit", "approve", "post")
     assert ok(t.post("/api/store/tools/remind"))["mentioned"] == 1
     assert ok(t.post("/api/store/tools/remind"))["mentioned"] == 0
+
+
+def test_a_storekeeper_does_not_write_off_a_tool(account):
+    from fastapi.testclient import TestClient
+    import main
+    from conftest import make_employee
+    t, tag = account["client"], uuid.uuid4().hex[:6]
+    w = _company(account, tag)
+    central = _hub(t, w, tag)
+    _tool_item(t, w)
+    tool = ok(t.post("/api/store/tools", json={"item_id": w["item"], "store_id": central["id"], "serial_no": "WO-1"}))
+    people = {}
+    for role in ("stores", "store_incharge"):
+        email = "%s-%s@example.com" % (role, tag)
+        emp = make_employee(t, email=email, password="Crew1234", permission_role=role, status="active")
+        ok(t.post("/api/store/masters/stores/%d/assignments" % central["id"], json={"employee_id": emp["id"], "role": "STOREKEEPER"}))
+        c = TestClient(main.app)
+        c.__enter__()
+        assert c.post("/api/employee/auth/login", json={"email": email, "password": "Crew1234"}).status_code == 200
+        people[role] = c
+    try:
+        url = "/api/store/tools/%d/" % tool["id"]
+        assert ok(people["stores"].post(url + "assign", json={"holder_name": "Suresh"}))["status"] == "ISSUED"      # the keeper gives it out
+        assert people["stores"].post(url + "lose", json={"note": "Not found"}).status_code == 403                     # but does not write it off
+        assert ok(people["store_incharge"].post(url + "lose", json={"note": "Not found at stock-take"}))["status"] == "LOST"
+        assert people["stores"].post(url + "retire", json={}).status_code == 403
+    finally:
+        for c in people.values():
+            c.__exit__(None, None, None)
