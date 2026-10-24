@@ -60,16 +60,20 @@ def test_wrong_passwords_from_one_address_do_not_lock_the_master_out_elsewhere(a
     for _ in range(10):
         assert at("203.0.113.9", "wrong").status_code == 401
         main.rate_limiter._hits.clear()
-    assert at("203.0.113.9", PASSWORD).status_code == 429                         # the guesser's address is locked out
-    assert at("198.51.100.20", PASSWORD).status_code == 200                       # the Master, from their own, is not
+    # The Master is never locked out, from the guesser's address or any other: what stands in front of the account is
+    # the CAPTCHA and the limit on how fast one address may try (test_login_guard.py).
+    assert at("203.0.113.9", PASSWORD).status_code == 200
+    assert at("198.51.100.20", PASSWORD).status_code == 200
 
 
-def test_a_new_password_through_forgot_password_lifts_the_lock(account):
+def test_a_new_password_through_forgot_password_clears_what_was_counted(account):
+    from app.core import login_guard
     c, email = account["client"], account["email"]
     for _ in range(10):
         c.post("/api/client/login", json={"email": email, "password": "wrong"})
         main.rate_limiter._hits.clear()
-    assert c.post("/api/client/login", json={"email": email, "password": PASSWORD}).status_code == 429
+    assert login_guard.failures.count("acct:" + email.lower()) == 10                 # counted, though never locked
+    assert c.post("/api/client/login", json={"email": email, "password": PASSWORD}).status_code == 200
     raw = uuid.uuid4().hex
     with main.SessionLocal() as db:
         owner = db.query(models.DBClient).filter(models.DBClient.email == email).first()
@@ -77,6 +81,7 @@ def test_a_new_password_through_forgot_password_lifts_the_lock(account):
                                       expires_at=(datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")))
         db.commit()
     assert c.post("/api/client/reset-password", json={"token": raw, "password": "NewPassw0rd!x"}).status_code == 200
+    assert login_guard.failures.count("acct:" + email.lower()) == 0                  # the reset wiped it
     assert c.post("/api/client/login", json={"email": email, "password": "NewPassw0rd!x"}).status_code == 200
 
 
