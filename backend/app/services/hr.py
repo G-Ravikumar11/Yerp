@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy import func as sqlfunc
+from sqlalchemy.orm import joinedload
 
 from app import models
 
@@ -46,41 +47,63 @@ def validated_staff_password(password):
     return password
 
 
-def start_onboarding(db, client_id, emp):
+def start_onboarding(db, client_id, emp, *, new=False):
     """Give a new starter their checklist and their document requests.
 
     Both ways in have to do this. Hiring from recruitment used to create the
     employee and stop, so anyone who came through the pipeline arrived with an
     empty checklist and nothing asked of them, while the same person added by
     hand got both.
+
+    `new` is for somebody created in this same transaction: they can have no
+    checklist and no requests yet, so neither is looked for. On a database
+    across an ocean each look is a third of a second.
     """
-    existing = db.query(models.DBOnboardingItem).filter(
-        models.DBOnboardingItem.employee_id == emp.id).count()
-    if not existing:
+    if new or not db.query(models.DBOnboardingItem).filter(
+            models.DBOnboardingItem.employee_id == emp.id).count():
         for title, category, assignee in DEFAULT_ONBOARDING_ITEMS:
             db.add(models.DBOnboardingItem(
                 client_id=client_id, employee_id=emp.id,
                 title=title, category=category, assigned_to=assignee,
             ))
-    seed_default_requirements(db, client_id)
-    assign_document_requests(db, client_id, emp)
+    # Every requirement in one read; the defaults are seeded only when there are none at all.
+    rules = db.query(models.DBDocumentRequirement).filter(
+        models.DBDocumentRequirement.client_id == client_id,
+    ).order_by(models.DBDocumentRequirement.sort_order.asc()).all()
+    rules = [r for r in rules if r.is_active] if rules else seed_default_requirements(db, client_id)
+    assign_document_requests(db, client_id, emp, rules, existing=set() if new else None)
 
 
-def onboarding_snapshot(db, emp, today=None):
+def onboarding_snapshots(db, emps, today=None):
+    """{employee id: onboarding_snapshot} for many people, in two queries however many there are."""
+    ids = [e.id for e in emps]
+    items, reqs = {i: [] for i in ids}, {i: [] for i in ids}
+    if ids:
+        for row in db.query(models.DBOnboardingItem).filter(models.DBOnboardingItem.employee_id.in_(ids)).all():
+            items[row.employee_id].append(row)
+        for row in db.query(models.DBDocumentRequest).filter(models.DBDocumentRequest.employee_id.in_(ids)).all():
+            reqs[row.employee_id].append(row)
+    return {e.id: onboarding_snapshot(db, e, today, items=items[e.id], reqs=reqs[e.id]) for e in emps}
+
+
+def onboarding_snapshot(db, emp, today=None, *, items=None, reqs=None):
     """Where one person has got to, worked out from their actual records
-    rather than a status column that has to be kept in step."""
+    rather than a status column that has to be kept in step. `items` and
+    `reqs` are theirs when the caller has already read them for everybody."""
     today = today or datetime.now().date()
     today_str = today.strftime("%Y-%m-%d")
 
-    items = db.query(models.DBOnboardingItem).filter(
-        models.DBOnboardingItem.employee_id == emp.id).all()
+    if items is None:
+        items = db.query(models.DBOnboardingItem).filter(
+            models.DBOnboardingItem.employee_id == emp.id).all()
     done_items = sum(1 for i in items if i.is_completed)
     overdue_items = sum(
         1 for i in items
         if not i.is_completed and i.due_date and i.due_date < today_str)
 
-    reqs = db.query(models.DBDocumentRequest).filter(
-        models.DBDocumentRequest.employee_id == emp.id).all()
+    if reqs is None:
+        reqs = db.query(models.DBDocumentRequest).filter(
+            models.DBDocumentRequest.employee_id == emp.id).all()
     mandatory = [r for r in reqs if r.is_mandatory]
     awaiting_employee = [r for r in mandatory if r.status in ("pending", "rejected")]
     awaiting_hr = [r for r in reqs if r.status == "submitted"]
@@ -306,8 +329,8 @@ def suggest_org_email(db, client_id, first_name, last_name) -> str:
     stem = ".".join(p for p in (part(first_name), part(last_name)) if p) or "staff"
     candidate = f"{stem}@{domain}"
     taken = {
-        (e.email or "").lower()
-        for e in db.query(models.DBEmployee).filter(
+        (email or "").lower()
+        for (email,) in db.query(models.DBEmployee.email).filter(
             models.DBEmployee.client_id == client_id).all()
     }
     if candidate not in taken:
@@ -397,39 +420,46 @@ def resolve_employee_job_id(db, emp, raw):
     return job_id
 
 
-def set_employee_sites(db, client_id, emp, job_ids):
-    """Replace this person's site list. None leaves it alone."""
+def set_employee_sites(db, client_id, emp, job_ids, *, new=False):
+    """Replace this person's site list. None leaves it alone. Returns the sites
+    kept, as (id, number, name), so the answer needs no second look; `new` is
+    for somebody created in this transaction, who has no list to clear."""
     if job_ids is None:
-        return
+        return None
     wanted = set()
     for raw in job_ids:
         try:
             wanted.add(int(raw))
         except (TypeError, ValueError):
             continue
+    jobs = []
     if wanted:
-        real = {j.id for j in db.query(models.DBJob.id).filter(
-            models.DBJob.client_id == client_id, models.DBJob.id.in_(wanted)).all()}
-        wanted = {j for j in wanted if j in real}
-    db.query(models.DBEmployeeSite).filter(
-        models.DBEmployeeSite.employee_id == emp.id).delete(synchronize_session=False)
-    for job_id in sorted(wanted):
+        jobs = db.query(models.DBJob.id, models.DBJob.number, models.DBJob.name).filter(
+            models.DBJob.client_id == client_id, models.DBJob.id.in_(wanted)).order_by(models.DBJob.id).all()
+    if not new:
+        db.query(models.DBEmployeeSite).filter(
+            models.DBEmployeeSite.employee_id == emp.id).delete(synchronize_session=False)
+    for job in jobs:
         db.add(models.DBEmployeeSite(
-            client_id=client_id, employee_id=emp.id, job_id=job_id))
+            client_id=client_id, employee_id=emp.id, job_id=job.id))
+    return jobs
 
 
-def employee_sites_payload(db, emp):
-    rows = db.query(models.DBEmployeeSite.job_id).filter(
-        models.DBEmployeeSite.employee_id == emp.id).all()
-    ids = [r[0] for r in rows]
-    if not ids:
+def sites_payload(jobs):
+    """The site part of an employee's answer from (id, number, name) rows. None of them is every site."""
+    if not jobs:
         return {"site_ids": [], "site_names": [], "all_sites": True}
-    jobs = db.query(models.DBJob).filter(models.DBJob.id.in_(ids)).all()
     return {
-        "site_ids": ids,
+        "site_ids": [j.id for j in jobs],
         "site_names": [((j.number + " ") if j.number else "") + (j.name or "") for j in jobs],
         "all_sites": False,
     }
+
+
+def employee_sites_payload(db, emp):
+    return sites_payload(db.query(models.DBJob.id, models.DBJob.number, models.DBJob.name).join(
+        models.DBEmployeeSite, models.DBEmployeeSite.job_id == models.DBJob.id).filter(
+        models.DBEmployeeSite.employee_id == emp.id).order_by(models.DBJob.id).all())
 
 
 def requirement_to_dict(r):
@@ -439,13 +469,21 @@ def requirement_to_dict(r):
         "due_days": r.due_days, "applies_to": r.applies_to,
         "requires_expiry": bool(r.requires_expiry),
         "expiry_reminder_days": r.expiry_reminder_days or 30,
-        "has_template": bool(r.template_file_data),
+        "has_template": bool(r.has_template),
         "template_file_name": r.template_file_name or "",
         "department_id": r.department_id,
         "department_name": r.department.name if r.department else "",
         "level": r.level or "", "is_active": bool(r.is_active),
         "sort_order": r.sort_order, "created_at": r.created_at,
     }
+
+
+def with_request_links(query):
+    """Document requests with their requirement and their file record joined in, for `request_to_dict`.
+
+    Each row otherwise fetched both on its own - two trips per document across the
+    ocean. Neither brings the file itself: that is read only when it is opened."""
+    return query.options(joinedload(models.DBDocumentRequest.requirement), joinedload(models.DBDocumentRequest.document))
 
 
 def request_to_dict(req, include_file=False):
@@ -461,7 +499,7 @@ def request_to_dict(req, include_file=False):
     }
     # The employee needs to know a blank form exists before they can fetch it.
     rule = getattr(req, "requirement", None)
-    data["has_template"] = bool(rule is not None and rule.template_file_data)
+    data["has_template"] = bool(rule is not None and rule.has_template)
 
     doc = req.document
     if doc:
@@ -550,20 +588,22 @@ def sync_requirement_to_requests(db, client_id, req):
     return touched
 
 
-def assign_document_requests(db, client_id, emp, requirements=None):
+def assign_document_requests(db, client_id, emp, requirements=None, existing=None):
     """Create the outstanding requests for one employee, skipping any they
-    already have so this is safe to re-run after a department or level change."""
+    already have so this is safe to re-run after a department or level change.
+    `existing` is the requirement ids they already hold, when the caller knows."""
     if requirements is None:
         requirements = db.query(models.DBDocumentRequirement).filter(
             models.DBDocumentRequirement.client_id == client_id,
             models.DBDocumentRequirement.is_active == True,
         ).order_by(models.DBDocumentRequirement.sort_order.asc()).all()
 
-    existing = {
-        r.requirement_id for r in db.query(models.DBDocumentRequest).filter(
-            models.DBDocumentRequest.employee_id == emp.id
-        ).all() if r.requirement_id
-    }
+    if existing is None:
+        existing = {
+            rid for (rid,) in db.query(models.DBDocumentRequest.requirement_id).filter(
+                models.DBDocumentRequest.employee_id == emp.id
+            ).all() if rid
+        }
     start = _parse_date(emp.start_date) or datetime.now().date()
     created = []
     for req in requirements:

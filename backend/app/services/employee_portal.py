@@ -267,8 +267,9 @@ def working_days_between(
     return float(days)
 
 
-def leave_balance_for(db: Session, emp: models.DBEmployee, for_year: Optional[int] = None) -> Dict[str, float]:
-    """Calculate leave entitlement and remaining balance bounded to the calendar year."""
+def leave_balance_for(db: Session, emp: models.DBEmployee, for_year: Optional[int] = None, leaves=None) -> Dict[str, float]:
+    """Calculate leave entitlement and remaining balance bounded to the calendar year.
+    `leaves` is the person's leave requests when the caller has already read them (any years: only this one counts)."""
     if not emp:
         return {
             "annual_total": 0.0, "annual_taken": 0.0, "annual_pending": 0.0, "annual_remaining": 0.0,
@@ -278,11 +279,14 @@ def leave_balance_for(db: Session, emp: models.DBEmployee, for_year: Optional[in
     year = for_year or datetime.now().year
     year_prefix = f"{year}-"
 
-    leaves = db.query(models.DBLeaveRequest).filter(
-        models.DBLeaveRequest.employee_id == emp.id,
-        models.DBLeaveRequest.client_id == emp.client_id,
-        models.DBLeaveRequest.start_date.like(f"{year_prefix}%"),
-    ).all()
+    if leaves is None:
+        leaves = db.query(models.DBLeaveRequest).filter(
+            models.DBLeaveRequest.employee_id == emp.id,
+            models.DBLeaveRequest.client_id == emp.client_id,
+            models.DBLeaveRequest.start_date.like(f"{year_prefix}%"),
+        ).all()
+    else:
+        leaves = [l for l in leaves if l.client_id == emp.client_id and (l.start_date or "").startswith(year_prefix)]
 
     def taken(kind: str, statuses: tuple) -> float:
         return round(sum(float(l.days or 0) for l in leaves if l.leave_type == kind and l.status in statuses), 2)

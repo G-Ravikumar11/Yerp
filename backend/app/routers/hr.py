@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import case, func, func as sqlfunc, or_
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, aliased, joinedload, undefer
 
 from app import models
 from app.core import passwords
@@ -51,14 +51,17 @@ from app.services.hr import (
     move_to_department,
     pending_department_goals,
     onboarding_snapshot,
+    onboarding_snapshots,
     org_domain_for,
     request_to_dict,
     requirement_to_dict,
+    with_request_links,
     resolve_basic_pay,
     seed_default_requirements,
     serialise,
     set_department_sites,
     set_employee_sites,
+    sites_payload,
     start_onboarding,
     suggest_org_email,
     sync_requirement_to_requests,
@@ -85,6 +88,12 @@ ACCESS_FIELDS = {"permission_role", "extra_permissions", "denied_permissions"}
 router = APIRouter()
 
 
+def _department_names(db, client_id):
+    """{department id: name} for the tenant in one read, rather than one per person through `emp.department`."""
+    return {d.id: d.name for d in db.query(models.DBDepartment.id, models.DBDepartment.name).filter(
+        models.DBDepartment.client_id == client_id).all()}
+
+
 @router.get("/api/onboarding/pipeline")
 def onboarding_pipeline(request: Request, db: Session = Depends(get_db)):
     """Everyone still onboarding, grouped by what they are waiting on."""
@@ -94,23 +103,30 @@ def onboarding_pipeline(request: Request, db: Session = Depends(get_db)):
         models.DBEmployee.status == "onboarding",
     ).all()
 
+    # Only what the card shows: a submission also holds the CV and every answer.
     hired_from = {
-        s.hired_employee_id: s for s in db.query(models.DBFormSubmission).filter(
+        s.hired_employee_id: s for s in db.query(
+            models.DBFormSubmission.id, models.DBFormSubmission.hired_employee_id,
+            models.DBFormSubmission.candidate_name, models.DBFormSubmission.hired_at,
+        ).filter(
             models.DBFormSubmission.client_id == client.id,
             models.DBFormSubmission.hired_employee_id.isnot(None),
         ).all()
     }
 
+    # Everybody's checklist and documents in two reads, not two per person.
+    snaps = onboarding_snapshots(db, employees)
+    dept_names = _department_names(db, client.id)
     buckets = {key: [] for key, _, _ in ONBOARDING_STAGES}
     for emp in employees:
-        snap = onboarding_snapshot(db, emp)
+        snap = snaps[emp.id]
         sub = hired_from.get(emp.id)
         card = {
             "employee_id": emp.id,
             "name": f"{emp.first_name} {emp.last_name}".strip(),
             "employee_number": emp.employee_id or "",
             "job_title": emp.job_title or "",
-            "department": emp.department.name if emp.department else "",
+            "department": dept_names.get(emp.department_id, ""),
             "start_date": emp.start_date or "",
             "email": emp.email or "",
         }
@@ -412,42 +428,70 @@ def get_employees(request: Request, q: str = "", status: str = "", db: Session =
     return result
 
 
+def _split_rights(role, permissions):
+    """The ticked rights measured against the access level, as (extra, denied).
+
+    A right the level already carries is not written as a grant, and one it never
+    had is not written as a denial; otherwise the two lists fill up with entries
+    that mean nothing and hide the one that does."""
+    wanted = {p for p in (permissions or []) if p in PERMISSION_KEYS}
+    from_role = set(ROLE_PERMISSIONS.get(role, set()))
+    return ",".join(sorted(wanted - from_role)), ",".join(sorted(from_role - wanted))
+
+
+def _access_detail(old_role, new_role, before, after):
+    detail = "Access changed from %s to %s" % (old_role, new_role)
+    gained, lost = sorted(set(after) - set(before)), sorted(set(before) - set(after))
+    if gained:
+        detail += "; gained " + ", ".join(gained)
+    if lost:
+        detail += "; lost " + ", ".join(lost)
+    return detail
+
+
 @router.post("/api/employees")
 def create_employee(request: Request, body: EmployeeCreate, db: Session = Depends(get_db)):
+    """A new member of staff, with their checklist, document requests, sites and access, in one
+    transaction. Every step is a trip to a database across an ocean, so nothing is looked up twice,
+    nothing is looked for that cannot be there yet, and the answer is built before the one commit."""
     client = get_client_user(request, db)
-    serialise(db, "employee-create:%d" % client.id)
+    client_id = client.id
+    serialise(db, "employee-create:%d" % client_id)
     first_name = clean_person_name(body.first_name, "First name")
     last_name = clean_person_name(body.last_name, "Last name")
-    email = clean_employee_email(db, client.id, body.email, required=bool(body.password))
-    org_email = clean_org_email(db, client.id, body.org_email)
+    email = clean_employee_email(db, client_id, body.email, required=bool(body.password))
+    org_email = clean_org_email(db, client_id, body.org_email)
     validate_employee_money(body.model_dump())
-    employee_code = assert_employee_code_free(db, client.id, body.employee_id)
+    employee_code = assert_employee_code_free(db, client_id, body.employee_id)
 
     level = validate_level(body.level)
     role = validate_role(body.role)
     level = level or ROLE_LEVEL.get(role, "")
     permission_role = validate_permission_role(body.permission_role)
-    if permission_role != DEFAULT_PERMISSION_ROLE:
-        require_owner(request, db)
+    if permission_role != DEFAULT_PERMISSION_ROLE or body.permissions is not None:
+        require_owner(request, db)  # access is the Master's to give
     if body.reports_to:
         require_owner(request, db)  # the reporting line is the Master's to set
-    reports_to = validate_manager(db, client.id, None, body.reports_to, level)
+    reports_to = validate_manager(db, client_id, None, body.reports_to, level)
     if not reports_to:
-        reports_to = automatic_reports_to(db, client.id, role, body.department_id)
-    if body.department_id:
+        reports_to = automatic_reports_to(db, client_id, role, body.department_id)
+    dept_id = body.department_id or None
+    if dept_id:
         require_owner(request, db)
-        department_or_404(db, client.id, body.department_id)
+        department_or_404(db, client_id, dept_id)
+    extra, denied = _split_rights(permission_role, body.permissions) if body.permissions is not None else ("", "")
 
-    max_num = db.query(sqlfunc.coalesce(sqlfunc.max(models.DBEmployee.id), 0)).filter(models.DBEmployee.client_id == client.id).scalar()
+    max_num = db.query(sqlfunc.coalesce(sqlfunc.max(models.DBEmployee.id), 0)).filter(models.DBEmployee.client_id == client_id).scalar()
     emp_number = employee_code or f"EMP-{max_num + 1:04d}"
 
     emp = models.DBEmployee(
-        client_id=client.id, employee_id=emp_number,
+        client_id=client_id, employee_id=emp_number,
         first_name=first_name, last_name=last_name,
         email=email, org_email=org_email, phone=body.phone, address=body.address,
-        reports_to=reports_to,
+        # In the department from the start: some document requirements apply to one department only.
+        department_id=dept_id, reports_to=reports_to,
         job_title=body.job_title, role=role, level=level,
-        permission_role=permission_role,
+        permission_role=permission_role, extra_permissions=extra, denied_permissions=denied,
         employment_type=body.employment_type, pay_frequency=body.pay_frequency,
         salary=body.salary, hourly_rate=body.hourly_rate,
         tax_rate=body.tax_rate, deductions=body.deductions,
@@ -460,50 +504,55 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     )
     db.add(emp)
     db.flush()
-    # Before the checklist: some document requirements apply to one department only.
-    move_to_department(db, client.id, emp, body.department_id)
-
-    # Create default onboarding checklist
-    start_onboarding(db, client.id, emp)
-
-    db.commit()
-    db.refresh(emp)
-    set_employee_sites(db, client.id, emp, body.site_ids)
-    log_audit(db, client.id, "employee_created", "employee", emp.id, f"{emp.first_name} {emp.last_name}", f"Dept: {body.department_id or 'None'}", request)
-    db.commit()
-    return {
-        **employee_sites_payload(db, emp),
-        "id": emp.id, "employee_id": emp.employee_id,
-        "first_name": emp.first_name, "last_name": emp.last_name,
-        "email": emp.email, "org_email": emp.org_email or "", "status": emp.status, "level": emp.level or "", "role": emp.role,
-        "permission_role": emp.permission_role or DEFAULT_PERMISSION_ROLE,
-        "department_id": emp.department_id, "reports_to": emp.reports_to,
+    if dept_id:
+        hand_out_department_goals(db, client_id, emp.id, dept_id, pending_department_goals(db, client_id, dept_id))
+    start_onboarding(db, client_id, emp, new=True)
+    sites = set_employee_sites(db, client_id, emp, body.site_ids, new=True)
+    name = f"{first_name} {last_name}"
+    log_audit(db, client_id, "employee_created", "employee", emp.id, name, f"Dept: {dept_id or 'None'}", request)
+    if body.permissions is not None:
+        log_audit(db, client_id, "employee_permissions_changed", "employee", emp.id, name,
+                  _access_detail(permission_role, permission_role,
+                                 sorted(ROLE_PERMISSIONS.get(permission_role, set())), sorted(permissions_for(emp))), request)
+    # Read back before the commit: afterwards every attribute is expired and
+    # reading one is another trip to the database.
+    out = {
+        **sites_payload(sites),
+        "id": emp.id, "employee_id": emp_number,
+        "first_name": first_name, "last_name": last_name,
+        "email": email, "org_email": org_email or "", "status": "onboarding", "level": level or "", "role": role,
+        "permission_role": permission_role or DEFAULT_PERMISSION_ROLE,
+        "department_id": dept_id, "reports_to": reports_to,
         "message": "Employee created. Onboarding checklist generated.",
     }
+    db.commit()
+    return out
 
 
 @router.get("/api/employees/{emp_id}")
 def get_employee(emp_id: int, request: Request, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
-    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
-    if not emp:
+    # The person, their department and their manager in one read: each is a trip across the ocean.
+    mgr = aliased(models.DBEmployee)
+    row = db.query(models.DBEmployee, models.DBDepartment.name, mgr.first_name, mgr.last_name).outerjoin(
+        models.DBDepartment, models.DBDepartment.id == models.DBEmployee.department_id).outerjoin(
+        mgr, mgr.id == models.DBEmployee.reports_to).filter(
+        models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+    if not row:
         raise HTTPException(status_code=404, detail="Employee not found")
-    dept_name = ""
-    if emp.department_id:
-        dept = db.query(models.DBDepartment).filter(models.DBDepartment.id == emp.department_id).first()
-        dept_name = dept.name if dept else ""
-    manager_name = ""
-    if emp.reports_to:
-        mgr = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp.reports_to).first()
-        manager_name = f"{mgr.first_name} {mgr.last_name}" if mgr else ""
+    emp, dept_name, mgr_first, mgr_last = row
+    dept_name = dept_name or ""
+    manager_name = f"{mgr_first} {mgr_last}" if emp.reports_to and mgr_first is not None else ""
     payslips = db.query(models.DBPayslip).filter(models.DBPayslip.employee_id == emp.id).order_by(models.DBPayslip.created_at.desc()).limit(12).all()
     onboarding = db.query(models.DBOnboardingItem).filter(models.DBOnboardingItem.employee_id == emp.id).all()
 
     # The profile is the one place HR looks up a person, so it answers every
     # question about them rather than sending the user hunting across tabs.
-    leave_rows = db.query(models.DBLeaveRequest).filter(
+    # All of them in one read: the latest ten are shown, and this year's give the balance.
+    all_leave = db.query(models.DBLeaveRequest).filter(
         models.DBLeaveRequest.employee_id == emp.id
-    ).order_by(models.DBLeaveRequest.id.desc()).limit(10).all()
+    ).order_by(models.DBLeaveRequest.id.desc()).all()
+    leave_rows = all_leave[:10]
 
     today = datetime.now().date()
     on_leave_today = False
@@ -529,12 +578,12 @@ def get_employee(emp_id: int, request: Request, db: Session = Depends(get_db)):
     documents = db.query(models.DBDocument).filter(
         models.DBDocument.employee_id == emp.id
     ).order_by(models.DBDocument.id.desc()).all()
-    doc_requests = db.query(models.DBDocumentRequest).options(selectinload(models.DBDocumentRequest.requirement)).filter(
+    doc_requests = with_request_links(db.query(models.DBDocumentRequest)).filter(
         models.DBDocumentRequest.employee_id == emp.id
     ).order_by(models.DBDocumentRequest.id.asc()).all()
 
-    # Where this person came from, if they were hired through recruitment.
-    origin = db.query(models.DBFormSubmission).filter(
+    # Where this person came from, if they were hired through recruitment - not the CV and answers with it.
+    origin = db.query(models.DBFormSubmission.id, models.DBFormSubmission.form_id, models.DBFormSubmission.created_at).filter(
         models.DBFormSubmission.hired_employee_id == emp.id
     ).first()
 
@@ -579,7 +628,7 @@ def get_employee(emp_id: int, request: Request, db: Session = Depends(get_db)):
                                "category": o.category, "is_completed": o.is_completed,
                                "completed_at": o.completed_at, "assigned_to": o.assigned_to,
                                "due_date": o.due_date} for o in onboarding],
-        "leave_balance": leave_balance_for(db, emp),
+        "leave_balance": leave_balance_for(db, emp, leaves=all_leave),
         "on_leave_today": on_leave_today,
         "leave_requests": [{
             "id": l.id, "leave_type": l.leave_type, "start_date": l.start_date,
@@ -815,15 +864,9 @@ def set_employee_permissions(emp_id: int, request: Request, body: dict = None,
     emp.permission_role = new_role
 
     # Anything named here is measured against the role rather than stored on
-    # top of it, so the record says what was actually decided: a right the
-    # role already carries is not written as a grant, and one it never had is
-    # not written as a denial. Otherwise the two lists fill up with entries
-    # that mean nothing and hide the one that does.
+    # top of it, so the record says what was actually decided.
     if "permissions" in body:
-        wanted = {p for p in (body.get("permissions") or []) if p in PERMISSION_KEYS}
-        from_role = set(ROLE_PERMISSIONS.get(new_role, set()))
-        emp.extra_permissions = ",".join(sorted(wanted - from_role))
-        emp.denied_permissions = ",".join(sorted(from_role - wanted))
+        emp.extra_permissions, emp.denied_permissions = _split_rights(new_role, body.get("permissions"))
 
     # Sites are part of access too, so they save together with the rights;
     # an empty list means every site, and leaving the key out changes nothing.
@@ -833,16 +876,8 @@ def set_employee_permissions(emp_id: int, request: Request, body: dict = None,
         set_employee_sites(db, client.id, emp, body["site_ids"])
 
     after = sorted(permissions_for(emp))
-    detail = "Access changed from %s to %s" % (old_role, new_role)
-    if before != after:
-        gained = sorted(set(after) - set(before))
-        lost = sorted(set(before) - set(after))
-        if gained:
-            detail += "; gained " + ", ".join(gained)
-        if lost:
-            detail += "; lost " + ", ".join(lost)
     log_audit(db, client.id, "employee_permissions_changed", "employee", emp.id,
-              f"{emp.first_name} {emp.last_name}", detail, request)
+              f"{emp.first_name} {emp.last_name}", _access_detail(old_role, new_role, before, after), request)
     db.commit()
     return {
         "message": "Access updated",
@@ -906,18 +941,26 @@ def get_onboarding_hub(request: Request, db: Session = Depends(get_db)):
         models.DBEmployee.client_id == client.id,
         models.DBEmployee.status.in_(["onboarding", "active"])
     ).all()
+    # Everybody's checklist in one read and the department names in another: this was two
+    # queries per person, a couple of hundred trips across the ocean for a hundred staff.
+    items_by_emp = {e.id: [] for e in employees}
+    if employees:
+        for i in db.query(models.DBOnboardingItem.employee_id, models.DBOnboardingItem.is_completed,
+                          models.DBOnboardingItem.due_date).join(
+                models.DBEmployee, models.DBEmployee.id == models.DBOnboardingItem.employee_id).filter(
+                models.DBEmployee.client_id == client.id,
+                models.DBEmployee.status.in_(["onboarding", "active"])).all():
+            items_by_emp[i.employee_id].append(i)
+    dept_names = _department_names(db, client.id)
+    today = datetime.now().strftime("%Y-%m-%d")
     result = []
     for emp in employees:
-        items = db.query(models.DBOnboardingItem).filter(models.DBOnboardingItem.employee_id == emp.id).all()
+        items = items_by_emp[emp.id]
         completed = sum(1 for i in items if i.is_completed)
-        overdue = 0
-        today = datetime.now().strftime("%Y-%m-%d")
-        for i in items:
-            if not i.is_completed and i.due_date and i.due_date < today:
-                overdue += 1
+        overdue = sum(1 for i in items if not i.is_completed and i.due_date and i.due_date < today)
         result.append({
             "id": emp.id, "name": (emp.first_name + " " + emp.last_name).strip(),
-            "job_title": emp.job_title or "", "department": emp.department.name if emp.department else "",
+            "job_title": emp.job_title or "", "department": dept_names.get(emp.department_id, ""),
             "status": emp.status or "", "start_date": emp.start_date or "",
             "total": len(items), "completed": completed,
             "progress": round((completed / len(items)) * 100) if items else 0,
@@ -1231,19 +1274,18 @@ def get_org_chart(request: Request, db: Session = Depends(get_db)):
 @router.get("/api/hr/stats")
 def get_hr_stats(request: Request, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
-    total = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id).count()
-    active = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id, models.DBEmployee.status == "active").count()
-    onboarding = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id, models.DBEmployee.status == "onboarding").count()
-    offboarding = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id, models.DBEmployee.status == "offboarding").count()
-    terminated = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id, models.DBEmployee.status == "terminated").count()
+    # One count per status in a single grouped read, rather than five separate counts.
+    by_status = dict(db.query(models.DBEmployee.status, sqlfunc.count(models.DBEmployee.id)).filter(
+        models.DBEmployee.client_id == client.id).group_by(models.DBEmployee.status).all())
     depts = db.query(models.DBDepartment).filter(models.DBDepartment.client_id == client.id).count()
     total_payroll, pending_payroll = db.query(
         sqlfunc.coalesce(sqlfunc.sum(case((models.DBPayslip.status == "Paid", models.DBPayslip.net_pay), else_=0)), 0),
         sqlfunc.coalesce(sqlfunc.sum(case((models.DBPayslip.status != "Paid", models.DBPayslip.net_pay), else_=0)), 0),
     ).filter(models.DBPayslip.client_id == client.id).one()
     return {
-        "total_employees": total, "active": active, "onboarding": onboarding,
-        "offboarding": offboarding, "terminated": terminated,
+        "total_employees": sum(by_status.values()), "active": by_status.get("active", 0),
+        "onboarding": by_status.get("onboarding", 0),
+        "offboarding": by_status.get("offboarding", 0), "terminated": by_status.get("terminated", 0),
         "departments": depts,
         "total_payroll": round(float(total_payroll), 2),
         "pending_payroll": round(float(pending_payroll), 2),
@@ -1398,7 +1440,7 @@ def list_employee_document_requests(emp_id: int, request: Request, db: Session =
     ).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
-    rows = db.query(models.DBDocumentRequest).options(selectinload(models.DBDocumentRequest.requirement)).filter(
+    rows = with_request_links(db.query(models.DBDocumentRequest)).filter(
         models.DBDocumentRequest.employee_id == emp_id
     ).order_by(models.DBDocumentRequest.id.asc()).all()
     return [request_to_dict(r) for r in rows]
@@ -1409,7 +1451,7 @@ def document_review_queue(request: Request, status: str = "submitted", db: Sessi
     """What employees have sent in, waiting on HR. This is the auto-fetch the
     employee portal feeds."""
     client = get_client_user(request, db)
-    query = db.query(models.DBDocumentRequest).filter(
+    query = with_request_links(db.query(models.DBDocumentRequest)).filter(
         models.DBDocumentRequest.client_id == client.id
     )
     if status and status != "all":
@@ -1419,7 +1461,8 @@ def document_review_queue(request: Request, status: str = "submitted", db: Sessi
 
     emp_names = {
         e.id: f"{e.first_name} {e.last_name}"
-        for e in db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id).all()
+        for e in db.query(models.DBEmployee.id, models.DBEmployee.first_name, models.DBEmployee.last_name).filter(
+            models.DBEmployee.client_id == client.id).all()
     }
     out = []
     for r in rows:
@@ -1432,7 +1475,9 @@ def document_review_queue(request: Request, status: str = "submitted", db: Sessi
 @router.get("/api/onboarding/document-requests/{req_id}/file")
 def download_document_request_file(req_id: int, request: Request, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
-    row = db.query(models.DBDocumentRequest).filter(
+    # The file is deferred on the model; this is the one place it is wanted, so it comes in the same read.
+    row = db.query(models.DBDocumentRequest).options(
+        joinedload(models.DBDocumentRequest.document).undefer(models.DBDocument.file_data)).filter(
         models.DBDocumentRequest.id == req_id,
         models.DBDocumentRequest.client_id == client.id,
     ).first()
@@ -1536,7 +1581,7 @@ def download_requirement_template(req_id: int, request: Request, db: Session = D
     if not client_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    row = db.query(models.DBDocumentRequirement).filter(
+    row = db.query(models.DBDocumentRequirement).options(undefer(models.DBDocumentRequirement.template_file_data)).filter(
         models.DBDocumentRequirement.id == req_id,
         models.DBDocumentRequirement.client_id == client_id,
     ).first()
@@ -1561,7 +1606,7 @@ def expiring_documents(request: Request, days: int = 60, db: Session = Depends(g
     horizon = (datetime.now().date() + timedelta(days=days))
     today = datetime.now().date()
 
-    rows = db.query(models.DBDocumentRequest).filter(
+    rows = with_request_links(db.query(models.DBDocumentRequest)).filter(
         models.DBDocumentRequest.client_id == client.id,
         models.DBDocumentRequest.status == "approved",
         models.DBDocumentRequest.expires_on != "",
@@ -1569,7 +1614,8 @@ def expiring_documents(request: Request, days: int = 60, db: Session = Depends(g
 
     emp_names = {
         e.id: f"{e.first_name} {e.last_name}"
-        for e in db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id).all()
+        for e in db.query(models.DBEmployee.id, models.DBEmployee.first_name, models.DBEmployee.last_name).filter(
+            models.DBEmployee.client_id == client.id).all()
     }
     out = []
     for r in rows:

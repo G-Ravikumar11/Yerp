@@ -142,6 +142,8 @@ export interface EmployeeInput {
   start_date: string
   emergency_contact: string
   emergency_phone: string
+  /** The rights the Master ticked, saved with the employee in the same request. Left out, the access level's own apply. */
+  permissions?: string[]
 }
 
 export const createEmployee = (b: EmployeeInput) => post<{ id: number; employee_id: string; first_name: string; site_names?: string[]; message: string }>('/api/employees', b)
