@@ -33,6 +33,7 @@ from app.core.permissions import (
 )
 from app.core.security import validate_password_strength
 from app.schemas.hr import DepartmentCreate, DepartmentMembersIn, DocumentRequirementIn, EmployeeCreate, RequirementTemplateIn
+from app.services.store_staff import release_on_leaving
 from app.services.employee_portal import leave_balance_for
 from app.services.hr import (
     automatic_reports_to,
@@ -674,6 +675,8 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
         if hasattr(emp, key) and key not in ("id", "client_id", "created_at", "password_hash", "employee_id"):
             setattr(emp, key, val)
     set_employee_sites(db, client.id, emp, site_ids)
+    if "status" in body:
+        release_on_leaving(db, emp)
     if move_to_department(db, client.id, emp, new_dept) != new_dept:
         log_audit(db, client.id, "employee_department_changed", "employee", emp.id,
                   f"{emp.first_name} {emp.last_name}", "Department set to %s" % (new_dept or "none"), request)
@@ -860,6 +863,7 @@ def _set_status(emp_id: int, request: Request, db: Session, status: str, message
     emp.status = status
     for k, v in fields.items():
         setattr(emp, k, v)
+    release_on_leaving(db, emp)                       # someone who has left works in no store
     log_audit(db, client.id, "employee_status_changed", "employee", emp.id, "%s: %s -> %s" % (emp.full_name if hasattr(emp, "full_name") else emp.id, before, status), "", request)
     db.commit()
     return {"message": message, "status": emp.status, "end_date": emp.end_date or ""}
@@ -890,6 +894,7 @@ def complete_offboarding(emp_id: int, request: Request, body: dict = None, db: S
     emp.status = "terminated"
     emp.end_date = end_date
     emp.offboarding_complete = True
+    release_on_leaving(db, emp)
     db.commit()
     return {"message": "Employee offboarded"}
 

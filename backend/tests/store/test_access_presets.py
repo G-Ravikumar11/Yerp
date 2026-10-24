@@ -88,3 +88,25 @@ def test_putting_people_in_a_store_needs_the_approve_right(account):
     finally:
         for c in logins.values():
             c.__exit__(None, None, None)
+
+
+def test_someone_who_leaves_is_taken_out_of_their_stores(account):
+    t, tag = account["client"], uuid.uuid4().hex[:6]
+    w = _company(account, tag)
+    central = _hub(t, w, tag)
+    url = "/api/store/masters/stores/%d/assignments" % central["id"]
+    a = make_employee(t, email="a-%s@example.com" % tag, password="Crew1234", permission_role="stores", status="active")
+    b = make_employee(t, email="b-%s@example.com" % tag, password="Crew1234", permission_role="stores", status="active")
+    for e in (a, b):
+        ok(t.post(url, json={"employee_id": e["id"], "role": "STOREKEEPER"}))
+    assert ok(t.get("/api/store/masters/stores/%d" % central["id"]))["staff"] == 2
+
+    ok(t.post("/api/employees/%d/offboard" % a["id"]))                          # still working out their notice: still in the store
+    assert ok(t.get("/api/store/masters/stores/%d" % central["id"]))["staff"] == 2
+    ok(t.post("/api/employees/%d/terminate" % a["id"]))                         # gone: out of the store
+    ok(t.put("/api/employees/%d" % b["id"], json={"status": "inactive"}))       # switched off by an edit: out as well
+    assert ok(t.get("/api/store/masters/stores/%d" % central["id"]))["staff"] == 0
+
+    ok(t.put("/api/employees/%d" % b["id"], json={"status": "active"}))         # coming back does not put them back on its own
+    assert ok(t.get("/api/store/masters/stores/%d" % central["id"]))["staff"] == 0
+    assert ok(t.post(url, json={"employee_id": b["id"], "role": "STOREKEEPER"}))["is_active"] is True
