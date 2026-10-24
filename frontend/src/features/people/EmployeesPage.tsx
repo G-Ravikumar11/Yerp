@@ -8,6 +8,7 @@ import { FilterBar, useListFilters } from '@/components/data/filters'
 import { Badge, Button, Stat, StatGrid, Tabs } from '@/components/ui'
 import { prefetchEmployee, useEmployees, useHrStats, type Employee } from '@/api/people'
 import { formatDate } from '@/lib/format'
+import { prefetchAddEmployee } from '@/lib/prefetch'
 import { EmployeeFormModal } from './EmployeeFormModal'
 
 type Tab = '' | 'active' | 'onboarding' | 'offboarding' | 'terminated'
@@ -37,7 +38,7 @@ export default function EmployeesPage() {
 
   return (
     <>
-      <PageHeader eyebrow="People" title="Employees" description="Everyone who works for the business, the department each belongs to, and what each may do. What you set here is what they see when they sign in." actions={<Button onClick={() => setCreating(true)}><Plus /> Add an employee</Button>} />
+      <PageHeader eyebrow="People" title="Employees" description="Everyone who works for the business, the department each belongs to, and what each may do. What you set here is what they see when they sign in." actions={<Button onClick={() => setCreating(true)} onMouseEnter={() => prefetchAddEmployee(qc)} onFocus={() => prefetchAddEmployee(qc)}><Plus /> Add an employee</Button>} />
       <StatGrid>
         <Stat label="Employees" value={s?.total_employees ?? 0} loading={stats.isPending} />
         <Stat label="Active" value={s?.active ?? 0} loading={stats.isPending} />

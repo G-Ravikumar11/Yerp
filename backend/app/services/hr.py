@@ -385,6 +385,24 @@ def resolve_basic_pay(emp, requested_basic, hours_worked):
     return 0.0
 
 
+def ytd_totals(db, client_id, emp_id, year=""):
+    """Year-to-date totals for one employee - required on most statutory payslip formats. One read, of only the
+    columns that are added up."""
+    year = year or datetime.now().strftime("%Y")
+    P = models.DBPayslip
+    slips = db.query(P.period_end, P.pay_date, P.gross_pay, P.tax_amount, P.total_deductions, P.net_pay).filter(
+        P.client_id == client_id, P.employee_id == emp_id, P.status != "Void").all()
+    in_year = [s for s in slips if (s.period_end or s.pay_date or "").startswith(year)]
+    return {
+        "year": year,
+        "payslip_count": len(in_year),
+        "gross_pay": money(sum(s.gross_pay or 0 for s in in_year)),
+        "tax_amount": money(sum(s.tax_amount or 0 for s in in_year)),
+        "total_deductions": money(sum(s.total_deductions or 0 for s in in_year)),
+        "net_pay": money(sum(s.net_pay or 0 for s in in_year)),
+    }
+
+
 def employee_name(emp) -> str:
     if not emp:
         return ""

@@ -10,7 +10,7 @@ from app import models
 from app.core import login_guard
 from app.core import passwords
 from app.core.queries import by_id, prime
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.approvals import GONE_STATUSES
 from app.constants.projects import JOB_CLOSED_STATUSES
@@ -1324,7 +1324,7 @@ def get_pending_department_goals(request: Request, db: Session = Depends(get_db)
 
 
 @router.get("/api/leave/requests")
-def get_all_leave_requests(request: Request, db: Session = Depends(get_db)):
+def get_all_leave_requests(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     leaves = db.query(models.DBLeaveRequest).filter(models.DBLeaveRequest.client_id == client.id).order_by(models.DBLeaveRequest.created_at.desc()).all()
     prime(db, models.DBEmployee, [l.employee_id for l in leaves])

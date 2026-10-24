@@ -6,6 +6,7 @@ import { useJobOptions } from '@/api/clientOrders'
 import { useAction } from '@/lib/mutate'
 import { today } from '@/lib/format'
 import { useSession } from '@/lib/session'
+import { useDebounced } from '@/lib/hooks'
 import { AccessPicker } from './AccessPicker'
 import { PASSWORD_RULE, PasswordField, passwordProblem } from '@/features/auth/PasswordField'
 
@@ -30,7 +31,8 @@ function Form({ onClose }: { onClose: () => void }) {
   const depts = useDepartments()
   const people = useEmployees('')
   const jobs = useJobOptions(false)
-  const suggested = useSuggestedEmail(f.first_name, f.last_name)
+  // Not on every letter: the address is asked for once the name has stopped changing.
+  const suggested = useSuggestedEmail(useDebounced(f.first_name, 400), useDebounced(f.last_name, 400))
   const set = (k: keyof EmployeeInput) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((s) => ({ ...s, [k]: e.target.value }))
   // The reporting line runs up the levels: somebody can report to the same level or above, never below. People with no level yet are not ruled out.
   const rank = (code: string) => cat.data?.levels.find((l) => l.code === code)?.rank ?? 0

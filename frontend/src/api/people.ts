@@ -111,7 +111,8 @@ export interface HrCatalogue {
 export const peopleKeys = { all: ['people'] as const }
 const k = (...p: unknown[]) => ['people', ...p] as const
 
-export const useEmployees = (status: string) => useQuery({ queryKey: k('employees', status), queryFn: () => get<Employee[]>(`/api/employees${status ? `?status=${encodeURIComponent(status)}` : ''}`) })
+export const employeesQuery = (status: string) => ({ queryKey: k('employees', status), queryFn: () => get<Employee[]>(`/api/employees${status ? `?status=${encodeURIComponent(status)}` : ''}`) })
+export const useEmployees = (status: string) => useQuery(employeesQuery(status))
 const employeeQuery = (id: number) => ({ queryKey: k('employee', id), queryFn: () => get<EmployeeDetail>(`/api/employees/${id}?view=profile`) })
 /**
  * What the employee's page shows (profile, access, sites): three reads on the server rather than a dozen for everything
@@ -134,11 +135,15 @@ export function useEmployee(id: number) {
 /** Starts reading somebody's page before they are clicked (the pointer is on their row); a fresh copy is not read twice. */
 export const prefetchEmployee = (qc: QueryClient, id: number) => void qc.prefetchQuery({ ...employeeQuery(id), staleTime: 30_000 })
 /** Every site in the application, finished ones too: a department can be assigned to any of them. */
-export const useAllSites = () => useQuery({ queryKey: ['jobs', 'all-sites'], queryFn: async () => (await get<{ jobs: { id: number; number: string; name: string }[] }>('/api/jobs?costing=false')).jobs ?? [], staleTime: 5 * 60_000 })
-export const useDepartments = () => useQuery({ queryKey: k('departments'), queryFn: () => get<Department[]>('/api/departments') })
+export const allSitesQuery = () => ({ queryKey: ['jobs', 'all-sites'], queryFn: async () => (await get<{ jobs: { id: number; number: string; name: string }[] }>('/api/jobs?costing=false')).jobs ?? [], staleTime: 5 * 60_000 })
+export const useAllSites = () => useQuery(allSitesQuery())
+export const departmentsQuery = () => ({ queryKey: k('departments'), queryFn: () => get<Department[]>('/api/departments') })
+export const useDepartments = () => useQuery(departmentsQuery())
 /** Levels, roles, access levels and portals. They are fixed in the code, so they are read once and kept, and live outside the People keys: a save there does not read them again. */
-export const useHrCatalogue = () => useQuery({ queryKey: ['hr-catalogue', 'v3'], queryFn: () => get<HrCatalogue>('/api/hr/levels'), staleTime: Infinity, gcTime: Infinity })
-export const useHrStats = () => useQuery({ queryKey: k('stats'), queryFn: () => get<{ total_employees: number; active: number; onboarding: number; offboarding: number; terminated: number; departments: number }>('/api/hr/stats') })
+export const hrCatalogueQuery = () => ({ queryKey: ['hr-catalogue', 'v3'], queryFn: () => get<HrCatalogue>('/api/hr/levels'), staleTime: Infinity, gcTime: Infinity })
+export const useHrCatalogue = () => useQuery(hrCatalogueQuery())
+export const hrStatsQuery = () => ({ queryKey: k('stats'), queryFn: () => get<{ total_employees: number; active: number; onboarding: number; offboarding: number; terminated: number; departments: number }>('/api/hr/stats') })
+export const useHrStats = () => useQuery(hrStatsQuery())
 export const useSuggestedEmail = (first: string, last: string) =>
   useQuery({ queryKey: k('suggest', first, last), queryFn: async () => (await get<{ email?: string }>(`/api/hr/suggest-email?first_name=${encodeURIComponent(first)}&last_name=${encodeURIComponent(last)}`)).email ?? '', enabled: !!(first.trim() && last.trim()), staleTime: 60_000 })
 

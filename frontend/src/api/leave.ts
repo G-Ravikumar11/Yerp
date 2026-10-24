@@ -16,5 +16,6 @@ export interface LeaveRow {
   approved_by: string
 }
 
-export const useLeaveRequests = () => useQuery({ queryKey: ['leave', 'requests'], queryFn: () => get<LeaveRow[]>('/api/leave/requests') })
+export const leaveRequestsQuery = () => ({ queryKey: ['leave', 'requests'], queryFn: () => get<LeaveRow[]>('/api/leave/requests') })
+export const useLeaveRequests = () => useQuery(leaveRequestsQuery())
 export const decideLeave = (id: number, action: 'approve' | 'reject') => post<{ message?: string }>(`/api/leave/requests/${id}/action`, { action })
