@@ -40,6 +40,7 @@ export default function CountSheet({ doc, editable }: { doc: Doc; editable: bool
     ...(reveal ? ([
       { id: 'var', header: 'Difference', align: 'right', width: '8rem', cell: (l) => (l.variance_qty != null && Number(l.variance_qty) !== 0 ? <span className={Number(l.variance_qty) < 0 ? 'text-danger' : 'text-success'}>{Number(l.variance_qty) > 0 ? '+' : ''}{num(l.variance_qty)}</span> : l.counted_qty != null ? '-' : '') },
       { id: 'val', header: 'Value', align: 'right', width: '8rem', hideBelow: 'sm', cell: (l) => (l.variance_value != null && Number(l.variance_value) !== 0 ? money(l.variance_value) : '') },
+      ...(lines.some((l) => Number(l.arrived_since) > 0) ? [{ id: 'arr', header: 'Came in since', align: 'right', width: '8rem', hideBelow: 'sm', cell: (l: DocLine) => (Number(l.arrived_since) > 0 ? <span title="Received while the count was on - kept apart, not counted">+{num(l.arrived_since ?? '')}</span> : '') }] : []),
     ] as TableColumn<DocLine>[]) : []),
     { id: 'why', header: 'Reason for a difference', width: '14rem', hideBelow: 'md', cell: (l) => (editable ? <Input aria-label={`Reason for ${l.item_name}`} value={reasonOf(l)} onChange={(e) => setWhy((w) => ({ ...w, [l.id]: e.target.value }))} /> : l.reason || '') },
   ]

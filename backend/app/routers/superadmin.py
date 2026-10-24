@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.db import get_db
 
+from app.core import login_guard
 from app.core.audit import log_audit, log_login
 from app.core.auth import require_superadmin
 from app.core.currency import DEFAULT_CURRENCY, PLATFORM_CURRENCY, currency_symbol, money, to_major, to_minor
@@ -36,6 +37,7 @@ def superadmin_login(request: Request, body: dict = None, db: Session = Depends(
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
     body = body or {}
     identifier = (body.get("identifier") or body.get("username") or "").strip().lower()
+    login_guard.guard(request, identifier, body)
     password = body.get("password", "")
     env_pwd = os.getenv("SUPERADMIN_PASSWORD", "")
     sa = None
@@ -50,10 +52,12 @@ def superadmin_login(request: Request, body: dict = None, db: Session = Depends(
         elif env_pwd:
             ok = verify_password(password, hash_password(env_pwd))
         if ok:
+            login_guard.succeeded(request, identifier)
             request.session['superadmin_id'] = sa.id
             log_login(db, None, identifier or sa.email, "superadmin", "password", request, "success")
             return {"ok": True, "username": sa.username, "email": sa.email}
     log_login(db, None, identifier or "superadmin", "superadmin", "password", request, "failed")
+    login_guard.failed(request, identifier if sa else "")
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 

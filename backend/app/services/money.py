@@ -359,7 +359,7 @@ def money_entry_dict(e, accounts=None):
             "paid_on": e.paid_on or "", "mode": e.mode or "", "reference": e.reference or "",
             "note": e.note or "", "voided": bool(e.voided), "void_reason": e.void_reason or "",
             "recorded_by_name": e.recorded_by_name or "", "created_at": e.created_at or "",
-            "head": e.head or "", "pair_id": e.pair_id}
+            "head": e.head or "", "pair_id": e.pair_id, "cleared_on": e.cleared_on or ""}
 
 
 def _doc_for_any(db, client_id, doc_type, doc_id):

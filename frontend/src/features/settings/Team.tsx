@@ -23,7 +23,7 @@ function InviteModal({ onClose }: { onClose: () => void }) {
       footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button loading={send.isPending} disabled={!f.email.trim()} onClick={() => { setTried(true); if (check.ok) send.mutate() }}>Add colleague</Button></>}>
       <div className="grid gap-4">
         <Field label="Name" htmlFor="tm-name"><Input id="tm-name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
-        <Field label="Email" htmlFor="tm-email"><Input id="tm-email" type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
+        <Field label="Email" htmlFor="tm-email"><Input id="tm-email" type="email" autoComplete="off" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
         <Field label="Role" htmlFor="tm-role"><Select id="tm-role" options={ROLES} value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })} /></Field>
         <PasswordField id="tm-pass" label="Password" value={f.password} onChange={(v) => setF({ ...f, password: v })} error={tried || f.password ? check.pass || undefined : undefined} hint={PASSWORD_RULE} />
         <PasswordField id="tm-pass2" label="Confirm password" value={confirm} onChange={setConfirm} error={tried || confirm ? check.again || undefined : undefined} placeholder="Type it again" />

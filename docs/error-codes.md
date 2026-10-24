@@ -24,6 +24,8 @@ When someone reports a problem, ask for both.
 | YE-AUTH-06 | Password not set yet | Send the set-password email. |
 | YE-AUTH-07 | Reset link invalid or expired | Ask for a new reset link. |
 | YE-AUTH-08 | Email already registered | Sign in with it, or use "Forgot password". |
+| YE-AUTH-09 | Check that you are a person (CAPTCHA) | Type the letters shown (or tick the box) and try again. Asked for after three wrong tries, and always on Forgot password. |
+| YE-AUTH-10 | Account locked for a while | Ten wrong passwords in 15 minutes. Wait 15 minutes or use "Forgot password"; the Master is told. |
 
 ## Access
 

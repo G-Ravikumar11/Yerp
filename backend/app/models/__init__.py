@@ -118,6 +118,7 @@ from app.models.money import (
     DBCreditNoteLine,
     DBPaymentRequest,
     DBSiteCashExpense,
+    DBBankStatementLine,
 )
 from app.models.procurement import (
     DBPurchaseOrder,

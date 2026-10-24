@@ -82,12 +82,15 @@ def test_stock_cannot_go_negative_and_a_rate_is_needed_on_in_only(db, store_worl
     assert get_balance(db, w.central_id, w.item["cement"]).qty == D("5000.000")
 
 
-def test_a_frozen_store_does_not_move(db, store_world):
+def test_a_frozen_store_takes_deliveries_but_nothing_leaves(db, store_world):
     w = store_world
     freeze_store(db, w.central_id, "annual count", user_id=None)
-    for mtype, rate in ((MovementType.GRN_IN, D("7")), (MovementType.ISSUE_OUT, None)):
+    post(db, w, MovementType.GRN_IN, D("1"), D("7"), doc=("GRN", 77))                 # the lorry is not turned away
+    for mtype, rate in ((MovementType.ISSUE_OUT, None), (MovementType.ADJUST_IN, D("7")), (MovementType.TRANSFER_OUT, None)):
         with pytest.raises(StoreFrozenError):
             post(db, w, mtype, D("1"), rate)
+    with pytest.raises(StoreFrozenError):
+        reverse_document(db, ref_doc_type="GRN", ref_doc_id=77, user_id=None, reason="no")
     with pytest.raises(InvalidMovementError):
         freeze_store(db, w.central_id, "twice", user_id=None)
     unfreeze_store(db, w.central_id, user_id=None)

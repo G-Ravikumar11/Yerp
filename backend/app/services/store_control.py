@@ -7,7 +7,8 @@ it (which reverses its movements) and make a new one.
 * A **transfer** is POSTED when it is dispatched: stock leaves the source at the average rate and is in transit. Receiving it at the
   destination (a second step) brings the stock in at that rate. Cancelling reverses whatever has moved, which fails if the destination has
   already used the stock.
-* A **stock count** freezes the store when it is started and adjusts the books to what was counted when it is posted, then unfreezes.
+* A **stock count** freezes the store when it is started: nothing leaves it, but deliveries (receipts, transfers in, returns from site) still
+  come in and are kept apart from the count. Posting adjusts the books by what the count found against the snapshot, then unfreezes.
 * **Wastage and scrap** write stock off at the average rate; scrap can record what it fetched.
 Quantities are in the item's base unit. A high-value document needs store.control.approve_high_value to approve.
 """
@@ -27,7 +28,8 @@ from app.models.store_control import (
 )
 from app.schemas.store_contracts import CountVarianceLine, InTransitLine, ScrapLine
 from app.services import store_cycle, store_outward, store_reservations
-from app.services.stock_ledger import convert_to_base, freeze_store, get_balance, post_movement, reverse_document, unfreeze_store
+from app.core.store_auth import check_not_own
+from app.services.stock_ledger import check_date, convert_to_base, entry_lots, freeze_store, get_balance, post_movement, reverse_document, unfreeze_store
 from app.services.store_numbering import next_doc_number
 
 ZERO = Decimal("0")
@@ -236,9 +238,12 @@ def transfer_receive(db, actor, doc):
     if not dest.is_active:
         raise HTTPException(409, "Store %s is not in use." % dest.code)
     for l in transfer_lines(db, doc):
+        # The batches arrive as they left, with their shelf life.
+        sent = (db.query(DBStoreStockLedger).filter(DBStoreStockLedger.ref_doc_type == TRANSFER, DBStoreStockLedger.ref_doc_id == doc.id, DBStoreStockLedger.ref_line_id == l.id,
+                                                    DBStoreStockLedger.qty_out > 0, DBStoreStockLedger.reversal_of_id.is_(None)).order_by(DBStoreStockLedger.id).first())
         post_movement(db, movement_type=MovementType.TRANSFER_IN, store_id=doc.to_store_id, item_id=l.item_id, qty=l.qty, rate=l.rate, txn_date=date.today(),
                       project_id=dest.project_id, ref_doc_type=TRANSFER, ref_doc_id=doc.id, ref_line_id=l.id, user_id=actor.user_id,
-                      remarks="%s from %s" % (doc.number, db.get(DBStore, doc.store_id).code))
+                      remarks="%s from %s" % (doc.number, db.get(DBStore, doc.store_id).code), lots=(entry_lots(db, sent.id) if sent is not None else None) or None)
     doc.receipt_status, doc.received_at, doc.received_by_name = "RECEIVED", datetime.now(), actor.name
     log(db, actor, TRANSFER, doc.id, "receive", doc.status, doc.status, "received at %s" % dest.code)
     db.flush()
@@ -278,6 +283,19 @@ def count_scope(db, client_id, doc, item_ids):
         seen.add(item.id)
         db.add(DBStoreCountLine(count_id=doc.id, item_id=item.id, system_qty=ZERO, avg_rate=ZERO, counted_qty=None, in_snapshot=1))
     db.flush()
+
+
+def in_transit_to(db, store_id):
+    """Transfers dispatched to a store and not yet received: [{id, number, from_store, dispatched_on, value}]. A count started
+    meanwhile does not see them - they are received into the store, apart from the count, when they arrive."""
+    rows = (db.query(DBStoreTransfer).filter(DBStoreTransfer.to_store_id == store_id, DBStoreTransfer.status == DocStatus.POSTED.value,
+                                             DBStoreTransfer.receipt_status == "IN_TRANSIT").order_by(DBStoreTransfer.transfer_date, DBStoreTransfer.id).all())
+    out = []
+    for t in rows:
+        src = db.get(DBStore, t.store_id)
+        out.append({"id": t.id, "number": t.number, "from_store": src.code if src else "", "dispatched_on": t.transfer_date.isoformat() if t.transfer_date else "",
+                    "value": s2(sum((Decimal(str(l.value or 0)) for l in transfer_lines(db, t)), ZERO))})
+    return out
 
 
 def count_start(db, actor, doc):
@@ -360,7 +378,8 @@ def count_post(db, actor, doc):
         raise HTTPException(409, "The store is no longer frozen for this count, so the books may have moved. Cancel it and count again.")
     lines = count_lines(db, doc)
     for l in lines:
-        if Decimal(str(l.system_qty)) != get_balance(db, doc.store_id, l.item_id).qty:
+        # Only deliveries can have come in since the snapshot; anything less than it means the books moved some other way.
+        if get_balance(db, doc.store_id, l.item_id).qty < Decimal(str(l.system_qty)):
             raise HTTPException(409, "The books changed for %s since the count started. Cancel it and count again." % db.get(models.DBItem, l.item_id).item_name)
     try:
         unfreeze_store(db, doc.store_id, actor.user_id)
@@ -525,6 +544,21 @@ def advance(db, actor, kind, doc, action, reason="", can_high_value=False):
             raise HTTPException(400, "Add at least one line before submitting.")
         if kind.check_submit:
             kind.check_submit(db, actor, doc)
+    if action in ("submit", "post"):
+        try:
+            check_date(db, actor.client.id, getattr(doc, kind.date_attr))
+        except InvalidMovementError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    if action == "approve":
+        raised = []
+        if kind.key == "scrap":                 # nor by whoever asked for the write-offs it settles
+            ids = [l.writeoff_request_id for l in scrap_lines(db, doc) if l.writeoff_request_id]
+            from app.models.store_outward import DBStoreWriteoffRequest
+            raised = [r for (r,) in db.query(DBStoreWriteoffRequest.requested_by_id).filter(DBStoreWriteoffRequest.id.in_(ids or [0])).all()]
+        if kind.key == "count" and doc.started_at is not None:
+            raised = [h.user_id for h in db.query(DBStoreControlLog).filter(DBStoreControlLog.doc_type == COUNT, DBStoreControlLog.doc_id == doc.id,
+                                                                             DBStoreControlLog.action == "start").all()]
+        check_not_own(db, actor, doc, DBStoreControlLog, kind.ref, kind.label, also=raised)
     if action == "approve" and kind.value is not None and not can_high_value:
         worth = kind.value(db, doc)
         if worth >= HIGH_VALUE:

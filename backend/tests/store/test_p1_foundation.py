@@ -9,6 +9,7 @@ import pytest
 
 from app import db as database, models
 from app.models.store_core import (
+    DBStoreBatch, DBStoreBatchBalance, DBStoreLedgerBatch,
     DBStoreItemSettings, DBStoreStockBalance, DBStoreStockLedger, DBStoreUomConversion, DBStoreUserAssignment, MovementType,
 )
 from app.services.stock_ledger import post_movement, reverse_document
@@ -26,6 +27,8 @@ def _leave_no_stock_behind():
     pointing at the old ids would then belong to the next test's items."""
     yield
     with database.SessionLocal() as s:
+        for model in (DBStoreLedgerBatch, DBStoreBatchBalance, DBStoreBatch):
+            s.query(model).delete(synchronize_session=False)
         s.query(DBStoreStockLedger).filter(DBStoreStockLedger.reversal_of_id.isnot(None)).delete(synchronize_session=False)
         for model in (DBStoreStockLedger, DBStoreStockBalance, DBStoreItemSettings, DBStoreUomConversion):
             s.query(model).delete(synchronize_session=False)

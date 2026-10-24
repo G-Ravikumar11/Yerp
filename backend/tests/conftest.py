@@ -38,6 +38,13 @@ os.environ.setdefault("PASSWORD_ITERATIONS", "1000")
 # Tests drive run_due_jobs() directly; a loop ticking in the background would
 # race them and claim periods out from under the assertions.
 os.environ.setdefault("SCHEDULER_ENABLED", "0")
+# Thousands of sign-ins and requests from one test address: the CAPTCHA and the flood limit are switched back on
+# in test_login_guard.py, where they are what is being tested.
+os.environ.setdefault("CAPTCHA_MODE", "off")
+os.environ.setdefault("API_FLOOD_PER_MINUTE", "0")
+# The suite must never send real mail: .env holds the live SMTP account, and load_dotenv keeps anything already set.
+for _k in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM"):
+    os.environ[_k] = ""
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -58,12 +65,24 @@ def _create_schema():
 
 
 @pytest.fixture(autouse=True)
+def _no_real_mail(request, monkeypatch):
+    # A test of the SMTP sender itself is marked fake_smtp: it replaces smtplib with a fake server, so it runs the real
+    # sender with nothing leaving the machine. Everywhere else the sender is not reached at all.
+    if request.node.get_closest_marker("fake_smtp") is None:
+        from app.core import notifications
+        monkeypatch.setattr(notifications, "_send_via_smtp", lambda to_email, raw_msg: (True, "not sent in tests"))
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _reset_rate_limiter():
     """Registration/login are deliberately rate limited per IP. Every test comes
     from the same testserver address, so clear the window between tests instead
     of weakening the limit itself."""
     main.rate_limiter._hits.clear()
     main._READ_CACHE.clear()
+    from app.core.login_guard import failures
+    failures.reset()
     yield
 
 

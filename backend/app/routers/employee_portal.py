@@ -7,6 +7,7 @@ from sqlalchemy import func, func as sqlfunc, or_
 from sqlalchemy.orm import Session, selectinload
 
 from app import models
+from app.core import login_guard
 from app.core import passwords
 from app.core.queries import by_id, prime
 from app.db import get_db
@@ -86,6 +87,7 @@ def employee_forgot_password(body: ForgotPasswordIn, background_tasks: Backgroun
     ip = request.client.host if request.client else "unknown"
     if rate_limiter.is_rate_limited(f"emp_forgot:{ip}", max_requests=5, window=300):
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+    login_guard.guard(request, "", login_guard.body_of(body), always=True)
 
     generic = {"message": "If that email has an account, a reset link is on its way."}
     email = (body.email or "").strip().lower()
@@ -114,6 +116,11 @@ def employee_forgot_password(body: ForgotPasswordIn, background_tasks: Backgroun
     return generic
 
 
+def _owner_or_member(db, email):
+    return bool(db.query(models.DBClient.id).filter(sqlfunc.lower(models.DBClient.email) == email).first()
+                or db.query(models.DBTeamMember.id).filter(sqlfunc.lower(models.DBTeamMember.email) == email).first())
+
+
 @router.post("/api/employee/auth/login")
 def employee_login(request: Request, body: dict = None, db: Session = Depends(get_db)):
     ip = request.client.host if request.client else "unknown"
@@ -122,15 +129,22 @@ def employee_login(request: Request, body: dict = None, db: Session = Depends(ge
     if not body or not body.get("email") or not body.get("password"):
         raise HTTPException(status_code=400, detail="Email and password required")
     email = body["email"].strip().lower()
+    login_guard.guard(request, email, body)
     emp = db.query(models.DBEmployee).filter(sqlfunc.lower(models.DBEmployee.email) == email).first()
     request.state.error_who = email                  # for the error log, if this sign-in fails
     request.state.error_client_id = emp.client_id if emp else None
     if not emp:
+        # Nobody's staff email. If it is an owner's or a colleague's, the owner's door has counted the wrong password
+        # already; otherwise somebody is trying addresses, and that counts against where they are trying from.
+        if not _owner_or_member(db, email):
+            login_guard.failed(request)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not emp.password_hash:
         raise HTTPException(status_code=401, detail="Password not set. Contact your administrator.")
     if not passwords.verify_password(body["password"], emp.password_hash):
+        login_guard.failed(request, email, db, emp.client_id)
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    login_guard.succeeded(request, email)
     upgrade_password_hash(emp, "password_hash", body["password"])
     if emp.status in ("terminated",):
         raise HTTPException(status_code=403, detail="Account deactivated")

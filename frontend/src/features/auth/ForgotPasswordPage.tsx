@@ -3,6 +3,7 @@ import { Button, Field, Input } from '@/components/ui'
 import { api, ApiError } from '@/lib/api'
 import { AuthLayout, Notice } from './AuthLayout'
 import { appUrl } from '@/lib/paths'
+import { CaptchaBox, type CaptchaValue } from './CaptchaBox'
 
 /** Asks for the address and says the same thing whether or not an account has it, so the page cannot be used to find out who banks here. */
 export default function ForgotPasswordPage() {
@@ -10,20 +11,26 @@ export default function ForgotPasswordPage() {
   const [error, setError] = useState('')
   const [sent, setSent] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [check, setCheck] = useState<CaptchaValue | null>(null)
+  const [round, setRound] = useState(0)
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (busy || !email.trim()) return
+    if (!check) return setError('Complete the check, then send the link.')
     setBusy(true)
     setError('')
     try {
       // One door for owners and staff, as on the sign-in page: the server knows which of the two holds the address.
       // Both always answer alike, so asking both reveals nothing; a throttled or unreachable one is the only failure.
-      const body = { email: email.trim() }
-      await Promise.all(['/api/client/forgot-password', '/api/employee/forgot-password'].map((url) => api(url, { method: 'POST', body, quiet: true })))
+      // One after the other: the check is spent by the first and covers the second.
+      const body = { email: email.trim(), ...check }
+      await api('/api/client/forgot-password', { method: 'POST', body, quiet: true })
+      await api('/api/employee/forgot-password', { method: 'POST', body, quiet: true })
       setSent(true)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not reach the server. Check the connection and try again.')
+      setRound((n) => n + 1)
     } finally {
       setBusy(false)
     }
@@ -40,6 +47,7 @@ export default function ForgotPasswordPage() {
         <form onSubmit={submit} className="grid gap-4">
           {error && <Notice tone="error">{error}</Notice>}
           <Field label="Email address" htmlFor="email"><Input id="email" type="email" autoComplete="username" autoFocus required placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+          <CaptchaBox round={round} onChange={setCheck} />
           <Button type="submit" loading={busy} className="w-full">Send reset link</Button>
         </form>
       )}

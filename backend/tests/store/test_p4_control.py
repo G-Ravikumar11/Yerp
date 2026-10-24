@@ -9,6 +9,7 @@ import pytest
 
 from app import db as database, models
 from app.models.store_core import (
+    DBStoreBatch, DBStoreBatchBalance, DBStoreLedgerBatch,
     DBStore, DBStoreFreeze, DBStoreItemSettings, DBStoreStockBalance, DBStoreStockLedger, DBStoreUomConversion, DBStoreUserAssignment, MovementType, StoreFrozenError,
 )
 from app.services import store_control, store_outward
@@ -26,6 +27,8 @@ def _leave_no_stock_behind():
     """The suite empties the item master between tests, freeing item ids for reuse: clear what points at them."""
     yield
     with database.SessionLocal() as s:
+        for model in (DBStoreLedgerBatch, DBStoreBatchBalance, DBStoreBatch):
+            s.query(model).delete(synchronize_session=False)
         s.query(DBStoreStockLedger).filter(DBStoreStockLedger.reversal_of_id.isnot(None)).delete(synchronize_session=False)
         for model in (DBStoreStockLedger, DBStoreStockBalance, DBStoreItemSettings, DBStoreUomConversion):
             s.query(model).delete(synchronize_session=False)
@@ -518,8 +521,10 @@ def test_a_transfer_can_be_sent_to_a_store_the_sender_does_not_work_in(account, 
     assert portal.get("/api/store/lookup/stores").json()["stores"][0]["id"] == w.central                                           # the shared picker is not enough
     res = portal.post(API + "/transfer", json=transfer_body(w, to_store_id=w.site_b))
     assert res.status_code == 200, res.text
-    for step in ("submit", "approve", "post"):
-        assert portal.post("%s/transfer/%d/%s" % (API, res.json()["id"], step)).status_code == 200
+    assert portal.post("%s/transfer/%d/submit" % (API, res.json()["id"])).status_code == 200
+    assert portal.post("%s/transfer/%d/approve" % (API, res.json()["id"])).status_code == 403          # not their own
+    assert tenant.post("%s/transfer/%d/approve" % (API, res.json()["id"])).status_code == 200
+    assert portal.post("%s/transfer/%d/post" % (API, res.json()["id"])).status_code == 200
     assert portal.post("%s/transfer/%d/receive" % (API, res.json()["id"])).status_code == 403          # receiving needs the destination
     assert tenant.post("%s/transfer/%d/receive" % (API, res.json()["id"])).status_code == 200
 

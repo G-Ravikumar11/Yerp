@@ -139,6 +139,7 @@ const NAV: NavEntry[] = [
       { label: 'Fixed Assets', path: '/money/assets', perm: 'bills.view_all' },
       { label: 'TDS, Guarantees & Advances', path: '/money/registers', perm: 'bills.view_all' },
       { label: 'Site Cash', path: '/money/site-cash', perm: 'bills.view_all' },
+      { label: 'Tally Export', path: '/money/tally', perm: 'bills.view_all' },
     ],
   },
   {

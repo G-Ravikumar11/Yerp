@@ -9,6 +9,7 @@ import pytest
 
 from app import db as database, models
 from app.models.store_core import (
+    DBStoreBatch, DBStoreBatchBalance, DBStoreLedgerBatch,
     DBStore, DBStoreItemSettings, DBStoreStockBalance, DBStoreStockLedger, DBStoreUomConversion, DBStoreUserAssignment, MovementType,
 )
 from app.services.stock_ledger import freeze_store, get_balance, post_movement, unfreeze_store
@@ -25,6 +26,8 @@ def _leave_no_stock_behind():
     """The suite empties the item master between tests, freeing item ids for reuse: clear what points at them."""
     yield
     with database.SessionLocal() as s:
+        for model in (DBStoreLedgerBatch, DBStoreBatchBalance, DBStoreBatch):
+            s.query(model).delete(synchronize_session=False)
         s.query(DBStoreStockLedger).filter(DBStoreStockLedger.reversal_of_id.isnot(None)).delete(synchronize_session=False)
         for model in (DBStoreStockLedger, DBStoreStockBalance, DBStoreItemSettings, DBStoreUomConversion):
             s.query(model).delete(synchronize_session=False)
@@ -413,21 +416,26 @@ def test_opening_stock_is_posted_as_opening(account):
 
 # --- stores, rights and tenancy -----------------------------------------------------------------------------------------------------
 
-def test_a_frozen_store_refuses_the_post_and_keeps_the_document_approved(account):
+def test_a_frozen_store_still_takes_a_delivery_but_sends_nothing_back(account):
+    """A count on does not strand the lorry at the gate: the receipt posts, apart from the count. Nothing leaves, though."""
     tenant = account["client"]
     w = world(account)
-    g = make_grn(tenant, w)
-    move(tenant, "grn", g["id"], "submit", "approve")
+    g = posted_grn(tenant, w, bags="10")
+    ret = tenant.post(API + "/returns", json={"grn_id": g["id"], "return_date": TODAY, "lines": [{"grn_line_id": g["lines"][0]["id"], "qty": "1", "uom": "bag"}]}).json()
+    move(tenant, "returns", ret["id"], "submit", "approve")
+    g2 = make_grn(tenant, w)
+    move(tenant, "grn", g2["id"], "submit", "approve")
     with database.SessionLocal() as s:
         freeze_store(s, w.central, "annual count", None)
         s.commit()
-    res = tenant.post("%s/grn/%d/post" % (API, g["id"]))
+    assert move(tenant, "grn", g2["id"], "post")["status"] == "POSTED"
+    res = tenant.post("%s/returns/%d/post" % (API, ret["id"]))
     assert res.status_code == 423 and "frozen" in res.json()["detail"].lower()
-    assert tenant.get("%s/grn/%d" % (API, g["id"])).json()["status"] == "APPROVED"
+    assert tenant.get("%s/returns/%d" % (API, ret["id"])).json()["status"] == "APPROVED"
     with database.SessionLocal() as s:
         unfreeze_store(s, w.central, None)
         s.commit()
-    assert move(tenant, "grn", g["id"], "post")["status"] == "POSTED"
+    assert move(tenant, "returns", ret["id"], "post")["status"] == "POSTED"
 
 
 def test_each_step_needs_its_own_right(account, portal):

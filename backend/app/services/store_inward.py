@@ -5,6 +5,8 @@ Every document runs DRAFT -> SUBMITTED -> APPROVED -> POSTED, or is CANCELLED. O
 post_movement for each line and the router commits once; cancelling a POSTED document calls reverse_document. A document
 can be edited only while it is a DRAFT; a POSTED one never. Quantities are kept in the item's base unit.
 """
+import json
+import re
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import List, Optional
@@ -21,7 +23,9 @@ from app.models.store_inward import (
     DBStoreInwardLog, DBStoreOpening, DBStoreOpeningLine, DBStorePurchaseReturn, DBStorePurchaseReturnLine,
 )
 from app.schemas.store_contracts import PoLineReceipt
-from app.services.stock_ledger import convert_to_base, post_movement, reverse_document
+from app.core.store_auth import check_not_own
+from app.models.store_core import DBStoreStockLedger
+from app.services.stock_ledger import check_date, convert_to_base, entry_lots, grn_line_lot, lots_on_hand, post_movement, reverse_document
 from app.services.store_batches import default_expiry
 from app.services.store_integration import old_received_in_base
 from app.models.store_extras import DBStorePoClosure
@@ -29,7 +33,7 @@ from app.services import store_rejections
 from app.services.store_numbering import next_doc_number
 
 ZERO = Decimal("0")
-_Q, _R = Decimal("0.001"), Decimal("0.0001")
+_Q, _R, _V = Decimal("0.001"), Decimal("0.0001"), Decimal("0.01")
 LIVE = (DocStatus.SUBMITTED.value, DocStatus.APPROVED.value, DocStatus.POSTED.value)     # a document that counts against a PO or a GRN
 PO_OPEN = ("Approved",)
 
@@ -86,6 +90,14 @@ def r4(x) -> Decimal:
     return Decimal(str(x)).quantize(_R, rounding=ROUND_HALF_UP)
 
 
+def v2(x) -> Decimal:
+    return Decimal(str(x)).quantize(_V, rounding=ROUND_HALF_UP)
+
+
+def s2(x) -> str:
+    return format(v2(x if x is not None else 0), "f")
+
+
 def s3(x) -> str:
     return format(q3(x if x is not None else 0), "f")
 
@@ -139,12 +151,44 @@ def numbered(db, doc_type, store_id, on_date) -> str:
 # --- purchase orders --------------------------------------------------------------------------------------------------
 
 def po_item(db, po, po_line) -> Optional[models.DBItem]:
-    """The stock item a purchase-order line names by its item code (None when it names none)."""
+    """The stock item a purchase-order line is for: the item it was linked to, else the one its item code names (the code
+    as typed, or failing that the same code in another case). None when neither says."""
+    if getattr(po_line, "item_id", None):
+        item = db.get(models.DBItem, po_line.item_id)
+        if item is not None and item.client_id == po.client_id and item.kind == "RM":
+            return item
     code = (po_line.item_code or "").strip()
     if not code:
         return None
-    return db.query(models.DBItem).filter(models.DBItem.client_id == po.client_id, models.DBItem.item_code == code,
-                                          models.DBItem.kind == "RM").first()
+    found = db.query(models.DBItem).filter(models.DBItem.client_id == po.client_id, models.DBItem.item_code == code,
+                                           models.DBItem.kind == "RM").first()
+    if found is None:
+        found = db.query(models.DBItem).filter(models.DBItem.client_id == po.client_id, models.DBItem.kind == "RM",
+                                               func.lower(func.trim(models.DBItem.item_code)) == code.lower()).first()
+    return found
+
+
+def link_po_line_item(db, actor, po_line_id, item_id):
+    """Say which stock item a purchase-order line is for, from the goods receipt screen, so it can be received. Refused once
+    the line has been received as another item (that receipt would no longer match its order)."""
+    pl = db.get(models.DBPurchaseOrderLineItem, po_line_id) if po_line_id else None
+    po = db.get(models.DBPurchaseOrder, pl.order_id) if pl is not None else None
+    if po is None or po.client_id != actor.client.id:
+        raise HTTPException(404, "Purchase-order line not found")
+    item = item_of(db, actor.client.id, item_id)
+    other = (db.query(DBStoreGrnLine.item_id).join(DBStoreGrn, DBStoreGrn.id == DBStoreGrnLine.grn_id)
+             .filter(DBStoreGrnLine.po_line_id == pl.id, DBStoreGrn.status.in_(LIVE), DBStoreGrnLine.item_id != item.id).first())
+    if other:
+        raise HTTPException(409, "This order line has already been received as another item, so it cannot be changed now.")
+    if _ordered_base(db, pl, item) <= 0:
+        raise HTTPException(400, "The order is in %s, which cannot be converted to %s's unit %s. Add the conversion in the item settings first."
+                            % (pl.uom or "?", item.item_name, base_uom_of(db, item)))
+    before = pl.item_code or ""
+    pl.item_id, pl.item_code = item.id, item.item_code
+    db.add(DBStoreInwardLog(client_id=actor.client.id, doc_type="PO", doc_id=po.id, action="map", from_status=before, to_status=item.item_code,
+                            user_id=actor.user_id, user_name=actor.name, note=("line %s: %s" % (pl.id, pl.description or ""))[:300]))
+    db.flush()
+    return pl
 
 
 def short_closed(db, po_id) -> bool:
@@ -234,11 +278,16 @@ def open_purchase_orders(db, client_id, visible_projects=None, q=""):
         for l in lines:
             sm = summary.get(l.id)
             item = po_item(db, po, l)
-            if sm is None or item is None or sm.pending_qty <= 0:
+            if sm is None or sm.pending_qty <= 0:
+                continue
+            if item is None:                    # no stock item yet: shown so the person receiving can say which it is
+                rows.append({"po_line_id": l.id, "item_id": None, "needs_item": True, "item_code": l.item_code or "", "item_name": "", "description": l.description or "",
+                             "po_uom": l.uom or "", "po_qty": s3(l.qty), "price": s4(l.price), "base_uom": "", "ordered": s3(sm.ordered_qty), "accepted": s3(sm.accepted_qty),
+                             "pending": s3(sm.pending_qty), "category": None, "batch_tracked": False})
                 continue
             rows.append({"po_line_id": l.id, "item_id": item.id, "item_code": item.item_code, "item_name": item.item_name, "description": l.description or "",
                          "po_uom": l.uom or "", "po_qty": s3(l.qty), "price": s4(l.price), "base_uom": base_uom_of(db, item), "ordered": s3(sm.ordered_qty),
-                         "accepted": s3(sm.accepted_qty), "pending": s3(sm.pending_qty), **_category_of(db, item.id)})
+                         "accepted": s3(sm.accepted_qty), "pending": s3(sm.pending_qty), "needs_item": False, **_category_of(db, item.id)})
         if rows:
             out.append({"id": po.id, "number": po.number, "supplier_name": po.supplier_name or "", "project_id": po.job_id, "issue_date": po.issue_date or "", "lines": rows})
     return out
@@ -281,7 +330,7 @@ def build_grn_lines(db, client_id, po, rows, grn_id=None):
             seen_po.add(po_line.id)
             item = po_item(db, po, po_line)
             if item is None:
-                raise HTTPException(400, "%s: the purchase-order line has no stock item code, so it cannot be received into stock." % label)
+                raise HTTPException(400, "%s: the purchase-order line does not say which stock item it is. Choose the item for it on the receipt first." % label)
         else:
             if po is not None:
                 raise HTTPException(400, "%s: choose the purchase-order line it is for." % label)
@@ -349,6 +398,71 @@ def write_grn_lines(db, grn, lines):
     db.flush()
 
 
+# --- landed cost ----------------------------------------------------------------------------------------------------------
+# What it cost to bring the goods in, besides the invoice rate: the lorry, the unloading gang, GST the company cannot claim back
+# (it is not registered, or the credit is blocked), transit insurance. Each charge is spread over the accepted lines - by their
+# value, or by quantity for freight on a single material - when the receipt posts, and the stock goes in at rate plus share.
+
+CHARGE_KINDS = {"FREIGHT": "Freight", "LOADING": "Loading and unloading", "GST": "GST not claimable", "INSURANCE": "Transit insurance", "OTHER": "Other charges"}
+CHARGE_BASES = ("VALUE", "QTY")
+
+
+def build_charges(rows):
+    """Validated charges from the screen: ([{kind, label, amount, basis}], total)."""
+    out = []
+    for n, r in enumerate(rows or [], 1):
+        what = "Charge %d" % n
+        kind = (getattr(r, "kind", "") or "OTHER").strip().upper()
+        if kind not in CHARGE_KINDS:
+            raise HTTPException(400, "%s: the kind is one of %s." % (what, ", ".join(CHARGE_KINDS)))
+        amount = v2(dec(getattr(r, "amount", ""), what + " amount"))
+        if amount == 0:
+            continue
+        basis = (getattr(r, "basis", "") or "VALUE").strip().upper()
+        if basis not in CHARGE_BASES:
+            raise HTTPException(400, "%s: spread it by VALUE or by QTY." % what)
+        out.append({"kind": kind, "label": text(getattr(r, "label", ""), what + " description", 80) or CHARGE_KINDS[kind], "amount": format(amount, "f"), "basis": basis})
+    if len(out) > 12:
+        raise HTTPException(400, "Keep it to twelve charges.")
+    return out, sum((Decimal(c["amount"]) for c in out), ZERO)
+
+
+def charges_of(grn):
+    try:
+        got = json.loads(grn.charges or "[]")
+        return got if isinstance(got, list) else []
+    except (TypeError, ValueError):
+        return []
+
+
+def landed_split(grn, lines):
+    """{line id: its share of the receipt's charges}. Only accepted goods carry a share; a charge spread by value over lines
+    worth nothing is spread by quantity instead. Rounding is left on the last line, so the shares add up to the charges."""
+    shares = {l.id: ZERO for l in lines}
+    takers = [l for l in lines if Decimal(str(l.accepted_qty or 0)) > 0]
+    if not takers:
+        return shares
+    for c in charges_of(grn):
+        amount = Decimal(str(c.get("amount") or 0))
+        by_qty = {l.id: Decimal(str(l.accepted_qty)) for l in takers}
+        weights = by_qty if c.get("basis") == "QTY" else {l.id: Decimal(str(l.accepted_qty)) * Decimal(str(l.rate or 0)) for l in takers}
+        total = sum(weights.values(), ZERO)
+        if total <= 0:
+            weights, total = by_qty, sum(by_qty.values(), ZERO)
+        given = ZERO
+        for n, l in enumerate(takers):
+            part = amount - given if n == len(takers) - 1 else v2(amount * weights[l.id] / total)
+            shares[l.id] += part
+            given += part
+    return shares
+
+
+def landed_rate(line, share) -> Decimal:
+    """Per base unit: the invoice rate plus the line's share of the charges."""
+    qty = Decimal(str(line.accepted_qty or 0))
+    return r4(Decimal(str(line.rate)) + (Decimal(str(share)) / qty if qty > 0 else ZERO))
+
+
 def grn_lines(db, grn):
     return db.query(DBStoreGrnLine).filter(DBStoreGrnLine.grn_id == grn.id).order_by(DBStoreGrnLine.line_no, DBStoreGrnLine.id).all()
 
@@ -414,12 +528,16 @@ def grn_post(db, actor, grn):
     _recheck_grn(db, grn, lines)
     project = grn.project_id
     posted = 0
+    shares = landed_split(grn, lines)
     for l in lines:
         if Decimal(str(l.accepted_qty)) <= 0:
+            l.charges_share, l.landed_rate = ZERO, l.rate
             continue
-        post_movement(db, movement_type=MovementType.GRN_IN, store_id=grn.store_id, item_id=l.item_id, qty=l.accepted_qty, rate=l.rate, txn_date=grn.grn_date,
+        l.charges_share, l.landed_rate = shares[l.id], landed_rate(l, shares[l.id])
+        # Into the lot it was delivered as (its batch number, or this line when only a shelf life was given).
+        post_movement(db, movement_type=MovementType.GRN_IN, store_id=grn.store_id, item_id=l.item_id, qty=l.accepted_qty, rate=l.landed_rate, txn_date=grn.grn_date,
                       project_id=project, ref_doc_type=GRN, ref_doc_id=grn.id, ref_line_id=l.id, user_id=actor.user_id,
-                      remarks="%s%s" % (grn.number, (" - " + grn.supplier_name) if grn.supplier_name else ""))
+                      remarks="%s%s" % (grn.number, (" - " + grn.supplier_name) if grn.supplier_name else ""), lots=grn_line_lot(db, grn.client_id, l, grn))
         posted += 1
     if not posted:
         raise HTTPException(409, "Nothing was accepted on this receipt, so there is nothing to post. Cancel it instead.")
@@ -551,14 +669,31 @@ def build_return_lines(db, client_id, grn, rows, return_id=None):
             raise HTTPException(409, "%s: only %s of %s can still be returned (%s was accepted%s)." % (
                 label, s3(max(ZERO, room)), item.item_name, s3(gl.accepted_qty), ", the rest is already on a return" if already.get(gl.id) else ""))
         reason = text(r.reason, "reason", 200)
-        out.append({"gl": gl, "item": item, "entry_uom": uom, "entry_qty": q3(entry), "qty": qty, "reason": reason})
+        rate, pct = Decimal(str(gl.rate or 0)), tax_pct_of(db, gl)
+        value = v2(qty * rate)
+        out.append({"gl": gl, "item": item, "entry_uom": uom, "entry_qty": q3(entry), "qty": qty, "reason": reason, "rate": r4(rate), "value": value,
+                    "tax_pct": pct, "tax_value": v2(value * pct / 100)})
     return out
+
+
+def tax_pct_of(db, gl) -> Decimal:
+    """The GST on what a receipt line was bought at: its order line's rate, when the order charged tax at all."""
+    pl = db.get(models.DBPurchaseOrderLineItem, gl.po_line_id) if gl.po_line_id else None
+    po = db.get(models.DBPurchaseOrder, pl.order_id) if pl is not None else None
+    if pl is None or po is None or not (po.tax_amount or 0):
+        return ZERO
+    m = re.search(r"\d+(?:\.\d+)?", pl.tax_rate or "")
+    pct = Decimal(m.group(0)) if m else ZERO
+    return pct if pct <= 40 else ZERO
 
 
 def write_return_lines(db, ret, lines):
     db.query(DBStorePurchaseReturnLine).filter(DBStorePurchaseReturnLine.return_id == ret.id).delete(synchronize_session=False)
     for l in lines:
-        db.add(DBStorePurchaseReturnLine(return_id=ret.id, grn_line_id=l["gl"].id, item_id=l["item"].id, entry_uom=l["entry_uom"], entry_qty=l["entry_qty"], qty=l["qty"], reason=l["reason"]))
+        db.add(DBStorePurchaseReturnLine(return_id=ret.id, grn_line_id=l["gl"].id, item_id=l["item"].id, entry_uom=l["entry_uom"], entry_qty=l["entry_qty"], qty=l["qty"], reason=l["reason"],
+                                         rate=l["rate"], value=l["value"], tax_pct=l["tax_pct"], tax_value=l["tax_value"]))
+    ret.debit_value = sum((l["value"] for l in lines), ZERO)
+    ret.tax_value = sum((l["tax_value"] for l in lines), ZERO)
     db.flush()
 
 
@@ -576,13 +711,39 @@ def return_check_submit(db, actor, ret):
     build_return_lines(db, ret.client_id, grn, [_R(l) for l in rows], return_id=ret.id)
 
 
+def _receipt_entry(db, grn, gl):
+    """The ledger entry a receipt line went into stock by (not reversed)."""
+    return (db.query(DBStoreStockLedger).filter(DBStoreStockLedger.ref_doc_type == GRN, DBStoreStockLedger.ref_doc_id == grn.id, DBStoreStockLedger.ref_line_id == gl.id,
+                                                DBStoreStockLedger.reversal_of_id.is_(None), DBStoreStockLedger.qty_in > 0).order_by(DBStoreStockLedger.id).first())
+
+
 def return_post(db, actor, ret):
+    """The goods go back at what they came in at - the receipt line's rate with its charges - and out of the batch they came
+    as, as far as the store still holds it; the rest of the store's stock keeps its own value. The debit note is fixed at the
+    receipt's invoice rate, with the order's GST."""
     return_check_submit(db, actor, ret)
     grn = db.get(DBStoreGrn, ret.grn_id)
+    debit, tax = ZERO, ZERO
     for l in return_lines(db, ret):
-        post_movement(db, movement_type=MovementType.PURCHASE_RETURN_OUT, store_id=ret.store_id, item_id=l.item_id, qty=l.qty, rate=None, txn_date=ret.return_date,
+        gl = db.get(DBStoreGrnLine, l.grn_line_id)
+        came = _receipt_entry(db, grn, gl)
+        rate_in = Decimal(str(came.rate)) if came is not None else Decimal(str(gl.landed_rate or gl.rate))
+        held = {(b.id if b is not None else 0): q for b, q in lots_on_hand(db, ret.store_id, l.item_id)}
+        wanted, left = [], Decimal(str(l.qty))
+        for lot, q in (entry_lots(db, came.id) if came is not None else []):
+            take = min(q, held.get(lot, ZERO), left)
+            if take > 0:
+                wanted.append((lot, take))
+                left -= take
+        post_movement(db, movement_type=MovementType.PURCHASE_RETURN_OUT, store_id=ret.store_id, item_id=l.item_id, qty=l.qty, rate=rate_in, txn_date=ret.return_date,
                       project_id=grn.project_id, ref_doc_type=PURCHASE_RETURN, ref_doc_id=ret.id, ref_line_id=l.id, user_id=actor.user_id,
-                      remarks="%s - against %s" % (ret.number, grn.number))
+                      remarks="%s - against %s" % (ret.number, grn.number), lots=wanted or None)
+        l.rate, l.tax_pct = r4(gl.rate), tax_pct_of(db, gl)
+        l.value = v2(Decimal(str(l.qty)) * Decimal(str(l.rate)))
+        l.tax_value = v2(l.value * Decimal(str(l.tax_pct)) / 100)
+        debit += l.value
+        tax += l.tax_value
+    ret.debit_value, ret.tax_value = debit, tax
 
 
 # --- client supply ----------------------------------------------------------------------------------------------------
@@ -693,12 +854,24 @@ def advance(db, actor, kind, doc, action, reason=""):
             raise HTTPException(400, "Add at least one line before submitting.")
         if kind.check_submit:
             kind.check_submit(db, actor, doc)
+    if action in ("submit", "post"):
+        open_date(db, actor.client.id, getattr(doc, kind.date_attr), backdate=kind.key != "opening")
+    if action == "approve":
+        check_not_own(db, actor, doc, DBStoreInwardLog, kind.ref, kind.label)
     if action == "post":
         kind.post(db, actor, doc)
         doc.posted_at = datetime.now()
     doc.status = to.value
     log(db, actor, kind.ref, doc.id, action, now, doc.status)
     return doc
+
+
+def open_date(db, client_id, on, backdate=True):
+    """400 when a document's date is in the locked period or further back than the company allows."""
+    try:
+        check_date(db, client_id, on, backdate=backdate)
+    except InvalidMovementError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 class Kind:

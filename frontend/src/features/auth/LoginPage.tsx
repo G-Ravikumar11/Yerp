@@ -6,6 +6,7 @@ import { api, ApiError } from '@/lib/api'
 import { AuthLayout, Notice, nextTarget } from './AuthLayout'
 import { codeLine } from '@/lib/errorCodes'
 import { appUrl } from '@/lib/paths'
+import { CaptchaBox, type CaptchaValue } from './CaptchaBox'
 
 const ERRORS: Record<string, string> = {
   auth_failed: 'Authentication failed. Please try again.',
@@ -50,6 +51,10 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [rememberMe, setRememberMe] = useState(false)
   const [busy, setBusy] = useState(false)
+  // The check (CAPTCHA), once the server has asked for one; a new one is drawn after every try.
+  const [askCheck, setAskCheck] = useState(false)
+  const [check, setCheck] = useState<CaptchaValue | null>(null)
+  const [round, setRound] = useState(0)
 
   useEffect(() => {
     api<{ company_name?: string; logo_url?: string }>('/api/public/brand', { quiet: true }).then((b) => { if (b?.company_name) setCompany(b.company_name); if (b?.logo_url) setLogo(b.logo_url) }).catch(() => undefined)
@@ -76,6 +81,7 @@ export default function LoginPage() {
     e.preventDefault()
     if (busy) return
     if (!email.trim() || !password) return setError('Enter your email and password.')
+    if (askCheck && !check) return setError('Complete the check below, then sign in.')
     setBusy(true)
     setError('')
     try {
@@ -88,11 +94,18 @@ export default function LoginPage() {
         else if (e.status !== 401 && !other) other = e
         return null
       }
-      const owner = await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password, rememberMe }, quiet: true }).catch(none)
+      // The check, once the server has asked for it, goes with both doors: one solved check covers one sign-in.
+      const extra = check ?? {}
+      const owner = await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, ...extra }, quiet: true }).catch(none)
       if (owner) return go(owner.is_onboarded === false ? nextTarget(appUrl('onboard')) : nextTarget(appUrl()))
-      const staff = await api('/api/employee/auth/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, device_info: navigator.userAgent.slice(0, 200) }, quiet: true }).catch(none)
+      const staff = await api('/api/employee/auth/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, device_info: navigator.userAgent.slice(0, 200), ...extra }, quiet: true }).catch(none)
       if (staff) return go(nextTarget(appUrl()))
       const refusal = other as ApiError | null
+      // Too many wrong tries from here, or against this account: from now on every try needs the check.
+      if (refusal?.status === 428 || askCheck) {
+        setAskCheck(true)
+        setRound((n) => n + 1)
+      }
       setError(
         unreachable ? `Could not reach the server. Check the connection and try again. (${codeLine('YE-NET')})`
           : refusal && refusal.status >= 500 ? `The server had a problem. Please try again in a moment. (${codeLine(refusal.code, refusal.ref)})`
@@ -131,6 +144,7 @@ export default function LoginPage() {
         <Field label="Email address" htmlFor="email"><Input id="email" type="email" autoComplete="username" autoFocus required placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
         <Field label="Password" htmlFor="password"><Input id="password" type={showPassword ? 'text' : 'password'} autoComplete="current-password" required placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)}
           trailing={<button type="button" onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} className="grid size-6 place-items-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">{showPassword ? <Eye className="size-4" /> : <EyeOff className="size-4" />}</button>} /></Field>
+        {askCheck && <CaptchaBox round={round} onChange={setCheck} />}
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
           <label htmlFor="rememberMe" className="flex w-fit cursor-pointer items-center gap-2 text-muted-foreground">
             <input id="rememberMe" type="checkbox" className="size-4 cursor-pointer rounded-md border-border accent-primary" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />

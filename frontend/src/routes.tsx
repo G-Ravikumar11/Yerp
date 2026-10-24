@@ -50,6 +50,7 @@ export const SCREENS: Screen[] = [
   { path: '/money/assets', Component: lazy(() => import('@/features/assets/AssetsPage')) },
   { path: '/money/registers', Component: lazy(() => import('@/features/registers/RegistersPage')) },
   { path: '/money/site-cash', Component: lazy(() => import('@/features/sitecash/SiteCashPage')) },
+  { path: '/money/tally', Component: lazy(() => import('@/features/tally/TallyPage')) },
   { path: '/me/site-cash', Component: lazy(() => import('@/features/sitecash/SiteCashPage')) },
   { path: '/store/purchase-orders', Component: lazy(() => import('@/features/purchaseorders/PurchaseOrdersPage')) },
   { path: '/people/departments', Component: lazy(() => import('@/features/people/DepartmentsPage')) },

@@ -40,6 +40,13 @@ STORE_OUTWARD_COLUMNS = (
     # Shelf life: the dates on a receipt line, and the batch an issue took.
     ("store_item_settings", "barcode", "VARCHAR DEFAULT ''"),
     ("store_grn_line", "manufacturing_date", "DATE"), ("store_grn_line", "expiry_date", "DATE"), ("store_issue_line", "batch_no", "VARCHAR DEFAULT ''"),
+    # Landed cost on a receipt, the debit note on a purchase return, who raised a write-off, and the stock item a purchase-order line is for.
+    ("store_grn", "charges", "TEXT DEFAULT '[]'"), ("store_grn", "charges_total", "NUMERIC(18,2) DEFAULT 0"),
+    ("store_grn_line", "charges_share", "NUMERIC(18,2) DEFAULT 0"), ("store_grn_line", "landed_rate", "NUMERIC(18,4)"),
+    ("store_purchase_return", "debit_value", "NUMERIC(18,2) DEFAULT 0"), ("store_purchase_return", "tax_value", "NUMERIC(18,2) DEFAULT 0"),
+    ("store_purchase_return_line", "rate", "NUMERIC(18,4) DEFAULT 0"), ("store_purchase_return_line", "value", "NUMERIC(18,2) DEFAULT 0"),
+    ("store_purchase_return_line", "tax_pct", "NUMERIC(7,3) DEFAULT 0"), ("store_purchase_return_line", "tax_value", "NUMERIC(18,2) DEFAULT 0"),
+    ("store_writeoff_request", "requested_by_id", "INTEGER"), ("purchase_order_line_items", "item_id", "INTEGER"),
 )
 
 SUBCONTRACT_CONTROL_COLUMNS = (
@@ -74,6 +81,8 @@ ACCOUNTS_COLUMNS = (
     # A site's cash box: its site, who holds it, and its float.
     ("bank_accounts", "job_id", "INTEGER"), ("bank_accounts", "custodian_id", "INTEGER"),
     ("bank_accounts", "imprest_amount", "FLOAT DEFAULT 0"),
+    # Bank reconciliation: when the bank moved it, and the statement line it was matched to.
+    ("money_entries", "cleared_on", "VARCHAR DEFAULT ''"), ("money_entries", "statement_line_id", "INTEGER"),
 )
 
 QUALITY_COLUMNS = (

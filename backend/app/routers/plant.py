@@ -1285,4 +1285,4 @@ def plant_report(kind: str, request: Request, date_from: str = "", date_to: str 
                  e["invoice_no"], e["payment_status"], e["approval_status"]) for e in d]
         head = ("ID", "Date", "Machine ID", "Machine", "Category", "Description", "Qty", "Rate", "Amount", "Vendor", "Invoice", "Payment", "Approval")
     from app.documents.forms import _pre
-    return sheet_response(head, rows, "plant-%s.xlsx" % kind, preamble=_pre(client, REPORTS[kind].upper()))
+    return sheet_response(head, rows, "plant-%s.xlsx" % kind, preamble=_pre(client, REPORTS[kind].upper()), portrait=True)

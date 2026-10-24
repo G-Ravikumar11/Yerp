@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Button, Field, Input, Tabs } from '@/components/ui'
 import { api, ApiError } from '@/lib/api'
 import { AuthLayout, Notice } from '@/features/auth/AuthLayout'
+import { CaptchaBox, type CaptchaValue } from '@/features/auth/CaptchaBox'
 import { portalAcceptInvite, portalInvite, portalKeys, portalLogin, portalLogout, usePortalMe, type PortalInvite } from '@/api/portal'
 import { Bills, Orders, Overview, Payments, SendInvoice, Statement } from './PortalTabs'
 
@@ -40,16 +41,22 @@ function SignIn() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
+  const [askCheck, setAskCheck] = useState(false)
+  const [check, setCheck] = useState<CaptchaValue | null>(null)
+  const [round, setRound] = useState(0)
   const google = useGoogle()
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (askCheck && !check) return setError('Complete the check, then sign in.')
     setBusy(true)
     setError('')
     try {
-      await portalLogin(email, password)
+      await portalLogin(email, password, check)
       await qc.invalidateQueries({ queryKey: portalKeys.me })
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not sign in.')
+      // After several wrong tries the server asks for a check, and from then on every try needs a new one.
+      if ((err instanceof ApiError && err.status === 428) || askCheck) { setAskCheck(true); setRound((n) => n + 1) }
     } finally {
       setBusy(false)
     }
@@ -60,6 +67,7 @@ function SignIn() {
       <form onSubmit={submit} className="grid gap-4">
         <Field label="Email" htmlFor="pl-email"><Input id="pl-email" type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
         <Field label="Password" htmlFor="pl-pass"><Input id="pl-pass" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+        {askCheck && <CaptchaBox round={round} onChange={setCheck} />}
         <Button type="submit" loading={busy}>Sign in</Button>
       </form>
       {google && <Button variant="outline" className="mt-3 w-full" onClick={() => window.location.assign('/api/auth/google/start?who=portal')}>Continue with Google</Button>}

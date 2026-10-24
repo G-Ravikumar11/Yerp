@@ -38,6 +38,8 @@ CODES = {
     "YE-AUTH-06": "Password not set yet",
     "YE-AUTH-07": "Reset link invalid or expired",
     "YE-AUTH-08": "Email already registered",
+    "YE-AUTH-09": "Check that you are a person (CAPTCHA)",
+    "YE-AUTH-10": "Account locked for a while after wrong passwords",
     "YE-ACCESS-01": "Not allowed: the person's access does not include this",
     "YE-ACCESS-02": "File link expired or for another file",
     "YE-DATA-01": "Not found",
@@ -81,6 +83,10 @@ def error_code(status: int, detail=None) -> str:
         return "YE-DATA-02"
     if status == 413 or "too large" in text or "over 15 mb" in text:
         return "YE-FILE-01"
+    if status == 428:
+        return "YE-AUTH-09"
+    if status == 429 and "is locked" in text:
+        return "YE-AUTH-10"
     if status == 429:
         return "YE-AUTH-03" if any(w in text for w in _SIGN_IN_NOISE) else "YE-BUSY-01"
     if status in (502, 503):

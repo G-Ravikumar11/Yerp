@@ -61,6 +61,10 @@ class DBMoneyEntry(Base):
     head = Column(String, default="")
     # A transfer between our own accounts is two entries, one out of each side and one into the other; each names the other.
     pair_id = Column(Integer, nullable=True, index=True)
+    # The day the bank actually moved the money (a cheque clears days after it is written), and the statement line
+    # it was matched to. Blank until it shows on the bank's statement.
+    cleared_on = Column(String, default="")
+    statement_line_id = Column(Integer, nullable=True, index=True)
 
 
 # RETENTION RELEASED
@@ -234,3 +238,28 @@ class DBSiteCashExpense(Base):
     checked_at = Column(String, default="")
     reject_reason = Column(String, default="")
     entry_id = Column(Integer, nullable=True, index=True)           # the expense voucher it was booked as
+
+
+# THE BANK'S OWN STATEMENT
+#
+# What the books say is in the bank and what the bank says are never the same on a given day: cheques written and not
+# yet presented, cheques deposited and not yet credited, charges and interest the bank booked on its own. The bank's
+# statement is read in line by line, each line matched to the entry it is, and what is left over is the
+# reconciliation.
+class DBBankStatementLine(Base):
+    __tablename__ = "bank_statement_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    account_id = Column(Integer, ForeignKey("bank_accounts.id"), nullable=False, index=True)
+    txn_date = Column(String, default="", index=True)
+    narration = Column(String, default="")
+    reference = Column(String, default="")             # cheque number, UTR
+    debit = Column(Float, default=0.0)                 # out of the account
+    credit = Column(Float, default=0.0)                # into it
+    balance = Column(Float, nullable=True)             # as the bank printed it, when it did
+    status = Column(String, default="UNMATCHED", index=True)    # UNMATCHED | MATCHED | IGNORED
+    entry_id = Column(Integer, nullable=True, index=True)
+    file_name = Column(String, default="")
+    imported_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    imported_by_name = Column(String, default="")

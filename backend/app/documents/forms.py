@@ -1078,6 +1078,47 @@ def money_voucher_spec(db, client, e, accounts, job=None):
             "footer": "%s  |  %s  |  %s" % (e.number or "", title.title(), company["name"])}
 
 
+def brs_spec(db, client, account, b):
+    """The bank reconciliation statement on a day, as the auditor files it: the balance in the books, the cheques written
+    and not yet presented added back, the deposits not yet credited taken off, the balance the bank should show - and
+    the balance it does show, and any difference still to find."""
+    company = letterhead(db, client)
+    fi = form_pdf.inr
+    row = lambda r: [form_pdf.date_text(r["paid_on"]), r["number"], r["party"], ("%s %s" % (r["mode"], r["reference"])).strip(),
+                     fi(r["amount"])]
+    cols = [("Date", 20, "C"), ("Voucher", 24, "L"), ("Party", 66, "L"), ("Cheque / ref", 40, "L"), ("Amount", 32, "R")]
+    acct = "%s%s" % (account.name or "", (" - A/c %s" % account.account_no) if account.account_no else "")
+    blocks = [
+        {"type": "header", "company": company, "title": "BANK RECONCILIATION",
+         "facts": [("Account", acct), ("As on", form_pdf.date_text(b["as_of"])),
+                   ("Printed", datetime.now().strftime("%d/%m/%Y"))]},
+        {"type": "sums", "rows": [("Balance as per the books", fi(b["books"]), True),
+                                  ("Add: cheques issued, not yet presented", fi(b["not_presented_total"]), False),
+                                  ("Less: deposits made, not yet credited", fi(-b["not_credited_total"]), False),
+                                  ("BALANCE THE BANK SHOULD SHOW", fi(b["bank_should_show"]), True)]
+                                 + ([("Balance as per the bank's statement (%s)" % form_pdf.date_text(b["statement_date"]),
+                                      fi(b["statement_balance"]), True),
+                                     ("Difference still to be found", fi(b["difference"]), True)]
+                                    if b["statement_balance"] is not None else [])},
+        {"type": "band", "text": "Cheques issued, not yet presented"},
+        {"type": "table", "columns": cols, "rows": [row(r) for r in b["not_presented"]] or [["", "", "None", "", ""]],
+         "totals": [("TOTAL", fi(b["not_presented_total"]), True)]},
+        {"type": "band", "text": "Deposits made, not yet credited"},
+        {"type": "table", "columns": cols, "rows": [row(r) for r in b["not_credited"]] or [["", "", "None", "", ""]],
+         "totals": [("TOTAL", fi(b["not_credited_total"]), True)]},
+    ]
+    if b["unbooked"]:
+        blocks += [
+            {"type": "band", "text": "On the bank's statement, not in the books yet"},
+            {"type": "table", "columns": [("Date", 20, "C"), ("Narration", 102, "L"), ("Debit", 30, "R"), ("Credit", 30, "R")],
+             "rows": [[form_pdf.date_text(l["txn_date"]), l["narration"], fi(l["debit"]) if l["debit"] else "",
+                       fi(l["credit"]) if l["credit"] else ""] for l in b["unbooked"]]},
+        ]
+    blocks.append({"type": "signatures", "boxes": [("Prepared By", ""), ("Checked By", ""), ("Approved By", "")]})
+    return {"title": "Bank reconciliation - %s - %s" % (account.name or "", b["as_of"]), "author": company["name"],
+            "blocks": blocks, "footer": "Bank reconciliation  |  %s  |  %s" % (acct, company["name"])}
+
+
 def cash_statement_spec(db, client, box, book, pending, custodian, job, date_from="", date_to=""):
     """A site's cash book for a period, as the custodian signs it and accounts keep it: what came into the box, what
     went out of it, the balance, and - beside the books - what has been spent and not yet checked, so the cash that
@@ -1133,8 +1174,8 @@ def _cell_text(v):
     return text
 
 
-def sheet_report_spec(headers, rows, filename, preamble=None, closing=None, client=None, logo_watermark=False):
-    """A workbook's rows as a ruled report."""
+def sheet_report_spec(headers, rows, filename, preamble=None, closing=None, client=None, logo_watermark=False, portrait=False):
+    """A workbook's rows as a ruled report. portrait: keep it upright on A4 however wide it is."""
     pre = [list(r) for r in (preamble or []) if r and any(str(x).strip() for x in r)]
     title = str(pre[0][0]).strip() if pre else re.sub(r"[_\-]+", " ", filename.rsplit(".", 1)[0]).upper()
     facts, notes = [], []
@@ -1158,7 +1199,7 @@ def sheet_report_spec(headers, rows, filename, preamble=None, closing=None, clie
         pref.append(max(6, min(longest, 46)))
     numeric = [all((not r[i]) or re.match(r"^[\(\-]?[\d,]+(\.\d+)?\)?%?$", r[i]) for r in body[:300] if i < len(r))
                for i in range(n)]
-    landscape = n > 7 or sum(pref) > 110
+    landscape = not portrait and (n > 7 or sum(pref) > 110)
     columns = [(str(h), p, "R" if numeric[i] and body else "L") for i, (h, p) in enumerate(zip(headers, pref))]
     foot = []
     for r in closing or []:

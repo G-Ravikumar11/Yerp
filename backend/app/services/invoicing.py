@@ -182,7 +182,11 @@ def job_overdue_reminders(db, now):
 
     A paid, part-paid or void invoice is never chased, and each rung of the
     ladder goes out at most once per invoice.
+
+    Off unless OVERDUE_REMINDERS_ENABLED=1: payment chasers do not go to customers on their own.
     """
+    if os.getenv("OVERDUE_REMINDERS_ENABLED", "0") != "1":
+        return "overdue reminders are off"
     today = now.date()
     sent = 0
     candidates = db.query(models.DBInvoice).filter(
