@@ -55,29 +55,45 @@ function shrinkImage(file: File, max: number, quality: number): Promise<Blob | n
   })
 }
 
-/** Send files against a record. Returns how many went and the reasons for any that did not. */
+/** How many files go up at once. Each upload waits mostly on the round trips to the database, so a few side by side
+ * finish together in about the time one took; more than this would only crowd the connection on a phone. */
+const UPLOADS_AT_ONCE = 3
+
+/** Send files against a record. Returns how many went and the reasons for any that did not (in the order chosen). */
 export async function uploadFiles(files: File[], type: string, id: number, extra: Record<string, string> = {}) {
   let done = 0
-  const failed: string[] = []
-  for (const f of files) {
-    const fd = new FormData()
-    const drawing = extra.kind === 'drawing'
-    let big = await shrinkImage(f, drawing ? 2400 : 1600, drawing ? 0.85 : 0.8)
-    if (big && big.size >= f.size && f.type === 'image/jpeg') big = null
-    if (big) {
-      fd.append('file', big, f.name.replace(/\.[^.]+$/, '') + '.jpg')
-      const small = await shrinkImage(f, 320, 0.6)
-      if (small) fd.append('thumb', small, 'thumb.jpg')
-    } else fd.append('file', f, f.name)
-    fd.append('attached_type', type)
-    fd.append('attached_id', String(id))
-    for (const [k, v] of Object.entries(extra)) fd.append(k, v)
-    try {
-      await api('/api/files', { method: 'POST', body: fd })
-      done++
-    } catch (e) {
-      failed.push(`${f.name}: ${e instanceof Error ? e.message : 'not saved'}`)
+  const reasons: (string | null)[] = files.map(() => null)
+  let next = 0
+  const worker = async () => {
+    while (next < files.length) {
+      const i = next++
+      const reason = await uploadOne(files[i], type, id, extra)
+      if (reason) reasons[i] = reason
+      else done++
     }
   }
-  return { done, failed }
+  await Promise.all(Array.from({ length: Math.min(UPLOADS_AT_ONCE, files.length) }, worker))
+  return { done, failed: reasons.filter((r): r is string => r !== null) }
+}
+
+/** One file, shrunk first when it is a photograph; null when it was saved, else why not. */
+async function uploadOne(f: File, type: string, id: number, extra: Record<string, string>): Promise<string | null> {
+  const fd = new FormData()
+  const drawing = extra.kind === 'drawing'
+  let big = await shrinkImage(f, drawing ? 2400 : 1600, drawing ? 0.85 : 0.8)
+  if (big && big.size >= f.size && f.type === 'image/jpeg') big = null
+  if (big) {
+    fd.append('file', big, f.name.replace(/\.[^.]+$/, '') + '.jpg')
+    const small = await shrinkImage(f, 320, 0.6)
+    if (small) fd.append('thumb', small, 'thumb.jpg')
+  } else fd.append('file', f, f.name)
+  fd.append('attached_type', type)
+  fd.append('attached_id', String(id))
+  for (const [k, v] of Object.entries(extra)) fd.append(k, v)
+  try {
+    await api('/api/files', { method: 'POST', body: fd })
+    return null
+  } catch (e) {
+    return `${f.name}: ${e instanceof Error ? e.message : 'not saved'}`
+  }
 }
