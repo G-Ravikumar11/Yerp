@@ -9,6 +9,9 @@ import { storeDelete, storePerm, storePost, storePut, useScanning, useStoreMeta 
 import StoreLevels from './StoreLevels'
 import { mastersInvalidate, useAssignments, useBins, useEmployeeOptions, useStores, type AssignRow, type BinRow, type StoreRow } from './api'
 
+/** What a person does in a store (the server holds the same list). What they may do comes from their access level. */
+const STORE_JOBS: Record<string, string> = { STOREKEEPER: 'Storekeeper', STORE_INCHARGE: 'Store in-charge', ASSISTANT: 'Store assistant', GATE: 'Gate / security', SITE_ENGINEER: 'Site engineer (asks for material)', VIEWER: 'Looks up stock' }
+
 const money = (v: string) => Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 /** Store > Masters > Stores: the places stock is kept, and who works in each. */
@@ -170,7 +173,7 @@ function StoreDetailModal({ store, canEdit, canClose, onEdit, onToggle, onClose 
             <ul className="divide-y rounded-lg border">
               {working.map((a) => (
                 <li key={a.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
-                  <span><span className="font-medium">{a.name}</span> <span className="text-muted-foreground">{a.email}</span> <Badge>{a.role}</Badge></span>
+                  <span><span className="font-medium">{a.name}</span> <span className="text-muted-foreground">{a.email}</span> <Badge>{STORE_JOBS[a.role] ?? a.role}</Badge></span>
                   {canEdit && <Button size="sm" variant="ghost" aria-label={`Remove ${a.name}`} onClick={() => unassign.mutate(a.employee_id)}>Remove</Button>}
                 </li>
               ))}
@@ -179,7 +182,7 @@ function StoreDetailModal({ store, canEdit, canClose, onEdit, onToggle, onClose 
           {canEdit && (
             <form className="mt-2 flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); if (who) assign.mutate() }}>
               <Field label="Employee" htmlFor="sd-emp" className="min-w-48 flex-1"><Select id="sd-emp" value={who} placeholder="Choose a person" onChange={(e) => setWho(e.target.value)} options={free.map((e) => ({ value: e.id, label: `${e.name}${e.job_title ? ' - ' + e.job_title : ''}` }))} /></Field>
-              <Field label="Role" htmlFor="sd-role" className="w-40"><Input id="sd-role" value={role} onChange={(e) => setRole(e.target.value)} maxLength={30} /></Field>
+              <Field label="Job in this store" htmlFor="sd-role" className="w-56"><Select id="sd-role" value={role} onChange={(e) => setRole(e.target.value)} options={Object.entries(STORE_JOBS).map(([value, label]) => ({ value, label }))} /></Field>
               <Button type="submit" variant="outline" loading={assign.isPending} disabled={!who}>Assign</Button>
             </form>
           )}

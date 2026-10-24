@@ -338,6 +338,22 @@ class AssignIn(BaseModel):
     role: str = "STOREKEEPER"
 
 
+# What a person does in a store, from a fixed list so the staff list reads the same everywhere. It describes the job; what they
+# may do is still decided by their access level (and they reach only the stores they are put in).
+STORE_JOBS = {"STOREKEEPER": "Storekeeper", "STORE_INCHARGE": "Store in-charge", "ASSISTANT": "Store assistant", "GATE": "Gate / security",
+              "SITE_ENGINEER": "Site engineer (asks for material)", "VIEWER": "Looks up stock"}
+STORE_JOB_ALIASES = {"STORE_KEEPER": "STOREKEEPER", "KEEPER": "STOREKEEPER", "INCHARGE": "STORE_INCHARGE", "IN_CHARGE": "STORE_INCHARGE",
+                     "STORE_ASSISTANT": "ASSISTANT", "SECURITY": "GATE", "ENGINEER": "SITE_ENGINEER"}
+
+
+def store_job(raw) -> str:
+    code = "_".join((raw or "").upper().replace("-", " ").split()) or "STOREKEEPER"
+    code = STORE_JOB_ALIASES.get(code, code)
+    if code not in STORE_JOBS:
+        raise HTTPException(400, "The job in the store is one of: %s." % ", ".join(STORE_JOBS.values()))
+    return code
+
+
 def _employee_name(e):
     return ("%s %s" % (e.first_name or "", e.last_name or "")).strip()
 
@@ -377,7 +393,7 @@ def assign(store_id: int, body: AssignIn, request: Request, db: Session = Depend
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == body.employee_id, models.DBEmployee.client_id == actor.client.id).first()
     if emp is None:
         raise HTTPException(400, "That employee does not exist.")
-    role = _clean(body.role, "role", 30).upper().replace(" ", "_")
+    role = store_job(body.role)
     row = db.query(DBStoreUserAssignment).filter(DBStoreUserAssignment.store_id == store.id, DBStoreUserAssignment.employee_id == emp.id).first()
     if row is not None and row.is_active:
         raise HTTPException(409, "%s already works in %s." % (_employee_name(emp), store.code))
