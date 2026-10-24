@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { get } from '@/lib/api'
+import { apiUrl, get } from '@/lib/api'
 import { useSession } from '@/lib/session'
 
 /**
@@ -21,7 +21,8 @@ export interface Identity {
 
 export function useIdentity() {
   const { user } = useSession()
-  return useQuery({ queryKey: ['settings', 'identity'], queryFn: () => get<Identity>('/api/company/identity'), enabled: !!user, retry: false })
+  // The logo comes as a link to the image, which the browser fetches once and keeps (inside the app, against its server).
+  return useQuery({ queryKey: ['settings', 'identity'], queryFn: async () => { const d = await get<Identity>('/api/company/identity'); return { ...d, logo_url: apiUrl(d.logo_url) } }, enabled: !!user, retry: false })
 }
 
 /** What every document must carry, in the order people look for it. */

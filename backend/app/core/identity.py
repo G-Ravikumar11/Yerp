@@ -84,3 +84,29 @@ def add_logo(ws, identity, anchor="A1", height=56):
         return True
     except Exception:
         return False
+
+
+# The logo is kept as a data: URI, a couple of hundred kilobytes of text. Sent inside the JSON of every screen that shows it,
+# it was downloaded again on every page; screens are given a link to it instead (/api/public/logo/...), which the browser
+# fetches once and keeps. The ?v= part changes when the logo does, so a new one is fetched straight away.
+LOGO_LINK = "/api/public/logo/"
+
+
+def logo_link(client_id, value, kind="company"):
+    """A link to the logo for a screen to show; '' when there is none. Anything that is not a data: URI is passed on as it is."""
+    value = str(value or "")
+    if not value.startswith("data:image"):
+        return value
+    import hashlib
+    return "%s%s/%d?v=%s" % (LOGO_LINK, kind, client_id, hashlib.sha1(value.encode()).hexdigest()[:12])
+
+
+def is_logo_link(value) -> bool:
+    """What logo_link made: a screen sending it back is not a new logo."""
+    return str(value or "").startswith(LOGO_LINK)
+
+
+def logo_mime(value) -> str:
+    head = str(value or "").partition(",")[0]          # data:image/png;base64
+    mime = head[5:].split(";")[0] if head.startswith("data:") else ""
+    return mime if mime.startswith("image/") else "image/png"

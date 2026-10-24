@@ -473,9 +473,9 @@ def recost_diary(db, diary):
 
 
 def diary_dict(db, d, detail=False):
-    job = db.query(models.DBJob).filter(models.DBJob.id == d.job_id).first()
-    wo = db.query(models.DBWorkOrder).filter(
-        models.DBWorkOrder.id == d.work_order_id).first() if d.work_order_id else None
+    # by_id: a list primes the projects and work orders once (list_diaries), not twice a day.
+    job = by_id(db, models.DBJob, d.job_id)
+    wo = by_id(db, models.DBWorkOrder, d.work_order_id) if d.work_order_id else None
     row = {
         "id": d.id, "job_id": d.job_id,
         "project": ("%s %s" % (job.number or "", job.name or "")).strip() if job else "",

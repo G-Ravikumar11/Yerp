@@ -394,7 +394,8 @@ def fixed_asset_register(request: Request, fy: str = "", db: Session = Depends(g
     year = fy_start_year(fy) if fy else fy_start_year(date.today())
     if year is None:
         raise HTTPException(400, "Financial year should read like 2026-27.")
-    blocks = ensure_tax_blocks(db, client.id)
+    # The names are read before the commit: after it each block would be read back from the database one by one.
+    block_names = [b.name for b in ensure_tax_blocks(db, client.id)]
     db.commit()
     books = {b.asset_id: b for b in db.query(models.DBAssetBook).filter(
         models.DBAssetBook.client_id == client.id).all()}
@@ -421,7 +422,7 @@ def fixed_asset_register(request: Request, fy: str = "", db: Session = Depends(g
     return {
         "fy": fy_label(year), "fys": [fy_label(y) for y in range(max(first, year - 15), fy_start_year(date.today()) + 2)][::-1],
         "assets": rows, "not_set_up": unset,
-        "methods": list(BOOK_METHODS), "blocks": [b.name for b in blocks],
+        "methods": list(BOOK_METHODS), "blocks": block_names,
         "defaults": {k: {"life_years": v[0], "tax_block": v[1]} for k, v in ASSET_BOOK_DEFAULTS.items()},
         "totals": {
             "cost": money(sum(r["cost"] for r in rows)),

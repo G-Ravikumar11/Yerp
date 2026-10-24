@@ -48,10 +48,11 @@ def save_rules(db, client_id, on, free_below, md_above):
             db.add(models.DBSettings(client_id=client_id, key=key, value=value, description="Payment approval"))
 
 
-def needs_request(db, client_id, emp, amount):
-    """Whether a payment of `amount` by this person has to go through a request first. The Master never does."""
+def needs_request(db, client_id, emp, amount, member=None):
+    """Whether a payment of `amount` by this person has to go through a request first. The Master never does; a member of
+    staff and a colleague of the Master's (who signs in as the company, `member`) both do."""
     rules = approval_rules(db, client_id)
-    return bool(rules["on"] and emp is not None and money(amount) > rules["free_below"])
+    return bool(rules["on"] and (emp is not None or member is not None) and money(amount) > rules["free_below"])
 
 
 def can_check(emp):
@@ -81,7 +82,7 @@ def asked_on_doc(db, client_id, doc_type, doc_id, but=None):
     return money(sum(r.amount or 0 for r in q.all()))
 
 
-def raise_request(db, client, emp, actor_name, body):
+def raise_request(db, client, emp, actor_name, body, member=None):
     """A request to pay a bill (or part of it), an advance on account, or an expense."""
     from app.services.crm import settled_on
     from app.services.money import _doc_for
@@ -120,7 +121,8 @@ def raise_request(db, client, emp, actor_name, body):
         doc_id=doc.id if doc else None, doc_number=doc_number, party_type=party_type, party_name=party_name,
         party_id=party_id, job_id=job_id, head=head, amount=amount, account_id=body.account_id or None,
         mode=(body.mode or "").strip()[:30], note=(body.note or "").strip()[:300],
-        requested_by=emp.id if emp is not None else None, requested_by_name=actor_name)
+        requested_by=emp.id if emp is not None else None, requested_by_member=member.id if member is not None else None,
+        requested_by_name=actor_name)
     db.add(r)
     db.flush()
     return r
@@ -134,7 +136,7 @@ def request_or_404(db, client_id, request_id):
     return r
 
 
-def decide(db, client, emp, actor_name, r, decision, note=""):
+def decide(db, client, emp, actor_name, r, decision, note="", member=None):
     """Approve or reject, at whichever step the request stands. Over the MD's limit, the accounts head's approval
     sends it on to the MD; somebody who may release it themselves approves it in one go."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -144,7 +146,7 @@ def decide(db, client, emp, actor_name, r, decision, note=""):
     if not allowed:
         raise HTTPException(403, "Your access does not include %s payments." % (
             "checking" if r.status == "PENDING" else "releasing large"))
-    if emp is not None and r.requested_by == emp.id:
+    if (emp is not None and r.requested_by == emp.id) or (member is not None and r.requested_by_member == member.id):
         raise HTTPException(403, "Your own request is approved by somebody else.")
     if decision == "reject":
         reason = (note or "").strip()

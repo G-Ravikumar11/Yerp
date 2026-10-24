@@ -518,9 +518,10 @@ def list_diaries(request: Request, job_id: int = 0, date_from: str = "",
         q = q.filter(models.DBSiteDiary.diary_date >= date_from)
     if date_to:
         q = q.filter(models.DBSiteDiary.diary_date <= date_to)
-    rows = [diary_dict(db, d) for d in q.order_by(
-        models.DBSiteDiary.diary_date.desc(),
-        models.DBSiteDiary.id.desc()).limit(400).all()]
+    days = q.order_by(models.DBSiteDiary.diary_date.desc(), models.DBSiteDiary.id.desc()).limit(400).all()
+    prime(db, models.DBJob, [d.job_id for d in days])
+    prime(db, models.DBWorkOrder, [d.work_order_id for d in days])
+    rows = [diary_dict(db, d) for d in days]
     return {
         "diaries": rows,
         "summary": {

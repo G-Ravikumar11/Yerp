@@ -86,6 +86,8 @@ SUBCONTRACT_CONTROL_COLUMNS = (
 ACCOUNTS_COLUMNS = (
     # (table, column, type) - the accounts vouchers: an expense or sundry receipt's head, and the other leg of a transfer.
     ("money_entries", "head", "VARCHAR DEFAULT ''"), ("money_entries", "pair_id", "INTEGER"),
+    # A payment request raised by one of the Master's colleagues, who may not then approve it themselves.
+    ("payment_requests", "requested_by_member", "INTEGER"),
     # A site's cash box: its site, who holds it, and its float.
     ("bank_accounts", "job_id", "INTEGER"), ("bank_accounts", "custodian_id", "INTEGER"),
     ("bank_accounts", "imprest_amount", "FLOAT DEFAULT 0"),

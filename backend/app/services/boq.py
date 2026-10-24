@@ -193,6 +193,33 @@ def boq_head(db, boq, rev=None):
             "items": count, "total": money(total), "created_at": boq.created_at or ""}
 
 
+def boq_heads(db, boqs):
+    """boq_head for a whole list in three queries - their projects, current revisions and totals - not three a BOQ."""
+    if not boqs:
+        return []
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.id.in_({b.job_id for b in boqs if b.job_id} or {0})).all()}
+    revs = {}
+    for r in db.query(models.DBBoqRevision).filter(models.DBBoqRevision.boq_id.in_([b.id for b in boqs])).all():
+        revs[(r.boq_id, r.rev_no)] = r
+    current = {b.id: revs.get((b.id, b.current_rev)) for b in boqs}
+    totals = {rid: (n, t) for rid, n, t in db.query(models.DBBoqLine.revision_id, func.count(models.DBBoqLine.id), func.coalesce(func.sum(models.DBBoqLine.amount), 0.0))
+              .filter(models.DBBoqLine.revision_id.in_([r.id for r in current.values() if r] or [0]), models.DBBoqLine.kind.in_(BOQ_PRICED))
+              .group_by(models.DBBoqLine.revision_id).all()}
+    out = []
+    for boq in boqs:
+        rev, job = current[boq.id], jobs.get(boq.job_id)
+        if rev is None:                         # as boq_head would: a BOQ whose current revision is missing is a 404 there
+            out.append(boq_head(db, boq))
+            continue
+        count, total = totals.get(rev.id, (0, 0.0))
+        out.append({"id": boq.id, "number": boq.number or "", "title": boq.title or "", "job_id": boq.job_id,
+                    "project": ("%s %s" % (job.number, job.name)).strip() if job else "",
+                    "customer": (job.customer_name if job else "") or "",
+                    "current_rev": boq.current_rev, "revision": rev.label or "R%d" % rev.rev_no, "status": rev.status,
+                    "items": count, "total": money(total), "created_at": boq.created_at or ""})
+    return out
+
+
 def boq_new_key():
     return uuid.uuid4().hex[:12]
 

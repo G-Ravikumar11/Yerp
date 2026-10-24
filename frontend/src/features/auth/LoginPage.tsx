@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Button, Field, Input } from '@/components/ui'
 import { Capacitor } from '@capacitor/core'
 import { Eye, EyeOff } from 'lucide-react'
-import { api, ApiError } from '@/lib/api'
+import { api, ApiError, apiUrl } from '@/lib/api'
 import { AuthLayout, Notice, nextTarget } from './AuthLayout'
 import { codeLine } from '@/lib/errorCodes'
 import { appUrl } from '@/lib/paths'
@@ -57,7 +57,7 @@ export default function LoginPage() {
   const [round, setRound] = useState(0)
 
   useEffect(() => {
-    api<{ company_name?: string; logo_url?: string }>('/api/public/brand', { quiet: true }).then((b) => { if (b?.company_name) setCompany(b.company_name); if (b?.logo_url) setLogo(b.logo_url) }).catch(() => undefined)
+    api<{ company_name?: string; logo_url?: string }>('/api/public/brand', { quiet: true }).then((b) => { if (b?.company_name) setCompany(b.company_name); if (b?.logo_url) setLogo(apiUrl(b.logo_url)) }).catch(() => undefined)
     api<{ configured?: boolean }>('/api/auth/google/status', { quiet: true }).then((d) => setGoogle(!!d?.configured)).catch(() => undefined)
     api<{ configured?: boolean }>('/api/auth/yahoo/status', { quiet: true }).then((d) => setYahoo(!!d?.configured)).catch(() => undefined)
     if (params.get('signedout')) {
