@@ -5,7 +5,6 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { get, post } from '@/lib/api'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
-import { storePerm } from '@/api/store'
 import { cn } from '@/lib/utils'
 import { dmy, money, num } from './api'
 
@@ -15,6 +14,8 @@ interface Closed { po_id: number; number: string; supplier_name: string; reason:
 interface Card { supplier_name: string; orders: number; ordered_value: string; accepted_value: string; rejected_value: string; fill_pct: string; rejection_pct: string; on_time_pct: string }
 
 const KEY = ['store', 'deliveries'] as const
+/** Short-closing an order is purchasing's decision, not the store's. */
+const CLOSE_RIGHT = 'purchase.manage'
 type View = 'pending' | 'closed' | 'suppliers'
 const VIEWS: { key: View; label: string }[] = [{ key: 'pending', label: 'Still to come' }, { key: 'closed', label: 'Short-closed' }, { key: 'suppliers', label: 'Supplier scorecard' }]
 const pill = (on: boolean) => cn('whitespace-nowrap rounded-lg px-3 py-1.5 text-[13px] font-medium', on ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground')
@@ -44,7 +45,7 @@ function Pending() {
     { id: 'proj', header: 'Project', hideBelow: 'md', cell: (p) => p.project || '-' },
     { id: 'due', header: 'Needed by', width: '10rem', cell: (p) => (p.needed_by ? <span className={p.days_late ? 'text-danger' : ''}>{dmy(p.needed_by)}{p.days_late ? ` - ${p.days_late} day${p.days_late === 1 ? '' : 's'} late` : ''}</span> : '-') },
     { id: 'what', header: 'Still to come', hideBelow: 'sm', cell: (p) => <ul className="text-sm">{p.lines.map((l) => <li key={l.po_line_id}>{l.item_name}: {num(l.pending)} {l.base_uom} <span className="text-muted-foreground">of {num(l.ordered)}</span></li>)}</ul> },
-    { id: 'act', header: '', width: '8rem', cell: (p) => can(storePerm('inward', 'approve')) ? <Button size="sm" variant="outline" onClick={() => setClosing(p)}>Short-close</Button> : null },
+    { id: 'act', header: '', width: '8rem', cell: (p) => can(CLOSE_RIGHT) ? <Button size="sm" variant="outline" onClick={() => setClosing(p)}>Short-close</Button> : null },
   ]
   return (
     <div>
@@ -82,7 +83,7 @@ function ClosedOrders() {
     { id: 'sup', header: 'Supplier', cell: (c) => c.supplier_name || '-' },
     { id: 'why', header: 'Why', hideBelow: 'sm', cell: (c) => c.reason },
     { id: 'by', header: 'Closed by', width: '10rem', hideBelow: 'md', cell: (c) => c.closed_by || '-' },
-    { id: 'act', header: '', width: '7rem', cell: (c) => can(storePerm('inward', 'approve')) ? <Button size="sm" variant="outline" loading={reopen.isPending && reopen.variables === c.po_id} onClick={() => reopen.mutate(c.po_id)}>Reopen</Button> : null },
+    { id: 'act', header: '', width: '7rem', cell: (c) => can(CLOSE_RIGHT) ? <Button size="sm" variant="outline" loading={reopen.isPending && reopen.variables === c.po_id} onClick={() => reopen.mutate(c.po_id)}>Reopen</Button> : null },
   ]
   return rows.isError ? <p role="alert" className="text-sm text-danger">Could not load the short-closed orders.</p> : (
     <DataTable label="Short-closed orders" rows={rows.data?.items ?? []} loading={rows.isPending} columns={columns} rowKey={(c) => c.po_id} empty="No order has been short-closed." />
