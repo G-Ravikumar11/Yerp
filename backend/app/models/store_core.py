@@ -14,6 +14,7 @@ from datetime import datetime
 from sqlalchemy import (
     Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint,
 )
+from sqlalchemy.orm import declared_attr
 
 from app.db.session import Base
 
@@ -53,6 +54,28 @@ class DocStatus(str, enum.Enum):
     APPROVED = "APPROVED"
     POSTED = "POSTED"
     CANCELLED = "CANCELLED"
+
+
+class DocHeader:
+    """The columns every store document shares - the inward, outward and control documents each had a copy."""
+
+    @declared_attr
+    def client_id(cls):
+        return Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+
+    @declared_attr
+    def store_id(cls):
+        return Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
+
+    id = Column(Integer, primary_key=True, index=True)
+    number = Column(String, nullable=False, index=True)
+    status = Column(String, nullable=False, default=DocStatus.DRAFT.value, index=True)
+    remarks = Column(Text, default="")
+    cancel_reason = Column(String, default="")
+    created_by_id = Column(Integer, nullable=True)           # employee id; empty when the account holder did it
+    created_by_name = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.now)
+    posted_at = Column(DateTime, nullable=True)
 
 
 class CostHead(str, enum.Enum):

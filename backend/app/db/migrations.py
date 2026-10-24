@@ -1,7 +1,8 @@
 """Bringing an existing database up to the shape the models describe: columns added since it was created."""
+import re
 import sys
 
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from app.db.session import DATABASE_URL, engine
 
 
@@ -13,6 +14,76 @@ MIGRATION_ERRORS = []
 
 def migration_report():
     return list(MIGRATION_ERRORS)
+
+
+# What start-up asks of the database "if it is not there yet", and the one read that says what is. Names are compared
+# in lower case, as Postgres folds them.
+_IF_MISSING = (
+    (re.compile(r"^\s*ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+(\w+)", re.I),
+     "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = current_schema()"),
+    (re.compile(r"^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+(\w+)", re.I),
+     "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()"),
+    (re.compile(r"^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\s+(\w+)", re.I),
+     "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"),
+)
+
+
+class SkipWhatExists:
+    """A connection that does not send `ADD COLUMN IF NOT EXISTS`, `CREATE TABLE IF NOT EXISTS` or `CREATE INDEX IF NOT
+    EXISTS` for something the database already has.
+
+    ensure_columns sends about 350 column additions, 40 table creations and 85 index creations on every start-up. Nearly
+    all do nothing, but each is a round trip (a quarter of a second or more across an ocean, and the column and index ones
+    take a lock on the table for the moment they run): minutes of start-up. What exists is read once for each kind, and
+    only what is missing is created, exactly as before. Everything else passes straight through to the connection."""
+
+    def __init__(self, conn):
+        self._conn = conn
+        self._known = {}
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def rollback(self):
+        self._known = {}                     # what was created since the last commit may be undone with it
+        return self._conn.rollback()
+
+    def _have(self, kind):
+        if kind not in self._known:
+            try:
+                rows = self._conn.execute(text(_IF_MISSING[kind][1])).fetchall()
+                self._known[kind] = {tuple(c.lower() for c in row) if len(row) > 1 else row[0].lower() for row in rows}
+            except Exception:
+                self._conn.rollback()
+                self._known = {}
+                self._known[kind] = set()    # could not tell: everything is created if missing, as it always was
+        return self._known[kind]
+
+    def execute(self, statement, *args, **kwargs):
+        sql = str(statement)
+        for kind, (pattern, _query) in enumerate(_IF_MISSING):
+            match = pattern.match(sql)
+            if match:
+                names = match.groups()
+                key = tuple(n.lower() for n in names) if len(names) > 1 else names[0].lower()
+                if key in self._have(kind):
+                    return None
+                result = self._conn.execute(statement, *args, **kwargs)
+                self._known.setdefault(kind, set()).add(key)
+                return result
+        return self._conn.execute(statement, *args, **kwargs)
+
+
+def create_missing_tables(metadata, bind):
+    """metadata.create_all, asking which tables exist once rather than once per table.
+
+    create_all checks every table on its own before creating it - about 265 round trips on every start-up, of which
+    nearly all find the table there. Only the tables the database does not have are handed to it."""
+    have = set(inspect(bind).get_table_names())
+    missing = [t for t in metadata.sorted_tables if t.name not in have]
+    if missing:
+        metadata.create_all(bind=bind, tables=missing)
+    return [t.name for t in missing]
 
 
 ITEM_MASTER_COLUMNS = (
@@ -198,7 +269,8 @@ def ensure_columns():
     if DATABASE_URL.startswith("sqlite"):
         return
     try:
-        with engine.connect() as conn:
+        with engine.connect() as raw_conn:
+            conn = SkipWhatExists(raw_conn)
             # line_items.name
             result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='line_items' AND column_name='name'"))
             if not result.fetchone():

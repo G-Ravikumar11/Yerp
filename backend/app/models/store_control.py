@@ -8,37 +8,16 @@ item's BASE unit; rates are Numeric(18,4), values Numeric(18,2).
 """
 from datetime import date, datetime
 
-from sqlalchemy import Column, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import declared_attr
+from sqlalchemy import Column, Date, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
 
 from app.db.session import Base
-from app.models.store_core import QTY, RATE, VALUE, DocStatus
+from app.models.store_core import DocHeader, QTY, RATE, VALUE
 
 TRANSFER, COUNT, SCRAP = "TRANSFER", "COUNT", "SCRAP"        # what the ledger calls these documents (ref_doc_type)
 WASTAGE = "WASTAGE"                                          # a SCRAP document line's disposal, besides SCRAP itself
 
 
-class _Header:
-    @declared_attr
-    def client_id(cls):
-        return Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
-
-    @declared_attr
-    def store_id(cls):
-        return Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
-
-    id = Column(Integer, primary_key=True, index=True)
-    number = Column(String, nullable=False, index=True)
-    status = Column(String, nullable=False, default=DocStatus.DRAFT.value, index=True)
-    remarks = Column(Text, default="")
-    cancel_reason = Column(String, default="")
-    created_by_id = Column(Integer, nullable=True)
-    created_by_name = Column(String, default="")
-    created_at = Column(DateTime, default=datetime.now)
-    posted_at = Column(DateTime, nullable=True)
-
-
-class DBStoreTransfer(_Header, Base):
+class DBStoreTransfer(DocHeader, Base):
     """Stock sent from one store (`store_id`) to another (`to_store_id`)."""
     __tablename__ = "store_transfer"
     __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_transfer_number"),)
@@ -67,7 +46,7 @@ class DBStoreTransferLine(Base):
     remarks = Column(String, default="")
 
 
-class DBStoreCount(_Header, Base):
+class DBStoreCount(DocHeader, Base):
     """A physical stock count of one store. Starting it freezes the store and takes a snapshot of the books; posting it adjusts
     the books to what was counted and unfreezes the store."""
     __tablename__ = "store_count"
@@ -94,7 +73,7 @@ class DBStoreCountLine(Base):
     reason = Column(String, default="")
 
 
-class DBStoreScrap(_Header, Base):
+class DBStoreScrap(DocHeader, Base):
     """Stock written off as wastage, or scrap that is sold or thrown away."""
     __tablename__ = "store_scrap"
     __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_scrap_number"),)

@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from app import models
 from app.db import SessionLocal, engine, ensure_columns, migrate_sqlite
+from app.db.migrations import create_missing_tables
 
 from app.core.auth import ensure_admin_user, ensure_super_admin
 from app.core.config import logger
@@ -24,7 +25,7 @@ from app.core.scheduler import SCHEDULER_TICK_SECONDS, scheduler_loop
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ok = True
-    for label, fn in (("create tables", lambda: models.Base.metadata.create_all(bind=engine)),
+    for label, fn in (("create tables", lambda: create_missing_tables(models.Base.metadata, engine)),
                       ("add missing columns", ensure_columns),
                       ("migrate sqlite", migrate_sqlite),
                       ("admin user", ensure_admin_user),

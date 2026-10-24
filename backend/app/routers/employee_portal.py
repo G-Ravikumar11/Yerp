@@ -330,19 +330,25 @@ def employee_clock_in(request: Request, body: dict = None, db: Session = Depends
     }
 
 
-@router.post("/api/employee/attendance/clock-out")
-def employee_clock_out(request: Request, db: Session = Depends(get_db)):
+def _todays_attendance(request, db):
+    """The signed-in member of staff's attendance record for today (None until they clock in), their company's id and
+    today's date as the record is keyed by it."""
     emp_id = request.session.get('employee_id')
     client_id = request.session.get('employee_client_id')
     if not emp_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
     today = datetime.now().strftime("%Y-%m-%d")
-    now_str = datetime.now().strftime("%H:%M:%S")
     att = db.query(models.DBAttendance).filter(
         models.DBAttendance.employee_id == emp_id,
         models.DBAttendance.date == today,
         models.DBAttendance.client_id == client_id,
     ).first()
+    return att, client_id, today
+
+
+@router.post("/api/employee/attendance/clock-out")
+def employee_clock_out(request: Request, db: Session = Depends(get_db)):
+    att, client_id, _today = _todays_attendance(request, db)
     if not att or not att.clock_in:
         raise HTTPException(status_code=400, detail="No clock-in found for today")
     if att.clock_out:
@@ -354,17 +360,8 @@ def employee_clock_out(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/api/employee/attendance/break-start")
 def employee_break_start(request: Request, db: Session = Depends(get_db)):
-    emp_id = request.session.get('employee_id')
-    client_id = request.session.get('employee_client_id')
-    if not emp_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    today = datetime.now().strftime("%Y-%m-%d")
+    att, _client_id, _today = _todays_attendance(request, db)
     now_str = datetime.now().strftime("%H:%M:%S")
-    att = db.query(models.DBAttendance).filter(
-        models.DBAttendance.employee_id == emp_id,
-        models.DBAttendance.date == today,
-        models.DBAttendance.client_id == client_id,
-    ).first()
     if not att or not att.clock_in:
         raise HTTPException(status_code=400, detail="Not clocked in")
     if att.clock_out:
@@ -379,16 +376,7 @@ def employee_break_start(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/api/employee/attendance/break-stop")
 def employee_break_stop(request: Request, db: Session = Depends(get_db)):
-    emp_id = request.session.get('employee_id')
-    client_id = request.session.get('employee_client_id')
-    if not emp_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    today = datetime.now().strftime("%Y-%m-%d")
-    att = db.query(models.DBAttendance).filter(
-        models.DBAttendance.employee_id == emp_id,
-        models.DBAttendance.date == today,
-        models.DBAttendance.client_id == client_id,
-    ).first()
+    att, _client_id, _today = _todays_attendance(request, db)
     if not att or not att.is_on_break:
         raise HTTPException(status_code=400, detail="Not on break")
     try:
@@ -407,16 +395,7 @@ def employee_break_stop(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/employee/attendance/today")
 def employee_today_attendance(request: Request, db: Session = Depends(get_db)):
-    emp_id = request.session.get('employee_id')
-    client_id = request.session.get('employee_client_id')
-    if not emp_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    today = datetime.now().strftime("%Y-%m-%d")
-    att = db.query(models.DBAttendance).filter(
-        models.DBAttendance.employee_id == emp_id,
-        models.DBAttendance.date == today,
-        models.DBAttendance.client_id == client_id,
-    ).first()
+    att, client_id, today = _todays_attendance(request, db)
     # The portal says why the Clock In button is waiting rather than filled in.
     settings = attendance_settings_for(db, client_id)
     holiday = custom_holidays(db, client_id, today, today).get(today)

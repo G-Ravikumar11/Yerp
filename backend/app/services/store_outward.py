@@ -6,8 +6,8 @@ moves stock: an issue is valued at the average rate of the day; a return brings 
 document is immutable - cancel it (which reverses its movements) and make a new one. Quantities are in the item's base unit.
 """
 from datetime import date, datetime
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
-from typing import List, Optional
+from decimal import ROUND_HALF_UP, Decimal
+from typing import List
 
 from fastapi import HTTPException
 from sqlalchemy import func
@@ -29,65 +29,17 @@ from app.services import store_reservations
 from app.services.store_batches import batches_on_hand, find_lot, usable_qty
 from app.services.store_numbering import next_doc_number
 
+from app.services.store_common import (  # noqa: F401  (the routers and documents call svc.dec, svc.day and the rest)
+    _Q, _R, _V, dec, day, q3, r4, s2, s3, s4, text, v2,
+)
+
 ZERO = Decimal("0")
-_Q = Decimal("0.001")
-_R = Decimal("0.0001")
 LIVE = (DocStatus.SUBMITTED.value, DocStatus.APPROVED.value, DocStatus.POSTED.value)
 RETURNABLE_CATEGORIES = ("RETURNABLE", "TOOL")
 HOLDERS = (EMPLOYEE, SUBCONTRACTOR, GANG)
 
 
 # --- small helpers --------------------------------------------------------------------------------------------------
-
-def dec(value, what, *, allow_zero=True, high=Decimal("999999999999")) -> Decimal:
-    try:
-        d = Decimal(str(value if value is not None else "").strip())
-    except (InvalidOperation, ValueError):
-        raise HTTPException(400, "%s is not a number." % what) from None
-    if not d.is_finite():
-        raise HTTPException(400, "%s is not a number." % what)
-    if d < 0 or (d == 0 and not allow_zero):
-        raise HTTPException(400, "%s must be %s." % (what, "more than zero" if not allow_zero else "zero or more"))
-    if d > high:
-        raise HTTPException(400, "%s is too large." % what)
-    return d
-
-
-def day(raw, what, *, allow_future=False, required=True) -> Optional[date]:
-    if raw in (None, ""):
-        if required:
-            raise HTTPException(400, "Give the %s." % what)
-        return None
-    if isinstance(raw, date):
-        out = raw
-    else:
-        try:
-            out = datetime.strptime(str(raw).strip()[:10], "%Y-%m-%d").date()
-        except ValueError:
-            raise HTTPException(400, "%s is not a date (use YYYY-MM-DD)." % what) from None
-    if not allow_future and out > date.today():
-        raise HTTPException(400, "%s cannot be in the future." % what)
-    if out.year < 2000 or out.year > 2100:
-        raise HTTPException(400, "%s is not a sensible date." % what)
-    return out
-
-
-def text(value, what, limit, required=False) -> str:
-    out = " ".join((value or "").split())
-    if required and not out:
-        raise HTTPException(400, "Give the %s." % what)
-    if len(out) > limit:
-        raise HTTPException(400, "Keep the %s to %d characters." % (what, limit))
-    return out
-
-
-def q3(x) -> Decimal:
-    return Decimal(str(x)).quantize(_Q, rounding=ROUND_HALF_UP)
-
-
-def s3(x) -> str:
-    return format(q3(x if x is not None else 0), "f")
-
 
 def item_of(db, client_id, item_id) -> models.DBItem:
     item = db.get(models.DBItem, item_id) if item_id else None
