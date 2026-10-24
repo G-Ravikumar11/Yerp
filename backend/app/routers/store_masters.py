@@ -174,15 +174,19 @@ def add_store(body: StoreIn, request: Request, db: Session = Depends(get_db)):
     code = (body.code or "").strip().upper()
     if not STORE_CODE.match(code):
         raise HTTPException(400, "The store code is 2 to 12 capital letters or numbers (with - or _), like CS01. It is printed in every document number.")
-    name, kind, _project, address = _check_store_fields(db, actor.client.id, body)
+    name, kind, project, address = _check_store_fields(db, actor.client.id, body)
     if db.query(DBStore.id).filter(DBStore.client_id == actor.client.id, DBStore.code == code).first():
         raise HTTPException(409, "There is already a store with the code %s." % code)
     store = DBStore(client_id=actor.client.id, code=code, name=name, type=kind, project_id=body.project_id or None, address=address, is_active=True)
     db.add(store)
     db.flush()
     log_audit(db, actor.client.id, "store_added", "store", store.id, store.code, "%s %s" % (kind, name), **_who(actor, request))
+    # A new store has no bins, staff, stock or freeze yet: the row is answered from what is in hand, before the commit
+    # expires it, rather than with five more round trips to count nothing (each one slow on a distant database).
+    row = _store_row(store, {"project_name": ("%s - %s" % (project.number, project.name)) if project else "", "bins": 0, "staff": 0,
+                             "items_held": 0, "stock_value": num(ZERO, "0.01"), "frozen": False, "frozen_reason": ""})
     db.commit()
-    return _store_rows(db, [store])[0]
+    return row
 
 
 @router.put("/stores/{store_id}")
