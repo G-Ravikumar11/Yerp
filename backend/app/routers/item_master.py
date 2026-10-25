@@ -146,7 +146,7 @@ def items_bulk_category(body: BulkCategoryIn, request: Request, db: Session = De
 
 
 @router.get("/api/items/import/template")
-def items_import_template(request: Request, db: Session = Depends(get_db)):
+def items_import_template(request: Request, db: Session = Depends(get_read_db)):
     require_erp_read(request, db)
     return sheet_response(item_import.TEMPLATE_HEADERS, item_import.TEMPLATE_SAMPLE, "item_import_template.xlsx")
 
@@ -212,7 +212,7 @@ def item_similar(request: Request, name: str = "", code: str = "", exclude_id: O
 @router.get("/api/items/export.xlsx")
 def items_export(request: Request, q: str = "", category: str = "", subcategory: str = "", item_type: str = "", uom: str = "",
                  status: str = "all", kind: str = "", site_id: Optional[int] = None, ids: str = "", missing: str = "",
-                 db: Session = Depends(get_db)):
+                 db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     query = _filtered(db, client.id, q, category, subcategory, item_type, uom, status, kind, site_id, missing)
     picked = [int(i) for i in ids.split(",") if i.strip().isdigit()]

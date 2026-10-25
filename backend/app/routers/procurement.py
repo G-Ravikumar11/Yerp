@@ -181,7 +181,7 @@ def delete_purchase_order(order_id: int, request: Request, db: Session = Depends
 
 
 @router.get("/api/purchase-orders/{po_id}/export.xlsx")
-def purchase_order_xlsx(po_id: int, request: Request, db: Session = Depends(get_db)):
+def purchase_order_xlsx(po_id: int, request: Request, db: Session = Depends(get_read_db)):
     """One purchase order, as sent to the supplier."""
     client = require_items_access(request, db, ("purchase.manage", "bills.view_all", "stores.receive"))
     po = db.query(models.DBPurchaseOrder).filter(
@@ -436,7 +436,7 @@ def delete_goods_receipt(grn_id: int, request: Request, db: Session = Depends(ge
 
 
 @router.get("/api/grn/{grn_id}/export.xlsx")
-def export_goods_receipt(grn_id: int, request: Request, db: Session = Depends(get_db)):
+def export_goods_receipt(grn_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The receipt as a workbook, for the file the store keeps by the gate."""
     client = require_erp_read(request, db)
     grn = grn_or_404(db, client.id, grn_id)
@@ -1003,7 +1003,7 @@ def send_purchase_order_email(order_id: int, request: Request, body: dict = None
 
 @router.get("/api/rfqs/{rfq_id}/comparison.xlsx")
 def rfq_comparison_export(rfq_id: int, request: Request, supplier: List[str] = Query(default=[]),
-                          db: Session = Depends(get_db)):
+                          db: Session = Depends(get_read_db)):
     """The comparative statement: each line against each supplier, then each
     supplier's total landed at site and its rank. `supplier` (repeat it) narrows
     it to the suppliers the buyer is comparing; none means everybody."""
@@ -1030,7 +1030,7 @@ def rfq_comparison_export(rfq_id: int, request: Request, supplier: List[str] = Q
 
 @router.get("/api/rfqs/{rfq_id}/comparison.pdf")
 def rfq_comparison_pdf(rfq_id: int, request: Request, supplier: List[str] = Query(default=[]),
-                       db: Session = Depends(get_db)):
+                       db: Session = Depends(get_read_db)):
     """The same comparison as a signed-off sheet to print: A4 landscape, one column a supplier."""
     client = require_erp_read(request, db)
     r = rfq_or_404(db, client.id, rfq_id)

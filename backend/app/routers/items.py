@@ -45,7 +45,7 @@ router = APIRouter()
 
 @router.get("/api/erp/items/template")
 def erp_item_template(kind: str = "RM", request: Request = None,
-                      db: Session = Depends(get_db)):
+                      db: Session = Depends(get_read_db)):
     require_items_access(request, db)
     kind = kind.upper()
     if kind not in ITEM_KINDS:
@@ -523,7 +523,7 @@ async def erp_bom_analyse(request: Request, file: UploadFile = File(...),
 
 
 @router.get("/api/erp/bom/template")
-def erp_bom_template(request: Request, db: Session = Depends(get_db)):
+def erp_bom_template(request: Request, db: Session = Depends(get_read_db)):
     require_workorder_access(request, db)
     return sheet_response(BOM_HEADERS,
                           [["FG0001", "RM0001", "20MM LMS PVC ISI CONDUIT", "5100", "Meters", "48.00"]],
@@ -656,7 +656,7 @@ def erp_md_approval(wo_id: int, body: MDDecision, request: Request,
 # is meant to be replacing rather than feeding.
 @router.get("/api/erp/items.xlsx")
 def erp_items_xlsx(request: Request, kind: str = "", q: str = "",
-                   db: Session = Depends(get_db)):
+                   db: Session = Depends(get_read_db)):
     """The item master, filtered the same way the screen filters it."""
     client = require_erp_read(request, db)
     query = db.query(models.DBItem).filter(models.DBItem.client_id == client.id)

@@ -63,7 +63,7 @@ router = APIRouter()
 
 
 @router.get("/api/wo/boq/template")
-def wo_boq_template(request: Request, db: Session = Depends(get_db)):
+def wo_boq_template(request: Request, db: Session = Depends(get_read_db)):
     """The shape we can read, as a workbook to fill in."""
     require_erp_read(request, db)
     return sheet_response(
@@ -76,7 +76,7 @@ def wo_boq_template(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/boqs/sample.xlsx")
-def boq_sample_sheet(request: Request, db: Session = Depends(get_db)):
+def boq_sample_sheet(request: Request, db: Session = Depends(get_read_db)):
     """A filled-in sample in exactly the shape the BOQ import reads: headings in capitals, priced lines under them,
     a group code on each, and rate-only (R/o) lines. Fill it in, or import it as it is to see how a BOQ comes in."""
     require_erp_read(request, db)

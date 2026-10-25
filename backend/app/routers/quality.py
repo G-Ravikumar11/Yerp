@@ -944,7 +944,7 @@ def close_ncr(nid: int, body: NcrCloseIn, request: Request, db: Session = Depend
 
 @router.get("/api/qc/inspections.xlsx")
 def inspections_export(request: Request, job_id: int = 0, q: str = "", status: str = "", date_from: str = "",
-                       date_to: str = "", db: Session = Depends(get_db)):
+                       date_to: str = "", db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     rows, _, _, _ = _inspection_rows(db, client.id, job_id, q, status, date_from, date_to, "date", "desc", 1, 0)
     rows = [(i["number"], i["project"], i["inspected_on"], i["checklist"], i["location"], i["inspected_by"],
@@ -955,7 +955,7 @@ def inspections_export(request: Request, job_id: int = 0, q: str = "", status: s
 
 @router.get("/api/qc/cubes.xlsx")
 def cubes_export(request: Request, job_id: int = 0, q: str = "", status: str = "", date_from: str = "",
-                 date_to: str = "", db: Session = Depends(get_db)):
+                 date_to: str = "", db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     rows = []
     for c in _filter_cubes(_all_cubes(db, client.id, job_id), q, status, date_from, date_to, "cast", "desc"):
@@ -969,7 +969,7 @@ def cubes_export(request: Request, job_id: int = 0, q: str = "", status: str = "
 
 @router.get("/api/qc/ncrs.xlsx")
 def ncrs_export(request: Request, job_id: int = 0, q: str = "", status: str = "", date_from: str = "",
-                date_to: str = "", db: Session = Depends(get_db)):
+                date_to: str = "", db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     found = ncr_query(db, client.id, job_id, q, status, date_from, date_to).order_by(models.DBNcr.id.desc()).all()
     names = job_names(db, client.id, [n.job_id for n in found])
@@ -980,7 +980,7 @@ def ncrs_export(request: Request, job_id: int = 0, q: str = "", status: str = ""
 
 
 @router.get("/api/qc/inspections/{iid}/document.pdf")
-def inspection_pdf(iid: int, request: Request, db: Session = Depends(get_db)):
+def inspection_pdf(iid: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     i = db.query(models.DBInspection).filter(models.DBInspection.id == iid, models.DBInspection.client_id == client.id).first()
     if not i:
@@ -1007,7 +1007,7 @@ def inspection_pdf(iid: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/qc/ncrs/{nid}/document.pdf")
-def ncr_pdf(nid: int, request: Request, db: Session = Depends(get_db)):
+def ncr_pdf(nid: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     n = db.query(models.DBNcr).filter(models.DBNcr.id == nid, models.DBNcr.client_id == client.id).first()
     if not n:

@@ -270,7 +270,7 @@ def _created(db, actor, kind, doc, request, direct=False):
 # --- the front door and pickers ----------------------------------------------------------------------------------------------
 
 @router.get("")
-def index(request: Request, db: Session = Depends(get_db)):
+def index(request: Request, db: Session = Depends(get_read_db)):
     """The slice's front door: the latest issues this person may see."""
     return {"slice": "outward", "items": list_documents("issue", request, limit=20, db=db)["items"]}
 
@@ -680,7 +680,7 @@ def get_indent(indent_id: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/indent/{indent_id}/print")
-def print_indent(indent_id: int, request: Request, db: Session = Depends(get_db)):
+def print_indent(indent_id: int, request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.outward.view")
     indent = _indent_or_404(db, actor, indent_id)
     try:
@@ -834,7 +834,7 @@ def get_gate_pass(gate_id: int, request: Request, db: Session = Depends(get_db))
 
 
 @router.get("/gate-pass/{gate_id}/print")
-def print_gate_pass(gate_id: int, request: Request, db: Session = Depends(get_db)):
+def print_gate_pass(gate_id: int, request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.outward.view")
     gp = _gate_or_404(db, actor, gate_id)
     try:
@@ -868,7 +868,7 @@ def cancel_gate_pass(gate_id: int, request: Request, body: Optional[ActionIn] = 
 
 @router.get("/{kind_key}")
 def list_documents(kind_key: str, request: Request, status: str = "", store_id: int = 0, q: str = "", project_id: int = 0, from_date: str = "", to_date: str = "",
-                   limit: int = 100, offset: int = 0, db: Session = Depends(get_db)):
+                   limit: int = 100, offset: int = 0, db: Session = Depends(get_read_db)):
     kind = _kind(kind_key)
     actor = store_actor(request, db, "store.outward.view")
     query = db.query(kind.header).filter(kind.header.client_id == actor.client.id)
@@ -916,14 +916,14 @@ def export_documents(kind_key: str, request: Request, status: str = "", store_id
 
 
 @router.get("/{kind_key}/{doc_id}")
-def get_document(kind_key: str, doc_id: int, request: Request, db: Session = Depends(get_db)):
+def get_document(kind_key: str, doc_id: int, request: Request, db: Session = Depends(get_read_db)):
     kind = _kind(kind_key)
     actor = store_actor(request, db, "store.outward.view")
     return doc_dict(db, kind, _doc(db, actor, kind, doc_id), detail=True)
 
 
 @router.get("/{kind_key}/{doc_id}/print")
-def print_document(kind_key: str, doc_id: int, request: Request, db: Session = Depends(get_db)):
+def print_document(kind_key: str, doc_id: int, request: Request, db: Session = Depends(get_read_db)):
     kind = _kind(kind_key)
     actor = store_actor(request, db, "store.outward.view")
     doc = _doc(db, actor, kind, doc_id)

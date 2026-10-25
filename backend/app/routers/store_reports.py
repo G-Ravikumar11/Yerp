@@ -368,7 +368,7 @@ def export_report(report: str, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/{report}/print")
-def print_report(report: str, request: Request, db: Session = Depends(get_db)):
+def print_report(report: str, request: Request, db: Session = Depends(get_read_db)):
     """The report as a printed form (PDF, landscape)."""
     actor = store_actor(request, db, "store.reports.view")
     data, filters = run_report(db, actor, report, _params(request))

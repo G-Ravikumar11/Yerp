@@ -471,7 +471,7 @@ def save_doc_signatories(request: Request, body: dict = None, db: Session = Depe
 
 
 @router.get("/api/sheets/{kind}/template.xlsx")
-def sheet_template(kind: str, request: Request, db: Session = Depends(get_db)):
+def sheet_template(kind: str, request: Request, db: Session = Depends(get_read_db)):
     require_erp_read(request, db)
     spec = _sheet_kind(kind)
     return sheet_response([label for _, label in spec["columns"]], [spec["example"]],
@@ -611,7 +611,7 @@ def import_subcontract_orders(body: dict, request: Request, db: Session = Depend
 
 
 @router.get("/api/registers/tds.xlsx")
-def tds_export(request: Request, year: str = "", quarter: str = "", db: Session = Depends(get_db)):
+def tds_export(request: Request, year: str = "", quarter: str = "", db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     d = tds_register(request, year, quarter, db)
     rows = []
@@ -631,7 +631,7 @@ def tds_export(request: Request, year: str = "", quarter: str = "", db: Session 
 
 
 @router.get("/api/registers/guarantees.xlsx")
-def guarantees_export(request: Request, db: Session = Depends(get_db)):
+def guarantees_export(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     d = guarantee_register(request, db)
     keys = [k for k in (d["guarantees"][0].keys() if d["guarantees"] else ["number", "bank", "amount", "valid_until", "status"])
@@ -642,7 +642,7 @@ def guarantees_export(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/registers/advances.xlsx")
-def advances_export(request: Request, db: Session = Depends(get_db)):
+def advances_export(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     d = advance_register(request, db)
     rows = [(a["order"], a["contractor"], a["agreed"], a["advance"], a["recovery_percent"], a["recovered"],

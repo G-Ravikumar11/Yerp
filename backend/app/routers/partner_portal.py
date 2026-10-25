@@ -217,7 +217,7 @@ def portal_statement(request: Request, date_from: str = "", date_to: str = "",
 
 @router.get("/api/portal/statement.xlsx")
 def portal_statement_export(request: Request, date_from: str = "", date_to: str = "",
-                            db: Session = Depends(get_db)):
+                            db: Session = Depends(get_read_db)):
     u, client, party, name = get_portal_user(request, db)
     s = _portal_statement(db, u, name, date_from, date_to)
     return sheet_response(
@@ -319,7 +319,7 @@ def portal_bill_pdf(bill_id: int, request: Request, db: Session = Depends(get_db
 
 
 @router.get("/api/portal/statement.pdf")
-def portal_statement_pdf(request: Request, date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+def portal_statement_pdf(request: Request, date_from: str = "", date_to: str = "", db: Session = Depends(get_read_db)):
     u, client, party, name = get_portal_user(request, db)
     s = _portal_statement(db, u, name, date_from, date_to)
     return form_pdf_response(statement_form_spec(client, name, "Sub Contractor" if u.party_type == "contractor"

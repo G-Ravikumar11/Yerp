@@ -235,7 +235,7 @@ def cancel_ra_bill(bill_id: int, body: RAActionIn, request: Request,
 
 
 @router.get("/api/ra-bills/{bill_id}/export.xlsx")
-def ra_bill_xlsx(bill_id: int, request: Request, db: Session = Depends(get_db)):
+def ra_bill_xlsx(bill_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The bill as it is presented for certification."""
     client = require_erp_read(request, db)
     bill = ra_bill_or_404(db, client.id, bill_id)
@@ -455,7 +455,7 @@ def einvoice_download(bill_id: int, request: Request, db: Session = Depends(get_
 
 
 @router.get("/api/ra-bills/{bill_id}/document.pdf")
-def ra_bill_pdf(bill_id: int, request: Request, db: Session = Depends(get_db)):
+def ra_bill_pdf(bill_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     bill = ra_bill_or_404(db, client.id, bill_id)
     return form_pdf_response(ra_form_spec(db, client, bill), bill.number)

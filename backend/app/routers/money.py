@@ -597,7 +597,7 @@ def retention_register(request: Request, db: Session = Depends(get_read_db)):
 
 
 @router.get("/api/money/receivables.xlsx")
-def receivables_export(request: Request, db: Session = Depends(get_db)):
+def receivables_export(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     data = receivables(request, db)
     b = data["buckets"]
@@ -619,7 +619,7 @@ def receivables_export(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/money/retention.xlsx")
-def retention_export(request: Request, db: Session = Depends(get_db)):
+def retention_export(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     data = retention_register(request, db)
     rows = [(r["number"], r["project"], r["customer"], r["job_status"],
@@ -792,7 +792,7 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
 
 
 @router.get("/api/money/entries/{entry_id}/voucher.pdf")
-def money_voucher_pdf(entry_id: int, request: Request, db: Session = Depends(get_db)):
+def money_voucher_pdf(entry_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The voucher for one receipt, payment, expense or transfer, on the company's letterhead - to file, to sign, or
     to hand the payer as their receipt."""
     client = require_items_access(request, db, "bills.view_all")
@@ -1032,7 +1032,7 @@ def _decide_site_expense(db, client, emp, expense_id, decision, note, request):
 
 @router.get("/api/site-cash/boxes/{account_id}/statement.pdf")
 def cash_box_statement(account_id: int, request: Request, date_from: str = "", date_to: str = "",
-                       db: Session = Depends(get_db)):
+                       db: Session = Depends(get_read_db)):
     """The box's cash book for the period, on the letterhead: opening, every top-up and every expense booked, the
     closing balance - and what has been spent and not yet checked - for the custodian to sign and accounts to keep."""
     from app.documents.forms import cash_statement_spec
@@ -1184,7 +1184,7 @@ def clear_entry(entry_id: int, body: ClearIn, request: Request, db: Session = De
 
 
 @router.get("/api/bank-reco/{account_id}/brs.pdf")
-def brs_pdf(account_id: int, request: Request, as_of: str = "", db: Session = Depends(get_db)):
+def brs_pdf(account_id: int, request: Request, as_of: str = "", db: Session = Depends(get_read_db)):
     """The bank reconciliation statement on a day, on the letterhead, for the auditor's file."""
     from app.documents.forms import brs_spec
     client = require_items_access(request, db, "bills.view_all")
@@ -1556,7 +1556,7 @@ def doc_outstanding(doc_type: str, doc_id: int, request: Request, db: Session = 
 
 @router.get("/api/ledger/statement.pdf")
 def ledger_statement_pdf(request: Request, party_type: str, party: str, date_from: str = "", date_to: str = "",
-                         db: Session = Depends(get_db)):
+                         db: Session = Depends(get_read_db)):
     """The office's copy of a party's statement, to send them."""
     client = require_items_access(request, db, "bills.view_all")
     s = ledger_statement(request, party_type, party, date_from, date_to, db)
@@ -1565,7 +1565,7 @@ def ledger_statement_pdf(request: Request, party_type: str, party: str, date_fro
 
 
 @router.get("/api/money/payables.xlsx")
-def payables_export(request: Request, db: Session = Depends(get_db)):
+def payables_export(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     d = payables(request, db)
     rows = [(r["number"], r["kind"], r["party"], r["project"], r["due_date"], r["outstanding"], r["bucket"],
@@ -1580,7 +1580,7 @@ def payables_export(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/money/entries.xlsx")
 def money_entries_export(request: Request, direction: str = "", party: str = "", job_id: int = 0,
-                         date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+                         date_from: str = "", date_to: str = "", db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     d = list_money(request, direction, party, job_id, date_from, date_to, db)
     rows = [(e["paid_on"], e["number"], "Received" if e["direction"] == "IN" else "Paid", e["party_name"],

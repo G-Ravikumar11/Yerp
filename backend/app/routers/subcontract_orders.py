@@ -1449,7 +1449,7 @@ def wo_update_contractor(con_id: int, body: ContractorIn, request: Request,
 
 
 @router.get("/api/wo/contractors/{con_id}/registration.pdf")
-def contractor_registration_pdf(con_id: int, request: Request, db: Session = Depends(get_db)):
+def contractor_registration_pdf(con_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     con = contractor_or_404(db, client.id, con_id)
     return form_pdf_response(registration_form_spec(db, client, con), "registration_%s" % (con.vendor_code or con.id))
@@ -1467,7 +1467,7 @@ def contractor_registration_xlsx(con_id: int, request: Request, db: Session = De
 
 
 @router.get("/api/wo/contractors.xlsx")
-def contractors_register_xlsx(request: Request, db: Session = Depends(get_db)):
+def contractors_register_xlsx(request: Request, db: Session = Depends(get_read_db)):
     """Every sub contractor on the books with their vendor code, as the office's
     vendor list - its PDF twin beside it."""
     client = require_erp_read(request, db)

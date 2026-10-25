@@ -250,7 +250,7 @@ def close_permit(pid: int, body: PermitCloseIn, request: Request, db: Session = 
 
 
 @router.get("/api/safety/incidents.xlsx")
-def incidents_export(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+def incidents_export(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     d = safety_overview(request, job_id, db)
     rows = [(i["number"], i["happened_on"], i["kind"], i["location"], i["description"], i["injured_name"], i["injury"],
@@ -261,7 +261,7 @@ def incidents_export(request: Request, job_id: int = 0, db: Session = Depends(ge
 
 
 @router.get("/api/safety/permits.xlsx")
-def permits_export(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+def permits_export(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     d = safety_overview(request, job_id, db)
     rows = [(p["number"], p["kind"], p["location"], p["valid_from"], p["valid_to"], p["receiver"],
@@ -271,7 +271,7 @@ def permits_export(request: Request, job_id: int = 0, db: Session = Depends(get_
 
 
 @router.get("/api/safety/talks.xlsx")
-def talks_export(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+def talks_export(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     d = safety_overview(request, job_id, db)
     rows = [(t["held_on"], t["topic"], t["conducted_by"], t["attendees"], t.get("attendee_names", ""))
@@ -281,7 +281,7 @@ def talks_export(request: Request, job_id: int = 0, db: Session = Depends(get_db
 
 
 @router.get("/api/safety/permits/{pid}/document.pdf")
-def permit_pdf(pid: int, request: Request, db: Session = Depends(get_db)):
+def permit_pdf(pid: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     p = db.query(models.DBWorkPermit).filter(models.DBWorkPermit.id == pid, models.DBWorkPermit.client_id == client.id).first()
     if not p:
@@ -311,7 +311,7 @@ def permit_pdf(pid: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/safety/incidents/{iid}/document.pdf")
-def incident_pdf(iid: int, request: Request, db: Session = Depends(get_db)):
+def incident_pdf(iid: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     i = db.query(models.DBSafetyIncident).filter(models.DBSafetyIncident.id == iid,
                                                  models.DBSafetyIncident.client_id == client.id).first()
@@ -533,7 +533,7 @@ def _photo_data_uri(db, f):
 
 
 @router.get("/api/workers/{wid}/document.pdf")
-def worker_pdf(wid: int, request: Request, db: Session = Depends(get_db)):
+def worker_pdf(wid: int, request: Request, db: Session = Depends(get_read_db)):
     """The worker's screening, filled in on the company's "Screening Of Worker" form, ready to print and sign."""
     client = require_erp_read(request, db)
     w = db.query(models.DBWorkerScreening).filter(models.DBWorkerScreening.id == wid,

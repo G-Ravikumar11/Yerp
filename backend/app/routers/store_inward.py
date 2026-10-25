@@ -22,7 +22,7 @@ from app import models
 from app.core.audit import log_audit
 from app.core.permissions import permissions_for
 from app.core.store_auth import store_actor, store_errors
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.documents import form_pdf
 from app.documents.store.inward_forms import FORMS
 from app.models.store_core import DBStore, DBStoreUserAssignment, DocStatus
@@ -268,7 +268,7 @@ def _created(db, actor, kind, doc, request):
 # --- the front door and pickers -----------------------------------------------------------------------------------------
 
 @router.get("")
-def index(request: Request, db: Session = Depends(get_db)):
+def index(request: Request, db: Session = Depends(get_read_db)):
     """The slice's front door: the latest goods receipts this person may see."""
     return {"slice": "inward", "items": list_documents("grn", request, limit=20, db=db)["items"]}
 
@@ -322,7 +322,7 @@ def returnable_lines(grn_id: int, request: Request, db: Session = Depends(get_db
 
 @router.get("/{kind_key}")
 def list_documents(kind_key: str, request: Request, status: str = "", store_id: int = 0, q: str = "", from_date: str = "", to_date: str = "", po_id: int = 0,
-                   limit: int = 100, offset: int = 0, db: Session = Depends(get_db)):
+                   limit: int = 100, offset: int = 0, db: Session = Depends(get_read_db)):
     kind = _kind(kind_key)
     actor = store_actor(request, db, "store.inward.view")
     query = db.query(kind.header).filter(kind.header.client_id == actor.client.id)
@@ -372,14 +372,14 @@ def export_documents(kind_key: str, request: Request, status: str = "", store_id
 
 
 @router.get("/{kind_key}/{doc_id}")
-def get_document(kind_key: str, doc_id: int, request: Request, db: Session = Depends(get_db)):
+def get_document(kind_key: str, doc_id: int, request: Request, db: Session = Depends(get_read_db)):
     kind = _kind(kind_key)
     actor = store_actor(request, db, "store.inward.view")
     return doc_dict(db, kind, _doc(db, actor, kind, doc_id), detail=True)
 
 
 @router.get("/{kind_key}/{doc_id}/print")
-def print_document(kind_key: str, doc_id: int, request: Request, db: Session = Depends(get_db)):
+def print_document(kind_key: str, doc_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The printed form of the document, as a PDF."""
     kind = _kind(kind_key)
     actor = store_actor(request, db, "store.inward.view")

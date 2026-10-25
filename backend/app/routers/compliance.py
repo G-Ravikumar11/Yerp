@@ -29,14 +29,14 @@ def _contractor_or_404(db, client_id, contractor_id):
 
 
 @router.get("/api/compliance")
-def compliance_home(request: Request, db: Session = Depends(get_db)):
+def compliance_home(request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return {"contractors": compliance_overview(db, client.id), "kinds": DOC_KINDS,
             "back_charge_kinds": list(BACK_CHARGE_KINDS), "rating_fields": list(RATING_FIELDS)}
 
 
 @router.get("/api/compliance/contractors/{contractor_id}")
-def contractor_status(contractor_id: int, request: Request, db: Session = Depends(get_db)):
+def contractor_status(contractor_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     con = _contractor_or_404(db, client.id, contractor_id)
     out = contractor_compliance(db, client.id, con.id)

@@ -1084,7 +1084,7 @@ def act_on_estimate(est_id: int, action: str, request: Request, body: dict = Non
 
 
 @router.get("/api/estimates/{est_id}/export.xlsx")
-def export_estimate(est_id: int, request: Request, db: Session = Depends(get_db)):
+def export_estimate(est_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     e = estimate_dict(db, estimate_or_404(db, client.id, est_id), detail=True)
     preamble = [("TENDER ESTIMATE", client.company_name or ""),

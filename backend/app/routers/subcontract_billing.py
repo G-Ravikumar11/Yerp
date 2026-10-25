@@ -1564,7 +1564,7 @@ def cancel_release(release_id: int, request: Request, body: dict = None,
 
 
 @router.get("/api/retention/releases/{release_id}/export.xlsx")
-def export_release(release_id: int, request: Request, db: Session = Depends(get_db)):
+def export_release(release_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The release as a bill: the RA bills whose retention it gives back,
     then what was held, released before, released now, and the tax."""
     client = require_items_access(request, db, "bills.view_all")

@@ -75,7 +75,7 @@ def people(db, client_id, ids):
 # ---- dashboard ---------------------------------------------------------------------------------
 
 @router.get("/api/plant/dashboard")
-def dashboard(request: Request, date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+def dashboard(request: Request, date_from: str = "", date_to: str = "", db: Session = Depends(get_read_db)):
     """Every figure is worked out from the records each time it is asked for."""
     client = require_erp_read(request, db)
     f0, t0 = month_bounds()
@@ -1215,7 +1215,7 @@ REPORTS = {
 
 @router.get("/api/plant/reports/{kind}.xlsx")
 def plant_report(kind: str, request: Request, date_from: str = "", date_to: str = "", asset_id: int = 0, employee_id: int = 0,
-                 ownership: str = "", status: str = "", provider_id: int = 0, db: Session = Depends(get_db)):
+                 ownership: str = "", status: str = "", provider_id: int = 0, db: Session = Depends(get_read_db)):
     """Each report through the same reads the screens use, so it shows what the person asking may see. A .pdf of each
     is served beside it."""
     client = require_erp_read(request, db)

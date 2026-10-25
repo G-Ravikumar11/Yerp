@@ -143,7 +143,7 @@ def check_remove(cid: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/safety/checks.xlsx")
-def checks_xlsx(request: Request, job_id: int = 0, form_type: str = "", db: Session = Depends(get_db)):
+def checks_xlsx(request: Request, job_id: int = 0, form_type: str = "", db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     checks = _check_rows(db, client, job_id, form_type)
     due = {"overdue": "Overdue", "soon": "Due soon", "ok": "", "": ""}
@@ -163,7 +163,7 @@ def _reading(d, spec):
 
 
 @router.get("/api/safety/checks/{cid}/document.pdf")
-def check_pdf(cid: int, request: Request, db: Session = Depends(get_db)):
+def check_pdf(cid: int, request: Request, db: Session = Depends(get_read_db)):
     """The checklist as the company's paper form: header, every item with its Yes / No, the readings and the signatures."""
     client = require_erp_read(request, db)
     d = _one(db, client, cid)

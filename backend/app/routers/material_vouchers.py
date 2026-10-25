@@ -121,7 +121,7 @@ def _qty(n):
 
 
 @router.get("/api/material-vouchers/{vid}/document.pdf")
-def voucher_pdf(vid: int, request: Request, db: Session = Depends(get_db)):
+def voucher_pdf(vid: int, request: Request, db: Session = Depends(get_read_db)):
     """The voucher as the printed form: the company's head, MATERIAL ISSUE VOUCHER, the four fields, the items, and
     the four signatures."""
     client = require_erp_read(request, db)
@@ -149,7 +149,7 @@ def voucher_pdf(vid: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/material-vouchers.xlsx")
-def voucher_register(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+def voucher_register(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
     """The register: every line of every voucher, in Sl. No. order, with the voucher's fields beside it."""
     client = require_erp_read(request, db)
     projects = _projects(db, client.id)

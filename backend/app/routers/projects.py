@@ -734,7 +734,7 @@ def labour_history(job_id: int, request: Request, db: Session = Depends(get_read
 
 
 @router.get("/api/diary/{diary_id}/export.xlsx")
-def diary_export(diary_id: int, request: Request, db: Session = Depends(get_db)):
+def diary_export(diary_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     d = diary_or_404(db, client.id, diary_id)
     row = diary_dict(db, d, detail=True)
@@ -875,7 +875,7 @@ def whats_worth_a_look(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/jobs/{job_id}/equipment")
-def job_equipment(job_id: int, request: Request, db: Session = Depends(get_db)):
+def job_equipment(job_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The machines on one site and what they have cost it."""
     client = require_erp_read(request, db)
     job_or_404(db, client.id, job_id)

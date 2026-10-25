@@ -1166,7 +1166,7 @@ def gst_inward(request: Request, date_from: str = "", date_to: str = "",
 
 @router.get("/api/gst/outward.xlsx")
 def gst_outward_export(request: Request, date_from: str = "", date_to: str = "",
-                       db: Session = Depends(get_db)):
+                       db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     d = gst_outward(request, date_from, date_to, db)
     rows = [(r["date"], r["number"], r["party"], r["project"], r["place_of_supply"],
@@ -1478,7 +1478,7 @@ def record_irn(doc_type: str, doc_id: int, request: Request, body: dict = None,
 
 
 @router.get("/api/gst/inward.xlsx")
-def gst_inward_export(request: Request, date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+def gst_inward_export(request: Request, date_from: str = "", date_to: str = "", db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     d = gst_inward(request, date_from, date_to, db)
     rows = [(r["date"], r["kind"], r["number"], r["party"], r.get("party_gstin", ""), r.get("sac", ""), r["rate"],

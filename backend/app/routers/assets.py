@@ -57,7 +57,7 @@ router = APIRouter()
 
 
 @router.get("/api/assets")
-def list_assets(request: Request, status: str = "", job_id: int = 0, archived: bool = False, db: Session = Depends(get_db)):
+def list_assets(request: Request, status: str = "", job_id: int = 0, archived: bool = False, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     q = db.query(models.DBAsset).filter(models.DBAsset.client_id == client.id,
                                         models.DBAsset.is_archived.is_(True) if archived else models.DBAsset.is_archived.isnot(True))
@@ -160,7 +160,7 @@ def archive_asset(asset_id: int, request: Request, body: dict = None, db: Sessio
 
 
 @router.get("/api/assets/{asset_id}")
-def get_asset(asset_id: int, request: Request, db: Session = Depends(get_db)):
+def get_asset(asset_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     a = asset_or_404(db, client.id, asset_id)
     jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client.id).all()}
