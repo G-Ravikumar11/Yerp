@@ -21,7 +21,7 @@ from app import models
 from app.core.audit import log_audit
 from app.core.permissions import permissions_for
 from app.core.store_auth import store_actor, store_errors
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.documents import form_pdf
 from app.documents.store.outward_forms import FORMS
 from app.models.store_core import DBStore, DBStoreBin, DBStoreUserAssignment, DocStatus
@@ -287,7 +287,7 @@ def batches(request: Request, store_id: int, item_id: int, on: str = "", db: Ses
 
 
 @router.get("/pick/boq-items")
-def pick_boq_items(project_id: int, request: Request, q: str = "", db: Session = Depends(get_db)):
+def pick_boq_items(project_id: int, request: Request, q: str = "", db: Session = Depends(get_read_db)):
     """A project's priced BOQ items (current revision), for charging an issue to."""
     actor = store_actor(request, db, "store.outward.view")
     boq = db.query(models.DBBoq).filter(models.DBBoq.job_id == project_id, models.DBBoq.client_id == actor.client.id).first()
@@ -304,14 +304,14 @@ def pick_boq_items(project_id: int, request: Request, q: str = "", db: Session =
 
 
 @router.get("/pick/work-orders")
-def pick_work_orders(project_id: int, request: Request, db: Session = Depends(get_db)):
+def pick_work_orders(project_id: int, request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.outward.view")
     rows = db.query(models.DBWorkOrder).filter(models.DBWorkOrder.client_id == actor.client.id, models.DBWorkOrder.job_id == project_id).order_by(models.DBWorkOrder.id.desc()).limit(100).all()
     return {"items": [{"id": w.id, "number": w.number or "", "status": w.status or ""} for w in rows]}
 
 
 @router.get("/pick/subcontractors")
-def pick_subcontractors(request: Request, q: str = "", db: Session = Depends(get_db)):
+def pick_subcontractors(request: Request, q: str = "", db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.outward.view")
     query = db.query(models.DBContractor).filter(models.DBContractor.client_id == actor.client.id)
     term = (q or "").strip()
@@ -322,7 +322,7 @@ def pick_subcontractors(request: Request, q: str = "", db: Session = Depends(get
 
 
 @router.get("/pick/employees")
-def pick_employees(request: Request, q: str = "", db: Session = Depends(get_db)):
+def pick_employees(request: Request, q: str = "", db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.outward.view")
     query = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == actor.client.id, models.DBEmployee.status.in_(["active", "onboarding"]))
     term = (q or "").strip()
@@ -365,7 +365,7 @@ def _returnable_rows(db, actor, project_id, store_id):
 
 
 @router.get("/returnables")
-def returnables(request: Request, project_id: int = 0, store_id: int = 0, overdue_only: bool = False, db: Session = Depends(get_db)):
+def returnables(request: Request, project_id: int = 0, store_id: int = 0, overdue_only: bool = False, db: Session = Depends(get_read_db)):
     """Returnable items and tools still out, who holds them and how late they are."""
     actor = store_actor(request, db, "store.outward.view")
     if store_id:
@@ -391,7 +391,7 @@ def export_returnables(request: Request, project_id: int = 0, store_id: int = 0,
 
 
 @router.get("/writeoffs")
-def writeoffs(request: Request, status: str = "OPEN", db: Session = Depends(get_db)):
+def writeoffs(request: Request, status: str = "OPEN", db: Session = Depends(get_read_db)):
     """Returnables reported lost or damaged and waiting to be dealt with."""
     actor = store_actor(request, db, "store.outward.view")
     seen = _visible(db, actor)
@@ -409,7 +409,7 @@ def writeoffs(request: Request, status: str = "OPEN", db: Session = Depends(get_
 
 
 @router.get("/subcontractors/{subcontractor_id}/recovery")
-def subcontractor_recovery(subcontractor_id: int, request: Request, upto: str = "", db: Session = Depends(get_db)):
+def subcontractor_recovery(subcontractor_id: int, request: Request, upto: str = "", db: Session = Depends(get_read_db)):
     """Material issued to one subcontractor, what came back and what is to be recovered from their bill."""
     actor = store_actor(request, db, "store.outward.view")
     con = db.query(models.DBContractor).filter(models.DBContractor.id == subcontractor_id, models.DBContractor.client_id == actor.client.id).first()
@@ -427,7 +427,7 @@ def subcontractor_recovery(subcontractor_id: int, request: Request, upto: str = 
 # --- more pickers, settings and recoveries ------------------------------------------------------------------------------------
 
 @router.get("/pick/subcontract-orders")
-def pick_subcontract_orders(subcontractor_id: int, request: Request, project_id: int = 0, db: Session = Depends(get_db)):
+def pick_subcontract_orders(subcontractor_id: int, request: Request, project_id: int = 0, db: Session = Depends(get_read_db)):
     """A subcontractor's work orders (on a project, if one is given), for the issue to be made under."""
     actor = store_actor(request, db, "store.outward.view")
     q = db.query(models.DBSubcontractOrder).filter(models.DBSubcontractOrder.client_id == actor.client.id, models.DBSubcontractOrder.contractor_id == subcontractor_id)
@@ -437,7 +437,7 @@ def pick_subcontract_orders(subcontractor_id: int, request: Request, project_id:
 
 
 @router.get("/pick/bins")
-def pick_bins(store_id: int, request: Request, db: Session = Depends(get_db)):
+def pick_bins(store_id: int, request: Request, db: Session = Depends(get_read_db)):
     """A store's bins, for the bin damaged goods are returned into."""
     actor = store_actor(request, db, "store.outward.view")
     store = db.get(DBStore, store_id) if store_id else None
@@ -474,7 +474,7 @@ def put_settings(body: SettingsIn, request: Request, db: Session = Depends(get_d
 
 
 @router.get("/recoveries")
-def recoveries(request: Request, subcontractor_id: int = 0, project_id: int = 0, status: str = "OPEN", db: Session = Depends(get_db)):
+def recoveries(request: Request, subcontractor_id: int = 0, project_id: int = 0, status: str = "OPEN", db: Session = Depends(get_read_db)):
     """What the store has charged to subcontractors and holders to be recovered: chargeable issues and returnables converted to a charge."""
     actor = store_actor(request, db, "store.outward.view")
     seen = _visible(db, actor)

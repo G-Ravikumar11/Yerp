@@ -6,7 +6,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.items import BOM_COLUMNS, BOM_HEADERS, ITEM_COLUMNS, ITEM_HEADERS
 from app.core.audit import log_audit
@@ -257,7 +257,7 @@ def erp_items_commit(body: ItemCommitIn, request: Request, db: Session = Depends
 
 
 @router.get("/api/erp/vocabulary")
-def erp_vocabulary(request: Request, db: Session = Depends(get_db)):
+def erp_vocabulary(request: Request, db: Session = Depends(get_read_db)):
     """Everything the pickers need, so the browser never invents an option."""
     require_erp_read(request, db)
     return {
@@ -272,7 +272,7 @@ def erp_vocabulary(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/erp/items/next-code")
 def erp_next_item_code(request: Request, kind: str = "RM",
-                       db: Session = Depends(get_db)):
+                       db: Session = Depends(get_read_db)):
     require_items_access(request, db)
     # Peek only: nothing is reserved until the item is saved, so a picker that
     # is opened and abandoned does not burn a code.
@@ -430,7 +430,7 @@ def _kind_counts(db, client_id):
 
 @router.get("/api/erp/items")
 def erp_list_items(request: Request, kind: str = "", q: str = "",
-                   db: Session = Depends(get_db)):
+                   db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     query = db.query(models.DBItem).filter(models.DBItem.client_id == client.id)
     if kind:
@@ -570,7 +570,7 @@ async def erp_bom_upload(request: Request, file: UploadFile = File(...),
 
 
 @router.get("/api/erp/inquiry")
-def erp_work_order_inquiry(request: Request, db: Session = Depends(get_db)):
+def erp_work_order_inquiry(request: Request, db: Session = Depends(get_read_db)):
     """The screen the flow ends on.
 
     Every order with what it is worth, whether its budget has been allocated,

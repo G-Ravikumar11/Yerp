@@ -19,7 +19,7 @@ from app import models
 from app.core.audit import log_audit
 from app.core.permissions import permissions_for
 from app.core.store_auth import store_actor
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.models.store_core import (
     DBStore, DBStoreBin, DBStoreDocSequence, DBStoreFreeze, DBStoreItemSettings, DBStoreStockBalance, DBStoreStockLedger,
     DBStoreUomConversion, DBStoreUserAssignment, ItemCategory, StoreType,
@@ -135,13 +135,13 @@ def _store_rows(db, stores):
 
 
 @router.get("")
-def index(request: Request, db: Session = Depends(get_db)):
+def index(request: Request, db: Session = Depends(get_read_db)):
     """The slice's front door: the stores this person may see."""
     return {"slice": "masters", **list_stores(request, db=db)}
 
 
 @router.get("/stores")
-def list_stores(request: Request, q: str = "", type: str = "", project_id: int = 0, status: str = "all", db: Session = Depends(get_db)):
+def list_stores(request: Request, q: str = "", type: str = "", project_id: int = 0, status: str = "all", db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.masters.view")
     query = db.query(DBStore).filter(DBStore.client_id == actor.client.id)
     seen = visible_store_ids(db, actor)
@@ -163,7 +163,7 @@ def list_stores(request: Request, q: str = "", type: str = "", project_id: int =
 
 
 @router.get("/stores/{store_id}")
-def get_store(store_id: int, request: Request, db: Session = Depends(get_db)):
+def get_store(store_id: int, request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.masters.view")
     return _store_rows(db, [my_store(db, actor, store_id)])[0]
 
@@ -256,7 +256,7 @@ def _bin_fields(body):
 
 
 @router.get("/labels.pdf")
-def labels(request: Request, store_id: int, kind: str = "bins", item_ids: str = "", db: Session = Depends(get_db)):
+def labels(request: Request, store_id: int, kind: str = "bins", item_ids: str = "", db: Session = Depends(get_read_db)):
     """Sticky QR labels to print: a tag for every rack and yard bay of a store (kind=bins), or a rack label for each item the
     store holds (kind=items; item_ids, comma-separated, for chosen ones). Scanning one in the app finds the bin or the item."""
     actor = store_actor(request, db, "store.masters.view")
@@ -281,7 +281,7 @@ def labels(request: Request, store_id: int, kind: str = "bins", item_ids: str = 
 
 
 @router.get("/stores/{store_id}/bins")
-def list_bins(store_id: int, request: Request, db: Session = Depends(get_db)):
+def list_bins(store_id: int, request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.masters.view")
     store = my_store(db, actor, store_id)
     return {"items": [_bin_dict(b) for b in db.query(DBStoreBin).filter(DBStoreBin.store_id == store.id).order_by(DBStoreBin.code).all()]}
@@ -372,7 +372,7 @@ def _assign_dict(a, e):
 
 
 @router.get("/employees")
-def employee_options(request: Request, q: str = "", limit: int = 30, db: Session = Depends(get_db)):
+def employee_options(request: Request, q: str = "", limit: int = 30, db: Session = Depends(get_read_db)):
     """Staff who can be assigned to a store."""
     actor = store_actor(request, db, "store.masters.view")
     query = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == actor.client.id, models.DBEmployee.status.in_(["active", "onboarding"]))
@@ -385,7 +385,7 @@ def employee_options(request: Request, q: str = "", limit: int = 30, db: Session
 
 
 @router.get("/stores/{store_id}/assignments")
-def list_assignments(store_id: int, request: Request, db: Session = Depends(get_db)):
+def list_assignments(store_id: int, request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.masters.view")
     store = my_store(db, actor, store_id)
     rows = db.query(DBStoreUserAssignment, models.DBEmployee).join(models.DBEmployee, models.DBEmployee.id == DBStoreUserAssignment.employee_id).filter(
@@ -477,7 +477,7 @@ def _conversions(db, item_ids):
 
 
 @router.get("/items")
-def list_items(request: Request, q: str = "", category: str = "", configured: str = "all", limit: int = 100, offset: int = 0, db: Session = Depends(get_db)):
+def list_items(request: Request, q: str = "", category: str = "", configured: str = "all", limit: int = 100, offset: int = 0, db: Session = Depends(get_read_db)):
     """Every stock item with its store settings (or the defaults it would get) and how much is held in the stores this person may see."""
     actor = store_actor(request, db, "store.masters.view")
     query = db.query(models.DBItem, DBStoreItemSettings).outerjoin(DBStoreItemSettings, DBStoreItemSettings.item_id == models.DBItem.id).filter(
@@ -507,7 +507,7 @@ def list_items(request: Request, q: str = "", category: str = "", configured: st
 
 
 @router.get("/items/{item_id}")
-def get_item(item_id: int, request: Request, db: Session = Depends(get_db)):
+def get_item(item_id: int, request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.masters.view")
     item = _my_item(db, actor, item_id)
     s = db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == item.id).first()
@@ -615,7 +615,7 @@ def _controls_dict(row, actor):
 
 
 @router.get("/controls")
-def get_controls(request: Request, db: Session = Depends(get_db)):
+def get_controls(request: Request, db: Session = Depends(get_read_db)):
     from app.models.store_core import DBStoreControlSetting
     actor = store_actor(request, db, ("store.masters.view", "store.inward.view", "store.outward.view", "store.control.view"))
     return _controls_dict(db.query(DBStoreControlSetting).filter(DBStoreControlSetting.client_id == actor.client.id).first(), actor)

@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.validators import import_guard
 from app import models
 from app.documents import sheet_forms
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.approvals import GONE_STATUSES
 from app.constants.boq import BOQ_HEADER_ALIASES, BOQ_PRICED
@@ -275,7 +275,7 @@ def wo_create_business_unit(body: BusinessUnitIn, request: Request,
 
 
 @router.get("/api/wo/contractors/{con_id}/documents/{key}")
-def wo_contractor_document(con_id: int, key: str, request: Request, db: Session = Depends(get_db)):
+def wo_contractor_document(con_id: int, key: str, request: Request, db: Session = Depends(get_read_db)):
     """One of the registration form's uploaded documents, as the file it was given."""
     client = require_erp_read(request, db)
     con = db.query(models.DBContractor).filter(models.DBContractor.id == con_id,
@@ -300,7 +300,7 @@ def wo_contractor_document(con_id: int, key: str, request: Request, db: Session 
 
 
 @router.get("/api/wo/contractors")
-def wo_list_contractors(request: Request, q: str = "", status: str = "", db: Session = Depends(get_db)):
+def wo_list_contractors(request: Request, q: str = "", status: str = "", db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     query = db.query(models.DBContractor).filter(
         models.DBContractor.client_id == client.id)
@@ -790,7 +790,7 @@ def wo_copy_order(order_id: int, request: Request, db: Session = Depends(get_db)
 
 @router.get("/api/wo/rates")
 def wo_last_rates(request: Request, item_code: str = "", description: str = "",
-                  db: Session = Depends(get_db)):
+                  db: Session = Depends(get_read_db)):
     """What this line was last ordered at, and from whom.
 
     Farvision's "copy rate": the rate on the previous order for the same
@@ -1004,7 +1004,7 @@ def wo_set_terms(order_id: int, body: TermsIn, request: Request,
 
 
 @router.get("/api/wo/terms/library")
-def wo_terms_library(request: Request, db: Session = Depends(get_db)):
+def wo_terms_library(request: Request, db: Session = Depends(get_read_db)):
     """The clauses this trade puts on nearly every order.
 
     Offered as a starting point rather than imposed: they are edited per order,
@@ -1210,7 +1210,7 @@ def wo_delete_order(order_id: int, request: Request, db: Session = Depends(get_d
 
 
 @router.get("/api/wo/contractors/{con_id}/delete-preview")
-def vendor_delete_preview(con_id: int, request: Request, db: Session = Depends(get_db)):
+def vendor_delete_preview(con_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     require_owner(request, db)
     con = _vendor_or_404(db, client, con_id)
@@ -1248,7 +1248,7 @@ def vendor_delete(con_id: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/work-orders/delete-all-preview")
-def work_orders_delete_all_preview(request: Request, db: Session = Depends(get_db)):
+def work_orders_delete_all_preview(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     require_owner(request, db)
     return {"phrase": WIPE_PHRASE,

@@ -6,7 +6,7 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.core.audit import log_audit
 from app.core.queries import by_id, prime
@@ -83,7 +83,7 @@ def items_list(request: Request, q: str = "", category: str = "", subcategory: s
 
 
 @router.get("/api/items/gaps")
-def items_gaps(request: Request, status: str = "active", kind: str = "", db: Session = Depends(get_db)):
+def items_gaps(request: Request, status: str = "active", kind: str = "", db: Session = Depends(get_read_db)):
     """How many items are missing each detail: what the master still needs filling in before its codes can carry
     tax and rates onto orders and bills."""
     client = require_erp_read(request, db)
@@ -196,14 +196,14 @@ def items_import_commit(body: ImportRowsIn, request: Request, db: Session = Depe
 
 
 @router.get("/api/items/next-code")
-def item_next_code(request: Request, db: Session = Depends(get_db)):
+def item_next_code(request: Request, db: Session = Depends(get_read_db)):
     """The next free code, offered when someone starts a new item. Nothing is reserved: they can type their own."""
     require_erp_read(request, db)
     return {"code": im.peek_next_code(db)}
 
 
 @router.get("/api/items/similar")
-def item_similar(request: Request, name: str = "", code: str = "", exclude_id: Optional[int] = None, db: Session = Depends(get_db)):
+def item_similar(request: Request, name: str = "", code: str = "", exclude_id: Optional[int] = None, db: Session = Depends(get_read_db)):
     """What already looks like this name or code, so a repeat is noticed before it is saved."""
     client = require_erp_read(request, db)
     return {"similar": im.similar_items(db, client.id, name, code, exclude_id)}
@@ -230,7 +230,7 @@ def items_export(request: Request, q: str = "", category: str = "", subcategory:
 
 
 @router.get("/api/items/{item_id}")
-def item_get(item_id: int, request: Request, db: Session = Depends(get_db)):
+def item_get(item_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     item = _item(db, client.id, item_id)
     return {"item": im.item_dict(item, len(im.sites_using(db, client.id, [item.item_code]).get(item.item_code, ())))}
@@ -289,7 +289,7 @@ def item_where_used(item_id: int, request: Request, db: Session = Depends(get_db
 
 
 @router.get("/api/items/{item_id}/sites")
-def item_sites(item_id: int, request: Request, db: Session = Depends(get_db)):
+def item_sites(item_id: int, request: Request, db: Session = Depends(get_read_db)):
     """Every site whose current BOQ uses the item, with that site's quantity and rate."""
     client = require_erp_read(request, db)
     item = _item(db, client.id, item_id)

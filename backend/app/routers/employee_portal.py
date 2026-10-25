@@ -67,7 +67,7 @@ router = APIRouter()
 
 
 @router.get("/api/my/login-history")
-def my_login_history(request: Request, limit: int = 50, db: Session = Depends(get_db)):
+def my_login_history(request: Request, limit: int = 50, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     logs = db.query(models.DBClientLoginLog).filter(
         models.DBClientLoginLog.client_id == client.id
@@ -196,7 +196,7 @@ def employee_logout(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/employee/auth/me")
-def employee_me(request: Request, db: Session = Depends(get_db)):
+def employee_me(request: Request, db: Session = Depends(get_read_db)):
     emp_id = request.session.get('employee_id')
     if not emp_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -394,7 +394,7 @@ def employee_break_stop(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/employee/attendance/today")
-def employee_today_attendance(request: Request, db: Session = Depends(get_db)):
+def employee_today_attendance(request: Request, db: Session = Depends(get_read_db)):
     att, client_id, today = _todays_attendance(request, db)
     # The portal says why the Clock In button is waiting rather than filled in.
     settings = attendance_settings_for(db, client_id)
@@ -439,7 +439,7 @@ def employee_today_attendance(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/employee/dashboard")
-def employee_dashboard(request: Request, db: Session = Depends(get_db)):
+def employee_dashboard(request: Request, db: Session = Depends(get_read_db)):
     emp_id = request.session.get('employee_id')
     client_id = request.session.get('employee_client_id')
     if not emp_id:
@@ -528,7 +528,7 @@ def employee_heartbeat(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/employee/bills")
-def employee_list_bills(request: Request, db: Session = Depends(get_db)):
+def employee_list_bills(request: Request, db: Session = Depends(get_read_db)):
     """What this person has raised - or everything, if their access allows."""
     emp = require_employee_permission(request, db, "bills.submit")
     query = db.query(models.DBBill).filter(models.DBBill.client_id == emp.client_id)
@@ -543,7 +543,7 @@ def employee_list_bills(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/employee/bills/{bill_id}")
-def employee_get_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
+def employee_get_bill(bill_id: int, request: Request, db: Session = Depends(get_read_db)):
     emp = require_employee_permission(request, db, "bills.submit")
     bill = employee_bill_or_404(db, emp, bill_id)
     if bill.submitted_by != emp.id and not employee_can(emp, "bills.view_all"):
@@ -719,7 +719,7 @@ def employee_resubmit_purchase_order(order_id: int, request: Request,
 
 
 @router.get("/api/employee/jobs")
-def employee_list_jobs(request: Request, db: Session = Depends(get_db)):
+def employee_list_jobs(request: Request, db: Session = Depends(get_read_db)):
     """The jobs somebody can book time or costs against.
 
     Only live ones: a finished site should not be on the picker, because the
@@ -760,7 +760,7 @@ def employee_set_attendance_job(request: Request, body: dict = None,
 
 
 @router.get("/api/employee/approvals")
-def employee_pending_approvals(request: Request, db: Session = Depends(get_db)):
+def employee_pending_approvals(request: Request, db: Session = Depends(get_read_db)):
     """What is waiting on this person to decide, or upcoming in their queue."""
     emp = get_employee_user(request, db)
     steps = db.query(models.DBApprovalChain).filter(
@@ -838,7 +838,7 @@ def employee_approval_action(step_id: int, request: Request, body: dict = None,
 
 @router.get("/api/employee/approvals/history/{entity_type}/{entity_id}")
 def employee_approval_history(entity_type: str, entity_id: int, request: Request,
-                              db: Session = Depends(get_db)):
+                              db: Session = Depends(get_read_db)):
     emp = get_employee_user(request, db)
     if entity_type not in APPROVAL_ENTITY_TYPES:
         raise HTTPException(status_code=400, detail="Unknown document type")
@@ -885,7 +885,7 @@ def employee_pay_bill(bill_id: int, request: Request, db: Session = Depends(get_
 
 
 @router.get("/api/employee/document-requests")
-def employee_document_requests(request: Request, db: Session = Depends(get_db)):
+def employee_document_requests(request: Request, db: Session = Depends(get_read_db)):
     emp_id = request.session.get('employee_id')
     if not emp_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -972,7 +972,7 @@ def employee_upload_document(req_id: int, body: EmployeeDocumentUpload, request:
 
 
 @router.get("/api/employee/goals")
-def get_employee_goals(request: Request, db: Session = Depends(get_db)):
+def get_employee_goals(request: Request, db: Session = Depends(get_read_db)):
     emp_id = request.session.get('employee_id')
     if not emp_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -981,7 +981,7 @@ def get_employee_goals(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/employee/notifications")
-def get_employee_notifications(request: Request, db: Session = Depends(get_db)):
+def get_employee_notifications(request: Request, db: Session = Depends(get_read_db)):
     emp_id = request.session.get('employee_id')
     if not emp_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -1014,7 +1014,7 @@ def mark_all_notifications_read(request: Request, db: Session = Depends(get_db))
 
 
 @router.get("/api/employee/leave")
-def get_employee_leave(request: Request, db: Session = Depends(get_db)):
+def get_employee_leave(request: Request, db: Session = Depends(get_read_db)):
     emp_id = request.session.get('employee_id')
     if not emp_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -1093,7 +1093,7 @@ def request_leave(request: Request, body: dict, db: Session = Depends(get_db)):
 
 
 @router.get("/api/employee/documents")
-def get_employee_documents(request: Request, db: Session = Depends(get_db)):
+def get_employee_documents(request: Request, db: Session = Depends(get_read_db)):
     emp_id = request.session.get('employee_id')
     if not emp_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -1102,7 +1102,7 @@ def get_employee_documents(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/employee/documents/{doc_id}/download")
-def download_document(doc_id: int, request: Request, db: Session = Depends(get_db)):
+def download_document(doc_id: int, request: Request, db: Session = Depends(get_read_db)):
     emp_id = request.session.get('employee_id')
     if not emp_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -1114,7 +1114,7 @@ def download_document(doc_id: int, request: Request, db: Session = Depends(get_d
 
 
 @router.get("/api/employee/profile")
-def get_employee_profile(request: Request, db: Session = Depends(get_db)):
+def get_employee_profile(request: Request, db: Session = Depends(get_read_db)):
     emp_id = request.session.get('employee_id')
     if not emp_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -1154,7 +1154,7 @@ def get_employee_profile(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/employee/analytics")
-def get_employee_analytics(request: Request, days: int = 30, db: Session = Depends(get_db)):
+def get_employee_analytics(request: Request, days: int = 30, db: Session = Depends(get_read_db)):
     emp_id = request.session.get('employee_id')
     if not emp_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -1182,7 +1182,7 @@ def get_employee_analytics(request: Request, days: int = 30, db: Session = Depen
 
 
 @router.get("/api/employee/team-presence")
-def get_team_presence(request: Request, db: Session = Depends(get_db)):
+def get_team_presence(request: Request, db: Session = Depends(get_read_db)):
     emp_id = request.session.get('employee_id')
     if not emp_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -1205,7 +1205,7 @@ def get_team_presence(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/employee/weekly-chart")
-def get_weekly_chart(request: Request, db: Session = Depends(get_db)):
+def get_weekly_chart(request: Request, db: Session = Depends(get_read_db)):
     emp_id = request.session.get('employee_id')
     if not emp_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -1283,7 +1283,7 @@ def assign_department_goal(request: Request, body: dict = None, db: Session = De
 
 
 @router.get("/api/goals/department-pending")
-def get_pending_department_goals(request: Request, db: Session = Depends(get_db)):
+def get_pending_department_goals(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     goals = db.query(models.DBDepartmentGoal).filter(
         models.DBDepartmentGoal.client_id == client.id,
@@ -1338,7 +1338,7 @@ def action_leave_simple(leave_id: int, request: Request, body: dict = None, db: 
 # supervisor, what is waiting for my signature. One call, the sites they are
 # assigned to, nothing of anybody else's.
 @router.get("/api/employee/today")
-def employee_today(request: Request, db: Session = Depends(get_db)):
+def employee_today(request: Request, db: Session = Depends(get_read_db)):
     emp = get_employee_user(request, db)
     today = date.today().isoformat()
     now = datetime.now().strftime("%Y-%m-%d %H:%M")

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import get_client_user, require_owner
 from app.core.config import logger
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.services import purge
 from app.services.subcontract_orders import run_bulk_delete
 
@@ -18,7 +18,7 @@ router = APIRouter()
 
 
 @router.get("/api/master/kinds")
-def kinds(request: Request, db: Session = Depends(get_db)):
+def kinds(request: Request, db: Session = Depends(get_read_db)):
     get_client_user(request, db)
     require_owner(request, db)
     return {"kinds": {k: v[2] for k, v in purge.KINDS.items()}}

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.ai.assistant_llm import llm_chat, llm_configured, llm_error_message, llm_json
 
 from app.constants.wallet_ai import ASSISTANT_SYSTEM, TOPUP_MAX_MAJOR, TOPUP_MIN_MAJOR
@@ -55,7 +55,7 @@ def get_my_wallet(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/wallet/transactions")
 def wallet_transactions(request: Request, limit: int = 100, direction: str = "",
-                        db: Session = Depends(get_db)):
+                        db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     query = db.query(models.DBWalletTransaction).filter(
         models.DBWalletTransaction.client_id == client.id
@@ -338,7 +338,7 @@ def capture_paypal(order_id: int, request: Request, db: Session = Depends(get_db
 
 
 @router.get("/api/wallet/topups")
-def list_topups(request: Request, limit: int = 50, db: Session = Depends(get_db)):
+def list_topups(request: Request, limit: int = 50, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     rows = db.query(models.DBTopUpOrder).filter(
         models.DBTopUpOrder.client_id == client.id
@@ -353,7 +353,7 @@ def list_topups(request: Request, limit: int = 50, db: Session = Depends(get_db)
 
 
 @router.get("/api/ai/status")
-def ai_status_detail(request: Request, db: Session = Depends(get_db)):
+def ai_status_detail(request: Request, db: Session = Depends(get_read_db)):
     """Whether the AI is usable at all.
 
     The UI asks once and hides its AI buttons if not, rather than offering
@@ -476,7 +476,7 @@ def generate_followup_email(request: Request, body: dict = None, db: Session = D
 
 
 @router.get("/api/ai/payroll-anomalies")
-def detect_payroll_anomalies(request: Request, db: Session = Depends(get_db)):
+def detect_payroll_anomalies(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     payslips = db.query(models.DBPayslip).filter(
         models.DBPayslip.client_id == client.id
@@ -510,7 +510,7 @@ def detect_payroll_anomalies(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/ai/attendance-alerts")
-def detect_attendance_alerts(request: Request, db: Session = Depends(get_db)):
+def detect_attendance_alerts(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     from datetime import timedelta
     thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
@@ -621,7 +621,7 @@ def ai_assistant(body: AssistantQuery, request: Request, db: Session = Depends(g
 
 
 @router.get("/api/ai/suggestions")
-def ai_suggestions(request: Request, db: Session = Depends(get_db)):
+def ai_suggestions(request: Request, db: Session = Depends(get_read_db)):
     """Starter questions worth asking, chosen from what is actually going on
     rather than a fixed list."""
     client = get_client_user(request, db)

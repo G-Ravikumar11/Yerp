@@ -8,7 +8,7 @@ from sqlalchemy import func as sqlfunc, or_
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.recruitment import (
     INTERVIEW_MODES,
@@ -53,7 +53,7 @@ router = APIRouter()
 
 @router.get("/api/recruitment/interviews/{interview_id}/reminders")
 def interview_reminders(interview_id: int, request: Request,
-                        db: Session = Depends(get_db)):
+                        db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     iv = db.query(models.DBInterview).filter(
         models.DBInterview.id == interview_id,
@@ -68,7 +68,7 @@ def interview_reminders(interview_id: int, request: Request,
 
 
 @router.get("/api/recruitment/jobs")
-def list_requisitions(request: Request, status: str = "", db: Session = Depends(get_db)):
+def list_requisitions(request: Request, status: str = "", db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     query = db.query(models.DBJobRequisition).filter(models.DBJobRequisition.client_id == client.id)
     if status:
@@ -126,7 +126,7 @@ def create_requisition(request: Request, body: JobRequisitionIn, db: Session = D
 
 
 @router.get("/api/recruitment/jobs/{job_id}")
-def get_requisition(job_id: int, request: Request, db: Session = Depends(get_db)):
+def get_requisition(job_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     job = db.query(models.DBJobRequisition).filter(
         models.DBJobRequisition.id == job_id, models.DBJobRequisition.client_id == client.id
@@ -200,7 +200,7 @@ def delete_requisition(job_id: int, request: Request, db: Session = Depends(get_
 
 
 @router.get("/api/recruitment/submissions/{sub_id}/interviews")
-def list_interviews(sub_id: int, request: Request, db: Session = Depends(get_db)):
+def list_interviews(sub_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     _get_submission_for_client(db, client.id, sub_id)
     rows = db.query(models.DBInterview).filter(
@@ -331,7 +331,7 @@ def delete_interview(iv_id: int, request: Request, db: Session = Depends(get_db)
 
 
 @router.get("/api/recruitment/interviews/upcoming")
-def upcoming_interviews(request: Request, days: int = 14, db: Session = Depends(get_db)):
+def upcoming_interviews(request: Request, days: int = 14, db: Session = Depends(get_read_db)):
     """Everything scheduled in the next N days, for the recruiter's day view."""
     client = get_client_user(request, db)
     now = datetime.now()
@@ -355,7 +355,7 @@ def upcoming_interviews(request: Request, days: int = 14, db: Session = Depends(
 
 
 @router.get("/api/recruitment/submissions/{sub_id}/offers")
-def list_offers(sub_id: int, request: Request, db: Session = Depends(get_db)):
+def list_offers(sub_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     _get_submission_for_client(db, client.id, sub_id)
     rows = db.query(models.DBOffer).filter(
@@ -489,7 +489,7 @@ def reopen_candidate(sub_id: int, request: Request, db: Session = Depends(get_db
 
 
 @router.get("/api/recruitment/submissions/{sub_id}/email-preview")
-def preview_candidate_email(sub_id: int, request: Request, template: str = "custom", db: Session = Depends(get_db)):
+def preview_candidate_email(sub_id: int, request: Request, template: str = "custom", db: Session = Depends(get_read_db)):
     """Let the recruiter read and edit the wording before anything is sent."""
     client = get_client_user(request, db)
     sub = _get_submission_for_client(db, client.id, sub_id)
@@ -561,7 +561,7 @@ def email_candidate(sub_id: int, request: Request, background_tasks: BackgroundT
 
 
 @router.get("/api/recruitment/analytics")
-def recruitment_analytics(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+def recruitment_analytics(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
     """Funnel, time-to-hire and offer acceptance - the numbers a head of talent
     is asked for."""
     client = get_client_user(request, db)
@@ -636,7 +636,7 @@ def recruitment_analytics(request: Request, job_id: int = 0, db: Session = Depen
 
 @router.get("/api/recruitment/talent-pool")
 def talent_pool(request: Request, q: str = "", stage: str = "", limit: int = 100,
-                db: Session = Depends(get_db)):
+                db: Session = Depends(get_read_db)):
     """Every candidate across every job, so a strong applicant for one role can
     be found again for another."""
     client = get_client_user(request, db)
@@ -679,7 +679,7 @@ def talent_pool(request: Request, q: str = "", stage: str = "", limit: int = 100
 
 
 @router.get("/api/recruitment/forms")
-def list_recruitment_forms(request: Request, db: Session = Depends(get_db)):
+def list_recruitment_forms(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     forms = db.query(models.DBRecruitmentForm).filter(
         models.DBRecruitmentForm.client_id == client.id
@@ -773,7 +773,7 @@ def delete_recruitment_form(form_id: int, request: Request, db: Session = Depend
 
 
 @router.get("/api/recruitment/forms/{form_id}/submissions")
-def list_form_submissions(form_id: int, request: Request, db: Session = Depends(get_db)):
+def list_form_submissions(form_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     form = db.query(models.DBRecruitmentForm).filter(
         models.DBRecruitmentForm.id == form_id, models.DBRecruitmentForm.client_id == client.id
@@ -826,7 +826,7 @@ def update_submission(sub_id: int, request: Request, body: dict, db: Session = D
 
 
 @router.get("/api/recruitment/forms/{form_id}/pipeline")
-def get_form_pipeline(form_id: int, request: Request, db: Session = Depends(get_db)):
+def get_form_pipeline(form_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     form = db.query(models.DBRecruitmentForm).filter(
         models.DBRecruitmentForm.id == form_id, models.DBRecruitmentForm.client_id == client.id
@@ -904,7 +904,7 @@ def move_submission_stage(sub_id: int, request: Request, body: dict, db: Session
 
 
 @router.get("/api/recruitment/submissions/{sub_id}/documents")
-def list_candidate_documents(sub_id: int, request: Request, db: Session = Depends(get_db)):
+def list_candidate_documents(sub_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     sub = db.query(models.DBFormSubmission).filter(
         models.DBFormSubmission.id == sub_id, models.DBFormSubmission.client_id == client.id
@@ -923,7 +923,7 @@ def list_candidate_documents(sub_id: int, request: Request, db: Session = Depend
 
 
 @router.get("/api/recruitment/documents/{doc_id}")
-def get_candidate_document(doc_id: int, request: Request, db: Session = Depends(get_db)):
+def get_candidate_document(doc_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     doc = db.query(models.DBCandidateDocument).filter(
         models.DBCandidateDocument.id == doc_id, models.DBCandidateDocument.client_id == client.id
@@ -977,7 +977,7 @@ def delete_candidate_document(doc_id: int, request: Request, db: Session = Depen
 
 
 @router.get("/api/recruitment/submissions/{sub_id}/history")
-def get_submission_history(sub_id: int, request: Request, db: Session = Depends(get_db)):
+def get_submission_history(sub_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     sub = db.query(models.DBFormSubmission).filter(
         models.DBFormSubmission.id == sub_id, models.DBFormSubmission.client_id == client.id
@@ -1121,7 +1121,7 @@ def rate_candidate(sub_id: int, request: Request, body: dict = None, db: Session
 
 
 @router.get("/api/recruitment/form/{token}")
-def get_public_form(token: str, db: Session = Depends(get_db)):
+def get_public_form(token: str, db: Session = Depends(get_read_db)):
     form = db.query(models.DBRecruitmentForm).filter(
         models.DBRecruitmentForm.form_token == token,
         models.DBRecruitmentForm.is_active == True,

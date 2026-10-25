@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.approvals import PO_APPROVED, PO_AWAITING_APPROVAL, PO_REJECTED
 from app.constants.common import GRN_EDITABLE, PURCHASE_ORDER_STATUSES
@@ -244,7 +244,7 @@ def grn_open_orders(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/grn")
-def list_goods_receipts(request: Request, db: Session = Depends(get_db),
+def list_goods_receipts(request: Request, db: Session = Depends(get_read_db),
                         purchase_order_id: int = 0, status: str = ""):
     client = require_erp_read(request, db)
     q = db.query(models.DBGoodsReceipt).filter(
@@ -466,13 +466,13 @@ def export_goods_receipt(grn_id: int, request: Request, db: Session = Depends(ge
 
 
 @router.get("/api/grn/{grn_id}")
-def get_goods_receipt(grn_id: int, request: Request, db: Session = Depends(get_db)):
+def get_goods_receipt(grn_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return grn_dict(db, grn_or_404(db, client.id, grn_id), detail=True)
 
 
 @router.get("/api/match/three-way")
-def three_way_match(request: Request, db: Session = Depends(get_db),
+def three_way_match(request: Request, db: Session = Depends(get_read_db),
                     job_id: int = 0, only_exceptions: bool = False):
     """Every order with what was ordered, what arrived and what was billed.
 
@@ -679,7 +679,7 @@ def bill_from_receipt(grn_id: int, request: Request, body: dict = None,
 
 
 @router.get("/api/suppliers")
-def list_suppliers(request: Request, q: str = "", db: Session = Depends(get_db)):
+def list_suppliers(request: Request, q: str = "", db: Session = Depends(get_read_db)):
     """The supplier master - and the names already on orders and bills that
     are not in it yet, so the history can be adopted in one click."""
     client = require_erp_read(request, db)
@@ -750,7 +750,7 @@ def adopt_suppliers(request: Request, body: dict = None, db: Session = Depends(g
 
 
 @router.get("/api/rfqs")
-def list_rfqs(request: Request, db: Session = Depends(get_db)):
+def list_rfqs(request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     rows = rfq_list_rows(db, client.id, db.query(models.DBRfq).filter(
         models.DBRfq.client_id == client.id).order_by(models.DBRfq.id.desc()).limit(300).all())
@@ -829,7 +829,7 @@ def edit_rfq(rfq_id: int, body: RfqIn, request: Request, db: Session = Depends(g
 
 
 @router.get("/api/rfqs/{rfq_id}")
-def get_rfq(rfq_id: int, request: Request, db: Session = Depends(get_db)):
+def get_rfq(rfq_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return comparative_statement(db, rfq_or_404(db, client.id, rfq_id))
 

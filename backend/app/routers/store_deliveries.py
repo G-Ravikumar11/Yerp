@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import log_audit
 from app.core.store_auth import store_actor
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.services import store_deliveries as svc
 
 router = APIRouter(prefix="/api/store/deliveries", tags=["store-deliveries"])
@@ -25,13 +25,13 @@ def pending(request: Request, supplier: str = "", project_id: int = 0, db: Sessi
 
 
 @router.get("/short-closed")
-def short_closed(request: Request, db: Session = Depends(get_db)):
+def short_closed(request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.inward.view")
     return {"items": svc.short_closed_orders(db, actor.client.id)}
 
 
 @router.get("/suppliers")
-def suppliers(request: Request, db: Session = Depends(get_db)):
+def suppliers(request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.inward.view")
     return {"items": svc.supplier_scorecard(db, actor.client.id)}
 

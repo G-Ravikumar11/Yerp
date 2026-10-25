@@ -23,7 +23,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.core.auth import require_erp_read, wo_actor
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.schemas.programme import (ProgrammeAddIn, ProgrammeBaselineIn, ProgrammeCalendarIn, ProgrammeCopyIn, ProgrammeEditIn,
                                    ProgrammeFromBoqIn, ProgrammeHolidayIn, ProgrammeImportIn, ProgrammeMoveIn, ProgrammePublicHolidaysIn, ProgrammeRestoreIn)
 from app.services.programme import (add_holiday, add_public_holidays, add_rows, copy_to_units, delete_holiday,
@@ -44,7 +44,7 @@ def _writer(request, db, job_id):
 
 
 @router.get("/api/jobs/{job_id}/programme")
-def job_programme(job_id: int, request: Request, as_of: str = "", db: Session = Depends(get_db)):
+def job_programme(job_id: int, request: Request, as_of: str = "", db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return programme_view(db, client, job_or_404(db, client.id, job_id), _d(as_of))
 
@@ -64,7 +64,7 @@ def programme_add(job_id: int, body: ProgrammeAddIn, request: Request, db: Sessi
 
 
 @router.get("/api/jobs/{job_id}/programme/boq")
-def programme_boq_tree(job_id: int, request: Request, db: Session = Depends(get_db)):
+def programme_boq_tree(job_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The project's BOQ as a tree to pick from, with what is already on the programme from each line."""
     client = require_erp_read(request, db)
     return programme_boq(db, client, job_or_404(db, client.id, job_id))
@@ -179,7 +179,7 @@ def programme_import_confirm(job_id: int, body: ProgrammeImportIn, request: Requ
     return {**programme_view(db, client, job), "message": message, "made": n, "links": links}
 
 @router.get("/api/jobs/{job_id}/programme/pdf")
-def programme_print(job_id: int, request: Request, db: Session = Depends(get_db)):
+def programme_print(job_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The programme on A3 landscape: the header block, the columns and the bar chart fitted to the page."""
     client = require_erp_read(request, db)
     job = job_or_404(db, client.id, job_id)

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.core import identity as identity_core, login_guard, passwords
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.common import ALLOW_SELF_REGISTRATION, GOOGLE_SIGNIN_SCOPES
 from app.core.audit import log_audit, log_login
@@ -167,7 +167,7 @@ def client_logout(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/client/me")
-def client_me(request: Request, db: Session = Depends(get_db)):
+def client_me(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     return {
         "id": client.id,
@@ -212,7 +212,7 @@ def upload_logo(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/client/logo")
-def get_logo(request: Request, db: Session = Depends(get_db)):
+def get_logo(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     return {"logo_url": client.logo_url or ""}
 
@@ -460,7 +460,7 @@ async def yahoo_signin_callback(request: Request, db: Session = Depends(get_db))
 
 
 @router.get("/api/auth/me")
-def get_current_user(request: Request, db: Session = Depends(get_db)):
+def get_current_user(request: Request, db: Session = Depends(get_read_db)):
     user = request.session.get('user')
     client_id = request.session.get('client_id')
     if user:
@@ -525,7 +525,7 @@ def forgot_password(body: ForgotPasswordIn, background_tasks: BackgroundTasks,
 
 
 @router.get("/api/client/reset-password")
-def check_reset_token(token: str = "", db: Session = Depends(get_db)):
+def check_reset_token(token: str = "", db: Session = Depends(get_read_db)):
     """So the page can say the link is dead before someone types a new password."""
     return {"valid": find_valid_reset(db, token) is not None}
 

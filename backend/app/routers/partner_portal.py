@@ -6,7 +6,7 @@ from sqlalchemy import func as sqlfunc
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.common import PORTAL_INVOICE_TYPES
 from app.core import login_guard
@@ -50,7 +50,7 @@ router = APIRouter()
 
 
 @router.get("/api/portal/invite")
-def portal_invite_check(token: str = "", db: Session = Depends(get_db)):
+def portal_invite_check(token: str = "", db: Session = Depends(get_read_db)):
     """Who the link is for, so the page can greet them before they choose a
     password - and say plainly when it has run out."""
     u = db.query(models.DBPortalUser).filter(
@@ -111,7 +111,7 @@ def portal_logout(request: Request):
 
 
 @router.get("/api/portal/me")
-def portal_me(request: Request, db: Session = Depends(get_db)):
+def portal_me(request: Request, db: Session = Depends(get_read_db)):
     u, client, party, name = get_portal_user(request, db)
     return {"name": u.name or "", "email": u.email, "party_type": u.party_type, "party": name,
             "company": client.company_name or "", "company_logo": client.logo_url or "",
@@ -119,7 +119,7 @@ def portal_me(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/portal/summary")
-def portal_summary(request: Request, db: Session = Depends(get_db)):
+def portal_summary(request: Request, db: Session = Depends(get_read_db)):
     u, client, party, name = get_portal_user(request, db)
     orders = _portal_orders(db, u, party, name)
     bills = _portal_bills(db, u, party, name)
@@ -145,13 +145,13 @@ def portal_summary(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/portal/orders")
-def portal_orders(request: Request, db: Session = Depends(get_db)):
+def portal_orders(request: Request, db: Session = Depends(get_read_db)):
     u, client, party, name = get_portal_user(request, db)
     return {"orders": _portal_orders(db, u, party, name)}
 
 
 @router.get("/api/portal/orders/{order_id}")
-def portal_order(order_id: int, request: Request, db: Session = Depends(get_db)):
+def portal_order(order_id: int, request: Request, db: Session = Depends(get_read_db)):
     u, client, party, name = get_portal_user(request, db)
     o = next((x for x in _portal_orders(db, u, party, name) if x["id"] == order_id), None)
     if not o:
@@ -172,7 +172,7 @@ def portal_order(order_id: int, request: Request, db: Session = Depends(get_db))
 
 
 @router.get("/api/portal/bills")
-def portal_bills(request: Request, db: Session = Depends(get_db)):
+def portal_bills(request: Request, db: Session = Depends(get_read_db)):
     u, client, party, name = get_portal_user(request, db)
     return {"bills": _portal_bills(db, u, party, name)}
 
@@ -201,14 +201,14 @@ def portal_accept_bill(bill_id: int, request: Request, db: Session = Depends(get
 
 
 @router.get("/api/portal/payments")
-def portal_payments(request: Request, db: Session = Depends(get_db)):
+def portal_payments(request: Request, db: Session = Depends(get_read_db)):
     u, client, party, name = get_portal_user(request, db)
     return {"payments": _portal_payments(db, u, party, name)}
 
 
 @router.get("/api/portal/statement")
 def portal_statement(request: Request, date_from: str = "", date_to: str = "",
-                     db: Session = Depends(get_db)):
+                     db: Session = Depends(get_read_db)):
     """Their account with us: each bill, each payment, and the balance -
     positive is what we owe them."""
     u, client, party, name = get_portal_user(request, db)

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.common import BUDGET_REPORT_HEADERS
 from app.constants.subcontract_orders import WO_COLUMNS, WO_HEADERS
@@ -255,7 +255,7 @@ async def erp_wo_upload(request: Request, file: UploadFile = File(...),
 
 @router.get("/api/erp/work-orders")
 def erp_list_work_orders(request: Request, job_id: int = 0,
-                         db: Session = Depends(get_db)):
+                         db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     query = db.query(models.DBWorkOrder).filter(models.DBWorkOrder.client_id == client.id)
     if job_id:
@@ -275,7 +275,7 @@ def erp_list_work_orders(request: Request, job_id: int = 0,
 
 
 @router.get("/api/erp/work-orders/{wo_id}")
-def erp_get_work_order(wo_id: int, request: Request, db: Session = Depends(get_db)):
+def erp_get_work_order(wo_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return work_order_to_dict(db, work_order_or_404(db, client.id, wo_id), detail=True)
 
@@ -340,7 +340,7 @@ def erp_wo_decide(wo_id: int, body: WoDecisionIn, request: Request, db: Session 
 
 
 @router.get("/api/erp/work-orders/{wo_id}/delete-preview")
-def erp_delete_work_order_preview(wo_id: int, request: Request, db: Session = Depends(get_db)):
+def erp_delete_work_order_preview(wo_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     require_owner(request, db)
     wo = work_order_or_404(db, client.id, wo_id)
@@ -403,7 +403,7 @@ def erp_delete_work_order(wo_id: int, request: Request, db: Session = Depends(ge
 
 
 @router.get("/api/erp/work-orders/{wo_id}/budget-report")
-def erp_budget_report(wo_id: int, request: Request, db: Session = Depends(get_db)):
+def erp_budget_report(wo_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return budget_report(db, client, work_order_or_404(db, client.id, wo_id))
 
@@ -524,7 +524,7 @@ def erp_work_order_xlsx(wo_id: int, request: Request, db: Session = Depends(get_
 
 @router.get("/api/erp/work-orders/{wo_id}/statement")
 def erp_work_order_statement(wo_id: int, request: Request,
-                             db: Session = Depends(get_db)):
+                             db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return work_order_statement(db, client, work_order_or_404(db, client.id, wo_id))
 

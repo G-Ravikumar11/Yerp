@@ -12,7 +12,7 @@ import holidays
 from app import models
 from app.core.audit import log_audit
 from app.core.auth import get_client_user, require_owner
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 router = APIRouter()
 
@@ -44,7 +44,7 @@ def _custom_dict(h):
 
 
 @router.get("/api/calendar/holidays")
-def public_holidays(request: Request, year: int = 0, db: Session = Depends(get_db)):
+def public_holidays(request: Request, year: int = 0, db: Session = Depends(get_read_db)):
     """One year's holidays in date order (this year when none is given): India's public
     holidays, and the days this business has marked off itself, which carry `custom` and an `id`.
 

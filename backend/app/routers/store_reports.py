@@ -21,7 +21,7 @@ from app import models
 from app.core.audit import log_audit
 from app.core.permissions import permissions_for
 from app.core.store_auth import store_actor
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.documents import form_pdf
 from app.documents.store import report_forms
 from app.models.store_core import DBStore, DBStoreItemSettings, DBStoreUserAssignment
@@ -171,7 +171,7 @@ def _saved_dict(r):
 
 
 @router.get("")
-def index(request: Request, db: Session = Depends(get_db)):
+def index(request: Request, db: Session = Depends(get_read_db)):
     """The slice's front door: the reports this company has saved."""
     actor = store_actor(request, db, "store.reports.view")
     rows = db.query(DBStoreSavedReport).filter(DBStoreSavedReport.client_id == actor.client.id).order_by(DBStoreSavedReport.name).all()
@@ -247,7 +247,7 @@ def _norm_check(db, actor, body, norm_id=None):
 
 
 @router.get("/norms")
-def list_norms(request: Request, project_id: int = 0, boq_item_id: int = 0, db: Session = Depends(get_db)):
+def list_norms(request: Request, project_id: int = 0, boq_item_id: int = 0, db: Session = Depends(get_read_db)):
     """The material norms of a project's BOQ items (or of one BOQ item)."""
     actor = store_actor(request, db, "store.reports.view")
     _project(db, actor, project_id)
@@ -300,7 +300,7 @@ def delete_norm(norm_id: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/pick/boq-items")
-def pick_boq_items(project_id: int, request: Request, q: str = "", db: Session = Depends(get_db)):
+def pick_boq_items(project_id: int, request: Request, q: str = "", db: Session = Depends(get_read_db)):
     """A project's priced BOQ items (current revision), for setting norms against."""
     actor = store_actor(request, db, "store.reports.view")
     _project(db, actor, project_id)
@@ -320,7 +320,7 @@ def pick_boq_items(project_id: int, request: Request, q: str = "", db: Session =
 # --- project material cost (the integration read) ------------------------------------------------------------------------------
 
 @router.get("/project-cost/{project_id}")
-def project_cost(project_id: int, request: Request, from_date: str = "", to_date: str = "", db: Session = Depends(get_db)):
+def project_cost(project_id: int, request: Request, from_date: str = "", to_date: str = "", db: Session = Depends(get_read_db)):
     """Material the stores issued to a project, by cost head, work order and BOQ item: the same figures the project's costing reads."""
     actor = store_actor(request, db, "store.reports.view")
     job = _project(db, actor, project_id)
@@ -340,7 +340,7 @@ def project_cost(project_id: int, request: Request, from_date: str = "", to_date
 # --- the reports ----------------------------------------------------------------------------------------------------------------
 
 @router.get("/{report}")
-def get_report(report: str, request: Request, db: Session = Depends(get_db)):
+def get_report(report: str, request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.reports.view")
     data, filters = run_report(db, actor, report, _params(request))
     return jsonable({"report": report, "filters": filters, **data})

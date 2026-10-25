@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.core.audit import log_audit
 from app.core.store_auth import store_actor
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.models.store_core import DBStore, DBStoreItemSettings, DBStoreStockBalance
 from app.models.store_extras import DBStoreItemLevel
 from app.routers.store_masters import visible_store_ids
@@ -67,7 +67,7 @@ def _item(db, actor, item_id):
 
 
 @router.get("/{store_id}")
-def store_levels_list(store_id: int, request: Request, db: Session = Depends(get_db)):
+def store_levels_list(store_id: int, request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.masters.view")
     store = _store(db, actor, store_id)
     rows = db.query(DBStoreItemLevel).filter(DBStoreItemLevel.store_id == store.id).all()

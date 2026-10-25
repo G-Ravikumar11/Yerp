@@ -11,7 +11,7 @@ from app import models
 from app.core.audit import log_audit
 from app.core.permissions import permissions_for
 from app.core.store_auth import store_actor
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.models.store_core import DBStore, DBStoreUserAssignment
 from app.models.store_extras import DBStoreRejection
 from app.models.store_inward import DBStoreGrn
@@ -52,7 +52,7 @@ def _dicts(db, rows, client_id):
 
 
 @router.get("")
-def list_rejections(request: Request, status: str = "HELD", store_id: int = 0, db: Session = Depends(get_db)):
+def list_rejections(request: Request, status: str = "HELD", store_id: int = 0, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.inward.view")
     q = db.query(DBStoreRejection).filter(DBStoreRejection.client_id == actor.client.id, DBStoreRejection.status != "VOID")
     seen = _visible(db, actor)

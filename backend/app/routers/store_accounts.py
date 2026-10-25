@@ -14,7 +14,7 @@ from app.core.audit import log_audit
 from app.core.auth import require_items_access, wo_actor
 from app.core.permissions import permissions_for
 from app.core.store_auth import store_actor
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.models.store_control import DBStoreScrap
 from app.models.store_core import DBStoreUserAssignment
 from app.services import store_accounts as svc
@@ -65,14 +65,14 @@ def get_summary(request: Request, as_on: str = "", db: Session = Depends(get_db)
 
 
 @router.get("/not-billed")
-def get_not_billed(request: Request, db: Session = Depends(get_db)):
+def get_not_billed(request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.reports.view")
     require_items_access(request, db, ACCOUNTS_VIEW)
     return {"items": svc.grni(db, actor.client.id)}
 
 
 @router.get("/scrap")
-def get_scrap(request: Request, db: Session = Depends(get_db)):
+def get_scrap(request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.reports.view")
     return {"items": svc.scrap_sales(db, actor.client.id, _visible(db, actor))}
 
@@ -121,7 +121,7 @@ def adjust_cross_charge(charge_id: int, body: AdjustIn, request: Request, db: Se
 
 
 @router.get("/price-variances")
-def get_variances(request: Request, db: Session = Depends(get_db)):
+def get_variances(request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.reports.view")
     require_items_access(request, db, ACCOUNTS_VIEW)
     return {"items": svc.price_variances(db, actor.client.id)}

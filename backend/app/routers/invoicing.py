@@ -11,7 +11,7 @@ from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.invoicing import (
     EWAY_DOC_TYPES,
@@ -96,7 +96,7 @@ router = APIRouter()
 
 
 @router.get("/api/invoices")
-def get_invoices(request: Request, db: Session = Depends(get_db)):
+def get_invoices(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     invoices = db.query(models.DBInvoice).filter(models.DBInvoice.client_id == client.id).order_by(models.DBInvoice.id.desc()).all()
     today = datetime.now().date()
@@ -127,7 +127,7 @@ def get_invoices(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/invoices/{number}")
-def get_invoice(number: str, request: Request, db: Session = Depends(get_db)):
+def get_invoice(number: str, request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     inv = db.query(models.DBInvoice).filter(models.DBInvoice.number == number, models.DBInvoice.client_id == client.id).first()
     if not inv:
@@ -199,7 +199,7 @@ def get_invoice(number: str, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/next-invoice-number")
-def get_next_invoice_number(request: Request, db: Session = Depends(get_db)):
+def get_next_invoice_number(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     return {"next_number": next_sequence_number(
         db, models.DBInvoice, client.id, invoice_prefix_for(db, client.id)),
@@ -519,7 +519,7 @@ def send_invoice_whatsapp(number: str, background_tasks: BackgroundTasks, reques
 
 
 @router.get("/api/invoices/{number}/open-stats")
-def get_open_stats(number: str, request: Request, db: Session = Depends(get_db)):
+def get_open_stats(number: str, request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     inv = db.query(models.DBInvoice).filter(models.DBInvoice.number == number, models.DBInvoice.client_id == client.id).first()
     if not inv:
@@ -533,7 +533,7 @@ def get_open_stats(number: str, request: Request, db: Session = Depends(get_db))
 
 
 @router.get("/api/bills")
-def list_bills(request: Request, db: Session = Depends(get_db)):
+def list_bills(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     bills = db.query(models.DBBill).filter(models.DBBill.client_id == client.id).order_by(models.DBBill.id.desc()).all()
     submitters = {
@@ -603,7 +603,7 @@ def create_bill(request: Request, body: dict = None, db: Session = Depends(get_d
 
 
 @router.get("/api/bills/{bill_id}")
-def get_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
+def get_bill(bill_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     bill = db.query(models.DBBill).filter(models.DBBill.id == bill_id, models.DBBill.client_id == client.id).first()
     if not bill:
@@ -704,7 +704,7 @@ def mark_bill_paid(bill_id: int, request: Request, body: dict = None, db: Sessio
 
 
 @router.get("/api/next-bill-number")
-def next_bill_number(request: Request, db: Session = Depends(get_db)):
+def next_bill_number(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, ("bills.view_all", "bills.submit"))
     last = db.query(models.DBBill).filter(models.DBBill.client_id == client.id).order_by(models.DBBill.id.desc()).first()
     if last and last.number:
@@ -874,7 +874,7 @@ def update_invoice(number: str, invoice: InvoiceCreate, request: Request, db: Se
 
 
 @router.get("/api/recurring-invoices")
-def list_recurring(request: Request, db: Session = Depends(get_db)):
+def list_recurring(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     rows = db.query(models.DBRecurringInvoice).filter(
         models.DBRecurringInvoice.client_id == client.id
@@ -976,7 +976,7 @@ def delete_recurring(rec_id: int, request: Request, db: Session = Depends(get_db
 
 
 @router.get("/api/invoices/{number}/reminders")
-def invoice_reminders(number: str, request: Request, db: Session = Depends(get_db)):
+def invoice_reminders(number: str, request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     inv = db.query(models.DBInvoice).filter(
         models.DBInvoice.number == number, models.DBInvoice.client_id == client.id
@@ -991,13 +991,13 @@ def invoice_reminders(number: str, request: Request, db: Session = Depends(get_d
 
 
 @router.get("/api/next-quote-number")
-def get_next_quote_number(request: Request, db: Session = Depends(get_db)):
+def get_next_quote_number(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     return {"next_number": next_sequence_number(db, models.DBQuote, client.id, "QU-")}
 
 
 @router.get("/api/gst/settings")
-def gst_settings(request: Request, db: Session = Depends(get_db)):
+def gst_settings(request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     code = our_state(db, client.id)
     return {"gstin": client.gstin or "", "state_code": code,
@@ -1024,7 +1024,7 @@ def set_gst_settings(body: CompanyGstIn, request: Request, db: Session = Depends
 
 @router.get("/api/gst/outward")
 def gst_outward(request: Request, date_from: str = "", date_to: str = "",
-                db: Session = Depends(get_db)):
+                db: Session = Depends(get_read_db)):
     """What we charged, by month and rate, split the way GSTR-1 wants it.
 
     Outward supplies are the client's certified RA bills and the invoices.
@@ -1090,7 +1090,7 @@ def gst_outward(request: Request, date_from: str = "", date_to: str = "",
 
 @router.get("/api/gst/inward")
 def gst_inward(request: Request, date_from: str = "", date_to: str = "",
-               db: Session = Depends(get_db)):
+               db: Session = Depends(get_read_db)):
     """What we were charged - the input credit side. Subcontractor bills and
     supplier bills."""
     client = require_items_access(request, db, "bills.view_all")
@@ -1189,14 +1189,14 @@ EWAY_READ = ("accounts.manage", "stores.manage", "stores.receive", "bills.view_a
 
 
 @router.get("/api/eway-places")
-def eway_place_list(request: Request, db: Session = Depends(get_db)):
+def eway_place_list(request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return {"places": eway_places(db, client), "sub_types": EWAY_SUB_TYPES,
             "doc_types": EWAY_DOC_TYPES, "modes": EWAY_MODES, "threshold": EWAY_THRESHOLD}
 
 
 @router.get("/api/eway-bills")
-def list_eway_bills(request: Request, status: str = "", db: Session = Depends(get_db)):
+def list_eway_bills(request: Request, status: str = "", db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, EWAY_READ)
     q = db.query(models.DBEwayBill).filter(models.DBEwayBill.client_id == client.id)
     if status:
@@ -1252,7 +1252,7 @@ def create_eway_bill(body: EwayIn, request: Request, db: Session = Depends(get_d
 
 
 @router.get("/api/eway-bills/{eid}")
-def get_eway_bill(eid: int, request: Request, db: Session = Depends(get_db)):
+def get_eway_bill(eid: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, EWAY_READ)
     return {"eway_bill": eway_dict(db, eway_or_404(db, client.id, eid), detail=True)}
 
@@ -1272,7 +1272,7 @@ def update_eway_bill(eid: int, body: EwayIn, request: Request, db: Session = Dep
 
 
 @router.get("/api/eway-bills/{eid}/json")
-def eway_bill_json(eid: int, request: Request, db: Session = Depends(get_db)):
+def eway_bill_json(eid: int, request: Request, db: Session = Depends(get_read_db)):
     """The file for the portal's bulk generation."""
     client = require_items_access(request, db, EWAY_READ)
     e = eway_or_404(db, client.id, eid)
@@ -1347,7 +1347,7 @@ def eway_cancel(eid: int, body: EwayCancelIn, request: Request, db: Session = De
 
 
 @router.get("/api/einvoice/irns")
-def list_irns(request: Request, db: Session = Depends(get_db)):
+def list_irns(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     rows = db.query(models.DBEinvoiceIrn).filter(models.DBEinvoiceIrn.client_id == client.id).order_by(
         models.DBEinvoiceIrn.id.desc()).limit(500).all()
@@ -1355,7 +1355,7 @@ def list_irns(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/einvoice/irns/{irn_id}/qr.svg")
-def irn_qr(irn_id: int, request: Request, db: Session = Depends(get_db)):
+def irn_qr(irn_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     row = db.query(models.DBEinvoiceIrn).filter(models.DBEinvoiceIrn.id == irn_id,
                                                 models.DBEinvoiceIrn.client_id == client.id).first()
@@ -1391,7 +1391,7 @@ def cancel_irn(irn_id: int, request: Request, body: dict = None, db: Session = D
 
 
 @router.get("/api/einvoice/{doc_type}/{doc_id}")
-def einvoice_status(doc_type: str, doc_id: int, request: Request, db: Session = Depends(get_db)):
+def einvoice_status(doc_type: str, doc_id: int, request: Request, db: Session = Depends(get_read_db)):
     """Everything the e-invoice box shows: whether the bill can go to the
     portal, what is missing if not, and the IRN if it has been."""
     client = require_erp_read(request, db)
@@ -1406,7 +1406,7 @@ def einvoice_status(doc_type: str, doc_id: int, request: Request, db: Session = 
 
 
 @router.get("/api/einvoice/{doc_type}/{doc_id}/json")
-def einvoice_file(doc_type: str, doc_id: int, request: Request, db: Session = Depends(get_db)):
+def einvoice_file(doc_type: str, doc_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     doc, payload, problems = einvoice_document(db, client, doc_type, doc_id)
     if problems:

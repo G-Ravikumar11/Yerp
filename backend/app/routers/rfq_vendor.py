@@ -31,7 +31,7 @@ from app.core.audit import log_audit
 from app.core.auth import require_erp_read, wo_actor
 from app.core.notifications import notify
 from app.core.security import rate_limiter
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.services.crm import norm_name
 from app.services.procurement import _rfq_lines, rfq_or_404
 from app.services.rfq_quotes import (invite_dict, invites_of, keep_document, new_token, save_quote,
@@ -53,7 +53,7 @@ def _now():
 # --- the buyer ------------------------------------------------------------------------------------------------------
 
 @router.get("/api/rfqs/{rfq_id}/statement")
-def rfq_statement_for_screen(rfq_id: int, request: Request, db: Session = Depends(get_db)):
+def rfq_statement_for_screen(rfq_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return statement_for_screen(db, client.id, rfq_or_404(db, client.id, rfq_id))
 
@@ -110,7 +110,7 @@ def keep_quote_document(rfq_id: int, quote_id: int, request: Request, file: Uplo
 
 
 @router.get("/api/rfqs/{rfq_id}/quotes/{quote_id}/document-text")
-def quote_document_text(rfq_id: int, quote_id: int, request: Request, db: Session = Depends(get_db)):
+def quote_document_text(rfq_id: int, quote_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The supplier's quotation as text, to read beside the quote when it is a Word, Excel or other file a browser
     cannot show (a PDF or a photo is shown as it is)."""
     from app.ai import doc_text

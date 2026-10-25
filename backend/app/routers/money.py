@@ -7,7 +7,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.client_billing import RA_CREDIT_DAYS
 from app.constants.money import COST_CATEGORIES, EXPENSE_HEADS, INCOME_HEADS, MONEY_MODES, PARTY_TYPES
@@ -58,7 +58,7 @@ router = APIRouter()
 
 
 @router.get("/api/reports/profit-loss")
-def profit_loss_report(request: Request, db: Session = Depends(get_db)):
+def profit_loss_report(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "reports.view")
     base = base_currency(client)
     invoices = db.query(models.DBInvoice).filter(models.DBInvoice.client_id == client.id).all()
@@ -97,7 +97,7 @@ def profit_loss_report(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/reports/balance-sheet")
-def balance_sheet_report(request: Request, db: Session = Depends(get_db)):
+def balance_sheet_report(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "reports.view")
     base = base_currency(client)
     invoices = db.query(models.DBInvoice).filter(models.DBInvoice.client_id == client.id).all()
@@ -128,7 +128,7 @@ def balance_sheet_report(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/reports/cash-summary")
-def cash_summary_report(request: Request, db: Session = Depends(get_db)):
+def cash_summary_report(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "reports.view")
     base = base_currency(client)
     invoices = db.query(models.DBInvoice).filter(models.DBInvoice.client_id == client.id).all()
@@ -162,7 +162,7 @@ def cash_summary_report(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/reports/aged-receivables")
-def aged_receivables(request: Request, db: Session = Depends(get_db)):
+def aged_receivables(request: Request, db: Session = Depends(get_read_db)):
     """Outstanding balances bucketed by how late they are - the report every
     finance team asks for first."""
     client = require_items_access(request, db, "reports.view")
@@ -319,7 +319,7 @@ def costs_by_project_xlsx(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/money/receivables")
-def receivables(request: Request, db: Session = Depends(get_db)):
+def receivables(request: Request, db: Session = Depends(get_read_db)):
     """What customers owe, and how long they have owed it."""
     client = require_items_access(request, db, "bills.view_all")
     today = date.today()
@@ -418,7 +418,7 @@ def receivables(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/money/payables")
-def payables(request: Request, db: Session = Depends(get_db)):
+def payables(request: Request, db: Session = Depends(get_read_db)):
     """What the business owes: supplier bills, and bills it has certified.
 
     A certified RA bill is a promise already made - the work was measured and
@@ -529,7 +529,7 @@ def payables(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/money/retention")
-def retention_register(request: Request, db: Session = Depends(get_db)):
+def retention_register(request: Request, db: Session = Depends(get_read_db)):
     """Money already earned that is being held back.
 
     Held on every certified bill, invoiced on none of them. Half is normally
@@ -641,7 +641,7 @@ def retention_export(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/bank-accounts")
-def list_bank_accounts(request: Request, db: Session = Depends(get_db)):
+def list_bank_accounts(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     rows = db.query(models.DBBankAccount).filter(
         models.DBBankAccount.client_id == client.id).order_by(models.DBBankAccount.id).all()
@@ -829,7 +829,7 @@ def require_view(emp):
 
 
 @router.get("/api/payment-requests/rules")
-def payment_rules(request: Request, db: Session = Depends(get_db)):
+def payment_rules(request: Request, db: Session = Depends(get_read_db)):
     client, emp = _request_reader(request, db)
     rules = preq.approval_rules(db, client.id)
     master = emp is None and _colleague(request, db) is None
@@ -854,7 +854,7 @@ def save_payment_rules(body: PaymentRulesIn, request: Request, db: Session = Dep
 
 
 @router.get("/api/payment-requests")
-def list_payment_requests(request: Request, status: str = "", db: Session = Depends(get_db)):
+def list_payment_requests(request: Request, status: str = "", db: Session = Depends(get_read_db)):
     client, _ = _request_reader(request, db)
     q = db.query(models.DBPaymentRequest).filter(models.DBPaymentRequest.client_id == client.id)
     if status == "open":
@@ -941,7 +941,7 @@ def _jobs(db, client_id, ids):
 
 
 @router.get("/api/site-cash")
-def site_cash_view(request: Request, account_id: int = 0, status: str = "", db: Session = Depends(get_db)):
+def site_cash_view(request: Request, account_id: int = 0, status: str = "", db: Session = Depends(get_read_db)):
     """The cash boxes this person sees - every one for accounts, their own for a site engineer - with what each should
     hold, what is waiting to be checked, and the payments made out of them."""
     client, emp = session_person(request, db)
@@ -1049,7 +1049,7 @@ def cash_box_statement(account_id: int, request: Request, date_from: str = "", d
 # --- bank reconciliation and the cheque register ----------------------------------------------------------------------
 
 @router.get("/api/bank-reco/{account_id}")
-def bank_reco_view(account_id: int, request: Request, as_of: str = "", db: Session = Depends(get_db)):
+def bank_reco_view(account_id: int, request: Request, as_of: str = "", db: Session = Depends(get_read_db)):
     """One bank account against its statement: the reconciliation on a day, the statement lines not yet matched (with
     the entries each could be), and the entries the bank has not moved yet."""
     client = require_items_access(request, db, "bills.view_all")
@@ -1195,7 +1195,7 @@ def brs_pdf(account_id: int, request: Request, as_of: str = "", db: Session = De
 
 
 @router.get("/api/cheques")
-def cheque_register(request: Request, status: str = "", account_id: int = 0, db: Session = Depends(get_db)):
+def cheque_register(request: Request, status: str = "", account_id: int = 0, db: Session = Depends(get_read_db)):
     """Every cheque written or received: number, date, party, amount, account, and where it stands."""
     client = require_items_access(request, db, "bills.view_all")
     q = db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.client_id == client.id, models.DBMoneyEntry.mode == "Cheque")
@@ -1231,7 +1231,7 @@ def _tally_period(date_from, date_to):
 
 
 @router.get("/api/tally/settings")
-def tally_settings(request: Request, db: Session = Depends(get_db)):
+def tally_settings(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     names = tally.ledger_names(db, client.id)
     return {"company": tenant_setting(db, client.id, "tally_company", "") or "",
@@ -1293,7 +1293,7 @@ def tally_vouchers(request: Request, date_from: str = "", date_to: str = "", db:
 
 
 @router.get("/api/money/heads")
-def money_heads(request: Request, db: Session = Depends(get_db)):
+def money_heads(request: Request, db: Session = Depends(get_read_db)):
     """The heads an expense voucher or a sundry receipt is booked under."""
     require_items_access(request, db, "bills.view_all")
     return {"expense": list(EXPENSE_HEADS), "income": list(INCOME_HEADS)}
@@ -1386,7 +1386,7 @@ def void_money(entry_id: int, request: Request, body: dict = None,
 
 @router.get("/api/money/entries")
 def list_money(request: Request, direction: str = "", party: str = "", job_id: int = 0,
-               date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+               date_from: str = "", date_to: str = "", db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     q = db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.client_id == client.id)
     if direction:
@@ -1416,7 +1416,7 @@ def list_money(request: Request, direction: str = "", party: str = "", job_id: i
 
 
 @router.get("/api/ledger/parties")
-def ledger_parties(request: Request, party_type: str = "", db: Session = Depends(get_db)):
+def ledger_parties(request: Request, party_type: str = "", db: Session = Depends(get_read_db)):
     """Every party, what has been billed with them, what has moved, and the
     balance - owed to us for a client, owed by us for everybody else."""
     client = require_items_access(request, db, "bills.view_all")
@@ -1447,7 +1447,7 @@ def ledger_parties(request: Request, party_type: str = "", db: Session = Depends
 
 @router.get("/api/ledger/statement")
 def ledger_statement(request: Request, party_type: str, party: str,
-                     date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+                     date_from: str = "", date_to: str = "", db: Session = Depends(get_read_db)):
     """A statement of account for one party, oldest first, with the balance
     after every line - the document that is sent to a supplier to agree what
     is owed, and the one a client is sent before a payment is chased."""
@@ -1490,7 +1490,7 @@ def ledger_statement(request: Request, party_type: str, party: str,
 
 @router.get("/api/money/book")
 def money_book(request: Request, account_id: int = 0, date_from: str = "", date_to: str = "",
-               db: Session = Depends(get_db)):
+               db: Session = Depends(get_read_db)):
     """The bank book or the cash book: every movement through one account,
     in date order, with the balance after each."""
     client = require_items_access(request, db, "bills.view_all")
@@ -1537,7 +1537,7 @@ def cash_book(db, client_id, account, date_from="", date_to=""):
 
 
 @router.get("/api/money/outstanding/{doc_type}/{doc_id}")
-def doc_outstanding(doc_type: str, doc_id: int, request: Request, db: Session = Depends(get_db)):
+def doc_outstanding(doc_type: str, doc_id: int, request: Request, db: Session = Depends(get_read_db)):
     """What is still owed on one bill - for the payment box to open with."""
     client = require_items_access(request, db, "bills.view_all")
     doc, worth = _doc_for_any(db, client.id, doc_type, doc_id)

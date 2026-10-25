@@ -22,7 +22,7 @@ from app import models
 from app.core.audit import log_audit
 from app.core.permissions import permissions_for
 from app.core.store_auth import store_actor, store_errors
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.documents import form_pdf
 from app.documents.store.control_forms import FORMS
 from app.models.store_control import COUNT, SCRAP, TRANSFER, DBStoreControlLog, DBStoreCount, DBStoreScrap, DBStoreTransfer
@@ -228,7 +228,7 @@ def index(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/pick/writeoffs")
-def pick_writeoffs(store_id: int, request: Request, db: Session = Depends(get_db)):
+def pick_writeoffs(store_id: int, request: Request, db: Session = Depends(get_read_db)):
     """Open write-off requests (raised by outward returns) for a store, to be dealt with on a scrap document."""
     actor = store_actor(request, db, "store.control.view")
     _my_store(db, actor, store_id)
@@ -238,7 +238,7 @@ def pick_writeoffs(store_id: int, request: Request, db: Session = Depends(get_db
 
 
 @router.get("/pick/stores")
-def pick_stores(request: Request, db: Session = Depends(get_db)):
+def pick_stores(request: Request, db: Session = Depends(get_read_db)):
     """Every active store of the company, for choosing where a transfer goes. A transfer may be sent to a store the sender does not
     work in; only receiving it needs access to that store."""
     actor = store_actor(request, db, "store.control.view")
@@ -247,7 +247,7 @@ def pick_stores(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/in-transit")
-def in_transit(request: Request, project_id: int = 0, db: Session = Depends(get_db)):
+def in_transit(request: Request, project_id: int = 0, db: Session = Depends(get_read_db)):
     """Stock sent from one store and not yet received at the other, with what it is worth."""
     actor = store_actor(request, db, "store.control.view")
     seen = _visible(db, actor)
@@ -268,7 +268,7 @@ def in_transit(request: Request, project_id: int = 0, db: Session = Depends(get_
 
 
 @router.get("/count-variances")
-def count_variances(store_id: int, request: Request, from_date: str = "", to_date: str = "", db: Session = Depends(get_db)):
+def count_variances(store_id: int, request: Request, from_date: str = "", to_date: str = "", db: Session = Depends(get_read_db)):
     """What posted stock counts found against the books at a store."""
     actor = store_actor(request, db, "store.control.view")
     _my_store(db, actor, store_id)
@@ -282,7 +282,7 @@ def count_variances(store_id: int, request: Request, from_date: str = "", to_dat
 
 
 @router.get("/scrap-realisation")
-def scrap_realisation(request: Request, project_id: int = 0, from_date: str = "", to_date: str = "", db: Session = Depends(get_db)):
+def scrap_realisation(request: Request, project_id: int = 0, from_date: str = "", to_date: str = "", db: Session = Depends(get_read_db)):
     """Scrap sold or written off: what it was worth in the books against what it fetched."""
     actor = store_actor(request, db, "store.control.view")
     if project_id and not db.query(models.DBJob.id).filter(models.DBJob.id == project_id, models.DBJob.client_id == actor.client.id).first():

@@ -6,7 +6,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.core import identity
 from app.core.dates import _parse_date
@@ -16,7 +16,7 @@ router = APIRouter()
 
 
 @router.get("/api/public/jobs/{client_ref}")
-def public_job_board(client_ref: str, db: Session = Depends(get_db)):
+def public_job_board(client_ref: str, db: Session = Depends(get_read_db)):
     """Open roles for a company's careers page. Public: only published jobs,
     and never anything that identifies internal staff."""
     try:
@@ -64,7 +64,7 @@ def public_job_board(client_ref: str, db: Session = Depends(get_db)):
 
 
 @router.get("/api/public/brand")
-def public_brand(db: Session = Depends(get_db)):
+def public_brand(db: Session = Depends(get_read_db)):
     """The name on the front door.
 
     A single company's ERP: the sign-in page says whose it is. Only the name
@@ -79,7 +79,7 @@ def public_brand(db: Session = Depends(get_db)):
 
 
 @router.get("/api/public/logo/{kind}/{client_id}")
-def public_logo(kind: str, client_id: int, db: Session = Depends(get_db)):
+def public_logo(kind: str, client_id: int, db: Session = Depends(get_read_db)):
     """The company's logo as an image, for screens to show (they are given this link, not the image itself). It is on the
     sign-in page and every printed document already, so it is public. Kept by the browser for a year: the link carries a
     version that changes with the logo. `kind` is company (the account's own) or letterhead (what its documents head with)."""

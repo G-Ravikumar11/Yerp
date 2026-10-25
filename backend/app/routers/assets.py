@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.assets import ASSET_BOOK_DEFAULTS, ASSET_CATEGORIES, BOOK_METHODS, HIRE_BASES
 from app.core.audit import log_audit
@@ -486,7 +486,7 @@ def set_up_all_books(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/fixed-assets/{asset_id}/schedule")
-def asset_book_schedule(asset_id: int, request: Request, db: Session = Depends(get_db)):
+def asset_book_schedule(asset_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     a = asset_or_404(db, client.id, asset_id)
     b = asset_book_or_none(db, client.id, a.id)

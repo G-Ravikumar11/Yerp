@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.core.store_auth import store_actor
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.models.store_core import (
     DBStore, DBStoreItemSettings, DBStoreStockBalance, DBStoreStockLedger, DBStoreUomConversion, MovementType,
 )
@@ -95,14 +95,14 @@ def _balance_rows(db, rows, status=""):
 
 
 @router.get("")
-def index(request: Request, db: Session = Depends(get_db)):
+def index(request: Request, db: Session = Depends(get_read_db)):
     """The slice's front door: the stock position of the stores this person may see."""
     return {"slice": "enquiry", "items": stock_position(request, limit=200, db=db)["items"]}
 
 
 @router.get("/balances")
 def stock_position(request: Request, store_id: int = 0, q: str = "", category: str = "", status: str = "", include_zero: bool = False,
-                   limit: int = 200, offset: int = 0, db: Session = Depends(get_db)):
+                   limit: int = 200, offset: int = 0, db: Session = Depends(get_read_db)):
     """What is held, store by store and item by item, with its value and whether it is low."""
     actor = store_actor(request, db, "store.enquiry.view")
     rows = _balance_rows(db, _balance_query(db, actor, store_id, q, category, include_zero).all(), status)
@@ -130,7 +130,7 @@ def export_balances(request: Request, store_id: int = 0, q: str = "", category: 
 
 
 @router.get("/quick")
-def quick_find(request: Request, q: str = "", limit: int = 8, db: Session = Depends(get_db)):
+def quick_find(request: Request, q: str = "", limit: int = 8, db: Session = Depends(get_read_db)):
     """Type-ahead for the Store home page: a few matching items with the quantity held across the person's stores. One grouped query."""
     actor = store_actor(request, db, "store.enquiry.view")
     term = (q or "").strip().replace("%", "").replace("_", "").replace("\\", "")
@@ -152,7 +152,7 @@ def quick_find(request: Request, q: str = "", limit: int = 8, db: Session = Depe
 
 
 @router.get("/items/{item_id}")
-def item_position(item_id: int, request: Request, db: Session = Depends(get_db)):
+def item_position(item_id: int, request: Request, db: Session = Depends(get_read_db)):
     """One item: its settings, the units it can be counted in, and what each store holds of it."""
     actor = store_actor(request, db, "store.enquiry.view")
     item = db.get(models.DBItem, item_id)
@@ -266,7 +266,7 @@ def export_ledger(request: Request, store_id: int = 0, item_id: int = 0, from_da
 
 
 @router.get("/documents/{ref_doc_type}/{ref_doc_id}")
-def document_movements(ref_doc_type: str, ref_doc_id: int, request: Request, db: Session = Depends(get_db)):
+def document_movements(ref_doc_type: str, ref_doc_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The stock movements one document made (and the reversals of them)."""
     actor = store_actor(request, db, "store.enquiry.view")
     query = _ledger_query(db, actor, 0, 0, None, None, "", 0, ref_doc_type, ref_doc_id)

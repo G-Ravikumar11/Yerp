@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.approvals import (
     APPROVAL_MODELS,
@@ -90,7 +90,7 @@ def submit_for_approval(body: dict, request: Request, db: Session = Depends(get_
 
 
 @router.get("/api/approvals/pending")
-def get_pending_approvals(request: Request, db: Session = Depends(get_db)):
+def get_pending_approvals(request: Request, db: Session = Depends(get_read_db)):
     """Get all documents pending approval by the current user's employees."""
     client = get_client_user(request, db)
 
@@ -156,7 +156,7 @@ def get_pending_approvals(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/approvals/my-submissions")
-def get_my_submissions(request: Request, db: Session = Depends(get_db)):
+def get_my_submissions(request: Request, db: Session = Depends(get_read_db)):
     """Get all documents the current user's employees have submitted for approval."""
     client = get_client_user(request, db)
 
@@ -234,7 +234,7 @@ def get_my_submissions(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/approvals/history/{entity_type}/{entity_id}")
-def get_approval_history(entity_type: str, entity_id: int, request: Request, db: Session = Depends(get_db)):
+def get_approval_history(entity_type: str, entity_id: int, request: Request, db: Session = Depends(get_read_db)):
     """Get the full approval chain history for a document."""
     client = get_client_user(request, db)
     # Only a document of this company: ids run in sequence across every company, so counting through them
@@ -266,7 +266,7 @@ def approval_action(step_id: int, body: dict, request: Request, db: Session = De
 
 
 @router.get("/api/approval-rules")
-def get_approval_rules(request: Request, db: Session = Depends(get_db)):
+def get_approval_rules(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     auto_below, finance_above = approval_thresholds(db, client.id)
     purse = finance_approver_for(db, client.id, set())
@@ -476,7 +476,7 @@ def approvals_sent(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/approvals/who-approves")
-def approvals_who(request: Request, db: Session = Depends(get_db)):
+def approvals_who(request: Request, db: Session = Depends(get_read_db)):
     """The routing, spelled out: who each kind of paper goes to when its
     raiser has no manager set. For the owner to check the set-up against."""
     client = get_client_user(request, db)

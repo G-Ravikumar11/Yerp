@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.boq import BOQ_PRICED
 from app.core.audit import log_audit
@@ -92,7 +92,7 @@ def _respond(db, client_id, job_id, message, item_id=None):
 
 
 @router.get("/api/sites")
-def sites_list(request: Request, db: Session = Depends(get_db)):
+def sites_list(request: Request, db: Session = Depends(get_read_db)):
     """The sites this person may open, each with whether it has a BOQ yet."""
     client = require_items_access(request, db, VIEW)
     query = db.query(models.DBJob).filter(models.DBJob.client_id == client.id)
@@ -102,7 +102,7 @@ def sites_list(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/sites/{job_id}/boq-items")
-def site_boq_items(job_id: int, request: Request, db: Session = Depends(get_db)):
+def site_boq_items(job_id: int, request: Request, db: Session = Depends(get_read_db)):
     """Every priced line of the site's current BOQ revision, matched to the master, with the site's rate."""
     client, job = _viewer(request, db, job_id)
     boq, rev, rows = sr.pricing_rows(db, client.id, job.id)
@@ -110,14 +110,14 @@ def site_boq_items(job_id: int, request: Request, db: Session = Depends(get_db))
 
 
 @router.get("/api/sites/{job_id}/boq-items/unmapped")
-def site_boq_unmapped(job_id: int, request: Request, db: Session = Depends(get_db)):
+def site_boq_unmapped(job_id: int, request: Request, db: Session = Depends(get_read_db)):
     client, job = _viewer(request, db, job_id)
     _, _, rows = sr.pricing_rows(db, client.id, job.id)
     return {"rows": [r for r in rows if not r["mapped"]]}
 
 
 @router.get("/api/sites/{job_id}/item-prices")
-def site_prices(job_id: int, request: Request, db: Session = Depends(get_db)):
+def site_prices(job_id: int, request: Request, db: Session = Depends(get_read_db)):
     client, job = _viewer(request, db, job_id)
     _, _, rows = sr.pricing_rows(db, client.id, job.id)
     return {"site_id": job.id, "rows": [r for r in rows if r["mapped"]], "summary": sr.summary_of(rows)}
@@ -329,7 +329,7 @@ def site_prices_apply(job_id: int, body: ActionIn, request: Request, db: Session
 
 
 @router.get("/api/sites/{job_id}/item-prices/audit")
-def site_prices_audit(job_id: int, request: Request, item_id: Optional[int] = None, limit: int = 200, db: Session = Depends(get_db)):
+def site_prices_audit(job_id: int, request: Request, item_id: Optional[int] = None, limit: int = 200, db: Session = Depends(get_read_db)):
     client, job = _viewer(request, db, job_id)
     query = db.query(models.DBRateAuditLog).filter(models.DBRateAuditLog.client_id == client.id, models.DBRateAuditLog.job_id == job.id)
     if item_id:

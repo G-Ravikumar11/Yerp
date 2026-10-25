@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.core.auth import get_client_user, require_owner
 from app.core.errors import CODES, new_ref
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.core.security import rate_limiter
 
 router = APIRouter()
@@ -35,7 +35,7 @@ def _names(db, client, rows):
 
 
 @router.get("/api/errors")
-def error_log(request: Request, area: str = "", q: str = "", days: int = 30, db: Session = Depends(get_db)):
+def error_log(request: Request, area: str = "", q: str = "", days: int = 30, db: Session = Depends(get_read_db)):
     """The company's errors, newest first. The Master only."""
     require_owner(request, db)
     client = get_client_user(request, db)

@@ -11,7 +11,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import defer, Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.core.audit import log_audit
 from app.core.auth import get_client_user, require_erp_read, require_items_access, session_employee, wo_actor
@@ -65,7 +65,7 @@ async def erp_inspect_sheet(request: Request, file: UploadFile = File(...),
 
 @router.get("/api/registers/tds")
 def tds_register(request: Request, year: str = "", quarter: str = "",
-                 db: Session = Depends(get_db)):
+                 db: Session = Depends(get_read_db)):
     """TDS both ways, by quarter.
 
     Deducted: what we withheld from the contractors' bills under 194C, which has to
@@ -149,7 +149,7 @@ def tds_register(request: Request, year: str = "", quarter: str = "",
 
 
 @router.get("/api/registers/guarantees")
-def guarantee_register(request: Request, db: Session = Depends(get_db)):
+def guarantee_register(request: Request, db: Session = Depends(get_read_db)):
     """Every bank guarantee held against a subcontractor, and when it lapses.
 
     A guarantee that expires while the defects period is still running is
@@ -198,7 +198,7 @@ def guarantee_register(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/registers/advances")
-def advance_register(request: Request, db: Session = Depends(get_db)):
+def advance_register(request: Request, db: Session = Depends(get_read_db)):
     """Mobilisation advances given to the contractors, and how much has come back.
 
     Summed from the bills, not stored: a cancelled bill gives its recovery
@@ -286,7 +286,7 @@ def upload_file(request: Request, file: UploadFile = File(...), thumb: Optional[
 @router.get("/api/files")
 def list_files(request: Request, attached_type: str = "", attached_id: int = 0, job_id: int = 0,
                kind: str = "", q: str = "", date_from: str = "", date_to: str = "", by: str = "",
-               db: Session = Depends(get_db)):
+               db: Session = Depends(get_read_db)):
     """The files kept against something, filtered the way they are looked
     for: drawings or photos, words in the name or caption, when they were
     taken, who added them."""
@@ -353,7 +353,7 @@ def _file_response(db, f, download=0, cache="private, max-age=86400"):
 
 
 @router.get("/api/files/{fid}")
-def get_file(fid: int, request: Request, download: int = 0, db: Session = Depends(get_db)):
+def get_file(fid: int, request: Request, download: int = 0, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return _file_response(db, _file_or_404(db, client.id, fid, bytes_too=True), download)
 
@@ -374,7 +374,7 @@ def file_link(fid: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/files/{fid}/shared")
-def get_shared_file(fid: int, t: str = "", db: Session = Depends(get_db)):
+def get_shared_file(fid: int, t: str = "", db: Session = Depends(get_read_db)):
     try:
         file_id, client_id = _file_links.loads(t, max_age=FILE_LINK_SECONDS)
     except BadSignature:
@@ -385,7 +385,7 @@ def get_shared_file(fid: int, t: str = "", db: Session = Depends(get_db)):
 
 
 @router.get("/api/files/{fid}/thumb")
-def get_file_thumb(fid: int, request: Request, db: Session = Depends(get_db)):
+def get_file_thumb(fid: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     # The picture copy only; the full file is read below if there is no copy.
     f = db.query(models.DBFile).options(defer(models.DBFile.data)).filter(
@@ -437,7 +437,7 @@ def delete_file(fid: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/documents/signatories")
-def get_doc_signatories(request: Request, db: Session = Depends(get_db)):
+def get_doc_signatories(request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     sig = doc_signatories(db, client.id)
     seal = doc_seal(db, client.id)

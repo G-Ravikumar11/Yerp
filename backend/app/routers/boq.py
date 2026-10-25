@@ -9,7 +9,7 @@ from app.core.fastjson import fast_json
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.boq import BOQ_IMPORT_ALIASES, BOQ_PRICED, BOQ_RATE_ONLY_WORDS, BV_TRANSITIONS
 from app.core.audit import log_audit
@@ -100,7 +100,7 @@ def boq_sample_sheet(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/boqs/materials")
-def boq_materials(request: Request, db: Session = Depends(get_db)):
+def boq_materials(request: Request, db: Session = Depends(get_read_db)):
     """Every material or grade that has been put on any of this business's BOQ lines, for the Material dropdown: an
     item added once is on the list from then on, on every BOQ."""
     client = require_erp_read(request, db)
@@ -201,7 +201,7 @@ def boq_new_revision(boq_id: int, body: dict, request: Request, db: Session = De
 
 
 @router.get("/api/boqs/{boq_id}/changes")
-def boq_changes(boq_id: int, request: Request, frm: int = 0, to: Optional[int] = None, db: Session = Depends(get_db)):
+def boq_changes(boq_id: int, request: Request, frm: int = 0, to: Optional[int] = None, db: Session = Depends(get_read_db)):
     """What changed between two revisions: lines added, removed, and changed in quantity, rate or words."""
     client = require_erp_read(request, db)
     boq = boq_or_404(db, client.id, boq_id)

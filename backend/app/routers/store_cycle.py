@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import log_audit
 from app.core.permissions import permissions_for
 from app.core.store_auth import store_actor
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.models.store_control import DBStoreCount
 from app.models.store_core import DBStoreUserAssignment
 from app.services import store_cycle as svc
@@ -83,7 +83,7 @@ def put_settings(body: SettingsIn, request: Request, db: Session = Depends(get_d
 
 
 @router.get("/abc")
-def get_abc(request: Request, store_id: int = 0, db: Session = Depends(get_db)):
+def get_abc(request: Request, store_id: int = 0, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.control.view")
     stores = _stores(db, actor, store_id)
     return {"items": svc.abc(db, actor.client.id, None if stores is None else (stores or {0}))}

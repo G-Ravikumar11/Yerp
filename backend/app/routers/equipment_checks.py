@@ -9,7 +9,7 @@ from app import models
 from app.core.auth import require_erp_read, wo_actor
 from app.core.serials import next_number
 from app.core.sheets import sheet_response
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.documents import form_pdf
 from app.documents.forms import _field_doc, _job_line, _pre, form_pdf_response
 from app.schemas.safety import CheckIn, CheckSignoffIn
@@ -49,7 +49,7 @@ def _one(db, client, cid):
 
 
 @router.get("/api/safety/checks")
-def check_list(request: Request, job_id: int = 0, form_type: str = "", db: Session = Depends(get_db)):
+def check_list(request: Request, job_id: int = 0, form_type: str = "", db: Session = Depends(get_read_db)):
     """The inspections for one project, or every project, with the forms to fill and what is due."""
     client = require_erp_read(request, db)
     checks = _check_rows(db, client, job_id, form_type)

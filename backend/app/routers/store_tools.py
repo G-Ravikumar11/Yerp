@@ -11,7 +11,7 @@ from app import models
 from app.core.audit import log_audit
 from app.core.permissions import permissions_for
 from app.core.store_auth import store_actor
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.models.store_core import DBStore, DBStoreUserAssignment
 from app.models.store_extras import DBStoreTool
 from app.services import store_tools as svc
@@ -55,7 +55,7 @@ def _tool(db, actor, tool_id):
 
 
 @router.get("")
-def list_tools(request: Request, status: str = "", store_id: int = 0, q: str = "", db: Session = Depends(get_db)):
+def list_tools(request: Request, status: str = "", store_id: int = 0, q: str = "", db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.outward.view")
     query = db.query(DBStoreTool).filter(DBStoreTool.client_id == actor.client.id)
     seen = _visible(db, actor)
@@ -100,7 +100,7 @@ def remind(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/{tool_id}")
-def get_tool(tool_id: int, request: Request, db: Session = Depends(get_db)):
+def get_tool(tool_id: int, request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.outward.view")
     return svc.tool_dict(db, _tool(db, actor, tool_id), detail=True)
 

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.core.auth import require_erp_read, wo_actor
 from app.core.sheets import sheet_response
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.documents import form_pdf
 from app.documents.forms import _field_doc, _pre, form_pdf_response
 from app.services.projects import job_or_404
@@ -68,7 +68,7 @@ def _list(db, client_id, job_id):
 
 
 @router.get("/api/material-vouchers")
-def voucher_list(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+def voucher_list(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
     """Every voucher, in Sl. No. order."""
     client = require_erp_read(request, db)
     projects = _projects(db, client.id)
