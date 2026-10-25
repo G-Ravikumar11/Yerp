@@ -44,7 +44,7 @@ type Options = Omit<RequestInit, 'body'> & {
  */
 export function apiUrl(path: string): string {
   if (!path) return ''
-  if (/^https?:\/\//i.test(path)) return path
+  if (/^(https?:\/\/|data:|blob:)/i.test(path)) return path
   const base = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/$/, '')
   if (!base) return path
   return path.startsWith('/') ? `${base}${path}` : `${base}/${path}`

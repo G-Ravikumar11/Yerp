@@ -162,6 +162,8 @@ class Books:
 
     # --- what goes across ---
     def _money(self):
+        legs = {e.id: e for e in self.db.query(models.DBMoneyEntry).filter(
+            models.DBMoneyEntry.client_id == self.client.id, models.DBMoneyEntry.doc_type == "contra").all()}
         q = self.db.query(models.DBMoneyEntry).filter(
             models.DBMoneyEntry.client_id == self.client.id, models.DBMoneyEntry.voided.isnot(True),
             models.DBMoneyEntry.paid_on >= self.date_from, models.DBMoneyEntry.paid_on <= self.date_to)
@@ -173,7 +175,7 @@ class Books:
             if e.doc_type == "contra":
                 if e.direction != "OUT":
                     continue                                  # one voucher for the two entries
-                other = self.db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.id == e.pair_id).first()
+                other = legs.get(e.pair_id)
                 there = self.account(other.account_id if other else None, e.mode)
                 self.add("Contra", e.number, e.paid_on, "Transfer%s%s" % (ref, (". " + e.note) if e.note else ""),
                          [(there, amt), (here, -amt)], remote)

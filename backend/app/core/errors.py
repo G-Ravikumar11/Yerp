@@ -39,7 +39,7 @@ CODES = {
     "YE-AUTH-07": "Reset link invalid or expired",
     "YE-AUTH-08": "Email already registered",
     "YE-AUTH-09": "Check that you are a person (CAPTCHA)",
-    "YE-AUTH-10": "Account locked for a while after wrong passwords",
+    "YE-AUTH-10": "Sign-in locked from this address for a while after wrong passwords",
     "YE-ACCESS-01": "Not allowed: the person's access does not include this",
     "YE-ACCESS-02": "File link expired or for another file",
     "YE-DATA-01": "Not found",

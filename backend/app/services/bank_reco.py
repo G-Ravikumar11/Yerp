@@ -11,6 +11,7 @@ A cheque register is every cheque written or received, with where it stands: pen
 written more than three months ago and never presented, so the bank will not honour it.
 """
 import csv
+from collections import Counter
 import io
 import re
 from datetime import date, datetime, timedelta
@@ -164,16 +165,21 @@ def bank_account_or_404(db, client_id, account_id):
 
 
 def import_statement(db, client_id, account, lines, file_name, who):
-    """Store the lines not already stored (a statement downloaded twice, or overlapping months), then match."""
-    have = {(l.txn_date, money(l.debit), money(l.credit), (l.narration or "")[:120], l.balance)
-            for l in db.query(models.DBBankStatementLine).filter(models.DBBankStatementLine.client_id == client_id,
-                                                                 models.DBBankStatementLine.account_id == account.id).all()}
+    """Store the lines not already stored (a statement downloaded twice, or overlapping months), then match.
+
+    Lines that look alike are counted, not merged: two genuine charges of the same amount on the same day with the same
+    narration are two lines. The n-th such line in the file is taken to be the n-th already stored, so importing the same
+    statement again adds nothing, an overlapping month adds only what is new, and a pair that is really two stays two."""
+    have = Counter((l.txn_date, money(l.debit), money(l.credit), (l.narration or "")[:120], l.balance)
+                   for l in db.query(models.DBBankStatementLine).filter(models.DBBankStatementLine.client_id == client_id,
+                                                                        models.DBBankStatementLine.account_id == account.id).all())
+    seen = Counter()
     added = 0
     for l in lines:
         key = (l["txn_date"], l["debit"], l["credit"], l["narration"][:120], l["balance"])
-        if key in have:
+        seen[key] += 1
+        if seen[key] <= have[key]:
             continue
-        have.add(key)
         db.add(models.DBBankStatementLine(client_id=client_id, account_id=account.id, file_name=(file_name or "")[:200],
                                           imported_by_name=who, **l))
         added += 1
@@ -215,10 +221,12 @@ def auto_match(db, client_id, account):
         models.DBBankStatementLine.client_id == client_id, models.DBBankStatementLine.account_id == account.id,
         models.DBBankStatementLine.status == "UNMATCHED").order_by(models.DBBankStatementLine.txn_date,
                                                                     models.DBBankStatementLine.id).all()
-    entries = _candidates(db, client_id, account)
+    by_money = {}                       # an entry can only be a line's if direction and amount agree: look in that bucket
+    for e in _candidates(db, client_id, account):
+        by_money.setdefault((e.direction == "IN", round(money(e.amount) * 100)), []).append(e)
     pairs = []
     for l in lines:
-        for e in entries:
+        for e in by_money.get((l.credit > 0, round(money(l.credit or l.debit) * 100)), ()):
             s = score(l, e)
             if s is not None:
                 pairs.append((s, l.id, e.id, l, e))

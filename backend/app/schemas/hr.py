@@ -22,6 +22,9 @@ class EmployeeCreate(BaseModel):
     # The sites this person works on. None means "leave as it is"; an empty
     # list means "every site", which is what somebody unassigned already had.
     site_ids: Optional[List[int]] = None
+    # The rights the Master ticked, saved with the employee rather than by a second request
+    # (PUT /api/employees/{id}/permissions). None leaves the role's own rights.
+    permissions: Optional[List[str]] = None
     first_name: str
     last_name: str
     email: Optional[str] = ""

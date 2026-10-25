@@ -97,6 +97,14 @@ ITEM_MASTER_COLUMNS = (
     ("erp_items", "source_boq_id", "INTEGER"), ("erp_items", "source_boq_key", "VARCHAR DEFAULT ''"),
 )
 
+SITE_RATE_COLUMNS = (
+    # (table, column, type) - site-wise item pricing. A database that already had an earlier site_item_rates (finalized_rate, tax_inclusive)
+    # kept that shape, since create_all never alters a table that exists, and every read of a site rate then failed on item_code.
+    ("site_item_rates", "item_code", "VARCHAR DEFAULT ''"), ("site_item_rates", "site_rate", "FLOAT"),
+    ("site_item_rates", "default_rate_snapshot", "FLOAT"), ("site_item_rates", "effective_date", "VARCHAR DEFAULT ''"),
+    ("site_item_rates", "remarks", "TEXT DEFAULT ''"),
+)
+
 STORE_OUTWARD_COLUMNS = (
     # (table, column, type) - what the outward slice added to its own tables after they were first made (indents, who received the issue, the
     # recovery basis, damaged returns). create_all makes new tables but never adds a column to one that exists, so a database that already has
@@ -149,6 +157,8 @@ SUBCONTRACT_CONTROL_COLUMNS = (
 ACCOUNTS_COLUMNS = (
     # (table, column, type) - the accounts vouchers: an expense or sundry receipt's head, and the other leg of a transfer.
     ("money_entries", "head", "VARCHAR DEFAULT ''"), ("money_entries", "pair_id", "INTEGER"),
+    # A payment request raised by one of the Master's colleagues, who may not then approve it themselves.
+    ("payment_requests", "requested_by_member", "INTEGER"),
     # A site's cash box: its site, who holds it, and its float.
     ("bank_accounts", "job_id", "INTEGER"), ("bank_accounts", "custodian_id", "INTEGER"),
     ("bank_accounts", "imprest_amount", "FLOAT DEFAULT 0"),
@@ -1819,6 +1829,20 @@ def ensure_columns():
                 except Exception:
                     pass
 
+            # Site-wise item pricing: the columns an earlier shape of site_item_rates did not have. Only where the table exists.
+            try:
+                have = {r[0] for r in conn.execute(text("SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()")).fetchall()}
+                for table, column, typedef in SITE_RATE_COLUMNS:
+                    if table in have:
+                        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step site rates: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
             # The Store module's outward tables: columns added after the tables were first made. A database that has no store tables yet is not an error.
             try:
                 have = {r[0] for r in conn.execute(text("SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()")).fetchall()}
@@ -1944,7 +1968,7 @@ def migrate_sqlite():
                 add_col("subcontract_orders", column, "FLOAT DEFAULT 0")
             add_col("subcontract_items", "technical_spec", "TEXT DEFAULT ''")
             add_col("business_units", "logo_url", "TEXT DEFAULT ''")
-            for table, column, typedef in QUALITY_COLUMNS + ACCOUNTS_COLUMNS + ITEM_MASTER_COLUMNS + STORE_OUTWARD_COLUMNS:
+            for table, column, typedef in QUALITY_COLUMNS + ACCOUNTS_COLUMNS + ITEM_MASTER_COLUMNS + STORE_OUTWARD_COLUMNS + SITE_RATE_COLUMNS:
                 add_col(table, column, typedef.replace("BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"))
             try:
                 conn.execute(text(SCHEDULE_BACKFILL))

@@ -15,7 +15,7 @@ export const ERROR_CODES: Record<string, { title: string; help: string }> = {
   'YE-AUTH-07': { title: 'Reset link invalid or expired', help: 'Ask for a new reset link.' },
   'YE-AUTH-08': { title: 'Email already registered', help: 'Sign in with it, or use "Forgot password".' },
   'YE-AUTH-09': { title: 'Check that you are a person', help: 'Type the letters shown (or tick the box) and try again. It is asked for after several wrong tries.' },
-  'YE-AUTH-10': { title: 'Account locked for a while', help: 'Too many wrong passwords. Wait 15 minutes, or use "Forgot password". The Master has been told.' },
+  'YE-AUTH-10': { title: 'Sign-in locked here for a while', help: 'Too many wrong passwords from this device or network. Wait 15 minutes, sign in from somewhere else, or use "Forgot password". The Master has been told.' },
   // Access
   'YE-ACCESS-01': { title: 'Not allowed', help: 'Your access does not include this. Ask the Master to grant it.' },
   'YE-ACCESS-02': { title: 'File link expired', help: 'Open the file again from the app.' },

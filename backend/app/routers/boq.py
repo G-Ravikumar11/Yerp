@@ -35,6 +35,7 @@ from app.services.boq import (
     boq_given_to_contractors,
     boq_link_orders,
     boq_head,
+    boq_heads,
     boq_kind_of,
     boq_lines_with_subtotals,
     boq_new_key,
@@ -112,7 +113,7 @@ def boq_materials(request: Request, db: Session = Depends(get_db)):
 def boq_list(request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     rows = db.query(models.DBBoq).filter(models.DBBoq.client_id == client.id).order_by(models.DBBoq.id.desc()).all()
-    return {"boqs": [boq_head(db, b) for b in rows]}
+    return {"boqs": boq_heads(db, rows)}
 
 
 @router.post("/api/boqs")

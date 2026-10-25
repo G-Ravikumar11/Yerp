@@ -1347,6 +1347,8 @@ def set_employee_password(emp_id: int, request: Request, body: dict = None, db: 
     emp.password_hash = passwords.hash_password(body["password"])
     log_audit(db, client.id, "employee_password_set", "employee", emp.id, emp.email, "", request)
     db.commit()
+    from app.core import login_guard
+    login_guard.clear_account(emp.email)              # the Master has just given them a new password
     return {"message": "Password set. They can sign in with their email and this password."}
 
 

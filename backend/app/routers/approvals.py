@@ -400,8 +400,8 @@ def approvals_decide(body: ApprovalDecisionIn, request: Request, db: Session = D
         from app.routers.money import _decide_site_expense
         return _decide_site_expense(db, client, emp, body.id, decision, note, request)
     if kind == "payment_request":
-        from app.routers.money import _decide_payment
-        return _decide_payment(db, client, emp, body.id, decision, note, request)
+        from app.routers.money import _colleague, _decide_payment
+        return _decide_payment(db, client, emp, body.id, decision, note, request, member=_colleague(request, db))
     if kind == "leave":
         leave = db.query(models.DBLeaveRequest).filter(
             models.DBLeaveRequest.id == body.id,

@@ -57,6 +57,7 @@ from app.services.crm import (
     _log_lead,
     backfill_customer_codes,
     contact_dict,
+    customer_project_counts,
     customer_to_dict,
     estimate_dict,
     estimate_or_404,
@@ -171,7 +172,8 @@ def list_customers(request: Request, q: str = "", db: Session = Depends(get_db))
                                  models.DBContact.code.ilike("%" + q + "%"),
                                  models.DBContact.gstin.ilike("%" + q + "%")))
     rows = query.order_by(models.DBContact.id.desc()).limit(500).all()
-    return {"customers": [customer_to_dict(db, c, with_counts=True) for c in rows]}
+    counts = customer_project_counts(db, client.id)
+    return {"customers": [customer_to_dict(db, c, counts=counts) for c in rows]}
 
 
 @router.post("/api/customers")

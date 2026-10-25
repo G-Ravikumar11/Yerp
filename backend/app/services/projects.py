@@ -473,9 +473,9 @@ def recost_diary(db, diary):
 
 
 def diary_dict(db, d, detail=False):
-    job = db.query(models.DBJob).filter(models.DBJob.id == d.job_id).first()
-    wo = db.query(models.DBWorkOrder).filter(
-        models.DBWorkOrder.id == d.work_order_id).first() if d.work_order_id else None
+    # by_id: a list primes the projects and work orders once (list_diaries), not twice a day.
+    job = by_id(db, models.DBJob, d.job_id)
+    wo = by_id(db, models.DBWorkOrder, d.work_order_id) if d.work_order_id else None
     row = {
         "id": d.id, "job_id": d.job_id,
         "project": ("%s %s" % (job.number or "", job.name or "")).strip() if job else "",
@@ -999,25 +999,19 @@ def setup_progress(db, client_id):
     idea where to start. These are the steps in the order a site actually
     takes them, each one done or not, with where to go to do it.
     """
-    n = lambda q: q.count()
-    jobs = n(db.query(models.DBJob).filter(models.DBJob.client_id == client_id))
-    items = n(db.query(models.DBItem).filter(models.DBItem.client_id == client_id))
-    wos = db.query(models.DBWorkOrder).filter(
-        models.DBWorkOrder.client_id == client_id).all()
-    placed = len([w for w in wos if (w.status or "") != "Draft"])
-    measured = n(db.query(models.DBMeasurement).filter(
-        models.DBMeasurement.client_id == client_id))
-    billed = n(db.query(models.DBRABill).filter(
-        models.DBRABill.client_id == client_id))
-    received = n(db.query(models.DBGoodsReceipt).filter(
-        models.DBGoodsReceipt.client_id == client_id,
-        models.DBGoodsReceipt.status == "POSTED")) + n(db.query(DBStoreGrn).filter(
-        DBStoreGrn.client_id == client_id, DBStoreGrn.status == "POSTED"))
-    diaries = n(db.query(models.DBSiteDiary).filter(
-        models.DBSiteDiary.client_id == client_id))
+    # Every count in one round trip: nine queries one after another cost nine round trips, which on a database across
+    # an ocean was several seconds on every dashboard load after a save.
+    from sqlalchemy import or_, select
 
-    tenders = n(db.query(models.DBEstimate).filter(
-        models.DBEstimate.client_id == client_id))
+    def count(model, *where):
+        return select(func.count()).select_from(model).where(model.client_id == client_id, *where).scalar_subquery()
+    (jobs, items, wo_count, placed, measured, billed, received_old, received_new, diaries, tenders) = db.query(
+        count(models.DBJob), count(models.DBItem), count(models.DBWorkOrder),
+        count(models.DBWorkOrder, or_(models.DBWorkOrder.status.is_(None), models.DBWorkOrder.status != "Draft")),
+        count(models.DBMeasurement), count(models.DBRABill),
+        count(models.DBGoodsReceipt, models.DBGoodsReceipt.status == "POSTED"), count(DBStoreGrn, DBStoreGrn.status == "POSTED"),
+        count(models.DBSiteDiary), count(models.DBEstimate)).one()
+    received = (received_old or 0) + (received_new or 0)
     steps = [
         {"key": "tender", "done": tenders > 0, "view": "estimates-view",
          "title": "Price a tender",
@@ -1028,7 +1022,7 @@ def setup_progress(db, client_id):
         {"key": "items", "done": items > 0, "view": "workorders-view",
          "title": "Name what you sell and what you buy",
          "hint": "Deliverables get a code when you first price one on a work order. Materials can be added from a spreadsheet under Store."},
-        {"key": "order", "done": len(wos) > 0, "view": "workorders-view",
+        {"key": "order", "done": wo_count > 0, "view": "workorders-view",
          "title": "Build a work order",
          "hint": "What was sold, line by line, with a rate against each."},
         {"key": "placed", "done": placed > 0, "view": "workorders-view",
@@ -1959,6 +1953,31 @@ def _set_status(db, client_id, a, status, actor_name):
         a.actual_start = date.today().isoformat()
 
 
+def programme_summaries(db, client_id, jobs):
+    """[(job, its programme summary)] for each job - the same as schedule_view(...)["summary"] one job at a time.
+
+    Each job's programme is a dozen reads. On a database across a network they were done one job after another, so the
+    attention list took seconds per project; read-only and independent, they now run side by side, each on its own
+    short-lived session (up to four at once, well inside the connection pool). SQLite - the local file and the tests -
+    keeps the plain loop."""
+    if len(jobs) < 2 or db.get_bind().dialect.name == "sqlite":
+        return [(j, schedule_view(db, client_id, j)["summary"]) for j in jobs]
+    import contextvars
+    from concurrent.futures import ThreadPoolExecutor
+    from app.db.session import SessionLocal
+
+    def one(job_id):
+        s = SessionLocal()
+        try:
+            return schedule_view(s, client_id, s.get(models.DBJob, job_id))["summary"]
+        finally:
+            s.close()
+    with ThreadPoolExecutor(max_workers=min(4, len(jobs))) as pool:
+        # Each task carries a copy of this request's context (who is asking, which company), as the code it calls expects.
+        futures = [pool.submit(contextvars.copy_context().run, one, j.id) for j in jobs]
+        return [(j, f.result()) for j, f in zip(jobs, futures)]
+
+
 def attention_elsewhere(db, client_id, jobs, today):
     items = []
 
@@ -2030,11 +2049,8 @@ def attention_elsewhere(db, client_id, jobs, today):
     late_acts, slipped = 0, []
     with_plan = {j for (j,) in db.query(models.DBScheduleActivity.job_id).filter(
         models.DBScheduleActivity.client_id == client_id).distinct().all()}
-    for job_id in with_plan:
-        job = jobs.get(job_id)
-        if not job or (job.status or "") in (JOB_FINISHED, "cancelled"):
-            continue
-        s = schedule_view(db, client_id, job)["summary"]
+    live_jobs = [jobs[j] for j in with_plan if jobs.get(j) and (jobs[j].status or "") not in (JOB_FINISHED, "cancelled")]
+    for job, s in programme_summaries(db, client_id, live_jobs):
         late_acts += s["late"]
         if s["slip_days"] > 0:
             slipped.append((s["slip_days"], job))

@@ -277,8 +277,10 @@ def upload_file(request: Request, file: UploadFile = File(...), thumb: Optional[
                    taken_on=taken_on or date.today().isoformat(), by=actor_name, thumb=small)
     log_audit(db, client.id, "file_added", attached_type, attached_id, f.name,
               "%s, %d KB" % (f.kind, f.size // 1024), request)
+    # Answered from the row in hand: after the commit it would be read back again, thumbnail bytes and all.
+    out = {"file": file_dict(f)}
     db.commit()
-    return {"file": file_dict(f)}
+    return out
 
 
 @router.get("/api/files")
