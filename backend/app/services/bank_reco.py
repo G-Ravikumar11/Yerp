@@ -13,6 +13,7 @@ written more than three months ago and never presented, so the bank will not hon
 import csv
 import io
 import re
+from collections import Counter
 from datetime import date, datetime, timedelta
 
 from fastapi import HTTPException
@@ -164,16 +165,23 @@ def bank_account_or_404(db, client_id, account_id):
 
 
 def import_statement(db, client_id, account, lines, file_name, who):
-    """Store the lines not already stored (a statement downloaded twice, or overlapping months), then match."""
-    have = {(l.txn_date, money(l.debit), money(l.credit), (l.narration or "")[:120], l.balance)
-            for l in db.query(models.DBBankStatementLine).filter(models.DBBankStatementLine.client_id == client_id,
-                                                                 models.DBBankStatementLine.account_id == account.id).all()}
+    """Store the lines not already stored (a statement downloaded twice, or overlapping months), then match.
+
+    Lines are counted, not just compared: two identical lines in one file are two transactions (two equal charges on
+    one day, on a statement without a balance column), so a line is skipped only while the account already holds as
+    many lines like it as have been seen so far in this file."""
+    have = Counter((l.txn_date, money(l.debit), money(l.credit), (l.narration or "")[:120],
+                    money(l.balance) if l.balance is not None else None)
+                   for l in db.query(models.DBBankStatementLine).filter(
+                       models.DBBankStatementLine.client_id == client_id,
+                       models.DBBankStatementLine.account_id == account.id).all())
+    seen = Counter()
     added = 0
     for l in lines:
         key = (l["txn_date"], l["debit"], l["credit"], l["narration"][:120], l["balance"])
-        if key in have:
+        seen[key] += 1
+        if seen[key] <= have[key]:
             continue
-        have.add(key)
         db.add(models.DBBankStatementLine(client_id=client_id, account_id=account.id, file_name=(file_name or "")[:200],
                                           imported_by_name=who, **l))
         added += 1

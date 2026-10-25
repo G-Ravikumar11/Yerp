@@ -125,6 +125,39 @@ def test_voiding_a_matched_entry_puts_its_line_back(tenant):
     assert len(lines) == 1 and lines[0]["status"] == "UNMATCHED"
 
 
+def test_voiding_a_transfer_puts_both_banks_lines_back(tenant):
+    """Voided from either side, both legs go - and so the line on the other bank's statement is unmatched too."""
+    hdfc = tenant.post("/api/bank-accounts", json={"name": "HDFC current", "kind": "Bank", "opening_balance": 100000,
+                                                   "opening_date": day(40)}).json()
+    sbi = tenant.post("/api/bank-accounts", json={"name": "SBI current", "kind": "Bank", "opening_balance": 0,
+                                                  "opening_date": day(40)}).json()
+    moved = tenant.post("/api/money/transfer", json={"from_account_id": hdfc["id"], "to_account_id": sbi["id"],
+                                                     "amount": 25000, "paid_on": day(5), "reference": "UTR445566"})
+    assert moved.status_code == 200, moved.text
+    statement(tenant, hdfc, [[dmy(day(5)), "NEFT DR-SBI-UTR445566", "UTR445566", dmy(day(5)), "25,000.00", "", "75,000.00"]])
+    statement(tenant, sbi, [[dmy(day(5)), "NEFT CR-HDFC-UTR445566", "UTR445566", dmy(day(5)), "", "25,000.00", "25,000.00"]])
+    assert [tenant.get("/api/bank-reco/%d" % b["id"]).json()["counts"]["matched"] for b in (hdfc, sbi)] == [1, 1]
+    voided = tenant.post("/api/money/entries/%d/void" % moved.json()["entry"]["id"], json={"reason": "wrong account"})
+    assert voided.status_code == 200, voided.text
+    for b in (hdfc, sbi):
+        v = tenant.get("/api/bank-reco/%d" % b["id"]).json()
+        assert v["counts"]["matched"] == 0 and [l["status"] for l in v["lines"]] == ["UNMATCHED"]
+
+
+def test_identical_lines_in_one_statement_are_all_kept_and_still_not_stored_twice(tenant):
+    """Two equal charges on one day, on a statement with no balance column, are two transactions."""
+    bank = tenant.post("/api/bank-accounts", json={"name": "HDFC current", "kind": "Bank", "opening_balance": 0,
+                                                   "opening_date": day(40)}).json()
+    charge = [dmy(day(3)), "SMS ALERT CHARGES", "", dmy(day(3)), "17.70", "", ""]
+    first = statement(tenant, bank, [charge, charge])
+    assert (first["added"], first["already_in"]) == (2, 0)
+    # The same statement again stores nothing; a later one with a third such charge stores just that one.
+    assert (statement(tenant, bank, [charge, charge])["added"]) == 0
+    third = statement(tenant, bank, [charge, charge, charge])
+    assert (third["added"], third["already_in"]) == (1, 2)
+    assert tenant.get("/api/bank-reco/%d" % bank["id"]).json()["counts"]["unmatched"] == 3
+
+
 def test_the_cheque_register(tenant):
     bank, receipt, chq1, chq2 = setup(tenant)
     old = supplier_bill(tenant, vendor="Old Vendor", amount=5000, tax=0)

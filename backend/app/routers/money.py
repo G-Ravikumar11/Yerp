@@ -1319,6 +1319,15 @@ def transfer_money(body: TransferIn, request: Request, db: Session = Depends(get
             "message": "%s: %s moved from %s to %s." % (number, inr(amount), src.name, dst.name)}
 
 
+def _release_statement_line(db, e):
+    """A voided entry's line on the bank's statement is unmatched again: the money the bank moved is still to be
+    accounted for."""
+    if e.statement_line_id:
+        line = db.query(models.DBBankStatementLine).filter(models.DBBankStatementLine.id == e.statement_line_id).first()
+        if line is not None:
+            bank_reco.unmatch(db, line)
+
+
 @router.post("/api/money/entries/{entry_id}/void")
 def void_money(entry_id: int, request: Request, body: dict = None,
                db: Session = Depends(get_db)):
@@ -1334,11 +1343,7 @@ def void_money(entry_id: int, request: Request, body: dict = None,
     if e.voided:
         raise HTTPException(409, "%s is already void." % e.number)
     e.voided, e.void_reason = True, reason[:300]
-    if e.statement_line_id:
-        # Its line on the bank's statement is unmatched again: the money the bank moved is still to be accounted for.
-        line = db.query(models.DBBankStatementLine).filter(models.DBBankStatementLine.id == e.statement_line_id).first()
-        if line is not None:
-            bank_reco.unmatch(db, line)
+    _release_statement_line(db, e)
     booked = site_cash.expense_for_entry(db, e.id)
     if booked is not None and booked.status == "APPROVED":
         booked.status, booked.entry_id, booked.checked_by_name, booked.checked_at = "SUBMITTED", None, "", ""
@@ -1351,6 +1356,7 @@ def void_money(entry_id: int, request: Request, body: dict = None,
                                                      models.DBMoneyEntry.client_id == client.id).first()
         if other is not None and not other.voided:
             other.voided, other.void_reason = True, reason[:300]
+            _release_statement_line(db, other)
     db.flush()
     if e.doc_id and e.doc_type != "on_account":
         doc, worth, *_ = _doc_for_any(db, client.id, e.doc_type, e.doc_id)
