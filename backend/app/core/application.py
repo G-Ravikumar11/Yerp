@@ -34,6 +34,8 @@ async def lifespan(app: FastAPI):
     if ok:
         convert_legacy_holds_all()
         _boot_step("number the entries of the measurement book", backfill_entry_codes)
+        from app.services.hr import apply_india_onboarding_all
+        _boot_step("onboarding documents", apply_india_onboarding_all)
     DB_READY["ok"] = ok
     if ok:
         # Reading the schema's foreign keys is what the first delete after a restart used to wait for.

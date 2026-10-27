@@ -24,7 +24,8 @@ def test_defaults_are_seeded_on_first_read(tenant):
     rows = tenant.get("/api/onboarding/requirements").json()
     assert rows, "HR should see a starting list rather than an empty screen"
     names = [r["name"] for r in rows]
-    assert "Photo ID" in names
+    assert "Aadhaar card" in names and "PAN card" in names and "UAN (EPF) details" in names
+    assert not any(r["is_mandatory"] for r in rows), "none is compulsory: only the emergency contact is"
     # Reading again must not duplicate them.
     assert len(tenant.get("/api/onboarding/requirements").json()) == len(rows)
 
@@ -74,10 +75,10 @@ def test_new_starter_is_asked_for_the_documents(tenant):
     emp = make_employee(tenant, start_date="2026-01-01")
     rows = tenant.get(f"/api/employees/{emp['id']}/document-requests").json()
     assert rows, "a new starter should be asked for the default documents"
-    photo = next(r for r in rows if r["name"] == "Photo ID")
-    assert photo["status"] == "pending"
+    aadhaar = next(r for r in rows if r["name"] == "Aadhaar card")
+    assert aadhaar["status"] == "pending" and not aadhaar["is_mandatory"]
     # Due dates are computed from the start date, not the creation date.
-    assert photo["due_date"] == "2026-01-04"   # 3 days after start
+    assert aadhaar["due_date"] == "2026-01-08"   # 7 days after start
 
 
 def test_scoped_requirements_only_reach_the_right_people(tenant):

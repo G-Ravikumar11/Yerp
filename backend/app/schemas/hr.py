@@ -50,6 +50,7 @@ class EmployeeCreate(BaseModel):
     tax_id: Optional[str] = ""
     emergency_contact: Optional[str] = ""
     emergency_phone: Optional[str] = ""
+    gender: Optional[str] = ""
     start_date: Optional[str] = ""
     employee_id: Optional[str] = ""
     password: Optional[str] = ""

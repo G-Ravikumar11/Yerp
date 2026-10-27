@@ -74,6 +74,12 @@ class DBEmployee(Base):
     emergency_contact = Column(String, default="")
     emergency_phone = Column(String, default="")
 
+    # Optional; the employee gives them in their own portal. Aadhaar is kept as 12 digits and shown masked to HR.
+    gender = Column(String, default="")
+    aadhaar_no = Column(String, default="")
+    pan_no = Column(String, default="")
+    uan_no = Column(String, default="")
+
     annual_leave_entitlement = Column(Float, default=25.0)
     sick_leave_entitlement = Column(Float, default=10.0)
 

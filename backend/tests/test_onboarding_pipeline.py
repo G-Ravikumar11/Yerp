@@ -18,6 +18,19 @@ def _reset_limiter():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _documents_are_required(request):
+    """These tests are about a starter being held up by paperwork. No document is compulsory by default any more,
+    so HR is made to require them, as a company that wants them held up would."""
+    if "tenant" not in request.fixturenames:
+        return                                           # a test that is not signed in has nobody to ask
+    tenant = request.getfixturevalue("tenant")
+    for row in tenant.get("/api/onboarding/requirements").json():
+        body = {k: row[k] for k in ("name", "description", "doc_type", "due_days", "requires_expiry", "expiry_reminder_days",
+                                    "applies_to", "department_id", "level", "is_active", "sort_order") if k in row}
+        assert tenant.put(f"/api/onboarding/requirements/{row['id']}", json={**body, "is_mandatory": True}).status_code == 200
+
+
 def hire_a_candidate(client, tenant, email=None):
     """Take someone all the way through the recruitment side."""
     main.rate_limiter._hits.clear()

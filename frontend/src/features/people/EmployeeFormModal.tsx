@@ -10,6 +10,8 @@ import { useDebounced } from '@/lib/hooks'
 import { AccessPicker } from './AccessPicker'
 import { PASSWORD_RULE, PasswordField, passwordProblem } from '@/features/auth/PasswordField'
 
+export const GENDERS = ['Male', 'Female', 'Other', 'Prefer not to say']
+
 const blank = (): EmployeeInput => ({ first_name: '', last_name: '', email: '', org_email: '', password: '', phone: '', job_title: '', department_id: null, reports_to: null, level: '', role: '', permission_role: 'staff', site_ids: [], employment_type: 'full_time', pay_frequency: 'monthly', salary: 0, tax_rate: 0, start_date: today(), emergency_contact: '', emergency_phone: '' })
 
 /** A new member of staff: who they are, the department they belong to, what they may do, and a login if they need one. */
@@ -85,7 +87,9 @@ function Form({ onClose }: { onClose: () => void }) {
   // A login needs an email, a password that passes the rule, and the same password typed twice. Staff who never sign in need none of it.
   const passError = pass ? passwordProblem(pass) : ''
   const confirmError = pass && confirm !== pass ? 'Those two do not match.' : ''
-  const ready = f.first_name.trim() && f.last_name.trim() && (!pass || (f.email.trim() && !passError && !confirmError))
+  // The one thing every new starter must have: somebody to call in an emergency, by name and number.
+  const emergencyOk = f.emergency_contact.trim() !== '' && f.emergency_phone.replace(/\D/g, '').length >= 7
+  const ready = f.first_name.trim() && f.last_name.trim() && emergencyOk && (!pass || (f.email.trim() && !passError && !confirmError))
 
   if (given)
     return (
@@ -123,7 +127,9 @@ function Form({ onClose }: { onClose: () => void }) {
         <Field label="Paid" htmlFor="ef-freq"><Select id="ef-freq" value={f.pay_frequency} onChange={set('pay_frequency')} options={[['monthly', 'Monthly'], ['biweekly', 'Every two weeks'], ['weekly', 'Weekly'], ['hourly', 'Hourly']].map(([v, l]) => ({ value: v, label: l }))} /></Field>
         <Field label="Salary" htmlFor="ef-salary"><NumField id="ef-salary" value={f.salary} onValue={num('salary')} /></Field>
         <Field label="Tax rate %" htmlFor="ef-tax"><NumField id="ef-tax" value={f.tax_rate} onValue={num('tax_rate')} /></Field>
-        <Field label="Emergency contact" htmlFor="ef-em"><Input id="ef-em" value={f.emergency_contact} onChange={set('emergency_contact')} /></Field>
+        <Field label="Gender" htmlFor="ef-gender" hint="Optional."><Select id="ef-gender" value={f.gender ?? ''} placeholder="Not given" onChange={set('gender')} options={GENDERS.map((g) => ({ value: g, label: g }))} /></Field>
+        <Field label="Emergency contact name *" htmlFor="ef-em" hint="Required: who to call in an emergency."><Input id="ef-em" value={f.emergency_contact} onChange={set('emergency_contact')} /></Field>
+        <Field label="Emergency contact phone *" htmlFor="ef-emp" error={f.emergency_phone && !emergencyOk && f.emergency_contact ? 'Enter a phone number.' : undefined}><Input id="ef-emp" type="tel" value={f.emergency_phone} onChange={set('emergency_phone')} /></Field>
         <Field label="Sites" htmlFor="ef-sites" hint="None ticked means every site." className="sm:col-span-2 lg:col-span-3">
           <div className="flex flex-wrap gap-x-4 gap-y-1" id="ef-sites">
             {(jobs.data ?? []).map((j) => <label key={j.id} className="flex items-center gap-1.5 text-[13px]"><input type="checkbox" className="size-4 accent-[var(--primary)]" checked={f.site_ids.includes(j.id)} onChange={(e) => setF((s) => ({ ...s, site_ids: e.target.checked ? [...s.site_ids, j.id] : s.site_ids.filter((x) => x !== j.id) }))} />{j.number} {j.name}</label>)}

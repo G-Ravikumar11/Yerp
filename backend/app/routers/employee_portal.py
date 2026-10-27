@@ -61,6 +61,7 @@ from app.services.procurement import (
 )
 from app.services.projects import job_label_for
 from app.validators.common import validate_candidate_document
+from app.validators.hr import clean_aadhaar, clean_emergency, clean_gender, clean_pan, clean_uan
 
 
 router = APIRouter()
@@ -1167,11 +1168,45 @@ def get_employee_profile(request: Request, db: Session = Depends(get_db)):
         "work_location": emp.work_location,
         "emergency_contact": emp.emergency_contact,
         "emergency_phone": emp.emergency_phone,
+        "emergency_complete": bool((emp.emergency_contact or "").strip() and (emp.emergency_phone or "").strip()),
+        # Their own details, which only they enter. Optional apart from the emergency contact.
+        "gender": emp.gender or "", "aadhaar_no": emp.aadhaar_no or "", "pan_no": emp.pan_no or "", "uan_no": emp.uan_no or "",
+        "onboarding": emp.status == "onboarding",
         "employee_id_code": emp.employee_id,
         "goals_count": len(goals),
         "goal_progress": goal_progress,
         "team": [{"id": t.id, "name": f"{t.first_name} {t.last_name}", "job_title": t.job_title, "email": t.email} for t in team],
     }
+
+
+@router.put("/api/employee/profile/details")
+def update_my_details(request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """The employee's own details: the emergency contact (the one thing onboarding insists on) and, if they wish,
+    gender and their Aadhaar, PAN and UAN numbers. Who they are comes from the session, never from the request."""
+    emp_id = request.session.get("employee_id")
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id).first() if emp_id else None
+    if not emp or emp.status == "terminated":
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    body = body or {}
+    changed = []
+    if "emergency_contact" in body or "emergency_phone" in body:
+        # A contact is a name and a number together, and cannot be taken away again once given.
+        name, phone = clean_emergency(body.get("emergency_contact", emp.emergency_contact),
+                                      body.get("emergency_phone", emp.emergency_phone))
+        emp.emergency_contact, emp.emergency_phone = name, phone
+        changed.append("emergency contact")
+    for key, clean, label in (("gender", clean_gender, "gender"), ("aadhaar_no", clean_aadhaar, "Aadhaar number"),
+                              ("pan_no", clean_pan, "PAN"), ("uan_no", clean_uan, "UAN")):
+        if key in body:
+            setattr(emp, key, clean(body[key]))
+            changed.append(label)
+    if not changed:
+        raise HTTPException(status_code=400, detail="Nothing to save.")
+    log_audit(db, emp.client_id, "employee_details_given", "employee", emp.id, f"{emp.first_name} {emp.last_name}",
+              ", ".join(changed), request, user_type="employee", user_name=f"{emp.first_name} {emp.last_name}")
+    db.commit()
+    return {"message": "Saved: " + ", ".join(changed) + ".",
+            "emergency_complete": bool(emp.emergency_contact and emp.emergency_phone)}
 
 
 @router.get("/api/employee/analytics")
