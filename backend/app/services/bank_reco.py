@@ -14,6 +14,7 @@ import csv
 from collections import Counter
 import io
 import re
+from collections import Counter
 from datetime import date, datetime, timedelta
 
 from fastapi import HTTPException
@@ -167,12 +168,14 @@ def bank_account_or_404(db, client_id, account_id):
 def import_statement(db, client_id, account, lines, file_name, who):
     """Store the lines not already stored (a statement downloaded twice, or overlapping months), then match.
 
-    Lines that look alike are counted, not merged: two genuine charges of the same amount on the same day with the same
-    narration are two lines. The n-th such line in the file is taken to be the n-th already stored, so importing the same
-    statement again adds nothing, an overlapping month adds only what is new, and a pair that is really two stays two."""
-    have = Counter((l.txn_date, money(l.debit), money(l.credit), (l.narration or "")[:120], l.balance)
-                   for l in db.query(models.DBBankStatementLine).filter(models.DBBankStatementLine.client_id == client_id,
-                                                                        models.DBBankStatementLine.account_id == account.id).all())
+    Lines are counted, not just compared: two identical lines in one file are two transactions (two equal charges on
+    one day, on a statement without a balance column), so a line is skipped only while the account already holds as
+    many lines like it as have been seen so far in this file."""
+    have = Counter((l.txn_date, money(l.debit), money(l.credit), (l.narration or "")[:120],
+                    money(l.balance) if l.balance is not None else None)
+                   for l in db.query(models.DBBankStatementLine).filter(
+                       models.DBBankStatementLine.client_id == client_id,
+                       models.DBBankStatementLine.account_id == account.id).all())
     seen = Counter()
     added = 0
     for l in lines:
