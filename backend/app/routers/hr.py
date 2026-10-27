@@ -70,11 +70,16 @@ from app.services.hr import (
 )
 from app.validators.common import validate_candidate_document
 from app.validators.hr import (
+    clean_aadhaar,
     clean_department_name,
+    clean_emergency,
     clean_employee_email,
+    clean_gender,
     clean_org_email,
     clean_org_domain,
+    clean_pan,
     clean_person_name,
+    clean_uan,
     validate_employee_money,
     validate_level,
     validate_manager,
@@ -206,7 +211,7 @@ def nudge_onboarding(emp_id: int, request: Request, db: Session = Depends(get_db
     db.add(models.DBNotification(
         client_id=client.id, employee_id=emp.id, type="warning",
         title="Documents still needed",
-        message="Please upload: " + ", ".join(snap["awaiting_employee"]),
+        message="Please provide: " + ", ".join(snap["awaiting_employee"]),
     ))
     db.commit()
     return {"message": "Reminder sent", "items": snap["awaiting_employee"]}
@@ -459,6 +464,8 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     email = clean_employee_email(db, client_id, body.email, required=bool(body.password))
     org_email = clean_org_email(db, client_id, body.org_email)
     validate_employee_money(body.model_dump())
+    emergency_contact, emergency_phone = clean_emergency(body.emergency_contact, body.emergency_phone)
+    gender = clean_gender(body.gender)
     employee_code = assert_employee_code_free(db, client_id, body.employee_id)
 
     level = validate_level(body.level)
@@ -495,7 +502,7 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
         allowances=body.allowances, bonus=body.bonus,
         bank_name=body.bank_name, bank_account=body.bank_account,
         tax_id=body.tax_id,
-        emergency_contact=body.emergency_contact, emergency_phone=body.emergency_phone,
+        emergency_contact=emergency_contact, emergency_phone=emergency_phone, gender=gender,
         start_date=body.start_date, status="onboarding",
         password_hash=passwords.hash_password(validated_staff_password(body.password)) if body.password else "",
     )
@@ -578,6 +585,8 @@ def _profile(emp, dept_name, manager_name, sites):
         "allowances": emp.allowances, "bonus": emp.bonus,
         "bank_name": emp.bank_name, "bank_account": emp.bank_account, "tax_id": emp.tax_id,
         "emergency_contact": emp.emergency_contact, "emergency_phone": emp.emergency_phone,
+        "gender": emp.gender or "", "pan_no": emp.pan_no or "", "uan_no": emp.uan_no or "",
+        "aadhaar_masked": ("XXXX XXXX " + emp.aadhaar_no[-4:]) if emp.aadhaar_no else "",
         "start_date": emp.start_date, "end_date": emp.end_date,
         "status": emp.status, "onboarding_complete": emp.onboarding_complete,
         "offboarding_complete": emp.offboarding_complete,
@@ -735,6 +744,19 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
         else:
             body["org_email"] = clean_org_email(db, client.id, body["org_email"], exclude_id=emp.id)
     validate_employee_money(body)
+    if "gender" in body:
+        body["gender"] = clean_gender(body["gender"])
+    if "aadhaar_no" in body:
+        body["aadhaar_no"] = clean_aadhaar(body["aadhaar_no"])
+    if "pan_no" in body:
+        body["pan_no"] = clean_pan(body["pan_no"])
+    if "uan_no" in body:
+        body["uan_no"] = clean_uan(body["uan_no"])
+    # Somebody still being onboarded must keep an emergency contact. Everybody else is left as they are, so an old
+    # record without one can still be saved for any other change.
+    if emp.status == "onboarding" and ("emergency_contact" in body or "emergency_phone" in body):
+        body["emergency_contact"], body["emergency_phone"] = clean_emergency(
+            body.get("emergency_contact", emp.emergency_contact), body.get("emergency_phone", emp.emergency_phone))
     # Hierarchy fields go through the same checks as on create; a blind
     # setattr let callers set an unknown level or build a reporting loop.
     if "level" in body:

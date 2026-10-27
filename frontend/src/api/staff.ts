@@ -232,12 +232,25 @@ export interface Profile {
   work_location: string
   emergency_contact: string
   emergency_phone: string
+  /** Whether both the name and the number of the emergency contact have been given. */
+  emergency_complete: boolean
+  /** The employee's own optional details. */
+  gender: string
+  aadhaar_no: string
+  pan_no: string
+  uan_no: string
+  /** Still being onboarded: the emergency contact is then what stands between them and being active. */
+  onboarding: boolean
   employee_id_code: string
   goals_count: number
   goal_progress: number
   team: { id: number; name: string; job_title: string; email: string }[]
 }
 export const useProfile = () => useQuery({ queryKey: k('profile'), queryFn: () => get<Profile>('/api/employee/profile') })
+
+export interface MyDetails { emergency_contact: string; emergency_phone: string; gender: string; aadhaar_no: string; pan_no: string; uan_no: string }
+/** The employee saves their own emergency contact, gender, Aadhaar, PAN and UAN. The server knows who they are from the session. */
+export const saveMyDetails = (b: Partial<MyDetails>) => put<{ message?: string; emergency_complete: boolean }>('/api/employee/profile/details', b)
 
 export interface Note { id: number; title: string; message: string; type: string; is_read: boolean; link: string; created_at: string }
 export const useNotes = () => useQuery({ queryKey: k('notes'), queryFn: () => get<{ notifications: Note[]; unread_count: number }>('/api/employee/notifications'), refetchInterval: 60_000 })

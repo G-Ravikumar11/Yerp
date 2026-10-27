@@ -103,6 +103,9 @@ SITE_RATE_COLUMNS = (
     ("site_item_rates", "item_code", "VARCHAR DEFAULT ''"), ("site_item_rates", "site_rate", "FLOAT"),
     ("site_item_rates", "default_rate_snapshot", "FLOAT"), ("site_item_rates", "effective_date", "VARCHAR DEFAULT ''"),
     ("site_item_rates", "remarks", "TEXT DEFAULT ''"),
+    # Who an employee is, for onboarding: gender and the Aadhaar, PAN and UAN numbers (all optional).
+    ("employees", "gender", "VARCHAR DEFAULT ''"), ("employees", "aadhaar_no", "VARCHAR DEFAULT ''"),
+    ("employees", "pan_no", "VARCHAR DEFAULT ''"), ("employees", "uan_no", "VARCHAR DEFAULT ''"),
 )
 
 STORE_OUTWARD_COLUMNS = (

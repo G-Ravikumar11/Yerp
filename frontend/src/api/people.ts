@@ -40,6 +40,11 @@ interface OnboardingItem {
 
 export interface EmployeeDetail extends Employee {
   address: string
+  /** Optional, and given by the employee in their own portal. Aadhaar comes back masked. */
+  gender?: string
+  pan_no?: string
+  uan_no?: string
+  aadhaar_masked?: string
   /** Whether they have a password to sign in with. The password itself is never sent. */
   has_password: boolean
   permissions: string[]
@@ -170,6 +175,8 @@ export interface EmployeeInput {
   start_date: string
   emergency_contact: string
   emergency_phone: string
+  /** Optional: Male, Female, Other or Prefer not to say. */
+  gender?: string
   /** The rights the Master ticked, saved with the employee in the same request. Left out, the access level's own apply. */
   permissions?: string[]
 }

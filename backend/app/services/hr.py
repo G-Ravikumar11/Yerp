@@ -9,7 +9,7 @@ from sqlalchemy.orm import joinedload
 from app import models
 
 from app.constants.approvals import GONE_STATUSES
-from app.constants.hr import DEFAULT_DOCUMENT_REQUIREMENTS, DEFAULT_ONBOARDING_ITEMS, ORG_DOMAIN_KEY
+from app.constants.hr import DEFAULT_DOCUMENT_REQUIREMENTS, DEFAULT_ONBOARDING_ITEMS, ORG_DOMAIN_KEY, emergency_contact_required
 from app.core.currency import money
 from app.core.dates import _parse_date
 from app.core.permissions import EMPLOYEE_ROLES
@@ -105,11 +105,15 @@ def onboarding_snapshot(db, emp, today=None, *, items=None, reqs=None):
         reqs = db.query(models.DBDocumentRequest).filter(
             models.DBDocumentRequest.employee_id == emp.id).all()
     mandatory = [r for r in reqs if r.is_mandatory]
-    awaiting_employee = [r for r in mandatory if r.status in ("pending", "rejected")]
+    awaiting_employee = [r.name for r in mandatory if r.status in ("pending", "rejected")]
+    # The one thing onboarding always insists on: somebody to call in an emergency (a name and a number).
+    has_emergency = bool((emp.emergency_contact or "").strip()) and bool((emp.emergency_phone or "").strip())
+    if not has_emergency and emergency_contact_required():
+        awaiting_employee.insert(0, "Emergency contact")
     awaiting_hr = [r for r in reqs if r.status == "submitted"]
     approved = [r for r in mandatory if r.status == "approved"]
     overdue_docs = [
-        r for r in awaiting_employee if r.due_date and r.due_date < today_str]
+        r for r in mandatory if r.status in ("pending", "rejected") and r.due_date and r.due_date < today_str]
 
     checklist_done = bool(items) and done_items == len(items)
     documents_done = not awaiting_employee and not awaiting_hr
@@ -133,7 +137,8 @@ def onboarding_snapshot(db, emp, today=None, *, items=None, reqs=None):
         "items_overdue": overdue_items,
         "docs_total": len(mandatory),
         "docs_approved": len(approved),
-        "awaiting_employee": [r.name for r in awaiting_employee],
+        "awaiting_employee": awaiting_employee,
+        "emergency_contact_given": has_emergency,
         "awaiting_hr": [r.name for r in awaiting_hr],
         "docs_overdue": [r.name for r in overdue_docs],
         "checklist_done": checklist_done,
@@ -649,8 +654,56 @@ def seed_default_requirements(db, client_id):
         )
         db.add(row)
         rows.append(row)
+    # Starting from today's defaults, so the one-time move to them (apply_india_onboarding) has nothing to do here.
+    db.add(models.DBSettings(client_id=client_id, key=INDIA_ONBOARDING_KEY, value="1", description="Onboarding documents brought to the current defaults"))
     db.flush()
     return rows
+
+
+INDIA_ONBOARDING_KEY = "onboarding_documents_v2"
+
+
+def apply_india_onboarding(db, client_id):
+    """Bring one company's onboarding paperwork to the way it is meant to work now, once: an emergency contact is the only
+    thing compulsory, and a new starter is asked (not required) to upload Aadhaar, PAN, UAN, a photo, bank details and the
+    contract. What HR has set up is kept - nothing is deleted - but every requirement, and every request still waiting, stops
+    being mandatory, and the ones the company lacks are added and given to anybody who is still being onboarded.
+    Recorded in the company's settings, so HR making a document mandatory again later is not undone at the next start."""
+    done = db.query(models.DBSettings).filter(models.DBSettings.client_id == client_id, models.DBSettings.key == INDIA_ONBOARDING_KEY).first()
+    if done:
+        return 0
+    rules = db.query(models.DBDocumentRequirement).filter(models.DBDocumentRequirement.client_id == client_id).all()
+    added = []
+    if rules:                                              # a company with none gets the defaults when it first needs them
+        have = {r.name.strip().lower() for r in rules}
+        top = max((r.sort_order or 0 for r in rules), default=0)
+        for name, desc, dtype, _mandatory, days in DEFAULT_DOCUMENT_REQUIREMENTS:
+            if name.lower() in have or (name == "Aadhaar card" and any("aadhaar" in h or "aadhar" in h for h in have)):
+                continue
+            top += 1
+            row = models.DBDocumentRequirement(client_id=client_id, name=name, description=desc, doc_type=dtype,
+                                               is_mandatory=False, due_days=days, sort_order=top)
+            db.add(row)
+            added.append(row)
+        for r in rules:
+            r.is_mandatory = False
+        db.query(models.DBDocumentRequest).filter(
+            models.DBDocumentRequest.client_id == client_id, models.DBDocumentRequest.status.in_(("pending", "rejected")),
+        ).update({"is_mandatory": False}, synchronize_session=False)
+        db.flush()
+        if added:
+            for emp in db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client_id, models.DBEmployee.status == "onboarding").all():
+                assign_document_requests(db, client_id, emp, added)
+    db.add(models.DBSettings(client_id=client_id, key=INDIA_ONBOARDING_KEY, value="1", description="Onboarding documents brought to the current defaults"))
+    db.commit()
+    return len(added)
+
+
+def apply_india_onboarding_all():
+    from app.db import SessionLocal
+    with SessionLocal() as db:
+        for (cid,) in db.query(models.DBClient.id).all():
+            apply_india_onboarding(db, cid)
 
 
 # Names this module only needs once it is running. They come from modules that in turn need this one,

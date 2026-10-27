@@ -1,11 +1,13 @@
+import { Link } from 'react-router-dom'
 import { CheckCircle2, Circle } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Skeleton } from '@/components/ui'
-import { useOnboarding } from '@/api/staff'
+import { useOnboarding, useProfile } from '@/api/staff'
 
 /** The tasks of settling in, and how many are done. */
 export default function OnboardingPage() {
   const q = useOnboarding()
+  const profile = useProfile()
   const items = q.data ?? []
   const done = items.filter((i) => i.is_completed).length
   const pct = items.length ? Math.round((done / items.length) * 100) : 0
@@ -13,6 +15,9 @@ export default function OnboardingPage() {
   return (
     <>
       <PageHeader eyebrow="My work" title="Onboarding" description="The tasks of settling in. HR ticks them off as they are done." />
+      {profile.data && !profile.data.emergency_complete && (
+        <p role="alert" className="mb-4 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm">Your emergency contact is still needed - it is the one thing onboarding cannot finish without. <Link className="font-medium text-primary underline" to="/me/profile">Add it in My Profile</Link>. Your Aadhaar, PAN and UAN can be added there and under <Link className="font-medium text-primary underline" to="/me/documents">Documents</Link> whenever you like.</p>
+      )}
       {q.isPending ? <Skeleton className="h-40 w-full" /> : (
         <>
           <section aria-label="Progress" className="mb-6 flex items-center gap-4 rounded-xl border border-border bg-card p-5 shadow-card">

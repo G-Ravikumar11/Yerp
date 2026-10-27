@@ -8,6 +8,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { EmployeeAccess } from './EmployeeAccess'
+import { GENDERS } from './EmployeeFormModal'
 import { SetPasswordModal } from './SetPasswordModal'
 import { EMPLOYEE_TONE } from './EmployeesPage'
 
@@ -24,6 +25,7 @@ function Profile({ e, ready }: { e: EmployeeDetail; ready: boolean }) {
     ['Reporting role', cat.data?.roles.find((r) => r.code === e.role)?.label ?? e.role],
     ['Start date', e.start_date], ['Salary', e.salary], ['Tax rate %', e.tax_rate],
     ['Emergency contact', e.emergency_contact], ['Emergency phone', e.emergency_phone],
+    ['Gender', e.gender], ['Aadhaar (given by the employee)', e.aadhaar_masked], ['PAN (given by the employee)', e.pan_no], ['UAN (given by the employee)', e.uan_no],
   ]
   if (editing) return <ProfileForm e={e} onDone={() => setEditing(false)} />
   return (
@@ -45,7 +47,7 @@ function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
   const depts = useDepartments()
   const people = useEmployees('')
   const cat = useHrCatalogue()
-  const [f, setF] = useState({ first_name: e.first_name, last_name: e.last_name, email: e.email, org_email: e.org_email ?? '', phone: e.phone, job_title: e.job_title, department_id: e.department_id, reports_to: e.reports_to, level: e.level, role: e.role, employment_type: e.employment_type, pay_frequency: e.pay_frequency, salary: e.salary, tax_rate: e.tax_rate, start_date: e.start_date, emergency_contact: e.emergency_contact, emergency_phone: e.emergency_phone })
+  const [f, setF] = useState({ first_name: e.first_name, last_name: e.last_name, email: e.email, org_email: e.org_email ?? '', phone: e.phone, job_title: e.job_title, department_id: e.department_id, reports_to: e.reports_to, level: e.level, role: e.role, employment_type: e.employment_type, pay_frequency: e.pay_frequency, salary: e.salary, tax_rate: e.tax_rate, start_date: e.start_date, emergency_contact: e.emergency_contact, emergency_phone: e.emergency_phone, gender: e.gender ?? '' })
   const { isOwner } = useSession()
   // The reporting line runs up the levels: the same level or above, never below.
   const rank = (code: string) => cat.data?.levels.find((l) => l.code === code)?.rank ?? 0
@@ -73,6 +75,7 @@ function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
         <Field label="Start date" htmlFor="ep-start"><Input id="ep-start" type="date" value={f.start_date} onChange={set('start_date')} /></Field>
         <Field label="Salary" htmlFor="ep-salary"><NumField id="ep-salary" value={f.salary} onValue={(n) => setF((s) => ({ ...s, salary: n }))} /></Field>
         <Field label="Tax rate %" htmlFor="ep-tax"><NumField id="ep-tax" value={f.tax_rate} onValue={(n) => setF((s) => ({ ...s, tax_rate: n }))} /></Field>
+        <Field label="Gender" htmlFor="ep-gender"><Select id="ep-gender" value={f.gender} placeholder="Not given" onChange={set('gender')} options={GENDERS.map((g) => ({ value: g, label: g }))} /></Field>
         <Field label="Emergency contact" htmlFor="ep-em"><Input id="ep-em" value={f.emergency_contact} onChange={set('emergency_contact')} /></Field>
         <Field label="Emergency phone" htmlFor="ep-emp"><Input id="ep-emp" value={f.emergency_phone} onChange={set('emergency_phone')} /></Field>
       </div>

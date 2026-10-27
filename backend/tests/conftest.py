@@ -38,6 +38,8 @@ os.environ.setdefault("PASSWORD_ITERATIONS", "1000")
 # Tests drive run_due_jobs() directly; a loop ticking in the background would
 # race them and claim periods out from under the assertions.
 os.environ.setdefault("SCHEDULER_ENABLED", "0")
+# Most tests add people in bulk without an emergency contact; the rule has its own tests (test_emergency_and_ids.py).
+os.environ["REQUIRE_EMERGENCY_CONTACT"] = "0"
 # Thousands of sign-ins and requests from one test address: the CAPTCHA and the flood limit are switched back on
 # in test_login_guard.py, where they are what is being tested.
 os.environ.setdefault("CAPTCHA_MODE", "off")
