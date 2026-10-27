@@ -47,6 +47,7 @@ from app.models.boq import (
     DBBoqVariation,
     DBBoqVariationLine,
 )
+from app.models.budgeting import DBBoqBudget, DBBoqBudgetItem
 from app.models.client_orders import (
     DBWorkOrder,
     DBWorkOrderLine,
