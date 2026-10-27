@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app import models
 from app.core.audit import log_audit
 from app.core.auth import require_items_access, wo_actor
 from app.core.sheets import sheet_response

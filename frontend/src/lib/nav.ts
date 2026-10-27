@@ -73,6 +73,7 @@ const NAV: NavEntry[] = [
       { label: 'Site Diary', path: '/projects/diary' },
       { label: 'Project Chart', path: '/projects/chart' },
       { label: 'Equipment & Plant', path: '/projects/equipment' },
+      { label: 'Budgeting', path: '/projects/budgeting', perm: 'reports.view' },
       { label: 'Project Profit', path: '/projects/profit', perm: 'reports.view' },
       { label: 'Cost by Project', path: '/projects/costs', perm: 'reports.view' },
     ],

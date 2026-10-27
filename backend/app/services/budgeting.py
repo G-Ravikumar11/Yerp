@@ -108,7 +108,6 @@ def budget_view(db, client_id, job):
     oh, ct = (cfg.overhead_percent or 0.0) if cfg else 0.0, (cfg.contingency_percent or 0.0) if cfg else 0.0
 
     rows, tot = [], {"revenue": 0.0, "material": 0.0, "labour": 0.0, "other": 0.0, "unbudgeted_value": 0.0, "budgeted": 0}
-    section = ""
     sections = {}
     for l in lines:
         got = items.get(l.key, [])
