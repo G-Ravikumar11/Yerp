@@ -21,7 +21,8 @@ type Tab = (typeof TABS)[number]['value']
 
 /** The owner's settings: company, paper, approval rules, who can sign in, alerts and backups. */
 export default function SettingsPage() {
-  const [tab, setTab] = useState<Tab>('company')
+  // Back from connecting Gmail: open the tab its section is on, so its message is seen.
+  const [tab, setTab] = useState<Tab>(() => (new URLSearchParams(window.location.search).get('gmail') ? 'data' : 'company'))
   return (
     <>
       <PageHeader eyebrow="Master" title="Settings" description="The company on paper, who signs what, who can sign in, and where alerts go." />

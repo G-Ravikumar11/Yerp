@@ -3,24 +3,23 @@ import { Button, Field, Input } from '@/components/ui'
 import { Capacitor } from '@capacitor/core'
 import { Eye, EyeOff } from 'lucide-react'
 import { api, ApiError, apiUrl } from '@/lib/api'
-import { AuthLayout, Notice, nextTarget } from './AuthLayout'
+import { AuthLayout, Notice, YahooMark, nextTarget } from './AuthLayout'
 import { codeLine } from '@/lib/errorCodes'
 import { appUrl } from '@/lib/paths'
 import { CaptchaBox, type CaptchaValue } from './CaptchaBox'
 
 const ERRORS: Record<string, string> = {
   auth_failed: 'Authentication failed. Please try again.',
-  google_failed: 'Google sign-in did not complete. Try again.',
-  google_no_email: 'Google did not share an email address.',
-  google_unverified: 'That Google address is not verified.',
-  google_unknown: 'No account here uses that Google address. Ask whoever set up your access.',
   account_disabled: 'That account has been disabled.',
-  google_unconfigured: 'Google sign-in is not set up on this server yet.',
+  google_retired: 'Sign in with Google is no longer offered. Continue with Yahoo, or sign in with your email and password.',
   yahoo_failed: 'Yahoo sign-in did not complete. Try again.',
   yahoo_no_email: 'Yahoo did not share an email address.',
   yahoo_unverified: 'That Yahoo address is not verified.',
   yahoo_unknown: 'No account here uses that Yahoo address. Ask whoever set up your access.',
   yahoo_unconfigured: 'Yahoo sign-in is not set up on this server yet.',
+  yahoo_denied: 'Yahoo sign-in was cancelled. Try again, or sign in with your email and password.',
+  yahoo_state: 'That Yahoo sign-in did not start here, so it was stopped for your safety. Please try again.',
+  yahoo_expired: 'That Yahoo sign-in took too long or was used already. Please try again.',
   gmail_sign_in_first: 'Sign in first, then connect Gmail from inside the app.',
 }
 
@@ -33,7 +32,7 @@ const STEPS: [string, string][] = [
 ]
 
 const go = (to: string) => window.location.assign(to)
-// Inside the native app there is no website to go back to, and Google's sign-in page cannot hand its cookie back.
+// Inside the native app there is no website to go back to, and Yahoo's sign-in page cannot hand its cookie back.
 const native = Capacitor.isNativePlatform()
 
 /** One door for the whole business: the server decides whether the address is the account holder's or a member of staff's. */
@@ -44,8 +43,6 @@ export default function LoginPage() {
   const [company, setCompany] = useState('')
   // The company's own logo, which the server shows to anyone before they sign in; the blue Y until it has loaded or if there is none.
   const [logo, setLogo] = useState(`${import.meta.env.BASE_URL}brand/yalavarti-mark.svg`)
-  const [google, setGoogle] = useState(false)
-  const [yahoo, setYahoo] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -58,8 +55,6 @@ export default function LoginPage() {
 
   useEffect(() => {
     api<{ company_name?: string; logo_url?: string }>('/api/public/brand', { quiet: true }).then((b) => { if (b?.company_name) setCompany(b.company_name); if (b?.logo_url) setLogo(apiUrl(b.logo_url)) }).catch(() => undefined)
-    api<{ configured?: boolean }>('/api/auth/google/status', { quiet: true }).then((d) => setGoogle(!!d?.configured)).catch(() => undefined)
-    api<{ configured?: boolean }>('/api/auth/yahoo/status', { quiet: true }).then((d) => setYahoo(!!d?.configured)).catch(() => undefined)
     if (params.get('signedout')) {
       // Arrived from Sign out: end whatever sign-in this browser still holds, and show the form.
       for (const u of ['/api/client/logout', '/api/employee/auth/logout', '/api/portal/logout']) void api(u, { method: 'POST', quiet: true }).catch(() => undefined)
@@ -154,12 +149,12 @@ export default function LoginPage() {
         </div>
         <Button type="submit" loading={busy} className="w-full">Sign in</Button>
       </form>
-      {(google || yahoo) && !native && (
+      {/* Always offered on the website. A server without Yahoo keys answers a click with "not set up yet" (yahoo_unconfigured). */}
+      {!native && (
         <>
           <div className="my-5 flex items-center gap-3 text-xs uppercase text-muted-foreground"><span className="h-px flex-1 bg-border" />or<span className="h-px flex-1 bg-border" /></div>
           <div className="grid gap-2">
-            {google && <Button type="button" variant="outline" className="w-full" onClick={() => go('/api/auth/google/start?next=' + encodeURIComponent(nextTarget(appUrl())))}>Continue with Google</Button>}
-            {yahoo && <Button type="button" variant="outline" className="w-full" onClick={() => go('/api/auth/yahoo/start?next=' + encodeURIComponent(nextTarget(appUrl())))}>Continue with Yahoo</Button>}
+            <Button type="button" variant="outline" className="w-full gap-2.5" onClick={() => go('/api/auth/yahoo/start?next=' + encodeURIComponent(nextTarget(appUrl())))}><YahooMark /> Continue with Yahoo</Button>
           </div>
         </>
       )}
