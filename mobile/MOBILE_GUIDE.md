@@ -91,6 +91,21 @@ rules in `backend/app/core/app_limits.py` apply. The website is never held to th
 
 ---
 
+## 3d. Downloads (PDF, Excel) in the app
+
+The website's download buttons are plain links to the server. In the app a bare `/api/...` address points at the app's own
+files, and the phone's browser has none of the person's sign-in, so they did nothing. `frontend/src/lib/download.ts` fixes
+every such button at once, without editing any of them: in the native app it catches a tap on a link to an `/api/` file
+(`.pdf .xlsx .xls .csv .docx .zip`, or marked `download`), a `window.open` of one, and a script clicking a link it made;
+fetches the file itself with the person's sign-in; keeps it in the phone's cache; and opens Android's Open / Share choices.
+The server's refusals (the app rights in 3c) show as a message. The website never runs any of this.
+
+It uses two native plugins, `@capacitor/filesystem` and `@capacitor/share`, so it needs one new APK. On an older APK the screens
+still load, and a download says "Install the latest version of the app to download files." Once the new APK is out, set
+`mobile/web-min-native.txt` to its build number if older phones should stop receiving screens that rely on it.
+
+---
+
 ## 4. Connecting the Mobile App to Your Backend
 
 When running inside a native mobile wrapper (Android / iOS), the app needs to know where your live API lives:
