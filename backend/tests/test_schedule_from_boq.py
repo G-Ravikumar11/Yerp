@@ -27,7 +27,7 @@ def test_by_section_each_section_is_an_activity_with_its_lines_as_tasks(tenant):
     # weighted by what each is worth, and spread end to end across the span
     assert acts[0]["weight"] == 90000 + 984000 + 32800 and acts[1]["weight"] == 366000
     # the programme does not start on a Sunday
-    assert acts[0]["planned_start"] == (d(1) if date.today().weekday() == 6 else d(0)) and acts[1]["planned_finish"] == d(60)
+    assert acts[0]["planned_start"] == (d(1) if date.today().weekday() == 6 else d(0)) and acts[1]["planned_finish"] == (d(59) if (date.today() + timedelta(days=60)).weekday() == 6 else d(60))
     assert acts[1]["depends_on_id"] == acts[0]["id"]
     tasks = tenant.get("/api/schedule/activities/%d" % acts[0]["id"]).json()["activity"]["tasks"]
     texts = [t["text"] for t in tasks]

@@ -124,7 +124,7 @@ def test_a_schedule_drawn_from_a_work_order(tenant):
     acts = out.json()["schedule"]["activities"]
     assert len(acts) == 1 and acts[0]["work_order_line_id"]
     # the programme does not start on a Sunday
-    assert acts[0]["planned_start"] == (d(1) if date.today().weekday() == 6 else d(0)) and acts[0]["planned_finish"] == d(60)
+    assert acts[0]["planned_start"] == (d(1) if date.today().weekday() == 6 else d(0)) and acts[0]["planned_finish"] == (d(59) if (date.today() + timedelta(days=60)).weekday() == 6 else d(60))
     again = tenant.post("/api/jobs/%d/schedule/from-work-order/%d" % (job_id, wo["id"]),
                         json={"start": d(0), "finish": d(60)})
     assert again.status_code == 409
