@@ -87,9 +87,9 @@ export default function LoginPage() {
         else if (e.status !== 401 && !other) other = e
         return null
       }
-      const owner = await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password, rememberMe }, quiet: true }).catch(none)
+      const owner = await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, channel: native ? 'app' : 'web' }, quiet: true }).catch(none)
       if (owner) return go(owner.is_onboarded === false ? nextTarget(appUrl('onboard')) : nextTarget(appUrl()))
-      const staff = await api('/api/employee/auth/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, device_info: navigator.userAgent.slice(0, 200) }, quiet: true }).catch(none)
+      const staff = await api('/api/employee/auth/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, channel: native ? 'app' : 'web', device_info: navigator.userAgent.slice(0, 200) }, quiet: true }).catch(none)
       if (staff) return go(nextTarget(appUrl()))
       const refusal = other as ApiError | null
       setError(

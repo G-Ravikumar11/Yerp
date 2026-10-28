@@ -18,10 +18,25 @@ export type SessionUser = {
   headOffice: boolean
   /** The department the owner has put this person in; staff see it on their own sign-in. */
   department: string
+  /** Where this sign-in came from: the website, or the phone app (which changes less - see AppRight). */
+  channel: 'web' | 'app'
+  /** True in the app for everybody but the Master and the account's admins. */
+  appLimited: boolean
+  /** In the app, which of the four "Phone app" rights this person holds. Everything is true on the website. */
+  appRights: Record<AppRight, boolean>
 }
 
-type OwnerMe = { email: string; contact_name?: string; company_name?: string; role?: string }
-type StaffMe = {
+export type AppRight = 'app.site_edit' | 'app.approve' | 'app.download_pdf' | 'app.download_excel'
+type AppFields = { channel?: string; app_limited?: boolean; app_rights?: Partial<Record<AppRight, boolean>> }
+const ALL_RIGHTS: Record<AppRight, boolean> = { 'app.site_edit': true, 'app.approve': true, 'app.download_pdf': true, 'app.download_excel': true }
+
+/** What the server said about the channel, as the screens use it. An older server says nothing: it is the website. */
+function appFields(me: AppFields): Pick<SessionUser, 'channel' | 'appLimited' | 'appRights'> {
+  return { channel: me.channel === 'app' ? 'app' : 'web', appLimited: !!me.app_limited, appRights: { ...ALL_RIGHTS, ...(me.app_rights ?? {}) } }
+}
+
+type OwnerMe = AppFields & { email: string; contact_name?: string; company_name?: string; role?: string }
+type StaffMe = AppFields & {
   id: number
   email: string
   full_name?: string
@@ -61,6 +76,7 @@ async function resolveSession(): Promise<SessionUser | null> {
         roleCode: 'owner',
         headOffice: false,
         department: '',
+        ...appFields(owner),
       }
     }
   } catch (e) {
@@ -81,6 +97,7 @@ async function resolveSession(): Promise<SessionUser | null> {
         roleCode: staff.permission_role || 'staff',
         headOffice: !!staff.head_office,
         department: staff.department ?? '',
+        ...appFields(staff),
       }
     }
   } catch (e) {
@@ -100,9 +117,18 @@ export function useSession() {
     return permission.split('|').some((p) => user.permissions.includes(p))
   }
 
+  /**
+   * In the phone app, whether this person may do what one of the four "Phone app" rights covers. Always true on the website,
+   * and for the Master and admins in the app. The server enforces the same rules: this only keeps the buttons honest.
+   */
+  const appCan = (right: AppRight) => !user || user.channel !== 'app' || !user.appLimited || user.appRights[right]
+
   return {
     user,
     can,
+    appCan,
+    /** Signed in from the phone app. */
+    isApp: user?.channel === 'app',
     isLoading: q.isPending,
     // Only an answer of "nobody" is signed out. No answer at all (no signal) is not.
     isAnonymous: q.isSuccess && !user,

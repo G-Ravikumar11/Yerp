@@ -13,6 +13,7 @@ from app.db import get_db
 
 from app.constants.common import ALLOW_SELF_REGISTRATION, GOOGLE_SIGNIN_SCOPES
 from app.core.audit import log_audit, log_login
+from app.core import app_limits
 from app.core.auth import current_role, end_every_session, get_client_user, set_session_lifetime
 from app.core.config import logger
 from app.core.notifications import default_from_email, send_email_background
@@ -112,7 +113,7 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
             request.session.pop("portal_user_id", None)
             request.session["client_id"] = owner.id
             request.session["member_id"] = member.id
-            set_session_lifetime(request, body.remember_me)
+            set_session_lifetime(request, body.remember_me, body.channel)
             member.last_login = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             log_login(db, owner.id, member.email, "member", "password", request, "success")
             db.commit()
@@ -128,7 +129,7 @@ def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_
     request.session.pop("portal_user_id", None)
     request.session["client_id"] = client.id
     request.session.pop("member_id", None)
-    set_session_lifetime(request, body.remember_me)
+    set_session_lifetime(request, body.remember_me, body.channel)
     log_login(db, client.id, body.email, "client", "password", request, "success")
     return {"message": "Logged in", "is_onboarded": client.is_onboarded, "company_name": client.company_name}
 
@@ -160,6 +161,9 @@ def client_me(request: Request, db: Session = Depends(get_db)):
         "created_at": client.created_at,
         # The account holder or a colleague: the screens show the Master's controls only to the former.
         "role": current_role(request, db),
+        # Where this session signed in, and which app rights apply to it (the screens match the server's limits).
+        **app_limits.summary(request, app_limits.account_rights(current_role(request, db)),
+                             app_limits.free_account(current_role(request, db))),
     }
 
 

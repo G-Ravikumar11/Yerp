@@ -16,6 +16,8 @@ class ClientLogin(BaseModel):
     email: str
     password: str
     remember_me: bool = Field(False, alias="rememberMe")
+    # "app" when the phone app signs in (it holds the session to the app's limits); anything else is the website.
+    channel: str = "web"
 
 
 class ClientOnboard(BaseModel):

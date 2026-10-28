@@ -118,6 +118,19 @@ PORTAL_PERMISSIONS = [
     # bill - not only those it has a hand in, which is all a site sees.
     {"key": "ho.view_all", "group": "Head office",
      "label": "HO portal (all sites)"},
+    # THE PHONE APP
+    #
+    # The app is a narrower door than the website: whoever signs in there can look at everything their access lets them
+    # see, but changes only what these rights allow (core/app_limits.py). They do nothing on the website. The Master and
+    # the account's admins are not held to them: the app is the whole website to them.
+    {"key": "app.site_edit", "group": "Phone app",
+     "label": "Record site work in the app (diary, photos, measurements, material in, task progress)"},
+    {"key": "app.approve", "group": "Phone app",
+     "label": "Approve and reject in the app"},
+    {"key": "app.download_pdf", "group": "Phone app",
+     "label": "Download PDFs in the app"},
+    {"key": "app.download_excel", "group": "Phone app",
+     "label": "Download Excel reports in the app"},
 ]
 PERMISSION_KEYS = {p["key"] for p in PORTAL_PERMISSIONS}
 
@@ -285,6 +298,23 @@ PERMISSION_ROLES = [
         "permissions": sorted(PERMISSION_KEYS),
     },
 ]
+
+# What each role gets in the phone app to begin with, from what it already does on the website: the people who record site
+# work may record it from the phone, the people who approve may approve there, and everybody may download a PDF. Excel
+# reports are given by hand. The Master changes any of this for one person on the same Access screen as every other right.
+_APP_DEFAULTS = (
+    ("app.site_edit", {"site.record"}),
+    ("app.approve", {"bills.approve", "subcontracts.approve", "site.signoff"}),
+    ("app.download_pdf", None),
+)
+for _role in PERMISSION_ROLES:
+    if _role["code"] == "owner":
+        continue
+    _held = set(_role["permissions"])
+    for _key, _needs in _APP_DEFAULTS:
+        if _needs is None or _held & _needs:
+            _held.add(_key)
+    _role["permissions"] = sorted(_held)
 
 ROLE_PERMISSIONS = {r["code"]: set(r["permissions"]) for r in PERMISSION_ROLES}
 ROLE_RANK = {r["code"]: r.get("rank", 1) for r in PERMISSION_ROLES}

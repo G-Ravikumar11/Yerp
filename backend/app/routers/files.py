@@ -15,6 +15,7 @@ from app.db import get_db
 
 from app.core.audit import log_audit
 from app.core.auth import get_client_user, require_erp_read, require_items_access, session_employee, wo_actor
+from app.core import app_limits
 from app.core.config import SECRET_KEY
 from app.core.currency import money, sheet_number
 from app.services.credit_notes import credit_tds_rows
@@ -334,7 +335,9 @@ def _file_response(db, f, download=0, cache="private, max-age=86400"):
 @router.get("/api/files/{fid}")
 def get_file(fid: int, request: Request, download: int = 0, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
-    return _file_response(db, _file_or_404(db, client.id, fid, bytes_too=True), download)
+    f = _file_or_404(db, client.id, fid, bytes_too=True)
+    app_limits.check_stored_file(request, f.content_type)
+    return _file_response(db, f, download)
 
 
 # A file opened outside the app. In the phone app a PDF or a drawing cannot be shown inside it, so it is handed to the

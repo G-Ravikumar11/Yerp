@@ -65,6 +65,32 @@ The screens' release is public (the repository is), and the app only accepts a b
 
 ---
 
+## 3c. What the phone app lets people change
+
+The website and the app share one server and one set of accounts, but the app changes less. Signing in from the app stamps
+the session `channel = "app"` (in the signed cookie, so it cannot be dropped without signing in again), and from then on the
+rules in `backend/app/core/app_limits.py` apply. The website is never held to them.
+
+- **Not held to them:** the Master (the account holder), the account's admins, and staff whose access level is Master. The
+  app is the whole website to them.
+- **Everyone else, in the app:** can look at everything their access lets them see, and changes only what one of four
+  "Phone app" rights allows. The Master gives or takes these away person by person, on the same Access screen as every other
+  right (they are a "Phone app" group there):
+
+  | Right | What it allows in the app | Given to, by default |
+  |---|---|---|
+  | `app.site_edit` | Site work: diary, photos, measurements, material in, safety, quality, task progress | roles that record site work on the website |
+  | `app.approve` | Approve and reject | roles that approve bills, subcontracts or site work |
+  | `app.download_pdf` | Download a PDF, a stored document or a drawing | everybody |
+  | `app.download_excel` | Download an Excel report | nobody (by hand) |
+
+- **Never from the app, for anyone but the above:** billing, orders, settings, people, deleting. Their own things (sign in/out,
+  clock in, leave, chat, the push token) are always open.
+- **To change the policy**, edit the tables at the top of `app_limits.py`. To change a person, use the Access screen.
+- The app sends `channel: "app"` in its sign-in request only. An older app (or a browser) sends nothing and is the website.
+
+---
+
 ## 4. Connecting the Mobile App to Your Backend
 
 When running inside a native mobile wrapper (Android / iOS), the app needs to know where your live API lives:
