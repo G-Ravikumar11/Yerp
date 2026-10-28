@@ -11,7 +11,6 @@ A cheque register is every cheque written or received, with where it stands: pen
 written more than three months ago and never presented, so the bank will not honour it.
 """
 import csv
-from collections import Counter
 import io
 import re
 from collections import Counter

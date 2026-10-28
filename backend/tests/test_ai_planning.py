@@ -62,7 +62,7 @@ def test_a_draft_is_shown_then_saved_only_when_applied(tenant, monkeypatch):
     res = tenant.post("/api/ai/planning/jobs/%d/draft/apply" % job_id, json={"work_order_id": wo["id"], "activities": out["activities"]})
     assert res.status_code == 200, res.text
     a = res.json()["schedule"]["activities"]
-    assert len(a) == 1 and a[0]["work_order_line_id"] == line_id and a[0]["planned_finish"] == d(40) and a[0]["code"] == "A10"
+    assert len(a) == 1 and a[0]["work_order_line_id"] == line_id and a[0]["planned_finish"] == (d(39) if (date.today() + timedelta(days=40)).weekday() == 6 else d(40)) and a[0]["code"] == "A10"
     again = tenant.post("/api/ai/planning/jobs/%d/draft/apply" % job_id, json={"work_order_id": wo["id"], "activities": out["activities"]})
     assert again.status_code == 409                                                           # already on the programme
 
