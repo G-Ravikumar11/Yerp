@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Button, Field, Input, Tabs } from '@/components/ui'
-import { api, ApiError } from '@/lib/api'
+import { ApiError } from '@/lib/api'
 import { AuthLayout, Notice, YahooMark } from '@/features/auth/AuthLayout'
 import { CaptchaBox, type CaptchaValue } from '@/features/auth/CaptchaBox'
 import { portalAcceptInvite, portalInvite, portalKeys, portalLogin, portalLogout, usePortalMe, type PortalInvite } from '@/api/portal'
