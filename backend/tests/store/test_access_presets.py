@@ -36,9 +36,9 @@ def test_the_store_in_charge_approves_and_the_coordinator_gets_it():
 def test_the_other_jobs_get_what_they_do_in_the_store():
     assert hub("construction") == {"enquiry.view", "outward.view", "outward.create"}            # asks for material
     assert {"outward.approve", "reports.view"} <= hub("project_manager") and "inward.post" not in hub("project_manager")
-    for role in ("purchase", "accounts", "ho_qs", "ho_coordinator"):
+    for role in ("purchase", "accounts", "ho_qs", "ho_coordinator", "hr"):
         assert all(k.endswith(".view") for k in hub(role)), role                                # they only read
-    assert hub("staff") == set() and hub("hr_admin") == set()
+    assert hub("staff") == set()
 
 
 def test_a_storekeeper_can_now_work_in_the_hub_but_only_in_their_store(account):
@@ -146,7 +146,7 @@ def test_the_store_administrator_right_is_the_masters_to_give_and_says_what_it_o
         assert ("store.admin" in ROLE_PERMISSIONS[role]) == (role == "owner"), role
     # A member of staff - even one who manages people - cannot hand it to anyone.
     email = "hr-%s@example.com" % tag
-    make_employee(t, email=email, password="Crew1234", permission_role="hr_admin", status="active")
+    make_employee(t, email=email, password="Crew1234", permission_role="hr", status="active")
     target = make_employee(t, email="tg-%s@example.com" % tag, password="Crew1234", permission_role="stores", status="active")
     c = TestClient(main.app)
     c.__enter__()

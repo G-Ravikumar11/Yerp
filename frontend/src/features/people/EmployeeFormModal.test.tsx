@@ -38,7 +38,7 @@ vi.mock('@/lib/api', async (orig) => ({
   }),
   post: vi.fn(async (url: string, body: unknown) => { sent.push({ url, body }); return { id: 1, employee_id: 'EMP-1', message: 'ok', site_names: [] } }),
 }))
-vi.mock('@/lib/session', () => ({ useSession: () => ({ isOwner: owner, can: () => true }) }))
+vi.mock('@/lib/session', () => ({ useSession: () => ({ isOwner: owner, can: () => owner }) }))
 vi.mock('@/features/people/AccessPicker', () => ({
   AccessPicker: ({ role, granted }: { role: string; granted: string[] }) => <div data-testid="access">{role}|{[...granted].sort().join(',')}</div>,
 }))

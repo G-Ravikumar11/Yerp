@@ -7,6 +7,7 @@ from sqlalchemy import func as sqlfunc
 from app import models
 
 from app.constants.hr import EMPLOYEE_MONEY_FIELDS, PERMISSION_ROLE_CODES, _DOMAIN_RE
+from app.core.auth import require_people_admin
 from app.core.permissions import DEFAULT_PERMISSION_ROLE, FIXED_ROLES, LEVEL_CODES, LEVEL_RANK, ROLE_CODES
 
 
@@ -33,7 +34,8 @@ def validate_level(level):
     return level
 
 
-def validate_role(role, current=""):
+def validate_role(request, db, role, current=""):
+    """A known designation. The fixed ones are hidden from the picker, and only the Master or HR may give one out."""
     role = (role or "").strip().lower()
     if role and role not in ROLE_CODES:
         raise HTTPException(
@@ -41,7 +43,7 @@ def validate_role(role, current=""):
             detail=f"Unknown role '{role}'. Expected one of: {', '.join(sorted(ROLE_CODES))}",
         )
     if role in FIXED_ROLES and role != (current or ""):
-        raise HTTPException(status_code=403, detail="This role is fixed and cannot be given to anyone")
+        require_people_admin(request, db)
     return role
 
 

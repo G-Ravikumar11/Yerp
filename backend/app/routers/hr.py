@@ -15,7 +15,7 @@ from app.db import get_db, get_read_db
 
 from app.constants.hr import ONBOARDING_STAGES, ORG_DOMAIN_KEY
 from app.core.audit import log_audit, log_audit_many
-from app.core.auth import get_client_user, owned_or_404, require_owner
+from app.core.auth import is_master_session, owned_or_404, require_items_access, require_people_admin
 from app.core.currency import money
 from app.core.dates import _parse_date
 from app.core.references import release_references
@@ -98,7 +98,7 @@ def _department_names(db, client_id):
 @router.get("/api/onboarding/pipeline")
 def onboarding_pipeline(request: Request, db: Session = Depends(get_read_db)):
     """Everyone still onboarding, grouped by what they are waiting on."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     employees = db.query(models.DBEmployee).filter(
         models.DBEmployee.client_id == client.id,
         models.DBEmployee.status == "onboarding",
@@ -162,7 +162,7 @@ def complete_onboarding(emp_id: int, request: Request, db: Session = Depends(get
     Refuses while something is still outstanding, and says what, rather than
     quietly activating someone whose paperwork is not in.
     """
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     emp = db.query(models.DBEmployee).filter(
         models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id
     ).first()
@@ -194,7 +194,7 @@ def complete_onboarding(emp_id: int, request: Request, db: Session = Depends(get
 @router.post("/api/employees/{emp_id}/nudge")
 def nudge_onboarding(emp_id: int, request: Request, db: Session = Depends(get_db)):
     """Remind a starter what is still outstanding, in their own portal."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     emp = db.query(models.DBEmployee).filter(
         models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id
     ).first()
@@ -215,7 +215,7 @@ def nudge_onboarding(emp_id: int, request: Request, db: Session = Depends(get_db
 @router.get("/api/hr/levels")
 def get_hr_levels(request: Request, db: Session = Depends(get_read_db)):
     """Catalogue the UI uses to populate level and role pickers."""
-    get_client_user(request, db)
+    require_items_access(request, db, "people.manage")
     return {
         "levels": EMPLOYEE_LEVELS,
         "roles": ASSIGNABLE_ROLES,
@@ -228,7 +228,7 @@ def get_hr_levels(request: Request, db: Session = Depends(get_read_db)):
 @router.get("/api/departments")
 def get_departments(request: Request, site_id: Optional[int] = None, db: Session = Depends(get_read_db)):
     """Every department, or with ?site_id= only those added to that site."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     depts = db.query(models.DBDepartment).filter(
         models.DBDepartment.client_id == client.id).order_by(models.DBDepartment.name).all()
     if site_id is not None:
@@ -238,7 +238,7 @@ def get_departments(request: Request, site_id: Optional[int] = None, db: Session
 
 @router.get("/api/departments/{dept_id}")
 def get_department(dept_id: int, request: Request, db: Session = Depends(get_read_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     return department_to_dict(db, department_or_404(db, client.id, dept_id))
 
 
@@ -247,8 +247,8 @@ def get_department(dept_id: int, request: Request, db: Session = Depends(get_rea
 
 @router.post("/api/departments")
 def create_department(request: Request, body: DepartmentCreate, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
-    require_owner(request, db)
+    client = require_items_access(request, db, "people.manage")
+    require_people_admin(request, db)
     name = clean_department_name(body.name)
     assert_department_name_free(db, client.id, name)
     dept = models.DBDepartment(name=name, description=body.description, color=body.color, icon=body.icon, client_id=client.id)
@@ -270,8 +270,8 @@ def create_department(request: Request, body: DepartmentCreate, db: Session = De
 
 @router.put("/api/departments/{dept_id}")
 def update_department(dept_id: int, request: Request, body: DepartmentCreate, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
-    require_owner(request, db)
+    client = require_items_access(request, db, "people.manage")
+    require_people_admin(request, db)
     dept = department_or_404(db, client.id, dept_id)
     name = clean_department_name(body.name)
     # Create checked for duplicates but update did not, so a rename could
@@ -292,8 +292,8 @@ def update_department(dept_id: int, request: Request, body: DepartmentCreate, db
 
 @router.delete("/api/departments/{dept_id}")
 def delete_department(dept_id: int, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
-    require_owner(request, db)
+    client = require_items_access(request, db, "people.manage")
+    require_people_admin(request, db)
     dept = department_or_404(db, client.id, dept_id)
     log_audit(db, client.id, "department_deleted", "department", dept.id, dept.name, "", request)
     # In one trip: its people leave it, goals that hang off it (which would block the delete on Postgres) go or
@@ -319,8 +319,8 @@ def add_to_department(dept_id: int, request: Request, body: DepartmentMembersIn,
     A fixed handful of queries however many people are moved: on a remote
     database each one is a third of a second.
     """
-    client = get_client_user(request, db)
-    require_owner(request, db)
+    client = require_items_access(request, db, "people.manage")
+    require_people_admin(request, db)
     ids = list(dict.fromkeys(body.employee_ids))
     if not ids:
         raise HTTPException(status_code=400, detail="Choose at least one employee")
@@ -356,8 +356,8 @@ def add_to_department(dept_id: int, request: Request, body: DepartmentMembersIn,
 
 @router.delete("/api/departments/{dept_id}/employees/{emp_id}")
 def remove_from_department(dept_id: int, emp_id: int, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
-    require_owner(request, db)
+    client = require_items_access(request, db, "people.manage")
+    require_people_admin(request, db)
     dept = department_or_404(db, client.id, dept_id)
     emp = db.query(models.DBEmployee).filter(
         models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id,
@@ -375,7 +375,7 @@ def remove_from_department(dept_id: int, emp_id: int, request: Request, db: Sess
 
 @router.get("/api/employees")
 def get_employees(request: Request, q: str = "", status: str = "", db: Session = Depends(get_read_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     # Each person's department, manager and site count come in the same read as the person: on the hosted
     # database every separate query is a trip across the ocean.
     mgr = aliased(models.DBEmployee)
@@ -425,6 +425,22 @@ def get_employees(request: Request, q: str = "", status: str = "", db: Session =
     return result
 
 
+# Rights no access level carries but the Master's: HR may run the People portal, but cannot hand these out.
+MASTER_ONLY_RIGHTS = PERMISSION_KEYS - set().union(*(r for code, r in ROLE_PERMISSIONS.items() if code != "owner"))
+
+
+def _guard_the_master(request, emp=None, role=None, rights=None):
+    """HR has the whole People portal, yet the Master's own record, the Master's access level and the rights only
+    the Master holds stay out of its reach, so nobody can promote themselves past it."""
+    if is_master_session(request):
+        return
+    if (emp is not None and (emp.permission_role or "").lower() == "owner") or (role or "").lower() == "owner":
+        raise HTTPException(status_code=403, detail="Only the Master can change the Master's own record or give the Master's access")
+    if MASTER_ONLY_RIGHTS & set(rights or []):
+        raise HTTPException(status_code=403, detail="Some of those rights are the Master's alone to give")
+
+
+
 def _split_rights(role, permissions):
     """The ticked rights measured against the access level, as (extra, denied).
 
@@ -451,7 +467,7 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     """A new member of staff, with their checklist, document requests, sites and access, in one
     transaction. Every step is a trip to a database across an ocean, so nothing is looked up twice,
     nothing is looked for that cannot be there yet, and the answer is built before the one commit."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     client_id = client.id
     serialise(db, "employee-create:%d" % client_id)
     first_name = clean_person_name(body.first_name, "First name")
@@ -462,19 +478,20 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     employee_code = assert_employee_code_free(db, client_id, body.employee_id)
 
     level = validate_level(body.level)
-    role = validate_role(body.role)
+    role = validate_role(request, db, body.role)
     level = level or ROLE_LEVEL.get(role, "")
     permission_role = validate_permission_role(body.permission_role)
+    _guard_the_master(request, role=permission_role, rights=body.permissions)
     if permission_role != DEFAULT_PERMISSION_ROLE or body.permissions is not None:
-        require_owner(request, db)  # access is the Master's to give
+        require_people_admin(request, db)  # access is the Master's (or HR's) to give
     if body.reports_to:
-        require_owner(request, db)  # the reporting line is the Master's to set
+        require_people_admin(request, db)  # the reporting line is the Master's (or HR's) to set
     reports_to = validate_manager(db, client_id, None, body.reports_to, level)
     if not reports_to:
         reports_to = automatic_reports_to(db, client_id, role, body.department_id)
     dept_id = body.department_id or None
     if dept_id:
-        require_owner(request, db)
+        require_people_admin(request, db)
         department_or_404(db, client_id, dept_id)
     extra, denied = _split_rights(permission_role, body.permissions) if body.permissions is not None else ("", "")
 
@@ -602,7 +619,7 @@ def _profile_after(db, client_id, before, sites=None):
 def get_employee(emp_id: int, request: Request, view: str = "", db: Session = Depends(get_read_db)):
     """One employee. `?view=profile` is what their page shows - three reads; without it, everything about
     them (payslips, leave, attendance, goals, documents, reports) for the screens that want the lot."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     read = _employee_with_names(db, client.id, emp_id)
     emp, profile = read.emp, _profile(read.emp, read.dept_name, read.manager_name, sites_payload(read.sites))
     if view == "profile":
@@ -711,11 +728,13 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
     """Change somebody's details. The page sends every field back on each save, so what has not changed is not
     checked again (each check is a trip across the ocean), and the answer is the saved profile, so the page
     shows it without asking a second time."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     # The person with their names and sites, in the one read the answer is built from.
     before = _employee_with_names(db, client.id, emp_id)
     emp = before.emp
     body = body or {}
+    _guard_the_master(request, emp, role=body.get("permission_role"),
+                      rights=(body.get("extra_permissions") or "").split(","))
     # Everything a blind setattr would have accepted unchecked.
     if "first_name" in body:
         body["first_name"] = clean_person_name(body["first_name"], "First name")
@@ -740,24 +759,24 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
     if "level" in body:
         body["level"] = validate_level(body["level"])
     if "role" in body:
-        body["role"] = validate_role(body["role"], emp.role)
+        body["role"] = validate_role(request, db, body["role"], emp.role)
         if not body.get("level") and not emp.level:
             body["level"] = ROLE_LEVEL.get(body["role"], "")
     # Access is the Master's alone. A blind setattr below would otherwise let
     # any team member widen their own or anybody's rights through this route.
     if ACCESS_FIELDS & body.keys():
-        require_owner(request, db)
+        require_people_admin(request, db)
     # So is the department: only the Master moves people between them. The
     # profile form sends the current one back unchanged, which is fine.
     new_dept = body.pop("department_id", emp.department_id) or None
     if new_dept != emp.department_id:
-        require_owner(request, db)
+        require_people_admin(request, db)
     if "permission_role" in body:
         body["permission_role"] = validate_permission_role(body["permission_role"])
     if "reports_to" in body:
         line, level_now = body["reports_to"] or None, body.get("level") or emp.level or ""
         if line != emp.reports_to:
-            require_owner(request, db)  # the reporting line is the Master's to change
+            require_people_admin(request, db)  # the reporting line is the Master's (or HR's) to change
         if line == emp.reports_to and level_now == (emp.level or ""):
             body["reports_to"] = line      # the same manager at the same level: nothing new to check
         else:
@@ -790,11 +809,12 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
 def delete_employee(emp_id: int, request: Request, db: Session = Depends(get_db)):
     """Remove somebody for good. The Master's call alone: it takes their payslips,
     attendance, leave and documents with them, which nobody else may decide."""
-    client = get_client_user(request, db)
-    require_owner(request, db)
+    client = require_items_access(request, db, "people.manage")
+    require_people_admin(request, db)
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
+    _guard_the_master(request, emp)
     emp_name = f"{emp.first_name} {emp.last_name}"
     # Everything that points at the person is dealt with first, otherwise the delete fails on a foreign key violation
     # (on Postgres - SQLite would let it through). Their own records (payslips, attendance, leave, documents, sites)
@@ -811,7 +831,7 @@ def delete_employee(emp_id: int, request: Request, db: Session = Depends(get_db)
 
 @router.get("/api/hr/org-domain")
 def get_org_domain(request: Request, db: Session = Depends(get_read_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     domain = org_domain_for(db, client.id)
     off_domain = 0
     if domain:
@@ -836,7 +856,7 @@ def set_org_domain(request: Request, body: dict = None, db: Session = Depends(ge
     address changes what they sign in with, and doing that to a whole workforce
     behind a settings save would lock everyone out at once.
     """
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     domain = clean_org_domain((body or {}).get("domain", ""))
     setting = db.query(models.DBSettings).filter(
         models.DBSettings.client_id == client.id,
@@ -859,7 +879,7 @@ def set_org_domain(request: Request, body: dict = None, db: Session = Depends(ge
 def suggest_employee_email(request: Request, first_name: str = "", last_name: str = "",
                            db: Session = Depends(get_read_db)):
     """The address a new starter would be given, so HR does not type it."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     domain = org_domain_for(db, client.id)
     return {
         "domain": domain,
@@ -874,8 +894,8 @@ def master_access_overview(request: Request, db: Session = Depends(get_read_db))
     For the Master's access screen: one read gives the whole picture, and
     PUT /api/employees/{id}/permissions changes it.
     """
-    client = get_client_user(request, db)
-    require_owner(request, db)
+    client = require_items_access(request, db, "people.manage")
+    require_people_admin(request, db)
     people = db.query(models.DBEmployee).filter(
         models.DBEmployee.client_id == client.id,
     ).order_by(models.DBEmployee.first_name, models.DBEmployee.last_name).all()
@@ -903,12 +923,13 @@ def set_employee_permissions(emp_id: int, request: Request, body: dict = None,
     detail: who widened somebody's rights, and when, is the first question
     asked after a cost is approved by the wrong person.
     """
-    client = get_client_user(request, db)
-    require_owner(request, db)
+    client = require_items_access(request, db, "people.manage")
+    require_people_admin(request, db)
     read = _employee_with_names(db, client.id, emp_id)   # the answer is built from this one read
     emp = read.emp
     body = body or {}
     new_role = validate_permission_role(body.get("permission_role"))
+    _guard_the_master(request, emp, role=new_role, rights=body.get("permissions"))
     old_role = emp.permission_role or DEFAULT_PERMISSION_ROLE
     before = sorted(permissions_for(emp))
     emp.permission_role = new_role
@@ -937,11 +958,12 @@ def set_employee_permissions(emp_id: int, request: Request, body: dict = None,
 
 def _set_status(emp_id: int, request: Request, db: Session, status: str, message: str, **fields):
     """Master-only: move an employee to another stage of their time with the company."""
-    client = get_client_user(request, db)
-    require_owner(request, db)
+    client = require_items_access(request, db, "people.manage")
+    require_people_admin(request, db)
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
+    _guard_the_master(request, emp)
     before = emp.status
     emp.status = status
     for k, v in fields.items():
@@ -970,7 +992,7 @@ def terminate_employee(emp_id: int, request: Request, db: Session = Depends(get_
 
 @router.post("/api/employees/{emp_id}/complete-offboard")
 def complete_offboarding(emp_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
@@ -985,7 +1007,7 @@ def complete_offboarding(emp_id: int, request: Request, body: dict = None, db: S
 
 @router.get("/api/onboarding/hub")
 def get_onboarding_hub(request: Request, db: Session = Depends(get_read_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     employees = db.query(models.DBEmployee).filter(
         models.DBEmployee.client_id == client.id,
         models.DBEmployee.status.in_(["onboarding", "active"])
@@ -1021,7 +1043,7 @@ def get_onboarding_hub(request: Request, db: Session = Depends(get_read_db)):
 
 @router.get("/api/employees/{emp_id}/onboarding")
 def get_onboarding(emp_id: int, request: Request, db: Session = Depends(get_read_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
@@ -1039,7 +1061,7 @@ def get_onboarding(emp_id: int, request: Request, db: Session = Depends(get_read
 
 @router.put("/api/onboarding/{item_id}")
 def update_onboarding_item(item_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     item = db.query(models.DBOnboardingItem).filter(models.DBOnboardingItem.id == item_id, models.DBOnboardingItem.client_id == client.id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -1069,7 +1091,7 @@ def update_onboarding_item(item_id: int, request: Request, body: dict = None, db
 
 @router.delete("/api/onboarding/{item_id}")
 def delete_onboarding_item(item_id: int, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     item = db.query(models.DBOnboardingItem).filter(models.DBOnboardingItem.id == item_id, models.DBOnboardingItem.client_id == client.id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -1080,7 +1102,7 @@ def delete_onboarding_item(item_id: int, request: Request, db: Session = Depends
 
 @router.post("/api/employees/{emp_id}/onboarding")
 def add_onboarding_item(emp_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
@@ -1098,7 +1120,7 @@ def add_onboarding_item(emp_id: int, request: Request, body: dict = None, db: Se
 
 @router.post("/api/employees/{emp_id}/onboarding/bulk")
 def bulk_add_onboarding(emp_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
@@ -1120,7 +1142,7 @@ def bulk_add_onboarding(emp_id: int, request: Request, body: dict = None, db: Se
 
 @router.post("/api/onboarding/apply-template")
 def apply_onboarding_template(request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     emp_ids = body.get("employee_ids", []) if body else []
     template_items = body.get("items", []) if body else []
     count = 0
@@ -1143,14 +1165,14 @@ def apply_onboarding_template(request: Request, body: dict = None, db: Session =
 
 @router.get("/api/onboarding/templates")
 def get_onboarding_templates(request: Request, db: Session = Depends(get_read_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     templates = db.query(models.DBOnboardingTemplate).filter(models.DBOnboardingTemplate.client_id == client.id).all()
     return [{"id": t.id, "name": t.name, "items": json.loads(t.items_json) if t.items_json else [], "created_at": t.created_at} for t in templates]
 
 
 @router.post("/api/onboarding/templates")
 def create_onboarding_template(request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     if not body or not body.get("name"):
         raise HTTPException(status_code=400, detail="Name required")
     template = models.DBOnboardingTemplate(
@@ -1165,7 +1187,7 @@ def create_onboarding_template(request: Request, body: dict = None, db: Session 
 
 @router.delete("/api/onboarding/templates/{template_id}")
 def delete_onboarding_template(template_id: int, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     template = db.query(models.DBOnboardingTemplate).filter(models.DBOnboardingTemplate.id == template_id, models.DBOnboardingTemplate.client_id == client.id).first()
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -1176,7 +1198,7 @@ def delete_onboarding_template(template_id: int, request: Request, db: Session =
 
 @router.get("/api/employees/{emp_id}/pay-details")
 def get_employee_pay_details(emp_id: int, request: Request, period_start: str = "", period_end: str = "", db: Session = Depends(get_read_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
@@ -1253,7 +1275,7 @@ def get_employee_pay_details(emp_id: int, request: Request, period_start: str = 
 @router.get("/api/employees/{emp_id}/ytd")
 def employee_ytd(emp_id: int, request: Request, year: str = "", db: Session = Depends(get_read_db)):
     """Year-to-date totals - required on most statutory payslip formats."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     totals = ytd_totals(db, client.id, emp_id, year)
     # Payslips of this company's own employee prove the employee is there; only with none to add up is it looked for.
     if not totals["payslip_count"] and not db.query(models.DBEmployee.id).filter(
@@ -1264,7 +1286,7 @@ def employee_ytd(emp_id: int, request: Request, year: str = "", db: Session = De
 
 @router.get("/api/org-chart")
 def get_org_chart(request: Request, db: Session = Depends(get_read_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     employees = db.query(models.DBEmployee).filter(
         models.DBEmployee.client_id == client.id,
         models.DBEmployee.status.in_(["active", "onboarding"])
@@ -1308,7 +1330,7 @@ def get_org_chart(request: Request, db: Session = Depends(get_read_db)):
 
 @router.get("/api/hr/stats")
 def get_hr_stats(request: Request, db: Session = Depends(get_read_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     E, P = models.DBEmployee, models.DBPayslip
 
     def count(*where):
@@ -1335,10 +1357,12 @@ def get_hr_stats(request: Request, db: Session = Depends(get_read_db)):
 
 @router.put("/api/employees/{emp_id}/set-password")
 def set_employee_password(emp_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
+    require_people_admin(request, db)    
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
+    _guard_the_master(request, emp)
     if not body or not body.get("password"):
         raise HTTPException(status_code=400, detail="Password required")
     if not emp.email:
@@ -1354,7 +1378,7 @@ def set_employee_password(emp_id: int, request: Request, body: dict = None, db: 
 
 @router.get("/api/onboarding/requirements")
 def list_document_requirements(request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     rows = db.query(models.DBDocumentRequirement).filter(
         models.DBDocumentRequirement.client_id == client.id
     ).order_by(models.DBDocumentRequirement.sort_order.asc(),
@@ -1367,7 +1391,7 @@ def list_document_requirements(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/api/onboarding/requirements")
 def create_document_requirement(request: Request, body: DocumentRequirementIn, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     name, applies, due_days, level, reminder = validate_requirement(body, db, client.id)
     clash = db.query(models.DBDocumentRequirement).filter(
         models.DBDocumentRequirement.client_id == client.id,
@@ -1394,7 +1418,7 @@ def create_document_requirement(request: Request, body: DocumentRequirementIn, d
 
 @router.put("/api/onboarding/requirements/{req_id}")
 def update_document_requirement(req_id: int, request: Request, body: DocumentRequirementIn, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     row = db.query(models.DBDocumentRequirement).filter(
         models.DBDocumentRequirement.id == req_id,
         models.DBDocumentRequirement.client_id == client.id,
@@ -1440,7 +1464,7 @@ def update_document_requirement(req_id: int, request: Request, body: DocumentReq
 def delete_document_requirement(req_id: int, request: Request, db: Session = Depends(get_db)):
     """Outstanding requests go with it; anything already submitted is kept so
     the record of what someone provided is not destroyed."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     row = db.query(models.DBDocumentRequirement).filter(
         models.DBDocumentRequirement.id == req_id,
         models.DBDocumentRequirement.client_id == client.id,
@@ -1464,7 +1488,7 @@ def delete_document_requirement(req_id: int, request: Request, db: Session = Dep
 def sync_employee_document_requests(emp_id: int, request: Request, db: Session = Depends(get_db)):
     """Apply the current requirements to one employee - used after their
     department or level changes, or for staff who predate a new rule."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     emp = db.query(models.DBEmployee).filter(
         models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id
     ).first()
@@ -1477,7 +1501,7 @@ def sync_employee_document_requests(emp_id: int, request: Request, db: Session =
 
 @router.get("/api/employees/{emp_id}/document-requests")
 def list_employee_document_requests(emp_id: int, request: Request, db: Session = Depends(get_read_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     emp = db.query(models.DBEmployee).filter(
         models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id
     ).first()
@@ -1493,7 +1517,7 @@ def list_employee_document_requests(emp_id: int, request: Request, db: Session =
 def document_review_queue(request: Request, status: str = "submitted", db: Session = Depends(get_read_db)):
     """What employees have sent in, waiting on HR. This is the auto-fetch the
     employee portal feeds."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     query = with_request_links(db.query(models.DBDocumentRequest)).filter(
         models.DBDocumentRequest.client_id == client.id
     )
@@ -1517,7 +1541,7 @@ def document_review_queue(request: Request, status: str = "submitted", db: Sessi
 
 @router.get("/api/onboarding/document-requests/{req_id}/file")
 def download_document_request_file(req_id: int, request: Request, db: Session = Depends(get_read_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     # The file is deferred on the model; this is the one place it is wanted, so it comes in the same read.
     row = db.query(models.DBDocumentRequest).options(
         joinedload(models.DBDocumentRequest.document).undefer(models.DBDocument.file_data)).filter(
@@ -1534,7 +1558,7 @@ def download_document_request_file(req_id: int, request: Request, db: Session = 
 
 @router.post("/api/onboarding/document-requests/{req_id}/review")
 def review_document_request(req_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     body = body or {}
     row = db.query(models.DBDocumentRequest).filter(
         models.DBDocumentRequest.id == req_id,
@@ -1582,7 +1606,7 @@ def review_document_request(req_id: int, request: Request, body: dict = None, db
 def upload_requirement_template(req_id: int, body: RequirementTemplateIn, request: Request,
                                 db: Session = Depends(get_db)):
     """Attach a blank form for the employee to download, fill in and return."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     row = db.query(models.DBDocumentRequirement).filter(
         models.DBDocumentRequirement.id == req_id,
         models.DBDocumentRequirement.client_id == client.id,
@@ -1599,7 +1623,7 @@ def upload_requirement_template(req_id: int, body: RequirementTemplateIn, reques
 
 @router.delete("/api/onboarding/requirements/{req_id}/template")
 def delete_requirement_template(req_id: int, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     row = db.query(models.DBDocumentRequirement).filter(
         models.DBDocumentRequirement.id == req_id,
         models.DBDocumentRequirement.client_id == client.id,
@@ -1644,7 +1668,7 @@ def expiring_documents(request: Request, days: int = 60, db: Session = Depends(g
     Right-to-work and DBS checks lapse quietly; this is what stops a company
     finding out during an audit.
     """
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     days = max(1, min(days, 365))
     horizon = (datetime.now().date() + timedelta(days=days))
     today = datetime.now().date()
@@ -1679,7 +1703,7 @@ def expiring_documents(request: Request, days: int = 60, db: Session = Depends(g
 # HR-side: Create goal for employee
 @router.post("/api/employees/{emp_id}/goals")
 def create_employee_goal(emp_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     if not body: body = {}
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
     if not emp:
@@ -1706,7 +1730,7 @@ def create_employee_goal(emp_id: int, request: Request, body: dict = None, db: S
 @router.get("/api/employees/{emp_id}/leave-balance")
 def get_employee_leave_balance(emp_id: int, request: Request, db: Session = Depends(get_read_db)):
     """Entitlement vs. usage, for the HR-side employee record."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     emp = db.query(models.DBEmployee).filter(
         models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id
     ).first()
@@ -1718,7 +1742,7 @@ def get_employee_leave_balance(emp_id: int, request: Request, db: Session = Depe
 @router.put("/api/employees/{emp_id}/leave-entitlement")
 def set_employee_leave_entitlement(emp_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
     """Entitlements were hard-coded at 25/10 for everyone; make them per-person."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     emp = db.query(models.DBEmployee).filter(
         models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id
     ).first()
@@ -1742,28 +1766,28 @@ def set_employee_leave_entitlement(emp_id: int, request: Request, body: dict = N
 
 @router.get("/api/employees/{emp_id}/goals")
 def get_goals_for_employee(emp_id: int, request: Request, db: Session = Depends(get_read_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     goals = db.query(models.DBEmployeeGoal).filter(models.DBEmployeeGoal.employee_id == emp_id, models.DBEmployeeGoal.client_id == client.id).order_by(models.DBEmployeeGoal.created_at.desc()).all()
     return [{"id": g.id, "title": g.title, "description": g.description, "target_value": g.target_value, "current_value": g.current_value, "unit": g.unit, "category": g.category, "priority": g.priority, "start_date": g.start_date, "due_date": g.due_date, "status": g.status, "created_by": g.created_by, "department_id": g.department_id} for g in goals]
 
 
 @router.get("/api/employees/{emp_id}/documents")
 def get_documents_for_employee(emp_id: int, request: Request, db: Session = Depends(get_read_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     docs = db.query(models.DBDocument).filter(models.DBDocument.employee_id == emp_id, models.DBDocument.client_id == client.id).order_by(models.DBDocument.created_at.desc()).all()
     return [{"id": d.id, "title": d.title, "doc_type": d.doc_type, "file_name": d.file_name, "uploaded_by": d.uploaded_by, "created_at": d.created_at} for d in docs]
 
 
 @router.get("/api/employees/{emp_id}/leave")
 def get_leave_for_employee(emp_id: int, request: Request, db: Session = Depends(get_read_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     leaves = db.query(models.DBLeaveRequest).filter(models.DBLeaveRequest.employee_id == emp_id, models.DBLeaveRequest.client_id == client.id).order_by(models.DBLeaveRequest.created_at.desc()).all()
     return [{"id": l.id, "leave_type": l.leave_type, "start_date": l.start_date, "end_date": l.end_date, "days": l.days, "reason": l.reason, "status": l.status, "approved_by": l.approved_by, "created_at": l.created_at} for l in leaves]
 
 
 @router.post("/api/employees/{emp_id}/documents")
 def upload_document(emp_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "people.manage")
     if not body: body = {}
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
     if not emp:

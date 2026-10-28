@@ -12,7 +12,8 @@ from app import models
 from app.db import SessionLocal
 
 from app.core.config import ADMIN_PANEL_MIN_LENGTH, logger
-from app.core.permissions import HO_FOLLOW_UP_ONLY_ROLES, HO_QS_ONLY, HO_QS_ONLY_REFUSAL, PORTAL_PERMISSIONS, employee_can
+from app.core.permissions import (HO_FOLLOW_UP_ONLY_ROLES, HO_QS_ONLY, HO_QS_ONLY_REFUSAL, HR_ONLY, PORTAL_PERMISSIONS,
+                                  employee_can)
 from app.core.security import admin_panel_password, hash_password, verify_password
 
 
@@ -150,6 +151,8 @@ def require_items_access(request, db, permission="items.manage"):
             raise HTTPException(
                 status_code=403,
                 detail=HO_QS_ONLY_REFUSAL.get(wanted[0], "Only HO QS can do that") + " - ask HO QS to open it.")
+        if set(wanted) <= HR_ONLY:
+            raise HTTPException(status_code=403, detail="Only HR and the Master can do that.")
         label = " or ".join(next((p["label"] for p in PORTAL_PERMISSIONS if p["key"] == w), w)
                             for w in wanted)
         raise HTTPException(
@@ -220,9 +223,32 @@ def current_role(request: Request, db: Session) -> str:
 
 
 def require_owner(request: Request, db: Session):
-    if current_role(request, db) != "owner":
+    # A staff login has no team member behind it, which reads as "owner" below: it is never the Master.
+    if not request.session.get("client_id") or current_role(request, db) != "owner":
         raise HTTPException(status_code=403,
                             detail="Only the account Master can do that")
+
+
+def require_payroll_editor(request: Request, db: Session):
+    """Changing payroll: the Master, or a staff login with the payroll right, which only HR holds. A team member
+    the Master has invited, even an admin, may look but not change."""
+    if request.session.get("client_id"):
+        client = get_client_user(request, db)
+        require_owner(request, db)
+        return client
+    return require_items_access(request, db, "payroll.manage")
+
+
+def require_people_admin(request: Request, db: Session):
+    """The whole People portal: the Master, or a staff login holding people.manage (HR)."""
+    if request.session.get("client_id"):
+        require_owner(request, db)
+        return
+    require_employee_permission(request, db, "people.manage")
+
+
+def is_master_session(request: Request) -> bool:
+    return bool(request.session.get("client_id"))
 
 
 def get_employee_user(request: Request, db: Session):

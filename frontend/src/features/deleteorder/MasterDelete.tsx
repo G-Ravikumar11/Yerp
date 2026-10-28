@@ -67,11 +67,12 @@ export function MasterDeleteDialog({ open, onOpenChange, kind, id, label, noun, 
   )
 }
 
-/** The delete icon for a row, shown only to the Master, with its confirmation. */
+/** The delete icon for a row, shown to the Master (and to HR for leave and timesheets), with its confirmation. */
 export function MasterDelete({ kind, id, label, noun, onDeleted, optimistic, simple }: { kind: MasterKind; id: number; label: string; noun?: string; onDeleted?: () => void; optimistic?: () => void; simple?: boolean }) {
-  const { isOwner } = useSession()
+  const { isOwner, can } = useSession()
   const [open, setOpen] = useState(false)
-  if (!isOwner) return null
+  // HR may delete the People portal's own records as well as the Master.
+  if (!isOwner && !((kind === 'leave' || kind === 'attendance') && can('people.manage'))) return null
   return (
     // The dialog is drawn over the page, but React still hands its clicks up to the row it was opened from. A row
     // that opens on a click would then open the very record being deleted - so no click leaves this one.

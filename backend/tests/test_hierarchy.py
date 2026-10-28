@@ -151,14 +151,14 @@ def test_fixed_roles_are_not_offered_in_the_picker(tenant):
 
 
 @pytest.mark.parametrize("role", FIXED)
-def test_fixed_roles_cannot_be_given_to_anyone(tenant, role):
+def test_fixed_roles_are_hidden_from_the_picker_but_the_master_can_give_them(tenant, role):
     res = tenant.post("/api/employees", json={
         "first_name": "A", "last_name": "B", "email": f"{role}@example.com", "role": role})
-    assert res.status_code == 403
+    assert res.status_code == 200
+    assert res.json()["role"] == role
     emp = make_employee(tenant)
-    res = tenant.put(f"/api/employees/{emp['id']}", json={"role": role})
-    assert res.status_code == 403
-    assert tenant.get(f"/api/employees/{emp['id']}").json()["role"] == ""
+    assert tenant.put(f"/api/employees/{emp['id']}", json={"role": role}).status_code == 200
+    assert tenant.get(f"/api/employees/{emp['id']}").json()["role"] == role
 
 
 def test_the_master_can_set_and_resend_the_reporting_line(tenant):
