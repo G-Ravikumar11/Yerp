@@ -40,14 +40,14 @@ const joined = (iso: string) => {
 export function payslipHtml(p: PayslipDetail, { autoPrint = false } = {}): string {
   const e = p.employee
   const c = p.company
-  const earn: [string, number][] = [['Basic', p.basic_salary]]
+  // Every column of the sheet. A head the application holds no figure for is left empty, for the office to complete.
+  const earn: [string, number | null][] = [['Basic', p.basic_salary], ['HRA', null], ['Site Allowance', null], ['Special Allownace', null], ['Mobile Allowance', null], ['Transport Allowance', null], ['Other Allowance', p.allowances]]
   if (p.overtime_pay) earn.push([`Overtime${p.overtime_hours ? ` (${p.overtime_hours}h)` : ''}`, p.overtime_pay])
   if (p.bonus) earn.push(['Bonus', p.bonus])
-  earn.push(['Allowances', p.allowances])
-  const ded: [string, number][] = [['PF / Retirement', p.retirement], ['ESI / Insurance', p.insurance], ['TDS Deduction', p.tax_amount], ['Other Deductions', p.other_deductions]]
+  const ded: [string, number | null][] = [['PF', p.retirement], ['ESI', p.insurance], ['Prof Tax', null], ['Salary Advance', null], ['TDS Deduction', p.tax_amount], ['Loss Of Pay', null], ['Other Deductions', p.other_deductions]]
   if (p.standing_deduction > 0) ded.push(['Standing Deduction', p.standing_deduction])
   const rows = Math.max(earn.length, ded.length, 4)
-  const lines = Array.from({ length: rows }, (_, i) => `<tr><td colspan="2">${esc(earn[i]?.[0] ?? '')}</td><td class="r">${earn[i] ? amt(earn[i][1]) : ''}</td><td colspan="2">${esc(ded[i]?.[0] ?? '')}</td><td class="r">${ded[i] ? amt(ded[i][1]) : ''}</td></tr>`).join('')
+  const lines = Array.from({ length: rows }, (_, i) => `<tr><td colspan="2">${esc(earn[i]?.[0] ?? '')}</td><td class="r">${earn[i]?.[1] != null ? amt(earn[i][1] as number) : ''}</td><td colspan="2">${esc(ded[i]?.[0] ?? '')}</td><td class="r">${ded[i]?.[1] != null ? amt(ded[i][1] as number) : ''}</td></tr>`).join('')
   const info = (l: string, v: unknown, l2: string, v2: unknown) => `<tr><td>${l}</td><td colspan="2">${esc(v)}</td><td>${l2}</td><td colspan="2">${esc(v2)}</td></tr>`
   const contact = [c.address, [c.phone && `Phone : ${c.phone}`, c.email && `E-mail : ${c.email}`].filter(Boolean).join(', ')].filter(Boolean)
   return `<!doctype html><meta charset="utf-8"><title>Payslip ${esc(p.number)}</title><style>${STYLE}</style>

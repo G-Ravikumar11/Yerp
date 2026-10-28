@@ -13,11 +13,13 @@ from app.db import get_db, get_read_db
 from app.constants.common import PAYROLL_EXCLUDED_STATUSES, PAYSLIP_META_FIELDS, PAYSLIP_PAY_INPUTS
 from app.core.audit import log_audit
 from app.core.queries import by_id, prime
-from app.core.auth import get_client_user, require_owner
+from app.core.auth import require_items_access, require_payroll_editor, require_people_admin
 from app.core.currency import esc, money
 from app.core.dates import _parse_date
 from app.core.notifications import default_from_email, send_email_background
 from app.core.serials import next_sequence_number
+from app.documents import payslip as payslip_sheet
+from app.documents.letterhead import letterhead
 from app.services.hr import ytd_totals
 from app.schemas.invoicing import SendInvoiceEmail
 from app.schemas.payroll import PayrollRunRequest, PayslipCreate
@@ -29,10 +31,12 @@ from app.validators.common import validate_email_address
 
 router = APIRouter()
 
+REGISTER_LIMIT = 500          # payslips in one register download
+
 
 @router.get("/api/payslips")
 def get_payslips(request: Request, status: str = "", db: Session = Depends(get_read_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "payroll.manage")
     query = db.query(models.DBPayslip).filter(models.DBPayslip.client_id == client.id)
     if status:
         query = query.filter(models.DBPayslip.status == status)
@@ -57,7 +61,7 @@ def get_payslips(request: Request, status: str = "", db: Session = Depends(get_r
 
 @router.post("/api/payslips")
 def create_payslip(request: Request, body: PayslipCreate, allow_overlap: bool = False, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_payroll_editor(request, db)
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == body.employee_id, models.DBEmployee.client_id == client.id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
@@ -97,7 +101,7 @@ def run_payroll(request: Request, body: PayrollRunRequest, db: Session = Depends
     Replaces the browser looping one request per employee, which had no
     atomicity and silently swallowed per-employee failures.
     """
-    client = get_client_user(request, db)
+    client = require_payroll_editor(request, db)
     if not body.period_start or not body.period_end or not body.pay_date:
         raise HTTPException(status_code=400, detail="Period start, period end and pay date are all required")
     p_start, p_end = _parse_date(body.period_start), _parse_date(body.period_end)
@@ -125,15 +129,15 @@ def run_payroll(request: Request, body: PayrollRunRequest, db: Session = Depends
 @router.get("/api/payroll/auto")
 def get_auto_payroll(request: Request, db: Session = Depends(get_read_db)):
     """Whether payslips are drafted by themselves when a month ends."""
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "payroll.manage")
     return {"enabled": auto_payroll_enabled(db, client.id)}
 
 
 @router.put("/api/payroll/auto")
 def put_auto_payroll(request: Request, body: dict = None, db: Session = Depends(get_db)):
-    """The Master turns the automatic monthly payroll on or off."""
-    client = get_client_user(request, db)
-    require_owner(request, db)
+    """The Master (or HR) turns the automatic monthly payroll on or off."""
+    client = require_payroll_editor(request, db)
+    require_people_admin(request, db)
     enabled = bool((body or {}).get("enabled"))
     set_auto_payroll(db, client.id, enabled)
     log_audit(db, client.id, "payroll_auto_changed", "settings", None, "auto_payroll",
@@ -142,21 +146,85 @@ def put_auto_payroll(request: Request, body: dict = None, db: Session = Depends(
     return {"enabled": enabled, "message": "Automatic payroll is " + ("on" if enabled else "off")}
 
 
-@router.get("/api/payslips/{ps_id}")
-def get_payslip(ps_id: int, request: Request, db: Session = Depends(get_read_db)):
-    client = get_client_user(request, db)
+@router.get("/api/payslips/register.xlsx")
+def download_payroll_register(request: Request, ids: str = "", db: Session = Depends(get_read_db)):
+    """Many payslips in one Excel sheet, a row each, with every column. `ids` is the payslips to include, comma
+    separated; none given means every payslip. Declared ahead of the payslip routes so it is not read as an id."""
+    client = require_items_access(request, db, "payroll.manage")
+    query = db.query(models.DBPayslip).filter(models.DBPayslip.client_id == client.id)
+    if ids.strip():
+        try:
+            wanted = [int(x) for x in ids.split(",") if x.strip()]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="ids must be payslip ids separated by commas")
+        query = query.filter(models.DBPayslip.id.in_(wanted))
+    slips = query.order_by(models.DBPayslip.period_end, models.DBPayslip.number).limit(REGISTER_LIMIT + 1).all()
+    if not slips:
+        raise HTTPException(status_code=404, detail="No payslips to put in the register")
+    if len(slips) > REGISTER_LIMIT:
+        raise HTTPException(status_code=400, detail="At most %d payslips at a time: narrow it by month first." % REGISTER_LIMIT)
+    rows = db.query(models.DBEmployee, models.DBDepartment.name).outerjoin(
+        models.DBDepartment, models.DBDepartment.id == models.DBEmployee.department_id).filter(
+        models.DBEmployee.id.in_({p.employee_id for p in slips})).all()
+    by_emp = {emp.id: (emp, name or "") for emp, name in rows}
+    payloads = [payslip_payload(db, client, p, light=True, row=by_emp.get(p.employee_id)) for p in slips]
+    months = sorted({(p.period_end or p.period_start or "")[:7] for p in slips} - {""})
+    span = months[0] if len(months) == 1 else ("%s to %s" % (months[0], months[-1]) if months else "")
+    content = payslip_sheet.register_workbook(payloads, letterhead(db, client)["name"], span)
+    return Response(content=content, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": 'attachment; filename="Payroll_register_%s.xlsx"' % (span or "all")})
+
+
+def _payslip_or_404(db, client, ps_id):
     ps = db.query(models.DBPayslip).filter(models.DBPayslip.id == ps_id, models.DBPayslip.client_id == client.id).first()
     if not ps:
         raise HTTPException(status_code=404, detail="Payslip not found")
+    return ps
+
+
+@router.get("/api/payslips/{ps_id}")
+def get_payslip(ps_id: int, request: Request, db: Session = Depends(get_read_db)):
+    client = require_items_access(request, db, "payroll.manage")
+    return payslip_payload(db, client, _payslip_or_404(db, client, ps_id))
+
+
+def _download(content, media_type, number, ext):
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in (number or "payslip"))
+    return Response(content=content, media_type=media_type,
+                    headers={"Content-Disposition": 'attachment; filename="Payslip_%s.%s"' % (safe, ext)})
+
+
+@router.get("/api/payslips/{ps_id}/pdf")
+def download_payslip_pdf(ps_id: int, request: Request, db: Session = Depends(get_read_db)):
+    """The payslip as a PDF, with every column of the sheet."""
+    client = require_items_access(request, db, "payroll.manage")
+    if not payslip_sheet.form_pdf.PDF_AVAILABLE:
+        raise HTTPException(503, "The PDF library is not installed on this server; the Excel file is still available.")
+    p = payslip_payload(db, client, _payslip_or_404(db, client, ps_id))
+    return _download(payslip_sheet.pdf_bytes(p), "application/pdf", p["number"], "pdf")
+
+
+@router.get("/api/payslips/{ps_id}/xlsx")
+def download_payslip_xlsx(ps_id: int, request: Request, db: Session = Depends(get_read_db)):
+    """The payslip as an Excel workbook, with every column of the sheet."""
+    client = require_items_access(request, db, "payroll.manage")
+    p = payslip_payload(db, client, _payslip_or_404(db, client, ps_id))
+    return _download(payslip_sheet.workbook(p), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", p["number"], "xlsx")
+
+
+def payslip_payload(db, client, ps, light=False, row=None):
+    """A payslip with its employee and the day counts. `light` leaves out the company's head and the year to date,
+    which a register of many payslips does not need; `row` is the employee and department name when already read."""
     # The employee with their department's name in one read, the totals straight from the payslips: this page made
     # fourteen round trips to the database, several of them the same lookup twice.
-    row = db.query(models.DBEmployee, models.DBDepartment.name).outerjoin(
-        models.DBDepartment, models.DBDepartment.id == models.DBEmployee.department_id).filter(
-        models.DBEmployee.id == ps.employee_id).first()
+    if row is None and not light:
+        row = db.query(models.DBEmployee, models.DBDepartment.name).outerjoin(
+            models.DBDepartment, models.DBDepartment.id == models.DBEmployee.department_id).filter(
+            models.DBEmployee.id == ps.employee_id).first()
     emp, dept_name = (row[0], row[1] or "") if row else (None, "")
-    settings_rows = db.query(models.DBSettings.key, models.DBSettings.value).filter(models.DBSettings.client_id == client.id).all()
+    settings_rows = [] if light else db.query(models.DBSettings.key, models.DBSettings.value).filter(models.DBSettings.client_id == client.id).all()
     settings_map = {k: v for k, v in settings_rows}
-    ytd = ytd_totals(db, client.id, ps.employee_id, (ps.period_end or ps.pay_date or "")[:4]) if emp else {}
+    ytd = ytd_totals(db, client.id, ps.employee_id, (ps.period_end or ps.pay_date or "")[:4]) if emp and not light else {}
     return {
         "id": ps.id, "number": ps.number,
         "employee_id": ps.employee_id,
@@ -204,7 +272,7 @@ def update_payslip(ps_id: int, request: Request, body: dict = None, db: Session 
     Previously the totals were frozen while the components were editable, so an
     edited payslip reported a net figure that no longer matched its own lines.
     """
-    client = get_client_user(request, db)
+    client = require_payroll_editor(request, db)
     ps = db.query(models.DBPayslip).filter(models.DBPayslip.id == ps_id, models.DBPayslip.client_id == client.id).first()
     if not ps:
         raise HTTPException(status_code=404, detail="Payslip not found")
@@ -237,7 +305,7 @@ def update_payslip(ps_id: int, request: Request, body: dict = None, db: Session 
 
 @router.post("/api/payslips/{ps_id}/mark-paid")
 def mark_payslip_paid(ps_id: int, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_payroll_editor(request, db)
     ps = db.query(models.DBPayslip).filter(models.DBPayslip.id == ps_id, models.DBPayslip.client_id == client.id).first()
     if not ps:
         raise HTTPException(status_code=404, detail="Payslip not found")
@@ -251,7 +319,7 @@ def mark_payslip_paid(ps_id: int, request: Request, db: Session = Depends(get_db
 @router.post("/api/payslips/{ps_id}/unmark-paid")
 def unmark_payslip_paid(ps_id: int, request: Request, db: Session = Depends(get_db)):
     """Undo a mark-as-paid entered by mistake."""
-    client = get_client_user(request, db)
+    client = require_payroll_editor(request, db)
     ps = db.query(models.DBPayslip).filter(models.DBPayslip.id == ps_id, models.DBPayslip.client_id == client.id).first()
     if not ps:
         raise HTTPException(status_code=404, detail="Payslip not found")
@@ -263,7 +331,7 @@ def unmark_payslip_paid(ps_id: int, request: Request, db: Session = Depends(get_
 
 @router.delete("/api/payslips/{ps_id}")
 def delete_payslip(ps_id: int, request: Request, force: bool = False, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_payroll_editor(request, db)
     ps = db.query(models.DBPayslip).filter(models.DBPayslip.id == ps_id, models.DBPayslip.client_id == client.id).first()
     if not ps:
         raise HTTPException(status_code=404, detail="Payslip not found")
@@ -282,7 +350,7 @@ def delete_payslip(ps_id: int, request: Request, force: bool = False, db: Sessio
 def send_payslip_email(ps_id: int, request: Request, background_tasks: BackgroundTasks, payload: Optional[SendInvoiceEmail] = None, db: Session = Depends(get_db)):
     if payload is None:
         payload = SendInvoiceEmail()
-    client = get_client_user(request, db)
+    client = require_payroll_editor(request, db)
     ps = db.query(models.DBPayslip).filter(models.DBPayslip.id == ps_id, models.DBPayslip.client_id == client.id).first()
     if not ps:
         raise HTTPException(status_code=404, detail="Payslip not found")

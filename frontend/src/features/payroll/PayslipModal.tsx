@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { Mail, Printer } from 'lucide-react'
+import { Download, Mail, Printer } from 'lucide-react'
 import { Badge, Button, ConfirmDialog, Modal, Skeleton } from '@/components/ui'
-import { deletePayslip, emailPayslip, markPaid, payKeys, reopenPayslip, usePayslip } from '@/api/payroll'
+import { deletePayslip, emailPayslip, markPaid, payKeys, payslipFile, reopenPayslip, usePayslip } from '@/api/payroll'
 import { useAction } from '@/lib/mutate'
 import { formatDate } from '@/lib/format'
 import { payslipHtml, printPayslip } from './print'
@@ -28,6 +28,8 @@ export function PayslipModal({ id, onClose }: { id: number | null; onClose: () =
           <div className="mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
             <Button variant="ghost" className="mr-auto text-danger" onClick={() => setDeleting(true)}>Delete</Button>
             <Button variant="outline" onClick={() => printPayslip(p)}><Printer /> Print</Button>
+            <Button variant="outline" asChild><a href={payslipFile(p.id, 'pdf')}><Download /> PDF</a></Button>
+            <Button variant="outline" asChild><a href={payslipFile(p.id, 'xlsx')}><Download /> Excel</a></Button>
             <Button variant="outline" loading={mail.isPending} onClick={() => mail.mutate()}><Mail /> {p.sent ? 'Email again' : 'Email to employee'}</Button>
             {p.status === 'Paid' ? <Button variant="outline" loading={reopen.isPending} onClick={() => reopen.mutate()}>Reopen</Button> : <Button loading={pay.isPending} onClick={() => pay.mutate()}>Mark as paid</Button>}
           </div>

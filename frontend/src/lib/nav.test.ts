@@ -17,6 +17,7 @@ describe('the menu follows the portals a person holds', () => {
     expect(groups(['store.view', 'purchase.manage'])).toEqual(['store'])
     expect(groups(['subcontractors.view'])).toEqual(['subcontractors'])
     expect(groups(['clients.view', 'customers.manage'])).toEqual(['clients'])
+    expect(groups(['people.manage'])).toEqual(['people'])
   })
   it('still asks a screen for its own right inside a portal', () => {
     const money = visibleNav(canWith('money.view'), true).find((e) => e.kind === 'group' && e.id === 'money')

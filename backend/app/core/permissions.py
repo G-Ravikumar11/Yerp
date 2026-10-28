@@ -42,12 +42,12 @@ EMPLOYEE_ROLES = [
      "reports_to": "md", "access": "ho_qs"},
     {"code": "store_coordinator", "label": "Coordinator Store / Sr. Store", "level": "L3",
      "department": "Store", "reports_to": "hod", "access": "store_incharge"},
+    {"code": "hr", "label": "HR", "level": "L3", "department": "HR",
+     "reports_to": "hod", "access": "hr"},
     {"code": "project_manager", "label": "Project Manager", "level": "L4", "department": "Projects",
      "reports_to": "ho_planning_head", "access": "project_manager"},
     {"code": "safety_head", "label": "Safety Head", "level": "L4", "department": "Site",
      "reports_to": "ho_planning_head", "access": "construction"},
-    {"code": "sr_hr", "label": "Sr. HR", "level": "L4", "department": "HR",
-     "reports_to": "hod", "access": "hr_admin"},
     {"code": "tpt", "label": "TPT (Transport)", "level": "L4", "department": "Transport",
      "reports_to": "hod", "access": "staff"},
     {"code": "site_director", "label": "Site Director", "level": "L5", "department": "Site",
@@ -66,7 +66,7 @@ EMPLOYEE_ROLES = [
 ROLE_LEVEL = {r["code"]: r["level"] for r in EMPLOYEE_ROLES}
 # Roles that can be held but never handed out: they are not in the role picker and no create, update or
 # hire can give one to anybody. Whoever already holds one keeps it.
-FIXED_ROLES = frozenset({"hod", "md", "coordinator", "ho_planning_head", "ho_qs", "store_coordinator"})
+FIXED_ROLES = frozenset({"hod", "md", "coordinator", "ho_planning_head", "ho_qs", "store_coordinator", "hr"})
 ASSIGNABLE_ROLES = [r for r in EMPLOYEE_ROLES if r["code"] not in FIXED_ROLES]
 ROLE_CODES = {r["code"] for r in EMPLOYEE_ROLES}
 
@@ -107,9 +107,11 @@ PORTAL_PERMISSIONS = [
      "label": "Team attendance"},
     {"key": "leave.approve", "group": "People",
      "label": "Approve leave"},
-    {"key": "people.manage", "group": "People",
+    # Employee records and payslips are changed by HR and the Master and nobody else, however the boxes were
+    # ticked (see HR_ONLY): the way to give somebody them is to make that person HR.
+    {"key": "people.manage", "group": "People", "only_role": "hr",
      "label": "Manage employees & access"},
-    {"key": "payroll.manage", "group": "People",
+    {"key": "payroll.manage", "group": "People", "only_role": "hr",
      "label": "Payroll & payslips"},
     {"key": "recruitment.manage", "group": "People",
      "label": "Recruitment"},
@@ -198,6 +200,9 @@ PERMISSION_KEYS = {p["key"] for p in PORTAL_PERMISSIONS}
 # The rights only HO QS (and the Master) can hold, whatever else is ticked.
 HO_QS_ONLY = frozenset(p["key"] for p in PORTAL_PERMISSIONS if p.get("only_role") == "ho_qs")
 HO_QS_ONLY_ROLES = frozenset({"ho_qs", "owner"})
+# The rights only HR (and the Master) can hold: the people records and the payroll.
+HR_ONLY = frozenset(p["key"] for p in PORTAL_PERMISSIONS if p.get("only_role") == "hr")
+HR_ONLY_ROLES = frozenset({"hr", "owner"})
 # The HO Coordinator follows up and keeps drafts current; it starts nothing new: no project, tender, bill
 # or variation. (It still edits what is already open.)
 HO_FOLLOW_UP_ONLY_ROLES = frozenset({"ho_coordinator"})
@@ -316,12 +321,13 @@ PERMISSION_ROLES = [
                         "store.enquiry.view", "store.inward.view", "store.reports.view"],
     },
     {
-        "code": "hr_admin", "label": "HR admin", "rank": 2,
-        "description": "Looks after people. Adds employees, decides what each "
-                       "can do, runs payroll, hiring and leave.",
-        "permissions": ["self.service", "bills.submit", "attendance.view_team",
-                        "leave.approve", "people.manage", "payroll.manage",
-                        "recruitment.manage", "projects.view"],
+        "code": "hr", "label": "HR", "rank": 2,
+        "description": "Looks after people: employees, payroll, hiring, attendance and leave. "
+                       "Can see every other portal but change nothing in them.",
+        "permissions": ["self.service", "people.manage", "payroll.manage", "recruitment.manage",
+                        "attendance.view_team", "leave.approve",
+                        "projects.view", "clients.view", "subcontractors.view", "store.view",
+                        "money.view", "bills.view_all"] + _STORE_VIEW,
     },
     {
         "code": "project_manager", "label": "Project manager", "rank": 3,
@@ -426,11 +432,10 @@ PORTALS = [
     {"code": "money", "label": "Money Portal",
      "blurb": "Supplier bills, payments, GST, assets and the registers.",
      "read": ["money.view", "bills.view_all"], "write": ["bills.pay", "invoices.manage", "accounts.manage"]},
-    # Run by the Master alone for now: every People screen opens only for the Master's own login, so there is
-    # nothing a staff login could be given. Shown, so the list of portals is complete, but not settable.
-    {"code": "people", "label": "People Portal", "locked": "Master only",
+    {"code": "people", "label": "People Portal",
      "blurb": "Employees, departments, attendance, leave and payroll.",
-     "read": [], "write": []},
+     "read": ["people.manage"],
+     "write": ["payroll.manage", "recruitment.manage", "attendance.view_team", "leave.approve"]},
 ]
 PORTAL_KEYS = {k for pt in PORTALS for k in pt["read"] + pt["write"]}
 
@@ -479,6 +484,8 @@ def permissions_for(emp) -> set:
         # Ticked by hand for somebody who is not HO QS: not honoured. Opening
         # codes and orders stays with one desk however the boxes were set.
         held -= HO_QS_ONLY
+    if role not in HR_ONLY_ROLES:
+        held -= HR_ONLY            # the same for the people records and payroll: HR and the Master only
     return held
 
 

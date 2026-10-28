@@ -59,7 +59,7 @@ def test_a_manager_or_finance_can_maintain_the_master(tenant, role):
     assert not (set(issued) - set(main.CODE_ALPHABET))
 
 
-@pytest.mark.parametrize("role", ["staff", "supervisor", "hr_admin"])
+@pytest.mark.parametrize("role", ["staff", "supervisor", "hr"])
 def test_others_cannot_change_the_master(tenant, role):
     person = staff(tenant, role)
     sign_in(tenant, person)

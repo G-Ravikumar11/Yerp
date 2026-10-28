@@ -51,7 +51,7 @@ def setup(tenant):
 
 def test_adding_an_employee_is_one_short_transaction(tenant):
     dept, sites = setup(tenant)
-    sent, res = new_starter(tenant, dept, sites, permissions=["projects.view", "people.manage"])
+    sent, res = new_starter(tenant, dept, sites, permissions=["projects.view", "invoices.manage"])
     # Signed-in check, org domain, email free, department, next number, the employee, the department's goals,
     # the requirements, the sites, then one insert per table and one commit - with nothing looked up twice.
     assert len(sent) <= 15, "%d statements:\n%s" % (len(sent), "\n".join(s[:120] for s in sent))
@@ -63,12 +63,12 @@ def test_adding_an_employee_is_one_short_transaction(tenant):
 def test_the_rights_ticked_are_saved_with_the_employee(tenant):
     dept, sites = setup(tenant)
     # Keeps one right the staff level gives, drops the rest, and adds one it does not.
-    _, res = new_starter(tenant, dept, [], permissions=["projects.view", "people.manage"])
+    _, res = new_starter(tenant, dept, [], permissions=["projects.view", "invoices.manage"])
     emp = tenant.get("/api/employees/%d" % res.json()["id"]).json()
-    assert emp["permissions"] == ["people.manage", "projects.view"]
+    assert emp["permissions"] == ["invoices.manage", "projects.view"]
     assert emp["all_sites"] is True and emp["site_ids"] == []
     # Measured against the access level, exactly as the Access screen saves them.
-    assert emp["extra_permissions"] == ["people.manage"]
+    assert emp["extra_permissions"] == ["invoices.manage"]
     assert set(emp["denied_permissions"]) == set(emp["role_permissions"]) - {"projects.view"}
     actions = {r["action"] for r in tenant.get("/api/audit-logs").json() if r["entity_id"] == emp["id"]}
     assert {"employee_created", "employee_permissions_changed"} <= actions

@@ -4,7 +4,7 @@ import { levelOf, withLevel } from './portals'
 
 const store: Portal = { code: 'store', label: 'Store', blurb: '', read: ['store.view'], write: ['items.manage', 'purchase.manage'] }
 const money: Portal = { code: 'money', label: 'Money', blurb: '', read: ['money.view', 'bills.view_all'], write: ['bills.pay'] }
-const people: Portal = { code: 'people', label: 'People', blurb: '', read: [], write: [], locked: 'Master only' }
+const people: Portal = { code: 'people', label: 'People', blurb: '', read: ['people.manage'], write: ['payroll.manage', 'recruitment.manage', 'attendance.view_team', 'leave.approve'] }
 
 describe('where a person stands on a portal', () => {
   it('is no access without the view right, whatever write rights are held', () => {
@@ -16,8 +16,12 @@ describe('where a person stands on a portal', () => {
   it('is read and write once any write right is held', () => {
     expect(levelOf(store, new Set(['store.view', 'purchase.manage']))).toBe('write')
   })
-  it('is no access on a portal with nothing to set', () => {
-    expect(levelOf(people, new Set(['anything']))).toBe('none')
+  it('is no access on the People portal without people.manage', () => {
+    expect(levelOf(people, new Set(['payroll.manage']))).toBe('none')
+  })
+  it('is read and write on the People portal once a write right is held', () => {
+    expect(levelOf(people, new Set(['people.manage']))).toBe('read')
+    expect(levelOf(people, new Set(['people.manage', 'payroll.manage']))).toBe('write')
   })
 })
 
@@ -40,7 +44,9 @@ describe('setting a portal', () => {
     const once = withLevel(held, store, 'write')
     expect(withLevel(once, store, 'write').sort()).toEqual(once.sort())
   })
-  it('leaves a portal with nothing to set exactly as it was', () => {
-    expect(withLevel(held, people, 'write').sort()).toEqual([...held].sort())
+  it('sets the People portal on its own rights and leaves the rest', () => {
+    const after = withLevel(held, people, 'write')
+    expect(after.sort()).toEqual([...held, 'people.manage', 'payroll.manage', 'recruitment.manage', 'attendance.view_team', 'leave.approve'].sort())
+    expect(withLevel(after, people, 'none').sort()).toEqual([...held].sort())
   })
 })

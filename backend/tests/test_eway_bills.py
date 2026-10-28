@@ -156,7 +156,8 @@ def test_e_way_bills_are_read_by_those_who_make_them_or_move_the_goods(tenant):
     import main
     from conftest import make_employee
     tag = uuid.uuid4().hex[:6]
-    for role, expected in (("staff", 403), ("hr_admin", 403), ("stores", 200), ("accounts", 200)):
+    # HR reads every portal (all bills, store inward and outward), so it can read these too.
+    for role, expected in (("staff", 403), ("hr", 200), ("stores", 200), ("accounts", 200)):
         email = "ew-%s-%s@example.com" % (role, tag)
         make_employee(tenant, email=email, password="Crew1234", permission_role=role, status="active")
         c = TestClient(main.app)

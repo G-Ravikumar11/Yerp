@@ -29,7 +29,8 @@ function Form({ onClose }: { onClose: () => void }) {
   const [confirm, setConfirm] = useState('')
   const [given, setGiven] = useState<{ id: string; email: string; password: string; sites: string } | null>(null)
   const cat = useHrCatalogue()
-  const { isOwner } = useSession()
+  const { can } = useSession()
+  const canManage = can('people.manage')
   const depts = useDepartments()
   const people = useEmployees('')
   const jobs = useJobOptions(false)
@@ -43,7 +44,7 @@ function Form({ onClose }: { onClose: () => void }) {
   // Access follows the role and the level, so the Master does not tick it all again: the access level the role carries is
   // chosen and its rights ticked at once, and can still be changed below. Only the Master gives access; for anybody else the server's default stands.
   const giveAccess = (access?: string) => {
-    const level = isOwner && access ? cat.data?.permission_roles.find((x) => x.code === access) : undefined
+    const level = canManage && access ? cat.data?.permission_roles.find((x) => x.code === access) : undefined
     if (!level) return
     setF((s) => ({ ...s, permission_role: level.code }))
     setGranted(level.permissions)
@@ -51,7 +52,7 @@ function Form({ onClose }: { onClose: () => void }) {
   const pickRole = (code: string) => {
     const r = cat.data?.roles.find((x) => x.code === code)
     setF((s) => {
-      const boss = isOwner && r?.reports_to ? (people.data ?? []).find((p) => p.role === r.reports_to) : undefined
+      const boss = canManage && r?.reports_to ? (people.data ?? []).find((p) => p.role === r.reports_to) : undefined
       return { ...s, role: code, level: r?.level || s.level, reports_to: boss?.id ?? s.reports_to }
     })
     giveAccess(r?.access)
@@ -76,7 +77,7 @@ function Form({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
   // One request: the access the Master ticked is saved with the employee. The People lists then
   // refresh behind the details screen rather than holding it until every one has reloaded.
-  const save = useAction(() => createEmployee({ ...f, password: f.password?.trim(), ...(isOwner ? { permissions: granted } : {}) }), {
+  const save = useAction(() => createEmployee({ ...f, password: f.password?.trim(), ...(canManage ? { permissions: granted } : {}) }), {
     success: (r) => r.message || 'Employee created',
     onSuccess: (r) => {
       setGiven({ id: r.employee_id, email: f.email, password: f.password ?? '', sites: (r.site_names ?? []).join(', ') || 'Every site' })
@@ -118,8 +119,8 @@ function Form({ onClose }: { onClose: () => void }) {
         {pass && <PasswordField id="ef-pass2" label="Confirm password" value={confirm} onChange={setConfirm} error={confirm ? confirmError || undefined : undefined} placeholder="Type it again" />}
         <Field label="Phone" htmlFor="ef-phone"><Input id="ef-phone" type="tel" value={f.phone} onChange={set('phone')} /></Field>
         <Field label="Job title" htmlFor="ef-title"><Input id="ef-title" value={f.job_title} onChange={set('job_title')} /></Field>
-        <Field label="Department" htmlFor="ef-dept" hint={isOwner ? undefined : 'Only the Master places people in departments.'}><Select id="ef-dept" disabled={!isOwner} value={f.department_id ?? ''} onChange={(e) => setF((s) => ({ ...s, department_id: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={(depts.data ?? []).filter((d) => d.site_ids.length > 0 || d.id === f.department_id).map((d) => ({ value: d.id, label: d.name }))} /></Field>
-        <Field label="Reports to" htmlFor="ef-mgr" hint={isOwner ? 'Follows the role; change it if needed.' : 'Set automatically from the role. Only the Master can change it.'}><Select id="ef-mgr" disabled={!isOwner} value={f.reports_to ?? ''} onChange={(e) => setF((s) => ({ ...s, reports_to: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={managers.map((p) => ({ value: p.id, label: p.level ? `${p.full_name} (${p.level})` : p.full_name }))} /></Field>
+        <Field label="Department" htmlFor="ef-dept" hint={canManage ? undefined : 'Only the Master or HR places people in departments.'}><Select id="ef-dept" disabled={!canManage} value={f.department_id ?? ''} onChange={(e) => setF((s) => ({ ...s, department_id: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={(depts.data ?? []).filter((d) => d.site_ids.length > 0 || d.id === f.department_id).map((d) => ({ value: d.id, label: d.name }))} /></Field>
+        <Field label="Reports to" htmlFor="ef-mgr" hint={canManage ? 'Follows the role; change it if needed.' : 'Set automatically from the role. Only the Master or HR can change it.'}><Select id="ef-mgr" disabled={!canManage} value={f.reports_to ?? ''} onChange={(e) => setF((s) => ({ ...s, reports_to: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={managers.map((p) => ({ value: p.id, label: p.level ? `${p.full_name} (${p.level})` : p.full_name }))} /></Field>
         <Field label="Level" htmlFor="ef-level"><Select id="ef-level" value={f.level} onChange={(e) => pickLevel(e.target.value)} placeholder="Not set" options={(cat.data?.levels ?? []).map((l) => ({ value: l.code, label: l.label }))} /></Field>
         <Field label="Reporting role" htmlFor="ef-role"><Select id="ef-role" value={f.role} onChange={(e) => pickRole(e.target.value)} placeholder="Not set" options={(cat.data?.roles ?? []).filter((r) => !f.level || r.level === f.level).map((r) => ({ value: r.code, label: r.label }))} /></Field>
         <Field label="Start date" htmlFor="ef-start"><Input id="ef-start" type="date" value={f.start_date} onChange={set('start_date')} /></Field>
@@ -136,7 +137,7 @@ function Form({ onClose }: { onClose: () => void }) {
           </div>
         </Field>
       </div>
-      {isOwner && cat.data && <div className="mt-5"><AccessPicker catalogue={cat.data} role={f.permission_role} granted={granted} onRole={(code, rights) => { setF((s) => ({ ...s, permission_role: code })); setGranted(rights) }} onGranted={setGranted} /></div>}
+      {canManage && cat.data && <div className="mt-5"><AccessPicker catalogue={cat.data} role={f.permission_role} granted={granted} onRole={(code, rights) => { setF((s) => ({ ...s, permission_role: code })); setGranted(rights) }} onGranted={setGranted} /></div>}
       <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
         {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
         <Button variant="ghost" onClick={onClose}>Cancel</Button>

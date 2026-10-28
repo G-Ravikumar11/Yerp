@@ -15,7 +15,7 @@ from app.db import get_db, get_read_db
 from app.constants.approvals import GONE_STATUSES
 from app.constants.projects import JOB_CLOSED_STATUSES
 from app.core.audit import log_audit
-from app.core.auth import end_every_session, get_client_user, set_session_lifetime, get_employee_user, require_employee_permission
+from app.core.auth import end_every_session, get_client_user, require_items_access, set_session_lifetime, get_employee_user, require_employee_permission
 from app.core.config import logger
 from app.core.dates import _parse_date
 from app.core.files import ALLOWED_DOCUMENT_EXTENSIONS, MAX_DOCUMENT_BYTES
@@ -1339,7 +1339,7 @@ def get_pending_department_goals(request: Request, db: Session = Depends(get_rea
 
 @router.get("/api/leave/requests")
 def get_all_leave_requests(request: Request, db: Session = Depends(get_read_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, ("leave.approve", "people.manage"))
     leaves = db.query(models.DBLeaveRequest).filter(models.DBLeaveRequest.client_id == client.id).order_by(models.DBLeaveRequest.created_at.desc()).all()
     prime(db, models.DBEmployee, [l.employee_id for l in leaves])
     result = []
@@ -1357,7 +1357,7 @@ def get_all_leave_requests(request: Request, db: Session = Depends(get_read_db))
 
 @router.post("/api/leave/requests/{leave_id}/action")
 def action_leave_simple(leave_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, "leave.approve")
     if not body: body = {}
     leave = db.query(models.DBLeaveRequest).filter(models.DBLeaveRequest.id == leave_id, models.DBLeaveRequest.client_id == client.id).first()
     if not leave:

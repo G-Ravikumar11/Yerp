@@ -1,6 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { del, get, post, put } from '@/lib/api'
 
+/** The payslip as a file, every column of the sheet: a PDF or an Excel workbook. */
+export const payslipFile = (id: number, kind: 'pdf' | 'xlsx') => `/api/payslips/${id}/${kind}`
+
+/** Many payslips in one Excel sheet, a row each with every column. */
+export const payrollRegister = (ids: number[]) => `/api/payslips/register.xlsx?ids=${ids.join(',')}`
+
 export const payKeys = { all: ['payroll'] as const }
 const k = (...p: unknown[]) => ['payroll', ...p] as const
 

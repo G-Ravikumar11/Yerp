@@ -15,7 +15,8 @@ import { EMPLOYEE_TONE } from './EmployeesPage'
 type Tab = 'profile' | 'access'
 
 function Profile({ e, ready }: { e: EmployeeDetail; ready: boolean }) {
-  const { isOwner } = useSession()
+  const { can } = useSession()
+  const canManage = can('people.manage')
   const [editing, setEditing] = useState(false)
   const cat = useHrCatalogue()
   const rows: [string, string | number | null | undefined][] = [
@@ -30,7 +31,7 @@ function Profile({ e, ready }: { e: EmployeeDetail; ready: boolean }) {
   if (editing) return <ProfileForm e={e} onDone={() => setEditing(false)} />
   return (
     <div>
-      {isOwner && <div className="mb-4 flex justify-end"><Button variant="outline" disabled={!ready} onClick={() => setEditing(true)}>Edit</Button></div>}
+      {canManage && <div className="mb-4 flex justify-end"><Button variant="outline" disabled={!ready} onClick={() => setEditing(true)}>Edit</Button></div>}
       <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
         {rows.map(([label, value]) => (
           <div key={label}>
@@ -48,7 +49,8 @@ function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
   const people = useEmployees('')
   const cat = useHrCatalogue()
   const [f, setF] = useState({ first_name: e.first_name, last_name: e.last_name, email: e.email, org_email: e.org_email ?? '', phone: e.phone, job_title: e.job_title, department_id: e.department_id, reports_to: e.reports_to, level: e.level, role: e.role, employment_type: e.employment_type, pay_frequency: e.pay_frequency, salary: e.salary, tax_rate: e.tax_rate, start_date: e.start_date, emergency_contact: e.emergency_contact, emergency_phone: e.emergency_phone, gender: e.gender ?? '' })
-  const { isOwner } = useSession()
+  const { can } = useSession()
+  const canManage = can('people.manage')
   // The reporting line runs up the levels: the same level or above, never below.
   const rank = (code: string) => cat.data?.levels.find((l) => l.code === code)?.rank ?? 0
   const managers = (people.data ?? []).filter((p) => p.id !== e.id && (!f.level || !p.level || rank(p.level) >= rank(f.level)))
@@ -68,8 +70,8 @@ function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
         <Field label="Organization email (Yahoo sign-in)" htmlFor="ep-org-email"><Input id="ep-org-email" type="email" value={f.org_email} onChange={set('org_email')} /></Field>
         <Field label="Phone" htmlFor="ep-phone"><Input id="ep-phone" value={f.phone} onChange={set('phone')} /></Field>
         <Field label="Job title" htmlFor="ep-title"><Input id="ep-title" value={f.job_title} onChange={set('job_title')} /></Field>
-        <Field label="Department" htmlFor="ep-dept" hint={isOwner ? undefined : 'Only the Master moves people between departments.'}><Select id="ep-dept" disabled={!isOwner} value={f.department_id ?? ''} onChange={(ev) => setF((s) => ({ ...s, department_id: ev.target.value ? Number(ev.target.value) : null }))} placeholder="None" options={(depts.data ?? []).filter((d) => d.site_ids.length > 0 || d.id === f.department_id).map((d) => ({ value: d.id, label: d.name }))} /></Field>
-        <Field label="Reports to" htmlFor="ep-mgr" hint={isOwner ? 'Follows the role; change it if needed.' : 'Set automatically from the role. Only the Master can change it.'}><Select id="ep-mgr" disabled={!isOwner} value={f.reports_to ?? ''} onChange={(ev) => setF((s) => ({ ...s, reports_to: ev.target.value ? Number(ev.target.value) : null }))} placeholder="None" options={managers.map((p) => ({ value: p.id, label: p.level ? `${p.full_name} (${p.level})` : p.full_name }))} /></Field>
+        <Field label="Department" htmlFor="ep-dept" hint={canManage ? undefined : 'Only the Master or HR moves people between departments.'}><Select id="ep-dept" disabled={!canManage} value={f.department_id ?? ''} onChange={(ev) => setF((s) => ({ ...s, department_id: ev.target.value ? Number(ev.target.value) : null }))} placeholder="None" options={(depts.data ?? []).filter((d) => d.site_ids.length > 0 || d.id === f.department_id).map((d) => ({ value: d.id, label: d.name }))} /></Field>
+        <Field label="Reports to" htmlFor="ep-mgr" hint={canManage ? 'Follows the role; change it if needed.' : 'Set automatically from the role. Only the Master or HR can change it.'}><Select id="ep-mgr" disabled={!canManage} value={f.reports_to ?? ''} onChange={(ev) => setF((s) => ({ ...s, reports_to: ev.target.value ? Number(ev.target.value) : null }))} placeholder="None" options={managers.map((p) => ({ value: p.id, label: p.level ? `${p.full_name} (${p.level})` : p.full_name }))} /></Field>
         <Field label="Level" htmlFor="ep-level"><Select id="ep-level" value={f.level} onChange={set('level')} placeholder="Not set" options={(cat.data?.levels ?? []).map((l) => ({ value: l.code, label: l.label }))} /></Field>
         <Field label="Reporting role" htmlFor="ep-role"><Select id="ep-role" value={f.role} onChange={(ev) => pickRole(ev.target.value)} placeholder="Not set" options={roleOptions.map((r) => ({ value: r.code, label: r.label }))} /></Field>
         <Field label="Start date" htmlFor="ep-start"><Input id="ep-start" type="date" value={f.start_date} onChange={set('start_date')} /></Field>
@@ -144,11 +146,12 @@ export default function EmployeePage() {
   const q = useEmployee(id)
   const [tab, setTab] = useState<Tab | null>(null)
   const e = q.data
-  const { isOwner } = useSession()
+  const { can } = useSession()
+  const canManage = can('people.manage')
   const [givingPassword, setGivingPassword] = useState(false)
   // Drawn from their list row until the record arrives: the profile shows at once, editing waits for the real thing.
   const ready = !q.isPlaceholderData
-  const shown: Tab = isOwner && ready ? (tab ?? 'profile') : 'profile'
+  const shown: Tab = canManage && ready ? (tab ?? 'profile') : 'profile'
   if (q.isPending) return <Skeleton className="h-64 w-full" />
   if (!e) return <p role="alert" className="py-10 text-center text-sm text-danger">Could not open that employee.</p>
   return (
@@ -156,8 +159,8 @@ export default function EmployeePage() {
       <Link to="/people/employees" className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Employees</Link>
       <PageHeader eyebrow={e.employee_id} title={e.full_name} description={[e.job_title, e.department_name, e.manager_name && `reports to ${e.manager_name}`].filter(Boolean).join(' · ') || undefined} actions={<Badge tone={EMPLOYEE_TONE[e.status] ?? 'neutral'}>{e.status}</Badge>} />
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <Tabs label="Section" value={shown} onChange={setTab} items={isOwner && ready ? [{ value: 'profile', label: 'Profile' }, { value: 'access', label: 'Access' }] : [{ value: 'profile', label: 'Profile' }]} />
-        {isOwner && ready && <div className="flex items-center gap-2"><Button variant="outline" onClick={() => setGivingPassword(true)} disabled={!e.email} title={e.email ? undefined : 'Give them an email address first - they sign in with it'}>{e.has_password ? 'Change password' : 'Set password'}</Button><StatusMenu e={e} /></div>}
+        <Tabs label="Section" value={shown} onChange={setTab} items={canManage && ready ? [{ value: 'profile', label: 'Profile' }, { value: 'access', label: 'Access' }] : [{ value: 'profile', label: 'Profile' }]} />
+        {canManage && ready && <div className="flex items-center gap-2"><Button variant="outline" onClick={() => setGivingPassword(true)} disabled={!e.email} title={e.email ? undefined : 'Give them an email address first - they sign in with it'}>{e.has_password ? 'Change password' : 'Set password'}</Button><StatusMenu e={e} /></div>}
       </div>
       {shown === 'profile' && <Profile key={e.id} e={e} ready={ready} />}
       {shown === 'access' && <EmployeeAccess key={e.id} e={e} />}

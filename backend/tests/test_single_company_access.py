@@ -186,10 +186,10 @@ def test_the_change_is_written_down_with_what_moved(tenant):
     """Who may do what is exactly the thing somebody audits later."""
     person = staff(tenant, "staff")
     access(tenant, person["id"], permission_role="supervisor",
-           permissions=["self.service", "bills.submit", "bills.approve", "payroll.manage"])
+           permissions=["self.service", "bills.submit", "bills.approve", "invoices.manage"])
     logs = tenant.get("/api/audit-logs").json()
     entries = logs if isinstance(logs, list) else logs.get("logs", [])
     changed = [l for l in entries
                if l.get("action") == "employee_permissions_changed"]
     assert changed, "the change was recorded"
-    assert "payroll.manage" in changed[0].get("details", "")
+    assert "invoices.manage" in changed[0].get("details", "")

@@ -146,9 +146,9 @@ const NAV: NavEntry[] = [
   {
     kind: 'group',
     id: 'people',
+    perm: 'people.manage',
     label: 'People',
     icon: Users,
-    ownerOnly: true,
     items: [
       { label: 'Employees', path: '/people/employees', perm: 'people.manage' },
       { label: 'Departments', path: '/people/departments', perm: 'people.manage' },

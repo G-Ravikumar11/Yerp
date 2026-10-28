@@ -45,7 +45,7 @@ RFQ = {"title": "Cement for raft", "lines": [{"description": "OPC 53", "qty": 10
 def test_the_departments_are_the_access_levels_on_offer(tenant):
     roles = {r["code"]: r for r in tenant.get("/api/hr/levels").json()["permission_roles"]}
     for code, label in (("planning_billing", "Planning & Billing"), ("accounts", "Accounts"),
-                        ("stores", "Stores"), ("purchase", "Purchase"), ("hr_admin", "HR admin"),
+                        ("stores", "Stores"), ("purchase", "Purchase"), ("hr", "HR"),
                         ("construction", "Construction management team"),
                         ("project_manager", "Project manager"), ("head_projects", "Head projects")):
         assert roles[code]["label"] == label
