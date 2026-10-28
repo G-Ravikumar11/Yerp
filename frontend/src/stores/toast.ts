@@ -5,7 +5,7 @@ interface Toast {
   id: number
   tone: ToastTone
   message: string
-  /** A button on the message ("Reload"). A toast with one stays until it is used or dismissed. */
+  /** A button on the message ("Reload"), used or dismissed by the person. */
   action?: { label: string; onClick: () => void }
 }
 
@@ -17,13 +17,12 @@ interface ToastState {
 
 let next = 1
 
-export const useToasts = create<ToastState>((set, get) => ({
+export const useToasts = create<ToastState>((set) => ({
   toasts: [],
   push: (tone, message, action) => {
     const id = next++
-    set((s) => ({ toasts: [...s.toasts.slice(-3), { id, tone, message, action }] }))
-    // Errors stay long enough to read; the rest get out of the way.
-    if (!action) setTimeout(() => get().dismiss(id), tone === 'error' ? 8000 : 4000)
+    // A message stays until it is closed (the X): nothing disappears while it is being read. The newest five are kept.
+    set((s) => ({ toasts: [...s.toasts.slice(-4), { id, tone, message, action }] }))
   },
   dismiss: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }))
