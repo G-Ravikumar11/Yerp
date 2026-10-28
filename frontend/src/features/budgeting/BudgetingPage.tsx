@@ -30,10 +30,10 @@ export default function BudgetingPage() {
   const rows = (b?.rows ?? []).filter((r) => (show === 'todo' ? !r.budgeted : show === 'loss' ? (r.profit ?? 0) < 0 && r.budgeted : true))
   const cols: TableColumn<BudgetRow>[] = [
     { id: 'no', header: 'Item', cell: (r) => r.item_no || '-', width: '4.5rem', sort: (r) => r.item_no },
-    { id: 'what', header: 'Description', cell: (r) => <div className="min-w-[12rem] max-w-[26rem]"><p>{r.description}</p><p className="text-xs text-muted-foreground">{r.group_code}{r.group_code && ' · '}{r.quantity} {r.uom}</p></div>, sort: (r) => r.description },
-    { id: 'rate', header: 'BOQ rate', align: 'right', cell: (r) => formatINR(r.rate), hideBelow: 'md', sort: (r) => r.rate },
+    { id: 'what', header: 'Description', cell: (r) => <div className="min-w-[10rem] max-w-[22rem]"><p>{r.description}</p><p className="text-xs text-muted-foreground">{r.group_code}{r.group_code && ' · '}{r.quantity} {r.uom}</p></div>, sort: (r) => r.description },
+    { id: 'rate', header: 'BOQ rate', align: 'right', cell: (r) => formatINR(r.rate), hideBelow: 'lg', sort: (r) => r.rate },
     { id: 'rev', header: 'BOQ amount', align: 'right', cell: (r) => (r.rate_only ? 'Rate only' : formatINR(r.revenue)), sort: (r) => r.revenue },
-    { id: 'cost', header: 'Our cost', align: 'right', cell: (r) => (r.budgeted ? <div><p>{formatINR(r.cost)}</p><p className="whitespace-nowrap text-xs text-muted-foreground">Mat {compactINR(r.material)} · Lab {compactINR(r.labour)} · Other {compactINR(r.other)}</p></div> : <Badge tone="warning">Not budgeted</Badge>), sort: (r) => r.cost },
+    { id: 'cost', header: 'Our cost', align: 'right', cell: (r) => (r.budgeted ? <div><p>{formatINR(r.cost)}</p><p className="ml-auto max-w-[10rem] text-xs text-muted-foreground">Mat {compactINR(r.material)} · Lab {compactINR(r.labour)} · Other {compactINR(r.other)}</p></div> : <Badge tone="warning">Not budgeted</Badge>), sort: (r) => r.cost },
     { id: 'profit', header: 'Profit', align: 'right', cell: (r) => (r.profit === null ? '-' : <span className={r.profit < 0 ? 'text-danger' : 'text-success'}>{formatINR(r.profit)}</span>), sort: (r) => r.profit ?? -Infinity },
     { id: 'margin', header: 'Margin', align: 'right', cell: (r) => (r.margin === null ? '-' : <span className={r.margin < 0 ? 'text-danger' : ''}>{pct(r.margin)}</span>), hideBelow: 'sm', sort: (r) => r.margin ?? -Infinity },
     ...(edit ? [{ id: 'edit', header: '', width: '3rem', cell: (r: BudgetRow) => <Pencil className="size-4 text-muted-foreground" aria-label={`Budget ${r.description}`} /> }] : []),
