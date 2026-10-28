@@ -44,13 +44,13 @@ describe('My details', () => {
     expect(sent[0].body).toMatchObject({ emergency_contact: 'Ravi Rao', emergency_phone: '9876543210' })
   })
 
-  it('keeps gender, Aadhaar, PAN and UAN optional, and points to Documents for the files', async () => {
+  it('saves without the Aadhaar, PAN or UAN numbers, and points to Documents for the files', async () => {
     const user = userEvent.setup()
     profile = { ...base, emergency_contact: 'Ravi', emergency_phone: '9876543210', emergency_complete: true }
     mount()
     await screen.findByLabelText('Aadhaar number')
     expect(screen.queryByText(/Please give an emergency contact/)).toBeNull()
-    await user.click(screen.getByRole('button', { name: 'Save my details' }))        // nothing optional filled: still saves
+    await user.click(screen.getByRole('button', { name: 'Save my details' }))        // numbers not filled in: still saves
     await waitFor(() => expect(sent.length).toBe(1))
     expect(screen.getByRole('link', { name: 'Documents' }).getAttribute('href')).toBe('/me/documents')
   })

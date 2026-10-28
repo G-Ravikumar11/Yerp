@@ -10,7 +10,7 @@ import { formatDate } from '@/lib/format'
 
 const GENDERS = ['Male', 'Female', 'Other', 'Prefer not to say']
 
-/** The employee's own details. The emergency contact is the one thing that must be given; the rest is optional. Their documents (Aadhaar, PAN, UAN, a photo) are uploaded under Documents. */
+/** The employee's own details. The emergency contact must be given; the Aadhaar, PAN and UAN numbers are there to fill in. Their documents (Aadhaar, PAN, UAN, a photo) are uploaded under Documents. */
 function MyDetails({ p }: { p: Profile }) {
   const qc = useQueryClient()
   const [f, setF] = useState({ emergency_contact: p.emergency_contact ?? '', emergency_phone: p.emergency_phone ?? '', gender: p.gender ?? '', aadhaar_no: p.aadhaar_no ?? '', pan_no: p.pan_no ?? '', uan_no: p.uan_no ?? '' })
@@ -22,15 +22,15 @@ function MyDetails({ p }: { p: Profile }) {
   return (
     <section aria-label="My details" className="mt-6 rounded-xl border border-border bg-card p-5 shadow-card">
       <h2 className="text-base font-semibold">My details</h2>
-      <p className="mb-4 mt-1 text-sm text-muted-foreground">An emergency contact is required. Everything else here is optional, and you can add it whenever you like. Your Aadhaar card, PAN card, UAN and photo are uploaded under <Link className="text-primary underline" to="/me/documents">Documents</Link> (a photo or a PDF).</p>
+      <p className="mb-4 mt-1 text-sm text-muted-foreground">An emergency contact is required. Fill in your Aadhaar, PAN and UAN numbers here too. Your Aadhaar card, PAN card, UAN and photo are uploaded under <Link className="text-primary underline" to="/me/documents">Documents</Link> (a photo or a PDF).</p>
       {missing && <p role="alert" className="mb-4 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2.5 text-sm">Please give an emergency contact{p.onboarding ? ' to finish onboarding' : ''}.</p>}
       <form onSubmit={(e) => { e.preventDefault(); setTried(true); if (contactOk) save.mutate() }} className="grid gap-4 sm:grid-cols-2" noValidate>
         <Field label="Emergency contact name *" htmlFor="md-name" error={tried && !f.emergency_contact.trim() ? 'Required.' : undefined}><Input id="md-name" value={f.emergency_contact} onChange={set('emergency_contact')} autoComplete="off" /></Field>
         <Field label="Emergency contact phone *" htmlFor="md-phone" error={tried && f.emergency_phone.replace(/\D/g, '').length < 7 ? 'Enter a phone number.' : undefined}><Input id="md-phone" type="tel" value={f.emergency_phone} onChange={set('emergency_phone')} autoComplete="off" /></Field>
         <Field label="Gender" htmlFor="md-gender" hint="Optional."><Select id="md-gender" value={f.gender} placeholder="Prefer not to say" onChange={set('gender')} options={GENDERS.map((g) => ({ value: g, label: g }))} /></Field>
-        <Field label="Aadhaar number" htmlFor="md-aadhaar" hint="Optional. 12 digits."><Input id="md-aadhaar" inputMode="numeric" value={f.aadhaar_no} onChange={set('aadhaar_no')} autoComplete="off" /></Field>
-        <Field label="PAN" htmlFor="md-pan" hint="Optional. Like ABCDE1234F."><Input id="md-pan" value={f.pan_no} onChange={(e) => setF((s) => ({ ...s, pan_no: e.target.value.toUpperCase() }))} autoComplete="off" /></Field>
-        <Field label="UAN" htmlFor="md-uan" hint="Optional. 12 digits."><Input id="md-uan" inputMode="numeric" value={f.uan_no} onChange={set('uan_no')} autoComplete="off" /></Field>
+        <Field label="Aadhaar number" htmlFor="md-aadhaar" hint="12 digits."><Input id="md-aadhaar" inputMode="numeric" value={f.aadhaar_no} onChange={set('aadhaar_no')} autoComplete="off" /></Field>
+        <Field label="PAN" htmlFor="md-pan" hint="Like ABCDE1234F."><Input id="md-pan" value={f.pan_no} onChange={(e) => setF((s) => ({ ...s, pan_no: e.target.value.toUpperCase() }))} autoComplete="off" /></Field>
+        <Field label="UAN" htmlFor="md-uan" hint="12 digits."><Input id="md-uan" inputMode="numeric" value={f.uan_no} onChange={set('uan_no')} autoComplete="off" /></Field>
         {save.error && <p role="alert" className="text-sm text-danger sm:col-span-2">{save.error.message}</p>}
         <div className="sm:col-span-2"><Button type="submit" loading={save.isPending}>Save my details</Button></div>
       </form>

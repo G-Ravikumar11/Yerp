@@ -21,5 +21,7 @@ oauth.register(
     client_id=os.getenv("YAHOO_CLIENT_ID"),
     client_secret=os.getenv("YAHOO_CLIENT_SECRET"),
     server_metadata_url='https://api.login.yahoo.com/.well-known/openid-configuration',
-    client_kwargs={'scope': 'openid email profile'},
+    # PKCE (S256) on top of the state and nonce authlib already checks; the ID token's signature, issuer, audience,
+    # expiry and nonce are checked by authlib against Yahoo's published keys when the code is exchanged.
+    client_kwargs={'scope': 'openid email profile', 'code_challenge_method': 'S256'},
 )

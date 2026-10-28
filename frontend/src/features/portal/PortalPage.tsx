@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Button, Field, Input, Tabs } from '@/components/ui'
 import { api, ApiError } from '@/lib/api'
-import { AuthLayout, Notice } from '@/features/auth/AuthLayout'
+import { AuthLayout, Notice, YahooMark } from '@/features/auth/AuthLayout'
 import { CaptchaBox, type CaptchaValue } from '@/features/auth/CaptchaBox'
 import { portalAcceptInvite, portalInvite, portalKeys, portalLogin, portalLogout, usePortalMe, type PortalInvite } from '@/api/portal'
 import { Bills, Orders, Overview, Payments, SendInvoice, Statement } from './PortalTabs'
@@ -10,18 +10,18 @@ import { Bills, Orders, Overview, Payments, SendInvoice, Statement } from './Por
 type Tab = 'overview' | 'orders' | 'bills' | 'payments' | 'statement' | 'send'
 
 const GOOGLE_ERRORS: Record<string, string> = {
-  google_failed: 'Google sign-in did not complete. Try again.',
-  google_no_email: 'Google did not share an email address.',
-  google_unverified: 'That Google address is not verified.',
-  google_unknown: 'No partner login uses that Google address. Ask the office to open the portal to it.',
+  yahoo_failed: 'Yahoo sign-in did not complete. Try again.',
+  yahoo_no_email: 'Yahoo did not share an email address.',
+  yahoo_unverified: 'That Yahoo address is not verified.',
+  yahoo_unknown: 'No partner login uses that Yahoo address. Ask the office to open the portal to it.',
+  yahoo_unconfigured: 'Yahoo sign-in is not set up on this server yet. Sign in with your email and password.',
+  yahoo_denied: 'Yahoo sign-in was cancelled. Try again, or sign in with your email and password.',
+  yahoo_state: 'That Yahoo sign-in did not start here, so it was stopped for your safety. Please try again.',
+  yahoo_expired: 'That Yahoo sign-in took too long or was used already. Please try again.',
+  google_retired: 'Sign in with Google is no longer offered. Continue with Yahoo, or sign in with your email and password.',
   account_disabled: 'This login is no longer open. Ask the office.',
 }
 
-function useGoogle() {
-  const [on, setOn] = useState(false)
-  useEffect(() => { api<{ configured?: boolean }>('/api/auth/google/status', { quiet: true }).then((d) => setOn(!!d?.configured)).catch(() => undefined) }, [])
-  return on
-}
 
 /** A subcontractor's or supplier's own door: their orders, bills, payments and statement with the company. */
 export default function PortalPage() {
@@ -44,7 +44,6 @@ function SignIn() {
   const [askCheck, setAskCheck] = useState(false)
   const [check, setCheck] = useState<CaptchaValue | null>(null)
   const [round, setRound] = useState(0)
-  const google = useGoogle()
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (askCheck && !check) return setError('Complete the check, then sign in.')
@@ -70,7 +69,7 @@ function SignIn() {
         {askCheck && <CaptchaBox round={round} onChange={setCheck} />}
         <Button type="submit" loading={busy}>Sign in</Button>
       </form>
-      {google && <Button variant="outline" className="mt-3 w-full" onClick={() => window.location.assign('/api/auth/google/start?who=portal')}>Continue with Google</Button>}
+      <Button variant="outline" className="mt-3 w-full gap-2.5" onClick={() => window.location.assign('/api/auth/yahoo/start?who=portal')}><YahooMark /> Continue with Yahoo</Button>
       <p className="mt-4 text-xs text-muted-foreground">Forgotten your password? Ask the office for a new link.</p>
     </AuthLayout>
   )
@@ -82,7 +81,6 @@ function InviteScreen({ token }: { token: string }) {
   const [a, setA] = useState('')
   const [b, setB] = useState('')
   const [error, setError] = useState('')
-  const google = useGoogle()
   useEffect(() => { portalInvite(token).then(setInvite).catch((e) => { setInvite('dead'); setError(e instanceof ApiError ? e.message : 'Ask the office for a new one.') }) }, [token])
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -105,7 +103,7 @@ function InviteScreen({ token }: { token: string }) {
         <Field label="Once more" htmlFor="pi-pass2"><Input id="pi-pass2" type="password" minLength={8} required autoComplete="new-password" value={b} onChange={(e) => setB(e.target.value)} /></Field>
         <Button type="submit">Set password and open</Button>
       </form>
-      {google && <Button variant="outline" className="mt-3 w-full" onClick={() => window.location.assign('/api/auth/google/start?who=portal')}>Or skip the password: continue with Google</Button>}
+      <Button variant="outline" className="mt-3 w-full gap-2.5" onClick={() => window.location.assign('/api/auth/yahoo/start?who=portal')}><YahooMark /> Or skip the password: continue with Yahoo</Button>
     </AuthLayout>
   )
 }

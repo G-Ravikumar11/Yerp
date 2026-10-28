@@ -248,13 +248,14 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
     try:
         token = await oauth.google.authorize_access_token(request)
     except Exception as e:
-        logger.error(f"Google token exchange failed: {e}")
+        logger.error("Google token exchange failed: %s", type(e).__name__)
         return RedirectResponse(url="/next/login?error=auth_failed")
     user = token.get('userinfo') or {}
     refresh_token = token.get('refresh_token')
     oauth_role = request.session.pop('oauth_role', 'client')
     oauth_portal = request.session.pop('oauth_portal', 'invoicing')
-    target_dashboard = "/next/people/employees" if oauth_portal == "hr" else "/next/"
+    target_dashboard = ("/next/people/employees" if oauth_portal == "hr"
+                        else "/next/settings?gmail=connected" if oauth_portal == "settings" else "/next/")
     google_email = (user.get('email') or '').strip().lower()
     verified = user.get("email_verified") is not False
 
@@ -272,6 +273,9 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
     client_id = request.session.get("client_id")
     if not client_id or not db.query(models.DBClient).filter(models.DBClient.id == client_id).first():
         return RedirectResponse(url="/next/login?error=gmail_sign_in_first")
+    # Which mailbox the company's mail goes out from is the Master's decision, not a colleague's.
+    if request.session.get("member_id"):
+        return RedirectResponse(url="/next/settings?gmail=master_only")
     # Who the Gmail belongs to, for the screen that says which address mail goes out from. Never the tokens:
     # the session lives in a cookie, and a cookie is no place for the key to somebody's mailbox.
     request.session['user'] = {"email": google_email, "name": user.get("name", "")}
@@ -288,59 +292,24 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
             log_audit(db, client_id, "gmail_connected", "client", client_id, google_email, "", request)
             db.commit()
         except Exception as e:
-            logger.error(f"Failed to save refresh token: {e}")
+            logger.error("Failed to save the Gmail connection: %s", type(e).__name__)
     return RedirectResponse(url=target_dashboard)
 
 
 @router.get("/api/auth/google/status")
 def google_status():
-    """Whether the button should be offered at all.
-
-    A sign-in button that cannot work is worse than no button: people try it,
-    it fails, and they conclude the account is broken rather than unconfigured.
-    """
-    return {"configured": google_configured()}
+    """Whether a Google sign-in button should be offered: never now - Yahoo has taken its place. (An older page still asks.)"""
+    return {"configured": False}
 
 
+# Sign in with Google has been retired in favour of Yahoo (and email and password). The Google client stays: it is what
+# connects Gmail for sending mail (/api/auth/login, /api/auth/callback). An old link or bookmark to the Google sign-in,
+# or Google coming back to it, lands on the sign-in page with a message saying so.
 @router.get("/api/auth/google/start")
-async def google_signin_start(request: Request, next: str = "/next/", who: str = ""):
-    if not google_configured():
-        # Back to the sign-in page with something readable, rather than a raw
-        # server error. Somebody can reach this from a stale tab long after the
-        # button stopped being offered.
-        return RedirectResponse("/next/login?error=google_unconfigured")
-    # Only a path on this site, so the redirect cannot be pointed elsewhere.
-    request.session["google_next"] = next if next.startswith("/") and not next.startswith("//") else "/next/"
-    # The partner portal has its own door: a partner signs in there, never into the office's app.
-    request.session["google_for"] = "portal" if who == "portal" else ""
-    redirect_uri = str(request.url_for("google_signin_callback"))
-    if redirect_uri.startswith("http://") and "localhost" not in redirect_uri:
-        redirect_uri = redirect_uri.replace("http://", "https://", 1)
-    # The scope is passed explicitly rather than inherited from the registered
-    # client, which also carries gmail.send. Signing in must not ask for
-    # permission to send mail: it is a sensitive scope, so Google would hold
-    # the whole sign-in behind app verification for the sake of a feature the
-    # person may never touch. Connecting Gmail asks for it separately.
-    return await oauth.google.authorize_redirect(
-        request, redirect_uri, scope=GOOGLE_SIGNIN_SCOPES)
-
-
 @router.get("/api/auth/google/callback", name="google_signin_callback")
-async def google_signin_callback(request: Request, db: Session = Depends(get_db)):
-    """Come back from Google, work out who this is, and sign them in.
-
-    An address is matched against the account holders first and then against
-    the staff, so somebody who is both signs in as the owner - the same
-    precedence the password form uses.
-    """
-    try:
-        token = await oauth.google.authorize_access_token(request)
-    except Exception:
-        logger.exception("Google sign-in failed at the token exchange")
-        page = "/next/portal" if request.session.pop("google_for", "") == "portal" else "/next/login"
-        return RedirectResponse(page + "?error=google_failed")
-
-    return _sign_in_with_identity(request, db, token.get("userinfo") or {}, "google")
+def google_signin_retired(request: Request, who: str = ""):
+    page = "/next/portal" if who == "portal" or request.session.pop("google_for", "") == "portal" else "/next/login"
+    return RedirectResponse(page + "?error=google_retired")
 
 
 def _sign_in_with_identity(request: Request, db: Session, info: dict, provider: str):
@@ -434,7 +403,9 @@ async def yahoo_signin_start(request: Request, next: str = "/next/", who: str = 
         return RedirectResponse("/next/login?error=yahoo_unconfigured")
     request.session["google_next"] = next if next.startswith("/") and not next.startswith("//") else "/next/"
     request.session["google_for"] = "portal" if who == "portal" else ""
-    redirect_uri = str(request.url_for("yahoo_signin_callback"))
+    # YAHOO_REDIRECT_URI is sent exactly as written: the address registered on the Yahoo app (an https tunnel on a
+    # laptop, say). Without it the address is worked out from the request, as on the live site.
+    redirect_uri = (os.getenv("YAHOO_REDIRECT_URI") or "").strip() or str(request.url_for("yahoo_signin_callback"))
     if redirect_uri.startswith("http://") and "localhost" not in redirect_uri:
         redirect_uri = redirect_uri.replace("http://", "https://", 1)
     return await oauth.yahoo.authorize_redirect(request, redirect_uri)
@@ -442,19 +413,31 @@ async def yahoo_signin_start(request: Request, next: str = "/next/", who: str = 
 
 @router.get("/api/auth/yahoo/callback", name="yahoo_signin_callback")
 async def yahoo_signin_callback(request: Request, db: Session = Depends(get_db)):
-    """Back from Yahoo: the same account matching as Google, and no account creation."""
+    """Back from Yahoo: the same account matching as before, and no account creation."""
+    page = "/next/portal" if request.session.get("google_for", "") == "portal" else "/next/login"
+    if request.query_params.get("error"):
+        # Cancelled at Yahoo's page, or consent refused.
+        request.session.pop("google_for", None)
+        denied = request.query_params.get("error") in ("access_denied", "consent_required", "login_required")
+        return RedirectResponse(page + ("?error=yahoo_denied" if denied else "?error=yahoo_failed"))
     try:
         token = await oauth.yahoo.authorize_access_token(request)
-    except Exception:
-        logger.exception("Yahoo sign-in failed at the token exchange")
-        page = "/next/portal" if request.session.pop("google_for", "") == "portal" else "/next/login"
+    except Exception as exc:
+        request.session.pop("google_for", None)
+        # Only the kind of failure is logged: never the code, the token or what came back with them.
+        name, text = type(exc).__name__, str(exc).lower()
+        if name == "MismatchingStateError" or "state" in text:
+            return RedirectResponse(page + "?error=yahoo_state")       # not a sign-in this browser started
+        if "invalid_grant" in text:
+            return RedirectResponse(page + "?error=yahoo_expired")     # the code was used already or has run out
+        logger.error("Yahoo sign-in failed at the token exchange: %s", name)
         return RedirectResponse(page + "?error=yahoo_failed")
     info = token.get("userinfo")
     if not info:
         try:
             info = await oauth.yahoo.userinfo(token=token)
         except Exception:
-            logger.exception("Yahoo userinfo request failed")
+            logger.error("Yahoo userinfo request failed")
             info = {}
     return _sign_in_with_identity(request, db, dict(info or {}), "yahoo")
 

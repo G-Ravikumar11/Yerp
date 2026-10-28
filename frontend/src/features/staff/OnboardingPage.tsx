@@ -16,7 +16,7 @@ export default function OnboardingPage() {
     <>
       <PageHeader eyebrow="My work" title="Onboarding" description="The tasks of settling in. HR ticks them off as they are done." />
       {profile.data && !profile.data.emergency_complete && (
-        <p role="alert" className="mb-4 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm">Your emergency contact is still needed - it is the one thing onboarding cannot finish without. <Link className="font-medium text-primary underline" to="/me/profile">Add it in My Profile</Link>. Your Aadhaar, PAN and UAN can be added there and under <Link className="font-medium text-primary underline" to="/me/documents">Documents</Link> whenever you like.</p>
+        <p role="alert" className="mb-4 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm">Your emergency contact is still needed - it is the one thing onboarding cannot finish without. <Link className="font-medium text-primary underline" to="/me/profile">Add it in My Profile</Link>. Add your Aadhaar, PAN and UAN numbers there too, and copies of the cards under <Link className="font-medium text-primary underline" to="/me/documents">Documents</Link>.</p>
       )}
       {q.isPending ? <Skeleton className="h-40 w-full" /> : (
         <>
