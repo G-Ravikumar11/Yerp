@@ -52,6 +52,12 @@ DEFAULT_DOCUMENT_REQUIREMENTS = [
 GENDERS = ("Male", "Female", "Other", "Prefer not to say")
 
 
+def gender_required():
+    """On unless REQUIRE_GENDER=0 (the shared test setup, which creates people in bulk without one)."""
+    import os
+    return os.getenv("REQUIRE_GENDER", "1") != "0"
+
+
 def emergency_contact_required():
     """On unless REQUIRE_EMERGENCY_CONTACT=0 (the shared test setup, which creates people in bulk without one)."""
     import os

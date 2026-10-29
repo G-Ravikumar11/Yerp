@@ -15,6 +15,7 @@ from app.db import get_db, get_read_db
 from app.constants.approvals import GONE_STATUSES
 from app.constants.projects import JOB_CLOSED_STATUSES
 from app.core.audit import log_audit
+from app.core import app_limits
 from app.core.auth import end_every_session, get_client_user, require_items_access, set_session_lifetime, get_employee_user, require_employee_permission
 from app.core.config import LOGIN_PER_MINUTE, logger
 from app.core.dates import _parse_date
@@ -61,7 +62,7 @@ from app.services.procurement import (
 )
 from app.services.projects import job_label_for
 from app.validators.common import validate_candidate_document
-from app.validators.hr import clean_aadhaar, clean_emergency, clean_gender, clean_pan, clean_uan
+from app.validators.hr import clean_aadhaar, clean_emergency, clean_esi, clean_gender, clean_pan, clean_uan
 
 
 router = APIRouter()
@@ -163,7 +164,7 @@ def employee_login(request: Request, body: dict = None, db: Session = Depends(ge
     request.session.pop('portal_user_id', None)
     request.session['employee_id'] = emp.id
     request.session['employee_client_id'] = emp.client_id
-    set_session_lifetime(request, body.get('rememberMe') is True)
+    set_session_lifetime(request, body.get('rememberMe') is True, body.get('channel'))
     # Signing in is not clocking in. A shift starts when the person presses
     # Clock in, each one for themselves; opening the portal to read a payslip,
     # or from a phone left at home, must never count as being at work.
@@ -227,6 +228,7 @@ def employee_me(request: Request, db: Session = Depends(get_read_db)):
         "permission_role": role_code,
         "permission_role_label": role_label,
         "permissions": sorted(permissions_for(emp)),
+        **app_limits.summary(request, permissions_for(emp), app_limits.free_staff(emp.permission_role)),
         # HO QS and HO Coordinator sign in at the same page and land on the HO portal.
         "head_office": is_head_office(emp),
         "today_clock_in": att.clock_in if att else "",
@@ -1150,6 +1152,7 @@ def get_employee_profile(request: Request, db: Session = Depends(get_read_db)):
         "emergency_complete": bool((emp.emergency_contact or "").strip() and (emp.emergency_phone or "").strip()),
         # Their own details, which only they enter. Optional apart from the emergency contact.
         "gender": emp.gender or "", "aadhaar_no": emp.aadhaar_no or "", "pan_no": emp.pan_no or "", "uan_no": emp.uan_no or "",
+        "esi_no": emp.esi_no or "",
         "onboarding": emp.status == "onboarding",
         "employee_id_code": emp.employee_id,
         "goals_count": len(goals),
@@ -1175,7 +1178,7 @@ def update_my_details(request: Request, body: dict = None, db: Session = Depends
         emp.emergency_contact, emp.emergency_phone = name, phone
         changed.append("emergency contact")
     for key, clean, label in (("gender", clean_gender, "gender"), ("aadhaar_no", clean_aadhaar, "Aadhaar number"),
-                              ("pan_no", clean_pan, "PAN"), ("uan_no", clean_uan, "UAN")):
+                              ("pan_no", clean_pan, "PAN"), ("uan_no", clean_uan, "UAN"), ("esi_no", clean_esi, "ESI number")):
         if key in body:
             setattr(emp, key, clean(body[key]))
             changed.append(label)

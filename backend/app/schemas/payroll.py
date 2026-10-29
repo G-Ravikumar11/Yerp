@@ -21,6 +21,8 @@ class PayslipCreate(BaseModel):
     retirement: Optional[float] = 0.0
     other_deductions: Optional[float] = 0.0
     notes: Optional[str] = ""
+    # Work the pay out from the company's salary structure (the default) rather than from the figures above.
+    use_structure: Optional[bool] = True
 
 
 class PayrollRunRequest(BaseModel):

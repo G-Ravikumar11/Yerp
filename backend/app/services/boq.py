@@ -396,17 +396,34 @@ def boq_parts_of(item):
     return [p for p in parts if isinstance(p, dict) and p.get("key")]
 
 
+def boq_shares_of(item):
+    """[(boq key, share of the line)] for an order line: all of one BOQ line, or a heading's lines shared out by quantity."""
+    parts = boq_parts_of(item)
+    if parts:
+        whole = sum(float(p.get("qty") or 0) for p in parts) or 1.0
+        return [(p["key"], float(p.get("qty") or 0) / whole) for p in parts]
+    return [(item.boq_key, 1.0)] if item.boq_key else []
+
+
+def boq_items_naming(db, keys):
+    """A filter for the order lines that may be against these BOQ lines: tied to one of them, or a heading total on
+    one of the projects they belong to. The heading totals are then sorted out by their parts."""
+    total_line = (models.DBSubcontractItem.boq_parts != "") & models.DBSubcontractItem.boq_parts.isnot(None)
+    if keys is None:
+        tied = (models.DBSubcontractItem.boq_key != "") & models.DBSubcontractItem.boq_key.isnot(None)
+        return tied | total_line
+    keys = list(keys) or [""]
+    jobs = [r[0] for r in db.query(models.DBBoq.job_id).join(models.DBBoqLine, models.DBBoqLine.boq_id == models.DBBoq.id).filter(
+        models.DBBoqLine.key.in_(keys)).distinct().all() if r[0]]
+    return models.DBSubcontractItem.boq_key.in_(keys) | (total_line & models.DBSubcontractOrder.job_id.in_(jobs or [0]))
+
+
 def boq_given_to_contractors(db, client_id, keys=None):
     """{boq key: what the contractors have been given against it}, from the orders that are still alive."""
-    tied = (models.DBSubcontractItem.boq_key != "") & models.DBSubcontractItem.boq_key.isnot(None)
-    total_line = (models.DBSubcontractItem.boq_parts != "") & models.DBSubcontractItem.boq_parts.isnot(None)
     q = db.query(models.DBSubcontractItem, models.DBSubcontractOrder).join(
         models.DBSubcontractOrder, models.DBSubcontractOrder.id == models.DBSubcontractItem.order_id).filter(
-        models.DBSubcontractOrder.client_id == client_id, tied | total_line,
+        models.DBSubcontractOrder.client_id == client_id, boq_items_naming(db, keys),
         models.DBSubcontractOrder.status.notin_(BOQ_NOT_LIVE))
-    if keys is not None:
-        # A line that stands for a heading names its BOQ lines inside, so it is sorted out below.
-        q = q.filter(models.DBSubcontractItem.boq_key.in_(list(keys) or [""]) | total_line)
     # An order being amended is still live until its revision is approved, and the revision carries the same
     # lines, so counting both would give the same work to the contractor twice. The revision stands for it meanwhile.
     amended = {r[0] for r in db.query(models.DBSubcontractOrder.supersedes_id).filter(
@@ -427,13 +444,7 @@ def boq_given_to_contractors(db, client_id, keys=None):
         else:
             qty, cost = it.quantity or 0, it.total_amount or 0
         # An ordinary line is all of one BOQ line; a line for a whole heading is shared out among the lines it adds up.
-        parts = boq_parts_of(it)
-        if parts:
-            whole = sum(float(p.get("qty") or 0) for p in parts) or 1.0
-            shares = [(p["key"], float(p.get("qty") or 0) / whole) for p in parts]
-        else:
-            shares = [(it.boq_key, 1.0)]
-        for key, share in shares:
+        for key, share in boq_shares_of(it):
             if keys is not None and key not in keys:
                 continue
             g = out.setdefault(key, {"qty": 0.0, "cost": 0.0, "items": [], "orders": [], "share": {}})

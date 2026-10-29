@@ -18,10 +18,25 @@ type SessionUser = {
   headOffice: boolean
   /** The department the owner has put this person in; staff see it on their own sign-in. */
   department: string
+  /** Where this sign-in came from: the website, or the phone app (which changes less - see AppRight). */
+  channel: 'web' | 'app'
+  /** True in the app for everybody but the Master and the account's admins. */
+  appLimited: boolean
+  /** In the app, which of the four "Phone app" rights this person holds. Everything is true on the website. */
+  appRights: Record<AppRight, boolean>
 }
 
-type OwnerMe = { email: string; contact_name?: string; company_name?: string; role?: string }
-type StaffMe = {
+export type AppRight = 'app.site_edit' | 'app.approve' | 'app.download_pdf' | 'app.download_excel'
+type AppFields = { channel?: string; app_limited?: boolean; app_rights?: Partial<Record<AppRight, boolean>> }
+const ALL_RIGHTS: Record<AppRight, boolean> = { 'app.site_edit': true, 'app.approve': true, 'app.download_pdf': true, 'app.download_excel': true }
+
+/** What the server said about the channel, as the screens use it. An older server says nothing: it is the website. */
+function appFields(me: AppFields): Pick<SessionUser, 'channel' | 'appLimited' | 'appRights'> {
+  return { channel: me.channel === 'app' ? 'app' : 'web', appLimited: !!me.app_limited, appRights: { ...ALL_RIGHTS, ...(me.app_rights ?? {}) } }
+}
+
+type OwnerMe = AppFields & { email: string; contact_name?: string; company_name?: string; role?: string }
+type StaffMe = AppFields & {
   id: number
   email: string
   full_name?: string
@@ -67,6 +82,7 @@ const asOwner = async (): Promise<SessionUser | null> => {
         roleCode: 'owner',
         headOffice: false,
         department: '',
+        ...appFields(owner),
       }
     }
   } catch (e) {
@@ -91,6 +107,7 @@ const asStaff = async (): Promise<SessionUser | null> => {
         roleCode: staff.permission_role || 'staff',
         headOffice: !!staff.head_office,
         department: staff.department ?? '',
+        ...appFields(staff),
       }
     }
   } catch (e) {
@@ -98,6 +115,9 @@ const asStaff = async (): Promise<SessionUser | null> => {
   }
   return null
 }
+
+/** Rights a team member never gets, however much they otherwise can do. */
+const HR_AND_MASTER_ONLY = new Set(['payroll.manage'])
 
 async function resolveSession(): Promise<SessionUser | null> {
   const order = lastDoor() === 'employee' ? [asStaff, asOwner] : [asOwner, asStaff]
@@ -112,20 +132,32 @@ export function useSession() {
   const q = useQuery({ queryKey: ['session'], queryFn: loadSession, staleTime: 5 * 60_000, retry: false })
   const user = q.data ?? null
 
-  /** "a|b" means either will do. The owner holds everything, including rights added later. */
+  /** "a|b" means either will do. The owner holds everything, including rights added later. The payroll right is the exception
+   *  for a team member the Master has invited: payroll is HR's and the Master's alone, whatever role they were given. */
   const can = (permission: string) => {
     if (!user) return false
-    if (user.type === 'owner') return true
+    if (user.type === 'owner') return user.teamRole === 'owner' || permission.split('|').some((p) => !HR_AND_MASTER_ONLY.has(p))
     return permission.split('|').some((p) => user.permissions.includes(p))
   }
+
+  /**
+   * In the phone app, whether this person may do what one of the four "Phone app" rights covers. Always true on the website,
+   * and for the Master and admins in the app. The server enforces the same rules: this only keeps the buttons honest.
+   */
+  const appCan = (right: AppRight) => !user || user.channel !== 'app' || !user.appLimited || user.appRights[right]
 
   return {
     user,
     can,
+    appCan,
+    /** Signed in from the phone app. */
+    isApp: user?.channel === 'app',
     isLoading: q.isPending,
     // Only an answer of "nobody" is signed out. No answer at all (no signal) is not.
     isAnonymous: q.isSuccess && !user,
     isOwner: user?.type === 'owner' && user.teamRole === 'owner',
+    /** The Master, or a staff login that holds HR's right: the people's ID numbers, their documents, payroll and the salary structure. */
+    isHrOrMaster: user?.type === 'owner' ? user.teamRole === 'owner' : !!user?.permissions.includes('people.manage'),
     /** HO QS or HO Coordinator. */
     isHeadOffice: !!user?.headOffice,
     // A failed refresh with a person already known (offline, or the server restarting) is not

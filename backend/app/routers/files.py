@@ -15,6 +15,7 @@ from app.db import get_db, get_read_db
 
 from app.core.audit import log_audit
 from app.core.auth import get_client_user, require_erp_read, require_items_access, session_employee, wo_actor
+from app.core import app_limits
 from app.core.config import SECRET_KEY
 from app.core.currency import money, sheet_number
 from app.services.credit_notes import credit_tds_rows
@@ -355,7 +356,9 @@ def _file_response(db, f, download=0, cache="private, max-age=86400"):
 @router.get("/api/files/{fid}")
 def get_file(fid: int, request: Request, download: int = 0, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
-    return _file_response(db, _file_or_404(db, client.id, fid, bytes_too=True), download)
+    f = _file_or_404(db, client.id, fid, bytes_too=True)
+    app_limits.check_stored_file(request, f.content_type)
+    return _file_response(db, f, download)
 
 
 # A file opened outside the app. In the phone app a PDF or a drawing cannot be shown inside it, so it is handed to the
@@ -586,12 +589,14 @@ def import_subcontract_orders(body: dict, request: Request, db: Session = Depend
         con = contractors.get(norm_name(contractor_name))
         job = jobs.get(norm_name(str(r.get("project") or "").strip()))
         if not con:
+            # A work order is always for somebody: a name that is not on file is not guessed at, nor left blank.
             unmatched.append(contractor_name)
+            continue
         dept = str(r.get("department") or "").strip()
         order = models.DBSubcontractOrder(
             client_id=client.id, status="DRAFT",
             wo_number=next_wo_number(db, client.id, dept, r.get("commencement_date")),
-            contractor_id=con.id if con else None, job_id=job.id if job else None,
+            contractor_id=con.id, job_id=job.id if job else None,
             department=dept, subject=subject,
             commencement_date=str(r.get("commencement_date") or "").strip(),
             completion_date=str(r.get("completion_date") or "").strip(),
@@ -603,9 +608,10 @@ def import_subcontract_orders(body: dict, request: Request, db: Session = Depend
         log_audit(db, client.id, "subcontract_imported", "subcontract_order", order.id,
                   order.wo_number, subject, request, user_name=actor_name)
     db.commit()
-    note = (" %d contractor name%s not on file yet - pick one on each before pricing it: %s."
-            % (len(unmatched), "" if len(unmatched) == 1 else "s", ", ".join(sorted(set(unmatched))[:5]))) \
-        if unmatched else ""
+    names = sorted(set(unmatched))
+    note = (" %d row%s left out because the sub contractor is not on file - register %s first, then bring %s in again: %s."
+            % (len(unmatched), "" if len(unmatched) == 1 else "s", "it" if len(names) == 1 else "them",
+               "it" if len(unmatched) == 1 else "them", ", ".join(names[:5]))) if unmatched else ""
     return {"count": len(made), "message": ("%d order%s brought in as drafts." %
             (len(made), "" if len(made) == 1 else "s")) + note}
 

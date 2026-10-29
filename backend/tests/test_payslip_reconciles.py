@@ -12,6 +12,14 @@ from conftest import make_employee
 
 
 @pytest.fixture(autouse=True)
+def _without_the_salary_structure(tenant):
+    """These test the payslip's own arithmetic from the salary alone, which is what a company that has no salary structure
+    gets (the structure's own behaviour is in test_salary_structure.py)."""
+    for component in tenant.get("/api/salary-structure").json()["components"]:
+        tenant.delete("/api/salary-structure/%d" % component["id"])
+
+
+@pytest.fixture(autouse=True)
 def _reset_limiter():
     main.rate_limiter._hits.clear()
     yield

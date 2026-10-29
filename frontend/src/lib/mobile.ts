@@ -7,6 +7,7 @@ import { StatusBar, Style } from '@capacitor/status-bar'
 import { SplashScreen } from '@capacitor/splash-screen'
 import { PushNotifications } from '@capacitor/push-notifications'
 import { api, get, post } from '@/lib/api'
+import { installDownloads } from '@/lib/download'
 import { useUpdatePrompt } from '@/stores/updatePrompt'
 
 /**
@@ -19,6 +20,9 @@ export async function initMobile() {
   // Screens downloaded over the air are on trial until this runs: one that never gets this far is dropped, and the
   // plugin goes back to the last screens that did.
   void CapacitorUpdater.notifyAppReady().catch(() => undefined)
+
+  // PDF and Excel buttons: the app fetches the file itself and hands it to the phone's Open / Share choices.
+  installDownloads()
 
   try {
     // 1. Android physical & gesture back button handling
@@ -55,6 +59,7 @@ export async function initMobile() {
 /** The build number of the screens inside this APK; the workflow stamps it (VITE_WEB_VERSION). 0 for a laptop build. */
 const BAKED_WEB = Number(import.meta.env.VITE_WEB_VERSION) || 0
 let offeredWeb = 0
+let checkingWeb = false
 
 /**
  * Over the air: when screens newer than the ones this phone runs have been published, fetch them quietly. They are
@@ -63,6 +68,10 @@ let offeredWeb = 0
  * left for the "Update available" prompt above.
  */
 async function checkForWebUpdate() {
+  // The app asks once when it opens and once more as it comes to the front, close together: one at a time, or the same
+  // screens are downloaded twice.
+  if (checkingWeb) return
+  checkingWeb = true
   try {
     const [{ build }, latest, now, listed] = await Promise.all([
       App.getInfo(),
@@ -101,6 +110,8 @@ async function checkForWebUpdate() {
   } catch (err) {
     // No signal, an APK from before this existed, or the server has nothing published: try again next time.
     console.warn('Checking for new screens did not complete:', err)
+  } finally {
+    checkingWeb = false
   }
 }
 

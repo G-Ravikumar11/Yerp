@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Download, Play, Plus } from 'lucide-react'
+import { Download, ListChecks, Play, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
@@ -13,6 +13,7 @@ import { PayslipFormModal } from './PayslipFormModal'
 import { PayslipModal } from './PayslipModal'
 import { Anomalies } from './Anomalies'
 import { RunPayrollModal } from './RunPayrollModal'
+import { SalaryStructureModal } from './SalaryStructureModal'
 
 /** Whether the month's payslips draft themselves on the 1st. Anybody can see it; the Master changes it. */
 function AutoPayroll() {
@@ -40,6 +41,7 @@ export default function PayrollPage() {
   const [open, setOpen] = useState<number | null>(null)
   const [creating, setCreating] = useState(false)
   const [running, setRunning] = useState(false)
+  const [structure, setStructure] = useState(false)
   const rows = q.data ?? []
   const filters = useListFilters(rows, { search: (p) => [p.number, p.employee_name, p.status].join(' '), status: (p) => p.status, date: (p) => p.pay_date || p.period_end })
   const columns: TableColumn<PayslipRow>[] = [
@@ -54,7 +56,7 @@ export default function PayrollPage() {
   ]
   return (
     <>
-      <PageHeader eyebrow="People" title="Payroll" description="Payslips and payment. Run everyone's at once, or write one for a single person." actions={<>{filters.filtered.length > 0 && <Button variant="outline" asChild><a href={payrollRegister(filters.filtered.map((p) => p.id))} title="Every payslip shown below, one row each, all columns"><Download /> Excel ({filters.filtered.length})</a></Button>}<Button variant="outline" onClick={() => setRunning(true)}><Play /> Run payroll</Button><Button onClick={() => setCreating(true)}><Plus /> New payslip</Button></>} />
+      <PageHeader eyebrow="People" title="Payroll" description="Payslips and payment. Run everyone's at once, or write one for a single person." actions={<>{filters.filtered.length > 0 && <Button variant="outline" asChild><a href={payrollRegister(filters.filtered.map((p) => p.id))} title="Every payslip shown below, one row each, all columns"><Download /> Excel ({filters.filtered.length})</a></Button>}<Button variant="outline" onClick={() => setStructure(true)}><ListChecks /> Salary structure</Button><Button variant="outline" onClick={() => setRunning(true)}><Play /> Run payroll</Button><Button onClick={() => setCreating(true)}><Plus /> New payslip</Button></>} />
       <AutoPayroll />
       <FilterBar filters={filters} placeholder="Search by number, employee or status..." />
       <DataTable label="Payslips" rows={filters.filtered} columns={columns} rowKey={(p) => p.id} onRowClick={(p) => setOpen(p.id)} loading={q.isPending} empty={filters.active ? 'Nothing matches those filters.' : 'No payslips yet. Run payroll to create one for everybody.'} />
@@ -62,6 +64,7 @@ export default function PayrollPage() {
       <PayslipModal id={open} onClose={() => setOpen(null)} />
       <PayslipFormModal open={creating} onClose={() => setCreating(false)} />
       <RunPayrollModal open={running} onClose={() => setRunning(false)} />
+      <SalaryStructureModal open={structure} onClose={() => setStructure(false)} />
     </>
   )
 }

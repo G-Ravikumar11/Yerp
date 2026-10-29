@@ -18,7 +18,7 @@ import ProfilePage from './ProfilePage'
 const base = {
   full_name: 'Asha Rao', first_name: 'Asha', last_name: 'Rao', email: 'a@example.com', phone: '', address: '', job_title: 'Engineer', level: '', employment_type: 'full_time',
   department: '', manager: '', start_date: '', work_location: '', employee_id_code: 'EMP-1', goals_count: 0, goal_progress: 0, team: [],
-  emergency_contact: '', emergency_phone: '', emergency_complete: false, gender: '', aadhaar_no: '', pan_no: '', uan_no: '', onboarding: true,
+  emergency_contact: '', emergency_phone: '', emergency_complete: false, gender: '', aadhaar_no: '', pan_no: '', uan_no: '', esi_no: '', onboarding: true,
 }
 
 function mount() {
