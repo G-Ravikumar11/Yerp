@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Search } from 'lucide-react'
 import { Badge, Button, Input, Modal, Select, Skeleton, Tabs } from '@/components/ui'
 import { pullBoqLines, useAvailable, useBoqs, type AvailableLine } from '@/api/boq'
@@ -44,7 +44,7 @@ const standing = (l: AvailableLine): 'none' | 'part' | 'full' => {
  * doing, tick the lines, say how much of each and at what contractor rate. Each keeps its link to the BOQ line, so
  * what is given out is added up against what the client's BOQ allows.
  */
-export function BoqPicker({ orderId, jobId, open, onOpenChange, onAdd }: { orderId: number; jobId: number; open: boolean; onOpenChange: (o: boolean) => void; onAdd: (lines: Record<string, unknown>[]) => void }) {
+export function BoqPicker({ orderId, jobId, open, onOpenChange, onAdd, startMode = 'lines' }: { orderId: number; jobId: number; open: boolean; onOpenChange: (o: boolean) => void; onAdd: (lines: Record<string, unknown>[]) => void; startMode?: 'lines' | 'headings' }) {
   const boqs = useBoqs()
   const boq = (boqs.data?.boqs ?? []).find((b) => b.job_id === jobId)
   const avail = useAvailable(open && boq ? boq.id : 0)
@@ -53,7 +53,11 @@ export function BoqPicker({ orderId, jobId, open, onOpenChange, onAdd }: { order
   const [section, setSection] = useState('')
   const [left, setLeft] = useState<Left>('open')
   const [onlyTicked, setOnlyTicked] = useState(false)
-  const [mode, setMode] = useState<'lines' | 'headings'>('lines')
+  const [mode, setMode] = useState<'lines' | 'headings'>(startMode)
+  // Opened from "Add BOQ headings" it starts on the headings; from "Add from the project BOQ", line by line.
+  useEffect(() => {
+    if (open) setMode(startMode)
+  }, [open, startMode])
   const [gpicks, setGpicks] = useState<Record<string, string>>({})
 
   // Each priced line with the heading it sits under, so the BOQ can be cut down by section.
