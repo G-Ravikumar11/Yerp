@@ -1,8 +1,8 @@
 """The payslip as the office sets it: employee details in two column pairs, earnings beside deductions, net pay in
 figures and in words. One layout feeds the PDF and the Excel download, so the two always carry the same columns.
 
-Every column of the sheet is here. A column the application holds nothing for (father's name, Aadhaar, UAN, HRA and
-the other allowance heads, professional tax) is left empty rather than filled in, for the office to complete.
+Every column of the sheet is here. A column the application holds nothing for (father's name, HRA and the other
+allowance heads, professional tax) is left empty rather than filled in, for the office to complete.
 """
 import io
 from datetime import datetime
@@ -55,8 +55,8 @@ def layout(p):
         ("Father Name.", "", "LOP .", ""),
         ("Salary Per Month.", _figure(p.get("gross_pay")), "Balance Leaves.", _blank_or(days.get("balance_leaves"))),
         ("DOJ.", joined_on(e.get("start_date")), "Work Days.", work),
-        ("Aadhar No.", "", "Effective Work days.", work),
-        ("UAN No", "", "ESI No", ""),
+        ("Aadhar No.", e.get("aadhaar_masked", ""), "Effective Work days.", work),
+        ("UAN No", e.get("uan_no", ""), "ESI No", e.get("esi_no", "")),
     ]
     earnings = [
         ("Basic", p.get("basic_salary")), ("HRA", None), ("Site Allowance", None), ("Special Allownace", None),

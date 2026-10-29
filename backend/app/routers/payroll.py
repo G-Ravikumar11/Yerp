@@ -239,6 +239,8 @@ def payslip_payload(db, client, ps, light=False, row=None):
             "bank_account": emp.bank_account if emp else "", "tax_id": emp.tax_id if emp else "",
             "pay_frequency": emp.pay_frequency if emp else "",
             "start_date": emp.start_date if emp else "", "work_location": emp.work_location if emp else "",
+            "uan_no": emp.uan_no or "", "esi_no": emp.esi_no or "",
+            "aadhaar_masked": ("XXXX XXXX " + emp.aadhaar_no[-4:]) if emp.aadhaar_no else "",
         } if emp else {},
         "days": pay_period_days(db, client.id, emp, ps),
         "period_start": ps.period_start, "period_end": ps.period_end, "pay_date": ps.pay_date,

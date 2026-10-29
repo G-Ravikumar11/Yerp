@@ -96,6 +96,7 @@ describe('Add an employee: access follows the role and the level', () => {
     await waitFor(() => screen.getByTestId('access'))
     await user.type(screen.getByLabelText('First name *'), 'Asha')
     await user.type(screen.getByLabelText('Last name *'), 'Rao')
+    await user.selectOptions(screen.getByLabelText('Gender *'), 'Female')
     await user.type(screen.getByLabelText('Emergency contact name *'), 'Ravi Rao')
     await user.type(screen.getByLabelText('Emergency contact phone *'), '9876543210')
     await user.selectOptions(screen.getByLabelText('Reporting role'), 'site_engineer')
@@ -114,6 +115,7 @@ describe('Add an employee: access follows the role and the level', () => {
     expect(screen.queryByTestId('access')).toBeNull()
     await user.type(screen.getByLabelText('First name *'), 'Asha')
     await user.type(screen.getByLabelText('Last name *'), 'Rao')
+    await user.selectOptions(screen.getByLabelText('Gender *'), 'Female')
     await user.type(screen.getByLabelText('Emergency contact name *'), 'Ravi Rao')
     await user.type(screen.getByLabelText('Emergency contact phone *'), '9876543210')
     await user.click(screen.getByRole('button', { name: 'Create the employee' }))
@@ -122,7 +124,7 @@ describe('Add an employee: access follows the role and the level', () => {
     expect(sent[0].body).not.toHaveProperty('permissions')
   })
 
-  it('will not create anybody without an emergency contact name and number, and offers gender as optional', async () => {
+  it('will not create anybody without a gender and an emergency contact name and number', async () => {
     const user = userEvent.setup()
     mount()
     await waitFor(() => screen.getByTestId('access'))
@@ -135,11 +137,90 @@ describe('Add an employee: access follows the role and the level', () => {
     await user.type(screen.getByLabelText('Emergency contact phone *'), '12')
     expect(create.disabled).toBe(true)
     await user.type(screen.getByLabelText('Emergency contact phone *'), '34567890')
+    expect(create.disabled).toBe(true)                                                       // still no gender
+    expect((screen.getByLabelText('Gender *') as HTMLSelectElement).value).toBe('')
+    await user.selectOptions(screen.getByLabelText('Gender *'), 'Female')
     expect(create.disabled).toBe(false)
-    expect((screen.getByLabelText('Gender') as HTMLSelectElement).value).toBe('')
-    await user.selectOptions(screen.getByLabelText('Gender'), 'Female')
     await user.click(create)
     await waitFor(() => expect(sent.length).toBe(1))
     expect(sent[0].body).toMatchObject({ emergency_contact: 'Ravi Rao', emergency_phone: '1234567890', gender: 'Female' })
+  })
+})
+
+describe('Add an employee: the statutory numbers', () => {
+  it('asks for the UAN, Aadhaar and ESI numbers, and sends what is typed', async () => {
+    const user = userEvent.setup()
+    mount()
+    await waitFor(() => screen.getByTestId('access'))
+    await user.type(screen.getByLabelText('First name *'), 'Ravi')
+    await user.type(screen.getByLabelText('Last name *'), 'Kumar')
+    await user.selectOptions(screen.getByLabelText('Gender *'), 'Female')
+    await user.type(screen.getByLabelText('UAN'), '101185316896')
+    await user.type(screen.getByLabelText('Aadhaar number'), '801874264479')
+    await user.type(screen.getByLabelText('ESI number'), '3100123456')
+    await user.type(screen.getByLabelText('Emergency contact name *'), 'Asha')
+    await user.type(screen.getByLabelText('Emergency contact phone *'), '9876543210')
+    await user.click(screen.getByRole('button', { name: /add employee|save|create/i }))
+    await waitFor(() => expect(sent.length).toBeGreaterThan(0))
+    expect(sent[0]!.body).toMatchObject({ uan_no: '101185316896', aadhaar_no: '801874264479', esi_no: '3100123456' })
+  })
+})
+
+describe('Add an employee: the PAN number, the cards, address and gender', () => {
+  it('keeps the upload option out of the way until a number is clicked, then offers "Upload document"', async () => {
+    const user = userEvent.setup()
+    mount()
+    await waitFor(() => screen.getByTestId('access'))
+    expect(screen.getByLabelText('PAN number')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /upload document/i })).toBeNull()
+    for (const [number, card] of [['Aadhaar number', 'Aadhaar card'], ['PAN number', 'PAN card'], ['ESI number', 'ESI card']] as const) {
+      await user.click(screen.getByLabelText(number))
+      const pick = screen.getByLabelText(`Attach ${card}`) as HTMLInputElement
+      expect(pick.type).toBe('file')
+      expect(pick.accept).toContain('.pdf')
+      expect(pick.accept).toContain('.jpeg')
+    }
+    expect(screen.getAllByRole('button', { name: /upload document/i }).length).toBe(3)
+  })
+
+  it('shows the chosen file beside the option, and lets it be taken off again', async () => {
+    const user = userEvent.setup()
+    mount()
+    await waitFor(() => screen.getByTestId('access'))
+    await user.click(screen.getByLabelText('Aadhaar number'))
+    await user.upload(screen.getByLabelText('Attach Aadhaar card'), new File(['x'], 'aadhaar.jpeg', { type: 'image/jpeg' }))
+    expect(screen.getByText('aadhaar.jpeg')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /remove the attached aadhaar card/i }))
+    expect(screen.queryByText('aadhaar.jpeg')).toBeNull()
+  })
+
+  it('asks for an address and sends it, with the PAN number', async () => {
+    const user = userEvent.setup()
+    mount()
+    await waitFor(() => screen.getByTestId('access'))
+    await user.type(screen.getByLabelText('First name *'), 'Ravi')
+    await user.type(screen.getByLabelText('Last name *'), 'Kumar')
+    await user.selectOptions(screen.getByLabelText('Gender *'), 'Male')
+    await user.type(screen.getByLabelText('Address'), 'Plot 1, Kondapur')
+    await user.type(screen.getByLabelText('PAN number'), 'abcde1234f')
+    await user.type(screen.getByLabelText('Emergency contact name *'), 'Asha')
+    await user.type(screen.getByLabelText('Emergency contact phone *'), '9876543210')
+    await user.click(screen.getByRole('button', { name: /create the employee/i }))
+    await waitFor(() => expect(sent.length).toBeGreaterThan(0))
+    expect(sent[0]!.body).toMatchObject({ pan_no: 'ABCDE1234F', address: 'Plot 1, Kondapur', gender: 'Male' })
+  })
+
+  it('will not create the employee until a gender is chosen', async () => {
+    const user = userEvent.setup()
+    mount()
+    await waitFor(() => screen.getByTestId('access'))
+    await user.type(screen.getByLabelText('First name *'), 'Ravi')
+    await user.type(screen.getByLabelText('Last name *'), 'Kumar')
+    await user.type(screen.getByLabelText('Emergency contact name *'), 'Asha')
+    await user.type(screen.getByLabelText('Emergency contact phone *'), '9876543210')
+    const create = screen.getByRole('button', { name: /create the employee/i }) as HTMLButtonElement
+    expect(create.disabled).toBe(true)
+    await user.selectOptions(screen.getByLabelText('Gender *'), 'Prefer not to say')
+    expect(create.disabled).toBe(false)
   })
 })

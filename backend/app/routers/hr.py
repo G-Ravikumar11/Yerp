@@ -1,5 +1,6 @@
 """The hr endpoints."""
 import json
+import os
 from collections import namedtuple
 from datetime import datetime, timedelta
 from typing import Optional
@@ -74,6 +75,7 @@ from app.validators.hr import (
     clean_department_name,
     clean_emergency,
     clean_employee_email,
+    clean_esi,
     clean_gender,
     clean_org_email,
     clean_org_domain,
@@ -482,6 +484,10 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     validate_employee_money(body.model_dump())
     emergency_contact, emergency_phone = clean_emergency(body.emergency_contact, body.emergency_phone)
     gender = clean_gender(body.gender)
+    from app.constants.hr import gender_required
+    if gender_required() and not gender:
+        raise HTTPException(status_code=400, detail="Gender is required. Choose one ('Prefer not to say' is an answer).")
+    aadhaar_no, pan_no, uan_no, esi_no = clean_aadhaar(body.aadhaar_no), clean_pan(body.pan_no), clean_uan(body.uan_no), clean_esi(body.esi_no)
     employee_code = assert_employee_code_free(db, client_id, body.employee_id)
 
     level = validate_level(body.level)
@@ -520,6 +526,7 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
         bank_name=body.bank_name, bank_account=body.bank_account,
         tax_id=body.tax_id,
         emergency_contact=emergency_contact, emergency_phone=emergency_phone, gender=gender,
+        aadhaar_no=aadhaar_no, pan_no=pan_no, uan_no=uan_no, esi_no=esi_no,
         start_date=body.start_date, status="onboarding",
         password_hash=passwords.hash_password(validated_staff_password(body.password)) if body.password else "",
     )
@@ -602,7 +609,7 @@ def _profile(emp, dept_name, manager_name, sites):
         "allowances": emp.allowances, "bonus": emp.bonus,
         "bank_name": emp.bank_name, "bank_account": emp.bank_account, "tax_id": emp.tax_id,
         "emergency_contact": emp.emergency_contact, "emergency_phone": emp.emergency_phone,
-        "gender": emp.gender or "", "pan_no": emp.pan_no or "", "uan_no": emp.uan_no or "",
+        "gender": emp.gender or "", "pan_no": emp.pan_no or "", "uan_no": emp.uan_no or "", "esi_no": emp.esi_no or "",
         "aadhaar_masked": ("XXXX XXXX " + emp.aadhaar_no[-4:]) if emp.aadhaar_no else "",
         "start_date": emp.start_date, "end_date": emp.end_date,
         "status": emp.status, "onboarding_complete": emp.onboarding_complete,
@@ -771,6 +778,8 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
         body["pan_no"] = clean_pan(body["pan_no"])
     if "uan_no" in body:
         body["uan_no"] = clean_uan(body["uan_no"])
+    if "esi_no" in body:
+        body["esi_no"] = clean_esi(body["esi_no"])
     # Somebody still being onboarded must keep an emergency contact. Everybody else is left as they are, so an old
     # record without one can still be saved for any other change.
     if emp.status == "onboarding" and ("emergency_contact" in body or "emergency_phone" in body):
@@ -1797,7 +1806,30 @@ def get_goals_for_employee(emp_id: int, request: Request, db: Session = Depends(
 def get_documents_for_employee(emp_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "people.manage")
     docs = db.query(models.DBDocument).filter(models.DBDocument.employee_id == emp_id, models.DBDocument.client_id == client.id).order_by(models.DBDocument.created_at.desc()).all()
-    return [{"id": d.id, "title": d.title, "doc_type": d.doc_type, "file_name": d.file_name, "uploaded_by": d.uploaded_by, "created_at": d.created_at} for d in docs]
+    return [{"id": d.id, "title": d.title, "doc_type": d.doc_type, "file_name": d.file_name, "file_size": d.file_size or 0, "uploaded_by": d.uploaded_by, "created_at": d.created_at} for d in docs]
+
+
+@router.get("/api/employees/{emp_id}/documents/{doc_id}/download")
+def download_employee_document(emp_id: int, doc_id: int, request: Request, db: Session = Depends(get_read_db)):
+    client = require_items_access(request, db, "people.manage")
+    doc = db.query(models.DBDocument).options(undefer(models.DBDocument.file_data)).filter(
+        models.DBDocument.id == doc_id, models.DBDocument.employee_id == emp_id, models.DBDocument.client_id == client.id).first()
+    if not doc or not doc.file_data:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"file_name": doc.file_name, "file_type": doc.file_type, "file_data": doc.file_data}
+
+
+@router.delete("/api/employees/{emp_id}/documents/{doc_id}")
+def delete_employee_document(emp_id: int, doc_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_items_access(request, db, "people.manage")
+    doc = db.query(models.DBDocument).filter(
+        models.DBDocument.id == doc_id, models.DBDocument.employee_id == emp_id, models.DBDocument.client_id == client.id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    log_audit(db, client.id, "employee_document_removed", "employee", emp_id, doc.title or "", doc.file_name or "", request)
+    db.delete(doc)
+    db.commit()
+    return {"message": "Document removed"}
 
 
 @router.get("/api/employees/{emp_id}/leave")
@@ -1809,18 +1841,25 @@ def get_leave_for_employee(emp_id: int, request: Request, db: Session = Depends(
 
 @router.post("/api/employees/{emp_id}/documents")
 def upload_document(emp_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """A document HR keeps on somebody's file (their Aadhaar, PAN or ESI card, say). The file comes as base64 and
+    is held to the same size and type limits as every other upload from outside."""
     client = require_items_access(request, db, "people.manage")
     if not body: body = {}
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
+    from types import SimpleNamespace
+    size = validate_candidate_document(SimpleNamespace(
+        file_name=body.get("file_name", ""), file_type=body.get("file_type", ""), file_data=body.get("file_data", "")))
+    title = (body.get("title") or "").strip() or os.path.splitext(body.get("file_name", ""))[0]
     doc = models.DBDocument(
         client_id=client.id, employee_id=emp_id,
-        title=body.get("title", ""), doc_type=body.get("doc_type", "other"),
-        file_name=body.get("file_name", ""), file_type=body.get("file_type", ""),
+        title=title[:120], doc_type=(body.get("doc_type") or "other")[:40],
+        file_name=body.get("file_name", ""), file_type=body.get("file_type", ""), file_size=size,
         file_data=body.get("file_data", ""), uploaded_by="HR",
     )
     db.add(doc)
+    log_audit(db, client.id, "employee_document_added", "employee", emp_id, "%s %s" % (emp.first_name, emp.last_name), title, request)
     note = models.DBNotification(
         client_id=client.id, employee_id=emp_id,
         title="New Document Uploaded", message=f"HR has uploaded a document: {doc.title}",

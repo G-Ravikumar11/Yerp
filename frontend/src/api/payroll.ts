@@ -30,7 +30,7 @@ export interface PayslipRow {
 export interface PayslipDetail {
   id: number
   number: string
-  employee: { full_name: string; employee_id: string; email: string; job_title: string; department_name: string; bank_name: string; bank_account: string; tax_id: string; start_date: string; work_location: string }
+  employee: { full_name: string; employee_id: string; email: string; job_title: string; department_name: string; bank_name: string; bank_account: string; tax_id: string; start_date: string; work_location: string; uan_no?: string; esi_no?: string; aadhaar_masked?: string }
   days: { total: number; work: number; balance_leaves: number }
   period_start: string
   period_end: string

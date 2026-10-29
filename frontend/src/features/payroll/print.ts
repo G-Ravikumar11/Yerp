@@ -62,8 +62,8 @@ ${info('Bank Acc.No.', e.bank_account, 'Total Days.', p.days.total || '')}
 ${info('Father Name.', '', 'LOP .', '')}
 ${info('Salary Per Month.', amt(p.gross_pay), 'Balance Leaves.', p.days.balance_leaves)}
 ${info('DOJ.', joined(e.start_date), 'Work Days.', p.days.work || '')}
-${info('Aadhar No.', '', 'Effective Work days.', p.days.work || '')}
-${info('UAN No', '', 'ESI No', '')}
+${info('Aadhar No.', e.aadhaar_masked, 'Effective Work days.', p.days.work || '')}
+${info('UAN No', e.uan_no, 'ESI No', e.esi_no)}
 <tr class="h"><td colspan="3">Earnings</td><td colspan="3">Deductions</td></tr>
 ${lines}
 <tr class="b"><td colspan="2">Total Earnings : Rs.</td><td class="r">${amt(p.gross_pay)}</td><td colspan="2">Total Deductions : Rs.</td><td class="r">${amt(p.total_deductions)}</td></tr>

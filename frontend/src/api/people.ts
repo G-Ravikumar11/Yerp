@@ -44,6 +44,7 @@ export interface EmployeeDetail extends Employee {
   gender?: string
   pan_no?: string
   uan_no?: string
+  esi_no?: string
   aadhaar_masked?: string
   /** Whether they have a password to sign in with. The password itself is never sent. */
   has_password: boolean
@@ -115,6 +116,45 @@ export interface HrCatalogue {
 }
 
 export const peopleKeys = { all: ['people'] as const }
+
+/** The cards HR keeps on file besides the numbers: what each is called, and the kind it is filed under. */
+export const ID_DOCUMENTS = [
+  { key: 'aadhaar', title: 'Aadhaar card', type: 'identity' },
+  { key: 'pan', title: 'PAN card', type: 'identity' },
+  { key: 'esi', title: 'ESI card', type: 'finance' },
+] as const
+export type IdDocumentKey = (typeof ID_DOCUMENTS)[number]['key']
+/** What the server accepts: a photo (JPG, JPEG, PNG, WEBP) or a PDF, Word or text file, up to 5 MB. */
+export const DOCUMENT_ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.txt'
+
+export interface EmployeeDoc { id: number; title: string; doc_type: string; file_name: string; file_size: number; uploaded_by: string; created_at: string }
+export const useEmployeeDocuments = (id: number) => useQuery({ queryKey: [...peopleKeys.all, 'documents', id], queryFn: () => get<EmployeeDoc[]>(`/api/employees/${id}/documents`) })
+
+const toBase64 = (file: File) => new Promise<string>((res, rej) => {
+  const r = new FileReader()
+  r.onerror = () => rej(new Error('Could not read that file. Try another copy of it.'))
+  r.onload = () => res(String(r.result).split(',')[1] ?? '')
+  r.readAsDataURL(file)
+})
+
+/** Keeps a file on somebody's record. The file travels as base64, as the staff portal's uploads do. */
+export async function uploadEmployeeDocument(id: number, title: string, docType: string, file: File) {
+  return post<{ message?: string; id?: number }>(`/api/employees/${id}/documents`, { title, doc_type: docType, file_name: file.name, file_type: file.type, file_data: await toBase64(file) })
+}
+
+/** The file comes back as base64 in JSON; hand it to the browser as a download. */
+export async function downloadEmployeeDocument(id: number, docId: number) {
+  const f = await get<{ file_name: string; file_type: string; file_data: string }>(`/api/employees/${id}/documents/${docId}/download`)
+  const bytes = Uint8Array.from(atob(f.file_data), (c) => c.charCodeAt(0))
+  const url = URL.createObjectURL(new Blob([bytes], { type: f.file_type || 'application/octet-stream' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = f.file_name
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 10_000)
+}
+
+export const deleteEmployeeDocument = (id: number, docId: number) => del<{ message?: string }>(`/api/employees/${id}/documents/${docId}`)
 const k = (...p: unknown[]) => ['people', ...p] as const
 
 export const employeesQuery = (status: string) => ({ queryKey: k('employees', status), queryFn: () => get<Employee[]>(`/api/employees${status ? `?status=${encodeURIComponent(status)}` : ''}`) })
@@ -160,6 +200,7 @@ export interface EmployeeInput {
   org_email?: string
   password?: string
   phone: string
+  address?: string
   job_title: string
   department_id: number | null
   reports_to: number | null
@@ -177,6 +218,11 @@ export interface EmployeeInput {
   emergency_phone: string
   /** Optional: Male, Female, Other or Prefer not to say. */
   gender?: string
+  /** Optional statutory numbers. UAN is 12 digits, Aadhaar 12 digits, ESI 10 (17 for an employer code). */
+  aadhaar_no?: string
+  pan_no?: string
+  uan_no?: string
+  esi_no?: string
   /** The rights the Master ticked, saved with the employee in the same request. Left out, the access level's own apply. */
   permissions?: string[]
 }

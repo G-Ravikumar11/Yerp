@@ -2,12 +2,13 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, ChevronDown } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { Badge, Button, ConfirmDialog, Field, Input, NumField, Select, Skeleton, Tabs } from '@/components/ui'
+import { Badge, Button, ConfirmDialog, Field, Input, NumField, Select, Skeleton, Tabs, Textarea } from '@/components/ui'
 import { deleteEmployee, setEmployeePassword, setEmployeeStatus, showEmployeeChange, updateEmployee, useDepartments, useEmployee, useEmployees, useHrCatalogue, type EmployeeDetail } from '@/api/people'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { EmployeeAccess } from './EmployeeAccess'
+import { EmployeeDocuments } from './EmployeeDocuments'
 import { GENDERS } from './EmployeeFormModal'
 import { SetPasswordModal } from './SetPasswordModal'
 import { EMPLOYEE_TONE } from './EmployeesPage'
@@ -20,13 +21,13 @@ function Profile({ e, ready }: { e: EmployeeDetail; ready: boolean }) {
   const [editing, setEditing] = useState(false)
   const cat = useHrCatalogue()
   const rows: [string, string | number | null | undefined][] = [
-    ['First name', e.first_name], ['Last name', e.last_name], ['Email (their login)', e.email], ['Phone', e.phone],
+    ['First name', e.first_name], ['Last name', e.last_name], ['Email (their login)', e.email], ['Phone', e.phone], ['Address', e.address],
     ['Job title', e.job_title], ['Department', e.department_name], ['Reports to', e.manager_name],
     ['Level', cat.data?.levels.find((l) => l.code === e.level)?.label ?? e.level],
     ['Reporting role', cat.data?.roles.find((r) => r.code === e.role)?.label ?? e.role],
     ['Start date', e.start_date], ['Salary', e.salary], ['Tax rate %', e.tax_rate],
     ['Emergency contact', e.emergency_contact], ['Emergency phone', e.emergency_phone],
-    ['Gender', e.gender], ['Aadhaar (given by the employee)', e.aadhaar_masked], ['PAN (given by the employee)', e.pan_no], ['UAN (given by the employee)', e.uan_no],
+    ['Gender', e.gender], ['Aadhaar (given by the employee)', e.aadhaar_masked], ['PAN (given by the employee)', e.pan_no], ['UAN (given by the employee)', e.uan_no], ['ESI number', e.esi_no],
   ]
   if (editing) return <ProfileForm e={e} onDone={() => setEditing(false)} />
   return (
@@ -40,6 +41,7 @@ function Profile({ e, ready }: { e: EmployeeDetail; ready: boolean }) {
           </div>
         ))}
       </dl>
+      <EmployeeDocuments id={e.id} canManage={canManage} />
     </div>
   )
 }
@@ -48,7 +50,7 @@ function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
   const depts = useDepartments()
   const people = useEmployees('')
   const cat = useHrCatalogue()
-  const [f, setF] = useState({ first_name: e.first_name, last_name: e.last_name, email: e.email, org_email: e.org_email ?? '', phone: e.phone, job_title: e.job_title, department_id: e.department_id, reports_to: e.reports_to, level: e.level, role: e.role, employment_type: e.employment_type, pay_frequency: e.pay_frequency, salary: e.salary, tax_rate: e.tax_rate, start_date: e.start_date, emergency_contact: e.emergency_contact, emergency_phone: e.emergency_phone, gender: e.gender ?? '' })
+  const [f, setF] = useState({ first_name: e.first_name, last_name: e.last_name, email: e.email, org_email: e.org_email ?? '', phone: e.phone, address: e.address ?? '', job_title: e.job_title, department_id: e.department_id, reports_to: e.reports_to, level: e.level, role: e.role, employment_type: e.employment_type, pay_frequency: e.pay_frequency, salary: e.salary, tax_rate: e.tax_rate, start_date: e.start_date, emergency_contact: e.emergency_contact, emergency_phone: e.emergency_phone, gender: e.gender ?? '', uan_no: e.uan_no ?? '', esi_no: e.esi_no ?? '', aadhaar_no: '', pan_no: e.pan_no ?? '' })
   const { can } = useSession()
   const canManage = can('people.manage')
   // The reporting line runs up the levels: the same level or above, never below.
@@ -60,7 +62,7 @@ function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
   const set = (k: keyof typeof f) => (ev: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((s) => ({ ...s, [k]: ev.target.value }))
   const qc = useQueryClient()
   // The server answers with the saved profile: shown at once, the lists refreshed behind it.
-  const save = useAction(() => updateEmployee(e.id, f), { success: 'Saved', onSuccess: (r) => { showEmployeeChange(qc, { saved: r }); onDone() } })
+  const save = useAction(() => updateEmployee(e.id, f.aadhaar_no.trim() ? f : (({ aadhaar_no: _kept, ...rest }) => rest)(f)), { success: 'Saved', onSuccess: (r) => { showEmployeeChange(qc, { saved: r }); onDone() } })
   return (
     <div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -78,6 +80,11 @@ function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
         <Field label="Salary" htmlFor="ep-salary"><NumField id="ep-salary" value={f.salary} onValue={(n) => setF((s) => ({ ...s, salary: n }))} /></Field>
         <Field label="Tax rate %" htmlFor="ep-tax"><NumField id="ep-tax" value={f.tax_rate} onValue={(n) => setF((s) => ({ ...s, tax_rate: n }))} /></Field>
         <Field label="Gender" htmlFor="ep-gender"><Select id="ep-gender" value={f.gender} placeholder="Not given" onChange={set('gender')} options={GENDERS.map((g) => ({ value: g, label: g }))} /></Field>
+        <Field label="Address" htmlFor="ep-address" className="sm:col-span-2 lg:col-span-3"><Textarea id="ep-address" rows={2} value={f.address} onChange={(ev) => setF((s) => ({ ...s, address: ev.target.value }))} /></Field>
+        <Field label="UAN" htmlFor="ep-uan" hint="12 digits."><Input id="ep-uan" inputMode="numeric" value={f.uan_no} onChange={set('uan_no')} autoComplete="off" /></Field>
+        <Field label="Aadhaar number" htmlFor="ep-aadhaar" hint={e.aadhaar_masked ? `On file: ${e.aadhaar_masked}. Leave blank to keep it.` : '12 digits.'}><Input id="ep-aadhaar" inputMode="numeric" value={f.aadhaar_no} onChange={set('aadhaar_no')} autoComplete="off" /></Field>
+        <Field label="PAN number" htmlFor="ep-pan" hint="Like ABCDE1234F."><Input id="ep-pan" value={f.pan_no} onChange={(ev) => setF((s) => ({ ...s, pan_no: ev.target.value.toUpperCase() }))} autoComplete="off" /></Field>
+        <Field label="ESI number" htmlFor="ep-esi" hint="10 digits."><Input id="ep-esi" inputMode="numeric" value={f.esi_no} onChange={set('esi_no')} autoComplete="off" /></Field>
         <Field label="Emergency contact" htmlFor="ep-em"><Input id="ep-em" value={f.emergency_contact} onChange={set('emergency_contact')} /></Field>
         <Field label="Emergency phone" htmlFor="ep-emp"><Input id="ep-emp" value={f.emergency_phone} onChange={set('emergency_phone')} /></Field>
       </div>

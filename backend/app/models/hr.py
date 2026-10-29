@@ -79,6 +79,7 @@ class DBEmployee(Base):
     aadhaar_no = Column(String, default="")
     pan_no = Column(String, default="")
     uan_no = Column(String, default="")
+    esi_no = Column(String, default="")      # the ESIC insurance number; 10 digits (17 for an employer code)
 
     annual_leave_entitlement = Column(Float, default=25.0)
     sick_leave_entitlement = Column(Float, default=10.0)

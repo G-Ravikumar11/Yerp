@@ -61,7 +61,7 @@ from app.services.procurement import (
 )
 from app.services.projects import job_label_for
 from app.validators.common import validate_candidate_document
-from app.validators.hr import clean_aadhaar, clean_emergency, clean_gender, clean_pan, clean_uan
+from app.validators.hr import clean_aadhaar, clean_emergency, clean_esi, clean_gender, clean_pan, clean_uan
 
 
 router = APIRouter()
@@ -1150,6 +1150,7 @@ def get_employee_profile(request: Request, db: Session = Depends(get_read_db)):
         "emergency_complete": bool((emp.emergency_contact or "").strip() and (emp.emergency_phone or "").strip()),
         # Their own details, which only they enter. Optional apart from the emergency contact.
         "gender": emp.gender or "", "aadhaar_no": emp.aadhaar_no or "", "pan_no": emp.pan_no or "", "uan_no": emp.uan_no or "",
+        "esi_no": emp.esi_no or "",
         "onboarding": emp.status == "onboarding",
         "employee_id_code": emp.employee_id,
         "goals_count": len(goals),
@@ -1175,7 +1176,7 @@ def update_my_details(request: Request, body: dict = None, db: Session = Depends
         emp.emergency_contact, emp.emergency_phone = name, phone
         changed.append("emergency contact")
     for key, clean, label in (("gender", clean_gender, "gender"), ("aadhaar_no", clean_aadhaar, "Aadhaar number"),
-                              ("pan_no", clean_pan, "PAN"), ("uan_no", clean_uan, "UAN")):
+                              ("pan_no", clean_pan, "PAN"), ("uan_no", clean_uan, "UAN"), ("esi_no", clean_esi, "ESI number")):
         if key in body:
             setattr(emp, key, clean(body[key]))
             changed.append(label)

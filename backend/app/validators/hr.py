@@ -283,6 +283,16 @@ def clean_uan(value):
     return d
 
 
+def clean_esi(value):
+    """The ESIC insurance number: 10 digits (17 for an employer code); or nothing."""
+    d = _digits(value)
+    if not d:
+        return ""
+    if not re.fullmatch(r"[0-9]{10}|[0-9]{17}", d):
+        raise HTTPException(status_code=400, detail="An ESI number is 10 digits (17 for an employer code).")
+    return d
+
+
 def clean_emergency(name, phone, required=None):
     """(name, phone) of somebody to call if the employee is hurt or cannot be reached. Both, or - when it is not
     required - neither."""
