@@ -739,6 +739,8 @@ def wo_take_head(db, client, order, body, creating):
     order.payment_days = max(0, int(body.payment_days or 0))
     if creating and not order.contractor_id:
         raise HTTPException(400, "Choose the sub contractor this work order is for before opening it.")
+    if not creating and was_contractor and not order.contractor_id:
+        raise HTTPException(400, "A work order needs its sub contractor. Choose another one instead of leaving it blank.")
 
 
 @router.post("/api/wo/orders")
@@ -993,6 +995,7 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
     db.query(models.DBSubcontractItem).filter(
         models.DBSubcontractItem.order_id == order.id).delete()
     kept = 0
+    dropped = []
     project_boq = {l.key: l for l in boq_lines_of_job(db, client.id, order.job_id)}
     for index, line in enumerate(body.lines):
         description = (line.item_description or "").strip()
@@ -1007,7 +1010,10 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
                                      % (index + 1))
         tolerance = 0.0 if header else wo_percent(line.tolerance_percent,
                                                   "tolerance on line %d" % (index + 1))
-        parts = [] if header else wo_checked_parts(line.boq_parts, qty, project_boq, index + 1)
+        parts, gone = ([], 0) if header else wo_checked_parts(line.boq_parts, qty, project_boq)
+        if gone:
+            dropped.append("line %d: %d of the BOQ lines it adds up %s no longer on the project BOQ" % (
+                index + 1, gone, "is" if gone == 1 else "are"))
         db.add(models.DBSubcontractItem(
             order_id=order.id, activity_no=(line.activity_no or "").strip(),
             item_code=(line.item_code or "").strip(), item_description=description,
@@ -1028,6 +1034,7 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
     db.commit()
     db.refresh(order)
     over = boq_over_allotments(db, client.id, [l.boq_key or "" for l in saved] + [p["key"] for l in saved for p in boq_parts_of(l)])
+    over = over + dropped
     if loose:
         over = over + ["%d line%s not on the project BOQ (first: %s) - pick %s from the BOQ, or add %s to the BOQ first" % (
             len(loose), "" if len(loose) == 1 else "s", loose[0].item_description[:40],
@@ -1734,24 +1741,29 @@ def wo_charge_budget(order_id: int, body: ChargeBudgetIn, request: Request,
             "message": "%d line%s charged." % (n, "" if n == 1 else "s")}
 
 
-def wo_checked_parts(raw, quantity, project_boq, number):
-    """The BOQ lines a heading-total line adds up, kept to lines of this project's BOQ and scaled to the quantity on the
-    line, so editing the total in the schedule shares the change out instead of leaving the parts out of step."""
-    parts = []
+def wo_checked_parts(raw, quantity, project_boq):
+    """The BOQ lines a heading-total line adds up, and how many of them are no longer on this project's BOQ.
+
+    The parts are scaled to the quantity on the line, so editing the total in the schedule shares the change out
+    instead of leaving them out of step. A quantity cleared to nothing leaves them as they were, so typing it back
+    in later still knows which BOQ lines it is. A part whose BOQ line a revision took away is let go, and the save
+    says so, as it does for any other line that is not on the BOQ."""
+    parts, gone = [], 0
     for p in raw or []:
         key = str((p or {}).get("key") or "")
         qty = money((p or {}).get("qty") or 0)
         if not key:
             continue
         if key not in project_boq or project_boq[key].kind not in BOQ_PRICED:
-            raise HTTPException(400, "Line %d: one of the BOQ lines it adds up is not on this project's BOQ" % number)
+            gone += 1
+            continue
         if qty > 0:
             parts.append({"key": key, "qty": qty})
     total = sum(p["qty"] for p in parts)
-    if parts and total > 0 and abs(total - quantity) > 0.0001:
+    if parts and total > 0 and quantity > 0 and abs(total - quantity) > 0.0001:
         scale = quantity / total
         parts = [{"key": p["key"], "qty": money(p["qty"] * scale)} for p in parts]
-    return parts
+    return parts, gone
 
 
 @router.post("/api/wo/orders/{order_id}/boq-lines")

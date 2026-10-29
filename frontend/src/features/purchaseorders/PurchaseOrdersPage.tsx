@@ -54,7 +54,7 @@ export default function PurchaseOrdersPage() {
           {!staff && (o.status === 'Draft' || o.status === 'Rejected') && o.approval_status !== 'pending' && can('purchase.manage|bills.view_all') && <Button size="sm" onClick={() => setApproving(o)}>Approve</Button>}
           {!staff && o.approval_status !== 'pending' && <Button size="sm" variant="outline" onClick={() => setEditing(o)}>Edit</Button>}
           {staff && (o.approval_status === 'rejected' || o.approval_status === 'none') && <Button size="sm" loading={resend.isPending && resend.variables?.id === o.id} onClick={() => resend.mutate(o)}>Send again</Button>}
-          {!staff && o.status === 'Approved' && can('purchase.manage') && <Button size="sm" variant="outline" onClick={() => setEmailing(o)}><Mail /> Send email</Button>}
+          {!staff && ['Approved', 'Received', 'Partially Received', 'Closed'].includes(o.status) && can('purchase.manage') && <Button size="sm" variant="outline" onClick={() => setEmailing(o)}><Mail /> Send email</Button>}
           {!staff && <Button size="sm" variant="outline" asChild><a href={`/api/purchase-orders/${o.id}/document.pdf`} target="_blank" rel="noopener" title="The order in the ruled form it is signed on"><FileText /> PDF</a></Button>}
           {!staff && <a className="text-xs text-primary underline-offset-2 hover:underline" href={`/api/purchase-orders/${o.id}/export.xlsx`}>Excel</a>}
           {!staff && can('purchase.manage') && <button type="button" className="text-xs text-primary underline-offset-2 hover:underline" onClick={() => setSupplierOf(o.supplier_name)} title="The supplier's PAN, GSTIN, address and contact, as they print on the order">Supplier</button>}
