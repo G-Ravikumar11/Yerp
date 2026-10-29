@@ -21,6 +21,8 @@ export interface OrderItem {
   tolerance_percent: number
   /** The line of the project BOQ this is part of. */
   boq_key?: string
+  /** For a line that stands for a whole heading of the BOQ: the BOQ lines it adds up. */
+  boq_parts?: { key: string; qty: number }[]
   /** Ordered plus its tolerance: the most that may be measured. */
   max_quantity: number
 }

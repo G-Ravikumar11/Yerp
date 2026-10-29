@@ -279,6 +279,9 @@ class DBSubcontractItem(Base):
     # The line of the project BOQ this is part of (its stable key), so what is given to contractors can be added up
     # against what the client's BOQ allows.
     boq_key = Column(String, default="", index=True)
+    # A line that stands for a whole heading of the BOQ (Plain Cement Concrete, say) has no single BOQ line: it keeps
+    # which ones it adds up, as JSON [{"key": ..., "qty": ...}], so each still shows what was given against it.
+    boq_parts = Column(Text, default="")
 
 
 class DBSubcontractTerm(Base):

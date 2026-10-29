@@ -108,6 +108,7 @@ class BoqLineIn(BaseModel):
     tolerance_percent: Optional[float] = 0
     # The line of the project BOQ it is part of.
     boq_key: Optional[str] = ""
+    boq_parts: Optional[list] = None
 
 
 class BoqIn(BaseModel):

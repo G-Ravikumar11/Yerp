@@ -1,4 +1,5 @@
 """The rules and workings behind the boq endpoints."""
+import json
 import re
 import uuid
 from datetime import datetime
@@ -92,6 +93,8 @@ def boq_tie_subcontract_lines(db, client_id, job_id, lines):
     for line in lines:
         if getattr(line, "is_header", False) or not (line.item_description or "").strip():
             continue
+        if getattr(line, "boq_parts", ""):
+            continue                      # a line for a whole heading is tied to every line it adds up
         if line.boq_key and line.boq_key in keys:
             continue
         hit = by_code.get((line.item_code or "").strip().upper())
@@ -384,14 +387,26 @@ def boq_issue_codes(db, client_id, lines):
     return given
 
 
+def boq_parts_of(item):
+    """The BOQ lines a heading-total line adds up: [{"key", "qty"}], or nothing for an ordinary line."""
+    try:
+        parts = json.loads(item.boq_parts) if getattr(item, "boq_parts", "") else []
+    except ValueError:
+        return []
+    return [p for p in parts if isinstance(p, dict) and p.get("key")]
+
+
 def boq_given_to_contractors(db, client_id, keys=None):
     """{boq key: what the contractors have been given against it}, from the orders that are still alive."""
+    tied = (models.DBSubcontractItem.boq_key != "") & models.DBSubcontractItem.boq_key.isnot(None)
+    total_line = (models.DBSubcontractItem.boq_parts != "") & models.DBSubcontractItem.boq_parts.isnot(None)
     q = db.query(models.DBSubcontractItem, models.DBSubcontractOrder).join(
         models.DBSubcontractOrder, models.DBSubcontractOrder.id == models.DBSubcontractItem.order_id).filter(
-        models.DBSubcontractOrder.client_id == client_id, models.DBSubcontractItem.boq_key != "",
-        models.DBSubcontractItem.boq_key.isnot(None), models.DBSubcontractOrder.status.notin_(BOQ_NOT_LIVE))
+        models.DBSubcontractOrder.client_id == client_id, tied | total_line,
+        models.DBSubcontractOrder.status.notin_(BOQ_NOT_LIVE))
     if keys is not None:
-        q = q.filter(models.DBSubcontractItem.boq_key.in_(list(keys) or [""]))
+        # A line that stands for a heading names its BOQ lines inside, so it is sorted out below.
+        q = q.filter(models.DBSubcontractItem.boq_key.in_(list(keys) or [""]) | total_line)
     # An order being amended is still live until its revision is approved, and the revision carries the same
     # lines, so counting both would give the same work to the contractor twice. The revision stands for it meanwhile.
     amended = {r[0] for r in db.query(models.DBSubcontractOrder.supersedes_id).filter(
@@ -402,21 +417,32 @@ def boq_given_to_contractors(db, client_id, keys=None):
     for it, order in q.all():
         if order.id in amended:
             continue
-        g = out.setdefault(it.boq_key, {"qty": 0.0, "cost": 0.0, "items": [], "orders": []})
         if order.status == "CLOSED":
             # A closed order gave the contractor only what it billed; the rest is free to give to somebody else.
             if order.id not in billed:
                 from app.services.subcontract_rules import billed_qty_by_item
                 billed[order.id] = billed_qty_by_item(db, order.id)
             qty = billed[order.id].get(it.id, 0.0)
-            g["qty"] += qty
-            g["cost"] += money(qty * (it.unit_rate or 0))
+            cost = money(qty * (it.unit_rate or 0))
         else:
-            g["qty"] += it.quantity or 0
-            g["cost"] += it.total_amount or 0
-        g["items"].append(it.id)
-        if order.wo_number not in g["orders"]:
-            g["orders"].append(order.wo_number)
+            qty, cost = it.quantity or 0, it.total_amount or 0
+        # An ordinary line is all of one BOQ line; a line for a whole heading is shared out among the lines it adds up.
+        parts = boq_parts_of(it)
+        if parts:
+            whole = sum(float(p.get("qty") or 0) for p in parts) or 1.0
+            shares = [(p["key"], float(p.get("qty") or 0) / whole) for p in parts]
+        else:
+            shares = [(it.boq_key, 1.0)]
+        for key, share in shares:
+            if keys is not None and key not in keys:
+                continue
+            g = out.setdefault(key, {"qty": 0.0, "cost": 0.0, "items": [], "orders": [], "share": {}})
+            g["qty"] += qty * share
+            g["cost"] += cost * share
+            g["items"].append(it.id)
+            g["share"][it.id] = share
+            if order.wo_number not in g["orders"]:
+                g["orders"].append(order.wo_number)
     return out
 
 
@@ -467,10 +493,10 @@ def boq_tracker_data(db, client, boq):
             continue
         if l.kind not in BOQ_PRICED:
             continue
-        g = given.get(l.key, {"qty": 0.0, "cost": 0.0, "items": [], "orders": []})
+        g = given.get(l.key, {"qty": 0.0, "cost": 0.0, "items": [], "orders": [], "share": {}})
         contractor_rate = unit_rate(g["cost"] / g["qty"]) if g["qty"] else 0.0
-        executed = money(sum(done.get(i, 0.0) for i in g["items"]))
-        contractor_billed = money(sum(billed.get(i, 0.0) for i in g["items"]))
+        executed = money(sum(done.get(i, 0.0) * g["share"].get(i, 1.0) for i in g["items"]))
+        contractor_billed = money(sum(billed.get(i, 0.0) * g["share"].get(i, 1.0) for i in g["items"]))
         code = (l.item_code or "").upper()
         c_done, c_billed = money(client_done.get(code, 0.0)), money(client_billed.get(code, 0.0))
         row_flags = []

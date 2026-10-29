@@ -77,7 +77,7 @@ from app.schemas.subcontract_orders import (
     WorkTypeIn,
 )
 from app.services.approvals import owner_label, raised_by_owner
-from app.services.boq import boq_given_to_contractors, boq_lines_of_job, boq_over_allotments, boq_tie_subcontract_lines
+from app.services.boq import boq_given_to_contractors, boq_lines_of_job, boq_over_allotments, boq_parts_of, boq_tie_subcontract_lines
 from app.services.crm import norm_name
 from app.services.subcontract_orders import (
     _vendor_or_404,
@@ -993,6 +993,7 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
     db.query(models.DBSubcontractItem).filter(
         models.DBSubcontractItem.order_id == order.id).delete()
     kept = 0
+    project_boq = {l.key: l for l in boq_lines_of_job(db, client.id, order.job_id)}
     for index, line in enumerate(body.lines):
         description = (line.item_description or "").strip()
         if not description:
@@ -1006,6 +1007,7 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
                                      % (index + 1))
         tolerance = 0.0 if header else wo_percent(line.tolerance_percent,
                                                   "tolerance on line %d" % (index + 1))
+        parts = [] if header else wo_checked_parts(line.boq_parts, qty, project_boq, index + 1)
         db.add(models.DBSubcontractItem(
             order_id=order.id, activity_no=(line.activity_no or "").strip(),
             item_code=(line.item_code or "").strip(), item_description=description,
@@ -1014,7 +1016,8 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
             total_amount=money(qty * rate), is_header=header, tolerance_percent=tolerance,
             budget_id=None if header else wo_valid_budget_id(db, client.id, order, line.budget_id),
             cost_centre=(line.cost_centre or "").strip(), display_order=index,
-            boq_key=(line.boq_key or "").strip()[:40] if not header else ""))
+            boq_key=(line.boq_key or "").strip()[:40] if not header and not parts else "",
+            boq_parts=json.dumps(parts) if parts else ""))
         kept += 1
 
     db.flush()
@@ -1024,7 +1027,7 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
     recost_order(db, order)
     db.commit()
     db.refresh(order)
-    over = boq_over_allotments(db, client.id, [l.boq_key or "" for l in saved])
+    over = boq_over_allotments(db, client.id, [l.boq_key or "" for l in saved] + [p["key"] for l in saved for p in boq_parts_of(l)])
     if loose:
         over = over + ["%d line%s not on the project BOQ (first: %s) - pick %s from the BOQ, or add %s to the BOQ first" % (
             len(loose), "" if len(loose) == 1 else "s", loose[0].item_description[:40],
@@ -1731,6 +1734,26 @@ def wo_charge_budget(order_id: int, body: ChargeBudgetIn, request: Request,
             "message": "%d line%s charged." % (n, "" if n == 1 else "s")}
 
 
+def wo_checked_parts(raw, quantity, project_boq, number):
+    """The BOQ lines a heading-total line adds up, kept to lines of this project's BOQ and scaled to the quantity on the
+    line, so editing the total in the schedule shares the change out instead of leaving the parts out of step."""
+    parts = []
+    for p in raw or []:
+        key = str((p or {}).get("key") or "")
+        qty = money((p or {}).get("qty") or 0)
+        if not key:
+            continue
+        if key not in project_boq or project_boq[key].kind not in BOQ_PRICED:
+            raise HTTPException(400, "Line %d: one of the BOQ lines it adds up is not on this project's BOQ" % number)
+        if qty > 0:
+            parts.append({"key": key, "qty": qty})
+    total = sum(p["qty"] for p in parts)
+    if parts and total > 0 and abs(total - quantity) > 0.0001:
+        scale = quantity / total
+        parts = [{"key": p["key"], "qty": money(p["qty"] * scale)} for p in parts]
+    return parts
+
+
 @router.post("/api/wo/orders/{order_id}/boq-lines")
 def wo_add_boq_lines(order_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
     """Lines of the project BOQ, ready to go into a contractor order's schedule: pick them by key, give the quantity and the
@@ -1738,10 +1761,32 @@ def wo_add_boq_lines(order_id: int, body: dict, request: Request, db: Session = 
     client, _, _ = wo_actor(request, db)
     order = wo_or_404(db, client.id, order_id)
     wanted = body.get("lines") or []
-    keys = [str(w.get("key") or "") for w in wanted]
+    groups = body.get("groups") or []
+    keys = [str(w.get("key") or "") for w in wanted] + [str(p.get("key") or "") for g in groups for p in (g.get("parts") or [])]
     found = {l.key: l for l in boq_lines_of_job(db, client.id, order.job_id) if l.key in set(keys)}
     given = boq_given_to_contractors(db, client.id, set(keys))
     out, warn = [], []
+    # A heading taken as one line: the quantities of the lines under it added up, at one contractor rate. Lines of
+    # different units are never added together, so a heading in two units comes back as two lines.
+    for g in groups:
+        by_unit = {}
+        for p in g.get("parts") or []:
+            l = found.get(str(p.get("key") or ""))
+            qty = money(p.get("quantity") or 0)
+            if l and l.kind in BOQ_PRICED and qty > 0:
+                by_unit.setdefault((l.uom or "").strip(), []).append((l, qty))
+        rate = unit_rate(g.get("rate") or 0)
+        for uom, members in by_unit.items():
+            qty = money(sum(q for _, q in members))
+            out.append({"boq_key": "", "boq_parts": [{"key": l.key, "qty": q} for l, q in members],
+                        "activity_no": str(g.get("group_code") or ""), "item_code": "",
+                        "item_description": str(g.get("description") or members[0][0].description)
+                        + ((" (%s)" % uom) if len(by_unit) > 1 and uom else ""),
+                        "technical_spec": "", "uom": uom, "quantity": qty, "unit_rate": rate})
+            for l, q in members:
+                total = (given.get(l.key) or {"qty": 0.0})["qty"] + q
+                if total > (l.quantity or 0) + 0.0001:
+                    warn.append("%s: %s would be given in all against %s in the BOQ" % (l.description[:30], money(total), money(l.quantity)))
     for w in wanted:
         l = found.get(str(w.get("key") or ""))
         if not l or l.kind not in BOQ_PRICED:
