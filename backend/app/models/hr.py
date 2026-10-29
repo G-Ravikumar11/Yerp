@@ -193,6 +193,25 @@ class DBPayslipLine(Base):
     sort_order = Column(Integer, default=0)
 
 
+class DBSalaryRevision(Base):
+    """One salary increment: what the monthly salary was, what it became and from which day. Kept so a payslip for an
+    earlier period is made from the salary of the time."""
+    __tablename__ = "salary_revisions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    old_salary = Column(Float, default=0.0)
+    new_salary = Column(Float, default=0.0)
+    mode = Column(String, default="percent")             # how it was given: percent | amount
+    percent = Column(Float, default=0.0)
+    effective_date = Column(String, nullable=False)
+    valid_until = Column(String, default="")             # the day the next review falls due; a year on unless HR says otherwise
+    reason = Column(String, default="")
+    changed_by = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
 class DBOnboardingItem(Base):
     __tablename__ = "onboarding_items"
 

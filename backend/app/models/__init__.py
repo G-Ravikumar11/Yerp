@@ -84,6 +84,7 @@ from app.models.hr import (
     DBPayslip,
     DBPayComponent,
     DBPayslipLine,
+    DBSalaryRevision,
     DBOnboardingItem,
     DBOnboardingTemplate,
     DBAttendance,

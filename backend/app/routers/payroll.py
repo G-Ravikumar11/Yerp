@@ -21,6 +21,7 @@ from app.core.serials import next_sequence_number
 from app.documents import payslip as payslip_sheet
 from app.documents.letterhead import letterhead
 from app.services.hr import ytd_totals
+from app.services.salary_revisions import employee_on, salary_on
 from app.schemas.invoicing import SendInvoiceEmail
 from app.schemas.payroll import PayrollRunRequest, PayslipCreate
 from app.services.email import TRACKING_PIXEL
@@ -80,6 +81,7 @@ def create_payslip(request: Request, body: PayslipCreate, allow_overlap: bool = 
             )
 
     ps_number = next_sequence_number(db, models.DBPayslip, client.id, "PS-")
+    emp = employee_on(db, emp, body.period_end)         # the salary of the period, if an increment came after it
     lines = structure_lines(db, client.id, emp) if body.use_structure is not False else None
     figures = compute_payslip_figures(emp, body.model_dump(), lines)
 
@@ -358,7 +360,7 @@ def payslip_payload(db, client, ps, light=False, row=None):
             - (ps.retirement or 0) - (ps.other_deductions or 0)),
         "net_pay": ps.net_pay, "status": ps.status, "sent": ps.sent, "notes": ps.notes,
         # The pay as the company's salary structure made it, line by line; empty for a payslip made without one.
-        "monthly_salary": (emp.salary or 0) if emp else 0,
+        "monthly_salary": (emp.salary or 0) if (not emp or light) else (salary_on(db, emp, ps.period_end) or 0),
         "lines": [{"id": l.id, "name": l.name, "kind": l.kind, "basis": l.basis, "percent": l.percent,
                    "counts_as": l.counts_as, "amount": l.amount} for l in ps.lines],
         "company": {
@@ -395,7 +397,7 @@ def update_payslip(ps_id: int, request: Request, body: dict = None, db: Session 
             setattr(ps, key, body[key])
 
     if body.get("reapply_structure"):
-        fresh = structure_lines(db, client.id, emp)
+        fresh = structure_lines(db, client.id, employee_on(db, emp, ps.period_end))
         if fresh is None:
             raise HTTPException(status_code=400, detail="The salary structure does not apply to this employee: it needs a monthly salary.")
         attach_lines(ps, emp, fresh)

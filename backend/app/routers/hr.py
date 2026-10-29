@@ -37,6 +37,7 @@ from app.core.security import validate_password_strength
 from app.schemas.hr import DepartmentCreate, DepartmentMembersIn, DocumentRequirementIn, EmployeeCreate, RequirementTemplateIn
 from app.services.store_staff import release_on_leaving
 from app.services.employee_portal import leave_balance_for
+from app.services.salary_revisions import give_increment, revision_payload, revisions
 from app.services.salary_structure import structure_lines
 from app.services.hr import (
     automatic_reports_to,
@@ -1820,6 +1821,31 @@ def get_goals_for_employee(emp_id: int, request: Request, db: Session = Depends(
     client = require_items_access(request, db, "people.manage")
     goals = db.query(models.DBEmployeeGoal).filter(models.DBEmployeeGoal.employee_id == emp_id, models.DBEmployeeGoal.client_id == client.id).order_by(models.DBEmployeeGoal.created_at.desc()).all()
     return [{"id": g.id, "title": g.title, "description": g.description, "target_value": g.target_value, "current_value": g.current_value, "unit": g.unit, "category": g.category, "priority": g.priority, "start_date": g.start_date, "due_date": g.due_date, "status": g.status, "created_by": g.created_by, "department_id": g.department_id} for g in goals]
+
+
+@router.get("/api/employees/{emp_id}/salary-history")
+def salary_history(emp_id: int, request: Request, db: Session = Depends(get_read_db)):
+    client = require_hr_or_master(request, db, "people.manage")
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    return {"salary": emp.salary or 0, "revisions": [revision_payload(r) for r in reversed(revisions(db, client.id, emp.id))]}
+
+
+@router.post("/api/employees/{emp_id}/increment")
+def give_salary_increment(emp_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    client = require_hr_or_master(request, db, "people.manage")
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    _guard_the_master(request, emp=emp)
+    body = body or {}
+    rev = give_increment(db, client.id, emp, body.get("mode"), body.get("value"), body.get("effective_date"), body.get("reason"),
+                         "Master" if is_master_session(request) else "HR", body.get("valid_until"))
+    log_audit(db, client.id, "salary_increment", "employee", emp.id, f"{emp.first_name} {emp.last_name}",
+              f"{rev.old_salary:.2f} to {rev.new_salary:.2f} from {rev.effective_date}", request)
+    db.commit()
+    return {"message": "Salary raised to %.2f" % rev.new_salary, "salary": emp.salary, "revision": revision_payload(rev)}
 
 
 @router.get("/api/employees/{emp_id}/documents")

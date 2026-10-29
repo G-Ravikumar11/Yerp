@@ -304,3 +304,8 @@ export function showDepartmentChange(qc: QueryClient, change: { saved?: Departme
 /** Puts these people in the department, moving any already in another one. The Master only. */
 export const addToDepartment = (id: number, employee_ids: number[]) => post<Department>(`/api/departments/${id}/employees`, { employee_ids })
 export const removeFromDepartment = (id: number, employeeId: number) => del<Department>(`/api/departments/${id}/employees/${employeeId}`)
+
+export interface SalaryRevision { id: number; old_salary: number; new_salary: number; percent: number; effective_date: string; valid_until: string; reason: string; changed_by: string; created_at: string }
+export const useSalaryHistory = (id: number, enabled = true) => useQuery({ queryKey: [...peopleKeys.all, 'salary-history', id], queryFn: () => get<{ salary: number; revisions: SalaryRevision[] }>(`/api/employees/${id}/salary-history`), enabled })
+export const giveIncrement = (id: number, body: { mode: 'percent' | 'amount'; value: number; effective_date: string; valid_until: string; reason: string }) =>
+  post<{ message: string; salary: number; revision: SalaryRevision }>(`/api/employees/${id}/increment`, body)

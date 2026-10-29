@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { Download, Trash2, Upload, X } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Button, ConfirmDialog, Field, Input, Select } from '@/components/ui'
+import { Button, ConfirmDialog, Field, Select } from '@/components/ui'
 import { DOCUMENT_ACCEPT, ID_DOCUMENTS, deleteEmployeeDocument, downloadEmployeeDocument, peopleKeys, uploadEmployeeDocument, useEmployeeDocuments, type EmployeeDoc } from '@/api/people'
 import { useAction } from '@/lib/mutate'
 import { formatDate } from '@/lib/format'
@@ -61,7 +61,13 @@ export function EmployeeDocuments({ id, canManage }: { id: number; canManage: bo
       {canManage && (
         <div className="mt-4 grid items-end gap-3 sm:grid-cols-[12rem_1fr_auto]">
           <Field label="Document" htmlFor="doc-kind"><Select id="doc-kind" value={which} onChange={(e) => setWhich(e.target.value)} options={ID_DOCUMENTS.map((d) => ({ value: d.key, label: d.title }))} /></Field>
-          <Field label="File" htmlFor="doc-file"><Input id="doc-file" ref={input} type="file" accept={DOCUMENT_ACCEPT} onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
+          <Field label="Document file" htmlFor="doc-file">
+            <input id="doc-file" ref={input} type="file" hidden accept={DOCUMENT_ACCEPT} onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            <div className="flex h-10 items-center gap-2">
+              <Button type="button" variant="outline" onClick={() => input.current?.click()}>Choose document</Button>
+              <span className="min-w-0 truncate text-[13px] text-muted-foreground">{file ? file.name : 'No document chosen'}</span>
+            </div>
+          </Field>
           <Button loading={add.isPending} disabled={!file} onClick={() => add.mutate()}><Upload /> Upload</Button>
         </div>
       )}

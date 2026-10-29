@@ -10,31 +10,34 @@ import { useSession } from '@/lib/session'
 import { EmployeeAccess } from './EmployeeAccess'
 import { EmployeeDocuments } from './EmployeeDocuments'
 import { GENDERS } from './EmployeeFormModal'
+import { SalaryIncrement } from './SalaryIncrement'
 import { SetPasswordModal } from './SetPasswordModal'
 import { EMPLOYEE_TONE } from './EmployeesPage'
 
 type Tab = 'profile' | 'access'
 
-function Profile({ e, ready }: { e: EmployeeDetail; ready: boolean }) {
+function Profile({ e, ready, onPassword }: { e: EmployeeDetail; ready: boolean; onPassword: () => void }) {
   const { can, isHrOrMaster: hrOnly } = useSession()
   const canManage = can('people.manage')
   const [editing, setEditing] = useState(false)
   const cat = useHrCatalogue()
-  const rows: [string, string | number | null | undefined][] = [
-    ['First name', e.first_name], ['Last name', e.last_name], ['Email (their login)', e.email], ['Phone', e.phone], ['Address', e.address],
+  type Row = [string, string | number | null | undefined]
+  const personal: Row[] = [
+    ['First name', e.first_name], ['Last name', e.last_name], ['Gender', e.gender], ['Email (their login)', e.email], ['Phone', e.phone], ['Address', e.address],
+    ['Emergency contact', e.emergency_contact], ['Emergency phone', e.emergency_phone],
+    // The ID numbers are HR's and the Master's.
+    ...(hrOnly ? ([['Aadhaar (given by the employee)', e.aadhaar_masked], ['PAN (given by the employee)', e.pan_no], ['UAN (given by the employee)', e.uan_no], ['ESI number', e.esi_no]] as Row[]) : []),
+  ]
+  const company: Row[] = [
     ['Job title', e.job_title], ['Department', e.department_name], ['Reports to', e.manager_name],
     ['Level', cat.data?.levels.find((l) => l.code === e.level)?.label ?? e.level],
     ['Reporting role', cat.data?.roles.find((r) => r.code === e.role)?.label ?? e.role],
     ['Start date', e.start_date], ['Salary', e.salary], ['Tax rate %', e.tax_rate],
-    ['Emergency contact', e.emergency_contact], ['Emergency phone', e.emergency_phone],
-    ['Gender', e.gender],
-    // The ID numbers are HR's and the Master's.
-    ...(hrOnly ? ([['Aadhaar (given by the employee)', e.aadhaar_masked], ['PAN (given by the employee)', e.pan_no], ['UAN (given by the employee)', e.uan_no], ['ESI number', e.esi_no]] as [string, string | undefined][]) : []),
   ]
-  if (editing) return <ProfileForm e={e} onDone={() => setEditing(false)} />
-  return (
-    <div>
-      {canManage && <div className="mb-4 flex justify-end"><Button variant="outline" disabled={!ready} onClick={() => setEditing(true)}>Edit</Button></div>}
+  if (editing) return <ProfileForm e={e} onDone={() => setEditing(false)} onPassword={onPassword} />
+  const group = (title: string, rows: Row[], first = false) => (
+    <section aria-label={title} className={first ? '' : 'mt-6 border-t border-border pt-5'}>
+      <h4 className="mb-3 text-sm font-semibold">{title}</h4>
       <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
         {rows.map(([label, value]) => (
           <div key={label}>
@@ -43,12 +46,20 @@ function Profile({ e, ready }: { e: EmployeeDetail; ready: boolean }) {
           </div>
         ))}
       </dl>
+    </section>
+  )
+  return (
+    <div>
+      {canManage && <div className="mb-4 flex justify-end"><Button variant="outline" disabled={!ready} onClick={() => setEditing(true)}>Edit</Button></div>}
+      {group('Personal details', personal, true)}
+      {group('Company details', company)}
+      {hrOnly && canManage && <SalaryIncrement e={e} />}
       {hrOnly && <EmployeeDocuments id={e.id} canManage={canManage} />}
     </div>
   )
 }
 
-function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
+function ProfileForm({ e, onDone, onPassword }: { e: EmployeeDetail; onDone: () => void; onPassword: () => void }) {
   const depts = useDepartments()
   const people = useEmployees('')
   const cat = useHrCatalogue()
@@ -68,11 +79,21 @@ function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
   return (
     <div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <h4 className="col-span-full text-sm font-semibold">Personal details</h4>
         <Field label="First name" htmlFor="ep-first"><Input id="ep-first" value={f.first_name} onChange={set('first_name')} /></Field>
         <Field label="Last name" htmlFor="ep-last"><Input id="ep-last" value={f.last_name} onChange={set('last_name')} /></Field>
+        <Field label="Gender" htmlFor="ep-gender"><Select id="ep-gender" value={f.gender} placeholder="Not given" onChange={set('gender')} options={GENDERS.map((g) => ({ value: g, label: g }))} /></Field>
         <Field label="Personal email" htmlFor="ep-email"><Input id="ep-email" type="email" value={f.email} onChange={set('email')} /></Field>
-        <Field label="Organization email (Yahoo sign-in)" htmlFor="ep-org-email"><Input id="ep-org-email" type="email" value={f.org_email} onChange={set('org_email')} /></Field>
         <Field label="Phone" htmlFor="ep-phone"><Input id="ep-phone" value={f.phone} onChange={set('phone')} /></Field>
+        <Field label="Address" htmlFor="ep-address" className="sm:col-span-2 lg:col-span-3"><Textarea id="ep-address" rows={2} value={f.address} onChange={(ev) => setF((s) => ({ ...s, address: ev.target.value }))} /></Field>
+        {hrOnly && <Field label="UAN" htmlFor="ep-uan" hint="12 digits."><Input id="ep-uan" inputMode="numeric" value={f.uan_no} onChange={set('uan_no')} autoComplete="off" /></Field>}
+        {hrOnly && <Field label="Aadhaar number" htmlFor="ep-aadhaar" hint={e.aadhaar_masked ? `On file: ${e.aadhaar_masked}. Leave blank to keep it.` : '12 digits.'}><Input id="ep-aadhaar" inputMode="numeric" value={f.aadhaar_no} onChange={set('aadhaar_no')} autoComplete="off" /></Field>}
+        {hrOnly && <Field label="PAN number" htmlFor="ep-pan" hint="Like ABCDE1234F."><Input id="ep-pan" value={f.pan_no} onChange={(ev) => setF((s) => ({ ...s, pan_no: ev.target.value.toUpperCase() }))} autoComplete="off" /></Field>}
+        {hrOnly && <Field label="ESI number" htmlFor="ep-esi" hint="10 digits."><Input id="ep-esi" inputMode="numeric" value={f.esi_no} onChange={set('esi_no')} autoComplete="off" /></Field>}
+        <Field label="Emergency contact" htmlFor="ep-em"><Input id="ep-em" value={f.emergency_contact} onChange={set('emergency_contact')} /></Field>
+        <Field label="Emergency phone" htmlFor="ep-emp"><Input id="ep-emp" value={f.emergency_phone} onChange={set('emergency_phone')} /></Field>
+        <div className="col-span-full mt-1 border-t border-border pt-4"><h4 className="text-sm font-semibold">Company details</h4></div>
+        <Field label="Organization email (Yahoo sign-in)" htmlFor="ep-org-email"><Input id="ep-org-email" type="email" value={f.org_email} onChange={set('org_email')} /></Field>
         <Field label="Job title" htmlFor="ep-title"><Input id="ep-title" value={f.job_title} onChange={set('job_title')} /></Field>
         <Field label="Department" htmlFor="ep-dept" hint={canManage ? undefined : 'Only the Master or HR moves people between departments.'}><Select id="ep-dept" disabled={!canManage} value={f.department_id ?? ''} onChange={(ev) => setF((s) => ({ ...s, department_id: ev.target.value ? Number(ev.target.value) : null }))} placeholder="None" options={(depts.data ?? []).filter((d) => d.site_ids.length > 0 || d.id === f.department_id).map((d) => ({ value: d.id, label: d.name }))} /></Field>
         <Field label="Reports to" htmlFor="ep-mgr" hint={canManage ? 'Follows the role; change it if needed.' : 'Set automatically from the role. Only the Master or HR can change it.'}><Select id="ep-mgr" disabled={!canManage} value={f.reports_to ?? ''} onChange={(ev) => setF((s) => ({ ...s, reports_to: ev.target.value ? Number(ev.target.value) : null }))} placeholder="None" options={managers.map((p) => ({ value: p.id, label: p.level ? `${p.full_name} (${p.level})` : p.full_name }))} /></Field>
@@ -81,17 +102,10 @@ function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
         <Field label="Start date" htmlFor="ep-start"><Input id="ep-start" type="date" value={f.start_date} onChange={set('start_date')} /></Field>
         <Field label="Salary" htmlFor="ep-salary"><NumField id="ep-salary" value={f.salary} onValue={(n) => setF((s) => ({ ...s, salary: n }))} /></Field>
         <Field label="Tax rate %" htmlFor="ep-tax"><NumField id="ep-tax" value={f.tax_rate} onValue={(n) => setF((s) => ({ ...s, tax_rate: n }))} /></Field>
-        <Field label="Gender" htmlFor="ep-gender"><Select id="ep-gender" value={f.gender} placeholder="Not given" onChange={set('gender')} options={GENDERS.map((g) => ({ value: g, label: g }))} /></Field>
-        <Field label="Address" htmlFor="ep-address" className="sm:col-span-2 lg:col-span-3"><Textarea id="ep-address" rows={2} value={f.address} onChange={(ev) => setF((s) => ({ ...s, address: ev.target.value }))} /></Field>
-        {hrOnly && <Field label="UAN" htmlFor="ep-uan" hint="12 digits."><Input id="ep-uan" inputMode="numeric" value={f.uan_no} onChange={set('uan_no')} autoComplete="off" /></Field>}
-        {hrOnly && <Field label="Aadhaar number" htmlFor="ep-aadhaar" hint={e.aadhaar_masked ? `On file: ${e.aadhaar_masked}. Leave blank to keep it.` : '12 digits.'}><Input id="ep-aadhaar" inputMode="numeric" value={f.aadhaar_no} onChange={set('aadhaar_no')} autoComplete="off" /></Field>}
-        {hrOnly && <Field label="PAN number" htmlFor="ep-pan" hint="Like ABCDE1234F."><Input id="ep-pan" value={f.pan_no} onChange={(ev) => setF((s) => ({ ...s, pan_no: ev.target.value.toUpperCase() }))} autoComplete="off" /></Field>}
-        {hrOnly && <Field label="ESI number" htmlFor="ep-esi" hint="10 digits."><Input id="ep-esi" inputMode="numeric" value={f.esi_no} onChange={set('esi_no')} autoComplete="off" /></Field>}
-        <Field label="Emergency contact" htmlFor="ep-em"><Input id="ep-em" value={f.emergency_contact} onChange={set('emergency_contact')} /></Field>
-        <Field label="Emergency phone" htmlFor="ep-emp"><Input id="ep-emp" value={f.emergency_phone} onChange={set('emergency_phone')} /></Field>
       </div>
       <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
         {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
+        {canManage && <Button variant="outline" onClick={onPassword} disabled={!e.email} title={e.email ? undefined : 'Give them an email address first - they sign in with it'}>{e.has_password ? 'Change password' : 'Set password'}</Button>}
         <Button variant="outline" onClick={onDone}>Cancel</Button>
         <Button loading={save.isPending} onClick={() => save.mutate()}>Save changes</Button>
       </div>
@@ -169,9 +183,9 @@ export default function EmployeePage() {
       <PageHeader eyebrow={e.employee_id} title={e.full_name} description={[e.job_title, e.department_name, e.manager_name && `reports to ${e.manager_name}`].filter(Boolean).join(' · ') || undefined} actions={<Badge tone={EMPLOYEE_TONE[e.status] ?? 'neutral'}>{e.status}</Badge>} />
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <Tabs label="Section" value={shown} onChange={setTab} items={canManage && ready ? [{ value: 'profile', label: 'Profile' }, { value: 'access', label: 'Access' }] : [{ value: 'profile', label: 'Profile' }]} />
-        {canManage && ready && <div className="flex items-center gap-2"><Button variant="outline" onClick={() => setGivingPassword(true)} disabled={!e.email} title={e.email ? undefined : 'Give them an email address first - they sign in with it'}>{e.has_password ? 'Change password' : 'Set password'}</Button><StatusMenu e={e} /></div>}
+        {canManage && ready && <StatusMenu e={e} />}
       </div>
-      {shown === 'profile' && <Profile key={e.id} e={e} ready={ready} />}
+      {shown === 'profile' && <Profile key={e.id} e={e} ready={ready} onPassword={() => setGivingPassword(true)} />}
       {shown === 'access' && <EmployeeAccess key={e.id} e={e} />}
       {givingPassword && <SetPasswordModal who={e.full_name} email={e.email} hasPassword={e.has_password} save={async (password) => { const r = await setEmployeePassword(e.id, password); showEmployeeChange(qc, { patch: { id: e.id, has_password: true } }); return r }} invalidate={[]} onClose={() => setGivingPassword(false)} />}
     </>
