@@ -686,6 +686,8 @@ def wo_take_head(db, client, order, body, creating):
     order.ld_cap_percent = wo_percent(body.ld_cap_percent, "liquidated damages cap")
     order.billing_cycle = wo_billing_cycle(body.billing_cycle)
     order.payment_days = max(0, int(body.payment_days or 0))
+    if creating and not order.contractor_id:
+        raise HTTPException(400, "Choose the sub contractor this work order is for before opening it.")
 
 
 @router.post("/api/wo/orders")
