@@ -11,6 +11,7 @@ from app.db import get_db, get_read_db
 from app.constants.common import PORTAL_INVOICE_TYPES
 from app.core import login_guard
 from app.core.audit import log_audit, log_login
+from app.core.config import LOGIN_PER_MINUTE
 from app.core.auth import end_every_session
 from app.core.currency import inr, money
 from app.core.dates import _parse_date, days_after
@@ -81,7 +82,7 @@ def portal_accept_invite(body: PortalPasswordIn, request: Request, db: Session =
 @router.post("/api/portal/login")
 def portal_login(body: PortalLoginIn, request: Request, db: Session = Depends(get_db)):
     ip = request.client.host if request.client else "unknown"
-    if rate_limiter.is_rate_limited(f"portal_login:{ip}", max_requests=10, window=60):
+    if rate_limiter.is_rate_limited(f"portal_login:{ip}", max_requests=LOGIN_PER_MINUTE, window=60):
         raise HTTPException(429, "Too many attempts. Try again in a minute.")
     email = (body.email or "").strip().lower()
     login_guard.guard(request, email, login_guard.body_of(body))

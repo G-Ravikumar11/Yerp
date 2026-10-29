@@ -2,6 +2,7 @@
 import asyncio
 import secrets
 import contextvars
+import hashlib
 import json
 import os
 import re
@@ -314,6 +315,8 @@ async def security_middleware(request: Request, call_next):
 # One address asking the API more than API_FLOOD_PER_MINUTE times a minute is not a person: the rest of that minute it
 # is told to wait (429). Generous - a whole site office behind one connection, every screen open, does not come near
 # it - so it only stops a script. 0 turns it off. Counted per real address (ClientAddressMiddleware runs first).
+# Several hundred people work from a few offices and sites, each behind one public address, and a screen opens five to ten
+# calls: 1,200 a minute stopped a site office of forty people, so the default is 6,000 (100 a second from one address).
 class FloodMiddleware:
     def __init__(self, app):
         self.app = app
@@ -322,9 +325,9 @@ class FloodMiddleware:
     @staticmethod
     def limit():
         try:
-            return int(os.getenv("API_FLOOD_PER_MINUTE", "1200"))
+            return int(os.getenv("API_FLOOD_PER_MINUTE", "6000"))
         except ValueError:
-            return 1200
+            return 6000
 
     async def __call__(self, scope, receive, send):
         limit = self.limit()
@@ -347,8 +350,69 @@ class FloodMiddleware:
         await self.app(scope, receive, send)
 
 
+# HEAVY REQUESTS
+#
+# A PDF, an Excel export, a big report or an AI question takes seconds of the server, where an ordinary screen takes
+# milliseconds. A few people pressing them again and again could slow everyone, and the per-address limit above is far
+# too generous to notice (and counts a whole office together). These are counted for each signed-in person instead, by the
+# who-is-signed-in part of their session cookie (the rest of it is only a renewed timestamp and signature), or by address when
+# there is none: HEAVY_PER_MINUTE exports and documents, AI_PER_MINUTE AI requests.
+# 0 turns a limit off. Kept in memory, so with several server processes each has its own count.
+_FILE_ROUTE = re.compile(r"(\.pdf|\.xlsx|\.csv|/export|/print|/download)$|/(export|print)/")
+
+
+def heavy_kind(path):
+    """'ai', 'file' or '' for a path that is neither."""
+    if path.startswith("/api/ai/"):
+        return "" if path == "/api/ai/status" else "ai"
+    if path.startswith("/api/") and _FILE_ROUTE.search(path):
+        return "file"
+    return ""
+
+
+class HeavyMiddleware:
+    LIMITS = {"file": ("HEAVY_PER_MINUTE", 30, "exports and documents"), "ai": ("AI_PER_MINUTE", 20, "AI requests")}
+
+    def __init__(self, app):
+        self.app = app
+        self.windows = {}
+
+    async def __call__(self, scope, receive, send):
+        kind = heavy_kind(scope.get("path", "")) if scope["type"] == "http" and scope.get("method") in ("GET", "POST") else ""
+        if kind:
+            name, default, what = self.LIMITS[kind]
+            try:
+                limit = int(os.getenv(name, str(default)))
+            except ValueError:
+                limit = default
+            if limit > 0:
+                who = ""
+                for k, v in scope.get("headers") or []:
+                    if k == b"cookie":
+                        m = re.search(rb"(?:^|;\s*)session=([^;.]+)", v)
+                        who = hashlib.sha1(m.group(1)).hexdigest()[:16] if m else ""
+                        break
+                who = who or "ip:" + str((scope.get("client") or ("unknown",))[0])
+                minute = int(time.time() // 60)
+                key = (kind, who)
+                seen = self.windows.get(key)
+                if not seen or seen[0] != minute:
+                    if len(self.windows) > 50000:
+                        self.windows = {k: v for k, v in self.windows.items() if v[0] == minute}
+                    seen = [minute, 0]
+                    self.windows[key] = seen
+                seen[1] += 1
+                if seen[1] > limit:
+                    response = JSONResponse({"detail": "Too many %s in a minute (the limit is %d). Wait a moment and try again." % (what, limit),
+                                             "code": "YE-BUSY-01"}, status_code=429, headers={"Retry-After": "30"})
+                    await response(scope, receive, send)
+                    return
+        await self.app(scope, receive, send)
+
+
 from app.core.login_guard import ClientAddressMiddleware  # noqa: E402
 
 # Added last, so they run first: the real address is put in place, then the flood is counted against it.
+app.add_middleware(HeavyMiddleware)
 app.add_middleware(FloodMiddleware)
 app.add_middleware(ClientAddressMiddleware)

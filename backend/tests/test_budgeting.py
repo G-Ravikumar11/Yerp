@@ -179,3 +179,26 @@ def test_the_budget_exports_to_a_workbook(tenant):
     cells = [str(c.value) for row in ws.iter_rows() for c in row if c.value is not None]
     assert "PROJECT BUDGET AGAINST BOQ" in cells and "Ready-mix M25" not in cells   # one row per BOQ line, not per item
     assert "M25 grade RCC in raft" in cells and "288000.0" in cells or "288000" in cells
+
+
+def test_the_boqs_section_headings_come_with_the_budget_above_their_lines(tenant):
+    """The budget table shows each section heading of the BOQ, in bold, above the lines of its section."""
+    jid, boq = make_boq(tenant)
+    lines = saved(tenant, boq)["lines"]
+    heads = [l for l in lines if l["kind"] == "section"]
+    assert heads, "the sample BOQ has section headings"
+    b = tenant.get("/api/jobs/%d/budget" % jid).json()
+    assert [h["description"] for h in b["headings"]] == [h["description"] for h in heads]
+    priced = [l["key"] for l in lines if l["kind"] in ("item", "sub")]
+    assert all(h["before"] in priced + [""] for h in b["headings"])
+    # A heading stands above the first priced line that follows it in the BOQ.
+    order = [l["key"] for l in lines]
+    for h in b["headings"]:
+        after = [k for k in order[order.index(h["key"]) + 1:] if k in priced]
+        assert h["before"] == (after[0] if after else "")
+    assert b["total"]["lines"] == len(priced)                       # headings are not priced lines
+    # Every line says which heading it is under (the nearest above it), so a section can be folded away.
+    heading_keys = {h["key"] for h in b["headings"]}
+    for r in b["rows"]:
+        above = [k for k in order[:order.index(r["key"])] if k in heading_keys]
+        assert r["under"] == (above[-1] if above else "")
