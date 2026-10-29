@@ -45,7 +45,13 @@ async function loadSession(): Promise<SessionUser | null> {
   return next
 }
 
-async function resolveSession(): Promise<SessionUser | null> {
+// Staff are most of the people who sign in, and the owner's door answers them with a refusal first - a whole request
+// before the app even starts. The door that worked last time is tried first; the other is still tried if it fails.
+const DOOR_KEY = 'yerp-door'
+const lastDoor = (): string => { try { return localStorage.getItem(DOOR_KEY) ?? '' } catch { return '' } }
+const rememberDoor = (type: string) => { try { localStorage.setItem(DOOR_KEY, type) } catch { /* private window: nothing to remember */ } }
+
+const asOwner = async (): Promise<SessionUser | null> => {
   try {
     const owner = await api<OwnerMe>('/api/client/me', { quiet: true })
     if (owner?.email) {
@@ -66,6 +72,10 @@ async function resolveSession(): Promise<SessionUser | null> {
   } catch (e) {
     if (!(e instanceof ApiError) || e.status >= 500) throw e
   }
+  return null
+}
+
+const asStaff = async (): Promise<SessionUser | null> => {
   try {
     const staff = await api<StaffMe>('/api/employee/auth/me', { quiet: true })
     if (staff?.email) {
@@ -85,6 +95,15 @@ async function resolveSession(): Promise<SessionUser | null> {
     }
   } catch (e) {
     if (!(e instanceof ApiError) || e.status >= 500) throw e
+  }
+  return null
+}
+
+async function resolveSession(): Promise<SessionUser | null> {
+  const order = lastDoor() === 'employee' ? [asStaff, asOwner] : [asOwner, asStaff]
+  for (const door of order) {
+    const found = await door()
+    if (found) { rememberDoor(found.type); return found }
   }
   return null
 }
