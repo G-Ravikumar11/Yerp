@@ -149,3 +149,22 @@ def test_an_increment_runs_a_year_unless_told_otherwise_and_the_reminder_follows
     assert tenant.post(url, json={"mode": "percent", "value": 10, "effective_date": start, "valid_until": day(-1)}).status_code == 200   # six months, already over
     assert _run_reminders(monkeypatch)[0] == "1 reminder(s)"                                                                         # only b's is due
     assert len(_notes(hr)) == 1
+
+
+def test_a_salary_typed_in_the_edit_form_is_kept_in_the_history(tenant):
+    emp = make_employee(tenant, salary=40000.0, start_date="2020-01-01")
+    assert tenant.put("/api/employees/%d" % emp["id"], json={"salary": 44000}).status_code == 200
+    revs = tenant.get("/api/employees/%d/salary-history" % emp["id"]).json()["revisions"]
+    assert [(r["old_salary"], r["new_salary"], r["percent"], r["reason"]) for r in revs] == [(40000.0, 44000.0, 10.0, "Changed in the Edit form")]
+    # saving again without changing it adds nothing
+    assert tenant.put("/api/employees/%d" % emp["id"], json={"salary": 44000, "job_title": "Clerk"}).status_code == 200
+    assert len(tenant.get("/api/employees/%d/salary-history" % emp["id"]).json()["revisions"]) == 1
+
+
+def test_the_office_alert_names_the_person_but_not_the_pay(tenant, hr, monkeypatch):
+    emp = make_employee(tenant, first_name="Kiran", last_name="Rao", salary=50000.0, start_date="2020-01-01")
+    assert tenant.post("/api/employees/%d/increment" % emp["id"], json={"mode": "percent", "value": 10, "effective_date": day(-400)}).status_code == 200
+    _run_reminders(monkeypatch)
+    alert = [a for a in tenant.get("/api/alerts").json()["alerts"] if a["title"] == "Increment due: Kiran Rao"][0]
+    assert "Kiran Rao" in alert["body"] and "55000" not in alert["body"] and "50000" not in alert["body"]
+    assert "55000.00" in _notes(hr)[0]["message"]

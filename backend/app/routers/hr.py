@@ -37,7 +37,7 @@ from app.core.security import validate_password_strength
 from app.schemas.hr import DepartmentCreate, DepartmentMembersIn, DocumentRequirementIn, EmployeeCreate, RequirementTemplateIn
 from app.services.store_staff import release_on_leaving
 from app.services.employee_portal import leave_balance_for
-from app.services.salary_revisions import give_increment, revision_payload, revisions
+from app.services.salary_revisions import give_increment, record_salary_change, revision_payload, revisions
 from app.services.salary_structure import structure_lines
 from app.services.hr import (
     automatic_reports_to,
@@ -840,6 +840,8 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
             except HTTPException:
                 pass  # a loop or a lower level: keep the line as it was rather than refuse the save
     site_ids = body.pop("site_ids", None)
+    if body.get("salary") is not None:
+        record_salary_change(db, client.id, emp, float(body["salary"] or 0), "Master" if is_master_session(request) else "HR")
     for key, val in body.items():
         if hasattr(emp, key) and key not in ("id", "client_id", "created_at", "password_hash", "employee_id"):
             setattr(emp, key, val)

@@ -1,19 +1,36 @@
 import { useEffect, useRef, useState } from 'react'
 import { Bell } from 'lucide-react'
-import { readAllNotes, readNote, staffKeys, useNotes } from '@/api/staff'
+import { readAllNotes, readAllOfficeNotes, readNote, readOfficeNote, staffKeys, useNotes, useOfficeNotes } from '@/api/staff'
+import type { Note } from '@/api/staff'
 import { useAction } from '@/lib/mutate'
 import { cn } from '@/lib/utils'
 
 const dot: Record<string, string> = { info: 'bg-primary', success: 'bg-success', warning: 'bg-warning', error: 'bg-danger' }
 const when = (at: string) => (at ? at.slice(5, 16).replace('-', '/') : '')
 
-/** A member of staff's notifications: leave decided, a document asked for, something sent to them. */
-export function NotificationBell() {
+/** A member of staff's notifications (leave decided, a document asked for, an increment due), or, for the Master's
+ *  sign-in, the office's own notices. */
+export function NotificationBell({ office = false }: { office?: boolean }) {
+  return office ? <OfficeBell /> : <StaffBell />
+}
+
+function StaffBell() {
   const q = useNotes()
-  const [open, setOpen] = useState(false)
-  const box = useRef<HTMLDivElement>(null)
   const one = useAction((id: number) => readNote(id).then(() => ({})), { invalidate: [staffKeys.all], success: false })
   const all = useAction(() => readAllNotes(), { invalidate: [staffKeys.all], success: false })
+  return <Bell_ q={q} one={(id) => one.mutate(id)} all={() => all.mutate()} />
+}
+
+function OfficeBell() {
+  const q = useOfficeNotes()
+  const one = useAction((id: number) => readOfficeNote(id).then(() => ({})), { invalidate: [['alerts']], success: false })
+  const all = useAction(() => readAllOfficeNotes(), { invalidate: [['alerts']], success: false })
+  return <Bell_ q={q} one={(id) => one.mutate(id)} all={() => all.mutate()} />
+}
+
+function Bell_({ q, one, all }: { q: { data?: { unread_count: number; notifications: Note[] } }; one: (id: number) => void; all: () => void }) {
+  const [open, setOpen] = useState(false)
+  const box = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!open) return
     const away = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false) }
@@ -32,12 +49,12 @@ export function NotificationBell() {
       </button>
       {open && (
         <div role="dialog" aria-label="Notifications" className="absolute right-0 z-40 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-card shadow-md">
-          <div className="flex items-center justify-between border-b border-border px-4 py-3"><h2 className="text-sm font-semibold">Notifications</h2>{unread > 0 && <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => all.mutate()}>Mark all read</button>}</div>
+          <div className="flex items-center justify-between border-b border-border px-4 py-3"><h2 className="text-sm font-semibold">Notifications</h2>{unread > 0 && <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={all}>Mark all read</button>}</div>
           <ul className="max-h-80 overflow-y-auto">
             {notes.length === 0 && <li className="p-6 text-center text-sm text-muted-foreground">Nothing yet</li>}
             {notes.map((n) => (
               <li key={n.id}>
-                <button type="button" onClick={() => !n.is_read && one.mutate(n.id)} className={cn('flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-accent', !n.is_read && 'bg-primary-soft/40')}>
+                <button type="button" onClick={() => !n.is_read && one(n.id)} className={cn('flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-accent', !n.is_read && 'bg-primary-soft/40')}>
                   <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', dot[n.type] ?? 'bg-subtle')} aria-hidden />
                   <span className="min-w-0"><span className="block text-[13px] font-medium">{n.title}</span><span className="block text-[13px] text-muted-foreground">{n.message}</span><span className="mt-0.5 block text-[11px] text-subtle">{when(n.created_at)}</span></span>
                 </button>
