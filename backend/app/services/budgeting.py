@@ -95,6 +95,22 @@ def replace_items(db, client_id, job_id, boq_key, rows, who):
                                    updated_by_name=who, updated_at=now, **r))
 
 
+def boq_headings(db, boq, lines):
+    """The BOQ's section headings, each with the key of the priced line it stands above ('' for one after the last), so the
+    budget can show them in bold where they are in the BOQ. `lines` are the priced lines, in order."""
+    rev = db.query(models.DBBoqRevision).filter(models.DBBoqRevision.boq_id == boq.id, models.DBBoqRevision.rev_no == boq.current_rev).first()
+    if rev is None:
+        return []
+    heads = db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id, models.DBBoqLine.kind == "section").order_by(
+        models.DBBoqLine.display_order).all()
+    out, at = [], 0
+    for h in heads:
+        while at < len(lines) and (lines[at].display_order or 0) <= (h.display_order or 0):
+            at += 1
+        out.append({"key": h.key, "item_no": h.item_no or "", "description": h.description or "", "before": lines[at].key if at < len(lines) else ""})
+    return out
+
+
 def budget_view(db, client_id, job):
     """The whole budget for a project: every priced BOQ line with its cost and profit, and the totals."""
     boq = boq_of_job(db, client_id, job.id)
@@ -106,6 +122,16 @@ def budget_view(db, client_id, job):
         items.setdefault(i.boq_key, []).append(i)
     cfg = settings_of(db, client_id, job.id)
     oh, ct = (cfg.overhead_percent or 0.0) if cfg else 0.0, (cfg.contingency_percent or 0.0) if cfg else 0.0
+
+    headings = boq_headings(db, boq, lines) if boq else []
+    # Which heading each line is under: the nearest one above it in the BOQ ('' before the first), so the screen can fold a section away.
+    standing_over = {}
+    for h in headings:
+        standing_over[h["before"]] = h["key"]
+    under, current = {}, ""
+    for l in lines:
+        current = standing_over.get(l.key, current)
+        under[l.key] = current
 
     rows, tot = [], {"revenue": 0.0, "material": 0.0, "labour": 0.0, "other": 0.0, "unbudgeted_value": 0.0, "budgeted": 0}
     sections = {}
@@ -124,7 +150,7 @@ def budget_view(db, client_id, job):
         profit = money(revenue - cost) if budgeted else None
         sec = l.group_code or ""
         rows.append({
-            "key": l.key, "item_no": l.item_no or "", "group_code": sec, "description": l.description or "",
+            "key": l.key, "under": under.get(l.key, ""), "item_no": l.item_no or "", "group_code": sec, "description": l.description or "",
             "uom": l.uom or "", "quantity": money(qty), "rate": money(l.rate), "revenue": revenue, "rate_only": bool(l.rate_only),
             "item_code": l.item_code or "", "budgeted": budgeted, "items": [item_dict(i) for i in got],
             "unit_material": round(unit["MATERIAL"], 4), "unit_labour": round(unit["LABOUR"], 4), "unit_other": round(unit["OTHER"], 4),
@@ -160,6 +186,7 @@ def budget_view(db, client_id, job):
             "boq": {"id": boq.id, "number": boq.number, "revision": boq.current_rev} if boq else None,
             "overhead_percent": oh, "contingency_percent": ct, "note": (cfg.note if cfg else "") or "",
             "updated_by_name": (cfg.updated_by_name if cfg else "") or "", "rows": rows, "total": total,
+            "headings": headings,
             "sections": [{"group": s["group"], "revenue": money(s["revenue"]), "cost": money(s["cost"]),
                           "profit": money(s["revenue"] - s["cost"]),
                           "margin": round((s["revenue"] - s["cost"]) / s["revenue"] * 100, 1) if s["revenue"] else None}

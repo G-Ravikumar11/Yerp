@@ -23,6 +23,8 @@ export interface BudgetItem {
 
 export interface BudgetRow {
   key: string
+  /** The key of the BOQ heading this line is under ('' before the first heading). */
+  under: string
   item_no: string
   group_code: string
   description: string
@@ -76,6 +78,8 @@ export interface Budget {
   note: string
   updated_by_name: string
   rows: BudgetRow[]
+  /** The BOQ's section headings, each standing above the priced line `before` ('' = after the last one). */
+  headings: { key: string; item_no: string; description: string; before: string }[]
   total: BudgetTotal
   sections: { group: string; revenue: number; cost: number; profit: number; margin: number | null }[]
 }
