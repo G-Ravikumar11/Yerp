@@ -34,3 +34,10 @@ def test_a_bad_address_is_refused_and_a_failed_send_is_reported(tenant, monkeypa
     patch_app(monkeypatch, "send_email_background", lambda *a, **k: (False, "Gmail refresh token not configured"))
     res = tenant.post("/api/purchase-orders/%d/send-email" % oid, json={})
     assert res.status_code == 502 and "refresh token" in res.text
+
+
+def test_asking_for_the_draft_sends_nothing(tenant, sent):
+    oid = po_id(po(tenant))
+    d = tenant.get("/api/purchase-orders/%d/email-draft" % oid).json()
+    assert d["to"] == "steel@example.com" and d["subject"].startswith("Purchase order") and d["body"] and d["attachment"].endswith(".pdf")
+    assert sent == []

@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Copy, Download, FileText, Save, Share2, Trash2 } from 'lucide-react'
+import { ArrowLeft, Copy, Download, FileText, Mail, Save, Share2, Trash2 } from 'lucide-react'
 import { ShareOrderDialog } from './ShareOrderDialog'
+import { SendEmailDialog } from '@/components/data/SendEmailDialog'
 import { Badge, Button, ConfirmDialog, Field, Input, Skeleton, Stat, StatGrid, StatusBadge, Tabs } from '@/components/ui'
 import {
   closeOrder,
@@ -68,6 +69,7 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
   const { can, isOwner, user } = useSession()
   const [deleting, setDeleting] = useState(false)
   const [sharing, setSharing] = useState(false)
+  const [emailing, setEmailing] = useState(false)
   const vocab = useOrderVocabulary()
 
   // A new order on a project with a BOQ opens straight on its schedule, with the BOQ to pick its lines from.
@@ -180,6 +182,11 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
                 <FileText /> PDF
               </a>
             </Button>
+            {can('workorders.manage') && ['APPROVED', 'EXECUTED', 'CLOSED'].includes(order.status) && (
+              <Button variant="outline" size="sm" onClick={() => setEmailing(true)}>
+                <Mail /> Send email
+              </Button>
+            )}
             <Button variant="outline" size="sm" asChild>
               <a href={`/api/wo/orders/${order.id}/boq.xlsx`}>
                 <Download /> Schedule
@@ -372,6 +379,7 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
         loading={move.isPending}
         onConfirm={() => move.mutate({ action: 'execute' })}
       />
+      <SendEmailDialog open={emailing} onOpenChange={setEmailing} title={`Email ${order.wo_number}`} draftUrl={`/api/wo/orders/${order.id}/email-draft`} sendUrl={`/api/wo/orders/${order.id}/send-email`} />
       <ShareOrderDialog open={sharing} onOpenChange={setSharing} orderId={order.id} number={order.wo_number} />
       <DeleteOrderDialog open={deleting} onOpenChange={setDeleting} kind="subcontract" id={order.id} number={order.wo_number} onDeleted={() => nav('/subcontractors/work-orders')} />
     </>

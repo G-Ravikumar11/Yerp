@@ -42,7 +42,7 @@ from app.core.currency import format_money_plain, inr, money, sheet_number, unit
 from app.core.dates import financial_year_label
 from app.core.files import file_counts, file_headers, image_data_url, served_type
 from app.core.gst import state_from_gstin
-from app.core.notifications import notify, notify_employee
+from app.core.notifications import default_from_email, notify, notify_employee, send_email_background
 from app.core.queries import prime
 from app.core.serials import next_wo_number
 from app.core.sheets import (
@@ -55,6 +55,7 @@ from app.core.sheets import (
 )
 from app.core.tenant_settings import put_setting
 from app.core.units import UNITS_OF_MEASURE
+from app.documents import form_pdf
 from app.documents.forms import (
     WO_STANDARD_TERMS,
     form_pdf_response,
@@ -177,6 +178,56 @@ def wo_access_put(order_id: int, body: dict, request: Request, db: Session = Dep
 def wo_document(order_id: int, request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     return wo_document_payload(db, client, wo_or_404(db, client.id, order_id))
+
+
+# Only an order that has been approved goes to the sub contractor: a draft or one waiting for a decision is still ours.
+WO_EMAILABLE = ("APPROVED", "EXECUTED", "CLOSED")
+
+
+def wo_email_draft(db, client, order):
+    con = by_id(db, models.DBContractor, order.contractor_id)
+    company = client.company_name or "Our company"
+    what = (" for " + order.subject) if order.subject else ""
+    return {"to": (con.email if con else "") or "", "contractor": con.company_name if con else "",
+            "subject": "Work order %s%s - %s" % (order.wo_number, what, company),
+            "body": "Dear %s,\n\nPlease find our work order %s%s attached. Kindly sign and return a copy "
+                    "as your acceptance, and let us know when you can start.\n\nRegards,\n%s"
+                    % ((con.contact_person or con.company_name) if con else "Sir/Madam", order.wo_number, what, company),
+            "attachment": "%s.pdf" % re.sub(r"[^A-Za-z0-9]+", "_", order.wo_number or "work_order").strip("_")}
+
+
+@router.get("/api/wo/orders/{order_id}/email-draft")
+def wo_email_draft_view(order_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return wo_email_draft(db, client, wo_or_404(db, client.id, order_id))
+
+
+@router.post("/api/wo/orders/{order_id}/send-email")
+def wo_send_email(order_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """Emails the order, with its PDF, to the sub contractor. Sent only when somebody asks for it."""
+    client, _, actor = wo_actor(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    if order.status not in WO_EMAILABLE:
+        raise HTTPException(409, "%s can be emailed once it is approved. It is %s now." % (order.wo_number, (order.status or "").lower()))
+    body = body or {}
+    draft = wo_email_draft(db, client, order)
+    to = (body.get("to") or draft["to"] or "").strip()
+    if not re.match(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$", to):
+        raise HTTPException(400, "Give a valid email address to send %s to." % order.wo_number)
+    if not form_pdf.PDF_AVAILABLE:
+        raise HTTPException(503, "The PDF library is not installed on this server, so the order cannot be attached.")
+    subject = (body.get("subject") or draft["subject"]).strip()[:200]
+    text = (body.get("body") or draft["body"]).strip()
+    pdf = form_pdf.build_form_pdf(wo_form_spec(db, client, order))
+    ok, message = send_email_background(
+        to, subject, text, "%s <%s>" % (client.company_name or "Y ERP", default_from_email()), client_id=client.id,
+        pdf_b64=base64.b64encode(pdf).decode(), pdf_filename=draft["attachment"])
+    if not ok:
+        raise HTTPException(502, "%s was not sent: %s" % (order.wo_number, message))
+    log_audit(db, client.id, "subcontract_emailed", "subcontract_order", order.id, order.wo_number,
+              "Sent to %s by %s" % (to, actor or "the Master"), request)
+    db.commit()
+    return {"ok": True, "to": to, "message": "%s sent to %s." % (order.wo_number, to)}
 
 
 @router.get("/api/wo/orders/{order_id}/document.pdf")

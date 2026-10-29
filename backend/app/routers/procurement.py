@@ -972,6 +972,17 @@ def purchase_order_pdf(order_id: int, request: Request, db: Session = Depends(ge
     return form_pdf_response(po_form_spec(db, client, order), order.number)
 
 
+@router.get("/api/purchase-orders/{order_id}/email-draft")
+def purchase_order_email_draft(order_id: int, request: Request, db: Session = Depends(get_read_db)):
+    """The plain wording for the email to the supplier, to read and change before it is sent. Nothing is sent."""
+    client = require_erp_read(request, db)
+    order = purchase_order_or_404(db, client.id, order_id)
+    from app.ai.po_supplier_email import plain_draft
+    draft = plain_draft(purchase_order_to_dict(db, order), client.company_name or "Our company")
+    return {"to": order.supplier_email or "", "subject": draft["subject"], "body": draft["body"],
+            "attachment": "%s.pdf" % re.sub(r"[^A-Za-z0-9]+", "_", order.number).strip("_")}
+
+
 @router.post("/api/purchase-orders/{order_id}/send-email")
 def send_purchase_order_email(order_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
     """Email the purchase order, with its PDF, to the supplier from the company's connected Gmail.
