@@ -14,6 +14,7 @@ from app.constants.common import DRAWING_STATUSES
 from app.constants.crm import OPEN_INVOICE_STATUSES
 from app.constants.projects import DRAWING_DISCIPLINES, JOB_CLOSED_STATUSES, JOB_FINISHED, WEATHER
 from app.core.audit import log_audit
+from app.core import checks
 from app.core.auth import (get_client_user, owned_or_404, refuse_ho_coordinator, require_erp_read, require_items_access, require_owner,
                             session_person, wo_actor)
 from app.core.cache import cached_read
@@ -257,6 +258,10 @@ def create_job(body: JobIn, request: Request, db: Session = Depends(get_db)):
     if len(name) > 160:
         raise HTTPException(status_code=400, detail="Job name must be 160 characters or fewer")
 
+    start_on, end_on = checks.day(body.start_date, "start date"), checks.day(body.target_end_date, "target end date")
+    checks.span(start_on, end_on, "target end date")
+    retention = clamp_percent(body.retention_percent)
+
     customer_name = (body.customer_name or "").strip()
     contact_id = None
     if body.contact_id:
@@ -284,11 +289,11 @@ def create_job(body: JobIn, request: Request, db: Session = Depends(get_db)):
         site_address=(body.site_address or "").strip(),
         description=(body.description or "").strip(),
         status=validate_job_status(body.status),
-        start_date=body.start_date or "",
-        target_end_date=body.target_end_date or "",
+        start_date=start_on,
+        target_end_date=end_on,
         quoted_value=validate_job_money("Quoted value", body.quoted_value),
         budget=validate_job_money("Budget", body.budget),
-        retention_percent=clamp_percent(body.retention_percent),
+        retention_percent=retention,
         currency=(body.currency or client.currency or "").upper(),
         reference=(body.reference or "").strip(),
         manager_id=owned_or_404(db, models.DBEmployee, client.id, body.manager_id, "Project manager"),
@@ -310,6 +315,9 @@ def update_job(job_id: int, body: JobIn, request: Request, db: Session = Depends
     name = (body.name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Give the job a name")
+    start_on, end_on = checks.day(body.start_date, "start date"), checks.day(body.target_end_date, "target end date")
+    checks.span(start_on, end_on, "target end date")
+    retention = clamp_percent(body.retention_percent)
 
     was_open = job.status not in JOB_CLOSED_STATUSES
     if body.number is not None and " ".join(body.number.split()) != (job.number or ""):
@@ -336,11 +344,11 @@ def update_job(job_id: int, body: JobIn, request: Request, db: Session = Depends
     job.status = validate_job_status(body.status)
     if getattr(body, "state_code", None) is not None:
         job.state_code = (body.state_code or "").strip()
-    job.start_date = body.start_date or ""
-    job.target_end_date = body.target_end_date or ""
+    job.start_date = start_on
+    job.target_end_date = end_on
     job.quoted_value = validate_job_money("Quoted value", body.quoted_value)
     job.budget = validate_job_money("Budget", body.budget)
-    job.retention_percent = clamp_percent(body.retention_percent)
+    job.retention_percent = retention
     job.reference = (body.reference or "").strip()
     job.manager_id = owned_or_404(db, models.DBEmployee, client.id, body.manager_id, "Project manager")
     if was_open and job.status == "complete" and not job.completed_at:
@@ -546,7 +554,10 @@ def create_diary(body: DiaryIn, request: Request, db: Session = Depends(get_db))
     if not job:
         raise HTTPException(404, "Project not found")
 
-    on = (body.diary_date or datetime.now().strftime("%Y-%m-%d"))[:10]
+    # A day or two ahead is allowed (the plan moves from today either way); a date a year away is a slip of the finger.
+    on = checks.day(body.diary_date, "diary date", default_today=True, ahead_days=7)
+    checks.between(body.rain_hours, "hours of rain", 0, 24, unit="hours")
+    checks.between(body.working_hours, "working hours", 0, 24, unit="hours")
     # One diary per site per day. Two records for the same day is how a delay
     # claim gets thrown out, so the second attempt reopens the first rather
     # than quietly creating a rival.
@@ -598,8 +609,8 @@ def update_diary(diary_id: int, body: DiaryIn, request: Request,
                  "afterwards is worth nothing in a claim.")
     if body.weather in WEATHER:
         diary.weather = body.weather
-    for field in ("rain_hours", "working_hours"):
-        val = getattr(body, field, None)
+    for field, label in (("rain_hours", "hours of rain"), ("working_hours", "working hours")):
+        val = checks.between(getattr(body, field, None), label, 0, 24, unit="hours")
         if val is not None:
             setattr(diary, field, money(val))
     for field in ("work_done", "holdups", "instructions", "visitors",
@@ -993,6 +1004,7 @@ def delete_task(task_id: int, request: Request, db: Session = Depends(get_db)):
 def add_activity(job_id: int, body: ActivityIn, request: Request, db: Session = Depends(get_db)):
     client, _, actor_name = wo_actor(request, db)
     job = job_or_404(db, client.id, job_id)
+    checks.between(body.weight, "weight", 0, 1_000_000)
     n = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.job_id == job.id).count()
     a = models.DBScheduleActivity(client_id=client.id, job_id=job.id, display_order=n)
     db.add(a)
@@ -1007,6 +1019,7 @@ def add_activity(job_id: int, body: ActivityIn, request: Request, db: Session = 
 @router.put("/api/schedule/activities/{activity_id}")
 def edit_activity(activity_id: int, body: ActivityIn, request: Request, db: Session = Depends(get_db)):
     client, _, actor_name = wo_actor(request, db)
+    checks.between(body.weight, "weight", 0, 1_000_000)
     a = db.query(models.DBScheduleActivity).filter(
         models.DBScheduleActivity.id == activity_id,
         models.DBScheduleActivity.client_id == client.id).first()
@@ -1063,7 +1076,7 @@ def report_progress(activity_id: int, body: ProgressIn, request: Request, db: Se
         done = pct * qty / 100.0 if qty else None
     if pct < 0 or pct > 100:
         raise HTTPException(400, "Progress is a percentage between 0 and 100.")
-    on = (body.reported_on or datetime.now().strftime("%Y-%m-%d"))[:10]
+    on = checks.day(body.reported_on, "date of the report", not_future=True, default_today=True)
     db.add(models.DBScheduleProgress(client_id=client.id, activity_id=a.id, reported_on=on, percent=pct, qty_done=done,
                                      note=(body.note or "").strip(), by_name=actor_name))
     if done is not None:

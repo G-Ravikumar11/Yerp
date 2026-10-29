@@ -16,6 +16,7 @@ from app.db import get_db, get_read_db
 from app.constants.common import (INCIDENT_KINDS, INJURY_KINDS, PERMIT_PRECAUTIONS, WORKER_MARITAL_STATUS,
                                   WORKER_MIN_AGE, WORKER_SEX, WORKER_TRADES)
 from app.constants.quality import SERIOUS_KINDS
+from app.core import checks
 from app.core.auth import require_erp_read, wo_actor
 from app.core.notifications import notify
 from app.core.files import file_bytes
@@ -147,9 +148,12 @@ def report_incident(body: IncidentIn, request: Request, db: Session = Depends(ge
         raise HTTPException(400, "Say what happened.")
     if body.kind in INJURY_KINDS and not (body.injured_name or "").strip():
         raise HTTPException(400, "Who was hurt?")
+    happened_on = checks.day(body.happened_on, "date it happened", not_future=True, default_today=True)
+    happened_at = checks.clock(body.happened_at, "time it happened")
+    checks.between(body.lost_days, "days lost", 0, 365, unit="days")
     i = models.DBSafetyIncident(
         client_id=client.id, job_id=job.id, number=next_number(db, models.DBSafetyIncident, client.id, "INC"),
-        happened_on=(body.happened_on or date.today().isoformat())[:10], happened_at=(body.happened_at or "")[:5],
+        happened_on=happened_on, happened_at=happened_at,
         kind=body.kind, location=(body.location or "").strip(), description=body.description.strip(),
         injured_name=(body.injured_name or "").strip(), injury=(body.injury or "").strip(),
         treatment=(body.treatment or "").strip(), lost_days=max(0.0, float(body.lost_days or 0)),
@@ -189,10 +193,13 @@ def record_talk(body: TalkIn, request: Request, db: Session = Depends(get_db)):
     if not (body.topic or "").strip():
         raise HTTPException(400, "What was the talk about?")
     names = [n.strip() for n in re.split(r"[,\n]+", body.attendee_names or "") if n.strip()]
+    checks.between(body.attendees, "number who attended", 0, 2000)
+    checks.between(body.minutes, "minutes the talk lasted", 0, 600, unit="minutes")
     count = max(int(body.attendees or 0), len(names))
     if count < 1:
         raise HTTPException(400, "How many stood through it?")
-    t = models.DBToolboxTalk(client_id=client.id, job_id=job.id, held_on=(body.held_on or date.today().isoformat())[:10],
+    held_on = checks.day(body.held_on, "date of the talk", not_future=True, default_today=True)
+    t = models.DBToolboxTalk(client_id=client.id, job_id=job.id, held_on=held_on,
                              topic=body.topic.strip(), conducted_by=actor_name, attendees=count,
                              attendee_names=", ".join(names), minutes=max(1, int(body.minutes or 15)),
                              notes=(body.notes or "").strip())
@@ -470,6 +477,9 @@ def worker_screen(body: WorkerIn, request: Request, db: Session = Depends(get_db
         raise HTTPException(400, "A worker on site must be at least %d." % WORKER_MIN_AGE)
     if body.age > 75:
         raise HTTPException(400, "Check the age: %d is past working age on a site." % body.age)
+    screened_on = checks.day(body.screened_on, "date screened", not_future=True, default_today=True)
+    checks.between(body.weight_kg or None, "weight", 25, 250, unit="kg")        # 0 is how the form says "not given"
+    checks.between(body.height_cm or None, "height", 100, 230, unit="cm")
     if body.sex and body.sex not in WORKER_SEX:
         raise HTTPException(400, "Sex: " + ", ".join(WORKER_SEX))
     if body.marital_status and body.marital_status not in WORKER_MARITAL_STATUS:
@@ -499,7 +509,7 @@ def worker_screen(body: WorkerIn, request: Request, db: Session = Depends(get_db
     w = models.DBWorkerScreening(
         client_id=client.id, job_id=job.id, number=next_number(db, models.DBWorkerScreening, client.id, "WKR"),
         name=name[:120], age=int(body.age), address=(body.address or "").strip()[:500], trade=body.trade,
-        screened_on=(body.screened_on or date.today().isoformat())[:10], screened_by=actor_name,
+        screened_on=screened_on, screened_by=actor_name,
         contractor_name=(body.contractor_name or "").strip()[:160], father_name=(body.father_name or "").strip()[:120],
         dob=(body.dob or "")[:10], sex=body.sex or "", marital_status=body.marital_status or "",
         children=max(0, int(body.children or 0)), mother_tongue=(body.mother_tongue or "").strip()[:60],
