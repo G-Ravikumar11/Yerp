@@ -1,3 +1,4 @@
+import os
 """The rules and workings behind the recruitment endpoints."""
 from datetime import datetime, timedelta
 
@@ -20,7 +21,11 @@ def job_interview_reminders(db, now):
     An interview was booked and then nothing happened until it either did or
     did not. Candidates no-show when nobody reminds them, and an interviewer
     who has forgotten is worse than one who cancels.
+
+    Off unless INTERVIEW_REMINDERS_ENABLED=1: an email goes out only when someone clicks send.
     """
+    if os.getenv("INTERVIEW_REMINDERS_ENABLED", "0") != "1":
+        return "interview reminders are off"
     horizon = now + timedelta(hours=INTERVIEW_REMINDER_HOURS)
     sent = 0
 

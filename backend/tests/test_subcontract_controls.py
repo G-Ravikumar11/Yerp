@@ -302,6 +302,9 @@ def test_the_order_head_is_checked(tenant, second_tenant):
     theirs = second_tenant.post("/api/wo/contractors", json={"company_name": "Not Ours Ltd"}).json()
     res = tenant.post("/api/wo/orders", json={"contractor_id": theirs["id"]})
     assert res.status_code == 400 and "not on file" in res.json()["detail"]
+    # and an order is opened for someone: no sub contractor, no work order
+    res = tenant.post("/api/wo/orders", json={"subject": "Shuttering"})
+    assert res.status_code == 400 and "sub contractor" in res.json()["detail"]
 
 
 def test_an_amendment_says_why(tenant):

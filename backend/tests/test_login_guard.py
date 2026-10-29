@@ -56,6 +56,8 @@ def test_the_address_is_the_one_the_proxy_saw_not_the_one_the_visitor_wrote(monk
 
 
 def test_writing_a_new_address_on_every_try_does_not_get_round_the_limit(account, monkeypatch):
+    import app.routers.auth as auth
+    monkeypatch.setattr(auth, "LOGIN_PER_MINUTE", 10)               # the limit is a setting (60 by default); ten shows the point
     c = account["client"]
     monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
     codes = [c.post("/api/client/login", json={"email": account["email"], "password": "wrong"},

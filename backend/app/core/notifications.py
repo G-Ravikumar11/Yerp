@@ -214,7 +214,8 @@ NOTIFY_KINDS = {
     "increment_due": "It is a year since somebody's last salary increment",
 }
 # Out of the box: the bell for everything, email for the money, the digest and a locked account.
-NOTIFY_DEFAULT_EMAIL = {"ra_bill_certified", "money_in", "daily_digest", "security_lock"}   # increment_due goes to HR itself
+# Nothing is emailed on its own: a company ticks the alerts it wants mailed in Settings.
+NOTIFY_DEFAULT_EMAIL = set()
 
 
 def notify_settings(db, client_id):

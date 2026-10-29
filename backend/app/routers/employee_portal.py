@@ -16,7 +16,7 @@ from app.constants.approvals import GONE_STATUSES
 from app.constants.projects import JOB_CLOSED_STATUSES
 from app.core.audit import log_audit
 from app.core.auth import end_every_session, get_client_user, require_items_access, set_session_lifetime, get_employee_user, require_employee_permission
-from app.core.config import logger
+from app.core.config import LOGIN_PER_MINUTE, logger
 from app.core.dates import _parse_date
 from app.core.files import ALLOWED_DOCUMENT_EXTENSIONS, MAX_DOCUMENT_BYTES
 from app.core.notifications import default_from_email, notify_employee, send_email_background
@@ -125,7 +125,7 @@ def _owner_or_member(db, email):
 @router.post("/api/employee/auth/login")
 def employee_login(request: Request, body: dict = None, db: Session = Depends(get_db)):
     ip = request.client.host if request.client else "unknown"
-    if rate_limiter.is_rate_limited(f"emp_login:{ip}", max_requests=10, window=60):
+    if rate_limiter.is_rate_limited(f"emp_login:{ip}", max_requests=LOGIN_PER_MINUTE, window=60):
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
     if not body or not body.get("email") or not body.get("password"):
         raise HTTPException(status_code=400, detail="Email and password required")

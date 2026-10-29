@@ -8,7 +8,7 @@ from app import models
 from app.constants.common import PAYROLL_EXCLUDED_STATUSES
 from app.core.currency import money
 from app.core.dates import _parse_date
-from app.core.notifications import default_from_email, notify, notify_employee, send_email_background
+from app.core.notifications import notify, notify_employee
 from app.core.scheduler import scheduled_job
 
 
@@ -116,7 +116,7 @@ def _a_year_on(day):
 def job_increment_reminders(db, now):
     """A year after somebody's last increment, tell HR it is time to look at theirs again.
 
-    HR gets it in its own notices and by email; the Master gets it on the bell. Each increment is reminded once, and
+    HR gets it in its own notices; the Master gets it on the bell. Nothing is emailed on its own. Each increment is reminded once, and
     only while it is still the employee's latest, so a newer one starts the year again."""
     today = now.date()
     latest = {}
@@ -142,16 +142,9 @@ def job_increment_reminders(db, now):
               if (e.permission_role or "").lower() == "hr" and (e.status or "active") not in PAYROLL_EXCLUDED_STATUSES]
         for h in hr:
             notify_employee(db, client_id, h.id, title, body, link="/people/employees/%d" % emp.id)
-        # The office bell is read by everyone in the office, so it names the person and leaves the figures to HR.
+        # On screen only: an email goes out only when somebody clicks send. The office bell is read by everyone in the
+        # office, so it names the person and leaves the figures to HR's own notice.
         notify(db, client_id, "increment_due", title, "%s is due for a salary review: their last increment ran until %s." % (name, due),
                ref_type="salary_revision", ref_id=rev.id, severity="warning")
-        company = db.query(models.DBClient).filter(models.DBClient.id == client_id).first()
-        for h in hr:
-            if h.email:
-                try:
-                    send_email_background(h.email, "%s - %s" % ((company.company_name if company else "") or "Y ERP", title), body,
-                                          default_from_email(), client_id=client_id)
-                except Exception:
-                    pass
         sent += 1
     return "%d reminder(s)" % sent

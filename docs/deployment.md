@@ -76,6 +76,30 @@ signs in only addresses that already have a login here - it never creates one.
 The platform console's Google sign-in admits only addresses listed in
 `SUPERADMIN_EMAILS`.
 
+## Many users (about a thousand)
+
+Measured with 100 simulated users clicking about four times faster than people do (roughly 400 people at once), one
+server process serves about 100 requests a second. What decides speed is how far the database is from the server:
+with it 0.3 s away, even 20 users waited ten seconds or more for a page, because every request makes several round
+trips and only about 15 database connections are open at a time.
+
+1. **Same region, near the users.** The server and the database in one region, Mumbai if the users are in India.
+2. **A database that does not sleep**, with a pooler in front (on Neon: a paid plan, autosuspend off, the `-pooler` address).
+3. **`API_FLOOD_PER_MINUTE`** is 6000 a minute per address, so a site office of a few dozen people sharing one connection is
+   not stopped. Lower it only if a script is hammering the server.
+4. **Three more limits keep a few people from slowing everyone** (each is a variable; 0 turns it off):
+   `LOGIN_PER_MINUTE` (60) sign-ins a minute from one address, so a site office that signs in together is not turned away;
+   `HEAVY_PER_MINUTE` (30) exports, PDFs and printed documents a minute for each signed-in person; `AI_PER_MINUTE` (20)
+   AI requests a minute for each signed-in person. Wrong passwords are limited separately and harder (a CAPTCHA after
+   three, a lock on that address after ten).
+5. **More than one process (`WEB_CONCURRENCY=3` or `4`) needs two things first.** Each process then holds its own copy
+   of the sign-in lock counts, the CAPTCHA tokens already used, the request limits and `core/cache.py`'s heavy-page cache,
+   so the limits become that many times looser and the approvals inbox and project profit page can be 30 to 60 seconds
+   out of date on another process. Move those into the database or Redis first. Then raise `DB_POOL_SIZE` and
+   `DB_MAX_OVERFLOW` so processes x (pool + overflow) stays below what the database allows.
+6. **Uploaded files are stored in the database** (`files.data`). With many users, move them to object storage (S3 or
+   Cloudflare R2): the database grows quickly, and every download holds a connection.
+
 ## How it starts
 
 `railway.json` sets the start command and points the healthcheck at

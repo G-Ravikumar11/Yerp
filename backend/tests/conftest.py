@@ -38,6 +38,10 @@ os.environ.setdefault("PASSWORD_ITERATIONS", "1000")
 # Tests drive run_due_jobs() directly; a loop ticking in the background would
 # race them and claim periods out from under the assertions.
 os.environ.setdefault("SCHEDULER_ENABLED", "0")
+# The per-person limit on exports and AI requests would trip over a suite that makes dozens in a minute as the same test user;
+# tests/test_traffic_limits.py sets them itself.
+os.environ.setdefault("HEAVY_PER_MINUTE", "0")
+os.environ.setdefault("AI_PER_MINUTE", "0")
 # Most tests add people in bulk without an emergency contact; the rule has its own tests (test_emergency_and_ids.py).
 os.environ["REQUIRE_EMERGENCY_CONTACT"] = "0"
 os.environ["REQUIRE_GENDER"] = "0"

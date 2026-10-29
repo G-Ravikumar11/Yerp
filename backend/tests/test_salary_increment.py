@@ -103,7 +103,8 @@ def _run_reminders(monkeypatch):
     from app.db import SessionLocal
     from app.services import salary_revisions as sr
     mails = []
-    monkeypatch.setattr(sr, "send_email_background", lambda to, subject, body, *a, **k: mails.append((to, subject, body)))
+    from _patching import patch_app
+    patch_app(monkeypatch, "send_email_background", lambda to, subject, body, *a, **k: mails.append((to, subject, body)) or (True, ""))
     with SessionLocal() as db:
         out = sr.job_increment_reminders(db, datetime.now())
     return out, mails
@@ -121,7 +122,7 @@ def test_hr_is_reminded_a_year_after_an_increment(tenant, hr, monkeypatch):
     assert out == "1 reminder(s)"
     notes = _notes(hr)
     assert len(notes) == 1 and "Priya Nair" in notes[0]["title"] and last_year in notes[0]["message"]
-    assert len(mails) == 1 and "Priya Nair" in mails[0][1] and mails[0][0].startswith("hr-")
+    assert mails == [], "on screen only: nothing is emailed unless somebody clicks send"
     assert any(a["title"] == "Increment due: Priya Nair" for a in tenant.get("/api/alerts").json().get("alerts", tenant.get("/api/alerts").json()) if isinstance(a, dict))
     # once only
     assert _run_reminders(monkeypatch)[0] == "0 reminder(s)"
