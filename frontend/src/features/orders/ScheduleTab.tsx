@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { FileUp, Landmark, Layers, ListTree } from 'lucide-react'
+import { FileUp, Landmark, Layers, ListTree, Sigma } from 'lucide-react'
 import { DataGrid, type Column } from '@/components/grid'
 import { Badge, Button, ConfirmDialog, Select } from '@/components/ui'
 import { chargeBudget, importSchedule, orderKeys, type Order, type OrderItem, type Vocabulary } from '@/api/orders'
@@ -101,6 +101,7 @@ export function ScheduleTab({
   const [chargeTo, setChargeTo] = useState('')
   const [pending, setPending] = useState<File | null>(null)
   const [picking, setPicking] = useState(startPicking)
+  const [byHeading, setByHeading] = useState(false)
   const offBoq = rows.filter((r) => !r.is_header && r.item_description.trim() && !r.boq_key && !r.boq_parts?.length).length
 
   const columns = useMemo<Column<LineRow>[]>(
@@ -214,9 +215,14 @@ export function ScheduleTab({
               }}
             />
             {order.job_id ? (
-              <Button size="sm" onClick={() => setPicking(true)}>
-                <ListTree /> Add from the project BOQ
-              </Button>
+              <>
+                <Button size="sm" onClick={() => { setByHeading(false); setPicking(true) }}>
+                  <ListTree /> Add from the project BOQ
+                </Button>
+                <Button size="sm" variant="outline" title="Each heading of the BOQ as one line: its quantities added up, at one rate" onClick={() => { setByHeading(true); setPicking(true) }}>
+                  <Sigma /> Add BOQ headings (cumulative)
+                </Button>
+              </>
             ) : (
               <span className="text-[13px] text-muted-foreground">Choose and save the project, then build this order from its BOQ.</span>
             )}
@@ -288,6 +294,7 @@ export function ScheduleTab({
         orderId={order.id}
         jobId={order.job_id ?? 0}
         open={picking}
+        startMode={byHeading ? 'headings' : 'lines'}
         onOpenChange={(o) => { setPicking(o); if (!o) onPicked?.() }}
         onAdd={(added) => onRows([...rows.filter((r) => r.item_description.trim()), ...added.map((l) => ({ ...blankLine(), ...l }) as LineRow)])}
       />
