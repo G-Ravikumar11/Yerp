@@ -85,6 +85,21 @@ def give_increment(db, client_id, emp, mode, value, effective_date, reason, by, 
     return rev
 
 
+def record_salary_change(db, client_id, emp, new, by):
+    """A salary typed straight into the Edit form, kept in the history as from today, so it is never a silent change
+    and it starts the review clock like any increment."""
+    old, new = float(emp.salary or 0), money(new)
+    if old <= 0 or new <= 0 or new == old:
+        return None
+    today = datetime.now().date()
+    rev = models.DBSalaryRevision(
+        client_id=client_id, employee_id=emp.id, old_salary=old, new_salary=new, mode="amount",
+        percent=money((new - old) / old * 100.0), effective_date=today.strftime("%Y-%m-%d"),
+        valid_until=_a_year_on(today).strftime("%Y-%m-%d"), reason="Changed in the Edit form", changed_by=by)
+    db.add(rev)
+    return rev
+
+
 def revision_payload(r):
     return {"id": r.id, "old_salary": r.old_salary, "new_salary": r.new_salary, "percent": r.percent, "effective_date": r.effective_date,
             "valid_until": r.valid_until or _a_year_on(_parse_date(r.effective_date)).strftime("%Y-%m-%d"), "reason": r.reason or "", "changed_by": r.changed_by or "", "created_at": r.created_at}
@@ -127,7 +142,9 @@ def job_increment_reminders(db, now):
               if (e.permission_role or "").lower() == "hr" and (e.status or "active") not in PAYROLL_EXCLUDED_STATUSES]
         for h in hr:
             notify_employee(db, client_id, h.id, title, body, link="/people/employees/%d" % emp.id)
-        # On screen only: an email goes out only when somebody clicks send.
-        notify(db, client_id, "increment_due", title, body, ref_type="salary_revision", ref_id=rev.id, severity="warning")
+        # On screen only: an email goes out only when somebody clicks send. The office bell is read by everyone in the
+        # office, so it names the person and leaves the figures to HR's own notice.
+        notify(db, client_id, "increment_due", title, "%s is due for a salary review: their last increment ran until %s." % (name, due),
+               ref_type="salary_revision", ref_id=rev.id, severity="warning")
         sent += 1
     return "%d reminder(s)" % sent

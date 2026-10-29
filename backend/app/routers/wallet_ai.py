@@ -15,7 +15,7 @@ from app.db import get_db, get_read_db
 from app.ai.assistant_llm import llm_chat, llm_configured, llm_error_message, llm_json
 
 from app.constants.wallet_ai import ASSISTANT_SYSTEM, TOPUP_MAX_MAJOR, TOPUP_MIN_MAJOR
-from app.core.auth import get_client_user
+from app.core.auth import get_client_user, require_payroll_editor
 from app.core.config import logger
 from app.core.currency import currency_symbol, to_major
 from app.schemas.wallet_ai import AssistantQuery, TopUpIn
@@ -477,7 +477,7 @@ def generate_followup_email(request: Request, body: dict = None, db: Session = D
 
 @router.get("/api/ai/payroll-anomalies")
 def detect_payroll_anomalies(request: Request, db: Session = Depends(get_read_db)):
-    client = get_client_user(request, db)
+    client = require_payroll_editor(request, db)          # payslip figures: HR and the Master only
     payslips = db.query(models.DBPayslip).filter(
         models.DBPayslip.client_id == client.id
     ).order_by(models.DBPayslip.employee_id, models.DBPayslip.period_start.desc()).all()

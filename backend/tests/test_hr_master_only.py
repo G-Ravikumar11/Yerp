@@ -109,3 +109,8 @@ def test_the_salary_structure_preview_is_not_shown_to_a_team_member(tenant, memb
     url = "/api/employees/%d/pay-details?period_start=2026-09-01&period_end=2026-09-30" % emp["id"]
     assert tenant.get(url).json()["structure"]
     assert member.get(url).json()["structure"] is None
+
+
+def test_payroll_anomalies_are_for_hr_and_the_master(tenant, member, hr):
+    assert member.get("/api/ai/payroll-anomalies").status_code == 403
+    assert hr.get("/api/ai/payroll-anomalies").status_code != 403
