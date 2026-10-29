@@ -273,15 +273,6 @@ export async function downloadTemplate(requirementId: number) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000)
 }
 
-/** The office's own notices - the Master's bell: what was announced to the company, read per viewer. */
-interface OfficeAlert { id: number; title: string; body: string; severity: string; read: boolean; created_at: string }
-export const useOfficeNotes = () => useQuery({
-  queryKey: ['alerts', 'bell'],
-  queryFn: async () => {
-    const r = await get<{ alerts: OfficeAlert[]; unread: number }>('/api/alerts')
-    return { unread_count: r.unread, notifications: r.alerts.map((a): Note => ({ id: a.id, title: a.title, message: a.body, type: a.severity, is_read: a.read, link: '', created_at: a.created_at })) }
-  },
-  refetchInterval: 60_000,
-})
+/** The office's own notices - the Master's bell - marked read for whoever is looking. */
 export const readOfficeNote = (id: number) => post<{ marked: number }>('/api/alerts/read', { ids: [id] })
 export const readAllOfficeNotes = () => post<{ marked: number }>('/api/alerts/read', { all: true })

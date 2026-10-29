@@ -75,7 +75,11 @@ function ProfileForm({ e, onDone, onPassword }: { e: EmployeeDetail; onDone: () 
   const set = (k: keyof typeof f) => (ev: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((s) => ({ ...s, [k]: ev.target.value }))
   const qc = useQueryClient()
   // The server answers with the saved profile: shown at once, the lists refreshed behind it.
-  const save = useAction(() => updateEmployee(e.id, f.aadhaar_no.trim() ? f : (({ aadhaar_no: _kept, ...rest }) => rest)(f)), { success: 'Saved', onSuccess: (r) => { showEmployeeChange(qc, { saved: r }); onDone() } })
+  // A changed salary is kept in the history as an increment, unless it only puts right a figure typed wrongly.
+  const [correction, setCorrection] = useState(false)
+  const salaryChanged = Number(f.salary || 0) !== Number(e.salary || 0)
+  const body = { ...(f.aadhaar_no.trim() ? f : (({ aadhaar_no: _kept, ...rest }) => rest)(f)), salary_correction: salaryChanged && correction }
+  const save = useAction(() => updateEmployee(e.id, body), { success: 'Saved', onSuccess: (r) => { showEmployeeChange(qc, { saved: r }); onDone() } })
   return (
     <div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -100,7 +104,15 @@ function ProfileForm({ e, onDone, onPassword }: { e: EmployeeDetail; onDone: () 
         <Field label="Level" htmlFor="ep-level"><Select id="ep-level" value={f.level} onChange={set('level')} placeholder="Not set" options={(cat.data?.levels ?? []).map((l) => ({ value: l.code, label: l.label }))} /></Field>
         <Field label="Reporting role" htmlFor="ep-role"><Select id="ep-role" value={f.role} onChange={(ev) => pickRole(ev.target.value)} placeholder="Not set" options={roleOptions.map((r) => ({ value: r.code, label: r.label }))} /></Field>
         <Field label="Start date" htmlFor="ep-start"><Input id="ep-start" type="date" value={f.start_date} onChange={set('start_date')} /></Field>
-        <Field label="Salary" htmlFor="ep-salary"><NumField id="ep-salary" value={f.salary} onValue={(n) => setF((s) => ({ ...s, salary: n }))} /></Field>
+        <Field label="Salary" htmlFor="ep-salary" hint={salaryChanged ? (correction ? 'Kept in the log only, not as an increment.' : 'Kept in the salary history as an increment from today.') : undefined}>
+          <NumField id="ep-salary" value={f.salary} onValue={(n) => setF((s) => ({ ...s, salary: n }))} />
+          {salaryChanged && (
+            <label className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+              <input type="checkbox" className="size-4 accent-[var(--primary)]" checked={correction} onChange={(ev) => setCorrection(ev.target.checked)} />
+              This corrects a mistake, it is not an increment
+            </label>
+          )}
+        </Field>
         <Field label="Tax rate %" htmlFor="ep-tax"><NumField id="ep-tax" value={f.tax_rate} onValue={(n) => setF((s) => ({ ...s, tax_rate: n }))} /></Field>
       </div>
       <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">

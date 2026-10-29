@@ -113,4 +113,5 @@ def test_the_salary_structure_preview_is_not_shown_to_a_team_member(tenant, memb
 
 def test_payroll_anomalies_are_for_hr_and_the_master(tenant, member, hr):
     assert member.get("/api/ai/payroll-anomalies").status_code == 403
-    assert hr.get("/api/ai/payroll-anomalies").status_code != 403
+    assert hr.get("/api/ai/payroll-anomalies").status_code == 200
+    assert tenant.get("/api/ai/payroll-anomalies").status_code == 200

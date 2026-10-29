@@ -169,3 +169,27 @@ def test_the_office_alert_names_the_person_but_not_the_pay(tenant, hr, monkeypat
     alert = [a for a in tenant.get("/api/alerts").json()["alerts"] if a["title"] == "Increment due: Kiran Rao"][0]
     assert "Kiran Rao" in alert["body"] and "55000" not in alert["body"] and "50000" not in alert["body"]
     assert "55000.00" in _notes(hr)[0]["message"]
+
+
+def test_only_hr_and_the_master_change_a_salary_from_the_edit_form(tenant, member):
+    emp = make_employee(tenant, salary=40000.0, start_date="2020-01-01")
+    url = "/api/employees/%d" % emp["id"]
+    assert member.put(url, json={"salary": 90000}).status_code == 403
+    # sending the same salary back with another change is fine: that is how the form saves
+    assert member.put(url, json={"salary": 40000, "job_title": "Clerk"}).status_code == 200
+    assert tenant.get("/api/employees/%d/salary-history" % emp["id"]).json()["revisions"] == []
+
+
+def test_a_correction_is_not_an_increment(tenant):
+    emp = make_employee(tenant, salary=4000.0, start_date="2020-01-01")
+    url = "/api/employees/%d" % emp["id"]
+    assert tenant.put(url, json={"salary": 40000, "salary_correction": True}).status_code == 200
+    assert tenant.get("/api/employees/%d/salary-history" % emp["id"]).json()["revisions"] == []
+    assert tenant.get(url).json()["salary"] == 40000
+
+
+def test_hrs_own_name_goes_on_the_change(tenant, hr):
+    emp = make_employee(tenant, salary=40000.0, start_date="2020-01-01")
+    assert hr.put("/api/employees/%d" % emp["id"], json={"salary": 42000}).status_code == 200
+    rev = tenant.get("/api/employees/%d/salary-history" % emp["id"]).json()["revisions"][0]
+    assert rev["changed_by"] not in ("", "HR", "Master")

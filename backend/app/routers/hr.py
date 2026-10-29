@@ -16,7 +16,7 @@ from app.db import get_db, get_read_db
 
 from app.constants.hr import ONBOARDING_STAGES, ORG_DOMAIN_KEY
 from app.core.audit import log_audit, log_audit_many
-from app.core.auth import is_hr_or_master, is_master_session, owned_or_404, require_hr_or_master, require_items_access, require_people_admin
+from app.core.auth import get_employee_user, is_hr_or_master, is_master_session, owned_or_404, require_hr_or_master, require_items_access, require_people_admin
 from app.core.currency import money
 from app.core.dates import _parse_date
 from app.core.references import release_references
@@ -755,6 +755,11 @@ def get_employee(emp_id: int, request: Request, view: str = "", db: Session = De
     }
 
 
+def _staff_name(request, db):
+    me = get_employee_user(request, db)
+    return ("%s %s" % (me.first_name or "", me.last_name or "")).strip() if me else ""
+
+
 @router.put("/api/employees/{emp_id}")
 def update_employee(emp_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
     """Change somebody's details. The page sends every field back on each save, so what has not changed is not
@@ -840,8 +845,18 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
             except HTTPException:
                 pass  # a loop or a lower level: keep the line as it was rather than refuse the save
     site_ids = body.pop("site_ids", None)
-    if body.get("salary") is not None:
-        record_salary_change(db, client.id, emp, float(body["salary"] or 0), "Master" if is_master_session(request) else "HR")
+    correction = bool(body.pop("salary_correction", False))
+    if body.get("salary") is not None and money(body["salary"] or 0) != money(emp.salary or 0):
+        # Pay is HR's and the Master's: anybody else's save sends the salary back unchanged, which is fine.
+        if not is_hr_or_master(request, db):
+            raise HTTPException(403, "Only HR or the Master change a salary.")
+        if correction:
+            # Putting right a figure typed wrongly is not an increment: kept in the audit log, not the history.
+            log_audit(db, client.id, "salary_corrected", "employee", emp.id, f"{emp.first_name} {emp.last_name}",
+                      "Salary corrected from %s to %s" % (money(emp.salary or 0), money(body["salary"] or 0)), request)
+        else:
+            by = "Master" if is_master_session(request) else _staff_name(request, db) or "HR"
+            record_salary_change(db, client.id, emp, float(body["salary"] or 0), by)
     for key, val in body.items():
         if hasattr(emp, key) and key not in ("id", "client_id", "created_at", "password_hash", "employee_id"):
             setattr(emp, key, val)

@@ -1,11 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Bell } from 'lucide-react'
-import { readAllNotes, readAllOfficeNotes, readNote, readOfficeNote, staffKeys, useNotes, useOfficeNotes } from '@/api/staff'
+import { readAllNotes, readAllOfficeNotes, readNote, readOfficeNote, staffKeys, useNotes } from '@/api/staff'
 import type { Note } from '@/api/staff'
+import { alertKeys, useOwnerAlerts } from '@/api/alerts'
 import { useAction } from '@/lib/mutate'
 import { cn } from '@/lib/utils'
 
-const dot: Record<string, string> = { info: 'bg-primary', success: 'bg-success', warning: 'bg-warning', error: 'bg-danger' }
+// Staff notices say info/success/warning/error; the office's alerts say action, money, wrong or danger.
+const dot: Record<string, string> = {
+  info: 'bg-primary', success: 'bg-success', warning: 'bg-warning', error: 'bg-danger',
+  action: 'bg-warning', money: 'bg-success', wrong: 'bg-danger', danger: 'bg-danger',
+}
 const when = (at: string) => (at ? at.slice(5, 16).replace('-', '/') : '')
 
 /** A member of staff's notifications (leave decided, a document asked for, an increment due), or, for the Master's
@@ -22,13 +27,27 @@ function StaffBell() {
 }
 
 function OfficeBell() {
-  const q = useOfficeNotes()
-  const one = useAction((id: number) => readOfficeNote(id).then(() => ({})), { invalidate: [['alerts']], success: false })
-  const all = useAction(() => readAllOfficeNotes(), { invalidate: [['alerts']], success: false })
-  return <Bell_ q={q} one={(id) => one.mutate(id)} all={() => all.mutate()} />
+  const alerts = useOwnerAlerts(true)
+  const data = useMemo(
+    () =>
+      alerts.data && {
+        unread_count: alerts.data.unread,
+        notifications: alerts.data.alerts.map((a): Note => ({ id: a.id, title: a.title, message: a.body, type: a.severity, is_read: a.read, link: '', created_at: a.created_at })),
+      },
+    [alerts.data],
+  )
+  const one = useAction((id: number) => readOfficeNote(id).then(() => ({})), { invalidate: [alertKeys.all], success: false })
+  const all = useAction(() => readAllOfficeNotes(), { invalidate: [alertKeys.all], success: false })
+  return <Bell_ q={{ data: data || undefined, isPending: alerts.isPending, isError: alerts.isError }} one={(id) => one.mutate(id)} all={() => all.mutate()} />
 }
 
-function Bell_({ q, one, all }: { q: { data?: { unread_count: number; notifications: Note[] } }; one: (id: number) => void; all: () => void }) {
+interface BellQuery {
+  data?: { unread_count: number; notifications: Note[] }
+  isPending?: boolean
+  isError?: boolean
+}
+
+function Bell_({ q, one, all }: { q: BellQuery; one: (id: number) => void; all: () => void }) {
   const [open, setOpen] = useState(false)
   const box = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -51,7 +70,9 @@ function Bell_({ q, one, all }: { q: { data?: { unread_count: number; notificati
         <div role="dialog" aria-label="Notifications" className="absolute right-0 z-40 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-card shadow-md">
           <div className="flex items-center justify-between border-b border-border px-4 py-3"><h2 className="text-sm font-semibold">Notifications</h2>{unread > 0 && <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={all}>Mark all read</button>}</div>
           <ul className="max-h-80 overflow-y-auto">
-            {notes.length === 0 && <li className="p-6 text-center text-sm text-muted-foreground">Nothing yet</li>}
+            {notes.length === 0 && (
+              <li className="p-6 text-center text-sm text-muted-foreground">{q.isError ? 'Could not load the notifications. Try again in a moment.' : q.isPending ? 'Loading...' : 'Nothing yet'}</li>
+            )}
             {notes.map((n) => (
               <li key={n.id}>
                 <button type="button" onClick={() => !n.is_read && one(n.id)} className={cn('flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-accent', !n.is_read && 'bg-primary-soft/40')}>
