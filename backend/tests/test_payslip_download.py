@@ -1,4 +1,5 @@
-"""A payslip downloaded as PDF or Excel carries every column of the office's sheet."""
+"""A payslip downloaded as PDF or Excel carries every column of the office's sheet (these are payslips made without the
+salary structure; the structure's own are in test_salary_structure.py)."""
 import io
 
 from conftest import make_employee
@@ -15,7 +16,7 @@ def _payslip(tenant):
     emp = make_employee(tenant, job_title="Project Manager", salary=65000)
     res = tenant.post("/api/payslips", json={
         "employee_id": emp["id"], "period_start": "2026-09-01", "period_end": "2026-09-30", "pay_date": "2026-09-30",
-        "basic_salary": 60000, "allowances": 5000, "retirement": 3000})
+        "basic_salary": 60000, "allowances": 5000, "retirement": 3000, "use_structure": False})
     assert res.status_code == 200, res.text
     return res.json()["id"]
 
@@ -58,7 +59,7 @@ def _two_payslips(tenant):
     other = make_employee(tenant, job_title="Engineer", salary=40000)
     res = tenant.post("/api/payslips", json={
         "employee_id": other["id"], "period_start": "2026-09-01", "period_end": "2026-09-30", "pay_date": "2026-09-30",
-        "basic_salary": 40000, "allowances": 2000})
+        "basic_salary": 40000, "allowances": 2000, "use_structure": False})
     assert res.status_code == 200, res.text
     return ids + [res.json()["id"]]
 

@@ -89,14 +89,18 @@ async function resolveSession(): Promise<SessionUser | null> {
   return null
 }
 
+/** Rights a team member never gets, however much they otherwise can do. */
+const HR_AND_MASTER_ONLY = new Set(['payroll.manage'])
+
 export function useSession() {
   const q = useQuery({ queryKey: ['session'], queryFn: loadSession, staleTime: 5 * 60_000, retry: false })
   const user = q.data ?? null
 
-  /** "a|b" means either will do. The owner holds everything, including rights added later. */
+  /** "a|b" means either will do. The owner holds everything, including rights added later. The payroll right is the exception
+   *  for a team member the Master has invited: payroll is HR's and the Master's alone, whatever role they were given. */
   const can = (permission: string) => {
     if (!user) return false
-    if (user.type === 'owner') return true
+    if (user.type === 'owner') return user.teamRole === 'owner' || permission.split('|').some((p) => !HR_AND_MASTER_ONLY.has(p))
     return permission.split('|').some((p) => user.permissions.includes(p))
   }
 
@@ -107,6 +111,8 @@ export function useSession() {
     // Only an answer of "nobody" is signed out. No answer at all (no signal) is not.
     isAnonymous: q.isSuccess && !user,
     isOwner: user?.type === 'owner' && user.teamRole === 'owner',
+    /** The Master, or a staff login that holds HR's right: the people's ID numbers, their documents, payroll and the salary structure. */
+    isHrOrMaster: user?.type === 'owner' ? user.teamRole === 'owner' : !!user?.permissions.includes('people.manage'),
     /** HO QS or HO Coordinator. */
     isHeadOffice: !!user?.headOffice,
     // A failed refresh with a person already known (offline, or the server restarting) is not
