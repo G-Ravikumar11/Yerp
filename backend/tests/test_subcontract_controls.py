@@ -308,8 +308,8 @@ def test_the_order_head_is_checked(tenant, second_tenant):
     # nor left without one afterwards
     con = tenant.post("/api/wo/contractors", json={"company_name": "Kept On Ltd"}).json()
     made = tenant.post("/api/wo/orders", json={"contractor_id": con["id"], "subject": "Shuttering"}).json()["order"]
-    res = tenant.put("/api/wo/orders/%d" % made["id"], json={"contractor_id": None, "subject": "Shuttering"})
-    assert res.status_code == 400 and "sub contractor" in res.json()["detail"]
+    res = tenant.put("/api/wo/orders/%d" % made["id"], json={"contractor_id": None, "subject": "Shuttering, tower C"})
+    assert res.status_code == 200 and res.json()["order"]["contractor_id"] == con["id"]
 
 
 def test_an_amendment_says_why(tenant):

@@ -703,7 +703,9 @@ def wo_take_head(db, client, order, body, creating):
     company's own, every percentage is a percentage, the dates are dates and run forwards."""
     order.business_unit_id = owned_or_400(db, models.DBBusinessUnit, client.id, body.business_unit_id, "business unit")
     was_contractor = order.contractor_id
-    order.contractor_id = owned_or_400(db, models.DBContractor, client.id, body.contractor_id, "contractor")
+    # An order keeps its sub contractor: a save that leaves the field blank (or does not send it) changes the others.
+    chosen = body.contractor_id if (creating or body.contractor_id) else was_contractor
+    order.contractor_id = owned_or_400(db, models.DBContractor, client.id, chosen, "contractor")
     order.job_id = owned_or_400(db, models.DBJob, client.id, body.job_id, "project")
     order.work_type = (body.work_type or "").strip()
     order.subject = (body.subject or "").strip()
@@ -739,8 +741,6 @@ def wo_take_head(db, client, order, body, creating):
     order.payment_days = max(0, int(body.payment_days or 0))
     if creating and not order.contractor_id:
         raise HTTPException(400, "Choose the sub contractor this work order is for before opening it.")
-    if not creating and was_contractor and not order.contractor_id:
-        raise HTTPException(400, "A work order needs its sub contractor. Choose another one instead of leaving it blank.")
 
 
 @router.post("/api/wo/orders")
