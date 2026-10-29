@@ -236,14 +236,28 @@ def require_owner(request: Request, db: Session):
                             detail="Only the account Master can do that")
 
 
-def require_payroll_editor(request: Request, db: Session):
-    """Changing payroll: the Master, or a staff login with the payroll right, which only HR holds. A team member
-    the Master has invited, even an admin, may look but not change."""
+def require_hr_or_master(request: Request, db: Session, permission: str = "people.manage"):
+    """HR or the Master, for reading and changing alike: the Master's own sign-in, or a staff login holding the right
+    (which only HR can hold). A team member the Master has invited, even an admin, is neither."""
     if request.session.get("client_id"):
         client = get_client_user(request, db)
         require_owner(request, db)
         return client
-    return require_items_access(request, db, "payroll.manage")
+    return require_items_access(request, db, permission)
+
+
+def is_hr_or_master(request: Request, db: Session) -> bool:
+    """Whether whoever is calling is HR or the Master, asked rather than enforced."""
+    try:
+        require_hr_or_master(request, db)
+        return True
+    except HTTPException:
+        return False
+
+
+def require_payroll_editor(request: Request, db: Session):
+    """Payroll, to read or to change: the Master, or HR."""
+    return require_hr_or_master(request, db, "payroll.manage")
 
 
 def require_people_admin(request: Request, db: Session):

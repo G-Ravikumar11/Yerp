@@ -1,8 +1,8 @@
 """The payslip as the office sets it: employee details in two column pairs, earnings beside deductions, net pay in
 figures and in words. One layout feeds the PDF and the Excel download, so the two always carry the same columns.
 
-Every column of the sheet is here. A column the application holds nothing for (father's name, Aadhaar, UAN, HRA and
-the other allowance heads, professional tax) is left empty rather than filled in, for the office to complete.
+Every column of the sheet is here. A column the application holds nothing for (father's name, HRA and the other
+allowance heads, professional tax) is left empty rather than filled in, for the office to complete.
 """
 import io
 from datetime import datetime
@@ -53,25 +53,35 @@ def layout(p):
         ("Bank Name.", e.get("bank_name", ""), "Designation.", e.get("job_title", "")),
         ("Bank Acc.No.", e.get("bank_account", ""), "Total Days.", days.get("total") or ""),
         ("Father Name.", "", "LOP .", ""),
-        ("Salary Per Month.", _figure(p.get("gross_pay")), "Balance Leaves.", _blank_or(days.get("balance_leaves"))),
+        ("Salary Per Month.", _figure(p.get("monthly_salary") if p.get("lines") else p.get("gross_pay")), "Balance Leaves.", _blank_or(days.get("balance_leaves"))),
         ("DOJ.", joined_on(e.get("start_date")), "Work Days.", work),
-        ("Aadhar No.", "", "Effective Work days.", work),
-        ("UAN No", "", "ESI No", ""),
+        ("Aadhar No.", e.get("aadhaar_masked", ""), "Effective Work days.", work),
+        ("UAN No", e.get("uan_no", ""), "ESI No", e.get("esi_no", "")),
     ]
-    earnings = [
-        ("Basic", p.get("basic_salary")), ("HRA", None), ("Site Allowance", None), ("Special Allownace", None),
-        ("Mobile Allowance", None), ("Transport Allowance", None), ("Other Allowance", p.get("allowances")),
-    ]
+    own = p.get("lines") or []
+    if own:
+        # Made from the company's salary structure: its components, as they were when this payslip was made.
+        earnings = [(l["name"], l["amount"]) for l in own if l["kind"] == "earning"]
+    else:
+        earnings = [
+            ("Basic", p.get("basic_salary")), ("HRA", None), ("Site Allowance", None), ("Special Allownace", None),
+            ("Mobile Allowance", None), ("Transport Allowance", None), ("Other Allowance", p.get("allowances")),
+        ]
     # Pay the application records that the sheet has no column for stays on the slip, so the total still adds up.
     if p.get("overtime_pay"):
         hours = p.get("overtime_hours")
         earnings.append(("Overtime%s" % (" (%sh)" % _figure(hours) if hours else ""), p["overtime_pay"]))
     if p.get("bonus"):
         earnings.append(("Bonus", p["bonus"]))
-    deductions = [
-        ("PF", p.get("retirement")), ("ESI", p.get("insurance")), ("Prof Tax", None), ("Salary Advance", None),
-        ("TDS Deduction", p.get("tax_amount")), ("Loss Of Pay", None), ("Other Deductions", p.get("other_deductions")),
-    ]
+    if own:
+        deductions = [(l["name"], l["amount"]) for l in own if l["kind"] == "deduction"]
+        if p.get("tax_amount"):
+            deductions.append(("TDS Deduction", p["tax_amount"]))
+    else:
+        deductions = [
+            ("PF", p.get("retirement")), ("ESI", p.get("insurance")), ("Prof Tax", None), ("Salary Advance", None),
+            ("TDS Deduction", p.get("tax_amount")), ("Loss Of Pay", None), ("Other Deductions", p.get("other_deductions")),
+        ]
     if (p.get("standing_deduction") or 0) > 0:
         deductions.append(("Standing Deduction", p["standing_deduction"]))
     rows = max(len(earnings), len(deductions))
@@ -254,27 +264,64 @@ REGISTER_COLUMNS = LEADING_COLUMNS + INFO_COLUMNS + EARNING_COLUMNS + DEDUCTION_
 # The columns that are sums of money: written as numbers, and totalled at the foot (but not the salary, which is
 # the same figure as total earnings and would be counted twice).
 MONEY_COLUMNS = {"Salary Per Month."} | set(EARNING_COLUMNS) | set(DEDUCTION_COLUMNS) | {"Total Earnings", "Total Deductions", "Net Pay"}
+NOT_MONEY = set(LEADING_COLUMNS) | (set(INFO_COLUMNS) - {"Salary Per Month."}) | {"Status"}
 
 
-def register_row(p):
-    """One payslip as one row of the register, in REGISTER_COLUMNS order."""
+def register_columns(payloads):
+    """The register's columns. Payslips made without a salary structure have the office sheet's fixed columns; ones made
+    from it have the company's own components, so the columns are those of the payslips actually chosen."""
+    if not any(p.get("lines") for p in payloads):
+        return list(REGISTER_COLUMNS)
+    earn, ded = [], []
+
+    def add(into, name):
+        if name not in into:
+            into.append(name)
+
+    for p in payloads:
+        if p.get("lines"):
+            for line in p["lines"]:
+                add(earn if line["kind"] == "earning" else ded, line["name"])
+        else:
+            for name in EARNING_COLUMNS[:7]:
+                add(earn, name)
+            for name in DEDUCTION_COLUMNS[:7]:
+                add(ded, name)
+    for name in ("Overtime", "Bonus"):
+        add(earn, name)
+    for name in ("TDS Deduction", "Standing Deduction"):
+        add(ded, name)
+    return LEADING_COLUMNS + INFO_COLUMNS + earn + ded + TRAILING_COLUMNS
+
+
+def register_row(p, columns=None):
+    """One payslip as one row of the register, in the order of `columns`."""
+    columns = columns or REGISTER_COLUMNS
     lay = layout(p)
     cells = {}
     for l1, v1, l2, v2 in lay["info"]:
         cells[l1], cells[l2] = v1, v2
-    for label, value in lay["earnings"] + lay["deductions"]:
-        if label:
-            cells[label] = value
+    own = p.get("lines") or []
+    if own:
+        for line in own:
+            cells[line["name"]] = round(cells.get(line["name"], 0) + float(line["amount"] or 0), 2)
+        cells["TDS Deduction"] = p.get("tax_amount") or None
+        cells["Salary Per Month."] = p.get("monthly_salary")
+    else:
+        for label, value in lay["earnings"] + lay["deductions"]:
+            if label:
+                cells[label] = value
+        cells["Salary Per Month."] = p.get("gross_pay")
     cells["Overtime"], cells["Bonus"] = p.get("overtime_pay") or None, p.get("bonus") or None
     cells["Standing Deduction"] = p.get("standing_deduction") or None
     cells.update({"Payslip No.": p.get("number") or "", "Month": month_year(p.get("period_end") or p.get("period_start")),
                   "Pay Date": joined_on(p.get("pay_date")), "Status": p.get("status") or "",
                   "Total Earnings": p.get("gross_pay"), "Total Deductions": p.get("total_deductions"),
-                  "Net Pay": p.get("net_pay"), "Salary Per Month.": p.get("gross_pay")})
+                  "Net Pay": p.get("net_pay")})
     out = []
-    for column in REGISTER_COLUMNS:
+    for column in columns:
         value = cells.get(column)
-        if column in MONEY_COLUMNS:
+        if column not in NOT_MONEY:
             out.append(None if value in (None, "") else round(float(value), 2))
         else:
             out.append("" if value is None else value)
@@ -287,6 +334,8 @@ def register_workbook(payloads, company="", span=""):
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
 
+    columns = register_columns(payloads)
+    rows = [register_row(p, columns) for p in payloads]
     book = openpyxl.Workbook()
     sheet = book.active
     sheet.title = "Payroll register"
@@ -296,29 +345,28 @@ def register_workbook(payloads, company="", span=""):
     sheet.cell(row=1, column=1).font = Font(bold=True, size=13)
     sheet.append([])
     header_row = sheet.max_row + 1
-    sheet.append(REGISTER_COLUMNS)
+    sheet.append(columns)
     grey = PatternFill("solid", fgColor="C0C0C0")
     for cell in sheet[header_row]:
         cell.font = Font(bold=True)
         cell.fill = grey
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    rows = [register_row(p) for p in payloads]
     for row in rows:
         sheet.append(row)
-    totals = [""] * len(REGISTER_COLUMNS)
+    totals = [""] * len(columns)
     totals[0] = "Total"
-    for i, column in enumerate(REGISTER_COLUMNS):
-        if column in MONEY_COLUMNS and column != "Salary Per Month.":
+    for i, column in enumerate(columns):
+        if column not in NOT_MONEY and column != "Salary Per Month.":
             totals[i] = round(sum(r[i] or 0 for r in rows), 2)
     sheet.append(totals)
     for cell in sheet[sheet.max_row]:
         cell.font = Font(bold=True)
-    for i, column in enumerate(REGISTER_COLUMNS, start=1):
+    for i, column in enumerate(columns, start=1):
         sheet.column_dimensions[get_column_letter(i)].width = max(12, min(30, len(column) + 4))
-        if column in MONEY_COLUMNS:
+        if column not in NOT_MONEY:
             for r in range(header_row + 1, sheet.max_row + 1):
                 sheet.cell(row=r, column=i).number_format = "#,##0.##"
-    sheet.column_dimensions[get_column_letter(REGISTER_COLUMNS.index("Name.") + 1)].width = 24
+    sheet.column_dimensions[get_column_letter(columns.index("Name.") + 1)].width = 24
     # The payslip number, month, pay date and employee number stay in view while the rest scrolls.
     sheet.freeze_panes = sheet.cell(row=header_row + 1, column=5)
     out = io.BytesIO()

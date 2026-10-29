@@ -15,7 +15,7 @@ from app.constants.common import ALLOW_SELF_REGISTRATION, GOOGLE_SIGNIN_SCOPES
 from app.core.audit import log_audit, log_login
 from app.core import app_limits
 from app.core.auth import current_role, end_every_session, get_client_user, set_session_lifetime
-from app.core.config import logger
+from app.core.config import LOGIN_PER_MINUTE, logger
 from app.core.notifications import default_from_email, send_email_background
 from app.core.oauth import oauth
 from app.core.security import (
@@ -99,7 +99,7 @@ def client_register(body: ClientRegister, request: Request, db: Session = Depend
 @router.post("/api/client/login")
 def client_login(body: ClientLogin, request: Request, db: Session = Depends(get_db)):
     ip = request.client.host if request.client else "unknown"
-    if rate_limiter.is_rate_limited(f"login:{ip}", max_requests=10, window=60):
+    if rate_limiter.is_rate_limited(f"login:{ip}", max_requests=LOGIN_PER_MINUTE, window=60):
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
     # Emails are not case-sensitive and a stray space from a paste or autofill is not part of one.
     email = (body.email or "").strip().lower()

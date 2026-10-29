@@ -51,6 +51,11 @@ class EmployeeCreate(BaseModel):
     emergency_contact: Optional[str] = ""
     emergency_phone: Optional[str] = ""
     gender: Optional[str] = ""
+    # Optional statutory numbers, which the employee may also give in their own portal.
+    aadhaar_no: Optional[str] = ""
+    pan_no: Optional[str] = ""
+    uan_no: Optional[str] = ""
+    esi_no: Optional[str] = ""
     start_date: Optional[str] = ""
     employee_id: Optional[str] = ""
     password: Optional[str] = ""

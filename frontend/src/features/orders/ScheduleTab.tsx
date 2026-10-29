@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { FileUp, Landmark, Layers, ListTree } from 'lucide-react'
+import { FileUp, Landmark, Layers, ListTree, Sigma } from 'lucide-react'
 import { DataGrid, type Column } from '@/components/grid'
 import { Badge, Button, ConfirmDialog, Select } from '@/components/ui'
 import { chargeBudget, importSchedule, orderKeys, type Order, type OrderItem, type Vocabulary } from '@/api/orders'
@@ -23,9 +23,11 @@ export interface LineRow {
   is_header: boolean
   /** The line of the project BOQ it came from. */
   boq_key: string
+  /** A line for a whole heading: the BOQ lines it adds up. */
+  boq_parts: { key: string; qty: number }[]
 }
 
-const blankLine = (): LineRow => ({ activity_no: '', item_code: '', item_description: '', technical_spec: '', uom: '', quantity: null, unit_rate: null, tolerance_percent: null, budget_id: '', is_header: false, boq_key: '' })
+const blankLine = (): LineRow => ({ activity_no: '', item_code: '', item_description: '', technical_spec: '', uom: '', quantity: null, unit_rate: null, tolerance_percent: null, budget_id: '', is_header: false, boq_key: '', boq_parts: [] })
 
 export const linesFrom = (o: Order): LineRow[] =>
   (o.items ?? []).map((i) => ({
@@ -40,6 +42,7 @@ export const linesFrom = (o: Order): LineRow[] =>
     budget_id: i.budget_id ? String(i.budget_id) : '',
     is_header: i.is_header,
     boq_key: i.boq_key ?? '',
+    boq_parts: i.boq_parts ?? [],
   }))
 
 /** What the server takes: every line with a description, numbers filled in, the cost centre as an id. */
@@ -58,6 +61,7 @@ export const toPayload = (rows: LineRow[]): Partial<OrderItem>[] =>
       budget_id: r.is_header || !r.budget_id ? null : Number(r.budget_id),
       is_header: r.is_header,
       boq_key: r.boq_key || '',
+      boq_parts: r.boq_parts ?? [],
     }))
 
 const amount = (r: LineRow) => (r.is_header || !r.quantity || !r.unit_rate ? null : Math.round(r.quantity * r.unit_rate * 100) / 100)
@@ -97,7 +101,8 @@ export function ScheduleTab({
   const [chargeTo, setChargeTo] = useState('')
   const [pending, setPending] = useState<File | null>(null)
   const [picking, setPicking] = useState(startPicking)
-  const offBoq = rows.filter((r) => !r.is_header && r.item_description.trim() && !r.boq_key).length
+  const [byHeading, setByHeading] = useState(false)
+  const offBoq = rows.filter((r) => !r.is_header && r.item_description.trim() && !r.boq_key && !r.boq_parts?.length).length
 
   const columns = useMemo<Column<LineRow>[]>(
     () => [
@@ -159,7 +164,7 @@ export function ScheduleTab({
         hint: 'Against the project BOQ?',
         width: 110,
         readOnly: true,
-        get: (r) => (r.is_header || !r.item_description.trim() ? '' : r.boq_key ? 'In BOQ' : 'Not in BOQ'),
+        get: (r) => (r.is_header || !r.item_description.trim() ? '' : r.boq_parts?.length ? `${r.boq_parts.length} BOQ lines` : r.boq_key ? 'In BOQ' : 'Not in BOQ'),
       },
     ],
     [vocab, budgets],
@@ -210,9 +215,14 @@ export function ScheduleTab({
               }}
             />
             {order.job_id ? (
-              <Button size="sm" onClick={() => setPicking(true)}>
-                <ListTree /> Add from the project BOQ
-              </Button>
+              <>
+                <Button size="sm" onClick={() => { setByHeading(false); setPicking(true) }}>
+                  <ListTree /> Add from the project BOQ
+                </Button>
+                <Button size="sm" variant="outline" title="Each heading of the BOQ as one line: its quantities added up, at one rate" onClick={() => { setByHeading(true); setPicking(true) }}>
+                  <Sigma /> Add BOQ headings (cumulative)
+                </Button>
+              </>
             ) : (
               <span className="text-[13px] text-muted-foreground">Choose and save the project, then build this order from its BOQ.</span>
             )}
@@ -284,6 +294,7 @@ export function ScheduleTab({
         orderId={order.id}
         jobId={order.job_id ?? 0}
         open={picking}
+        startMode={byHeading ? 'headings' : 'lines'}
         onOpenChange={(o) => { setPicking(o); if (!o) onPicked?.() }}
         onAdd={(added) => onRows([...rows.filter((r) => r.item_description.trim()), ...added.map((l) => ({ ...blankLine(), ...l }) as LineRow)])}
       />

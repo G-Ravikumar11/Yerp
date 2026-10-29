@@ -175,8 +175,12 @@ export function importBoq(id: number, file: File) {
   form.append('file', file)
   return api<BoqImport>(`/api/boqs/${id}/import`, { method: 'POST', body: form })
 }
-export const pullBoqLines = (orderId: number, lines: { key: string; quantity: number; rate: number }[]) =>
-  post<{ lines: Record<string, unknown>[]; warnings: string[] }>(`/api/wo/orders/${orderId}/boq-lines`, { lines })
+/** `lines` are BOQ lines taken one by one; `groups` are headings taken as one line each (their quantities added up at one rate). */
+export const pullBoqLines = (
+  orderId: number,
+  lines: { key: string; quantity: number; rate: number }[],
+  groups: { description: string; group_code: string; rate: number; parts: { key: string; quantity: number }[] }[] = [],
+) => post<{ lines: Record<string, unknown>[]; warnings: string[] }>(`/api/wo/orders/${orderId}/boq-lines`, { lines, groups })
 
 /* --- Variations to the BOQ -------------------------------------------------------------------- */
 

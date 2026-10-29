@@ -239,6 +239,7 @@ export interface Profile {
   aadhaar_no: string
   pan_no: string
   uan_no: string
+  esi_no: string
   /** Still being onboarded: the emergency contact is then what stands between them and being active. */
   onboarding: boolean
   employee_id_code: string
@@ -248,12 +249,12 @@ export interface Profile {
 }
 export const useProfile = () => useQuery({ queryKey: k('profile'), queryFn: () => get<Profile>('/api/employee/profile') })
 
-export interface MyDetails { emergency_contact: string; emergency_phone: string; gender: string; aadhaar_no: string; pan_no: string; uan_no: string }
+export interface MyDetails { emergency_contact: string; emergency_phone: string; gender: string; aadhaar_no: string; pan_no: string; uan_no: string; esi_no: string }
 /** The employee saves their own emergency contact, gender, Aadhaar, PAN and UAN. The server knows who they are from the session. */
 export const saveMyDetails = (b: Partial<MyDetails>) => put<{ message?: string; emergency_complete: boolean }>('/api/employee/profile/details', b)
 
 export interface Note { id: number; title: string; message: string; type: string; is_read: boolean; link: string; created_at: string }
-export const useNotes = () => useQuery({ queryKey: k('notes'), queryFn: () => get<{ notifications: Note[]; unread_count: number }>('/api/employee/notifications'), refetchInterval: 60_000 })
+export const useNotes = () => useQuery({ queryKey: k('notes'), queryFn: () => get<{ notifications: Note[]; unread_count: number }>('/api/employee/notifications'), refetchInterval: 60_000, refetchOnWindowFocus: true })
 export const readNote = (id: number) => api(`/api/employee/notifications/${id}/read`, { method: 'PATCH', body: {} })
 export const readAllNotes = () => post<{ message?: string }>('/api/employee/notifications/read-all')
 

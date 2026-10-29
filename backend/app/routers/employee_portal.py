@@ -17,7 +17,7 @@ from app.constants.projects import JOB_CLOSED_STATUSES
 from app.core.audit import log_audit
 from app.core import app_limits
 from app.core.auth import end_every_session, get_client_user, require_items_access, set_session_lifetime, get_employee_user, require_employee_permission
-from app.core.config import logger
+from app.core.config import LOGIN_PER_MINUTE, logger
 from app.core.dates import _parse_date
 from app.core.files import ALLOWED_DOCUMENT_EXTENSIONS, MAX_DOCUMENT_BYTES
 from app.core.notifications import default_from_email, notify_employee, send_email_background
@@ -62,7 +62,7 @@ from app.services.procurement import (
 )
 from app.services.projects import job_label_for
 from app.validators.common import validate_candidate_document
-from app.validators.hr import clean_aadhaar, clean_emergency, clean_gender, clean_pan, clean_uan
+from app.validators.hr import clean_aadhaar, clean_emergency, clean_esi, clean_gender, clean_pan, clean_uan
 
 
 router = APIRouter()
@@ -126,7 +126,7 @@ def _owner_or_member(db, email):
 @router.post("/api/employee/auth/login")
 def employee_login(request: Request, body: dict = None, db: Session = Depends(get_db)):
     ip = request.client.host if request.client else "unknown"
-    if rate_limiter.is_rate_limited(f"emp_login:{ip}", max_requests=10, window=60):
+    if rate_limiter.is_rate_limited(f"emp_login:{ip}", max_requests=LOGIN_PER_MINUTE, window=60):
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
     if not body or not body.get("email") or not body.get("password"):
         raise HTTPException(status_code=400, detail="Email and password required")
@@ -1152,6 +1152,7 @@ def get_employee_profile(request: Request, db: Session = Depends(get_read_db)):
         "emergency_complete": bool((emp.emergency_contact or "").strip() and (emp.emergency_phone or "").strip()),
         # Their own details, which only they enter. Optional apart from the emergency contact.
         "gender": emp.gender or "", "aadhaar_no": emp.aadhaar_no or "", "pan_no": emp.pan_no or "", "uan_no": emp.uan_no or "",
+        "esi_no": emp.esi_no or "",
         "onboarding": emp.status == "onboarding",
         "employee_id_code": emp.employee_id,
         "goals_count": len(goals),
@@ -1177,7 +1178,7 @@ def update_my_details(request: Request, body: dict = None, db: Session = Depends
         emp.emergency_contact, emp.emergency_phone = name, phone
         changed.append("emergency contact")
     for key, clean, label in (("gender", clean_gender, "gender"), ("aadhaar_no", clean_aadhaar, "Aadhaar number"),
-                              ("pan_no", clean_pan, "PAN"), ("uan_no", clean_uan, "UAN")):
+                              ("pan_no", clean_pan, "PAN"), ("uan_no", clean_uan, "UAN"), ("esi_no", clean_esi, "ESI number")):
         if key in body:
             setattr(emp, key, clean(body[key]))
             changed.append(label)

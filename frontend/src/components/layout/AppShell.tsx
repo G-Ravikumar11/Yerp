@@ -12,6 +12,7 @@ import { ErrorPage } from '@/components/errors/ErrorPage'
 import { useErrorPage } from '@/stores/errorPage'
 import { Sidebar, SIDEBAR_COLLAPSED, SIDEBAR_WIDTH } from './Sidebar'
 import { Topbar } from './Topbar'
+import { NotificationPopups } from './NotificationPopups'
 import { appUrl } from '@/lib/paths'
 import { ApiError } from '@/lib/api'
 
@@ -71,6 +72,7 @@ export function AppShell() {
         className="max-lg:!pl-0"
       >
         <Topbar />
+        <NotificationPopups />
         <main id="main" className="mx-auto w-full min-w-0 max-w-[1600px] overflow-x-clip px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
           <div key={pathname}>
             {!isLoading && !isAnonymous && !pathname.startsWith('/settings') && <CompanyNotice />}
