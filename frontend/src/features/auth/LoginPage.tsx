@@ -91,9 +91,9 @@ export default function LoginPage() {
       }
       // The check, once the server has asked for it, goes with both doors: one solved check covers one sign-in.
       const extra = check ?? {}
-      const owner = await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, ...extra }, quiet: true }).catch(none)
+      const owner = await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, channel: native ? 'app' : 'web', ...extra }, quiet: true }).catch(none)
       if (owner) return go(owner.is_onboarded === false ? nextTarget(appUrl('onboard')) : nextTarget(appUrl()))
-      const staff = await api('/api/employee/auth/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, device_info: navigator.userAgent.slice(0, 200), ...extra }, quiet: true }).catch(none)
+      const staff = await api('/api/employee/auth/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, channel: native ? 'app' : 'web', device_info: navigator.userAgent.slice(0, 200), ...extra }, quiet: true }).catch(none)
       if (staff) return go(nextTarget(appUrl()))
       const refusal = other as ApiError | null
       // Too many wrong tries from here, or against this account: from now on every try needs the check.
