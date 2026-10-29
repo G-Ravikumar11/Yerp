@@ -253,7 +253,7 @@ export interface MyDetails { emergency_contact: string; emergency_phone: string;
 export const saveMyDetails = (b: Partial<MyDetails>) => put<{ message?: string; emergency_complete: boolean }>('/api/employee/profile/details', b)
 
 export interface Note { id: number; title: string; message: string; type: string; is_read: boolean; link: string; created_at: string }
-export const useNotes = () => useQuery({ queryKey: k('notes'), queryFn: () => get<{ notifications: Note[]; unread_count: number }>('/api/employee/notifications'), refetchInterval: 60_000 })
+export const useNotes = () => useQuery({ queryKey: k('notes'), queryFn: () => get<{ notifications: Note[]; unread_count: number }>('/api/employee/notifications'), refetchInterval: 60_000, refetchOnWindowFocus: true })
 export const readNote = (id: number) => api(`/api/employee/notifications/${id}/read`, { method: 'PATCH', body: {} })
 export const readAllNotes = () => post<{ message?: string }>('/api/employee/notifications/read-all')
 
