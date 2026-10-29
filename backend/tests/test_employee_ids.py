@@ -34,7 +34,7 @@ def test_the_payslip_carries_the_numbers(tenant):
     import openpyxl
     emp = make_employee(tenant, uan_no=UAN, aadhaar_no=AADHAAR, esi_no=ESI)
     pid = tenant.post("/api/payslips", json={"employee_id": emp["id"], "period_start": "2026-09-01", "period_end": "2026-09-30",
-                                             "pay_date": "2026-09-30", "basic_salary": 1000}).json()["id"]
+                                             "pay_date": "2026-09-30", "basic_salary": 1000, "use_structure": False}).json()["id"]
     sheet = openpyxl.load_workbook(io.BytesIO(tenant.get("/api/payslips/%d/xlsx" % pid).content)).active
     cells = [str(c.value) for row in sheet.iter_rows() for c in row if c.value not in (None, "")]
     assert UAN in cells and ESI in cells and "XXXX XXXX 4479" in cells

@@ -12,15 +12,18 @@ from app.core.dates import _parse_date
 from app.core.scheduler import scheduled_job
 from app.services.employee_portal import attendance_settings_for, leave_balance_for, working_days_between
 from app.services.hr import resolve_basic_pay
+from app.services.salary_structure import attach_lines, line_totals, structure_lines
 from app.services.holidays import custom_holidays
 from app.services.wallet_ai import require_credit
 
 
-def compute_payslip_figures(emp, data):
+def compute_payslip_figures(emp, data, lines=None):
     """Single source of truth for payslip arithmetic, used by create, update and
     the bulk payroll run so the three can never drift apart.
 
-    `data` is a dict of the editable inputs.
+    `data` is a dict of the editable inputs. When the payslip has `lines` from the salary structure, they decide the
+    basic pay, the allowances, the PF, the insurance and the other deductions; hours, overtime, bonus and tax still
+    come from `data`.
     """
     hours = float(data.get("hours_worked") or 0)
     ot_hours = float(data.get("overtime_hours") or 0)
@@ -29,10 +32,18 @@ def compute_payslip_figures(emp, data):
         # Fall back to a 1.5x rate derived from the employee's own pay.
         ot_rate = emp.hourly_rate or (round((emp.salary or 0) / 160 * 1.5, 2) if emp.salary else 0)
 
-    basic = resolve_basic_pay(emp, data.get("basic_salary"), hours)
+    if lines is not None:
+        totals = line_totals(lines)
+        basic, allowances = totals["basic_salary"], totals["allowances"]
+        insurance, retirement, other = totals["insurance"], totals["retirement"], totals["other_deductions"]
+    else:
+        basic = resolve_basic_pay(emp, data.get("basic_salary"), hours)
+        allowances = money(data.get("allowances") or 0)
+        insurance = money(data.get("insurance") or 0)
+        retirement = money(data.get("retirement") or 0)
+        other = money(data.get("other_deductions") or 0)
     ot_pay = money(ot_hours * ot_rate) if ot_hours > 0 else 0.0
     bonus = money(data.get("bonus") or 0)
-    allowances = money(data.get("allowances") or 0)
     gross = money(basic + ot_pay + bonus + allowances)
 
     tax = data.get("tax_amount")
@@ -41,9 +52,6 @@ def compute_payslip_figures(emp, data):
     else:
         tax = money(tax)
 
-    insurance = money(data.get("insurance") or 0)
-    retirement = money(data.get("retirement") or 0)
-    other = money(data.get("other_deductions") or 0)
     standing = money(emp.deductions or 0)
     total_deductions = money(tax + insurance + retirement + other + standing)
     net = money(gross - total_deductions)
@@ -150,15 +158,18 @@ def generate_payroll(db, client_id, period_start, period_end, pay_date, employee
             ).all()
         ), 2)
 
+        lines = structure_lines(db, client_id, emp)
         figures = compute_payslip_figures(emp, {
             "hours_worked": hours, "overtime_hours": ot_hours,
             "bonus": emp.bonus or 0, "allowances": emp.allowances or 0,
-        })
+        }, lines)
         ps = models.DBPayslip(
             client_id=client_id, employee_id=emp.id, number=f"PS-{seq:04d}",
             period_start=period_start, period_end=period_end, pay_date=pay_date,
             status="Draft", pay_frequency=emp.pay_frequency or "", **figures,
         )
+        if lines is not None:
+            attach_lines(ps, emp, lines)
         seq += 1
         db.add(ps)
         total_net += figures["net_pay"]

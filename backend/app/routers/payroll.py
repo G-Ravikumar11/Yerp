@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import Response
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app import models
 from app.db import get_db, get_read_db
@@ -13,7 +13,7 @@ from app.db import get_db, get_read_db
 from app.constants.common import PAYROLL_EXCLUDED_STATUSES, PAYSLIP_META_FIELDS, PAYSLIP_PAY_INPUTS
 from app.core.audit import log_audit
 from app.core.queries import by_id, prime
-from app.core.auth import require_items_access, require_payroll_editor, require_people_admin
+from app.core.auth import require_payroll_editor, require_people_admin
 from app.core.currency import esc, money
 from app.core.dates import _parse_date
 from app.core.notifications import default_from_email, send_email_background
@@ -24,6 +24,8 @@ from app.services.hr import ytd_totals
 from app.schemas.invoicing import SendInvoiceEmail
 from app.schemas.payroll import PayrollRunRequest, PayslipCreate
 from app.services.email import TRACKING_PIXEL
+from app.services.salary_structure import (BASES, COUNTS_AS, KINDS, attach_lines, components, default_counts_as, ensure_structure,
+                                           structure_lines)
 from app.services.payroll import compute_payslip_figures, find_overlapping_payslip, auto_payroll_enabled, generate_payroll, pay_period_days, set_auto_payroll
 from app.services.wallet_ai import require_credit
 from app.validators.common import validate_email_address
@@ -36,7 +38,7 @@ REGISTER_LIMIT = 500          # payslips in one register download
 
 @router.get("/api/payslips")
 def get_payslips(request: Request, status: str = "", db: Session = Depends(get_read_db)):
-    client = require_items_access(request, db, "payroll.manage")
+    client = require_payroll_editor(request, db)
     query = db.query(models.DBPayslip).filter(models.DBPayslip.client_id == client.id)
     if status:
         query = query.filter(models.DBPayslip.status == status)
@@ -78,7 +80,8 @@ def create_payslip(request: Request, body: PayslipCreate, allow_overlap: bool = 
             )
 
     ps_number = next_sequence_number(db, models.DBPayslip, client.id, "PS-")
-    figures = compute_payslip_figures(emp, body.model_dump())
+    lines = structure_lines(db, client.id, emp) if body.use_structure is not False else None
+    figures = compute_payslip_figures(emp, body.model_dump(), lines)
 
     ps = models.DBPayslip(
         client_id=client.id, employee_id=body.employee_id, number=ps_number,
@@ -86,6 +89,8 @@ def create_payslip(request: Request, body: PayslipCreate, allow_overlap: bool = 
         status="Draft", notes=body.notes, pay_frequency=emp.pay_frequency or "",
         **figures,
     )
+    if lines is not None:
+        attach_lines(ps, emp, lines)
     db.add(ps)
     log_audit(db, client.id, "payslip_created", "payslip", None, ps_number,
               f"{emp.first_name} {emp.last_name}: net {figures['net_pay']:.2f}", request)
@@ -129,7 +134,7 @@ def run_payroll(request: Request, body: PayrollRunRequest, db: Session = Depends
 @router.get("/api/payroll/auto")
 def get_auto_payroll(request: Request, db: Session = Depends(get_read_db)):
     """Whether payslips are drafted by themselves when a month ends."""
-    client = require_items_access(request, db, "payroll.manage")
+    client = require_payroll_editor(request, db)
     return {"enabled": auto_payroll_enabled(db, client.id)}
 
 
@@ -146,11 +151,106 @@ def put_auto_payroll(request: Request, body: dict = None, db: Session = Depends(
     return {"enabled": enabled, "message": "Automatic payroll is " + ("on" if enabled else "off")}
 
 
+def _component_out(c):
+    return {"id": c.id, "name": c.name, "kind": c.kind, "basis": c.basis, "percent": c.percent or 0.0,
+            "counts_as": c.counts_as or default_counts_as(c.kind), "is_active": bool(c.is_active), "sort_order": c.sort_order}
+
+
+def _component_values(body, current=None):
+    """The fields of one component, checked. `current` is what it already is, for an edit that names only some of them."""
+    cur = current or {}
+    name = (body.get("name", cur.get("name")) or "").strip()
+    kind = body.get("kind", cur.get("kind", "earning"))
+    basis = body.get("basis", cur.get("basis", "percent"))
+    if not name or len(name) > 60:
+        raise HTTPException(status_code=400, detail="Give the component a name of up to 60 characters.")
+    if kind not in KINDS:
+        raise HTTPException(status_code=400, detail="A component is an earning or a deduction.")
+    if basis not in BASES:
+        raise HTTPException(status_code=400, detail="A component is a percentage of the monthly salary, or typed by hand on each payslip.")
+    try:
+        percent = float(body.get("percent", cur.get("percent", 0)) or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="The percentage must be a number.")
+    if basis == "percent" and not 0 <= percent <= 100:
+        raise HTTPException(status_code=400, detail="The percentage must be between 0 and 100.")
+    counts_as = body.get("counts_as", cur.get("counts_as")) or default_counts_as(kind)
+    if counts_as not in COUNTS_AS[kind]:
+        counts_as = default_counts_as(kind)
+    return {"name": name, "kind": kind, "basis": basis, "percent": percent if basis == "percent" else 0.0,
+            "counts_as": counts_as, "is_active": bool(body.get("is_active", cur.get("is_active", True)))}
+
+
+@router.get("/api/salary-structure")
+def get_salary_structure(request: Request, db: Session = Depends(get_db)):
+    """What a month's pay is made of. Given its starting list the first time it is asked for."""
+    client = require_payroll_editor(request, db)
+    ensure_structure(db, client.id)
+    db.commit()
+    return {"base": "the employee's monthly salary", "components": [_component_out(c) for c in components(db, client.id)]}
+
+
+@router.post("/api/salary-structure")
+def add_salary_component(request: Request, body: dict = None, db: Session = Depends(get_db)):
+    client = require_payroll_editor(request, db)
+    ensure_structure(db, client.id)
+    values = _component_values(body or {})
+    last = max([c.sort_order or 0 for c in components(db, client.id)] or [0])
+    row = models.DBPayComponent(client_id=client.id, sort_order=last + 1, **values)
+    db.add(row)
+    log_audit(db, client.id, "salary_component_added", "salary_structure", None, row.name, "", request)
+    db.commit()
+    return {"message": "%s added" % row.name, "component": _component_out(row)}
+
+
+@router.post("/api/salary-structure/reorder")
+def reorder_salary_structure(request: Request, body: dict = None, db: Session = Depends(get_db)):
+    client = require_payroll_editor(request, db)
+    rows = {c.id: c for c in components(db, client.id)}
+    ids = [i for i in (body or {}).get("ids", []) if i in rows]
+    if len(ids) != len(rows):
+        raise HTTPException(status_code=400, detail="Send every component once, in the order wanted.")
+    for order, i in enumerate(ids, start=1):
+        rows[i].sort_order = order
+    db.commit()
+    return {"message": "Order saved"}
+
+
+@router.put("/api/salary-structure/{component_id}")
+def update_salary_component(component_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    client = require_payroll_editor(request, db)
+    row = db.query(models.DBPayComponent).filter(models.DBPayComponent.id == component_id,
+                                                 models.DBPayComponent.client_id == client.id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Component not found")
+    values = _component_values(body or {}, _component_out(row))
+    for key, val in values.items():
+        setattr(row, key, val)
+    log_audit(db, client.id, "salary_component_changed", "salary_structure", row.id, row.name,
+              "%s %s%%" % (row.basis, row.percent), request)
+    db.commit()
+    return {"message": "%s saved" % row.name, "component": _component_out(row)}
+
+
+@router.delete("/api/salary-structure/{component_id}")
+def delete_salary_component(component_id: int, request: Request, db: Session = Depends(get_db)):
+    """Payslips already made keep their own lines, so removing a component changes only the ones made from now on."""
+    client = require_payroll_editor(request, db)
+    row = db.query(models.DBPayComponent).filter(models.DBPayComponent.id == component_id,
+                                                 models.DBPayComponent.client_id == client.id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Component not found")
+    log_audit(db, client.id, "salary_component_removed", "salary_structure", row.id, row.name, "", request)
+    db.delete(row)
+    db.commit()
+    return {"message": "%s removed" % row.name}
+
+
 @router.get("/api/payslips/register.xlsx")
 def download_payroll_register(request: Request, ids: str = "", db: Session = Depends(get_read_db)):
     """Many payslips in one Excel sheet, a row each, with every column. `ids` is the payslips to include, comma
     separated; none given means every payslip. Declared ahead of the payslip routes so it is not read as an id."""
-    client = require_items_access(request, db, "payroll.manage")
+    client = require_payroll_editor(request, db)
     query = db.query(models.DBPayslip).filter(models.DBPayslip.client_id == client.id)
     if ids.strip():
         try:
@@ -158,7 +258,8 @@ def download_payroll_register(request: Request, ids: str = "", db: Session = Dep
         except ValueError:
             raise HTTPException(status_code=400, detail="ids must be payslip ids separated by commas")
         query = query.filter(models.DBPayslip.id.in_(wanted))
-    slips = query.order_by(models.DBPayslip.period_end, models.DBPayslip.number).limit(REGISTER_LIMIT + 1).all()
+    slips = query.options(selectinload(models.DBPayslip.lines)).order_by(
+        models.DBPayslip.period_end, models.DBPayslip.number).limit(REGISTER_LIMIT + 1).all()
     if not slips:
         raise HTTPException(status_code=404, detail="No payslips to put in the register")
     if len(slips) > REGISTER_LIMIT:
@@ -184,7 +285,7 @@ def _payslip_or_404(db, client, ps_id):
 
 @router.get("/api/payslips/{ps_id}")
 def get_payslip(ps_id: int, request: Request, db: Session = Depends(get_read_db)):
-    client = require_items_access(request, db, "payroll.manage")
+    client = require_payroll_editor(request, db)
     return payslip_payload(db, client, _payslip_or_404(db, client, ps_id))
 
 
@@ -197,7 +298,7 @@ def _download(content, media_type, number, ext):
 @router.get("/api/payslips/{ps_id}/pdf")
 def download_payslip_pdf(ps_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The payslip as a PDF, with every column of the sheet."""
-    client = require_items_access(request, db, "payroll.manage")
+    client = require_payroll_editor(request, db)
     if not payslip_sheet.form_pdf.PDF_AVAILABLE:
         raise HTTPException(503, "The PDF library is not installed on this server; the Excel file is still available.")
     p = payslip_payload(db, client, _payslip_or_404(db, client, ps_id))
@@ -207,7 +308,7 @@ def download_payslip_pdf(ps_id: int, request: Request, db: Session = Depends(get
 @router.get("/api/payslips/{ps_id}/xlsx")
 def download_payslip_xlsx(ps_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The payslip as an Excel workbook, with every column of the sheet."""
-    client = require_items_access(request, db, "payroll.manage")
+    client = require_payroll_editor(request, db)
     p = payslip_payload(db, client, _payslip_or_404(db, client, ps_id))
     return _download(payslip_sheet.workbook(p), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", p["number"], "xlsx")
 
@@ -256,6 +357,10 @@ def payslip_payload(db, client, ps, light=False, row=None):
             (ps.total_deductions or 0) - (ps.tax_amount or 0) - (ps.insurance or 0)
             - (ps.retirement or 0) - (ps.other_deductions or 0)),
         "net_pay": ps.net_pay, "status": ps.status, "sent": ps.sent, "notes": ps.notes,
+        # The pay as the company's salary structure made it, line by line; empty for a payslip made without one.
+        "monthly_salary": (emp.salary or 0) if emp else 0,
+        "lines": [{"id": l.id, "name": l.name, "kind": l.kind, "basis": l.basis, "percent": l.percent,
+                   "counts_as": l.counts_as, "amount": l.amount} for l in ps.lines],
         "company": {
             "name": settings_map.get("company_name", "") or (client.company_name or ""),
             "address": settings_map.get("company_address", "") or (client.address or ""),
@@ -289,12 +394,33 @@ def update_payslip(ps_id: int, request: Request, body: dict = None, db: Session 
         if key in body and body[key] is not None:
             setattr(ps, key, body[key])
 
+    if body.get("reapply_structure"):
+        fresh = structure_lines(db, client.id, emp)
+        if fresh is None:
+            raise HTTPException(status_code=400, detail="The salary structure does not apply to this employee: it needs a monthly salary.")
+        attach_lines(ps, emp, fresh)
+    lines = list(ps.lines) or None
+    if lines and body.get("lines") and not body.get("reapply_structure"):
+        by_id = {line.id: line for line in lines}
+        for item in body["lines"]:
+            try:
+                line, amount = by_id[int(item.get("id"))], float(item.get("amount"))
+            except (KeyError, TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="Each line needs the id of one of this payslip's lines and an amount.")
+            if amount < 0:
+                raise HTTPException(status_code=400, detail="%s cannot be a negative amount." % line.name)
+            line.amount = money(amount)
+
     inputs = {key: getattr(ps, key) for key in PAYSLIP_PAY_INPUTS}
     for key in PAYSLIP_PAY_INPUTS:
         if key in body and body[key] is not None:
             inputs[key] = body[key]
+    if lines:
+        # The lines own the basic pay, allowances, PF, insurance and other deductions. The tax follows the new gross
+        # unless it was given.
+        inputs["tax_amount"] = body.get("tax_amount")
 
-    for key, val in compute_payslip_figures(emp, inputs).items():
+    for key, val in compute_payslip_figures(emp, inputs, lines).items():
         setattr(ps, key, val)
 
     log_audit(db, client.id, "payslip_updated", "payslip", ps.id, ps.number, f"Net: {ps.net_pay:.2f}", request)

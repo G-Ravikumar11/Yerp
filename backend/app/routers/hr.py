@@ -16,7 +16,7 @@ from app.db import get_db, get_read_db
 
 from app.constants.hr import ONBOARDING_STAGES, ORG_DOMAIN_KEY
 from app.core.audit import log_audit, log_audit_many
-from app.core.auth import is_master_session, owned_or_404, require_items_access, require_people_admin
+from app.core.auth import is_hr_or_master, is_master_session, owned_or_404, require_hr_or_master, require_items_access, require_people_admin
 from app.core.currency import money
 from app.core.dates import _parse_date
 from app.core.references import release_references
@@ -37,6 +37,7 @@ from app.core.security import validate_password_strength
 from app.schemas.hr import DepartmentCreate, DepartmentMembersIn, DocumentRequirementIn, EmployeeCreate, RequirementTemplateIn
 from app.services.store_staff import release_on_leaving
 from app.services.employee_portal import leave_balance_for
+from app.services.salary_structure import structure_lines
 from app.services.hr import (
     automatic_reports_to,
     assert_department_name_free,
@@ -487,7 +488,10 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     from app.constants.hr import gender_required
     if gender_required() and not gender:
         raise HTTPException(status_code=400, detail="Gender is required. Choose one ('Prefer not to say' is an answer).")
-    aadhaar_no, pan_no, uan_no, esi_no = clean_aadhaar(body.aadhaar_no), clean_pan(body.pan_no), clean_uan(body.uan_no), clean_esi(body.esi_no)
+    if is_hr_or_master(request, db):
+        aadhaar_no, pan_no, uan_no, esi_no = clean_aadhaar(body.aadhaar_no), clean_pan(body.pan_no), clean_uan(body.uan_no), clean_esi(body.esi_no)
+    else:
+        aadhaar_no = pan_no = uan_no = esi_no = ""      # these numbers are HR's and the Master's to enter
     employee_code = assert_employee_code_free(db, client_id, body.employee_id)
 
     level = validate_level(body.level)
@@ -581,6 +585,16 @@ def _employee_with_names(db, client_id, emp_id):
                  sorted({_Site(*r[4:]) for r in rows if r[4] is not None}), emp.department_id, emp.reports_to)
 
 
+ID_FIELDS = ("aadhaar_no", "pan_no", "uan_no", "esi_no")
+
+
+def _hide_ids(request, db, profile):
+    """The Aadhaar, PAN, UAN and ESI numbers are for HR and the Master. Anybody else who may open the person sees blanks."""
+    if not is_hr_or_master(request, db):
+        profile = {**profile, "pan_no": "", "uan_no": "", "esi_no": "", "aadhaar_masked": ""}
+    return profile
+
+
 def _profile(emp, dept_name, manager_name, sites):
     """What the employee's page shows: who they are, their place, their pay terms and their access.
     `sites` is the site part (sites_payload)."""
@@ -637,7 +651,7 @@ def get_employee(emp_id: int, request: Request, view: str = "", db: Session = De
     them (payslips, leave, attendance, goals, documents, reports) for the screens that want the lot."""
     client = require_items_access(request, db, "people.manage")
     read = _employee_with_names(db, client.id, emp_id)
-    emp, profile = read.emp, _profile(read.emp, read.dept_name, read.manager_name, sites_payload(read.sites))
+    emp, profile = read.emp, _hide_ids(request, db, _profile(read.emp, read.dept_name, read.manager_name, sites_payload(read.sites)))
     if view == "profile":
         return profile
     payslips = db.query(models.DBPayslip).filter(models.DBPayslip.employee_id == emp.id).order_by(models.DBPayslip.created_at.desc()).limit(12).all()
@@ -672,9 +686,10 @@ def get_employee(emp_id: int, request: Request, view: str = "", db: Session = De
     goals = db.query(models.DBEmployeeGoal).filter(
         models.DBEmployeeGoal.employee_id == emp.id
     ).order_by(models.DBEmployeeGoal.id.desc()).limit(10).all()
+    # The files HR keeps on somebody (their Aadhaar, PAN and ESI cards) are for HR and the Master.
     documents = db.query(models.DBDocument).filter(
         models.DBDocument.employee_id == emp.id
-    ).order_by(models.DBDocument.id.desc()).all()
+    ).order_by(models.DBDocument.id.desc()).all() if is_hr_or_master(request, db) else []
     doc_requests = with_request_links(db.query(models.DBDocumentRequest)).filter(
         models.DBDocumentRequest.employee_id == emp.id
     ).order_by(models.DBDocumentRequest.id.asc()).all()
@@ -770,6 +785,9 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
         else:
             body["org_email"] = clean_org_email(db, client.id, body["org_email"], exclude_id=emp.id)
     validate_employee_money(body)
+    if not is_hr_or_master(request, db):
+        for key in ID_FIELDS:
+            body.pop(key, None)                        # these numbers are HR's and the Master's to enter
     if "gender" in body:
         body["gender"] = clean_gender(body["gender"])
     if "aadhaar_no" in body:
@@ -831,7 +849,7 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
         log_audit(db, client.id, "employee_department_changed", "employee", emp.id,
                   f"{emp.first_name} {emp.last_name}", "Department set to %s" % (new_dept or "none"), request)
     log_audit(db, client.id, "employee_updated", "employee", emp.id, f"{emp.first_name} {emp.last_name}", f"Fields: {', '.join(body.keys()) if body else 'none'}", request)
-    out = {**_profile_after(db, client.id, before, sites), "message": "Employee updated"}
+    out = {**_hide_ids(request, db, _profile_after(db, client.id, before, sites)), "message": "Employee updated"}
     db.commit()
     return out
 
@@ -982,7 +1000,7 @@ def set_employee_permissions(emp_id: int, request: Request, body: dict = None,
     log_audit(db, client.id, "employee_permissions_changed", "employee", emp.id,
               f"{emp.first_name} {emp.last_name}", _access_detail(old_role, new_role, before, after), request)
     # The whole profile as saved, so the page shows it without asking again.
-    out = {**_profile_after(db, client.id, read, sites), "message": "Access updated"}
+    out = {**_hide_ids(request, db, _profile_after(db, client.id, read, sites)), "message": "Access updated"}
     db.commit()
     return out
 
@@ -1292,6 +1310,8 @@ def get_employee_pay_details(emp_id: int, request: Request, period_start: str = 
         "deductions": deductions,
         "allowances": allowances,
         "bonus": bonus,
+        # What the company's salary structure would make of this person's pay, when it applies to them.
+        "structure": structure_lines(db, client.id, emp, preview=True) if is_hr_or_master(request, db) else None,
         "hours_worked": hours_worked,
         "overtime_hours": overtime_hours,
         "overtime_rate": ot_rate,
@@ -1804,14 +1824,14 @@ def get_goals_for_employee(emp_id: int, request: Request, db: Session = Depends(
 
 @router.get("/api/employees/{emp_id}/documents")
 def get_documents_for_employee(emp_id: int, request: Request, db: Session = Depends(get_read_db)):
-    client = require_items_access(request, db, "people.manage")
+    client = require_hr_or_master(request, db, "people.manage")
     docs = db.query(models.DBDocument).filter(models.DBDocument.employee_id == emp_id, models.DBDocument.client_id == client.id).order_by(models.DBDocument.created_at.desc()).all()
     return [{"id": d.id, "title": d.title, "doc_type": d.doc_type, "file_name": d.file_name, "file_size": d.file_size or 0, "uploaded_by": d.uploaded_by, "created_at": d.created_at} for d in docs]
 
 
 @router.get("/api/employees/{emp_id}/documents/{doc_id}/download")
 def download_employee_document(emp_id: int, doc_id: int, request: Request, db: Session = Depends(get_read_db)):
-    client = require_items_access(request, db, "people.manage")
+    client = require_hr_or_master(request, db, "people.manage")
     doc = db.query(models.DBDocument).options(undefer(models.DBDocument.file_data)).filter(
         models.DBDocument.id == doc_id, models.DBDocument.employee_id == emp_id, models.DBDocument.client_id == client.id).first()
     if not doc or not doc.file_data:
@@ -1821,7 +1841,7 @@ def download_employee_document(emp_id: int, doc_id: int, request: Request, db: S
 
 @router.delete("/api/employees/{emp_id}/documents/{doc_id}")
 def delete_employee_document(emp_id: int, doc_id: int, request: Request, db: Session = Depends(get_db)):
-    client = require_items_access(request, db, "people.manage")
+    client = require_hr_or_master(request, db, "people.manage")
     doc = db.query(models.DBDocument).filter(
         models.DBDocument.id == doc_id, models.DBDocument.employee_id == emp_id, models.DBDocument.client_id == client.id).first()
     if not doc:
@@ -1843,7 +1863,7 @@ def get_leave_for_employee(emp_id: int, request: Request, db: Session = Depends(
 def upload_document(emp_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
     """A document HR keeps on somebody's file (their Aadhaar, PAN or ESI card, say). The file comes as base64 and
     is held to the same size and type limits as every other upload from outside."""
-    client = require_items_access(request, db, "people.manage")
+    client = require_hr_or_master(request, db, "people.manage")
     if not body: body = {}
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
     if not emp:

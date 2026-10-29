@@ -16,7 +16,7 @@ import { EMPLOYEE_TONE } from './EmployeesPage'
 type Tab = 'profile' | 'access'
 
 function Profile({ e, ready }: { e: EmployeeDetail; ready: boolean }) {
-  const { can } = useSession()
+  const { can, isHrOrMaster: hrOnly } = useSession()
   const canManage = can('people.manage')
   const [editing, setEditing] = useState(false)
   const cat = useHrCatalogue()
@@ -27,7 +27,9 @@ function Profile({ e, ready }: { e: EmployeeDetail; ready: boolean }) {
     ['Reporting role', cat.data?.roles.find((r) => r.code === e.role)?.label ?? e.role],
     ['Start date', e.start_date], ['Salary', e.salary], ['Tax rate %', e.tax_rate],
     ['Emergency contact', e.emergency_contact], ['Emergency phone', e.emergency_phone],
-    ['Gender', e.gender], ['Aadhaar (given by the employee)', e.aadhaar_masked], ['PAN (given by the employee)', e.pan_no], ['UAN (given by the employee)', e.uan_no], ['ESI number', e.esi_no],
+    ['Gender', e.gender],
+    // The ID numbers are HR's and the Master's.
+    ...(hrOnly ? ([['Aadhaar (given by the employee)', e.aadhaar_masked], ['PAN (given by the employee)', e.pan_no], ['UAN (given by the employee)', e.uan_no], ['ESI number', e.esi_no]] as [string, string | undefined][]) : []),
   ]
   if (editing) return <ProfileForm e={e} onDone={() => setEditing(false)} />
   return (
@@ -41,7 +43,7 @@ function Profile({ e, ready }: { e: EmployeeDetail; ready: boolean }) {
           </div>
         ))}
       </dl>
-      <EmployeeDocuments id={e.id} canManage={canManage} />
+      {hrOnly && <EmployeeDocuments id={e.id} canManage={canManage} />}
     </div>
   )
 }
@@ -51,7 +53,7 @@ function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
   const people = useEmployees('')
   const cat = useHrCatalogue()
   const [f, setF] = useState({ first_name: e.first_name, last_name: e.last_name, email: e.email, org_email: e.org_email ?? '', phone: e.phone, address: e.address ?? '', job_title: e.job_title, department_id: e.department_id, reports_to: e.reports_to, level: e.level, role: e.role, employment_type: e.employment_type, pay_frequency: e.pay_frequency, salary: e.salary, tax_rate: e.tax_rate, start_date: e.start_date, emergency_contact: e.emergency_contact, emergency_phone: e.emergency_phone, gender: e.gender ?? '', uan_no: e.uan_no ?? '', esi_no: e.esi_no ?? '', aadhaar_no: '', pan_no: e.pan_no ?? '' })
-  const { can } = useSession()
+  const { can, isHrOrMaster: hrOnly } = useSession()
   const canManage = can('people.manage')
   // The reporting line runs up the levels: the same level or above, never below.
   const rank = (code: string) => cat.data?.levels.find((l) => l.code === code)?.rank ?? 0
@@ -81,10 +83,10 @@ function ProfileForm({ e, onDone }: { e: EmployeeDetail; onDone: () => void }) {
         <Field label="Tax rate %" htmlFor="ep-tax"><NumField id="ep-tax" value={f.tax_rate} onValue={(n) => setF((s) => ({ ...s, tax_rate: n }))} /></Field>
         <Field label="Gender" htmlFor="ep-gender"><Select id="ep-gender" value={f.gender} placeholder="Not given" onChange={set('gender')} options={GENDERS.map((g) => ({ value: g, label: g }))} /></Field>
         <Field label="Address" htmlFor="ep-address" className="sm:col-span-2 lg:col-span-3"><Textarea id="ep-address" rows={2} value={f.address} onChange={(ev) => setF((s) => ({ ...s, address: ev.target.value }))} /></Field>
-        <Field label="UAN" htmlFor="ep-uan" hint="12 digits."><Input id="ep-uan" inputMode="numeric" value={f.uan_no} onChange={set('uan_no')} autoComplete="off" /></Field>
-        <Field label="Aadhaar number" htmlFor="ep-aadhaar" hint={e.aadhaar_masked ? `On file: ${e.aadhaar_masked}. Leave blank to keep it.` : '12 digits.'}><Input id="ep-aadhaar" inputMode="numeric" value={f.aadhaar_no} onChange={set('aadhaar_no')} autoComplete="off" /></Field>
-        <Field label="PAN number" htmlFor="ep-pan" hint="Like ABCDE1234F."><Input id="ep-pan" value={f.pan_no} onChange={(ev) => setF((s) => ({ ...s, pan_no: ev.target.value.toUpperCase() }))} autoComplete="off" /></Field>
-        <Field label="ESI number" htmlFor="ep-esi" hint="10 digits."><Input id="ep-esi" inputMode="numeric" value={f.esi_no} onChange={set('esi_no')} autoComplete="off" /></Field>
+        {hrOnly && <Field label="UAN" htmlFor="ep-uan" hint="12 digits."><Input id="ep-uan" inputMode="numeric" value={f.uan_no} onChange={set('uan_no')} autoComplete="off" /></Field>}
+        {hrOnly && <Field label="Aadhaar number" htmlFor="ep-aadhaar" hint={e.aadhaar_masked ? `On file: ${e.aadhaar_masked}. Leave blank to keep it.` : '12 digits.'}><Input id="ep-aadhaar" inputMode="numeric" value={f.aadhaar_no} onChange={set('aadhaar_no')} autoComplete="off" /></Field>}
+        {hrOnly && <Field label="PAN number" htmlFor="ep-pan" hint="Like ABCDE1234F."><Input id="ep-pan" value={f.pan_no} onChange={(ev) => setF((s) => ({ ...s, pan_no: ev.target.value.toUpperCase() }))} autoComplete="off" /></Field>}
+        {hrOnly && <Field label="ESI number" htmlFor="ep-esi" hint="10 digits."><Input id="ep-esi" inputMode="numeric" value={f.esi_no} onChange={set('esi_no')} autoComplete="off" /></Field>}
         <Field label="Emergency contact" htmlFor="ep-em"><Input id="ep-em" value={f.emergency_contact} onChange={set('emergency_contact')} /></Field>
         <Field label="Emergency phone" htmlFor="ep-emp"><Input id="ep-emp" value={f.emergency_phone} onChange={set('emergency_phone')} /></Field>
       </div>

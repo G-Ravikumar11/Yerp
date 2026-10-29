@@ -12,7 +12,7 @@ const monthEnd = () => { const d = new Date(); return today().slice(0, 8) + Stri
 
 export function PayslipFormModal({ open, onClose, employeeId }: { open: boolean; onClose: () => void; employeeId?: number }) {
   return (
-    <Modal open={open} onOpenChange={(o) => !o && onClose()} title="New payslip" description="Pick the person and the period; salary, hours and overtime fill in from their record and their attendance." size="lg">
+    <Modal open={open} onOpenChange={(o) => !o && onClose()} title="New payslip" description="Pick the person and the period; pay, hours and overtime fill in from their record, their attendance and the salary structure." size="lg">
       {open && <Form employeeId={employeeId} onClose={onClose} />}
     </Modal>
   )
@@ -33,10 +33,14 @@ function Form({ employeeId, onClose }: { employeeId?: number; onClose: () => voi
     if (d) setF((x) => ({ ...x, basic: d.salary || 0, hours: d.hours_worked || 0, otHours: d.overtime_hours || 0, otRate: d.overtime_rate || 0, bonus: d.bonus || 0, allow: d.allowances || 0 }))
   }, [d])
   const set = (k: keyof typeof f) => (n: number) => setF((x) => ({ ...x, [k]: n }))
+  // When the company's salary structure applies to this person, it makes the pay: its components stand in for the boxes
+  // for basic pay, allowances, insurance, PF and other deductions.
+  const structured = !!d?.structure?.length
+  const made = (kind: 'earning' | 'deduction') => (d?.structure ?? []).filter((l) => l.kind === kind).reduce((n, l) => n + l.amount, 0)
   const otPay = f.otHours * f.otRate
-  const gross = f.basic + otPay + f.bonus + f.allow
+  const gross = structured ? made('earning') + otPay + f.bonus : f.basic + otPay + f.bonus + f.allow
   const tax = Math.round(gross * ((d?.tax_rate ?? 0) / 100) * 100) / 100
-  const deductions = (d?.deductions ?? 0) + f.insurance + f.retirement + f.other
+  const deductions = (d?.deductions ?? 0) + (structured ? made('deduction') : f.insurance + f.retirement + f.other)
   const net = Math.round((gross - tax - deductions) * 100) / 100
   const body = () => ({ employee_id: Number(emp), period_start: start, period_end: end, pay_date: payDate, hours_worked: f.hours, basic_salary: f.basic, overtime_hours: f.otHours, overtime_rate: f.otRate, bonus: f.bonus, allowances: f.allow, insurance: f.insurance, retirement: f.retirement, other_deductions: f.other, notes })
   const save = useAction((overlap: boolean) => createPayslip(body(), overlap), {
@@ -53,20 +57,29 @@ function Form({ employeeId, onClose }: { employeeId?: number; onClose: () => voi
         <Field label="Period from" htmlFor="ps-start"><Input id="ps-start" type="date" value={start} onChange={(e) => setStart(e.target.value)} /></Field>
         <Field label="Period to" htmlFor="ps-end"><Input id="ps-end" type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
         <Field label="Pay date" htmlFor="ps-pay"><Input id="ps-pay" type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} /></Field>
-        <Field label="Basic pay" htmlFor="ps-basic" hint={d?.is_hourly ? 'Worked out from hours at the hourly rate' : undefined}><NumField id="ps-basic" value={f.basic} onValue={set('basic')} /></Field>
+        {!structured && <Field label="Basic pay" htmlFor="ps-basic" hint={d?.is_hourly ? 'Worked out from hours at the hourly rate' : undefined}><NumField id="ps-basic" value={f.basic} onValue={set('basic')} /></Field>}
         <Field label="Hours worked" htmlFor="ps-hours"><NumField id="ps-hours" value={f.hours} onValue={set('hours')} /></Field>
         <span />
         <Field label="Overtime hours" htmlFor="ps-oth"><NumField id="ps-oth" value={f.otHours} onValue={set('otHours')} /></Field>
         <Field label="Overtime rate" htmlFor="ps-otr"><NumField id="ps-otr" value={f.otRate} onValue={set('otRate')} /></Field>
         <span />
         <Field label="Bonus" htmlFor="ps-bonus"><NumField id="ps-bonus" value={f.bonus} onValue={set('bonus')} /></Field>
-        <Field label="Allowances" htmlFor="ps-allow"><NumField id="ps-allow" value={f.allow} onValue={set('allow')} /></Field>
+        {!structured && <Field label="Allowances" htmlFor="ps-allow"><NumField id="ps-allow" value={f.allow} onValue={set('allow')} /></Field>}
         <span />
-        <Field label="Insurance" htmlFor="ps-ins"><NumField id="ps-ins" value={f.insurance} onValue={set('insurance')} /></Field>
-        <Field label="Retirement / PF" htmlFor="ps-ret"><NumField id="ps-ret" value={f.retirement} onValue={set('retirement')} /></Field>
-        <Field label="Other deductions" htmlFor="ps-oth2"><NumField id="ps-oth2" value={f.other} onValue={set('other')} /></Field>
+        {!structured && <Field label="Insurance" htmlFor="ps-ins"><NumField id="ps-ins" value={f.insurance} onValue={set('insurance')} /></Field>}
+        {!structured && <Field label="Retirement / PF" htmlFor="ps-ret"><NumField id="ps-ret" value={f.retirement} onValue={set('retirement')} /></Field>}
+        {!structured && <Field label="Other deductions" htmlFor="ps-oth2"><NumField id="ps-oth2" value={f.other} onValue={set('other')} /></Field>}
         <Field label="Notes" htmlFor="ps-notes" className="sm:col-span-3"><Textarea id="ps-notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
       </div>
+      {structured && (
+        <section aria-label="From the salary structure" className="mt-4 rounded-lg border border-border p-3">
+          <h3 className="text-[13px] font-semibold">From the salary structure</h3>
+          <p className="mb-2 text-xs text-muted-foreground">Worked out from the monthly salary. Components typed by hand start at nothing; fill them in on the payslip afterwards.</p>
+          <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            {d!.structure!.map((l) => <div key={l.name} className="flex justify-between gap-3"><dt className="text-muted-foreground">{l.name}{l.basis === 'percent' ? ` (${l.percent}%)` : ' (typed)'}</dt><dd className="tabular">{l.kind === 'deduction' ? '-' : ''}{formatINR(l.amount)}</dd></div>)}
+          </dl>
+        </section>
+      )}
       {emp && (
         <dl aria-label="Preview" className="mt-4 grid grid-cols-2 gap-x-6 gap-y-1 rounded-lg bg-muted/50 p-3 text-sm sm:grid-cols-4">
           <div><dt className="text-xs text-muted-foreground">Gross</dt><dd className="tabular font-semibold">{formatINR(gross)}</dd></div>

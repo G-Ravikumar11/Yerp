@@ -28,6 +28,8 @@ function Form({ onClose }: { onClose: () => void }) {
   const [f, setF] = useState<EmployeeInput>(blank)
   const [granted, setGranted] = useState<string[]>([])
   const [confirm, setConfirm] = useState('')
+  // Step 1 is who they are and what they do here; step 2 is where they work and what they may do. Nothing is saved until the end.
+  const [step, setStep] = useState<1 | 2>(1)
   // The Aadhaar, PAN and ESI cards chosen here are kept on the employee's record once they are created.
   const [files, setFiles] = useState<Partial<Record<IdDocumentKey, File>>>({})
   // A card's upload option appears once its number is clicked, and stays.
@@ -36,7 +38,7 @@ function Form({ onClose }: { onClose: () => void }) {
   const pickFile = (key: IdDocumentKey) => (file: File | null) => setFiles((s) => { const { [key]: _gone, ...rest } = s; return file ? { ...rest, [key]: file } : rest })
   const [given, setGiven] = useState<{ id: string; email: string; password: string; sites: string; notKept: string[] } | null>(null)
   const cat = useHrCatalogue()
-  const { can } = useSession()
+  const { can, isHrOrMaster: hrOnly } = useSession()
   const canManage = can('people.manage')
   const depts = useDepartments()
   const people = useEmployees('')
@@ -125,19 +127,32 @@ function Form({ onClose }: { onClose: () => void }) {
       </div>
     )
 
+  const stepLabel = (n: 1 | 2, text: string) => (
+    <li aria-current={step === n ? 'step' : undefined} className={'flex items-center gap-2 ' + (step === n ? 'font-semibold text-foreground' : 'text-muted-foreground')}>
+      <span className={'grid size-6 place-items-center rounded-full text-xs ' + (step === n ? 'bg-[var(--primary)] text-white' : 'border border-border')}>{n}</span>{text}
+    </li>
+  )
   return (
     <div>
+      <ol aria-label="Steps" className="mb-5 flex items-center gap-3 text-sm">
+        {stepLabel(1, 'Details')}
+        <li aria-hidden className="h-px flex-1 bg-border" />
+        {stepLabel(2, 'Sites and access')}
+      </ol>
+      <div hidden={step !== 1}>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <h4 className="col-span-full text-sm font-semibold">Personal details</h4>
         <Field label="First name *" htmlFor="ef-first"><Input id="ef-first" value={f.first_name} onChange={set('first_name')} autoFocus /></Field>
         <Field label="Last name *" htmlFor="ef-last"><Input id="ef-last" value={f.last_name} onChange={set('last_name')} /></Field>
         <Field label="Gender *" htmlFor="ef-gender"><Select id="ef-gender" value={f.gender ?? ''} placeholder="Choose" onChange={set('gender')} options={GENDERS.map((g) => ({ value: g, label: g }))} /></Field>
         <Field label="Phone" htmlFor="ef-phone"><Input id="ef-phone" type="tel" value={f.phone} onChange={set('phone')} /></Field>
         <Field label="Personal email" htmlFor="ef-email"><Input id="ef-email" type="email" autoComplete="off" value={f.email} onChange={(e) => { setTyped(true); set('email')(e) }} /></Field>
         <Field label="Address" htmlFor="ef-address" className="sm:col-span-2 lg:col-span-3"><Textarea id="ef-address" rows={2} value={f.address ?? ''} onChange={(e) => setF((s) => ({ ...s, address: e.target.value }))} /></Field>
-        <Field label="Aadhaar number" htmlFor="ef-aadhaar" hint="Optional. 12 digits."><Input id="ef-aadhaar" inputMode="numeric" value={f.aadhaar_no ?? ''} onChange={set('aadhaar_no')} onFocus={reveal('aadhaar')} onClick={reveal('aadhaar')} autoComplete="off" /><DocumentPick label="Aadhaar card" file={files.aadhaar ?? null} shown={!!shown.aadhaar} onFile={pickFile('aadhaar')} /></Field>
-        <Field label="PAN number" htmlFor="ef-pan" hint="Optional. Like ABCDE1234F."><Input id="ef-pan" value={f.pan_no ?? ''} onChange={(e) => setF((s) => ({ ...s, pan_no: e.target.value.toUpperCase() }))} onFocus={reveal('pan')} onClick={reveal('pan')} autoComplete="off" /><DocumentPick label="PAN card" file={files.pan ?? null} shown={!!shown.pan} onFile={pickFile('pan')} /></Field>
+        {hrOnly && <Field label="Aadhaar number" htmlFor="ef-aadhaar" hint="Optional. 12 digits."><Input id="ef-aadhaar" inputMode="numeric" value={f.aadhaar_no ?? ''} onChange={set('aadhaar_no')} onFocus={reveal('aadhaar')} onClick={reveal('aadhaar')} autoComplete="off" /><DocumentPick label="Aadhaar card" file={files.aadhaar ?? null} shown={!!shown.aadhaar} onFile={pickFile('aadhaar')} /></Field>}
+        {hrOnly && <Field label="PAN number" htmlFor="ef-pan" hint="Optional. Like ABCDE1234F."><Input id="ef-pan" value={f.pan_no ?? ''} onChange={(e) => setF((s) => ({ ...s, pan_no: e.target.value.toUpperCase() }))} onFocus={reveal('pan')} onClick={reveal('pan')} autoComplete="off" /><DocumentPick label="PAN card" file={files.pan ?? null} shown={!!shown.pan} onFile={pickFile('pan')} /></Field>}
         <Field label="Emergency contact name *" htmlFor="ef-em" hint="Required: who to call in an emergency."><Input id="ef-em" value={f.emergency_contact} onChange={set('emergency_contact')} /></Field>
         <Field label="Emergency contact phone *" htmlFor="ef-emp" error={f.emergency_phone && !emergencyOk && f.emergency_contact ? 'Enter a phone number.' : undefined}><Input id="ef-emp" type="tel" value={f.emergency_phone} onChange={set('emergency_phone')} /></Field>
+        <div className="col-span-full mt-1 border-t border-border pt-4"><h4 className="text-sm font-semibold">Company details</h4></div>
         <Field label="Employee ID" htmlFor="ef-eid" hint="Leave blank to number it."><Input id="ef-eid" value={f.employee_id ?? ''} onChange={set('employee_id')} /></Field>
         <Field label="Organization email (Yahoo sign-in)" htmlFor="ef-org-email"><Input id="ef-org-email" type="email" autoComplete="off" value={f.org_email ?? ''} onChange={set('org_email')} /></Field>
         <PasswordField id="ef-pass" label="Password" value={f.password ?? ''} onChange={(v) => setF((s) => ({ ...s, password: v }))} error={pass && passError ? passError : undefined} hint={`They sign in with their email and this password - nothing is emailed. ${PASSWORD_RULE} Leave blank for site staff who are paid without signing in.`} />
@@ -152,19 +167,31 @@ function Form({ onClose }: { onClose: () => void }) {
         <Field label="Paid" htmlFor="ef-freq"><Select id="ef-freq" value={f.pay_frequency} onChange={set('pay_frequency')} options={[['monthly', 'Monthly'], ['biweekly', 'Every two weeks'], ['weekly', 'Weekly'], ['hourly', 'Hourly']].map(([v, l]) => ({ value: v, label: l }))} /></Field>
         <Field label="Salary" htmlFor="ef-salary"><NumField id="ef-salary" value={f.salary} onValue={num('salary')} /></Field>
         <Field label="Tax rate %" htmlFor="ef-tax"><NumField id="ef-tax" value={f.tax_rate} onValue={num('tax_rate')} /></Field>
-        <Field label="UAN" htmlFor="ef-uan" hint="Optional. 12 digits."><Input id="ef-uan" inputMode="numeric" value={f.uan_no ?? ''} onChange={set('uan_no')} autoComplete="off" /></Field>
-        <Field label="ESI number" htmlFor="ef-esi" hint="Optional. 10 digits."><Input id="ef-esi" inputMode="numeric" value={f.esi_no ?? ''} onChange={set('esi_no')} onFocus={reveal('esi')} onClick={reveal('esi')} autoComplete="off" /><DocumentPick label="ESI card" file={files.esi ?? null} shown={!!shown.esi} onFile={pickFile('esi')} /></Field>
-        <Field label="Sites" htmlFor="ef-sites" hint="None ticked means every site." className="sm:col-span-2 lg:col-span-3">
-          <div className="flex flex-wrap gap-x-4 gap-y-1" id="ef-sites">
-            {(jobs.data ?? []).map((j) => <label key={j.id} className="flex items-center gap-1.5 text-[13px]"><input type="checkbox" className="size-4 accent-[var(--primary)]" checked={f.site_ids.includes(j.id)} onChange={(e) => setF((s) => ({ ...s, site_ids: e.target.checked ? [...s.site_ids, j.id] : s.site_ids.filter((x) => x !== j.id) }))} />{j.number} {j.name}</label>)}
-          </div>
-        </Field>
+        {hrOnly && <Field label="UAN" htmlFor="ef-uan" hint="Optional. 12 digits."><Input id="ef-uan" inputMode="numeric" value={f.uan_no ?? ''} onChange={set('uan_no')} autoComplete="off" /></Field>}
+        {hrOnly && <Field label="ESI number" htmlFor="ef-esi" hint="Optional. 10 digits."><Input id="ef-esi" inputMode="numeric" value={f.esi_no ?? ''} onChange={set('esi_no')} onFocus={reveal('esi')} onClick={reveal('esi')} autoComplete="off" /><DocumentPick label="ESI card" file={files.esi ?? null} shown={!!shown.esi} onFile={pickFile('esi')} /></Field>}
       </div>
+      </div>
+      <div hidden={step !== 2}>
+        <div className="grid gap-4">
+          <Field label="Sites" htmlFor="ef-sites" hint="None ticked means every site.">
+            <div className="flex flex-col gap-y-1.5" id="ef-sites">
+              {(jobs.data ?? []).map((j) => <label key={j.id} className="flex items-center gap-1.5 text-[13px]"><input type="checkbox" className="size-4 accent-[var(--primary)]" checked={f.site_ids.includes(j.id)} onChange={(e) => setF((s) => ({ ...s, site_ids: e.target.checked ? [...s.site_ids, j.id] : s.site_ids.filter((x) => x !== j.id) }))} />{j.number} {j.name}</label>)}
+            </div>
+          </Field>
+        </div>
       {canManage && cat.data && <div className="mt-5"><AccessPicker catalogue={cat.data} role={f.permission_role} granted={granted} onRole={(code, rights) => { setF((s) => ({ ...s, permission_role: code })); setGranted(rights) }} onGranted={setGranted} /></div>}
+      </div>
       <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
-        {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
+        {step === 2 && save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button loading={save.isPending} disabled={!ready} onClick={() => save.mutate()}>Create the employee</Button>
+        {step === 1 ? (
+          <Button disabled={!ready} onClick={() => setStep(2)}>Save and continue</Button>
+        ) : (
+          <>
+            <Button variant="outline" onClick={() => setStep(1)}>Back</Button>
+            <Button loading={save.isPending} disabled={!ready} onClick={() => save.mutate()}>Create the employee</Button>
+          </>
+        )}
       </div>
     </div>
   )

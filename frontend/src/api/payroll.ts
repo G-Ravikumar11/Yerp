@@ -53,6 +53,9 @@ export interface PayslipDetail {
   status: string
   sent: boolean
   notes: string
+  /** The monthly salary the structure was worked from, and the pay line by line; no lines for a payslip made without one. */
+  monthly_salary?: number
+  lines?: PayLine[]
   company: { name: string; address: string; email: string; phone: string; logo_url?: string }
 }
 
@@ -66,7 +69,15 @@ export interface PayDetails {
   tax_rate: number
   deductions: number
   is_hourly?: boolean
+  /** What the company's salary structure would make of this person's pay; null when it does not apply to them. */
+  structure?: { name: string; kind: 'earning' | 'deduction'; amount: number; basis: 'percent' | 'manual'; percent: number }[] | null
 }
+
+/** One line of a payslip made from the salary structure. */
+export interface PayLine { id: number; name: string; kind: 'earning' | 'deduction'; basis: 'percent' | 'manual'; percent: number; counts_as: string; amount: number }
+/** One component of the company's salary structure. */
+export interface SalaryComponent { id: number; name: string; kind: 'earning' | 'deduction'; basis: 'percent' | 'manual'; percent: number; counts_as: string; is_active: boolean; sort_order: number }
+export type ComponentInput = Partial<Pick<SalaryComponent, 'name' | 'kind' | 'basis' | 'percent' | 'counts_as' | 'is_active'>>
 
 export interface PayslipInput {
   employee_id: number
@@ -94,6 +105,15 @@ export const usePayslip = (id: number | null) => useQuery({ queryKey: k('one', i
 export const usePayDetails = (emp: number | null, start: string, end: string) =>
   useQuery({ queryKey: k('pay-details', emp, start, end), queryFn: () => get<PayDetails>(`/api/employees/${emp}/pay-details?period_start=${start}&period_end=${end}`), enabled: !!emp && !!start && !!end })
 export const useAnomalies = () => useQuery({ queryKey: k('anomalies'), queryFn: () => get<{ anomalies: Anomaly[]; total_checked: number }>('/api/ai/payroll-anomalies'), enabled: false })
+
+export const useSalaryStructure = (enabled = true) => useQuery({ queryKey: k('structure'), queryFn: () => get<{ components: SalaryComponent[] }>('/api/salary-structure'), enabled })
+export const addComponent = (b: ComponentInput) => post<{ message?: string }>('/api/salary-structure', b)
+export const saveComponent = (id: number, b: ComponentInput) => put<{ message?: string }>(`/api/salary-structure/${id}`, b)
+export const removeComponent = (id: number) => del<{ message?: string }>(`/api/salary-structure/${id}`)
+export const reorderComponents = (ids: number[]) => post<{ message?: string }>('/api/salary-structure/reorder', { ids })
+/** HR types an amount on a payslip's own line (HRA, say), or brings the payslip up to date with the structure. */
+export const savePayslipLines = (id: number, lines: { id: number; amount: number }[]) => put<{ message?: string }>(`/api/payslips/${id}`, { lines })
+export const reapplyStructure = (id: number) => put<{ message?: string }>(`/api/payslips/${id}`, { reapply_structure: true })
 
 export const createPayslip = (b: PayslipInput, allowOverlap: boolean) => post<{ message?: string }>(`/api/payslips${allowOverlap ? '?allow_overlap=true' : ''}`, b)
 export const runPayroll = (b: { period_start: string; period_end: string; pay_date: string }) => post<RunResult>('/api/payroll/run', { ...b, include_attendance_hours: true, skip_existing: true })
