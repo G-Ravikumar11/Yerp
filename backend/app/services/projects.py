@@ -18,7 +18,9 @@ from app.core.dates import _days_until, ageing_bucket
 from app.core.permissions import employee_can
 from app.core.queries import by_id, on_job
 from app.services.assets import asset_service_state, equipment_cost_by_job
-from app.services.stores import stock_balances, stocked_share_of_bills
+from app.models.store_inward import DBStoreGrn
+from app.services.store_integration import current_stock, hub_transfers_out, project_store_material, store_material_by_project
+from app.services.stores import stocked_share_of_bills
 
 
 def job_or_404(db, client_id, job_id):
@@ -113,6 +115,31 @@ def labour_cost_for_job(db, client_id, job_id):
     return money(cost), round(hours, 2)
 
 
+def _store_material(db, client_id, job_id):
+    """What the Store module has issued to a job, net of what came back. One query for the whole board when jobs are costed together."""
+    pre = db.info.get("by_job")
+    if pre is not None:
+        if "store_material" not in pre:
+            pre["store_material"] = store_material_by_project(db, client_id)
+        return float(pre["store_material"].get(job_id, 0))
+    return float(project_store_material(db, job_id))
+
+
+def site_expenses_by_job(db, client_id, job_ids=None):
+    """{job_id: amount} paid out on expense vouchers charged to each project - diesel, transport, site expenses - and
+    not voided. Money with no bill behind it is still what the site cost."""
+    from sqlalchemy import func as _f
+    q = db.query(models.DBMoneyEntry.job_id, _f.coalesce(_f.sum(models.DBMoneyEntry.amount), 0.0)).filter(
+        models.DBMoneyEntry.client_id == client_id, models.DBMoneyEntry.doc_type == "expense",
+        models.DBMoneyEntry.direction == "OUT", models.DBMoneyEntry.voided.isnot(True),
+        models.DBMoneyEntry.job_id.isnot(None))
+    if job_ids is not None:
+        if not job_ids:
+            return {}
+        q = q.filter(models.DBMoneyEntry.job_id.in_(list(job_ids)))
+    return {j: float(v or 0) for j, v in q.group_by(models.DBMoneyEntry.job_id).all()}
+
+
 def job_costing(db, client_id, job):
     """Quoted, spent - and what is left of the budget."""
     bills = on_job(db, models.DBBill, client_id, job.id)
@@ -154,7 +181,15 @@ def job_costing(db, client_id, job):
                     if q.status in ("Accepted", "Invoiced")]
         quoted = money(sum(q.total or 0 for q in accepted))
 
-    total_cost = money(spent + labour)
+    pre = db.info.get("by_job")
+    if pre is not None:
+        # A list costing many jobs: every job's expense vouchers in one query, kept for the rest of the list.
+        if "expenses" not in pre:
+            pre["expenses"] = site_expenses_by_job(db, client_id)
+        expenses = money(pre["expenses"].get(job.id, 0.0))
+    else:
+        expenses = money(site_expenses_by_job(db, client_id, [job.id]).get(job.id, 0.0))
+    total_cost = money(spent + labour + expenses)
     budget = money(job.budget or 0)
 
     return {
@@ -164,7 +199,10 @@ def job_costing(db, client_id, job):
         "unpaid_bills": unpaid,
         "labour_cost": labour,
         "labour_hours": hours,
+        "site_expenses": expenses,
         "total_cost": total_cost,
+        # Material issued from the stores to this job. Shown beside the bills, not added to them: the stock was bought on a bill already.
+        "store_material": money(_store_material(db, client_id, job.id)),
         # Budget column: what has been used so far and what is left of it.
         "used": total_cost,
         "remaining": money(budget - total_cost) if budget else 0.0,
@@ -202,13 +240,6 @@ def job_to_dict(db, job, costing=False):
     if costing:
         row["costing"] = job_costing(db, job.client_id, job)
     return row
-
-
-def project_retention(db, client_id, job_id, fallback=5.0):
-    """The retention a project's bills are drawn at: the project's own percentage when it has one set, else the usual 5%.
-    A bill that is given a percentage on the screen uses that instead."""
-    job = db.query(models.DBJob).filter(models.DBJob.id == job_id, models.DBJob.client_id == client_id).first() if job_id else None
-    return float(job.retention_percent) if job is not None and (job.retention_percent or 0) > 0 else fallback
 
 
 def project_money_moved(db, client_id, job):
@@ -272,6 +303,7 @@ def cost_jobs(db, client_id, jobs):
     attendance = bucket(db.query(models.DBAttendance).filter(
         models.DBAttendance.client_id == client_id,
         models.DBAttendance.job_id.in_(ids)).all())
+    expenses_by_job = site_expenses_by_job(db, client_id, ids)
 
     wo_ids = [w.id for group in work_orders.values() for w in group]
     bom_by_wo = {}
@@ -303,7 +335,8 @@ def cost_jobs(db, client_id, jobs):
                              for l in bom_by_wo.get(w.id, [])))
 
         quoted = money(job.quoted_value or 0) or ordered
-        total_cost = money(spent + labour)
+        expenses = money(expenses_by_job.get(job.id, 0.0))
+        total_cost = money(spent + labour + expenses)
         budget = money(job.budget or 0)
 
         out.append({
@@ -323,6 +356,7 @@ def cost_jobs(db, client_id, jobs):
                 "quoted": quoted, "budget": budget,
                 "spent": spent, "unpaid_bills": unpaid,
                 "labour_cost": labour, "labour_hours": hours,
+                "site_expenses": expenses,
                 "total_cost": total_cost,
                 "used": total_cost,
                 "remaining": money(budget - total_cost) if budget else 0.0,
@@ -439,9 +473,9 @@ def recost_diary(db, diary):
 
 
 def diary_dict(db, d, detail=False):
-    job = db.query(models.DBJob).filter(models.DBJob.id == d.job_id).first()
-    wo = db.query(models.DBWorkOrder).filter(
-        models.DBWorkOrder.id == d.work_order_id).first() if d.work_order_id else None
+    # by_id: a list primes the projects and work orders once (list_diaries), not twice a day.
+    job = by_id(db, models.DBJob, d.job_id)
+    wo = by_id(db, models.DBWorkOrder, d.work_order_id) if d.work_order_id else None
     row = {
         "id": d.id, "job_id": d.job_id,
         "project": ("%s %s" % (job.number or "", job.name or "")).strip() if job else "",
@@ -463,13 +497,25 @@ def diary_dict(db, d, detail=False):
         "created_at": d.created_at or "",
     }
     if detail:
+        lines = db.query(models.DBDiaryLabour).filter(
+            models.DBDiaryLabour.site_diary_id == d.id).order_by(
+                models.DBDiaryLabour.display_order, models.DBDiaryLabour.id).all()
+        all_ids = set()
+        for l in lines:
+            all_ids.update(_parse_worker_ids(l.worker_ids))
+        workers = {}
+        if all_ids:
+            for w in db.query(models.DBWorkerScreening).filter(
+                    models.DBWorkerScreening.client_id == d.client_id,
+                    models.DBWorkerScreening.id.in_(all_ids)).all():
+                workers[w.id] = {"id": w.id, "name": w.name or "", "trade": w.trade or ""}
         row["labour"] = [{
             "id": l.id, "trade": l.trade or "", "agency": l.agency or "Own",
             "headcount": money(l.headcount), "hours": money(l.hours),
             "rate": money(l.rate), "amount": money(l.amount),
-        } for l in db.query(models.DBDiaryLabour).filter(
-            models.DBDiaryLabour.site_diary_id == d.id).order_by(
-                models.DBDiaryLabour.display_order, models.DBDiaryLabour.id).all()]
+            "worker_ids": _parse_worker_ids(l.worker_ids),
+            "workers": [workers[i] for i in _parse_worker_ids(l.worker_ids) if i in workers],
+        } for l in lines]
         row["plant"] = [{
             "id": p.id, "plant": p.plant or "",
             "worked_hours": money(p.worked_hours), "idle_hours": money(p.idle_hours),
@@ -481,12 +527,24 @@ def diary_dict(db, d, detail=False):
     return row
 
 
+def _parse_worker_ids(text):
+    out = []
+    for p in (text or "").split(","):
+        p = p.strip()
+        if p.isdigit():
+            out.append(int(p))
+    return out
+
+
 def _replace_diary_lines(db, diary, labour, plant):
     if labour is not None:
         db.query(models.DBDiaryLabour).filter(
             models.DBDiaryLabour.site_diary_id == diary.id).delete()
         for i, l in enumerate((labour or [])[:60]):
-            heads = money(l.get("headcount") or 0)
+            # A row added "from Workers & Safety" names its people; its headcount always matches how many are
+            # named, so a line cannot claim more heads than it has named workers for.
+            ids = [int(w) for w in (l.get("worker_ids") or []) if str(w).strip().isdigit()][:200]
+            heads = float(len(ids)) if ids else money(l.get("headcount") or 0)
             if not heads:
                 continue
             db.add(models.DBDiaryLabour(
@@ -494,7 +552,8 @@ def _replace_diary_lines(db, diary, labour, plant):
                 agency=(l.get("agency") or "Own")[:120], headcount=heads,
                 hours=money(l.get("hours") if l.get("hours") is not None
                             else (diary.working_hours or 8)),
-                rate=money(l.get("rate") or 0), display_order=i))
+                rate=money(l.get("rate") or 0), display_order=i,
+                worker_ids=",".join(str(w) for w in ids)))
     if plant is not None:
         db.query(models.DBDiaryPlant).filter(
             models.DBDiaryPlant.site_diary_id == diary.id).delete()
@@ -541,6 +600,7 @@ def preload_pnl_for_job(db, client_id, job_id):
             models.DBStockMovement.client_id == client_id,
             models.DBStockMovement.job_id == job_id,
             models.DBStockMovement.kind.in_(("ISSUE", "RETURN"))).all()),
+        "hub_material": {job_id: project_store_material(db, job_id)},
         "diaries": one(db.query(models.DBSiteDiary).filter(
             models.DBSiteDiary.client_id == client_id, models.DBSiteDiary.job_id == job_id).all()),
         "pos": one(db.query(models.DBPurchaseOrder).filter(
@@ -559,6 +619,7 @@ def preload_pnl_for_job(db, client_id, job_id):
             models.DBSubcontractOrder.client_id == client_id, models.DBSubcontractOrder.job_id == job_id).all()),
         "settled": settled_amounts(db, client_id),
         "credits": preload_credits(db, client_id),
+        "expenses": site_expenses_by_job(db, client_id, [job_id]),
     }
 
 
@@ -598,6 +659,7 @@ def preload_pnl(db, client_id):
         "moves": by_job(db.query(models.DBStockMovement).filter(
             models.DBStockMovement.client_id == client_id,
             models.DBStockMovement.kind.in_(("ISSUE", "RETURN"))).all()),
+        "hub_material": store_material_by_project(db, client_id),
         "diaries": by_job(db.query(models.DBSiteDiary).filter(
             models.DBSiteDiary.client_id == client_id).all()),
         "pos": by_job(db.query(models.DBPurchaseOrder).filter(
@@ -615,6 +677,7 @@ def preload_pnl(db, client_id):
             models.DBSubcontractOrder.client_id == client_id).all()),
         "settled": settled_amounts(db, client_id),
         "credits": preload_credits(db, client_id),
+        "expenses": site_expenses_by_job(db, client_id),
     }
 
 
@@ -654,10 +717,13 @@ def project_pnl(db, client_id, job, pre=None):
     stocked = pre.get("stocked") or {}
     bill_cost = money(sum((b.total or 0) * (1.0 - stocked.get(b.id, 0.0)) for b in supplier_bills))
 
-    # Material actually drawn from the store for this job. Issues are negative
-    # and returns positive, so the negated sum is what the site consumed and a
-    # cancelled issue costs nothing.
-    material = money(-sum(m.value or 0 for m in pre["moves"].get(job.id, [])))
+    # Material actually drawn from the store for this job. In the old store
+    # issues are negative and returns positive, so the negated sum is what the
+    # site consumed and a cancelled issue costs nothing. The Store Hub's issues
+    # come on top, net of returns: it began from the old store's closing stock,
+    # so neither repeats the other.
+    material = money(-sum(m.value or 0 for m in pre["moves"].get(job.id, []))
+                     + float((pre.get("hub_material") or {}).get(job.id, 0)))
 
     diaries = pre["diaries"].get(job.id, [])
     labour = money(sum(d.labour_cost or 0 for d in diaries))
@@ -685,7 +751,10 @@ def project_pnl(db, client_id, job, pre=None):
     # inside what they billed, so it comes off here or it is counted twice.
     recovered = money((pre.get("recovered") or {}).get(job.id, 0.0))
 
-    incurred = money(bill_cost + material + labour + plant + subcontract + equipment - recovered)
+    # Paid on expense vouchers charged to the site: the diesel, the lorry, the site's sundries, with no bill behind them.
+    site_expenses = money((pre.get("expenses") or {}).get(job.id, 0.0))
+
+    incurred = money(bill_cost + material + labour + plant + subcontract + equipment + site_expenses - recovered)
     budgeted = money(sum(pre["bom"].get(i, 0.0) for i in wo_ids)) if wo_ids else 0.0
 
     revenue = money(max(invoiced, certified))
@@ -713,6 +782,7 @@ def project_pnl(db, client_id, job, pre=None):
             "labour": labour,
             "plant": plant,
             "equipment": equipment,
+            "site_expenses": site_expenses,
             "material_recovered_from_contractors": recovered,
             "incurred": incurred,
             "committed_not_yet_billed": committed,
@@ -818,7 +888,7 @@ def attention_items(db, client_id):
         })
 
     # --- the store -------------------------------------------------------
-    balances = stock_balances(db, client_id)
+    balances = current_stock(db, client_id)
     levels = {i.item_code: (i.reorder_level or 0.0)
               for i in db.query(models.DBItem).filter(
                   models.DBItem.client_id == client_id).all()}
@@ -859,7 +929,9 @@ def attention_items(db, client_id):
 
     grn_drafts = db.query(models.DBGoodsReceipt).filter(
         models.DBGoodsReceipt.client_id == client_id,
-        models.DBGoodsReceipt.status == "DRAFT").count()
+        models.DBGoodsReceipt.status == "DRAFT").count() + db.query(DBStoreGrn).filter(
+        DBStoreGrn.client_id == client_id,
+        DBStoreGrn.status.in_(("DRAFT", "SUBMITTED", "APPROVED"))).count()
     if grn_drafts:
         items.append({
             "kind": "receipts", "severity": "notice", "value": 0.0,
@@ -927,24 +999,19 @@ def setup_progress(db, client_id):
     idea where to start. These are the steps in the order a site actually
     takes them, each one done or not, with where to go to do it.
     """
-    n = lambda q: q.count()
-    jobs = n(db.query(models.DBJob).filter(models.DBJob.client_id == client_id))
-    items = n(db.query(models.DBItem).filter(models.DBItem.client_id == client_id))
-    wos = db.query(models.DBWorkOrder).filter(
-        models.DBWorkOrder.client_id == client_id).all()
-    placed = len([w for w in wos if (w.status or "") != "Draft"])
-    measured = n(db.query(models.DBMeasurement).filter(
-        models.DBMeasurement.client_id == client_id))
-    billed = n(db.query(models.DBRABill).filter(
-        models.DBRABill.client_id == client_id))
-    received = n(db.query(models.DBGoodsReceipt).filter(
-        models.DBGoodsReceipt.client_id == client_id,
-        models.DBGoodsReceipt.status == "POSTED"))
-    diaries = n(db.query(models.DBSiteDiary).filter(
-        models.DBSiteDiary.client_id == client_id))
+    # Every count in one round trip: nine queries one after another cost nine round trips, which on a database across
+    # an ocean was several seconds on every dashboard load after a save.
+    from sqlalchemy import or_, select
 
-    tenders = n(db.query(models.DBEstimate).filter(
-        models.DBEstimate.client_id == client_id))
+    def count(model, *where):
+        return select(func.count()).select_from(model).where(model.client_id == client_id, *where).scalar_subquery()
+    (jobs, items, wo_count, placed, measured, billed, received_old, received_new, diaries, tenders) = db.query(
+        count(models.DBJob), count(models.DBItem), count(models.DBWorkOrder),
+        count(models.DBWorkOrder, or_(models.DBWorkOrder.status.is_(None), models.DBWorkOrder.status != "Draft")),
+        count(models.DBMeasurement), count(models.DBRABill),
+        count(models.DBGoodsReceipt, models.DBGoodsReceipt.status == "POSTED"), count(DBStoreGrn, DBStoreGrn.status == "POSTED"),
+        count(models.DBSiteDiary), count(models.DBEstimate)).one()
+    received = (received_old or 0) + (received_new or 0)
     steps = [
         {"key": "tender", "done": tenders > 0, "view": "estimates-view",
          "title": "Price a tender",
@@ -955,7 +1022,7 @@ def setup_progress(db, client_id):
         {"key": "items", "done": items > 0, "view": "workorders-view",
          "title": "Name what you sell and what you buy",
          "hint": "Deliverables get a code when you first price one on a work order. Materials can be added from a spreadsheet under Store."},
-        {"key": "order", "done": len(wos) > 0, "view": "workorders-view",
+        {"key": "order", "done": wo_count > 0, "view": "workorders-view",
          "title": "Build a work order",
          "hint": "What was sold, line by line, with a rate against each."},
         {"key": "placed", "done": placed > 0, "view": "workorders-view",
@@ -1026,9 +1093,15 @@ def planned_percent(a, on):
 
 
 class ScheduleContext:
-    """Everything the progress of a job's activities is read from, loaded once."""
+    """Everything the progress of a job's activities is read from, loaded once.
+
+    Dates are the programme's: what the engine works out from each row's Start, Days, predecessors and the project's
+    calendar, not what was typed. Headings add up the rows under them, so the figures for the whole project come from
+    the leaves (`leaves`), each with its share of the whole (`weight`), the same as the programme's roll-up."""
 
     def __init__(self, db, client_id, job_id):
+        self.db, self.client_id, self.job_id = db, client_id, job_id
+        self._prog = None
         self.acts = db.query(models.DBScheduleActivity).filter(
             models.DBScheduleActivity.client_id == client_id,
             models.DBScheduleActivity.job_id == job_id).order_by(
@@ -1057,6 +1130,8 @@ class ScheduleContext:
         if a.work_order_line_id and self.ordered.get(a.work_order_line_id):
             done = sum(q for d, q in self.measures.get(a.work_order_line_id, []) if d <= iso)
             pct = min(100.0, max(0.0, done / self.ordered[a.work_order_line_id] * 100.0))
+        elif a.id not in self.reports and (a.quantity or 0) > 0 and (a.qty_done or 0) > 0:
+            pct = min(100.0, a.qty_done / a.quantity * 100.0)      # a quantity done typed on the programme, undated
         else:
             pct = 0.0
             for d, p in self.reports.get(a.id, []):
@@ -1065,6 +1140,92 @@ class ScheduleContext:
         if a.actual_finish and a.actual_finish <= iso:
             pct = 100.0
         return round(pct, 1)
+
+    # --- the programme, worked out once, the first time it is asked for ---------------------------------------------
+    def _work_out(self):
+        # imported here: the programme service imports this module
+        from types import SimpleNamespace
+        from app.services.programme import programme_baseline, programme_calendar, programme_links, programme_rows
+        from app.services.programme_engine import leaf_weights, schedule
+        job = SimpleNamespace(id=self.job_id)
+        self._cal, self._cal_shown = programme_calendar(self.db, self.client_id, job)
+        self._links = programme_links(self.db, self.client_id, self.job_id, self.acts)
+        today = date.today()
+        self._prog = schedule(programme_rows(self.acts, lambda a: self.actual(a, today)), self._links, self._cal)
+        self._baseline_head, self._base = programme_baseline(self.db, self.client_id, job)
+        self._weight = leaf_weights(self._prog)
+        names = {a.id: a.name or "" for a in self.acts}
+        parent = {a.id: a.parent_id for a in self.acts if a.parent_id in names}
+        self._path = {}
+        for a in self.acts:
+            up, p = [], parent.get(a.id)
+            while p is not None and len(up) < 20:
+                up.append(names[p])
+                p = parent.get(p)
+            self._path[a.id] = " > ".join(reversed(up))
+
+    @property
+    def prog(self):
+        if self._prog is None:
+            self._work_out()
+        return self._prog
+
+    @property
+    def cal(self):
+        return self.prog and self._cal
+
+    @property
+    def cal_shown(self):
+        return self.prog and self._cal_shown
+
+    @property
+    def links(self):
+        return self.prog and self._links
+
+    @property
+    def baseline_head(self):
+        return self.prog and self._baseline_head
+
+    @property
+    def base(self):
+        return self.prog and self._base
+
+    @property
+    def weight(self):
+        """Leaf id -> its share of the whole project (they add up to 1)."""
+        return self.prog and self._weight
+
+    @property
+    def leaves(self):
+        """The rows that are work: everything but the headings."""
+        return [a for a in self.acts if not self.prog.rows[a.id].summary]
+
+    def path(self, a):
+        """The headings above a row: "A-16 > Internal Painting"."""
+        return self.prog and self._path.get(a.id, "")
+
+    def dates(self, a):
+        """When the programme has a row starting and ending (dates, or None for a row not scheduled yet)."""
+        p = self.prog.rows[a.id]
+        return p.start, p.end
+
+    def planned(self, a, on):
+        """Where the plan has a row by the end of a day: across its baseline dates if one is saved, else its current
+        ones, a working day at a time; a milestone is all or nothing."""
+        p = self.prog.rows[a.id]
+        s, e, d = self.base.get(a.id, (p.start, p.end, p.days))
+        if s is None or on < s:
+            return 0.0
+        if on >= e:
+            return 100.0
+        if a.is_milestone:
+            return 0.0
+        return round(min(100.0, self.cal.span(s, on) / max(1, d or self.cal.span(s, e)) * 100.0), 1)
+
+    def overall(self, on, measure):
+        """The whole project on a day, by each leaf's share: measure is self.actual or self.planned."""
+        w = self.weight
+        return round(sum(w.get(a.id, 0.0) * measure(a, on) for a in self.leaves), 1) if w else 0.0
 
 
 def _effective_status(a, done, state, slip):
@@ -1104,22 +1265,28 @@ def schedule_view(db, client_id, job):
     ctx = ScheduleContext(db, client_id, job.id)
     today = date.today()
     by_id = {a.id: a for a in ctx.acts}
+    leaves = ctx.leaves
     rows, forecast_finish = [], {}
+    before = {}                                   # leaf -> the leaves it waits on (links that hold, not onto headings)
+    for ln in ctx.links:
+        if ln not in ctx.prog.broken_links and ln.predecessor in by_id and not ctx.prog.rows[ln.predecessor].summary:
+            before.setdefault(ln.successor, []).append(ln.predecessor)
 
-    def forecast(a):
+    def forecast(a, seen=()):
         """When it will finish: late predecessors push it; progress so far
         tells how fast it is going once it has started."""
         if a.id in forecast_finish:
             return forecast_finish[a.id]
-        s, f = _d(a.planned_start), _d(a.planned_finish)
+        s, f = ctx.dates(a)
         if not s or not f:
             forecast_finish[a.id] = None
             return None
         dur = (f - s).days
-        pred = by_id.get(a.depends_on_id)
         start = s
-        if pred and pred.id != a.id:
-            pf = forecast(pred)
+        for pid in before.get(a.id, []):
+            if pid == a.id or pid in seen:
+                continue
+            pf = forecast(by_id[pid], seen + (a.id,))
             if pf and pf >= start:
                 start = pf + timedelta(days=1)
         done = ctx.actual(a, today)
@@ -1135,7 +1302,6 @@ def schedule_view(db, client_id, job):
         forecast_finish[a.id] = fin
         return fin
 
-    total_weight = sum(a.weight or 0 for a in ctx.acts) or float(len(ctx.acts) or 1)
     staff = {e.id: employee_name(e) for e in db.query(models.DBEmployee).filter(
         models.DBEmployee.client_id == client_id, models.DBEmployee.status != "terminated").all()}
     team_ids = {r[0] for r in db.query(models.DBEmployeeSite.employee_id).filter(
@@ -1143,24 +1309,29 @@ def schedule_view(db, client_id, job):
     if job.manager_id:
         team_ids.add(job.manager_id)
     team_ids |= {a.assigned_to_id for a in ctx.acts if a.assigned_to_id}      # whoever already has work here stays listed
-    for a in ctx.acts:
-        w = (a.weight or 0) if any(x.weight for x in ctx.acts) else 1.0
-        plan = planned_percent(a, today)
+    for a in sorted(leaves, key=lambda x: ctx.dates(x)[0] or date.max):      # earliest first: their forecasts feed the later ones
+        forecast(a)
+    names = {a.id: a.code or a.name or "" for a in ctx.acts}
+    for a in leaves:
+        plan = ctx.planned(a, today)
         done = ctx.actual(a, today)
         fin = forecast(a)
-        pf = _d(a.planned_finish)
+        ps, pf = ctx.dates(a)
+        p = ctx.prog.rows[a.id]
         slip = (fin - pf).days if fin and pf else 0
         state = ("done" if done >= 100 else
                  "late" if pf and today > pf else
                  "behind" if plan - done > 10 else
                  "not started" if done == 0 and plan == 0 else "on track")
-        pred = by_id.get(a.depends_on_id)
+        pred = by_id.get(a.depends_on_id) or (by_id.get(before[a.id][0]) if before.get(a.id) else None)
         rows.append({
             "id": a.id, "code": a.code or "", "name": a.name or "",
-            "planned_start": a.planned_start or "", "planned_finish": a.planned_finish or "",
+            "wbs": p.wbs, "path": ctx.path(a), "boq_ref": a.boq_ref or "", "uom": a.uom or "", "quantity": a.quantity or 0.0,
+            "qty_done": round(done * (a.quantity or 0.0) / 100.0, 3),
+            "planned_start": ps.isoformat() if ps else "", "planned_finish": pf.isoformat() if pf else "",
             "actual_start": a.actual_start or "", "actual_finish": a.actual_finish or "",
-            "weight": money(a.weight), "share_percent": round(w / total_weight * 100, 1),
-            "depends_on_id": a.depends_on_id, "depends_on": pred.code or pred.name if pred else "",
+            "weight": money(a.weight), "share_percent": round(ctx.weight.get(a.id, 0.0) * 100, 1),
+            "depends_on_id": a.depends_on_id, "depends_on": ", ".join(names[i] for i in before.get(a.id, [])) or (pred.code or pred.name if pred else ""),
             "work_order_line_id": a.work_order_line_id, "is_milestone": bool(a.is_milestone),
             "progress_from": "measurement book" if a.work_order_line_id else "reported",
             "planned_percent": plan, "actual_percent": done,
@@ -1172,16 +1343,10 @@ def schedule_view(db, client_id, job):
             "predecessor_code": pred.code or pred.name if pred else ""})
 
     def overall(on):
-        if not ctx.acts:
-            return 0.0, 0.0
-        weights = [(a.weight or 0) if any(x.weight for x in ctx.acts) else 1.0 for a in ctx.acts]
-        tw = sum(weights) or 1.0
-        p = sum(w * planned_percent(a, on) for a, w in zip(ctx.acts, weights)) / tw
-        d_ = sum(w * ctx.actual(a, on) for a, w in zip(ctx.acts, weights)) / tw
-        return round(p, 1), round(d_, 1)
+        return ctx.overall(on, ctx.planned), ctx.overall(on, ctx.actual)
 
-    starts = [_d(a.planned_start) for a in ctx.acts if _d(a.planned_start)]
-    finishes = [_d(a.planned_finish) for a in ctx.acts if _d(a.planned_finish)]
+    starts = [ctx.dates(a)[0] for a in leaves if ctx.dates(a)[0]]
+    finishes = [ctx.dates(a)[1] for a in leaves if ctx.dates(a)[1]]
     curve = []
     if starts and finishes:
         cur, end = min(starts), max(max(finishes), today)
@@ -1361,6 +1526,17 @@ def schedule_import_confirm(db, client_id, job, rows, actor_name=""):
                                                        tasks, "" if tasks == 1 else "s")
 
 
+def boq_order_lines(db, client_id, boq_id):
+    """Item code -> the line of a client work order made from this BOQ. An activity tied to that line takes its progress
+    from the measurement book."""
+    out = {}
+    for wo in db.query(models.DBWorkOrder).filter(models.DBWorkOrder.client_id == client_id, models.DBWorkOrder.boq_id == boq_id).all():
+        for wl in db.query(models.DBWorkOrderLine).filter(models.DBWorkOrderLine.work_order_id == wo.id).all():
+            if wl.fg_code:
+                out.setdefault(wl.fg_code.upper(), wl.id)
+    return out
+
+
 def schedule_from_boq(db, client_id, job, start, finish, by="section", actor_name=""):
     """Draw the programme from the project's BOQ: the work the client's sheet lists, put on the plan.
 
@@ -1408,12 +1584,7 @@ def schedule_from_boq(db, client_id, job, start, finish, by="section", actor_nam
         raise HTTPException(409, "Everything in %s is already on the programme." % (boq.number or "the BOQ"))
 
     # A client order made from this BOQ measures the work: an item drawn on its own takes its progress from that book.
-    wo_line = {}
-    if by == "item":
-        for wo in db.query(models.DBWorkOrder).filter(models.DBWorkOrder.client_id == client_id, models.DBWorkOrder.boq_id == boq.id).all():
-            for wl in db.query(models.DBWorkOrderLine).filter(models.DBWorkOrderLine.work_order_id == wo.id).all():
-                if wl.fg_code:
-                    wo_line.setdefault(wl.fg_code.upper(), wl.id)
+    wo_line = boq_order_lines(db, client_id, boq.id) if by == "item" else {}
     used_lines = {a.work_order_line_id for a in db.query(models.DBScheduleActivity.work_order_line_id).filter(
         models.DBScheduleActivity.job_id == job.id).all() if a.work_order_line_id}
 
@@ -1466,7 +1637,8 @@ def activity_detail(db, client_id, a):
     return {"job": {"id": job.id, "number": job.number, "name": job.name},
             "activity": dict(row, editable=not a.work_order_line_id, tasks_total=len(tasks), tasks_done=sum(1 for t in tasks if t.done),
                              tasks=[task_dict(t, names) for t in tasks], updated_on=last[0], updated_by=last[1]),
-            "history": [{"on": h.reported_on or "", "percent": h.percent or 0, "note": h.note or "", "by": h.by_name or ""} for h in history]}
+            "history": [{"on": h.reported_on or "", "percent": h.percent or 0, "qty_done": h.qty_done, "uom": a.uom or "",
+                         "note": h.note or "", "by": h.by_name or ""} for h in history]}
 
 
 def task_share(t):
@@ -1615,7 +1787,6 @@ def schedule_day(db, client_id, job, on=None, ahead_days=7):
     between where the plan has it and where the work actually is."""
     on = on or date.today()
     ctx = ScheduleContext(db, client_id, job.id)
-    weighted = any(a.weight for a in ctx.acts)
 
     names = {a.id: ((a.code or "") + " " + (a.name or "")).strip() for a in ctx.acts}
     by_activity = {}
@@ -1625,13 +1796,15 @@ def schedule_day(db, client_id, job, on=None, ahead_days=7):
         by_activity.setdefault(t.activity_id, []).append(t)
 
     def row(a, bucket):
-        s, f = _d(a.planned_start), _d(a.planned_finish)
+        s, f = ctx.dates(a)
         mine = by_activity.get(a.id, [])
-        by_end = planned_percent(a, on)
-        before = planned_percent(a, on - timedelta(days=1))
+        by_end = ctx.planned(a, on)
+        before = ctx.planned(a, on - timedelta(days=1))
         done = ctx.actual(a, on)
         return {"id": a.id, "code": a.code or "", "name": a.name or "", "bucket": bucket,
-                "planned_start": a.planned_start or "", "planned_finish": a.planned_finish or "",
+                "wbs": ctx.prog.rows[a.id].wbs, "path": ctx.path(a), "boq_ref": a.boq_ref or "",
+                "uom": a.uom or "", "quantity": a.quantity or 0.0, "qty_done": round(done * (a.quantity or 0.0) / 100.0, 3),
+                "planned_start": s.isoformat() if s else "", "planned_finish": f.isoformat() if f else "",
                 "is_milestone": bool(a.is_milestone), "progress_from": "measurement book" if a.work_order_line_id else "reported",
                 "planned_percent": by_end, "actual_percent": done,
                 "target_today": round(max(0.0, by_end - before), 1),
@@ -1645,8 +1818,8 @@ def schedule_day(db, client_id, job, on=None, ahead_days=7):
                 "tasks": [task_dict(t, names) for t in mine]}
 
     today_rows, overdue, soon, others = [], [], [], []
-    for a in ctx.acts:
-        s, f = _d(a.planned_start), _d(a.planned_finish)
+    for a in ctx.leaves:
+        s, f = ctx.dates(a)
         done = ctx.actual(a, on)
         if not s or not f:
             others.append(row(a, "done" if done >= 100 else "later"))
@@ -1663,10 +1836,8 @@ def schedule_day(db, client_id, job, on=None, ahead_days=7):
     overdue.sort(key=lambda r: -(r["days_late"] or 0))
     today_rows.sort(key=lambda r: (-r["to_catch_up"], r["planned_finish"]))
 
-    weights = [(a.weight or 0) if weighted else 1.0 for a in ctx.acts]
-    total = sum(weights) or 1.0
-    overall = round(sum(w * ctx.actual(a, on) for a, w in zip(ctx.acts, weights)) / total, 1) if ctx.acts else 0.0
-    planned = round(sum(w * planned_percent(a, on) for a, w in zip(ctx.acts, weights)) / total, 1) if ctx.acts else 0.0
+    overall = ctx.overall(on, ctx.actual)
+    planned = ctx.overall(on, ctx.planned)
     tasks = [task_dict(t, names) for t in db.query(models.DBScheduleTask).filter(
         models.DBScheduleTask.client_id == client_id, models.DBScheduleTask.job_id == job.id,
         models.DBScheduleTask.task_date == on.isoformat()).order_by(models.DBScheduleTask.id).all()]
@@ -1742,6 +1913,7 @@ def _apply_activity(db, client_id, job, a, body, actor_name=""):
     a.assigned_to_id = body.assigned_to_id or None
     a.name, a.code = name, (body.code or "").strip()
     a.planned_start, a.planned_finish = s.isoformat(), f.isoformat()
+    a.duration_days = None                         # both dates typed: they are its length
     a.weight = max(0.0, float(body.weight or 0))
     a.depends_on_id = body.depends_on_id or None
     a.work_order_line_id = body.work_order_line_id or None
@@ -1779,6 +1951,31 @@ def _set_status(db, client_id, a, status, actor_name):
             a.actual_finish = on
     elif status in ("In Progress", "Delayed") and not a.actual_start and not a.work_order_line_id:
         a.actual_start = date.today().isoformat()
+
+
+def programme_summaries(db, client_id, jobs):
+    """[(job, its programme summary)] for each job - the same as schedule_view(...)["summary"] one job at a time.
+
+    Each job's programme is a dozen reads. On a database across a network they were done one job after another, so the
+    attention list took seconds per project; read-only and independent, they now run side by side, each on its own
+    short-lived session (up to four at once, well inside the connection pool). SQLite - the local file and the tests -
+    keeps the plain loop."""
+    if len(jobs) < 2 or db.get_bind().dialect.name == "sqlite":
+        return [(j, schedule_view(db, client_id, j)["summary"]) for j in jobs]
+    import contextvars
+    from concurrent.futures import ThreadPoolExecutor
+    from app.db.session import SessionLocal
+
+    def one(job_id):
+        s = SessionLocal()
+        try:
+            return schedule_view(s, client_id, s.get(models.DBJob, job_id))["summary"]
+        finally:
+            s.close()
+    with ThreadPoolExecutor(max_workers=min(4, len(jobs))) as pool:
+        # Each task carries a copy of this request's context (who is asking, which company), as the code it calls expects.
+        futures = [pool.submit(contextvars.copy_context().run, one, j.id) for j in jobs]
+        return [(j, f.result()) for j, f in zip(jobs, futures)]
 
 
 def attention_elsewhere(db, client_id, jobs, today):
@@ -1852,11 +2049,8 @@ def attention_elsewhere(db, client_id, jobs, today):
     late_acts, slipped = 0, []
     with_plan = {j for (j,) in db.query(models.DBScheduleActivity.job_id).filter(
         models.DBScheduleActivity.client_id == client_id).distinct().all()}
-    for job_id in with_plan:
-        job = jobs.get(job_id)
-        if not job or (job.status or "") in (JOB_FINISHED, "cancelled"):
-            continue
-        s = schedule_view(db, client_id, job)["summary"]
+    live_jobs = [jobs[j] for j in with_plan if jobs.get(j) and (jobs[j].status or "") not in (JOB_FINISHED, "cancelled")]
+    for job, s in programme_summaries(db, client_id, live_jobs):
         late_acts += s["late"]
         if s["slip_days"] > 0:
             slipped.append((s["slip_days"], job))
@@ -1942,6 +2136,7 @@ def attention_elsewhere(db, client_id, jobs, today):
             models.DBStockMovement.client_id == client_id,
             models.DBStockMovement.kind == "TRANSFER_OUT").all():
         moved[m.source_ref] = money(moved.get(m.source_ref, 0.0) - (m.value or 0))
+    moved.update(hub_transfers_out(db, client_id))
     bare = [ref for ref, v in moved.items() if v > EWAY_THRESHOLD and ref not in covered]
     if bare:
         items.append({
@@ -1969,6 +2164,8 @@ def attention_elsewhere(db, client_id, jobs, today):
                       "is not a comparison." % (len(thin), "y" if len(thin) == 1 else "ies"),
         })
     items.extend(release_attention(db, client_id, today))
+    from app.services.subcontract_rules import subcontract_attention
+    items.extend(subcontract_attention(db, client_id, today))
     items.extend(fixed_asset_attention(db, client_id))
     return items
 

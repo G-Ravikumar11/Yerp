@@ -1,7 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, Field, Input, NumField, Select, Textarea } from '@/components/ui'
 import { departmentsForSite, useBusinessUnits, useContractors, useOrderVocabulary, type Order, type OrderHead } from '@/api/orders'
 
-export const BILLING_CYCLES = ['Monthly', 'Fortnightly', 'On milestone', 'On completion']
+const BILLING_CYCLES = ['Monthly', 'Fortnightly', 'On milestone', 'On completion']
 
 export function headFrom(o: Order): OrderHead {
   return {
@@ -19,6 +19,8 @@ export function headFrom(o: Order): OrderHead {
     bank_guarantee_applicable: o.bank_guarantee_applicable,
     bank_guarantee_amount: o.bank_guarantee_amount,
     bank_guarantee_validity: o.bank_guarantee_validity,
+    bank_guarantee_number: o.bank_guarantee_number ?? '',
+    bank_guarantee_bank: o.bank_guarantee_bank ?? '',
     gst_rate: o.gst_rate,
     tds_rate: o.tds_rate,
     retention_percent: o.retention_percent,
@@ -27,6 +29,8 @@ export function headFrom(o: Order): OrderHead {
     labour_cess_percent: o.labour_cess_percent,
     billing_cycle: o.billing_cycle,
     payment_days: o.payment_days,
+    ld_percent_per_week: o.ld_percent_per_week ?? 0,
+    ld_cap_percent: o.ld_cap_percent ?? 0,
   }
 }
 
@@ -40,6 +44,11 @@ export function HeadForm({ head, onChange, disabled, order }: { head: OrderHead;
   const v = vocab.data
 
   const contractor = (contractors.data?.contractors ?? []).filter((c) => c.registration_status === 'APPROVED' || c.id === head.contractor_id)
+  const picked = (contractors.data?.contractors ?? []).find((c) => c.id === head.contractor_id)
+  // The TDS the law sets for whoever is picked; an order below it needs the Master's reason to be approved.
+  const statutory = picked?.tds_rate ?? order.statutory_tds?.rate ?? null
+  const basis = picked?.tds_basis ?? order.statutory_tds?.why ?? ''
+  const tdsOptions = (v?.tds_options ?? [{ rate: 1, label: '1%' }]).map((t) => ({ value: t.rate, label: t.label }))
   const workTypes = (v?.work_types ?? []).filter((w) => !head.department || w.department === head.department)
 
   return (
@@ -54,7 +63,19 @@ export function HeadForm({ head, onChange, disabled, order }: { head: OrderHead;
             <Select id="h-unit" disabled={disabled} value={head.business_unit_id ?? ''} onChange={(e) => onChange({ business_unit_id: id(e.target.value) })} placeholder="Choose" options={(units.data ?? []).map((u) => ({ value: u.id, label: u.name }))} />
           </Field>
           <Field label="Sub contractor" htmlFor="h-con" hint="Only registered contractors can be issued an order.">
-            <Select id="h-con" disabled={disabled} value={head.contractor_id ?? ''} onChange={(e) => onChange({ contractor_id: id(e.target.value) })} placeholder="Choose" options={contractor.map((c) => ({ value: c.id, label: c.company_name + (c.vendor_code ? ` (${c.vendor_code})` : '') }))} />
+            <Select
+              id="h-con"
+              disabled={disabled}
+              value={head.contractor_id ?? ''}
+              onChange={(e) => {
+                const next = id(e.target.value)
+                const rate = (contractors.data?.contractors ?? []).find((c) => c.id === next)?.tds_rate
+                // A new contractor brings the TDS the law sets for them.
+                onChange(rate != null ? { contractor_id: next, tds_rate: rate } : { contractor_id: next })
+              }}
+              placeholder="Choose"
+              options={contractor.map((c) => ({ value: c.id, label: c.company_name + (c.vendor_code ? ` (${c.vendor_code})` : '') }))}
+            />
           </Field>
           <Field label="Project" htmlFor="h-job" hint="Its budget is what this order is held against.">
             <Select id="h-job" disabled={disabled} value={head.job_id ?? ''} onChange={(e) => onChange({ job_id: id(e.target.value) })} placeholder="Choose" options={(v?.jobs ?? []).map((j) => ({ value: j.id, label: `${j.number} ${j.name}` }))} />
@@ -110,8 +131,12 @@ export function HeadForm({ head, onChange, disabled, order }: { head: OrderHead;
           <Field label="GST" htmlFor="h-gst">
             <Select id="h-gst" disabled={disabled} value={head.gst_rate} onChange={(e) => onChange({ gst_rate: Number(e.target.value) })} options={(v?.gst_rates ?? [0, 5, 12, 18, 28]).map((r) => ({ value: r, label: `${r}%` }))} />
           </Field>
-          <Field label="TDS" htmlFor="h-tds">
-            <Select id="h-tds" disabled={disabled} value={head.tds_rate} onChange={(e) => onChange({ tds_rate: Number(e.target.value) })} options={(v?.tds_options ?? [{ rate: 1, label: '1%' }]).map((t) => ({ value: t.rate, label: t.label }))} />
+          <Field
+            label="TDS"
+            htmlFor="h-tds"
+            hint={statutory != null ? (head.tds_rate < statutory ? `Below the ${statutory}% the law sets - ${basis}. Only the Master can approve it so.` : `${statutory}% by law: ${basis}.`) : undefined}
+          >
+            <Select id="h-tds" disabled={disabled} value={head.tds_rate} onChange={(e) => onChange({ tds_rate: Number(e.target.value) })} options={tdsOptions} />
           </Field>
           <Field label="Retention (%)" htmlFor="h-ret" hint="Held back from every bill.">
             <NumField id="h-ret" disabled={disabled} value={head.retention_percent} onValue={(n) => onChange({ retention_percent: n })} />
@@ -125,6 +150,12 @@ export function HeadForm({ head, onChange, disabled, order }: { head: OrderHead;
           <Field label="Recovered per bill (%)" htmlFor="h-rec" hint="Of the advance paid.">
             <NumField id="h-rec" disabled={disabled} value={head.advance_recovery_percent} onValue={(n) => onChange({ advance_recovery_percent: n })} />
           </Field>
+          <Field label="Liquidated damages (% a week)" htmlFor="h-ld" hint="Of the order value, for each week past the completion date.">
+            <NumField id="h-ld" disabled={disabled} value={head.ld_percent_per_week} onValue={(n) => onChange({ ld_percent_per_week: n })} />
+          </Field>
+          <Field label="Damages capped at (%)" htmlFor="h-ldcap" hint="Of the order value. Nought: no cap below the order value.">
+            <NumField id="h-ldcap" disabled={disabled} value={head.ld_cap_percent} onValue={(n) => onChange({ ld_cap_percent: n })} />
+          </Field>
           <label className="flex items-center gap-2.5 text-[13px] font-medium sm:col-span-2">
             <input type="checkbox" disabled={disabled} checked={head.bank_guarantee_applicable} onChange={(e) => onChange({ bank_guarantee_applicable: e.target.checked })} className="size-4 accent-[var(--primary)]" />
             A bank guarantee is required
@@ -134,8 +165,14 @@ export function HeadForm({ head, onChange, disabled, order }: { head: OrderHead;
               <Field label="Guarantee amount" htmlFor="h-bg">
                 <NumField id="h-bg" disabled={disabled} value={head.bank_guarantee_amount} onValue={(n) => onChange({ bank_guarantee_amount: n })} />
               </Field>
-              <Field label="Valid until" htmlFor="h-bgv">
+              <Field label="Valid until" htmlFor="h-bgv" hint="At least to the completion date.">
                 <Input id="h-bgv" type="date" disabled={disabled} value={head.bank_guarantee_validity} onChange={(e) => onChange({ bank_guarantee_validity: e.target.value })} />
+              </Field>
+              <Field label="Guarantee number" htmlFor="h-bgn">
+                <Input id="h-bgn" disabled={disabled} value={head.bank_guarantee_number} onChange={(e) => onChange({ bank_guarantee_number: e.target.value })} placeholder="BG/2026/0042" />
+              </Field>
+              <Field label="Issuing bank" htmlFor="h-bgb">
+                <Input id="h-bgb" disabled={disabled} value={head.bank_guarantee_bank} onChange={(e) => onChange({ bank_guarantee_bank: e.target.value })} placeholder="HDFC Bank, Banjara Hills" />
               </Field>
             </>
           )}

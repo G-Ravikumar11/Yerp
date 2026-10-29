@@ -10,7 +10,8 @@ import { initials, useSession } from '@/lib/session'
 import { cn } from '@/lib/utils'
 import { type Theme, useUI } from '@/stores/ui'
 import { useState } from 'react'
-import { ConfirmDialog, Skeleton, Tooltip } from '@/components/ui'
+import { ConfirmDialog, InfoTip, Skeleton, Tooltip } from '@/components/ui'
+import { infoFor } from '@/lib/pageInfo'
 import { NotificationBell } from './NotificationBell'
 import { SyncIndicator } from './SyncIndicator'
 import { ActivityIndicator } from './ActivityIndicator'
@@ -20,7 +21,9 @@ function Breadcrumbs() {
   const { pathname } = useLocation()
   const { user } = useSession()
   const trail = trailFor(pathname, user?.type === 'employee')
+  const info = infoFor(pathname)
   return (
+    <div className="flex min-w-0 items-center gap-1.5">
     <nav aria-label="Breadcrumb" className="min-w-0">
       <ol className="flex items-center gap-1.5 text-[13px]">
         {trail.map((crumb, i) => {
@@ -44,6 +47,8 @@ function Breadcrumbs() {
         })}
       </ol>
     </nav>
+    {info && <InfoTip title={trail[trail.length - 1]?.label ?? ''}>{info}</InfoTip>}
+    </div>
   )
 }
 
@@ -56,7 +61,7 @@ const THEMES: { value: Theme; label: string; icon: typeof Sun }[] = [
 function ThemeSwitch() {
   const { theme, setTheme } = useUI()
   return (
-    <div role="radiogroup" aria-label="Theme" className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
+    <div role="radiogroup" aria-label="Theme" className="flex items-center gap-0.5 rounded-md bg-muted p-0.5">
       {THEMES.map(({ value, label, icon: Icon }) => {
         const on = theme === value
         return (
@@ -67,7 +72,7 @@ function ThemeSwitch() {
               aria-checked={on}
               aria-label={label}
               onClick={() => setTheme(value)}
-              className={cn('grid size-7 place-items-center rounded-md transition-all duration-150', on ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground')}
+              className={cn('grid size-7 place-items-center rounded-md transition-colors duration-150', on ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground')}
             >
               <Icon className="size-3.5" />
             </button>
@@ -101,7 +106,7 @@ function UserChip() {
 
   return (
     <div className="flex items-center gap-2 rounded-lg py-1 pl-1 pr-1 sm:gap-2.5">
-      <span className="grid size-8 place-items-center rounded-full bg-gradient-to-br from-steel-400 to-steel-600 text-[11px] font-semibold text-white">{initials(user?.name)}</span>
+      <span className="grid size-8 place-items-center rounded-full bg-info text-[11px] font-semibold text-white">{initials(user?.name)}</span>
       <span className="hidden min-w-0 leading-tight sm:block">
         <span className="block max-w-36 truncate text-[13px] font-medium">{user?.name ?? 'Guest'}</span>
         <span className="block text-[11px] text-muted-foreground">{user ? [user.roleLabel, user.department].filter(Boolean).join(' · ') : 'Not signed in'}</span>
@@ -132,7 +137,7 @@ function InstallButton() {
   if (!canInstall) return null
   return (
     <Tooltip content="Put Y ERP on this device" side="bottom">
-      <button type="button" onClick={() => void install()} className="hidden items-center gap-1.5 rounded-full bg-primary-soft px-3 py-1.5 text-xs font-medium text-primary ring-1 ring-inset ring-primary/25 transition-colors hover:brightness-110 sm:inline-flex">
+      <button type="button" onClick={() => void install()} className="hidden items-center gap-1.5 rounded-md bg-primary-soft px-3 py-1.5 text-xs font-medium text-primary ring-1 ring-inset ring-primary/25 transition-colors hover:bg-[color-mix(in_srgb,var(--primary-soft),black_10%)] sm:inline-flex">
         <Download className="size-3.5" /> Install
       </button>
     </Tooltip>
@@ -143,7 +148,7 @@ export function Topbar() {
   const setMobileNav = useUI((s) => s.setMobileNav)
   const { user } = useSession()
   return (
-    <header className="pt-safe glass sticky top-0 z-20 border-b border-border">
+    <header className="pt-safe surface sticky top-0 z-20 rounded-none border-x-0 border-t-0 border-b border-border">
       <div className="flex h-16 items-center gap-3 px-4 sm:px-6 lg:px-8">
         <button
           type="button"

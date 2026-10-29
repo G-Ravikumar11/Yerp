@@ -69,7 +69,9 @@ def test_a_contractor_registered_by_ho_qs_waits_for_approval(tenant, portal):
     qs = staff(tenant, "ho_qs")
     pm = staff(tenant, "project_manager")
     sign_in(portal, qs)
-    con = portal.post("/api/wo/contractors", json={"company_name": "Najir Hossain", "nature_of_work": "Concrete"}).json()
+    con = portal.post("/api/wo/contractors", json={"company_name": "Najir Hossain", "nature_of_work": "Concrete",
+                                                   "pan": "BNAPH8617N", "bank_account": "50100012345678",
+                                                   "bank_ifsc": "HDFC0001234"}).json()
     assert con["registration_status"] == "PENDING"
     # Not by the person who filled it in.
     assert portal.post("/api/wo/contractors/%d/approve" % con["id"], json={}).status_code == 403
@@ -406,6 +408,78 @@ def test_the_second_certificate_carries_the_first_as_upto_previous(tenant):
     rows = {r[1]: r for r in wb["Top Sheet"].iter_rows(values_only=True) if r[0] == "4.01"}
     work = next(iter(rows.values()))
     assert work[3:6] == (9000, 6000, 3000), "up to this = up to previous + this bill"
+
+
+# --- Material the Store Hub issued to the contractor ---------------------------------
+
+def hub_issue_to_contractor(order_id, value, day="2026-01-15"):
+    """A posted Store Hub issue to the order's contractor, chargeable: `value` rupees to recover from their bills."""
+    import uuid
+    from datetime import date
+    from app import db as database, models
+    from app.models.store_core import DBStore
+    from app.models.store_outward import DBStoreIssue, DBStoreIssueLine, DBStoreRecovery
+    with database.SessionLocal() as s:
+        o = s.get(models.DBSubcontractOrder, order_id)
+        job = o.job_id
+        if job is None:
+            j = models.DBJob(client_id=o.client_id, number="J-" + uuid.uuid4().hex[:6], name="Site")
+            s.add(j)
+            s.flush()
+            job = j.id
+        tag = uuid.uuid4().hex[:6]
+        store = DBStore(client_id=o.client_id, code="S" + tag, name="Site store")
+        item = models.DBItem(client_id=o.client_id, kind="RM", item_code="CEM-" + tag, item_name="Cement", units_of_measure="bag")
+        s.add_all([store, item])
+        s.flush()
+        issue = DBStoreIssue(client_id=o.client_id, store_id=store.id, number="ISSUE/" + tag, status="POSTED", issue_type="SUBCONTRACTOR",
+                             issue_date=date.fromisoformat(day), project_id=job, subcontractor_id=o.contractor_id)
+        s.add(issue)
+        s.flush()
+        line = DBStoreIssueLine(issue_id=issue.id, item_id=item.id, qty=10, chargeable=1)
+        s.add(line)
+        s.flush()
+        s.add(DBStoreRecovery(client_id=o.client_id, source="ISSUE", issue_line_id=line.id, store_id=store.id, project_id=job,
+                              subcontractor_id=o.contractor_id, item_id=item.id, qty=10, recovery_rate=value / 10.0, status="OPEN"))
+        s.commit()
+
+
+def test_store_material_issued_to_the_contractor_comes_off_the_bill_and_blocks_certifying_until_it_does(tenant):
+    order = painting_order(tenant)
+    buff = items_of(tenant, order["id"])[0]["item_id"]
+    measure(tenant, order["id"], buff, 1000)                                   # 6,000 of work
+    hub_issue_to_contractor(order["id"], 1200)
+
+    # Drawn up, the bill takes the 1,200 off by itself.
+    bill = raise_bill(tenant, order["id"], period_to="2026-02-28").json()["bill"]
+    assert bill["store_material"] == 1200 and bill["other_deductions"] == 1200 and bill["store_material_to_recover"] == 0
+    assert "Store Hub material recovered" in bill["deduction_notes"]
+    assert tenant.post("/api/sub-bills/%d/submit" % bill["id"], json={}).status_code == 200
+
+    # More is issued after it was sent: certifying it now would leave that unrecovered.
+    hub_issue_to_contractor(order["id"], 500, day="2026-02-20")
+    res = tenant.post("/api/sub-bills/%d/certify" % bill["id"], json={})
+    assert res.status_code == 409 and "500" in res.json()["detail"] and "unrecovered" in res.json()["detail"]
+    # The Master may certify it regardless, with a reason - kept on the bill.
+    res = tenant.post("/api/sub-bills/%d/certify" % bill["id"], json={"comments": "Cement for next month's block, recover on RA-2"})
+    assert res.status_code == 200, res.text
+    done = res.json()["bill"]
+    assert done["status"] == "CERTIFIED" and "store material unrecovered" in done["override_note"] and "RA-2" in done["override_note"]
+
+    # The next bill takes only what is still owed - the 500 - and not the 1,200 the first bill already recovered.
+    measure(tenant, order["id"], buff, 500)
+    second = raise_bill(tenant, order["id"], period_to="2026-03-31").json()["bill"]
+    assert second["store_material"] == 500
+
+
+def test_store_material_issued_after_the_bill_s_period_waits_for_the_next_bill(tenant):
+    order = painting_order(tenant)
+    buff = items_of(tenant, order["id"])[0]["item_id"]
+    measure(tenant, order["id"], buff, 1000)
+    bill = raise_bill(tenant, order["id"], period_to="2026-02-28").json()["bill"]
+    tenant.post("/api/sub-bills/%d/submit" % bill["id"], json={})
+    hub_issue_to_contractor(order["id"], 800, day="2026-03-05")
+    assert tenant.post("/api/sub-bills/%d/certify" % bill["id"], json={}).status_code == 200
 
 
 # --- Who signs it, in turn ---------------------------------------------------------

@@ -14,10 +14,14 @@ import {
   Wallet,
 } from 'lucide-react'
 
+/** Any of the Store module's six parts opens its hub. */
+const STORE_ANY = ['masters', 'enquiry', 'inward', 'outward', 'control', 'reports'].map((s) => `store.${s}.view`).join('|')
+
 /** notHeadOffice: left out for HO QS and HO Coordinator, whose front page is the HO portal. */
-export type NavItem = { label: string; path: string; perm?: string; notHeadOffice?: boolean }
+type NavItem = { label: string; path: string; perm?: string; notHeadOffice?: boolean }
 /** staffOnly: the screens of a member of staff's own work (timesheet, payslips), which the account holder has no use for. */
-export type NavGroup = { id: string; label: string; icon: LucideIcon; items: NavItem[]; staffOnly?: boolean; ownerOnly?: boolean }
+/** perm: the right that puts the whole group in somebody's menu (a portal). Its items may ask for more on top. */
+export type NavGroup = { id: string; label: string; icon: LucideIcon; items: NavItem[]; staffOnly?: boolean; ownerOnly?: boolean; perm?: string }
 export type NavEntry = { kind: 'link'; id: string; label: string; icon: LucideIcon; path: string; perm?: string; ownerOnly?: boolean; staffOnly?: boolean } | ({ kind: 'group' } & NavGroup)
 
 /**
@@ -25,7 +29,7 @@ export type NavEntry = { kind: 'link'; id: string; label: string; icon: LucideIc
  * things live - only what they look like. Every item gets a route; those not
  * yet ported render the migration placeholder.
  */
-export const NAV: NavEntry[] = [
+const NAV: NavEntry[] = [
   { kind: 'link', id: 'dashboard', label: 'Command Center', icon: LayoutDashboard, path: '/', ownerOnly: true },
   { kind: 'link', id: 'calendar', label: 'Calendar', icon: CalendarDays, path: '/calendar' },
   // Head office's front page: every site's vendors, work orders, BOQs and bills, and what waits on whom.
@@ -42,6 +46,7 @@ export const NAV: NavEntry[] = [
       { label: 'Overview', path: '/', notHeadOffice: true },
       { label: 'Timesheet', path: '/me/timesheet' },
       { label: 'My Costs', path: '/me/costs', perm: 'bills.submit' },
+      { label: 'Site Cash', path: '/me/site-cash' },
       { label: 'My Orders', path: '/me/orders', perm: 'bills.submit' },
       { label: 'My Leave', path: '/me/leave' },
       { label: 'Payslips', path: '/me/payslips' },
@@ -56,6 +61,7 @@ export const NAV: NavEntry[] = [
   {
     kind: 'group',
     id: 'projects',
+    perm: 'projects.view',
     label: 'Projects',
     icon: Building2,
     items: [
@@ -63,10 +69,11 @@ export const NAV: NavEntry[] = [
       { label: 'Planning & Progress', path: '/projects/programme' },
       { label: 'Drawings', path: '/projects/drawings' },
       { label: 'Quality', path: '/projects/quality' },
-      { label: 'Safety', path: '/projects/safety' },
+      { label: 'Workers and Safety', path: '/projects/safety' },
       { label: 'Site Diary', path: '/projects/diary' },
       { label: 'Project Chart', path: '/projects/chart' },
       { label: 'Equipment & Plant', path: '/projects/equipment' },
+      { label: 'Budgeting', path: '/projects/budgeting', perm: 'reports.view' },
       { label: 'Project Profit', path: '/projects/profit', perm: 'reports.view' },
       { label: 'Cost by Project', path: '/projects/costs', perm: 'reports.view' },
     ],
@@ -74,12 +81,14 @@ export const NAV: NavEntry[] = [
   {
     kind: 'group',
     id: 'clients',
+    perm: 'clients.view',
     label: 'Clients',
     icon: BadgeIndianRupee,
     items: [
       { label: 'Tender Pipeline', path: '/clients/pipeline', perm: 'billing.manage' },
       { label: 'Tenders & Estimates', path: '/clients/estimates', perm: 'billing.manage' },
       { label: 'BOQ', path: '/projects/boq', perm: 'workorders.manage|reports.view' },
+      { label: 'Site Item Pricing', path: '/projects/boq/rates', perm: 'siteprices.view|siteprices.edit|siteprices.finalize|workorders.manage|reports.view' },
       { label: 'Measurement & RA Bills', path: '/clients/measurement', perm: 'site.record|billing.manage' },
       { label: 'Customers', path: '/clients/customers', perm: 'customers.manage' },
       { label: 'Contacts', path: '/clients/contacts', perm: 'customers.manage' },
@@ -88,6 +97,7 @@ export const NAV: NavEntry[] = [
   {
     kind: 'group',
     id: 'subcontractors',
+    perm: 'subcontractors.view',
     label: 'Subcontractors',
     icon: HardHat,
     items: [
@@ -96,26 +106,30 @@ export const NAV: NavEntry[] = [
       { label: 'Measurement Book', path: '/subcontractors/measurement-book' },
       { label: 'RA Bills', path: '/subcontractors/ra-bills' },
       { label: 'Compliance', path: '/subcontractors/compliance' },
+      { label: 'Recoveries & Work Types', path: '/subcontractors/registers' },
     ],
   },
   {
     kind: 'group',
     id: 'store',
+    perm: 'store.view',
     label: 'Store',
     icon: Package,
     items: [
-      { label: 'Item Master', path: '/store/items', perm: 'items.manage' },
-      { label: 'Enquiries & Comparison', path: '/store/enquiries', perm: 'purchase.manage' },
+      // Every receipt, issue, transfer and count is in the Store Hub. The old store's screens are kept as records,
+      // reached from the Hub (routes.tsx sends their old addresses there).
+      { label: 'Store Hub', path: '/store/hub', perm: STORE_ANY },
       { label: 'Purchase Orders', path: '/store/purchase-orders', perm: 'purchase.manage|bills.view_all' },
-      { label: 'E-way Bills', path: '/store/eway' },
-      { label: 'Goods Receipt & Match', path: '/store/goods-receipt', perm: 'stores.receive' },
-      { label: 'Stock & Issues', path: '/store/stock', perm: 'site.record|stores.manage' },
-      { label: 'Material Used vs Costed', path: '/store/material-costing', perm: 'reports.view' },
+      { label: 'Enquiries & Comparison', path: '/store/enquiries', perm: 'purchase.manage' },
+      { label: 'Item Master', path: '/store/items', perm: 'items.manage' },
+      { label: 'Invoice Tracker', path: '/store/invoice-tracker', perm: 'stores.receive|stores.manage|purchase.manage|bills.view_all' },
+      { label: 'E-way Bills', path: '/store/eway', perm: 'accounts.manage|stores.manage|stores.receive|bills.view_all|store.inward.view|store.outward.view' },
     ],
   },
   {
     kind: 'group',
     id: 'money',
+    perm: 'money.view',
     label: 'Money',
     icon: Wallet,
     items: [
@@ -125,14 +139,16 @@ export const NAV: NavEntry[] = [
       { label: 'GST', path: '/money/gst', perm: 'bills.view_all' },
       { label: 'Fixed Assets', path: '/money/assets', perm: 'bills.view_all' },
       { label: 'TDS, Guarantees & Advances', path: '/money/registers', perm: 'bills.view_all' },
+      { label: 'Site Cash', path: '/money/site-cash', perm: 'bills.view_all' },
+      { label: 'Tally Export', path: '/money/tally', perm: 'bills.view_all' },
     ],
   },
   {
     kind: 'group',
     id: 'people',
+    perm: 'people.manage',
     label: 'People',
     icon: Users,
-    ownerOnly: true,
     items: [
       { label: 'Employees', path: '/people/employees', perm: 'people.manage' },
       { label: 'Departments', path: '/people/departments', perm: 'people.manage' },
@@ -146,6 +162,14 @@ export const NAV: NavEntry[] = [
 
 export type Trail = { label: string; path?: string }[]
 
+/** Screens with no menu entry of their own: the old store's records, opened from the Store Hub. */
+const OFF_MENU: Record<string, string> = {
+  '/store/old/stock': 'Stock & Issues (old store)',
+  '/store/old/goods-receipt': 'Goods Receipt & Match (old store)',
+  '/store/old/material-vouchers': 'Material Issue Voucher (old store)',
+  '/store/old/material-costing': 'Material Used vs Costed (old store)',
+}
+
 /** Home > Group > Page for whatever path is showing. */
 export function trailFor(pathname: string, staff = false): Trail {
   const home: Trail = [{ label: 'Home', path: '/' }]
@@ -157,6 +181,8 @@ export function trailFor(pathname: string, staff = false): Trail {
       if (hit) return [...home, { label: e.label }, { label: hit.label }]
     }
   }
+  const off = OFF_MENU[pathname]
+  if (off) return [...home, { label: 'Store' }, { label: 'Store Hub', path: '/store/hub' }, { label: off }]
   // A page inside a section: /subcontractors/work-orders/12 sits under Work Orders.
   for (const e of NAV) {
     if (e.kind !== 'group') continue
@@ -171,6 +197,7 @@ export function visibleNav(can: (perm: string) => boolean, staff = false, headOf
   return NAV.flatMap((e): NavEntry[] => {
     if (e.kind === 'group' && e.staffOnly && !staff) return []
     if (e.kind === 'group' && e.ownerOnly && staff) return []
+    if (e.kind === 'group' && e.perm && !can(e.perm)) return []
     if (e.kind === 'link' && e.ownerOnly && staff) return []
     if (e.kind === 'link' && e.staffOnly && !staff) return []
     if (e.kind === 'link') return !e.perm || can(e.perm) ? [e] : []

@@ -1,5 +1,5 @@
 // A contractor's papers, a back-charge taken off a draft bill, and an order's settlement - on screen.
-import { api, approvedOrder, clickText, fill, launch, measure, open, setValue, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
+import { api, approvedOrder, clickText, launch, measure, open, setValue, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
 
 const { page, check, done } = await launch({ allow: [/409 POST \/api\/sub-bills/] })
 await signIn(page)

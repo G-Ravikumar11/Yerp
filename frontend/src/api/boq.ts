@@ -22,6 +22,8 @@ export interface BoqLine {
   id?: number
   key: string
   kind: BoqKind
+  /** The client's own numbering: I, 2, 2.1, 2.1.1. The programme's tree is drawn from it. */
+  item_no?: string
   group_code: string
   description: string
   uom: string
@@ -59,7 +61,7 @@ export interface BoqSummary {
   rate_only_items: number
 }
 
-export interface BoqRevision {
+interface BoqRevision {
   rev_no: number
   label: string
   note: string
@@ -178,7 +180,7 @@ export const pullBoqLines = (orderId: number, lines: { key: string; quantity: nu
 
 /* --- Variations to the BOQ -------------------------------------------------------------------- */
 
-export type VariationStatus = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'CANCELLED'
+type VariationStatus = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'CANCELLED'
 
 export interface VariationLine {
   id?: number

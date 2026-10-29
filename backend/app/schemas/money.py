@@ -28,3 +28,77 @@ class MoneyIn(BaseModel):
     party_type: Optional[str] = ""
     party_name: Optional[str] = ""
     job_id: Optional[int] = None
+    # An expense voucher or a sundry receipt (doc_type "expense" / "income"): the head it is booked under.
+    head: Optional[str] = ""
+    # The approved payment request this payment settles, where payments need approval.
+    request_id: Optional[int] = None
+
+
+class PaymentRulesIn(BaseModel):
+    on: bool = False
+    free_below: Optional[float] = 0
+    md_above: Optional[float] = 100000
+
+
+class RequestPayIn(BaseModel):
+    """Paying an approved request: only how and when; what and to whom were approved."""
+    paid_on: Optional[str] = ""
+    mode: Optional[str] = ""
+    reference: Optional[str] = ""
+    account_id: Optional[int] = None
+    amount: Optional[float] = None         # less than approved, if only part is paid now
+
+
+class SiteCashExpenseIn(BaseModel):
+    """A payment made out of a site's cash box, as the site entered it."""
+    account_id: int
+    amount: float
+    head: str
+    paid_to: str
+    spent_on: Optional[str] = ""
+    note: Optional[str] = ""
+    bill_no: Optional[str] = ""
+    job_id: Optional[int] = None
+
+
+class CashBoxIn(BaseModel):
+    """A cash box set up as a site's imprest: the site, who holds it, and its float."""
+    job_id: Optional[int] = None
+    custodian_id: Optional[int] = None
+    imprest_amount: Optional[float] = 0
+
+
+class LineMatchIn(BaseModel):
+    entry_id: int
+
+
+class LineBookIn(BaseModel):
+    """A line the bank booked on its own (charges, interest), booked in the books from the line."""
+    head: str
+    note: Optional[str] = ""
+
+
+class ClearIn(BaseModel):
+    cleared_on: Optional[str] = ""          # blank: not cleared after all
+
+
+class TallySettingsIn(BaseModel):
+    """The company's own Tally ledger names (by key), and the name of the company in Tally."""
+    ledgers: Optional[dict] = None
+    company: Optional[str] = ""
+
+
+class PaymentDecisionIn(BaseModel):
+    decision: str                       # approve | reject
+    note: Optional[str] = ""
+
+
+class TransferIn(BaseModel):
+    """Money moved between our own accounts: cash drawn from the bank for a site, or deposited back."""
+    from_account_id: int
+    to_account_id: int
+    amount: float
+    paid_on: Optional[str] = ""
+    mode: Optional[str] = ""
+    reference: Optional[str] = ""
+    note: Optional[str] = ""

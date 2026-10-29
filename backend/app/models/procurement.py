@@ -59,6 +59,8 @@ class DBPurchaseOrderLineItem(Base):
     description = Column(String, default="")
     # Named so the line can be received off a lorry and counted into stock.
     item_code = Column(String, default="")
+    # The stock item itself, once someone has said which it is (the code alone can be missing or typed differently).
+    item_id = Column(Integer, nullable=True, index=True)
     uom = Column(String, default="")
     qty = Column(Float, default=1.0)
     price = Column(Float, default=0.0)
@@ -234,7 +236,34 @@ class DBRfqQuote(Base):
     freight = Column(Float, default=0.0)                   # lump sum to site
     valid_until = Column(String, default="")
     notes = Column(String, default="")
+    # Who put the figures in: "vendor" when the supplier sent them through his own link, else the buyer did.
+    source = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBRfqInvite(Base):
+    """A supplier asked to quote through a link of his own: no login, only this enquiry's items, his own answer.
+
+    The link is a long random token. It shows the items and quantities, takes his rates (typed, or read from the
+    quotation he uploads in whatever form he has it) and his document, and stops working once the enquiry is
+    awarded or cancelled."""
+    __tablename__ = "rfq_invites"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    rfq_id = Column(Integer, ForeignKey("rfqs.id"), nullable=False, index=True)
+    token = Column(String, nullable=False, unique=True, index=True)
+    supplier_name = Column(String, default="")
+    phone = Column(String, default="")
+    email = Column(String, default="")
+    created_by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    opened_at = Column(String, default="")
+    submitted_at = Column(String, default="")
+    quote_id = Column(Integer, ForeignKey("rfq_quotes.id"), nullable=True)
+    # A quotation sent without rates typed in (no AI to read it, or he chose not to): the buyer reads it.
+    document_id = Column(Integer, nullable=True)          # a project_files row, attached as "rfq_invite"
+    message = Column(Text, default="")
 
 
 class DBRfqQuoteLine(Base):

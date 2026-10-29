@@ -45,7 +45,7 @@ RFQ = {"title": "Cement for raft", "lines": [{"description": "OPC 53", "qty": 10
 def test_the_departments_are_the_access_levels_on_offer(tenant):
     roles = {r["code"]: r for r in tenant.get("/api/hr/levels").json()["permission_roles"]}
     for code, label in (("planning_billing", "Planning & Billing"), ("accounts", "Accounts"),
-                        ("stores", "Stores"), ("purchase", "Purchase"), ("hr_admin", "HR admin"),
+                        ("stores", "Stores"), ("purchase", "Purchase"), ("hr", "HR"),
                         ("construction", "Construction management team"),
                         ("project_manager", "Project manager"), ("head_projects", "Head projects")):
         assert roles[code]["label"] == label
@@ -194,7 +194,8 @@ def priced_order(client):
     unit = client.post("/api/wo/business-units", json={"name": "Yalavarti Projects", "code": "YP",
                                                        "gstin": "36AABCY1234H1ZX"}).json()
     con = client.post("/api/wo/contractors", json={"company_name": "Rani Labour %s" % id(client),
-                                                   "pan": "AAAPR1234C"}).json()
+                                                   "pan": "AAAPR1234C",
+                                                   "bank_account": "50100012345678", "bank_ifsc": "HDFC0001234"}).json()
     take_on(con)
     job = client.post("/api/jobs", json={"name": "295 KLD STP", "customer_name": "L&T"}).json()
     order = client.post("/api/wo/orders", json={

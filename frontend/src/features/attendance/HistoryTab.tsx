@@ -6,6 +6,7 @@ import { attKeys, clockFor, exportAttendance, useAttRecords, type AttRecord } fr
 import { useAction } from '@/lib/mutate'
 import { toast } from '@/stores/toast'
 import { formatDate } from '@/lib/format'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 const csv = (rows: Record<string, unknown>[]) => [Object.keys(rows[0]).join(','), ...rows.map((r) => Object.values(r).map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','))].join('\n')
 
@@ -32,6 +33,7 @@ export function HistoryTab() {
     { id: 'type', header: 'Type', hideBelow: 'lg', cell: (r) => (r.check_type ? <Badge tone={r.check_type === 'office' ? 'info' : 'neutral'}>{r.check_type}</Badge> : '-') },
     { id: 'status', header: 'Status', cell: (r) => <Badge tone={r.status === 'completed' ? 'success' : r.status === 'present' ? 'info' : 'neutral'} dot>{r.status}</Badge> },
     { id: 'act', header: '', align: 'right', cell: (r) => (!r.clock_out && r.clock_in ? <Button size="sm" variant="outline" loading={out.isPending && out.variables?.id === r.id} onClick={() => out.mutate(r)}>Clock out</Button> : null) },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="attendance" id={r.id} label={`${r.employee_name} on ${formatDate(r.date)}`} noun="timesheet entry" /> },
   ]
   return (
     <>

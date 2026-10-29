@@ -51,4 +51,20 @@ AGEING_BUCKETS = ("Not due", "0-30", "31-60", "61-90", "90+")
 MONEY_MODES = ("Bank transfer", "Cheque", "Cash", "UPI", "Adjustment")
 PARTY_TYPES = ("client", "supplier", "contractor", "other")
 
+# Money that moves with no bill behind it, as a site office pays it: diesel at the pump, the lorry, the room rent,
+# tea for the gang. Each goes out on an expense voucher under one of these heads, charged to the project it was for;
+# a bill with GST on it goes in as a supplier bill instead, so the input credit is claimed. Labour gangs are paid on
+# their RA bills and staff on the payroll, so neither is a head here: paid again here they would be counted twice.
+EXPENSE_HEADS = (
+    "Site expenses", "Diesel & fuel", "Machinery hire", "Transport & freight", "Repairs & maintenance",
+    "Rent", "Electricity & water", "Staff welfare & food", "Travel & conveyance", "Printing & stationery",
+    "Telephone & internet", "Professional & legal fees", "Bank charges", "Insurance", "Taxes & govt fees",
+    "Security", "Office expenses", "Other expenses",
+)
+# Money that comes in with no bill of ours behind it.
+INCOME_HEADS = ("Scrap sale", "Interest received", "Deposit refunded", "Insurance claim", "Rent received", "Other income")
+# Vouchers that are nobody's account: an expense or a sundry receipt, and money moved between our own bank and cash
+# (a contra). They are in the bank book and the day's vouchers, never in a party's ledger.
+NO_PARTY_DOCS = ("expense", "income", "contra")
+
 ASSET_STATUSES = ("Available", "Deployed", "Under repair", "Disposed")

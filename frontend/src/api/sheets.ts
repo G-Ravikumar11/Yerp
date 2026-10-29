@@ -1,7 +1,7 @@
 import { api, post } from '@/lib/api'
 
 /** A sheet read into rows, with what is wrong with each. Nothing is saved until the rows are brought in. */
-export interface SheetColumn {
+interface SheetColumn {
   key: string
   label: string
   number: boolean

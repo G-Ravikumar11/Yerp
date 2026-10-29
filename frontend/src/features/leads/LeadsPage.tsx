@@ -26,7 +26,7 @@ function Due({ days, on }: { days: number | null; on: string }) {
 
 function Card({ l, onOpen }: { l: Lead; onOpen: () => void }) {
   return (
-    <button type="button" onClick={onOpen} className="mb-2 block w-full rounded-lg border border-border bg-card p-2.5 text-left shadow-xs transition-colors hover:border-primary/40">
+    <button type="button" onClick={onOpen} className="mb-2 block w-full rounded-lg border border-border bg-card p-2.5 text-left shadow-xs transition-colors hover:bg-muted">
       <div className="font-mono text-[11px] text-muted-foreground">{l.number}</div>
       <div className="text-[13px] font-semibold leading-snug">{l.title}</div>
       <div className="text-xs text-muted-foreground">{l.customer_name}</div>

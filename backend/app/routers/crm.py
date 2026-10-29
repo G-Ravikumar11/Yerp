@@ -7,7 +7,7 @@ from sqlalchemy import func as sqlfunc, or_
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.crm import (
     EMD_MODES,
@@ -57,6 +57,7 @@ from app.services.crm import (
     _log_lead,
     backfill_customer_codes,
     contact_dict,
+    customer_project_counts,
     customer_to_dict,
     estimate_dict,
     estimate_or_404,
@@ -90,7 +91,7 @@ router = APIRouter()
 
 
 @router.get("/api/contacts/search")
-def search_contacts(request: Request, q: str = "", db: Session = Depends(get_db)):
+def search_contacts(request: Request, q: str = "", db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     query = db.query(models.DBContact).filter(models.DBContact.client_id == client.id)
     if q:
@@ -104,7 +105,7 @@ def search_contacts(request: Request, q: str = "", db: Session = Depends(get_db)
 
 
 @router.get("/api/contacts")
-def list_contacts(request: Request, db: Session = Depends(get_db)):
+def list_contacts(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     contacts = db.query(models.DBContact).filter(models.DBContact.client_id == client.id).all()
     return [contact_dict(c) for c in contacts]
@@ -171,7 +172,8 @@ def list_customers(request: Request, q: str = "", db: Session = Depends(get_db))
                                  models.DBContact.code.ilike("%" + q + "%"),
                                  models.DBContact.gstin.ilike("%" + q + "%")))
     rows = query.order_by(models.DBContact.id.desc()).limit(500).all()
-    return {"customers": [customer_to_dict(db, c, with_counts=True) for c in rows]}
+    counts = customer_project_counts(db, client.id)
+    return {"customers": [customer_to_dict(db, c, counts=counts) for c in rows]}
 
 
 @router.post("/api/customers")
@@ -229,7 +231,7 @@ def update_customer(customer_id: int, body: CustomerIn, request: Request,
 
 # CUSTOMER DETAIL - everything about one customer in one place
 @router.get("/api/contacts/{contact_id}/detail")
-def customer_detail(contact_id: int, request: Request, db: Session = Depends(get_db)):
+def customer_detail(contact_id: int, request: Request, db: Session = Depends(get_read_db)):
     """One customer's whole history: what they were quoted, what they were
     invoiced, what they have paid and what they still owe.
 
@@ -311,7 +313,7 @@ def customer_detail(contact_id: int, request: Request, db: Session = Depends(get
 
 
 @router.get("/api/sales/pipeline")
-def sales_pipeline(request: Request, db: Session = Depends(get_db)):
+def sales_pipeline(request: Request, db: Session = Depends(get_read_db)):
     """The money flow in one place, worked out from the documents themselves.
 
     Nothing is dragged between columns: send a quote, accept it, convert it,
@@ -385,7 +387,7 @@ def sales_pipeline(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/quotes")
-def get_quotes(request: Request, db: Session = Depends(get_db)):
+def get_quotes(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     quotes = db.query(models.DBQuote).filter(
         models.DBQuote.client_id == client.id
@@ -394,7 +396,7 @@ def get_quotes(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/quotes/{number}")
-def get_quote(number: str, request: Request, db: Session = Depends(get_db)):
+def get_quote(number: str, request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     return quote_to_dict(get_quote_or_404(db, client, number), client, db, detail=True)
 
@@ -813,7 +815,7 @@ Powered by Aniprotech"""
 
 
 @router.get("/api/estimates")
-def list_estimates(request: Request, db: Session = Depends(get_db)):
+def list_estimates(request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     rows = [estimate_dict(db, e) for e in db.query(models.DBEstimate).filter(
         models.DBEstimate.client_id == client.id).order_by(
@@ -855,7 +857,7 @@ def create_estimate(body: EstimateIn, request: Request, db: Session = Depends(ge
 
 
 @router.get("/api/estimates/{est_id}")
-def get_estimate(est_id: int, request: Request, db: Session = Depends(get_db)):
+def get_estimate(est_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return estimate_dict(db, estimate_or_404(db, client.id, est_id), detail=True)
 
@@ -1082,7 +1084,7 @@ def act_on_estimate(est_id: int, action: str, request: Request, body: dict = Non
 
 
 @router.get("/api/estimates/{est_id}/export.xlsx")
-def export_estimate(est_id: int, request: Request, db: Session = Depends(get_db)):
+def export_estimate(est_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     e = estimate_dict(db, estimate_or_404(db, client.id, est_id), detail=True)
     preamble = [("TENDER ESTIMATE", client.company_name or ""),

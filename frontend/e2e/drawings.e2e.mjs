@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { clickText, fill, launch, open, setValue, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
+import { clickText, fill, launch, open, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
 
 // Drawings & Photos: add a sheet to the register, give it revisions, mark it good for construction; photos kept on the project.
 const { page, check, done } = await launch()

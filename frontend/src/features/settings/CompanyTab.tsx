@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2 } from 'lucide-react'
 import { Check, Circle } from 'lucide-react'
-import { Button, Field, Input, Select, Skeleton, Textarea } from '@/components/ui'
+import { Button, Field, Input, NumField, Select, Skeleton, Textarea } from '@/components/ui'
 import { MANDATORY, useIdentity } from '@/api/identity'
 import { PictureField } from '@/components/data/PictureField'
 import { useAction } from '@/lib/mutate'
 import { saveCompany, saveLogo, settingsKeys, useCompany, useLogo, type BankDetail } from '@/api/settings'
+import { storeKeys } from '@/api/store'
+import { paymentKeys, savePaymentRules, usePaymentRules } from '@/api/payments'
 import { Section } from './Section'
 import { TaxRates } from './TaxRates'
 
@@ -118,6 +121,58 @@ export default function CompanyTab() {
         <Button className="mt-3" loading={saveLogoAction.isPending} onClick={() => saveLogoAction.mutate()}>Save logo</Button>
       </Section>
       <TaxRates />
+      <StoreScanning />
+      <PaymentApproval />
     </>
+  )
+}
+
+/** QR codes and barcodes in the Store: off unless a store wants them, so the screens stay as simple as they were. */
+function StoreScanning() {
+  const q = useCompany()
+  const qc = useQueryClient()
+  const on = ['true', '1', 'yes', 'on'].includes(String(q.data?.store_scanning ?? '').toLowerCase())
+  const save = useAction((v: boolean) => saveCompany({ store_scanning: v ? 'true' : 'false' }), {
+    invalidate: [[...settingsKeys.all]],
+    success: (_r, v) => (v ? 'Scanning is on in the Store' : 'Scanning is off in the Store'),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: [...storeKeys.meta] }),
+  })
+  return (
+    <Section title="Store: QR codes and barcodes" description="For a central store with racks of small look-alike items, packaged goods with the maker's barcode, or a gate that checks gate passes on a phone. Loose material - cement, sand, aggregate, steel - needs none of it.">
+      <label className="flex items-start gap-3 text-sm">
+        <input type="checkbox" className="mt-0.5" checked={on} disabled={q.isPending || save.isPending} onChange={(e) => save.mutate(e.target.checked)} />
+        <span>
+          <span className="font-medium">Use scanning in the Store</span>
+          <span className="block text-muted-foreground">Shows the Scan button in the Store Hub and on the item and store boxes, the maker's barcode in item settings, printing of bin and rack labels, and a QR on printed gate passes. A handheld barcode scanner works in the item box either way.</span>
+        </span>
+      </label>
+    </Section>
+  )
+}
+
+/** Payments approved before they are made: the accounts head checks each, the MD releases the large ones. */
+function PaymentApproval() {
+  const q = usePaymentRules()
+  const [f, setF] = useState<{ on: boolean; free_below: number; md_above: number } | null>(null)
+  const shown = f ?? (q.data ? { on: q.data.on, free_below: q.data.free_below, md_above: q.data.md_above } : null)
+  const save = useAction(() => savePaymentRules(shown!), { invalidate: [[...paymentKeys.all]], onSuccess: () => setF(null) })
+  if (!shown) return null
+  const set = (patch: Partial<typeof shown>) => setF({ ...shown, ...patch })
+  return (
+    <Section title="Payment approval" description="Accounts send a payment for approval; the accounts head checks it, and over the MD's limit the MD releases it too; only then is it paid. Give 'Check payments' and 'Release payments over the MD's limit' to the right people under People, Employees. You pay without asking.">
+      <label className="mb-4 flex items-start gap-3 text-sm">
+        <input type="checkbox" className="mt-0.5" checked={shown.on} onChange={(e) => set({ on: e.target.checked })} />
+        <span><span className="font-medium">Approve payments before they are made</span>
+          <span className="block text-muted-foreground">Supplier and contractor bills, advances and expense vouchers paid out. Money received never waits.</span></span>
+      </label>
+      <div className="grid max-w-xl gap-4 sm:grid-cols-2">
+        <Field label="No approval up to (Rs)" htmlFor="pa-free" hint="Small cash payments go straight through"><NumField id="pa-free" value={shown.free_below} onValue={(n) => set({ free_below: n })} disabled={!shown.on} /></Field>
+        <Field label="The MD releases over (Rs)" htmlFor="pa-md" hint="Above this, two signatures"><NumField id="pa-md" value={shown.md_above} onValue={(n) => set({ md_above: n })} disabled={!shown.on} /></Field>
+      </div>
+      <div className="mt-4 flex items-center gap-3">
+        <Button size="sm" loading={save.isPending} disabled={!f} onClick={() => save.mutate()}>Save payment approval</Button>
+        {save.error && <p role="alert" className="text-[13px] text-danger">{save.error.message}</p>}
+      </div>
+    </Section>
   )
 }

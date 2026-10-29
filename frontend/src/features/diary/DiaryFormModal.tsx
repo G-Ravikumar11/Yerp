@@ -1,11 +1,12 @@
 import { takePhoto } from '@/lib/mobile'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Camera, X } from 'lucide-react'
+import { Camera, HardHat, X } from 'lucide-react'
 import { Button, Field, Input, Modal, NumField, Select, Skeleton, Textarea } from '@/components/ui'
 import { PromptModal } from '@/components/data/PromptModal'
 import { TRADES, WEATHER, diaryKeys, reopenDiary, signOffDiary, useDiaries, useDiary, type DiaryDetail, type DiaryInput, type LabourLine, type PlantLine, type WorkUpdate } from '@/api/diary'
 import { schKeys, type DayRow, type DayTask } from '@/api/schedule'
 import { fileKeys, noFilter, uploadFiles, useFiles } from '@/api/files'
+import { useWorkers } from '@/api/safety'
 import { Tile } from '@/components/data/FilesModal'
 import { sendOrQueue } from '@/stores/offline'
 import { useAction } from '@/lib/mutate'
@@ -48,6 +49,7 @@ function Form({ job, day, onClose, onOpen }: { job: number; day: DiaryDetail | n
   // Always one blank row past the end, so adding a trade is typing rather than hunting for a button.
   const [labour, setLabour] = useState<LabourLine[]>([...(day?.labour ?? []), blankLabour(), blankLabour()])
   const [plant, setPlant] = useState<PlantLine[]>([...(day?.plant ?? []), blankPlant()])
+  const [picking, setPicking] = useState(false)
   const [photos, setPhotos] = useState<File[]>([])
   // What the day reports about the planned work, kept as differences from what the plan says now.
   const [taskState, setTaskState] = useState<Record<number, TaskState>>({})
@@ -143,17 +145,35 @@ function Form({ job, day, onClose, onOpen }: { job: number; day: DiaryDetail | n
         <PlannedWork job={job} date={date} taskState={taskState} onTask={tickTask} percent={percent} onPercent={setProgressOf} disabled={locked} />
         <h3 className="mb-2 mt-5 text-sm font-semibold">Labour on site</h3>
         <div className="grid gap-2">
-          {labour.map((l, i) => (
-            <div key={i} className="grid grid-cols-2 gap-2 sm:grid-cols-[1.2fr_1.2fr_.7fr_.7fr_.8fr]">
-              <Select aria-label={`Trade ${i + 1}`} value={l.trade} onChange={(e) => edit(labour, setLabour, i, { trade: e.target.value })} options={TRADES.map((t) => ({ value: t, label: t }))} />
-              <Input aria-label={`Agency ${i + 1}`} value={l.agency} placeholder="Own or the contractor" onChange={(e) => edit(labour, setLabour, i, { agency: e.target.value })} />
-              <NumField aria-label={`Headcount ${i + 1}`} placeholder="Heads" className={num} value={l.headcount} onValue={(n) => edit(labour, setLabour, i, { headcount: n })} />
-              <NumField aria-label={`Hours ${i + 1}`} placeholder="Hours" className={num} value={l.hours} onValue={(n) => edit(labour, setLabour, i, { hours: n })} />
-              <NumField aria-label={`Rate ${i + 1}`} placeholder="Rate" className={num} value={l.rate} onValue={(n) => edit(labour, setLabour, i, { rate: n })} />
-            </div>
-          ))}
+          {labour.map((l, i) => {
+            const named = !!l.worker_ids?.length
+            return (
+              <div key={i} className="grid grid-cols-2 gap-2 sm:grid-cols-[1.2fr_1.2fr_.7fr_.7fr_.8fr]">
+                {named ? (
+                  <div className="flex items-center gap-1.5 truncate rounded-md border border-input bg-muted/40 px-3 text-sm" title={`${l.trade} - ${l.workers?.[0]?.name}`}>
+                    <HardHat className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{l.workers?.[0]?.name} <span className="text-muted-foreground">({l.trade})</span></span>
+                  </div>
+                ) : (
+                  <Select aria-label={`Trade ${i + 1}`} value={l.trade} onChange={(e) => edit(labour, setLabour, i, { trade: e.target.value })} options={TRADES.map((t) => ({ value: t, label: t }))} />
+                )}
+                <Input aria-label={`Agency ${i + 1}`} value={l.agency} placeholder="Own or the contractor" onChange={(e) => edit(labour, setLabour, i, { agency: e.target.value })} />
+                <NumField aria-label={`Headcount ${i + 1}`} placeholder="Heads" className={num} value={l.headcount} disabled={named} onValue={(n) => edit(labour, setLabour, i, { headcount: n })} />
+                <NumField aria-label={`Hours ${i + 1}`} placeholder="Hours" className={num} value={l.hours} onValue={(n) => edit(labour, setLabour, i, { hours: n })} />
+                <NumField aria-label={`Rate ${i + 1}`} placeholder="Rate" className={num} value={l.rate} onValue={(n) => edit(labour, setLabour, i, { rate: n })} />
+              </div>
+            )
+          })}
         </div>
-        {!locked && <Button size="sm" variant="ghost" className="mt-1" onClick={() => setLabour([...labour, blankLabour()])}>Add a trade</Button>}
+        {!locked && (
+          <div className="mt-1 flex flex-wrap gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setLabour([...labour, blankLabour()])}>Add a trade</Button>
+            <Button size="sm" variant="ghost" onClick={() => setPicking(true)}><HardHat /> Add from Workers &amp; Safety</Button>
+          </div>
+        )}
+        <WorkerPicker job={job} open={picking} onClose={() => setPicking(false)}
+          already={new Set(labour.flatMap((l) => l.worker_ids ?? []))}
+          onAdd={(picked) => { setLabour([...labour, ...picked.map((w): LabourLine => ({ trade: w.trade, agency: 'Own', headcount: 1, hours, rate: 0, worker_ids: [w.id], workers: [{ id: w.id, name: w.name, trade: w.trade }] }))]); setPicking(false) }} />
         <h3 className="mb-2 mt-5 text-sm font-semibold">Plant and equipment</h3>
         <div className="grid gap-2">
           {plant.map((p, i) => (
@@ -185,6 +205,41 @@ function Form({ job, day, onClose, onOpen }: { job: number; day: DiaryDetail | n
         {!locked && can('site.signoff') && <Button loading={save.isPending} disabled={!!clash} onClick={() => save.mutate(true)}>Save and sign off</Button>}
       </div>
     </div>
+  )
+}
+
+/** Workers screened for this site, so today's diary can name them instead of only counting heads. One already on
+ * today's list (by another row) cannot be picked twice. */
+function WorkerPicker({ job, open, already, onAdd, onClose }: { job: number; open: boolean; already: Set<number>; onAdd: (picked: { id: number; name: string; trade: string }[]) => void; onClose: () => void }) {
+  const q = useWorkers(job)
+  const [checked, setChecked] = useState<Record<number, boolean>>({})
+  const available = (q.data?.workers ?? []).filter((w) => !already.has(w.id))
+  const toggle = (id: number) => setChecked((c) => ({ ...c, [id]: !c[id] }))
+  const add = () => {
+    const picked = available.filter((w) => checked[w.id]).map((w) => ({ id: w.id, name: w.name, trade: w.trade }))
+    setChecked({})
+    onAdd(picked)
+  }
+  return (
+    <Modal open={open} onOpenChange={(o) => !o && onClose()} title="Add from Workers & Safety" description="Pick who is on site today - their trade comes with them, so nobody has to be typed in by hand.">
+      {q.isPending ? <Skeleton className="h-32 w-full" /> : available.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{q.data?.workers.length ? 'Everyone screened for this site is already on today\'s list.' : 'Nobody has been screened for this site yet, in Workers & Safety.'}</p>
+      ) : (
+        <div className="grid max-h-80 gap-1 overflow-y-auto">
+          {available.map((w) => (
+            <label key={w.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/50">
+              <input type="checkbox" checked={!!checked[w.id]} onChange={() => toggle(w.id)} />
+              <span className="flex-1">{w.name}</span>
+              <span className="text-xs text-muted-foreground">{w.trade}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button disabled={!Object.values(checked).some(Boolean)} onClick={add}>Add to today</Button>
+      </div>
+    </Modal>
   )
 }
 

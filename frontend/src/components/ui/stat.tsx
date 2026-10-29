@@ -34,7 +34,7 @@ export function Stat({
     <>
       <div className="flex items-center justify-between gap-2">
         <p className="text-[12.5px] text-muted-foreground">{label}</p>
-        {(to || onClick) && <ArrowUpRight className="size-3.5 shrink-0 text-subtle transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-foreground" />}
+        {(to || onClick) && <ArrowUpRight className="size-3.5 shrink-0 text-subtle transition-colors group-hover:text-foreground" />}
       </div>
       {loading ? (
         <Skeleton className="mt-2.5 h-7 w-28" />
@@ -51,7 +51,7 @@ export function Stat({
         type="button"
         onClick={onClick}
         aria-pressed={active}
-        className={cn(box, 'group block w-full text-left transition-all hover:-translate-y-0.5 hover:border-ring/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', active && 'border-ring ring-1 ring-ring/60', className)}
+        className={cn(box, 'group block w-full text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', active && 'border-ring ring-1 ring-ring/60', className)}
       >
         {body}
       </button>
@@ -60,7 +60,7 @@ export function Stat({
   return (
     <Link
       to={to}
-      className={cn(box, 'group block transition-all hover:-translate-y-0.5 hover:border-ring/50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}
+      className={cn(box, 'group block transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}
     >
       {body}
     </Link>

@@ -60,7 +60,7 @@ export default function DiaryPage() {
           {labour.data?.by_trade.map((t) => (
             <div key={t.trade} className="mb-2">
               <div className="flex justify-between text-[13px]"><span>{t.trade}</span><span className="text-muted-foreground">{t.mandays} md - {formatINR(t.cost)}</span></div>
-              <div className="mt-1 h-2 overflow-hidden rounded bg-muted"><div className="h-full bg-primary" style={{ width: `${(t.mandays / top) * 100}%` }} /></div>
+              <div className="mt-1 h-2 overflow-hidden rounded-md bg-muted"><div className="h-full bg-primary" style={{ width: `${(t.mandays / top) * 100}%` }} /></div>
             </div>
           ))}
         </section>

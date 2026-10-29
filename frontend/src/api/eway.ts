@@ -3,9 +3,9 @@ import { get, post, put } from '@/lib/api'
 
 export const ewKeys = { all: ['eway'] as const }
 
-export interface Place { key: string; name: string; gstin: string; address: string; pincode: string; state: string; job_id: number | null }
+interface Place { key: string; name: string; gstin: string; address: string; pincode: string; state: string; job_id: number | null }
 export interface EwayMeta { places: Place[]; sub_types: Record<string, string>; doc_types: Record<string, string>; modes: Record<string, string>; threshold: number }
-export interface Party { name: string; address: string; pincode: string; state_name: string }
+interface Party { name: string; address: string; pincode: string; state_name: string }
 export interface EwayLine { item_code?: string; product_name: string; hsn: string; qty: number; unit: string; taxable: number; tax_rate: number }
 export interface Eway {
   id: number

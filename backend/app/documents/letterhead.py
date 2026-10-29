@@ -58,14 +58,6 @@ def _state_line(gstin):
     return ("%s - %s" % (code, GST_STATES.get(code, ""))).strip(" -") if code else ""
 
 
-def _company_box(db, unit, client):
-    return {"name": unit.get("name") or client.company_name or "",
-            "address": unit.get("address") or company_address(db, client),
-            "gstin": unit.get("gstin") or client.gstin or "",
-            "pan": unit.get("pan") or "", "state": _state_line(unit.get("gstin") or client.gstin),
-            "logo_url": unit.get("logo_url") or client.logo_url or ""}
-
-
 def letterhead(db, client, unit_id=None):
     """The company block at the top of every document: the issuing business
     unit's letterhead where one is named, else the company's own unit, with

@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { ApiError, api } from './api'
 import { queryClient } from './query'
 
-export type SessionUser = {
+type SessionUser = {
   type: 'owner' | 'employee'
   name: string
   email: string

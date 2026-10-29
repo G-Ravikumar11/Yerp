@@ -37,7 +37,7 @@ def test_an_approved_order_goes_with_its_measurements_and_bills(tenant):
 
 def test_a_revision_takes_the_whole_chain_with_it(tenant):
     order = live_order(tenant, pay_advance=False)
-    rev = tenant.post("/api/wo/orders/%d/amend" % order["id"], json={}).json()["order"]
+    rev = tenant.post("/api/wo/orders/%d/amend" % order["id"], json={"comments": "More quantity"}).json()["order"]
     prev = tenant.get("/api/wo/orders/%d/delete-preview" % rev["id"]).json()
     assert prev["counts"]["versions"] == 2
     assert tenant.delete("/api/wo/orders/%d" % rev["id"]).status_code == 200
@@ -84,7 +84,7 @@ def test_delete_all_needs_the_phrase_then_clears_every_work_order(tenant):
     from test_work_order_pricing import fg, job
     live_order(tenant, mobilization_advance_percent=10)
     sub = live_order(tenant, pay_advance=False)
-    tenant.post("/api/wo/orders/%d/amend" % sub["id"], json={})
+    tenant.post("/api/wo/orders/%d/amend" % sub["id"], json={"comments": "More quantity"})
     tenant.post("/api/erp/work-orders/build", json={
         "job_id": job(tenant)["id"], "reference": "PO/ALL/1",
         "lines": [{"code": fg(tenant), "qty": 10, "rate": 500}]})
@@ -128,6 +128,10 @@ def test_a_link_no_model_knows_about_does_not_stop_a_delete(tenant):
         conn.execute(text("CREATE TABLE IF NOT EXISTS zz_legacy_link (id INTEGER PRIMARY KEY, "
                           "bill_id INTEGER NOT NULL REFERENCES sub_bills(id))"))
         conn.execute(text("INSERT INTO zz_legacy_link (bill_id) VALUES (:b)"), {"b": bill["id"]})
+    # The schema is read once, when the server starts; a table that appears while it runs is read in again, as a
+    # restart would.
+    from app.services.subcontract_orders import forget_schema
+    forget_schema()
     try:
         assert tenant.delete("/api/wo/orders/%d" % order["id"]).status_code == 200
         with engine.begin() as conn:
@@ -135,6 +139,7 @@ def test_a_link_no_model_knows_about_does_not_stop_a_delete(tenant):
     finally:
         with engine.begin() as conn:
             conn.execute(text("DROP TABLE IF EXISTS zz_legacy_link"))
+        forget_schema()
 
 
 def test_a_bill_is_deleted_and_what_it_measured_is_free_to_bill_again(tenant):

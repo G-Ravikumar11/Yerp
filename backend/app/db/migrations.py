@@ -1,7 +1,8 @@
 """Bringing an existing database up to the shape the models describe: columns added since it was created."""
+import re
 import sys
 
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from app.db.session import DATABASE_URL, engine
 
 
@@ -15,7 +16,161 @@ def migration_report():
     return list(MIGRATION_ERRORS)
 
 
+# What start-up asks of the database "if it is not there yet", and the one read that says what is. Names are compared
+# in lower case, as Postgres folds them.
+_IF_MISSING = (
+    (re.compile(r"^\s*ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+(\w+)", re.I),
+     "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = current_schema()"),
+    (re.compile(r"^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+(\w+)", re.I),
+     "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()"),
+    (re.compile(r"^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\s+(\w+)", re.I),
+     "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"),
+)
+
+
+class SkipWhatExists:
+    """A connection that does not send `ADD COLUMN IF NOT EXISTS`, `CREATE TABLE IF NOT EXISTS` or `CREATE INDEX IF NOT
+    EXISTS` for something the database already has.
+
+    ensure_columns sends about 350 column additions, 40 table creations and 85 index creations on every start-up. Nearly
+    all do nothing, but each is a round trip (a quarter of a second or more across an ocean, and the column and index ones
+    take a lock on the table for the moment they run): minutes of start-up. What exists is read once for each kind, and
+    only what is missing is created, exactly as before. Everything else passes straight through to the connection."""
+
+    def __init__(self, conn):
+        self._conn = conn
+        self._known = {}
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def rollback(self):
+        self._known = {}                     # what was created since the last commit may be undone with it
+        return self._conn.rollback()
+
+    def _have(self, kind):
+        if kind not in self._known:
+            try:
+                rows = self._conn.execute(text(_IF_MISSING[kind][1])).fetchall()
+                self._known[kind] = {tuple(c.lower() for c in row) if len(row) > 1 else row[0].lower() for row in rows}
+            except Exception:
+                self._conn.rollback()
+                self._known = {}
+                self._known[kind] = set()    # could not tell: everything is created if missing, as it always was
+        return self._known[kind]
+
+    def execute(self, statement, *args, **kwargs):
+        sql = str(statement)
+        for kind, (pattern, _query) in enumerate(_IF_MISSING):
+            match = pattern.match(sql)
+            if match:
+                names = match.groups()
+                key = tuple(n.lower() for n in names) if len(names) > 1 else names[0].lower()
+                if key in self._have(kind):
+                    return None
+                result = self._conn.execute(statement, *args, **kwargs)
+                self._known.setdefault(kind, set()).add(key)
+                return result
+        return self._conn.execute(statement, *args, **kwargs)
+
+
+def create_missing_tables(metadata, bind):
+    """metadata.create_all, asking which tables exist once rather than once per table.
+
+    create_all checks every table on its own before creating it - about 265 round trips on every start-up, of which
+    nearly all find the table there. Only the tables the database does not have are handed to it."""
+    have = set(inspect(bind).get_table_names())
+    missing = [t for t in metadata.sorted_tables if t.name not in have]
+    if missing:
+        metadata.create_all(bind=bind, tables=missing)
+    return [t.name for t in missing]
+
+
+ITEM_MASTER_COLUMNS = (
+    # (table, column, type) - what the BOQ item master added. Additive and defaulted, safe on a live database.
+    ("erp_items", "item_category", "VARCHAR DEFAULT ''"), ("erp_items", "item_subcategory", "VARCHAR DEFAULT ''"),
+    ("erp_items", "specification", "VARCHAR DEFAULT ''"), ("erp_items", "purchase_rate", "FLOAT DEFAULT 0"),
+    ("erp_items", "selling_rate", "FLOAT DEFAULT 0"), ("erp_items", "preferred_supplier", "VARCHAR DEFAULT ''"),
+    ("erp_items", "remarks", "VARCHAR DEFAULT ''"), ("erp_items", "created_by_name", "VARCHAR DEFAULT ''"),
+    ("erp_items", "updated_by_name", "VARCHAR DEFAULT ''"), ("erp_items", "updated_at", "VARCHAR DEFAULT ''"),
+    ("boq_lines", "item_id", "INTEGER"),
+    ("erp_items", "source_boq_id", "INTEGER"), ("erp_items", "source_boq_key", "VARCHAR DEFAULT ''"),
+)
+
+SITE_RATE_COLUMNS = (
+    # (table, column, type) - site-wise item pricing. A database that already had an earlier site_item_rates (finalized_rate, tax_inclusive)
+    # kept that shape, since create_all never alters a table that exists, and every read of a site rate then failed on item_code.
+    ("site_item_rates", "item_code", "VARCHAR DEFAULT ''"), ("site_item_rates", "site_rate", "FLOAT"),
+    ("site_item_rates", "default_rate_snapshot", "FLOAT"), ("site_item_rates", "effective_date", "VARCHAR DEFAULT ''"),
+    ("site_item_rates", "remarks", "TEXT DEFAULT ''"),
+    # Who an employee is, for onboarding: gender and the Aadhaar, PAN and UAN numbers (all optional).
+    ("employees", "gender", "VARCHAR DEFAULT ''"), ("employees", "aadhaar_no", "VARCHAR DEFAULT ''"),
+    ("employees", "pan_no", "VARCHAR DEFAULT ''"), ("employees", "uan_no", "VARCHAR DEFAULT ''"),
+)
+
+STORE_OUTWARD_COLUMNS = (
+    # (table, column, type) - what the outward slice added to its own tables after they were first made (indents, who received the issue, the
+    # recovery basis, damaged returns). create_all makes new tables but never adds a column to one that exists, so a database that already has
+    # store_issue needs these. Additive and defaulted, safe on a live database.
+    ("store_issue", "indent_id", "INTEGER"), ("store_issue", "subcontract_order_id", "INTEGER"), ("store_issue", "received_by_type", "VARCHAR DEFAULT ''"),
+    ("store_issue", "received_by_employee_id", "INTEGER"), ("store_issue", "received_by_name", "VARCHAR DEFAULT ''"),
+    ("store_issue_line", "indent_line_id", "INTEGER"), ("store_issue_line", "recovery_basis", "VARCHAR DEFAULT ''"), ("store_issue_line", "handling_pct", "NUMERIC(7,3) DEFAULT 0"),
+    ("store_issue_return_line", "condition", "VARCHAR DEFAULT 'GOOD'"), ("store_issue_return_line", "bin_id", "INTEGER"),
+    # Gate deliveries on the goods receipt: received before their purchase order, linked to it later.
+    ("store_grn", "gate_delivery", "INTEGER DEFAULT 0"), ("store_grn", "driver_remarks", "VARCHAR DEFAULT ''"), ("store_grn", "linked_at", "TIMESTAMP"),
+    ("store_grn", "linked_by_name", "VARCHAR DEFAULT ''"), ("store_grn", "price_variance", "NUMERIC(18,2) DEFAULT 0"),
+    # Shelf life: the dates on a receipt line, and the batch an issue took.
+    ("store_item_settings", "barcode", "VARCHAR DEFAULT ''"),
+    ("store_grn_line", "manufacturing_date", "DATE"), ("store_grn_line", "expiry_date", "DATE"), ("store_issue_line", "batch_no", "VARCHAR DEFAULT ''"),
+    # Landed cost on a receipt, the debit note on a purchase return, who raised a write-off, and the stock item a purchase-order line is for.
+    ("store_grn", "charges", "TEXT DEFAULT '[]'"), ("store_grn", "charges_total", "NUMERIC(18,2) DEFAULT 0"),
+    ("store_grn_line", "charges_share", "NUMERIC(18,2) DEFAULT 0"), ("store_grn_line", "landed_rate", "NUMERIC(18,4)"),
+    ("store_purchase_return", "debit_value", "NUMERIC(18,2) DEFAULT 0"), ("store_purchase_return", "tax_value", "NUMERIC(18,2) DEFAULT 0"),
+    ("store_purchase_return_line", "rate", "NUMERIC(18,4) DEFAULT 0"), ("store_purchase_return_line", "value", "NUMERIC(18,2) DEFAULT 0"),
+    ("store_purchase_return_line", "tax_pct", "NUMERIC(7,3) DEFAULT 0"), ("store_purchase_return_line", "tax_value", "NUMERIC(18,2) DEFAULT 0"),
+    ("store_writeoff_request", "requested_by_id", "INTEGER"), ("purchase_order_line_items", "item_id", "INTEGER"),
+)
+
+SUBCONTRACT_CONTROL_COLUMNS = (
+    # (table, column, Postgres type, SQLite type) - closing orders out, liquidated damages, the bank guarantee
+    # register, retention releases that need a second signature, and who set a budget. All additive and defaulted.
+    ("subcontract_orders", "bank_guarantee_number", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("subcontract_orders", "bank_guarantee_bank", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("subcontract_orders", "bank_guarantee_returned_at", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("subcontract_orders", "ld_percent_per_week", "DOUBLE PRECISION DEFAULT 0", "FLOAT DEFAULT 0"),
+    ("subcontract_orders", "ld_cap_percent", "DOUBLE PRECISION DEFAULT 0", "FLOAT DEFAULT 0"),
+    ("subcontract_orders", "actual_completion_date", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("subcontract_orders", "closed_at", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("subcontract_orders", "closed_by_name", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("subcontract_orders", "close_reason", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("project_budgets", "set_by_name", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("project_budgets", "confirmed", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
+    ("project_budgets", "confirmed_by_name", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("sub_bills", "ld_amount", "DOUBLE PRECISION DEFAULT 0", "FLOAT DEFAULT 0"),
+    ("sub_bills", "ld_note", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("sub_bills", "ld_set_by_hand", "BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"),
+    ("sub_bills", "override_note", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("sub_bills", "store_material", "DOUBLE PRECISION DEFAULT 0", "FLOAT DEFAULT 0"),
+    ("retention_releases", "raised_by", "INTEGER", "INTEGER"),
+    ("retention_releases", "certified_by_name", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("retention_releases", "certified_at", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("retention_releases", "override_note", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+)
+
+ACCOUNTS_COLUMNS = (
+    # (table, column, type) - the accounts vouchers: an expense or sundry receipt's head, and the other leg of a transfer.
+    ("money_entries", "head", "VARCHAR DEFAULT ''"), ("money_entries", "pair_id", "INTEGER"),
+    # A payment request raised by one of the Master's colleagues, who may not then approve it themselves.
+    ("payment_requests", "requested_by_member", "INTEGER"),
+    # A site's cash box: its site, who holds it, and its float.
+    ("bank_accounts", "job_id", "INTEGER"), ("bank_accounts", "custodian_id", "INTEGER"),
+    ("bank_accounts", "imprest_amount", "FLOAT DEFAULT 0"),
+    # Bank reconciliation: when the bank moved it, and the statement line it was matched to.
+    ("money_entries", "cleared_on", "VARCHAR DEFAULT ''"), ("money_entries", "statement_line_id", "INTEGER"),
+)
+
 QUALITY_COLUMNS = (
+    ("rfq_quotes", "source", "VARCHAR DEFAULT ''"),
     # (table, column, Postgres type, SQLite type) - what the quality module grew after it was first created.
     ("qc_inspections", "building", "VARCHAR DEFAULT ''"), ("qc_inspections", "floor_area", "VARCHAR DEFAULT ''"),
     ("qc_inspections", "work_activity", "VARCHAR DEFAULT ''"), ("qc_inspections", "assigned_to", "VARCHAR DEFAULT ''"),
@@ -84,6 +239,17 @@ QUALITY_COLUMNS = (
     ("asset_services", "approved_by", "VARCHAR DEFAULT ''"),
     ("schedule_activities", "status", "VARCHAR DEFAULT ''"), ("schedule_activities", "notes", "TEXT DEFAULT ''"),
     ("project_messages", "parent_id", "INTEGER"), ("project_messages", "edited_at", "VARCHAR DEFAULT ''"),
+    # The programme (Planning & Progress, the Excel-style schedule)
+    ("schedule_activities", "parent_id", "INTEGER"), ("schedule_activities", "description", "TEXT DEFAULT ''"),
+    ("schedule_activities", "boq_ref", "VARCHAR DEFAULT ''"), ("schedule_activities", "uom", "VARCHAR DEFAULT ''"),
+    ("schedule_activities", "quantity", "FLOAT DEFAULT 0"), ("schedule_activities", "rate", "FLOAT DEFAULT 0"),
+    ("schedule_activities", "amount", "FLOAT DEFAULT 0"), ("schedule_activities", "labour_required", "FLOAT DEFAULT 0"),
+    ("schedule_activities", "duration_days", "INTEGER"), ("schedule_activities", "not_before", "VARCHAR DEFAULT ''"),
+    ("schedule_activities", "productivity", "BOOLEAN DEFAULT FALSE"),
+    ("schedule_activities", "output_per_day", "FLOAT DEFAULT 0"), ("schedule_activities", "gangs", "FLOAT DEFAULT 0"),
+    ("schedule_activities", "qty_done", "FLOAT DEFAULT 0"),
+    ("schedule_progress", "qty_done", "FLOAT"),
+    ("boq_lines", "item_no", "VARCHAR DEFAULT ''"),
 )
 
 
@@ -116,7 +282,8 @@ def ensure_columns():
     if DATABASE_URL.startswith("sqlite"):
         return
     try:
-        with engine.connect() as conn:
+        with engine.connect() as raw_conn:
+            conn = SkipWhatExists(raw_conn)
             # line_items.name
             result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='line_items' AND column_name='name'"))
             if not result.fetchone():
@@ -442,6 +609,10 @@ def ensure_columns():
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS password_hash VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS org_email VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS work_location VARCHAR DEFAULT ''",
+                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS gender VARCHAR DEFAULT ''",
+                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS aadhaar_no VARCHAR DEFAULT ''",
+                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS pan_no VARCHAR DEFAULT ''",
+                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS uan_no VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS latitude FLOAT DEFAULT 0.0",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS longitude FLOAT DEFAULT 0.0",
                 "ALTER TABLE attendance ADD COLUMN IF NOT EXISTS check_type VARCHAR DEFAULT 'manual'",
@@ -1535,6 +1706,34 @@ def ensure_columns():
                     ("schedule_tasks", "percent", "DOUBLE PRECISION DEFAULT 0"),
                     ("site_diaries", "amendments", "TEXT DEFAULT ''"),
                     ("schedule_activities", "boq_key", "TEXT DEFAULT ''"),
+                    ("diary_labour", "worker_ids", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "contractor_name", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "father_name", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "dob", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "sex", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "marital_status", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "children", "INTEGER DEFAULT 0"),
+                    ("worker_screenings", "mother_tongue", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "other_languages", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "emergency_contact", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "phone", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "signature", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "signed_at", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "identification_mark", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "vision_normal", "BOOLEAN DEFAULT TRUE"),
+                    ("worker_screenings", "vision_problem", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "health_normal", "BOOLEAN DEFAULT TRUE"),
+                    ("worker_screenings", "health_problem", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "weight_kg", "DOUBLE PRECISION DEFAULT 0"),
+                    ("worker_screenings", "height_cm", "DOUBLE PRECISION DEFAULT 0"),
+                    ("worker_screenings", "blood_group", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "education", "TEXT DEFAULT '[]'"),
+                    ("worker_screenings", "experience", "TEXT DEFAULT '[]'"),
+                    ("worker_screenings", "certificates_verified", "BOOLEAN DEFAULT FALSE"),
+                    ("worker_screenings", "trial_briefed", "BOOLEAN DEFAULT FALSE"),
+                    ("worker_screenings", "safety_officer_name", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "pan", "TEXT DEFAULT ''"),
+                    ("worker_screenings", "aadhaar", "TEXT DEFAULT ''"),
                     ("boq_lines", "rate_only", "BOOLEAN DEFAULT FALSE"),
                     ("sub_bills", "entry_mode", "TEXT DEFAULT ''"),
                     ("sub_bills", "scan_file_id", "INTEGER"),
@@ -1625,9 +1824,61 @@ def ensure_columns():
                 except Exception:
                     pass
 
+            # BOQ item master: new columns on items and BOQ lines. Additive, defaulted, safe on a live database.
+            try:
+                for table, column, typedef in ITEM_MASTER_COLUMNS:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step item master: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
+            # Site-wise item pricing: the columns an earlier shape of site_item_rates did not have. Only where the table exists.
+            try:
+                have = {r[0] for r in conn.execute(text("SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()")).fetchall()}
+                for table, column, typedef in SITE_RATE_COLUMNS:
+                    if table in have:
+                        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step site rates: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
+            # The Store module's outward tables: columns added after the tables were first made. A database that has no store tables yet is not an error.
+            try:
+                have = {r[0] for r in conn.execute(text("SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()")).fetchall()}
+                for table, column, typedef in STORE_OUTWARD_COLUMNS:
+                    if table in have:
+                        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step store outward: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
+            # Subcontract controls: close-out, LD, the BG register, two-signature retention releases.
+            try:
+                for table, column, pg_type, _ in SUBCONTRACT_CONTROL_COLUMNS:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {pg_type}"))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step subcontract controls: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
             # Quality: the workflow columns. Additive, defaulted, safe on a live database.
             try:
-                for table, column, typedef in QUALITY_COLUMNS:
+                for table, column, typedef in QUALITY_COLUMNS + ACCOUNTS_COLUMNS:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
                 conn.commit()
             except Exception:
@@ -1724,7 +1975,7 @@ def migrate_sqlite():
                 add_col("subcontract_orders", column, "FLOAT DEFAULT 0")
             add_col("subcontract_items", "technical_spec", "TEXT DEFAULT ''")
             add_col("business_units", "logo_url", "TEXT DEFAULT ''")
-            for table, column, typedef in QUALITY_COLUMNS:
+            for table, column, typedef in QUALITY_COLUMNS + ACCOUNTS_COLUMNS + ITEM_MASTER_COLUMNS + STORE_OUTWARD_COLUMNS + SITE_RATE_COLUMNS:
                 add_col(table, column, typedef.replace("BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"))
             try:
                 conn.execute(text(SCHEDULE_BACKFILL))
@@ -1827,6 +2078,36 @@ def migrate_sqlite():
             add_col("sub_bills", "accepted_at", "TEXT DEFAULT ''")
             add_col("project_files", "original_size", "INTEGER DEFAULT 0")
             add_col("project_files", "blob_of", "INTEGER")
+            add_col("diary_labour", "worker_ids", "TEXT DEFAULT ''")
+            for table, column, _, lite_type in SUBCONTRACT_CONTROL_COLUMNS:
+                add_col(table, column, lite_type)
+            add_col("worker_screenings", "contractor_name", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "father_name", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "dob", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "sex", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "marital_status", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "children", "INTEGER DEFAULT 0")
+            add_col("worker_screenings", "mother_tongue", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "other_languages", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "emergency_contact", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "phone", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "signature", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "signed_at", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "identification_mark", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "vision_normal", "BOOLEAN DEFAULT 1")
+            add_col("worker_screenings", "vision_problem", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "health_normal", "BOOLEAN DEFAULT 1")
+            add_col("worker_screenings", "health_problem", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "weight_kg", "FLOAT DEFAULT 0")
+            add_col("worker_screenings", "height_cm", "FLOAT DEFAULT 0")
+            add_col("worker_screenings", "blood_group", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "education", "TEXT DEFAULT '[]'")
+            add_col("worker_screenings", "experience", "TEXT DEFAULT '[]'")
+            add_col("worker_screenings", "certificates_verified", "BOOLEAN DEFAULT 0")
+            add_col("worker_screenings", "trial_briefed", "BOOLEAN DEFAULT 0")
+            add_col("worker_screenings", "safety_officer_name", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "pan", "TEXT DEFAULT ''")
+            add_col("worker_screenings", "aadhaar", "TEXT DEFAULT ''")
 
             # Create approval_chains table
             conn.execute(text("""

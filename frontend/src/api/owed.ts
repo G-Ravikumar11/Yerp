@@ -60,6 +60,9 @@ export interface Position {
   suggest?: { stage: string; amount: number }
   dlp_ends: string
   dlp_over: boolean
+  /** What would stop the release suggested next: the defects period still running, a back-charge open... */
+  holds?: string[]
+  actual_completion_date?: string
 }
 
 export interface Release {
@@ -74,8 +77,13 @@ export interface Release {
   net_amount: number
   gst_amount: number
   outstanding: number
-  status: 'CERTIFIED' | 'PAID' | 'CANCELLED' | string
+  /** SUBMITTED: raised by staff, waiting for somebody else to certify it before it is owed. */
+  status: 'SUBMITTED' | 'CERTIFIED' | 'PAID' | 'CANCELLED' | string
   settled?: boolean
+  created_by_name?: string
+  certified_by_name?: string
+  override_note?: string
+  can_certify?: boolean
 }
 
 export interface Retention {
@@ -87,5 +95,6 @@ export interface Retention {
 
 export const useRetentionPage = () => useQuery({ queryKey: owedKeys.retention, queryFn: () => get<Retention>('/api/retention') })
 
-export const raiseRelease = (b: { side: string; order_id: number; stage: string; amount: number; release_on: string; notes: string }) => post<{ message: string }>('/api/retention/releases', b)
+export const raiseRelease = (b: { side: string; order_id: number; stage: string; amount: number; release_on: string; notes: string; override?: boolean }) => post<{ message: string }>('/api/retention/releases', b)
+export const certifyRelease = (id: number, comments: string) => post<{ message: string }>(`/api/retention/releases/${id}/certify`, { comments })
 export const cancelRelease = (id: number, reason: string) => post<{ message: string }>(`/api/retention/releases/${id}/cancel`, { reason })

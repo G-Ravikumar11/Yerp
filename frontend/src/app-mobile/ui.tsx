@@ -11,7 +11,7 @@ const TONES = {
 } as const
 
 export function Pill({ tone = 'quiet', children }: { tone?: keyof typeof TONES; children: ReactNode }) {
-  return <span className={cn('inline-flex h-6 items-center rounded-full px-2.5 text-xs font-semibold', TONES[tone])}>{children}</span>
+  return <span className={cn('inline-flex h-6 items-center rounded-md px-2.5 text-xs font-semibold', TONES[tone])}>{children}</span>
 }
 
 export function Label({ children, action }: { children: ReactNode; action?: ReactNode }) {
@@ -24,7 +24,7 @@ export function Label({ children, action }: { children: ReactNode; action?: Reac
 }
 
 export function Sheet({ className, children }: { className?: string; children: ReactNode }) {
-  return <div className={cn('rounded-3xl border border-border bg-card p-4', className)}>{children}</div>
+  return <div className={cn('rounded-lg border border-border bg-card p-4', className)}>{children}</div>
 }
 
 /** The big title at the top of a tab, the way a phone app has it. */

@@ -10,10 +10,19 @@ export interface Screen {
   Component: LazyExoticComponent<ComponentType>
 }
 
+/** Addresses that moved: a bookmark or an old link lands on the Store Hub screen that does the same job. */
+export const REDIRECTS: { from: string; to: string }[] = [
+  { from: '/store/goods-receipt', to: '/store/hub/inward/grn' },
+  { from: '/store/stock', to: '/store/hub/enquiry' },
+  { from: '/store/material-vouchers', to: '/store/hub/outward/issue' },
+  { from: '/store/material-costing', to: '/store/hub/reports/norm-variance' },
+]
+
 export const SCREENS: Screen[] = [
   { path: '/calendar', Component: lazy(() => import('@/features/calendar/CalendarPage')) },
   { path: '/ho', Component: lazy(() => import('@/features/headoffice/HoPortalPage')) },
   { path: '/projects/boq', Component: lazy(() => import('@/features/boq/BoqListPage')) },
+  { path: '/projects/boq/rates', Component: lazy(() => import('@/features/boq/SiteRatesPage')) },
   { path: '/projects/boq/:id', Component: lazy(() => import('@/features/boq/BoqPage')) },
   { path: '/store/items', Component: lazy(() => import('@/features/items/ItemMasterPage')) },
   { path: '/subcontractors/work-orders', Component: lazy(() => import('@/features/orders/OrdersPage')) },
@@ -22,6 +31,7 @@ export const SCREENS: Screen[] = [
   { path: '/approvals', Component: lazy(() => import('@/features/approvals/ApprovalsPage')) },
   { path: '/subcontractors/vendors', Component: lazy(() => import('@/features/vendors/VendorsPage')) },
   { path: '/subcontractors/compliance', Component: lazy(() => import('@/features/compliance/CompliancePage')) },
+  { path: '/subcontractors/registers', Component: lazy(() => import('@/features/orders/RegistersPage')) },
   { path: '/subcontractors/ra-bills', Component: lazy(() => import('@/features/subbills/RaBillsPage')) },
   { path: '/subcontractors/ra-bills/:id', Component: lazy(() => import('@/features/subbills/BillPage')) },
   { path: '/subcontractors/work-orders/:id', Component: lazy(() => import('@/features/orders/OrderPage')) },
@@ -39,6 +49,9 @@ export const SCREENS: Screen[] = [
   { path: '/money/gst', Component: lazy(() => import('@/features/gst/GstPage')) },
   { path: '/money/assets', Component: lazy(() => import('@/features/assets/AssetsPage')) },
   { path: '/money/registers', Component: lazy(() => import('@/features/registers/RegistersPage')) },
+  { path: '/money/site-cash', Component: lazy(() => import('@/features/sitecash/SiteCashPage')) },
+  { path: '/money/tally', Component: lazy(() => import('@/features/tally/TallyPage')) },
+  { path: '/me/site-cash', Component: lazy(() => import('@/features/sitecash/SiteCashPage')) },
   { path: '/store/purchase-orders', Component: lazy(() => import('@/features/purchaseorders/PurchaseOrdersPage')) },
   { path: '/people/departments', Component: lazy(() => import('@/features/people/DepartmentsPage')) },
   { path: '/people/employees', Component: lazy(() => import('@/features/people/EmployeesPage')) },
@@ -54,12 +67,24 @@ export const SCREENS: Screen[] = [
   { path: '/projects/:id', Component: lazy(() => import('@/features/projects/ProjectPage')) },
   { path: '/projects/costs', Component: lazy(() => import('@/features/projects/CostByProjectPage')) },
   { path: '/projects/costs/:id', Component: lazy(() => import('@/features/projects/ProjectCostsPage')) },
+  { path: '/projects/budgeting', Component: lazy(() => import('@/features/budgeting/BudgetingPage')) },
   { path: '/projects/profit', Component: lazy(() => import('@/features/projects/ProjectProfitPage')) },
-  { path: '/store/stock', Component: lazy(() => import('@/features/stock/StockPage')) },
-  { path: '/store/material-costing', Component: lazy(() => import('@/features/stock/ConsumptionPage')) },
-  { path: '/store/goods-receipt', Component: lazy(() => import('@/features/grn/GrnPage')) },
+  { path: '/store/hub', Component: lazy(() => import('@/features/store/StorePage')) },
+  { path: '/store/hub/masters/*', Component: lazy(() => import('@/features/store/masters')) },
+  { path: '/store/hub/enquiry/*', Component: lazy(() => import('@/features/store/enquiry')) },
+  { path: '/store/hub/inward/*', Component: lazy(() => import('@/features/store/inward')) },
+  { path: '/store/hub/outward/*', Component: lazy(() => import('@/features/store/outward')) },
+  { path: '/store/hub/control/*', Component: lazy(() => import('@/features/store/control')) },
+  { path: '/store/hub/reports/*', Component: lazy(() => import('@/features/store/reports')) },
+  // The old store's screens: in use until the company moves into the Store Hub, then kept as records.
+  { path: '/store/old/stock', Component: lazy(() => import('@/features/stock/StockPage')) },
+  { path: '/store/old/material-vouchers', Component: lazy(() => import('@/features/stock/MaterialVouchersPage')) },
+  { path: '/store/old/material-costing', Component: lazy(() => import('@/features/stock/ConsumptionPage')) },
+  { path: '/store/old/goods-receipt', Component: lazy(() => import('@/features/grn/GrnPage')) },
+  { path: '/store/invoice-tracker', Component: lazy(() => import('@/features/invoicetracker/InvoiceTrackerPage')) },
   { path: '/store/eway', Component: lazy(() => import('@/features/eway/EwayPage')) },
   { path: '/store/enquiries', Component: lazy(() => import('@/features/rfq/RfqPage')) },
+  { path: '/store/enquiries/:id', Component: lazy(() => import('@/features/rfq/EnquiryPage')) },
   { path: '/projects/diary', Component: lazy(() => import('@/features/diary/DiaryPage')) },
   { path: '/people/attendance', Component: lazy(() => import('@/features/attendance/AttendancePage')) },
   { path: '/people/leave', Component: lazy(() => import('@/features/leave/LeavePage')) },

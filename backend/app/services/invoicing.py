@@ -182,7 +182,11 @@ def job_overdue_reminders(db, now):
 
     A paid, part-paid or void invoice is never chased, and each rung of the
     ladder goes out at most once per invoice.
+
+    Off unless OVERDUE_REMINDERS_ENABLED=1: payment chasers do not go to customers on their own.
     """
+    if os.getenv("OVERDUE_REMINDERS_ENABLED", "0") != "1":
+        return "overdue reminders are off"
     today = now.date()
     sent = 0
     candidates = db.query(models.DBInvoice).filter(
@@ -689,6 +693,12 @@ def transfer_lines_for(db, client_id, number):
         models.DBStockMovement.client_id == client_id,
         models.DBStockMovement.kind == "TRANSFER_OUT",
         models.DBStockMovement.source_ref == number).all()
+    if not rows:
+        # A transfer made in the Store Hub, by its number.
+        from app.services.store_integration import hub_transfer_lines
+        hub = hub_transfer_lines(db, client_id, number)
+        return hub, [EwayLineIn(item_code=l["item_code"], product_name=l["item_name"], hsn=l["hsn"], qty=money(l["qty"]),
+                                unit=l["uom"], taxable=money(l["value"]), tax_rate=0) for l in hub]
     out = []
     for m in rows:
         item = db.query(models.DBItem).filter(models.DBItem.item_code == m.item_code).first()

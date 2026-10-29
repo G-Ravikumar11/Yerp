@@ -11,11 +11,12 @@ from app import models
 from app.constants.approvals import GONE_STATUSES
 from app.constants.boq import BOQ_KINDS, BOQ_NOT_LIVE, BOQ_PRICED, BV_TRANSITIONS
 from app.core.currency import money, unit_rate
+from app.core.naming import short_name
 from app.core.permissions import employee_can
 from app.core.queries import by_id, chain_rows, forget_chain
 from app.core.units import canonical_unit
 from app.schemas.items import ItemIn
-from app.services.items import CATEGORY_BY_KIND
+from app.services.items import CATEGORY_BY_KIND, issue_item_codes
 
 
 def boq_client_orders(db, boq):
@@ -115,7 +116,7 @@ def boq_amount(kind, qty, rate, rate_only=False):
 
 
 def boq_line_dict(l):
-    return {"id": l.id, "key": l.key, "kind": l.kind, "group_code": l.group_code or "", "description": l.description or "",
+    return {"id": l.id, "key": l.key, "kind": l.kind, "item_no": l.item_no or "", "group_code": l.group_code or "", "description": l.description or "",
             "uom": l.uom or "", "quantity": money(l.quantity), "rate": unit_rate(l.rate), "amount": money(l.amount),
             "item_code": l.item_code or "", "remarks": l.remarks or "",
             "material": l.material or "", "rate_only": bool(l.rate_only)}
@@ -192,6 +193,33 @@ def boq_head(db, boq, rev=None):
             "items": count, "total": money(total), "created_at": boq.created_at or ""}
 
 
+def boq_heads(db, boqs):
+    """boq_head for a whole list in three queries - their projects, current revisions and totals - not three a BOQ."""
+    if not boqs:
+        return []
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.id.in_({b.job_id for b in boqs if b.job_id} or {0})).all()}
+    revs = {}
+    for r in db.query(models.DBBoqRevision).filter(models.DBBoqRevision.boq_id.in_([b.id for b in boqs])).all():
+        revs[(r.boq_id, r.rev_no)] = r
+    current = {b.id: revs.get((b.id, b.current_rev)) for b in boqs}
+    totals = {rid: (n, t) for rid, n, t in db.query(models.DBBoqLine.revision_id, func.count(models.DBBoqLine.id), func.coalesce(func.sum(models.DBBoqLine.amount), 0.0))
+              .filter(models.DBBoqLine.revision_id.in_([r.id for r in current.values() if r] or [0]), models.DBBoqLine.kind.in_(BOQ_PRICED))
+              .group_by(models.DBBoqLine.revision_id).all()}
+    out = []
+    for boq in boqs:
+        rev, job = current[boq.id], jobs.get(boq.job_id)
+        if rev is None:                         # as boq_head would: a BOQ whose current revision is missing is a 404 there
+            out.append(boq_head(db, boq))
+            continue
+        count, total = totals.get(rev.id, (0, 0.0))
+        out.append({"id": boq.id, "number": boq.number or "", "title": boq.title or "", "job_id": boq.job_id,
+                    "project": ("%s %s" % (job.number, job.name)).strip() if job else "",
+                    "customer": (job.customer_name if job else "") or "",
+                    "current_rev": boq.current_rev, "revision": rev.label or "R%d" % rev.rev_no, "status": rev.status,
+                    "items": count, "total": money(total), "created_at": boq.created_at or ""})
+    return out
+
+
 def boq_new_key():
     return uuid.uuid4().hex[:12]
 
@@ -230,7 +258,8 @@ def boq_save_lines(db, boq, rev, rows, issue_codes, client_id):
             key = boq_new_key()
         seen.add(key)
         line = models.DBBoqLine(
-            boq_id=boq.id, revision_id=rev.id, key=key, kind=kind, group_code=(r.group_code or "").strip()[:40],
+            boq_id=boq.id, revision_id=rev.id, key=key, kind=kind, item_no=(getattr(r, "item_no", "") or "").strip()[:20],
+            group_code=(r.group_code or "").strip()[:40],
             description=text, uom=(r.uom or "").strip()[:20] if kind in BOQ_PRICED else "", quantity=qty, rate=rate,
             amount=boq_amount(kind, qty, rate, rate_only),
             item_code=(r.item_code or "").strip().upper()[:40] if kind in BOQ_PRICED else "",
@@ -243,7 +272,22 @@ def boq_save_lines(db, boq, rev, rows, issue_codes, client_id):
     issued = 0
     if issue_codes:
         issued = boq_issue_codes(db, client_id, kept)
+    boq_stamp_item_ids(db, client_id, kept)
     return kept, issued
+
+
+def boq_stamp_item_ids(db, client_id, lines):
+    """Put the master item's id beside each priced line's code, so the line keeps pointing at the same item.
+
+    The code stays what orders, contractors, measurements and bills match on; the id is the stable reference
+    beside it. Derived from the code every time, so the two cannot disagree."""
+    codes = {l.item_code for l in lines if l.kind in BOQ_PRICED and l.item_code}
+    ids = {}
+    if codes:
+        ids = {i.item_code: i.id for i in db.query(models.DBItem.id, models.DBItem.item_code).filter(
+            models.DBItem.client_id == client_id, models.DBItem.item_code.in_(list(codes))).all()}
+    for l in lines:
+        l.item_id = ids.get(l.item_code) if l.kind in BOQ_PRICED and l.item_code else None
 
 
 # What a person may type as an item code on a BOQ line: letters, numbers and - _ / . in any pattern (CIV-RCC-25, RCC025X).
@@ -267,7 +311,10 @@ def boq_check_typed_codes(db, client_id, lines):
         seen[l.item_code] = l
     if not seen:
         return
-    known = {i.item_code: i for i in db.query(models.DBItem).filter(models.DBItem.item_code.in_(list(seen))).all()}
+    codes = list(seen)
+    known = {}
+    for at in range(0, len(codes), 500):
+        known.update({i.item_code: i for i in db.query(models.DBItem).filter(models.DBItem.item_code.in_(codes[at:at + 500])).all()})
     for code, l in seen.items():
         item = known.get(code)
         if item is not None:
@@ -275,35 +322,65 @@ def boq_check_typed_codes(db, client_id, lines):
                 raise HTTPException(409, "Item code %s belongs to something that is not one of your finished goods. "
                                          "Leave the code blank to be given one." % code)
             continue
-        name = re.sub(r"\s+", " ", (l.description or "").split("\n")[0]).strip()[:200]
+        name = short_name(l.description, 120) or re.sub(r"\s+", " ", (l.description or "").split("\n")[0]).strip()[:200]
         db.add(models.DBItem(client_id=client_id, kind="FG", item_code=code, item_name=name,
                              description=(l.description or "").strip() or name, category=CATEGORY_BY_KIND["FG"], sub_category="FG",
-                             item_type="Purchased", units_of_measure=canonical_unit(l.uom) or "Nos"))
-        db.flush()
+                             item_type="Work", units_of_measure=canonical_unit(l.uom) or "Nos",
+                             source_boq_id=l.boq_id, source_boq_key=l.key))
+    db.flush()
+
+
+def _same_work(item, line, name):
+    """Whether a master item is the very work a BOQ line describes. The name alone is not enough: two lines can open with
+    the same words and differ in grade, size or make further down, and then they are two items, not one. Spacing and
+    letter case are ignored in the comparison only; the stored text is never touched. A line with a unit also needs the
+    item to count in that unit."""
+    flat = lambda t: re.sub(r"\s+", " ", t or "").strip().lower()
+    text = flat(line.description)
+    if flat(item.description) != text and not (flat(item.item_name) == text and name.lower() == text):
+        return False
+    unit = canonical_unit(line.uom)
+    return not unit or not item.units_of_measure or item.units_of_measure == unit
 
 
 def boq_issue_codes(db, client_id, lines):
-    """Every priced line without an item code gets one: the code of the master item of the same name that no other
-    line of this BOQ uses, or a newly issued finished-goods code. Returns how many were given."""
+    """Every priced line without an item code gets one: the code of the master item that is the same work (name, full
+    description and unit) and that no other line of this BOQ uses, or a newly issued finished-goods code. Returns how many
+    were given."""
     in_use = {l.item_code for l in lines if l.item_code}
     by_name = {}
     for it in db.query(models.DBItem).filter(models.DBItem.client_id == client_id, models.DBItem.kind == "FG").all():
         by_name.setdefault(re.sub(r"\s+", " ", (it.item_name or "")).strip().lower(), []).append(it)
-    claimed, given = set(), 0
+    given, todo = 0, []
     for l in lines:
         if l.kind not in BOQ_PRICED or l.item_code:
             continue
-        name = re.sub(r"\s+", " ", (l.description or "").split("\n")[0]).strip()[:200]
-        match = next((i for i in by_name.get(name.lower(), []) if i.item_code not in in_use), None)
-        if match is None:
-            match = build_item(db, client_id, ItemIn(
-                kind="FG", item_name=name, description=(l.description or "").strip(),
-                units_of_measure=canonical_unit(l.uom) or "Nos"), claimed)
-            db.flush()
-            by_name.setdefault(name.lower(), []).append(match)
-        l.item_code = match.item_code
-        in_use.add(match.item_code)
-        given += 1
+        first = re.sub(r"\s+", " ", (l.description or "").split("\n")[0]).strip()[:200]
+        name = short_name(l.description, 120) or first
+        # An item made before names were shortened is filed under the whole first line, so look under both.
+        found = by_name.get(name.lower(), []) + ([] if first.lower() == name.lower() else by_name.get(first.lower(), []))
+        same = [i for i in found if i.item_code not in in_use and _same_work(i, l, first)]
+        # Of several items that are the same work, the one this very BOQ line made comes first.
+        match = next((i for i in same if i.source_boq_id == l.boq_id and i.source_boq_key == l.key), same[0] if same else None)
+        if match is not None:
+            l.item_code = match.item_code
+            in_use.add(match.item_code)
+            given += 1
+        else:
+            todo.append((l, name))
+    if todo:                       # every new code in one go and every new item in one flush, not one round trip each
+        codes = issue_item_codes(db, len(todo), in_use)
+        for (l, name), code in zip(todo, codes):
+            item = models.DBItem(client_id=client_id, kind="FG", item_code=code, item_name=name,
+                                 description=(l.description or "").strip() or name, category=CATEGORY_BY_KIND["FG"],
+                                 sub_category="FG", item_type="Work", units_of_measure=canonical_unit(l.uom) or "Nos",
+                                 source_boq_id=l.boq_id, source_boq_key=l.key)
+            db.add(item)
+            by_name.setdefault(name.lower(), []).append(item)
+            l.item_code = code
+            in_use.add(code)
+            given += 1
+        db.flush()
     return given
 
 
@@ -321,12 +398,22 @@ def boq_given_to_contractors(db, client_id, keys=None):
         models.DBSubcontractOrder.client_id == client_id, models.DBSubcontractOrder.supersedes_id.isnot(None),
         models.DBSubcontractOrder.status.notin_(BOQ_NOT_LIVE)).all()}
     out = {}
+    billed = {}
     for it, order in q.all():
         if order.id in amended:
             continue
         g = out.setdefault(it.boq_key, {"qty": 0.0, "cost": 0.0, "items": [], "orders": []})
-        g["qty"] += it.quantity or 0
-        g["cost"] += it.total_amount or 0
+        if order.status == "CLOSED":
+            # A closed order gave the contractor only what it billed; the rest is free to give to somebody else.
+            if order.id not in billed:
+                from app.services.subcontract_rules import billed_qty_by_item
+                billed[order.id] = billed_qty_by_item(db, order.id)
+            qty = billed[order.id].get(it.id, 0.0)
+            g["qty"] += qty
+            g["cost"] += money(qty * (it.unit_rate or 0))
+        else:
+            g["qty"] += it.quantity or 0
+            g["cost"] += it.total_amount or 0
         g["items"].append(it.id)
         if order.wo_number not in g["orders"]:
             g["orders"].append(order.wo_number)
@@ -588,9 +675,9 @@ def bv_apply(db, client, boq, vo):
     db.flush()
     copies = []
     for l in db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == cur.id).order_by(models.DBBoqLine.display_order).all():
-        copies.append(models.DBBoqLine(boq_id=boq.id, revision_id=nxt.id, key=l.key, kind=l.kind, group_code=l.group_code, description=l.description,
+        copies.append(models.DBBoqLine(boq_id=boq.id, revision_id=nxt.id, key=l.key, kind=l.kind, item_no=l.item_no, group_code=l.group_code, description=l.description,
                                        uom=l.uom, quantity=l.quantity, rate=l.rate, amount=l.amount,
-                                       item_code=l.item_code, remarks=l.remarks, material=l.material, rate_only=l.rate_only))
+                                       item_code=l.item_code, item_id=l.item_id, remarks=l.remarks, material=l.material, rate_only=l.rate_only))
     by_key = {c.key: c for c in copies}
     added = []
     for vl in db.query(models.DBBoqVariationLine).filter(models.DBBoqVariationLine.variation_id == vo.id).order_by(
@@ -622,6 +709,7 @@ def bv_apply(db, client, boq, vo):
         db.add(l)
     db.flush()
     boq_issue_codes(db, client.id, copies)                    # the extra items get their codes from the item master
+    boq_stamp_item_ids(db, client.id, copies)
     boq.current_rev = nxt.rev_no
     # The client's work order drawn from this BOQ follows it.
     for wo in [w for w in boq_client_orders(db, boq) if w.status not in ("Closed", "Rejected")]:

@@ -3,6 +3,7 @@ import re
 from datetime import datetime
 
 from fastapi import HTTPException
+from sqlalchemy import func
 
 from app import models
 
@@ -62,7 +63,32 @@ def allocate_job_number(db, client_id) -> str:
                 highest = max(highest, int(digits))
         db.add(models.DBCodeSequence(name=series, next_value=highest + 1))
         db.flush()
-    return f"JOB-{next_serial(db, series):04d}"
+    while True:
+        # Codes are typed by hand too, so one the counter reaches may already be in use: go past it.
+        number = f"JOB-{next_serial(db, series):04d}"
+        if not job_number_taken(db, client_id, number):
+            return number
+
+
+def job_number_taken(db, client_id, number, job_id=None):
+    """Whether another project of this company already has this code (APNRT-01 and apnrt-01 are the same)."""
+    q = db.query(models.DBJob.id).filter(models.DBJob.client_id == client_id,
+                                         func.lower(func.trim(models.DBJob.number)) == number.strip().lower())
+    if job_id:
+        q = q.filter(models.DBJob.id != job_id)
+    return q.first() is not None
+
+
+def typed_job_number(db, client_id, raw, job_id=None):
+    """The job code as typed for a project: the company's own code (APNRT-01, YP/24/007), never one already used."""
+    number = " ".join((raw or "").split())
+    if not number:
+        raise HTTPException(400, "Give the project its job code.")
+    if len(number) > 40:
+        raise HTTPException(400, "A job code is 40 characters or fewer.")
+    if job_number_taken(db, client_id, number, job_id):
+        raise HTTPException(409, "%s is already the job code of another project. Job codes are not repeated." % number)
+    return number
 
 
 # ENTERING THIS DATA WITHOUT A SPREADSHEET

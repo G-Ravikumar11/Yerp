@@ -41,7 +41,7 @@ class DBEmployee(Base):
     address = Column(String, default="")
 
     job_title = Column(String, default="")
-    role = Column(String, default="employee")
+    role = Column(String, default="")
     # What this person may DO in the portal, decided by HR. Deliberately
     # separate from `role`, which is their place in the reporting line: a site
     # supervisor may need to raise costs without being anyone's manager, and a
@@ -73,6 +73,12 @@ class DBEmployee(Base):
 
     emergency_contact = Column(String, default="")
     emergency_phone = Column(String, default="")
+
+    # Optional; the employee gives them in their own portal. Aadhaar is kept as 12 digits and shown masked to HR.
+    gender = Column(String, default="")
+    aadhaar_no = Column(String, default="")
+    pan_no = Column(String, default="")
+    uan_no = Column(String, default="")
 
     annual_leave_entitlement = Column(Float, default=25.0)
     sick_leave_entitlement = Column(Float, default=10.0)
@@ -340,6 +346,24 @@ class DBDepartmentSite(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=False, index=True)
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBCustomHoliday(Base):
+    """A day the business has marked as a holiday, on top of the public ones.
+
+    It is the whole business's: every employee has it off, so it takes no part in who works where.
+    The date is kept as YYYY-MM-DD, the way every other date in the app is."""
+    __tablename__ = "custom_holidays"
+    __table_args__ = (
+        UniqueConstraint('client_id', 'date', name='uq_custom_holiday_day'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    date = Column(String, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    created_by = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 

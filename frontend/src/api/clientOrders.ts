@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api, get, post } from '@/lib/api'
 
 /** An order received from a client: what we are paid for. Its budget and bills hang off it. */
-export interface ClientOrderLine {
+interface ClientOrderLine {
   id: number
   fg_code: string
   item_name: string
@@ -23,7 +23,7 @@ export interface BudgetLine {
   amount?: number
 }
 
-export type Approval = 'none' | 'pending' | 'approved' | 'rejected'
+type Approval = 'none' | 'pending' | 'approved' | 'rejected'
 
 export interface ClientOrder {
   id: number
@@ -76,12 +76,12 @@ export interface JobOption {
   number: string
   name: string
 }
-export const useJobOptions = (staff: boolean) =>
-  useQuery({
-    queryKey: ['jobs', 'options', staff],
-    queryFn: async () => (await get<{ jobs: JobOption[] }>(staff ? '/api/employee/jobs' : '/api/jobs?open_only=true&costing=false')).jobs ?? [],
-    staleTime: 5 * 60_000,
-  })
+export const jobOptionsQuery = (staff: boolean) => ({
+  queryKey: ['jobs', 'options', staff],
+  queryFn: async () => (await get<{ jobs: JobOption[] }>(staff ? '/api/employee/jobs' : '/api/jobs?open_only=true&costing=false')).jobs ?? [],
+  staleTime: 5 * 60_000,
+})
+export const useJobOptions = (staff: boolean) => useQuery(jobOptionsQuery(staff))
 
 /* --- Building an order from codes already in the item master ------------------ */
 
@@ -107,7 +107,7 @@ export const decideClientOrder = (id: number, decision: 'approve' | 'reject', no
 
 /* --- From the budget to a purchase order -------------------------------------------- */
 
-export interface RequisitionLine {
+interface RequisitionLine {
   item_code: string
   item_name: string
   uom: string
@@ -135,7 +135,7 @@ export const raisePurchaseOrder = (id: number, b: { supplier_name: string; neede
 
 /* --- Bringing an order in from a sheet ---------------------------------------------------- */
 
-export interface SheetIssue {
+interface SheetIssue {
   line: number
   field: string
   message: string

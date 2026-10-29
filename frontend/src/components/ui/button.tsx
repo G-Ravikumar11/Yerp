@@ -7,20 +7,20 @@ import { cn } from '@/lib/utils'
 export const buttonVariants = cva(
   [
     'relative inline-flex shrink-0 select-none items-center justify-center gap-2 whitespace-nowrap',
-    'rounded-md text-sm font-medium transition-all duration-150 ease-out',
-    'active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50',
+    'cursor-pointer rounded-md text-sm font-medium transition-[background-color,opacity] duration-150 ease-in-out',
+    'disabled:pointer-events-none disabled:opacity-50',
     '[&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
   ],
   {
     variants: {
       variant: {
-        primary: 'bg-primary text-primary-foreground shadow-xs hover:brightness-110 hover:shadow-glow',
-        secondary: 'bg-muted text-foreground hover:bg-accent hover:text-accent-foreground',
-        outline: 'border border-input bg-transparent text-foreground hover:bg-accent hover:border-subtle/50',
-        ghost: 'text-muted-foreground hover:bg-accent hover:text-foreground',
-        danger: 'bg-danger text-white shadow-xs hover:brightness-110',
-        soft: 'bg-primary-soft text-primary hover:brightness-95 dark:hover:brightness-125',
-        link: 'h-auto p-0 text-primary underline-offset-4 hover:underline active:scale-100',
+        primary: 'bg-primary text-primary-foreground shadow-xs hover:bg-[color-mix(in_srgb,var(--primary),black_10%)]',
+        secondary: 'bg-muted text-foreground hover:bg-[color-mix(in_srgb,var(--muted),black_10%)]',
+        outline: 'border border-input bg-transparent text-foreground hover:bg-accent',
+        ghost: 'text-muted-foreground hover:bg-accent',
+        danger: 'bg-danger text-white shadow-xs hover:bg-[color-mix(in_srgb,var(--danger),black_10%)]',
+        soft: 'bg-primary-soft text-primary hover:bg-[color-mix(in_srgb,var(--primary-soft),black_10%)]',
+        link: 'h-auto p-0 text-primary underline-offset-4 hover:underline',
       },
       size: {
         sm: 'h-8 px-3 text-[13px]',

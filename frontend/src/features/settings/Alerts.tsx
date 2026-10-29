@@ -56,7 +56,7 @@ export function Alerts() {
         <p className="mt-1 text-xs text-muted-foreground">From Meta Business, WhatsApp, API setup: the phone number ID and a permanent access token.</p>
         <div className="mt-3 grid gap-4 sm:grid-cols-2">
           <Field label="Phone number ID" htmlFor="al-waid"><Input id="al-waid" value={waId} onChange={(e) => setWaId(e.target.value)} /></Field>
-          <Field label="Access token" htmlFor="al-watok"><Input id="al-watok" type="password" placeholder={d.wa_token_set ? 'Saved - type to replace' : ''} value={waToken} onChange={(e) => setWaToken(e.target.value)} /></Field>
+          <Field label="Access token" htmlFor="al-watok"><Input id="al-watok" type="password" autoComplete="new-password" placeholder={d.wa_token_set ? 'Saved - type to replace' : ''} value={waToken} onChange={(e) => setWaToken(e.target.value)} /></Field>
         </div>
       </details>
       <div className="mt-4 flex gap-2"><Button loading={save.isPending} onClick={() => save.mutate()}>Save alerts</Button><Button variant="outline" loading={test.isPending} onClick={() => test.mutate()}>Send a test</Button></div>

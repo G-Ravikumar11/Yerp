@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Sparkles } from 'lucide-react'
+import { AiMark } from '@/components/ui/ai-mark'
+
 import { DataGrid, type Column } from '@/components/grid'
 import { Badge, Button, ConfirmDialog, Field, Modal, Skeleton, Textarea } from '@/components/ui'
 import {
@@ -192,7 +193,7 @@ export function VariationDialog({ boqId, id, lines, open, onOpenChange }: { boqI
             {draft && (
               <div className="flex flex-wrap items-center gap-2">
                 <Button variant="outline" size="sm" loading={suggest.isPending} onClick={() => suggest.mutate()}>
-                  <Sparkles /> Add what has been executed past the BOQ
+                  <AiMark /> Add what has been executed past the BOQ
                 </Button>
                 <span className="text-xs text-muted-foreground">Pick a BOQ line for a quantity change; leave the rate blank to use the BOQ&apos;s. For an extra item, give its words, quantity and rate.</span>
               </div>

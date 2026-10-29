@@ -1,8 +1,12 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
-import { Badge, Stat, StatGrid } from '@/components/ui'
+import { Badge, Button, ConfirmDialog, Stat, StatGrid } from '@/components/ui'
 import { useAdvances, useGuarantees, type Advance, type Guarantee } from '@/api/registers'
 import { formatDate } from '@/lib/format'
+import { returnGuarantee } from '@/api/orders'
+import { useAction } from '@/lib/mutate'
+import { useSession } from '@/lib/session'
 import { compactINR, formatINR } from '@/lib/utils'
 
 const STATE: Record<string, 'success' | 'warning' | 'danger' | 'neutral'> = { 'in force': 'success', 'lapses within 30 days': 'warning', lapsed: 'danger', 'no expiry recorded': 'neutral' }
@@ -12,14 +16,20 @@ const order = (id: number, no: string) => <Link className="font-mono text-[13px]
 export function GuaranteesTab() {
   const q = useGuarantees()
   const s = q.data?.summary
+  const { can } = useSession()
+  const [returning, setReturning] = useState<Guarantee | null>(null)
+  const back = useAction((a: { g: Guarantee; comments: string }) => returnGuarantee(a.g.order_id, a.comments), { invalidate: [['registers'], ['orders']], onSuccess: () => setReturning(null) })
   const columns: TableColumn<Guarantee>[] = [
     { id: 'c', header: 'Contractor', cell: (r) => r.contractor },
+    { id: 'n', header: 'Guarantee', hideBelow: 'md', cell: (r) => (r.number || r.bank ? <div>{r.number || '-'}<div className="text-xs text-muted-foreground">{r.bank}</div></div> : '-') },
     { id: 'o', header: 'Order', cell: (r) => order(r.order_id, r.order) },
     { id: 'a', header: 'Amount', align: 'right', cell: (r) => formatINR(r.amount) },
     { id: 'v', header: 'Valid until', hideBelow: 'md', cell: (r) => formatDate(r.valid_until) || '-' },
     { id: 'd', header: 'Days left', hideBelow: 'md', align: 'right', cell: (r) => (r.days_left === null ? '-' : r.days_left) },
     { id: 'w', header: 'Work ends', hideBelow: 'lg', cell: (r) => `${formatDate(r.completion_date) || '-'}${r.defect_liability_months ? ` + ${r.defect_liability_months} mo DLP` : ''}` },
     { id: 's', header: 'State', cell: (r) => <Badge tone={STATE[r.state] ?? 'neutral'}>{r.state}</Badge> },
+    // Handed back to the contractor: it stops being watched.
+    { id: 'act', header: '', align: 'right', cell: (r) => (can('subcontracts.approve') ? <Button size="sm" variant="outline" onClick={() => setReturning(r)}>Returned</Button> : null) },
   ]
   return (
     <>
@@ -30,6 +40,18 @@ export function GuaranteesTab() {
         <Stat label="No expiry recorded" value={s?.no_expiry ?? 0} loading={q.isPending} />
       </StatGrid>
       <DataTable label="Bank guarantees" rows={q.data?.guarantees ?? []} columns={columns} rowKey={(r) => r.order_id} loading={q.isPending} empty="No bank guarantees on any live order." />
+      <ConfirmDialog
+        open={!!returning}
+        onOpenChange={(o) => !o && setReturning(null)}
+        title={`Guarantee on ${returning?.order ?? 'this order'} returned?`}
+        description="Handed back to the contractor, it stops being watched for expiry."
+        confirmLabel="Mark as returned"
+        reason={{ label: returning && returning.order_status !== 'CLOSED' ? 'The order is still open - why is it going back now?' : 'Note (optional)', required: !!returning && returning.order_status !== 'CLOSED' }}
+        loading={back.isPending}
+        onConfirm={(comments) => {
+          if (returning) back.mutate({ g: returning, comments })
+        }}
+      />
     </>
   )
 }

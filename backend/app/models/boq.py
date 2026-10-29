@@ -50,6 +50,8 @@ class DBBoqLine(Base):
     # Stays the same on a line through every revision, so a change can be followed and orders can point at it.
     key = Column(String, nullable=False, index=True)
     kind = Column(String, default="item")                     # section | item | sub | note
+    # The client's own numbering (I, 2, 2.1, 2.1.1, A): the programme draws its tree from it.
+    item_no = Column(String, default="")
     # The group the line belongs to (PCC, RCC, Steel ...): picked from a list or typed, and kept as the sheet has it.
     group_code = Column(String, default="", index=True)
     description = Column(Text, default="")
@@ -58,6 +60,9 @@ class DBBoqLine(Base):
     rate = Column(Float, default=0.0)
     amount = Column(Float, default=0.0)
     item_code = Column(String, default="", index=True)        # ours, from the item master
+    # The master item itself, kept beside the code (which stays what orders, contractors, measurements and bills use).
+    # Stamped from the code whenever lines are saved, so it never disagrees with it.
+    item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=True, index=True)
     remarks = Column(Text, default="")
     # The grade or material the item is in ("M40", "Fe550/550D", "Ply wood"), kept apart from the description so a
     # sheet can be read, filtered and totalled by it.

@@ -23,8 +23,8 @@ export function DepartmentHierarchy({ dept }: { dept: Department }) {
     const people = (staff.data ?? []).filter((e) => e.department_id === dept.id && ['active', 'onboarding'].includes(e.status))
     const byLevel = new Map<string, Employee[]>()
     for (const e of people) byLevel.set(e.level || '', [...(byLevel.get(e.level || '') ?? []), e])
-    // The catalogue lists the levels junior to senior, so the chart reads it backwards; unlevelled people come last.
-    const order = [...levels.map((l) => l.code).reverse(), ...[...byLevel.keys()].filter((k) => k && !levels.some((l) => l.code === k)), '']
+    // Most senior first (a higher rank is more senior); unlevelled people come last.
+    const order = [...[...levels].sort((a, b) => b.rank - a.rank).map((l) => l.code), ...[...byLevel.keys()].filter((k) => k && !levels.some((l) => l.code === k)), '']
     return order.filter((code) => byLevel.has(code)).map((code) => ({
       code, people: byLevel.get(code)!.sort((a, b) => a.full_name.localeCompare(b.full_name)),
     }))
@@ -35,7 +35,7 @@ export function DepartmentHierarchy({ dept }: { dept: Department }) {
 
   const card = (e: Employee, row: number) => (
     <button type="button" onClick={() => setShown(e)} aria-label={`${e.full_name}, ${e.job_title || 'no title'}. Show details`} className="group mx-auto block w-44 text-center">
-      <span className="relative z-10 mx-auto grid size-16 place-items-center rounded-full border-[3px] bg-white text-lg font-semibold shadow-sm transition-transform group-hover:scale-105" style={{ borderColor: tier(row), color: tier(row) }}>{initials(e.full_name)}</span>
+      <span className="relative z-10 mx-auto grid size-16 place-items-center rounded-full border-[3px] bg-white text-lg font-semibold shadow-sm" style={{ borderColor: tier(row), color: tier(row) }}>{initials(e.full_name)}</span>
       <span className="-mt-8 block rounded-sm px-2 pb-2 pt-9 text-white" style={{ background: tier(row) }}>
         <span className="block truncate text-[13px] font-semibold">{e.full_name}</span>
         <span className="block truncate text-[12px] opacity-90">{e.job_title || 'No title'}</span>

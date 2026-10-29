@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.validators import import_guard
 from app import models
 from app.documents import sheet_forms
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.common import HARDCOPY_TYPES, RETENTION_STAGES, SUB_TRANSITIONS
 from app.core.audit import log_audit
@@ -65,6 +65,7 @@ from app.services.subcontract_billing import (
     _live_releases,
     add_sub_measurement,
     apply_material_recovery,
+    apply_store_material,
     bill_scan_required,
     dimension_total,
     draw_sub_bill_lines,
@@ -77,6 +78,7 @@ from app.services.subcontract_billing import (
     release_material_recovery,
     release_or_404,
     retention_positions,
+    store_material_due,
     sub_advance_recovery,
     sub_bill_chain_rows,
     sub_bill_current_step,
@@ -105,13 +107,22 @@ from app.services.subcontract_orders import (
     work_order_or_404,
     work_order_to_dict,
 )
+from app.services.subcontract_billing import release_party
+from app.services.subcontract_billing import apply_ld
+from app.services.credit_notes import bill_credited_net
+from app.services.subcontract_rules import (
+    bill_boq_overbilling,
+    compliance_gate,
+    ld_due,
+    retention_blockers,
+)
 
 
 router = APIRouter()
 
 
 @router.get("/api/sub-bills/{bill_id}/delete-preview")
-def sub_bill_delete_preview(bill_id: int, request: Request, db: Session = Depends(get_db)):
+def sub_bill_delete_preview(bill_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     require_owner(request, db)
     bill = sub_bill_or_404(db, client.id, bill_id)
@@ -153,7 +164,7 @@ def sub_bill_delete(bill_id: int, request: Request, db: Session = Depends(get_db
 
 @router.get("/api/mb/{work_order_id}")
 def measurement_book(work_order_id: int, request: Request,
-                     db: Session = Depends(get_db)):
+                     db: Session = Depends(get_read_db)):
     """Every ordered line, with what has been measured and what is left.
 
     The balance is the number somebody on site actually wants: how much of
@@ -931,9 +942,12 @@ def create_sub_bill(body: SubBillIn, request: Request, db: Session = Depends(get
     db.flush()
     draw_sub_bill_lines(db, bill, order, entry_ids=body.entry_ids)
     recost_sub_bill(db, bill)
+    apply_ld(db, order, bill)
     bill.advance_recovery = sub_advance_recovery(db, order, bill, body.advance_recovery)
     recost_sub_bill(db, bill)
     if apply_material_recovery(db, client.id, order, bill):
+        recost_sub_bill(db, bill)
+    if apply_store_material(db, bill):
         recost_sub_bill(db, bill)
     log_audit(db, client.id, "sub_bill_raised", "subcontract_order", order.id,
               order.wo_number or "", "%s %s" % (bill.number, inr(bill.this_bill)), request)
@@ -978,7 +992,7 @@ def sub_bill_attach_hardcopy(bill_id: int, request: Request, file: UploadFile = 
 
 
 @router.get("/api/sub-bills/{bill_id}/hardcopy")
-def sub_bill_hardcopy(bill_id: int, request: Request, db: Session = Depends(get_db)):
+def sub_bill_hardcopy(bill_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     bill = sub_bill_or_404(db, client.id, bill_id)
     if not bill.scan_file_id:
@@ -1043,7 +1057,24 @@ def edit_sub_bill(bill_id: int, body: SubBillEditIn, request: Request, db: Sessi
         material = money(sum(r.amount or 0 for r in db.query(models.DBMaterialRecovery).filter(
             models.DBMaterialRecovery.client_id == client.id,
             models.DBMaterialRecovery.sub_bill_id == bill.id).all()))
-        bill.other_deductions = money(material + money(body.other_deductions))
+        bill.other_deductions = money(material + (bill.store_material or 0) + money(body.other_deductions))
+    if body.ld_amount is not None:
+        wanted = money(body.ld_amount)
+        if wanted < 0:
+            raise HTTPException(400, "Liquidated damages cannot be negative.")
+        recost_sub_bill(db, bill)
+        due, why = ld_due(db, order, bill)
+        note = (body.ld_note or "").strip()
+        if abs(wanted - due) > 0.009 and not note:
+            raise HTTPException(400, "The liquidated damages worked out for this bill are %s (%s). Say why they are "
+                                     "%s instead - an extension of time agreed, say." % (
+                                         inr(due), why or "the work is not late", inr(wanted)))
+        bill.ld_amount = wanted
+        bill.ld_set_by_hand = abs(wanted - due) > 0.009
+        bill.ld_note = (note or why)[:300]
+    else:
+        # The period may have moved: the damages worked out follow it, unless somebody set them by hand.
+        apply_ld(db, order, bill)
     recost_sub_bill(db, bill)
     if body.advance_recovery is not None:
         bill.advance_recovery = 0.0
@@ -1079,7 +1110,7 @@ def credit_sub_bill(bill_id: int, body: CreditNoteIn, request: Request, db: Sess
 
 
 @router.get("/api/sub-bills/{bill_id}/credit-notes")
-def list_sub_bill_credit_notes(bill_id: int, request: Request, db: Session = Depends(get_db)):
+def list_sub_bill_credit_notes(bill_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     bill = sub_bill_or_404(db, client.id, bill_id)
     notes = db.query(models.DBCreditNote).filter(
@@ -1143,6 +1174,12 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
         # the draft was opened is on it.
         draw_sub_bill_lines(db, bill, order)
         recost_sub_bill(db, bill)
+        apply_ld(db, order, bill)
+        apply_store_material(db, bill)
+        recost_sub_bill(db, bill)
+        if (bill.net_payable or 0) < 0:
+            raise HTTPException(409, "The deductions take %s below nothing (%s). Bring them down before sending it."
+                                     % (bill.number, inr(bill.net_payable)))
         if not bill.this_bill:
             raise HTTPException(409, "There is nothing on this bill to submit.")
         # The owner signs as themselves, not as the company.
@@ -1151,6 +1188,33 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
         bill.approved_by_name, bill.remarks = "", ""
         sub_bill_start_chain(db, client.id, bill, actor_id)
     elif move == "CERTIFY":
+        # Nobody certifies a bill for a contractor whose papers have lapsed, or one that takes what contractors have
+        # been billed for past the client's BOQ - the Master alone may, with the reason kept on the bill.
+        notes = []
+        papers = compliance_gate(db, client.id, bill.contractor_id, actor_id, comments, "certified for payment")
+        if papers:
+            notes.append(papers)
+        over = bill_boq_overbilling(db, bill)
+        if over:
+            if actor_id is not None or not comments:
+                raise HTTPException(409, "%s takes contractors past the project BOQ: %s. %s" % (
+                    bill.number, "; ".join(over),
+                    "Give a reason to certify it regardless." if actor_id is None
+                    else "Take it back to the measurement book, or ask the Master to certify it with a reason."))
+            notes.append("Certified past the BOQ (%s). Reason: %s" % ("; ".join(over), comments))
+        # Material the Store Hub issued to the contractor as chargeable comes off their bills. A bill that leaves some of
+        # it unrecovered is not certified - but by the Master, with the reason kept on the bill.
+        short = money(store_material_due(db, bill) - (bill.store_material or 0))
+        if short >= 1:
+            if actor_id is not None or not comments:
+                raise HTTPException(409, "%s leaves %s of store material issued to the contractor unrecovered (%s taken "
+                                         "off this bill). %s" % (
+                    bill.number, inr(short), inr(bill.store_material or 0),
+                    "Give a reason to certify it regardless." if actor_id is None
+                    else "Send it back to take the material off, or ask the Master to certify it with a reason."))
+            notes.append("Certified with %s of store material unrecovered. Reason: %s" % (inr(short), comments))
+        if notes:
+            bill.override_note = ((bill.override_note + " | ") if bill.override_note else "") + " | ".join(notes)
         # Certifying a subcontractor's bill is agreeing to pay it - once the
         # last signature on its route is on.
         if not sub_bill_decide(db, client, bill, actor_id, actor_name, True, comments):
@@ -1172,8 +1236,24 @@ def act_on_sub_bill(bill_id: int, action: str, request: Request, body: dict = No
                 models.DBSubMeasurement.sub_bill_id == bill.id).update(
                     {"sub_bill_id": None}, synchronize_session=False)
     elif move == "PAY":
-        bill.paid_at = now
-        bill.paid_reference = (body.get("reference") or "").strip()
+        # Paid in full through the ledger and the bank book, never by a flag on the bill: a bill marked paid with no
+        # payment behind it left the cash book short of money that had gone out.
+        from app.routers.money import record_money
+        from app.schemas.money import MoneyIn
+        reference = (body.get("reference") or "").strip()
+        outstanding = money((bill.net_payable or 0) - bill_credited_net(db, "contractor", bill.id)
+                            - settled_on(db, client.id, "sub_bill", bill.id))
+        if outstanding <= 0:
+            raise HTTPException(409, "%s is already fully paid." % bill.number)
+        paid = record_money(MoneyIn(doc_type="sub_bill", doc_id=bill.id, amount=outstanding,
+                                    mode=(body.get("mode") or "Bank transfer"), reference=reference,
+                                    account_id=body.get("account_id"), note=comments), request, db)
+        db.refresh(bill)
+        if reference:
+            bill.paid_reference = reference[:80]
+            db.commit()
+        return {"ok": True, "bill": sub_bill_dict(db, bill, detail=True), "entry": paid.get("entry"),
+                "message": "%s paid: %s through the ledger." % (bill.number, inr(outstanding))}
     elif move == "CANCEL":
         if not comments:
             raise HTTPException(400, "Say why it is being cancelled.")
@@ -1254,13 +1334,29 @@ def export_sub_bill(bill_id: int, request: Request, db: Session = Depends(get_db
 
 
 @router.get("/api/material-recoveries")
-def list_material_recoveries(request: Request, order_id: int = 0, db: Session = Depends(get_db)):
+def list_material_recoveries(request: Request, order_id: int = 0, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     q = db.query(models.DBMaterialRecovery).filter(
         models.DBMaterialRecovery.client_id == client.id)
     if order_id:
         q = q.filter(models.DBMaterialRecovery.order_id == order_id)
-    rows = [material_recovery_dict(r) for r in q.order_by(models.DBMaterialRecovery.id.desc()).all()]
+    found = q.order_by(models.DBMaterialRecovery.id.desc()).limit(1000).all()
+    orders = {o.id: o for o in db.query(models.DBSubcontractOrder).filter(
+        models.DBSubcontractOrder.client_id == client.id,
+        models.DBSubcontractOrder.id.in_({r.order_id for r in found} or {0})).all()}
+    cons = {c.id: c for c in db.query(models.DBContractor).filter(
+        models.DBContractor.client_id == client.id,
+        models.DBContractor.id.in_({o.contractor_id for o in orders.values() if o.contractor_id} or {0})).all()}
+    bills = {b.id: b.number for b in db.query(models.DBSubBill).filter(
+        models.DBSubBill.id.in_({r.sub_bill_id for r in found if r.sub_bill_id} or {0})).all()}
+    rows = []
+    for r in found:
+        row = material_recovery_dict(r)
+        o = orders.get(r.order_id)
+        row["order"] = (o.wo_number or "") if o else ""
+        row["contractor"] = cons[o.contractor_id].company_name if o and o.contractor_id in cons else ""
+        row["bill"] = bills.get(r.sub_bill_id, "")
+        rows.append(row)
     return {"recoveries": rows, "summary": {
         "waiting": money(sum(r["amount"] for r in rows if r["state"] == "waiting")),
         "recovered": money(sum(r["amount"] for r in rows if r["state"] == "recovered"))}}
@@ -1287,7 +1383,7 @@ def sub_measurement_bulk_delete(body: dict, request: Request, db: Session = Depe
 
 
 @router.get("/api/retention")
-def retention_overview(request: Request, db: Session = Depends(get_db)):
+def retention_overview(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     positions = retention_positions(db, client.id)
     settled = settled_amounts(db, client.id)
@@ -1296,6 +1392,9 @@ def retention_overview(request: Request, db: Session = Depends(get_db)):
             models.DBRetentionRelease.id.desc()).limit(500).all()]
     ours = [p for p in positions if p["side"] == "client"]
     theirs = [p for p in positions if p["side"] == "contractor"]
+    for p in theirs:
+        # What would stop the release suggested next, said before anybody raises it.
+        p["holds"] = retention_blockers(db, client.id, p, (p["suggest"] or {}).get("stage", ""))
     live = [r for r in releases if r["status"] != "CANCELLED"]
     return {
         "positions": positions, "releases": releases, "stages": list(RETENTION_STAGES),
@@ -1340,6 +1439,18 @@ def create_release(body: RetentionReleaseIn, request: Request, db: Session = Dep
     on = (body.release_on or date.today().isoformat())[:10]
     if not _parse_date(on):
         raise HTTPException(400, "Release date should be YYYY-MM-DD.")
+    # Money owed to a contractor is let go only when nothing is still held against them - and, raised by staff,
+    # only once somebody else has certified it, as their bills are.
+    override_note = ""
+    if side == "contractor":
+        blockers = retention_blockers(db, client.id, pos, stage)
+        if blockers and not body.override:
+            raise HTTPException(409, "Not yet: " + " ".join(blockers) +
+                                     " Release it anyway with an override, saying why.")
+        if blockers:
+            if not (body.notes or "").strip():
+                raise HTTPException(400, "Say why it is being released regardless: " + " ".join(blockers))
+            override_note = "Released regardless of: " + " ".join(blockers) + " Reason: " + body.notes.strip()
     # GST was charged on the whole of every bill, retention included (recost_ra_bill / recost_sub_bill), and
     # returned for the month of that bill. Giving the retention back is not a second supply: a release carries no
     # tax, whatever rate the form sends, or the registers count the same work twice.
@@ -1359,7 +1470,11 @@ def create_release(body: RetentionReleaseIn, request: Request, db: Session = Dep
         number="%s-%04d" % (stem, n), stage=stage, release_on=on, amount=amount,
         gst_percent=rate, gst_amount=gst["total"], cgst_amount=gst["cgst"],
         sgst_amount=gst["sgst"], igst_amount=gst["igst"], place_of_supply=supply,
-        net_amount=money(amount + gst["total"]), status="CERTIFIED",
+        net_amount=money(amount + gst["total"]),
+        status="SUBMITTED" if (side == "contractor" and actor_id is not None) else "CERTIFIED",
+        raised_by=actor_id, override_note=override_note[:1000],
+        certified_by_name="" if (side == "contractor" and actor_id is not None) else (actor_name or ""),
+        certified_at="" if (side == "contractor" and actor_id is not None) else datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         notes=(body.notes or "").strip()[:500], created_by_name=actor_name or "")
     db.add(r)
     db.flush()
@@ -1371,17 +1486,58 @@ def create_release(body: RetentionReleaseIn, request: Request, db: Session = Dep
         notify(db, client.id, "retention_released", "%s - retention to claim from %s" % (r.number, pos["party"] or "the client"),
                "%s released at %s on %s." % (inr(amount), stage.lower(), pos["project"]),
                view="money-view", ref_type="retention_release", ref_id=r.id, severity="money")
+    elif r.status == "SUBMITTED":
+        notify(db, client.id, "retention_submitted", "%s - %s's retention waiting to be certified" % (
+                   r.number, pos["party"] or "the contractor"),
+               "%s raised by %s at %s on %s." % (inr(amount), actor_name, stage.lower(), pos["order_number"]),
+               view="money-view", ref_type="retention_release", ref_id=r.id, severity="action")
     else:
         notify(db, client.id, "retention_released", "%s - retention due to %s" % (r.number, pos["party"] or "the contractor"),
                "%s released at %s on %s." % (inr(amount), stage.lower(), pos["order_number"]),
                view="money-view", ref_type="retention_release", ref_id=r.id, severity="action")
     db.refresh(r)
     return {"release": release_dict(db, r),
-            "message": "%s raised: %s released. GST was charged on the bills, so none is added here." % (r.number, inr(amount))}
+            "message": ("%s raised: %s waits for somebody else to certify it before it is owed." % (r.number, inr(amount)))
+            if r.status == "SUBMITTED" else
+            "%s raised: %s released. GST was charged on the bills, so none is added here." % (r.number, inr(amount))}
+
+
+@router.post("/api/retention/releases/{release_id}/certify")
+def certify_release(release_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """The second signature on a contractor's retention raised by staff: from here it is owed, and can be paid.
+    Not by whoever raised it. What would have stopped it is checked again - a back-charge raised since, say -
+    and only the Master signs past that, with a reason."""
+    client, actor_id, actor_name = wo_actor(request, db, "subcontracts.approve")
+    r = release_or_404(db, client.id, release_id)
+    comments = ((body or {}).get("comments") or "").strip()
+    if r.status != "SUBMITTED":
+        raise HTTPException(409, "%s is %s, not waiting to be certified." % (r.number, (r.status or "").lower()))
+    if actor_id is not None and r.raised_by == actor_id:
+        raise HTTPException(403, "You raised %s, so somebody else has to certify it." % r.number)
+    pos = next((p for p in retention_positions(db, client.id)
+                if p["side"] == "contractor" and p["order_id"] == r.sub_order_id), None)
+    blockers = retention_blockers(db, client.id, pos, r.stage) if pos else []
+    if blockers and not r.override_note:
+        if actor_id is not None or not comments:
+            raise HTTPException(409, "Not yet: " + " ".join(blockers) + (
+                " Give a reason to certify it regardless." if actor_id is None
+                else " Only the Master can certify it regardless, with a reason."))
+        r.override_note = ("Certified regardless of: " + " ".join(blockers) + " Reason: " + comments)[:1000]
+    r.status = "CERTIFIED"
+    r.certified_by_name = actor_name if actor_id is not None else owner_label(db, client.id)
+    r.certified_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_audit(db, client.id, "retention_release_certified", "retention_release", r.id, r.number, comments, request)
+    db.commit()
+    party = release_party(db, r)[1]
+    notify(db, client.id, "retention_released", "%s - retention due to %s" % (r.number, party or "the contractor"),
+           "%s certified by %s." % (inr(r.amount), r.certified_by_name),
+           view="money-view", ref_type="retention_release", ref_id=r.id, severity="action")
+    return {"release": release_dict(db, r), "message": "%s certified: %s is owed to %s." % (
+        r.number, inr(r.net_amount), party or "the contractor")}
 
 
 @router.get("/api/retention/releases/{release_id}")
-def get_release(release_id: int, request: Request, db: Session = Depends(get_db)):
+def get_release(release_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     return release_dict(db, release_or_404(db, client.id, release_id))
 
@@ -1408,7 +1564,7 @@ def cancel_release(release_id: int, request: Request, body: dict = None,
 
 
 @router.get("/api/retention/releases/{release_id}/export.xlsx")
-def export_release(release_id: int, request: Request, db: Session = Depends(get_db)):
+def export_release(release_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The release as a bill: the RA bills whose retention it gives back,
     then what was held, released before, released now, and the tax."""
     client = require_items_access(request, db, "bills.view_all")

@@ -1,4 +1,4 @@
-import { api, cellText, clickCell, clickText, fill, launch, open, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
+import { api, cellText, clickCell, clickText, launch, open, signIn, sleep } from './lib.mjs'
 
 // A picker cell lists its choices the moment it is clicked; and an owner can approve and issue an order straight
 // from what is on screen, without saving the schedule first.

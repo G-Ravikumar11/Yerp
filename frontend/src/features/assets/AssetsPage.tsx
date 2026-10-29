@@ -9,6 +9,7 @@ import { useSession } from '@/lib/session'
 import { cn, compactINR, formatINR } from '@/lib/utils'
 import { BookModal, type BookTarget } from './BookModal'
 import { BlockModal, DisposeModal, ScheduleModal } from './SmallModals'
+import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 type Tab = 'register' | 'blocks'
 
@@ -47,6 +48,7 @@ export default function AssetsPage() {
         </div>
       ),
     },
+    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (u) => <MasterDelete kind="equipment" id={u.asset_id} label={`${u.code} ${u.name}`} noun="asset" /> },
   ]
 
   const unsetCols: TableColumn<NotSetUp>[] = [

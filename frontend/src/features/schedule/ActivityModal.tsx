@@ -6,7 +6,7 @@ import { formatDate, today } from '@/lib/format'
 import { MasterDeleteDialog } from '@/features/deleteorder/MasterDelete'
 import { useSession } from '@/lib/session'
 
-export const STATUSES = ['Not Started', 'In Progress', 'Completed', 'Delayed'] as const
+const STATUSES = ['Not Started', 'In Progress', 'Completed', 'Delayed'] as const
 
 export function ActivityModal({ job, activity, others, employees = [], teamScope = 'project', milestone = false, open, onClose }: { job: number; activity: Activity | null; others: Activity[]; employees?: Employee[]; teamScope?: string; milestone?: boolean; open: boolean; onClose: () => void }) {
   const isMilestone = activity ? activity.is_milestone : milestone
@@ -61,11 +61,24 @@ function Form({ job, activity, others, employees, teamScope, milestone: asMilest
     line: status === 'Completed' && line ? 'Its progress comes from the measurement book, so it cannot be marked completed by hand.' : '',
   }
   const bad = Object.values(errors).some(Boolean)
-  // Not an error - the forecast pushes it later - but worth saying before it is saved.
-  const early = pred && start && pred.planned_finish && start <= pred.planned_finish ? `It starts before ${pred.code || pred.name} finishes (${formatDate(pred.planned_finish)}); it will be forecast from that date.` : ''
+  // Not an error, but the programme puts it after what it waits on, so the bar will not be where these dates say.
+  const early = pred && start && pred.planned_finish && start <= pred.planned_finish
+    ? `${pred.code || pred.name} finishes on ${formatDate(pred.planned_finish)}, so this is put after it on the chart, not on the dates typed here. To keep these dates, choose "Nothing" here.` : ''
 
   const refresh = { invalidate: [schKeys.all] }
-  const save = useAction(() => saveActivity(job, activity?.id ?? null, { name, code, planned_start: start, planned_finish: end, weight, depends_on_id: after ? Number(after) : null, work_order_line_id: line ? Number(line) : null, is_milestone: milestone, assigned_to_id: who ? Number(who) : null, status: statusTouched ? status : (activity?.stored_status ?? ''), notes }), { ...refresh, success: milestone ? 'Milestone saved' : 'Activity saved', onSuccess: onClose })
+  const save = useAction(() => saveActivity(job, activity?.id ?? null, { name, code, planned_start: start, planned_finish: end, weight, depends_on_id: after ? Number(after) : null, work_order_line_id: line ? Number(line) : null, is_milestone: milestone, assigned_to_id: who ? Number(who) : null, status: statusTouched ? status : (activity?.stored_status ?? ''), notes }), {
+    ...refresh,
+    // Said plainly when the chart has it on other dates than the ones typed (it waits on an activity that ends later).
+    success: (r) => {
+      const saved = r.schedule.activities.find((x) => (activity ? x.id === activity.id : x.name === name.trim() && (!code.trim() || x.code === code.trim())))
+      const what = milestone ? 'Milestone saved' : 'Activity saved'
+      if (!saved || saved.planned_start === start) return what
+      const on = `on the chart from ${formatDate(saved.planned_start)} to ${formatDate(saved.planned_finish)}`
+      const after = saved.depends_on || saved.predecessor_code
+      return after ? `${what}. It waits on ${after}, so it is ${on}.` : `${what}. It is ${on}.`
+    },
+    onSuccess: onClose,
+  })
   return (
     <div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

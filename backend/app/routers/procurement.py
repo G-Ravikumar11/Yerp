@@ -2,16 +2,18 @@
 import base64
 import re
 from datetime import datetime
+from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.approvals import PO_APPROVED, PO_AWAITING_APPROVAL, PO_REJECTED
 from app.constants.common import GRN_EDITABLE, PURCHASE_ORDER_STATUSES
 from app.core.audit import log_audit
+from app.core.queries import by_id, prime
 from app.core.auth import require_erp_read, require_items_access, session_employee, wo_actor
 from app.core.currency import amount_in_words, inr, money, tax_percent_of, unit_rate
 from app.core.dates import days_after
@@ -19,7 +21,7 @@ from app.core.notifications import default_from_email, send_email_background
 from app.core.serials import allocate_grn_number, allocate_po_number, next_sequence_number
 from app.core.sheets import sheet_response
 from app.documents import form_pdf
-from app.documents.forms import _pre, form_pdf_response, po_form_spec
+from app.documents.forms import _pre, form_pdf_response, po_form_spec, rfq_comparison_form_spec
 from app.documents.letterhead import our_party
 from app.routers.employee_portal import employee_create_purchase_order
 from app.schemas.procurement import AwardIn, GRNActionIn, GRNIn, GRNUpdateIn, QuoteIn, RfqIn, SupplierIn
@@ -28,6 +30,7 @@ from app.services.crm import norm_name, supplier_dict
 from app.services.procurement import (
     _apply_supplier,
     _make_rfq,
+    add_rfq_lines,
     _rfq_lines,
     apply_order_fields,
     billed_against_po,
@@ -36,16 +39,23 @@ from app.services.procurement import (
     grn_apply,
     grn_dict,
     grn_or_404,
+    OrderPrefetch,
     match_verdict,
+    narrow_statement,
     next_supplier_code,
     order_is_committed,
     purchase_order_or_404,
     purchase_order_to_dict,
     recost_grn,
     rfq_dict,
+    rfq_line_rows,
+    rfq_list_rows,
     rfq_or_404,
     supplier_payment_days,
 )
+from app.core.units import canonical_unit
+from app.services.projects import job_or_404
+from app.services.store_cutover import refuse_if_moved
 from app.services.stores import material_required
 from app.services.subcontract_orders import work_order_or_404
 
@@ -64,7 +74,8 @@ def list_purchase_orders(request: Request, job_id: int = 0, status: str = "",
     if status:
         query = query.filter(models.DBPurchaseOrder.status == status)
     orders = query.order_by(models.DBPurchaseOrder.id.desc()).limit(300).all()
-    return {"orders": [purchase_order_to_dict(db, o) for o in orders]}
+    pre = OrderPrefetch(db, orders)
+    return {"orders": [purchase_order_to_dict(db, o, pre=pre) for o in orders]}
 
 
 @router.get("/api/purchase-orders/{order_id}")
@@ -170,7 +181,7 @@ def delete_purchase_order(order_id: int, request: Request, db: Session = Depends
 
 
 @router.get("/api/purchase-orders/{po_id}/export.xlsx")
-def purchase_order_xlsx(po_id: int, request: Request, db: Session = Depends(get_db)):
+def purchase_order_xlsx(po_id: int, request: Request, db: Session = Depends(get_read_db)):
     """One purchase order, as sent to the supplier."""
     client = require_items_access(request, db, ("purchase.manage", "bills.view_all", "stores.receive"))
     po = db.query(models.DBPurchaseOrder).filter(
@@ -221,7 +232,7 @@ def grn_open_orders(request: Request, db: Session = Depends(get_db)):
                             for l in lines))
         if lines and pending <= 0:
             continue
-        job = db.query(models.DBJob).filter(models.DBJob.id == po.job_id).first()
+        job = by_id(db, models.DBJob, po.job_id)
         out.append({
             "id": po.id, "number": po.number or "",
             "supplier_name": po.supplier_name or "",
@@ -233,7 +244,7 @@ def grn_open_orders(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/grn")
-def list_goods_receipts(request: Request, db: Session = Depends(get_db),
+def list_goods_receipts(request: Request, db: Session = Depends(get_read_db),
                         purchase_order_id: int = 0, status: str = ""):
     client = require_erp_read(request, db)
     q = db.query(models.DBGoodsReceipt).filter(
@@ -266,6 +277,7 @@ def create_goods_receipt(body: GRNIn, request: Request, db: Session = Depends(ge
     lines that came up short, not to type the whole order back in.
     """
     client, actor_id, actor_name = grn_actor(request, db)
+    refuse_if_moved(db, client.id)
     po = db.query(models.DBPurchaseOrder).filter(
         models.DBPurchaseOrder.id == body.purchase_order_id,
         models.DBPurchaseOrder.client_id == client.id).first()
@@ -424,7 +436,7 @@ def delete_goods_receipt(grn_id: int, request: Request, db: Session = Depends(ge
 
 
 @router.get("/api/grn/{grn_id}/export.xlsx")
-def export_goods_receipt(grn_id: int, request: Request, db: Session = Depends(get_db)):
+def export_goods_receipt(grn_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The receipt as a workbook, for the file the store keeps by the gate."""
     client = require_erp_read(request, db)
     grn = grn_or_404(db, client.id, grn_id)
@@ -454,13 +466,13 @@ def export_goods_receipt(grn_id: int, request: Request, db: Session = Depends(ge
 
 
 @router.get("/api/grn/{grn_id}")
-def get_goods_receipt(grn_id: int, request: Request, db: Session = Depends(get_db)):
+def get_goods_receipt(grn_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return grn_dict(db, grn_or_404(db, client.id, grn_id), detail=True)
 
 
 @router.get("/api/match/three-way")
-def three_way_match(request: Request, db: Session = Depends(get_db),
+def three_way_match(request: Request, db: Session = Depends(get_read_db),
                     job_id: int = 0, only_exceptions: bool = False):
     """Every order with what was ordered, what arrived and what was billed.
 
@@ -476,19 +488,18 @@ def three_way_match(request: Request, db: Session = Depends(get_db),
         q = q.filter(models.DBPurchaseOrder.job_id == job_id)
 
     rows = []
-    for po in q.order_by(models.DBPurchaseOrder.id.desc()).limit(500).all():
-        lines = db.query(models.DBPurchaseOrderLineItem).filter(
-            models.DBPurchaseOrderLineItem.order_id == po.id).all()
-        got = received_to_date(db, po.id)
-        billed = billed_against_po(db, po.id)
-        receipts = db.query(models.DBGoodsReceipt).filter(
-            models.DBGoodsReceipt.purchase_order_id == po.id,
-            models.DBGoodsReceipt.status != "CANCELLED").count()
+    orders = q.order_by(models.DBPurchaseOrder.id.desc()).limit(500).all()
+    pre = OrderPrefetch(db, orders)
+    for po in orders:
+        lines = pre.lines.get(po.id, [])
+        got = pre.received(po.id)
+        billed = pre.billed(po.id)
+        receipts = len(pre.receipts.get(po.id, []))
 
         ordered_value = money(sum((l.qty or 0) * (l.price or 0) for l in lines))
         received_value = money(sum(got.get(l.id, 0.0) * (l.price or 0) for l in lines))
         verdict, note = match_verdict(ordered_value, received_value, billed["value"])
-        job = db.query(models.DBJob).filter(models.DBJob.id == po.job_id).first()
+        job = pre.jobs.get(po.job_id) if po.job_id else None
         rows.append({
             "purchase_order_id": po.id, "number": po.number or "",
             "supplier_name": po.supplier_name or "",
@@ -668,7 +679,7 @@ def bill_from_receipt(grn_id: int, request: Request, body: dict = None,
 
 
 @router.get("/api/suppliers")
-def list_suppliers(request: Request, q: str = "", db: Session = Depends(get_db)):
+def list_suppliers(request: Request, q: str = "", db: Session = Depends(get_read_db)):
     """The supplier master - and the names already on orders and bills that
     are not in it yet, so the history can be adopted in one click."""
     client = require_erp_read(request, db)
@@ -739,13 +750,14 @@ def adopt_suppliers(request: Request, body: dict = None, db: Session = Depends(g
 
 
 @router.get("/api/rfqs")
-def list_rfqs(request: Request, db: Session = Depends(get_db)):
+def list_rfqs(request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
-    rows = [rfq_dict(db, r) for r in db.query(models.DBRfq).filter(
-        models.DBRfq.client_id == client.id).order_by(models.DBRfq.id.desc()).limit(300).all()]
+    rows = rfq_list_rows(db, client.id, db.query(models.DBRfq).filter(
+        models.DBRfq.client_id == client.id).order_by(models.DBRfq.id.desc()).limit(300).all())
     return {"rfqs": rows, "summary": {
         "open": len([r for r in rows if r["status"] == "OPEN"]),
         "awarded": len([r for r in rows if r["status"] == "AWARDED"]),
+        "cancelled": len([r for r in rows if r["status"] == "CANCELLED"]),
         "waiting_for_quotes": len([r for r in rows if r["status"] == "OPEN" and r["quotes"] < 3])}}
 
 
@@ -779,8 +791,45 @@ def rfq_from_work_order(wo_id: int, request: Request, db: Session = Depends(get_
                        % (r.number, len(rows), "" if len(rows) == 1 else "s", wo.number)}
 
 
+@router.put("/api/rfqs/{rfq_id}")
+def edit_rfq(rfq_id: int, body: RfqIn, request: Request, db: Session = Depends(get_db)):
+    """Put right what the enquiry says. Its items can change only until the first quote is in: after that a supplier
+    has priced exactly these lines, and changing them under him would make his quote say something it did not."""
+    client, _, actor_name = wo_actor(request, db, "purchase.manage")
+    r = rfq_or_404(db, client.id, rfq_id)
+    if r.status != "OPEN":
+        raise HTTPException(409, "%s is %s and can no longer be changed." % (r.number, r.status.lower()))
+    if not (body.title or "").strip():
+        raise HTTPException(400, "Say what is being bought - \"Cement for Block A raft\".")
+    if body.job_id:
+        job_or_404(db, client.id, body.job_id)
+    lines = rfq_line_rows([l.dict() for l in body.lines])
+    old = _rfq_lines(db, r.id)
+
+    def key(code, description, uom, qty):
+        # Both sides read alike: spacing and case aside, the unit as the master spells it, in any order. A line saved
+        # before units were tidied, or the screen sending them in another order, is not a change to what was priced.
+        flat = lambda t: " ".join((t or "").split()).lower()
+        return flat(code), flat(description), flat(canonical_unit(uom) or uom), money(qty)
+    same = sorted(key(l.item_code, l.description, l.uom, l.qty) for l in old) == sorted(
+        key(l.get("item_code"), l["description"], l.get("uom"), l["qty"]) for l in lines)
+    if not same:
+        if db.query(models.DBRfqQuote.id).filter(models.DBRfqQuote.rfq_id == r.id).first():
+            raise HTTPException(409, "Quotes are already in for these items, so they cannot be changed. Cancel this "
+                                     "enquiry and open a new one if what is needed has changed.")
+        for l in old:
+            db.delete(l)
+        db.flush()
+        add_rfq_lines(db, r.id, lines)
+    r.title, r.job_id = body.title.strip(), body.job_id
+    r.needed_by, r.notes = (body.needed_by or "").strip(), (body.notes or "").strip()
+    log_audit(db, client.id, "rfq_edited", "rfq", r.id, r.number, actor_name, request)
+    db.commit()
+    return {"ok": True, "rfq": rfq_dict(db, r), "message": "%s saved." % r.number}
+
+
 @router.get("/api/rfqs/{rfq_id}")
-def get_rfq(rfq_id: int, request: Request, db: Session = Depends(get_db)):
+def get_rfq(rfq_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return comparative_statement(db, rfq_or_404(db, client.id, rfq_id))
 
@@ -791,42 +840,11 @@ def record_quote(rfq_id: int, body: QuoteIn, request: Request, db: Session = Dep
     revised quote is the same supplier changing their mind, not a new one."""
     client, actor_id, actor_name = wo_actor(request, db, "purchase.manage")
     r = rfq_or_404(db, client.id, rfq_id)
-    if r.status != "OPEN":
-        raise HTTPException(409, "%s is %s; its quotes are closed." % (r.number, r.status.lower()))
-    name = (body.supplier_name or "").strip()
-    if not name:
-        raise HTTPException(400, "Whose quote is this?")
-    valid_ids = {l.id for l in _rfq_lines(db, r.id)}
-    lines = [l for l in body.lines if l.rfq_line_id in valid_ids and (l.rate or 0) > 0]
-    if not lines:
-        raise HTTPException(400, "The quote has no rates on it.")
-    if any(l.rate < 0 for l in body.lines) or (body.freight or 0) < 0:
-        raise HTTPException(400, "A rate or freight cannot be negative.")
-    existing = next((q for q in db.query(models.DBRfqQuote).filter(
-        models.DBRfqQuote.rfq_id == r.id).all() if norm_name(q.supplier_name) == norm_name(name)), None)
-    if existing:
-        db.query(models.DBRfqQuoteLine).filter(
-            models.DBRfqQuoteLine.quote_id == existing.id).delete()
-        q = existing
-    else:
-        q = models.DBRfqQuote(rfq_id=r.id)
-        db.add(q)
-    q.supplier_name = name
-    q.quote_ref = (body.quote_ref or "").strip()
-    q.quote_date = (body.quote_date or datetime.now().strftime("%Y-%m-%d"))[:10]
-    q.delivery_days = max(0, int(body.delivery_days or 0))
-    q.payment_terms = (body.payment_terms or "").strip()
-    q.freight = money(body.freight or 0)
-    q.valid_until = (body.valid_until or "").strip()
-    q.notes = (body.notes or "").strip()
-    db.flush()
-    for l in lines:
-        db.add(models.DBRfqQuoteLine(quote_id=q.id, rfq_line_id=l.rfq_line_id,
-                                     rate=unit_rate(l.rate), tax_percent=l.tax_percent or 0,
-                                     remarks=(l.remarks or "").strip()))
+    from app.services.rfq_quotes import save_quote          # the same checks for a quote a supplier sends himself
+    q, revised = save_quote(db, r, body.model_dump(), source="buyer")
     db.commit()
-    return {"ok": True, "comparison": comparative_statement(db, r),
-            "message": "%s's quote %s on %s." % (name, "revised" if existing else "recorded", r.number)}
+    return {"ok": True, "quote_id": q.id, "comparison": comparative_statement(db, r),
+            "message": "%s's quote %s on %s." % (q.supplier_name, "revised" if revised else "recorded", r.number)}
 
 
 @router.post("/api/rfqs/{rfq_id}/award")
@@ -954,6 +972,17 @@ def purchase_order_pdf(order_id: int, request: Request, db: Session = Depends(ge
     return form_pdf_response(po_form_spec(db, client, order), order.number)
 
 
+@router.get("/api/purchase-orders/{order_id}/email-draft")
+def purchase_order_email_draft(order_id: int, request: Request, db: Session = Depends(get_read_db)):
+    """The plain wording for the email to the supplier, to read and change before it is sent. Nothing is sent."""
+    client = require_erp_read(request, db)
+    order = purchase_order_or_404(db, client.id, order_id)
+    from app.ai.po_supplier_email import plain_draft
+    draft = plain_draft(purchase_order_to_dict(db, order), client.company_name or "Our company")
+    return {"to": order.supplier_email or "", "subject": draft["subject"], "body": draft["body"],
+            "attachment": "%s.pdf" % re.sub(r"[^A-Za-z0-9]+", "_", order.number).strip("_")}
+
+
 @router.post("/api/purchase-orders/{order_id}/send-email")
 def send_purchase_order_email(order_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
     """Email the purchase order, with its PDF, to the supplier from the company's connected Gmail.
@@ -984,11 +1013,13 @@ def send_purchase_order_email(order_id: int, request: Request, body: dict = None
 
 
 @router.get("/api/rfqs/{rfq_id}/comparison.xlsx")
-def rfq_comparison_export(rfq_id: int, request: Request, db: Session = Depends(get_db)):
+def rfq_comparison_export(rfq_id: int, request: Request, supplier: List[str] = Query(default=[]),
+                          db: Session = Depends(get_read_db)):
     """The comparative statement: each line against each supplier, then each
-    supplier's total landed at site and its rank."""
+    supplier's total landed at site and its rank. `supplier` (repeat it) narrows
+    it to the suppliers the buyer is comparing; none means everybody."""
     client = require_erp_read(request, db)
-    d = comparative_statement(db, rfq_or_404(db, client.id, rfq_id))
+    d = narrow_statement(comparative_statement(db, rfq_or_404(db, client.id, rfq_id)), supplier)
     names = [s["supplier_name"] for s in d["suppliers"]]
     rows = []
     for l in d["lines"]:
@@ -1006,3 +1037,15 @@ def rfq_comparison_export(rfq_id: int, request: Request, db: Session = Depends(g
                           preamble=_pre(client, "COMPARATIVE STATEMENT", ("Enquiry", rfq.get("number", ""),
                                                                           "L1", d.get("l1") or "-")),
                           closing=closing)
+
+
+@router.get("/api/rfqs/{rfq_id}/comparison.pdf")
+def rfq_comparison_pdf(rfq_id: int, request: Request, supplier: List[str] = Query(default=[]),
+                       db: Session = Depends(get_read_db)):
+    """The same comparison as a signed-off sheet to print: A4 landscape, one column a supplier."""
+    client = require_erp_read(request, db)
+    r = rfq_or_404(db, client.id, rfq_id)
+    d = narrow_statement(comparative_statement(db, r), supplier)
+    if not d["suppliers"]:
+        raise HTTPException(409, "No quotes yet, so there is nothing to compare.")
+    return form_pdf_response(rfq_comparison_form_spec(db, client, d), "comparison_%s" % r.number)

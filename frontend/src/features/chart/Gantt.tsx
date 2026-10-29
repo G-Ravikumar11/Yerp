@@ -102,7 +102,7 @@ export function Gantt({ rows, onOpen }: { rows: Activity[]; onOpen: (a: Activity
                     className="absolute z-[8] size-4 rotate-45 border border-card" style={{ left: x(f) + px / 2 - 8, top: i * ROW + ROW / 2 - 8, background: color }} />
                 ) : (
                   <button key={a.id} type="button" onClick={() => onOpen(a)} aria-label={`${a.name}, ${a.planned_start} to ${a.planned_finish}, ${a.actual_percent}% done, planned ${a.planned_percent}%, ${a.state}`}
-                    title={`${a.name}\n${a.planned_start} to ${a.planned_finish}\nDone ${a.actual_percent}% - planned ${a.planned_percent}%`} className="absolute z-[8] h-[18px] overflow-hidden rounded text-left ring-1 ring-inset ring-foreground/20" style={{ left, width: w, top: i * ROW + 12, background: `color-mix(in srgb, ${color} 26%, transparent)` }}>
+                    title={`${a.name}\n${a.planned_start} to ${a.planned_finish}\nDone ${a.actual_percent}% - planned ${a.planned_percent}%`} className="absolute z-[8] h-[18px] overflow-hidden rounded-md text-left ring-1 ring-inset ring-foreground/20" style={{ left, width: w, top: i * ROW + 12, background: `color-mix(in srgb, ${color} 26%, transparent)` }}>
                     <span className="block h-full transition-[width,background-color] duration-300" style={{ width: `${Math.min(100, a.actual_percent)}%`, background: color }} />
                     {w > 46 && <span aria-hidden className="absolute inset-y-0 left-1.5 flex items-center text-[10px] font-semibold leading-none text-foreground [text-shadow:0_0_3px_var(--color-card)]">{Math.round(a.actual_percent)}%</span>}
                     <span aria-hidden className="absolute inset-y-0 w-px bg-foreground/60" style={{ left: `${Math.min(100, a.planned_percent)}%` }} />
@@ -112,7 +112,7 @@ export function Gantt({ rows, onOpen }: { rows: Activity[]; onOpen: (a: Activity
               {rows.map((a, i) => {
                 if (a.is_milestone || a.status === 'Completed' || a.actual_percent >= 100 || !(a.forecast_finish && a.forecast_finish > a.planned_finish)) return null
                 const left = x(at(a.planned_finish) + 1), w = x(at(a.forecast_finish) + 1) - left
-                return <div key={a.id} aria-hidden title={`Forecast to finish ${a.forecast_finish}`} className="absolute z-[7] h-1.5 opacity-80" style={{ left, width: Math.max(4, w), top: i * ROW + 18, background: 'repeating-linear-gradient(90deg,var(--color-danger) 0 4px,transparent 4px 7px)' }} />
+                return <div key={a.id} aria-hidden title={`Forecast to finish ${a.forecast_finish}`} className="absolute z-[7] h-1.5 opacity-80" style={{ left, width: Math.max(4, w), top: i * ROW + 18, background: 'var(--color-danger)' }} />
               })}
             </div>
           </div>

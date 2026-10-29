@@ -100,7 +100,7 @@ def test_headings_survive_an_amendment(tenant):
     order = grouped(tenant)
     tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
     tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
-    rev = tenant.post("/api/wo/orders/%d/amend" % order["id"], json={}).json()["order"]
+    rev = tenant.post("/api/wo/orders/%d/amend" % order["id"], json={"comments": "More quantity"}).json()["order"]
     assert [i["is_header"] for i in rev["items"]] == [True, True, False, False]
     assert rev["items"][2]["tolerance_percent"] == 5
 

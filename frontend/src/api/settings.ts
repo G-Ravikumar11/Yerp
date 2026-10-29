@@ -69,12 +69,14 @@ export interface ApprovalRules {
   finance_above: number
   owner_signs_work_orders: boolean
   owner_signs_sub_bills: boolean
+  /** Refuse to approve, certify or pay a contractor whose labour licence, PF, ESI or insurance is missing or lapsed. */
+  compliance_blocks_payment: boolean
   currency: string
   finance_approver: string
   has_finance_approver: boolean
 }
 export const useApprovalRules = () => useQuery({ queryKey: k('rules'), queryFn: () => get<ApprovalRules>('/api/approval-rules') })
-export const saveApprovalRules = (b: { auto_below: number; finance_above: number; owner_signs_work_orders: boolean; owner_signs_sub_bills: boolean }) => put<{ message?: string }>('/api/approval-rules', b)
+export const saveApprovalRules = (b: { auto_below: number; finance_above: number; owner_signs_work_orders: boolean; owner_signs_sub_bills: boolean; compliance_blocks_payment?: boolean }) => put<{ message?: string }>('/api/approval-rules', b)
 
 export interface WhoApproves {
   owner: string
@@ -96,8 +98,8 @@ export interface TeamMember {
   is_account_owner: boolean
 }
 export const useTeam = () => useQuery({ queryKey: k('team'), queryFn: () => get<{ members: TeamMember[]; your_role: string }>('/api/team') })
-export const inviteMember = (b: { email: string; name: string; role: string }) => post<{ message?: string }>('/api/team/invite', b)
-export const updateMember = (id: number, b: { role?: string; is_active?: boolean }) => put<{ message?: string }>(`/api/team/${id}`, b)
+export const inviteMember = (b: { email: string; name: string; role: string; password: string }) => post<{ message?: string }>('/api/team/invite', b)
+export const updateMember = (id: number, b: { role?: string; is_active?: boolean; password?: string }) => put<{ message?: string }>(`/api/team/${id}`, b)
 export const removeMember = (id: number) => del<{ message?: string }>(`/api/team/${id}`)
 
 export interface PortalUser {
@@ -113,7 +115,7 @@ export interface PortalUser {
   invite_expires: string
   last_login: string
 }
-export interface PortalParty {
+interface PortalParty {
   id: number
   name: string
   email: string

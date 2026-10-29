@@ -12,6 +12,7 @@ from app.core.auth import wo_actor
 from app.core.currency import lines_money, money, unit_rate
 from app.core.gst import state_from_gstin
 from app.core.units import canonical_unit
+from app.services.store_integration import hub_debit_notes, hub_received_on_orders
 from app.services.stores import stock_movement
 
 
@@ -80,12 +81,78 @@ def resolve_order_id(db, client_id, order_id):
     return order.id
 
 
-def purchase_order_to_dict(db, o, include_chain=False):
-    submitter = db.query(models.DBEmployee).filter(
-        models.DBEmployee.id == o.submitted_by).first() if o.submitted_by else None
-    job = db.query(models.DBJob).filter(models.DBJob.id == o.job_id).first() if o.job_id else None
-    billed = db.query(models.DBBill).filter(
-        models.DBBill.purchase_order_id == o.id).all()
+def _in_chunks(db, column, values, extra=()):
+    """Rows whose column is in values, asked for in pieces so a long list never hits a database's parameter limit."""
+    values = list(values)
+    out = []
+    for i in range(0, len(values), 500):
+        out.extend(db.query(column.class_).filter(column.in_(values[i:i + 500]), *extra).all())
+    return out
+
+
+class OrderPrefetch:
+    """What the order list and the three-way match read for each order - its project, submitter, lines, bills and
+    receipts - fetched for the whole list at once. Asked for one order at a time that was six or more queries an
+    order, and a list is up to 500 of them."""
+
+    def __init__(self, db, orders):
+        ids = [o.id for o in orders]
+        job_ids = {o.job_id for o in orders if o.job_id}
+        who = {o.submitted_by for o in orders if o.submitted_by}
+        self.jobs = {j.id: j for j in _in_chunks(db, models.DBJob.id, job_ids)}
+        self.submitters = {e.id: e for e in _in_chunks(db, models.DBEmployee.id, who)}
+        self.lines, self.all_bills, self.receipts = {}, {}, {}
+        for l in sorted(_in_chunks(db, models.DBPurchaseOrderLineItem.order_id, ids), key=lambda x: x.id):
+            self.lines.setdefault(l.order_id, []).append(l)
+        for b in _in_chunks(db, models.DBBill.purchase_order_id, ids):
+            self.all_bills.setdefault(b.purchase_order_id, []).append(b)
+        grn_po = {}
+        for g in _in_chunks(db, models.DBGoodsReceipt.purchase_order_id, ids,
+                            (models.DBGoodsReceipt.status != "CANCELLED",)):
+            self.receipts.setdefault(g.purchase_order_id, []).append(g)
+            grn_po[g.id] = g.purchase_order_id
+        self._received = {}
+        for gl in _in_chunks(db, models.DBGoodsReceiptLine.goods_receipt_id, grn_po):
+            slot = self._received.setdefault(grn_po[gl.goods_receipt_id], {})
+            slot[gl.po_line_id] = slot.get(gl.po_line_id, 0.0) + (gl.accepted_qty or 0.0)
+        # What the Store Hub has received against the same orders, in the order line's unit.
+        hub, self.hub_receipts = hub_received_on_orders(db, ids)
+        self.debit_notes = hub_debit_notes(db, ids)
+        for po_id, got in hub.items():
+            slot = self._received.setdefault(po_id, {})
+            for line_id, qty in got.items():
+                slot[line_id] = slot.get(line_id, 0.0) + qty
+        live = {b.id: b.purchase_order_id for bs in self.all_bills.values() for b in bs if b.status != "Rejected"}
+        self._billed_lines = {}
+        for bl in _in_chunks(db, models.DBBillLineItem.bill_id, live):
+            key = getattr(bl, "po_line_id", None)
+            if key:
+                slot = self._billed_lines.setdefault(live[bl.bill_id], {})
+                slot[key] = slot.get(key, 0.0) + (bl.qty or 0.0)
+
+    def received(self, po_id):
+        return self._received.get(po_id, {})
+
+    def billed(self, po_id):
+        """The same answer as billed_against_po, from what was fetched."""
+        bills = [b for b in self.all_bills.get(po_id, []) if b.status != "Rejected"]
+        return {"bills": bills,
+                "value": money(sum((b.amount if b.amount else b.total) or 0 for b in bills)),
+                "paid": money(sum(b.amount_paid or 0 for b in bills)),
+                "per_line": self._billed_lines.get(po_id, {})}
+
+
+def purchase_order_to_dict(db, o, include_chain=False, pre=None):
+    if pre is not None:
+        submitter = pre.submitters.get(o.submitted_by) if o.submitted_by else None
+        job = pre.jobs.get(o.job_id) if o.job_id else None
+        billed = pre.all_bills.get(o.id, [])
+    else:
+        submitter = db.query(models.DBEmployee).filter(
+            models.DBEmployee.id == o.submitted_by).first() if o.submitted_by else None
+        job = db.query(models.DBJob).filter(models.DBJob.id == o.job_id).first() if o.job_id else None
+        billed = db.query(models.DBBill).filter(
+            models.DBBill.purchase_order_id == o.id).all()
     row = {
         "id": o.id, "number": o.number,
         "supplier_name": o.supplier_name or "", "supplier_email": o.supplier_email or "",
@@ -110,14 +177,21 @@ def purchase_order_to_dict(db, o, include_chain=False):
 
     # What has physically arrived, alongside what has been billed. An order
     # showing a bill and no receipt is the one worth looking at before paying.
-    got = received_to_date(db, o.id)
-    row["received_total"] = money(sum(
-        got.get(l.id, 0.0) * (l.price or 0)
-        for l in db.query(models.DBPurchaseOrderLineItem).filter(
-            models.DBPurchaseOrderLineItem.order_id == o.id).all()))
-    row["receipt_count"] = db.query(models.DBGoodsReceipt).filter(
-        models.DBGoodsReceipt.purchase_order_id == o.id,
-        models.DBGoodsReceipt.status != "CANCELLED").count()
+    if pre is not None:
+        got, lines = pre.received(o.id), pre.lines.get(o.id, [])
+        row["receipt_count"] = len(pre.receipts.get(o.id, [])) + pre.hub_receipts.get(o.id, 0)
+    else:
+        got = received_to_date(db, o.id)
+        lines = db.query(models.DBPurchaseOrderLineItem).filter(
+            models.DBPurchaseOrderLineItem.order_id == o.id).order_by(models.DBPurchaseOrderLineItem.id).all()
+        row["receipt_count"] = db.query(models.DBGoodsReceipt).filter(
+            models.DBGoodsReceipt.purchase_order_id == o.id,
+            models.DBGoodsReceipt.status != "CANCELLED").count() + hub_received_on_orders(db, [o.id])[1].get(o.id, 0)
+    row["received_total"] = money(sum(got.get(l.id, 0.0) * (l.price or 0) for l in lines))
+    # Goods sent back to the supplier: their debit notes, which the bills are matched net of.
+    notes = pre.debit_notes.get(o.id, []) if pre is not None else hub_debit_notes(db, [o.id]).get(o.id, [])
+    row["debit_notes"] = notes
+    row["debit_note_total"] = money(sum(n["total"] for n in notes))
     row["line_items"] = [{
         "id": l.id, "description": l.description or "",
         "item_code": getattr(l, "item_code", "") or "",
@@ -125,11 +199,12 @@ def purchase_order_to_dict(db, o, include_chain=False):
         "qty": l.qty or 0.0, "price": l.price or 0.0,
         "tax_rate": l.tax_rate or "",
         "received_qty": money(got.get(l.id, 0.0)),
-    } for l in db.query(models.DBPurchaseOrderLineItem).filter(
-        models.DBPurchaseOrderLineItem.order_id == o.id).order_by(
-            models.DBPurchaseOrderLineItem.id).all()]
+    } for l in lines]
     if include_chain:
         row["chain"] = get_approval_chain_history("purchase_order", o.id, db)
+        # What the Store module has received into stock against each line, in the item's base unit (posted receipts only).
+        from app.services.store_integration import po_receipt_for_order
+        row["store_receipt"] = po_receipt_for_order(db, o.id)
     return row
 
 
@@ -399,6 +474,21 @@ def _rfq_quotes(db, rfq_id):
     return quotes, rates
 
 
+def quote_totals(q, lines, rates):
+    """One supplier's quote on an enquiry: basic, tax, how many lines it prices, and the total landed at site (basic,
+    tax and freight together). The comparative statement and the enquiry list both read it from here."""
+    basic = tax = 0.0
+    quoted = 0
+    for l in lines:
+        ql = rates.get((q.id, l.id))
+        if ql and ql.rate > 0:
+            amt = (l.qty or 0) * ql.rate
+            basic += amt
+            tax += amt * (ql.tax_percent or 0) / 100.0
+            quoted += 1
+    return basic, tax, quoted, money(basic + tax + (q.freight or 0))
+
+
 def comparative_statement(db, rfq):
     """Every line against every supplier, the lowest named, and each
     supplier's total landed at site - basic, tax and freight together,
@@ -407,23 +497,15 @@ def comparative_statement(db, rfq):
     quotes, rates = _rfq_quotes(db, rfq.id)
     suppliers = []
     for q in quotes:
-        basic = tax = 0.0
-        quoted = 0
-        for l in lines:
-            ql = rates.get((q.id, l.id))
-            if ql and ql.rate > 0:
-                amt = (l.qty or 0) * ql.rate
-                basic += amt
-                tax += amt * (ql.tax_percent or 0) / 100.0
-                quoted += 1
+        basic, tax, quoted, landed = quote_totals(q, lines, rates)
         suppliers.append({
-            "quote_id": q.id, "supplier_name": q.supplier_name, "quote_ref": q.quote_ref or "",
+            "quote_id": q.id, "supplier_name": q.supplier_name, "quote_ref": q.quote_ref or "", "source": q.source or "",
             "quote_date": q.quote_date or "", "delivery_days": q.delivery_days or 0,
             "payment_terms": q.payment_terms or "", "freight": money(q.freight),
             "valid_until": q.valid_until or "", "notes": q.notes or "",
             "lines_quoted": quoted, "complete": quoted == len(lines),
             "basic": money(basic), "tax": money(tax),
-            "landed": money(basic + tax + (q.freight or 0))})
+            "landed": landed})
     rows = []
     for l in lines:
         offers = []
@@ -444,6 +526,15 @@ def comparative_statement(db, rfq):
                                if low and low["rate"] else 0.0),
             "awarded_supplier": l.awarded_supplier or "", "awarded_rate": unit_rate(l.awarded_rate),
             "po_id": l.po_id})
+    # The order each awarded line went on, by number: what the buyer looks for next; and the orders themselves, so
+    # the enquiry says where its items went.
+    po_ids = {r["po_id"] for r in rows if r["po_id"]}
+    orders = db.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.client_id == rfq.client_id,
+                                                     models.DBPurchaseOrder.id.in_(po_ids)).order_by(
+        models.DBPurchaseOrder.id).all() if po_ids else []
+    numbers = {o.id: o.number for o in orders}
+    for r in rows:
+        r["po_number"] = numbers.get(r["po_id"], "")
     complete = [s for s in suppliers if s["complete"]]
     best = min(complete, key=lambda s: s["landed"]) if complete else None
     per_line_total = money(sum(r["lowest_rate"] * r["qty"] for r in rows))
@@ -456,6 +547,39 @@ def comparative_statement(db, rfq):
             "l1": best["supplier_name"] if best else "",
             "l1_landed": best["landed"] if best else 0.0,
             "lowest_per_line_basic": per_line_total,
+            "orders": [{"id": o.id, "number": o.number, "supplier_name": o.supplier_name or "", "total": money(o.total),
+                        "status": o.status or ""} for o in orders],
+            "saving_vs_l2": money(ranked[1]["landed"] - ranked[0]["landed"]) if len(ranked) > 1 else 0.0}
+
+
+def narrow_statement(d, names):
+    """The statement for only the suppliers named, ranked among themselves - what the buyer put side by side on
+    screen, so the workbook and the PDF show the same L1, the same lowest in each row. No names, or none that
+    quoted: the whole statement."""
+    from app.services.crm import norm_name as norm
+    keep = {norm(n) for n in names or []}
+    sups = [dict(s) for s in d["suppliers"] if norm(s["supplier_name"]) in keep]
+    if not sups:
+        return d
+    ranked = sorted((s for s in sups if s["complete"]), key=lambda s: s["landed"])
+    for s in sups:
+        s["is_l1"] = bool(ranked) and s["quote_id"] == ranked[0]["quote_id"]
+        s.pop("rank", None)
+    for i, s in enumerate(ranked):
+        s["rank"] = "L%d" % (i + 1)
+    shown = {norm(s["supplier_name"]) for s in sups}
+    rows = []
+    for l in d["lines"]:
+        offers = [o for o in l["offers"] if norm(o["supplier_name"]) in shown]
+        low = min(offers, key=lambda o: o["rate"]) if offers else None
+        high = max(offers, key=lambda o: o["rate"]) if offers else None
+        rows.append({**l, "offers": offers, "lowest": low["supplier_name"] if low else "",
+                     "lowest_rate": low["rate"] if low else 0,
+                     "spread_percent": (round((high["rate"] - low["rate"]) / low["rate"] * 100, 1)
+                                        if low and low["rate"] else 0.0)})
+    return {**d, "suppliers": sups, "lines": rows,
+            "l1": ranked[0]["supplier_name"] if ranked else "", "l1_landed": ranked[0]["landed"] if ranked else 0.0,
+            "lowest_per_line_basic": money(sum(r["lowest_rate"] * r["qty"] for r in rows)),
             "saving_vs_l2": money(ranked[1]["landed"] - ranked[0]["landed"]) if len(ranked) > 1 else 0.0}
 
 
@@ -471,10 +595,74 @@ def rfq_dict(db, r):
             "quotes": db.query(models.DBRfqQuote).filter(models.DBRfqQuote.rfq_id == r.id).count()}
 
 
-def _make_rfq(db, client, actor_name, title, job_id, needed_by, notes, lines, work_order_id=None):
-    lines = [l for l in lines if (l["description"] or "").strip() and (l["qty"] or 0) > 0]
+def rfq_list_rows(db, client_id, rfqs):
+    """The enquiries for the list, each with how far it has got: suppliers asked and answered, and the best full
+    quote so far (landed at site, worked out exactly as the comparative statement does). A handful of queries for
+    the whole list, not several per enquiry."""
+    ids = [r.id for r in rfqs]
+    if not ids:
+        return []
+    job_ids = {r.job_id for r in rfqs if r.job_id}
+    jobs = {j.id: ("%s %s" % (j.number, j.name)).strip() for j in db.query(models.DBJob).filter(
+        models.DBJob.client_id == client_id, models.DBJob.id.in_(job_ids)).all()} if job_ids else {}
+    lines = {}
+    for l in db.query(models.DBRfqLine.id, models.DBRfqLine.rfq_id, models.DBRfqLine.qty,
+                      models.DBRfqLine.awarded_supplier, models.DBRfqLine.po_id).filter(models.DBRfqLine.rfq_id.in_(ids)).all():
+        lines.setdefault(l.rfq_id, []).append(l)
+    quotes = {}
+    for q in db.query(models.DBRfqQuote).filter(models.DBRfqQuote.rfq_id.in_(ids)).all():
+        quotes.setdefault(q.rfq_id, []).append(q)
+    rates = {}
+    quote_ids = [q.id for qs in quotes.values() for q in qs]
+    if quote_ids:
+        for ql in db.query(models.DBRfqQuoteLine.quote_id, models.DBRfqQuoteLine.rfq_line_id, models.DBRfqQuoteLine.rate,
+                           models.DBRfqQuoteLine.tax_percent).filter(models.DBRfqQuoteLine.quote_id.in_(quote_ids)).all():
+            rates[(ql.quote_id, ql.rfq_line_id)] = ql
+    asked = {}
+    for inv in db.query(models.DBRfqInvite.rfq_id, models.DBRfqInvite.quote_id, models.DBRfqInvite.document_id).filter(
+            models.DBRfqInvite.rfq_id.in_(ids)).all():
+        a = asked.setdefault(inv.rfq_id, {"asked": 0, "waiting": 0})
+        a["asked"] += 1
+        if not inv.quote_id:
+            a["waiting"] += 1
+    out = []
+    for r in rfqs:
+        mine = lines.get(r.id, [])
+        best = None
+        for q in quotes.get(r.id, []):
+            _, _, quoted, landed = quote_totals(q, mine, rates)
+            if mine and quoted == len(mine) and (best is None or landed < best["landed"]):
+                best = {"supplier_name": q.supplier_name, "landed": landed}
+        awarded = sorted({l.awarded_supplier for l in mine if l.awarded_supplier})
+        a = asked.get(r.id, {"asked": 0, "waiting": 0})
+        out.append({"id": r.id, "number": r.number, "title": r.title or "", "job_id": r.job_id,
+                    "project": jobs.get(r.job_id, ""), "work_order_id": r.work_order_id, "needed_by": r.needed_by or "",
+                    "status": r.status, "notes": r.notes or "", "award_reason": r.award_reason or "",
+                    "created_by_name": r.created_by_name or "", "awarded_at": r.awarded_at or "",
+                    "created_at": r.created_at or "", "lines": len(mine), "quotes": len(quotes.get(r.id, [])),
+                    "asked": a["asked"], "waiting": a["waiting"], "best": best, "awarded_to": awarded,
+                    "orders": len({l.po_id for l in mine if l.po_id})})
+    return out
+
+
+def rfq_line_rows(lines):
+    """Lines as sent: those with something named and a quantity, at most two hundred."""
+    lines = [l for l in lines if (l.get("description") or "").strip() and (l.get("qty") or 0) > 0]
     if not lines:
-        raise HTTPException(400, "An enquiry needs at least one line with a quantity.")
+        raise HTTPException(400, "An enquiry needs at least one item with a quantity.")
+    return lines[:200]
+
+
+def add_rfq_lines(db, rfq_id, lines):
+    for i, l in enumerate(lines):
+        db.add(models.DBRfqLine(rfq_id=rfq_id, item_code=(l.get("item_code") or "").strip(),
+                                description=l["description"].strip(),
+                                uom=canonical_unit(l.get("uom")) or (l.get("uom") or ""),
+                                qty=money(l["qty"]), display_order=i))
+
+
+def _make_rfq(db, client, actor_name, title, job_id, needed_by, notes, lines, work_order_id=None):
+    lines = rfq_line_rows(lines)
     if job_id:
         job_or_404(db, client.id, job_id)
     r = models.DBRfq(client_id=client.id, number=next_rfq_number(db, client.id),
@@ -483,11 +671,7 @@ def _make_rfq(db, client, actor_name, title, job_id, needed_by, notes, lines, wo
                      status="OPEN", created_by_name=actor_name)
     db.add(r)
     db.flush()
-    for i, l in enumerate(lines[:200]):
-        db.add(models.DBRfqLine(rfq_id=r.id, item_code=(l.get("item_code") or "").strip(),
-                                description=l["description"].strip(),
-                                uom=canonical_unit(l.get("uom")) or (l.get("uom") or ""),
-                                qty=money(l["qty"]), display_order=i))
+    add_rfq_lines(db, r.id, lines)
     return r
 
 

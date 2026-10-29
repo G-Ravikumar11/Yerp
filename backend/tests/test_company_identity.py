@@ -29,7 +29,10 @@ def test_the_app_says_what_company_details_are_still_missing(tenant):
     assert "logo" in ident.json()["missing"]
     with_letterhead(tenant)
     now = tenant.get("/api/company/identity").json()
-    assert now["name"] == "Yalavarti Projects Pvt Ltd" and now["logo_url"].startswith("data:image")
+    # The logo comes as a link to the image (fetched once and kept by the browser), not the image itself on every page.
+    assert now["name"] == "Yalavarti Projects Pvt Ltd" and now["logo_url"].startswith("/api/public/logo/letterhead/")
+    logo = tenant.get(now["logo_url"])
+    assert logo.status_code == 200 and logo.headers["content-type"].startswith("image/") and "immutable" in logo.headers["cache-control"]
     assert "logo" not in now["missing"] and "GSTIN" not in now["missing"] and "PAN" not in now["missing"]
 
 

@@ -7,6 +7,7 @@ from sqlalchemy import and_, func as sqlfunc, or_
 
 from app import models
 
+from app.constants.money import NO_PARTY_DOCS
 from app.constants.crm import EMD_MODES, EST_TRANSITIONS, LEAD_SOURCES
 from app.core.currency import compute_invoice_totals, line_net_amount, money, parse_tax_rate, unit_rate
 from app.core.dates import _days_until, _parse_date
@@ -86,7 +87,20 @@ def next_customer_code(db, client_id) -> str:
     return "CUST-%04d" % (highest + 1)
 
 
-def customer_to_dict(db, contact, with_counts=False):
+def customer_project_counts(db, client_id):
+    """Every customer's project count in one pass, for a list: ({contact id: n}, {lower-case name: n}). A job counts by its
+    link where it has one, and by the customer's name where it does not (see customer_to_dict)."""
+    by_id, by_name = {}, {}
+    for contact_id, name in db.query(models.DBJob.contact_id, models.DBJob.customer_name).filter(models.DBJob.client_id == client_id).all():
+        if contact_id is not None:
+            by_id[contact_id] = by_id.get(contact_id, 0) + 1
+        else:
+            key = (name or "").lower()
+            by_name[key] = by_name.get(key, 0) + 1
+    return by_id, by_name
+
+
+def customer_to_dict(db, contact, with_counts=False, counts=None):
     row = {
         "id": contact.id, "code": contact.code or "", "name": contact.name or "",
         "contact_person": contact.contact_person or "", "email": contact.email or "",
@@ -98,7 +112,10 @@ def customer_to_dict(db, contact, with_counts=False):
         "is_active": bool(contact.is_active) if contact.is_active is not None else True,
         "created_at": contact.created_at or "",
     }
-    if with_counts:
+    if counts is not None:                  # worked out for the whole list at once
+        by_id, by_name = counts
+        row["projects"] = by_id.get(contact.id, 0) + by_name.get((contact.name or "").lower(), 0)
+    elif with_counts:
         # By the link where a job has one, and by name where it does not. A
         # job raised from the jobs screen only ever carried the customer's
         # name, so counting the link alone reported nought projects against
@@ -468,6 +485,8 @@ def _ledger_rows(db, client_id):
     for e in db.query(models.DBMoneyEntry).filter(
             models.DBMoneyEntry.client_id == client_id,
             models.DBMoneyEntry.voided.is_(False)).all():
+        if (e.doc_type or "") in NO_PARTY_DOCS:
+            continue            # an expense, a sundry receipt or a transfer between our own accounts is nobody's account
         rows.append({"party_type": e.party_type or "other", "party": e.party_name or "",
                      "date": e.paid_on or "", "kind": ("Received" if e.direction == "IN" else "Paid")
                      + ((" - " + e.mode) if e.mode else ""),

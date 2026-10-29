@@ -3,7 +3,20 @@ import { del, get, post, put } from '@/lib/api'
 
 export const schKeys = { all: ['schedule'] as const }
 
-export interface Activity {
+/** Where a row sits in the programme and what it is in the BOQ: shown beside its name, and what progress is read in. */
+export interface Placing {
+  /** 1.2.3, the programme's own numbering */
+  wbs?: string
+  /** The headings above it: "A-16 > Internal Painting" */
+  path?: string
+  boq_ref?: string
+  /** With a quantity, progress is recorded as how much is done so far. */
+  quantity?: number
+  uom?: string
+  qty_done?: number
+}
+
+export interface Activity extends Placing {
   id: number
   code: string
   name: string
@@ -45,7 +58,7 @@ export interface WoLite { id: number; number: string; job_id: number; status: st
 export interface WoLine { id: number; label: string }
 
 /** One row of a day's plan: an activity, how far along it is, and what the plan asks of it that day. */
-export interface DayRow {
+export interface DayRow extends Placing {
   id: number
   code: string
   name: string
@@ -106,7 +119,8 @@ export const useDayPlan = (job: number, on: string) => useQuery({ queryKey: ['sc
 export interface ActivityDetail {
   job: { id: number; number: string; name: string }
   activity: Activity & Pick<DayRow, 'editable' | 'tasks_total' | 'tasks_done' | 'tasks' | 'updated_on' | 'updated_by'> & { planned_start: string; planned_finish: string }
-  history: { on: string; percent: number; note: string; by: string }[]
+  /** qty_done: the quantity done so far when it was reported that way */
+  history: { on: string; percent: number; qty_done?: number | null; uom?: string; note: string; by: string }[]
 }
 export const useActivity = (id: number) => useQuery({ queryKey: ['schedule', 'activity', id], enabled: id > 0, queryFn: () => get<ActivityDetail>(`/api/schedule/activities/${id}`) })
 export const useSchedule = (job: number) => useQuery({ queryKey: ['schedule', job], enabled: job > 0, staleTime: 0, refetchOnMount: 'always', queryFn: () => get<Schedule>(`/api/jobs/${job}/schedule`) })
@@ -132,9 +146,8 @@ export const useWorkOrderLines = (orders: WoLite[]) =>
 type Reply = { schedule: Schedule; message?: string }
 export const saveActivity = (job: number, id: number | null, b: ActivityInput) => (id ? put<Reply>(`/api/schedule/activities/${id}`, b) : post<Reply>(`/api/jobs/${job}/schedule/activities`, b))
 export const deleteActivity = (id: number) => del<Reply>(`/api/schedule/activities/${id}`)
-export const setProgress = (id: number, percent: number) => post<Reply>(`/api/schedule/activities/${id}/progress`, { percent })
+export const setProgress = (id: number, percent: number, qty_done?: number) =>
+  post<Reply>(`/api/schedule/activities/${id}/progress`, qty_done === undefined ? { percent } : { percent, qty_done })
 export const addTask = (job: number, b: { text: string; date: string; activity_id: number | null }) => post<{ task: DayTask }>(`/api/jobs/${job}/schedule/tasks`, b)
 export const editTask = (id: number, b: { text?: string; date?: string; activity_id?: number | null; done?: boolean; percent?: number }) => put<{ task: DayTask }>(`/api/schedule/tasks/${id}`, b)
 export const deleteTask = (id: number) => del<{ ok: boolean }>(`/api/schedule/tasks/${id}`)
-export const drawFromBoq = (job: number, start: string, finish: string, by: 'section' | 'item') => post<Reply>(`/api/jobs/${job}/schedule/from-boq`, { start, finish, by })
-export const drawFromOrder = (job: number, wo: number, start: string, finish: string) => post<Reply>(`/api/jobs/${job}/schedule/from-work-order/${wo}`, { start, finish })

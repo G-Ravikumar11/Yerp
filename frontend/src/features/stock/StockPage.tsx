@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { FileText, FileSpreadsheet, Send } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { OldStoreBanner, useCutover } from '@/features/store/OldStore'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { PromptModal } from '@/components/data/PromptModal'
 import { Badge, Button, ConfirmDialog, Stat, StatGrid } from '@/components/ui'
@@ -17,6 +18,7 @@ import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 /** What is in the store, what went to site, and what it cost. The store's balance is the sum of its movements. */
 export default function StockPage() {
+  const moved = !!useCutover().data
   const { can } = useSession()
   const [low, setLow] = useState(false)
   const stock = useStock(low)
@@ -67,7 +69,8 @@ export default function StockPage() {
   ]
   return (
     <>
-      <PageHeader eyebrow="Store" title="Stock & Issues" description="What is in the store, what went to site, and what it cost." actions={<><Button onClick={() => setIssuing(true)}><Send /> Issue to site</Button><Button variant="outline" onClick={() => setSending(true)}>Send to another site</Button><Button variant="outline" asChild><a href="/api/stock.xlsx"><FileSpreadsheet /> Download</a></Button></>} />
+      <PageHeader eyebrow="Store" title="Stock & Issues" description="What is in the store, what went to site, and what it cost." actions={moved ? <Button variant="outline" asChild><a href="/api/stock.xlsx"><FileSpreadsheet /> Download</a></Button> : <><Button onClick={() => setIssuing(true)}><Send /> Issue to site</Button><Button variant="outline" onClick={() => setSending(true)}>Send to another site</Button><Button variant="outline" asChild><a href="/api/stock.xlsx"><FileSpreadsheet /> Download</a></Button></>} />
+      <OldStoreBanner hub="/store/hub/enquiry" />
       <StatGrid className="lg:grid-cols-4 xl:grid-cols-4">
         <Stat label="Items held" value={s?.items_held ?? 0} loading={stock.isPending} />
         <Stat label="Value in the store" value={formatINR(s?.value_on_hand ?? 0)} loading={stock.isPending} />

@@ -2,23 +2,24 @@ import { useEffect, useState } from 'react'
 import { Button, Field, Input } from '@/components/ui'
 import { Capacitor } from '@capacitor/core'
 import { Eye, EyeOff } from 'lucide-react'
-import { api, ApiError } from '@/lib/api'
-import { AuthLayout, Notice, nextTarget } from './AuthLayout'
+import { api, ApiError, apiUrl } from '@/lib/api'
+import { AuthLayout, Notice, YahooMark, nextTarget } from './AuthLayout'
+import { codeLine } from '@/lib/errorCodes'
 import { appUrl } from '@/lib/paths'
+import { CaptchaBox, type CaptchaValue } from './CaptchaBox'
 
 const ERRORS: Record<string, string> = {
   auth_failed: 'Authentication failed. Please try again.',
-  google_failed: 'Google sign-in did not complete. Try again.',
-  google_no_email: 'Google did not share an email address.',
-  google_unverified: 'That Google address is not verified.',
-  google_unknown: 'No account here uses that Google address. Ask whoever set up your access.',
   account_disabled: 'That account has been disabled.',
-  google_unconfigured: 'Google sign-in is not set up on this server yet.',
+  google_retired: 'Sign in with Google is no longer offered. Continue with Yahoo, or sign in with your email and password.',
   yahoo_failed: 'Yahoo sign-in did not complete. Try again.',
   yahoo_no_email: 'Yahoo did not share an email address.',
   yahoo_unverified: 'That Yahoo address is not verified.',
   yahoo_unknown: 'No account here uses that Yahoo address. Ask whoever set up your access.',
   yahoo_unconfigured: 'Yahoo sign-in is not set up on this server yet.',
+  yahoo_denied: 'Yahoo sign-in was cancelled. Try again, or sign in with your email and password.',
+  yahoo_state: 'That Yahoo sign-in did not start here, so it was stopped for your safety. Please try again.',
+  yahoo_expired: 'That Yahoo sign-in took too long or was used already. Please try again.',
   gmail_sign_in_first: 'Sign in first, then connect Gmail from inside the app.',
 }
 
@@ -31,7 +32,7 @@ const STEPS: [string, string][] = [
 ]
 
 const go = (to: string) => window.location.assign(to)
-// Inside the native app there is no website to go back to, and Google's sign-in page cannot hand its cookie back.
+// Inside the native app there is no website to go back to, and Yahoo's sign-in page cannot hand its cookie back.
 const native = Capacitor.isNativePlatform()
 
 /** One door for the whole business: the server decides whether the address is the account holder's or a member of staff's. */
@@ -41,19 +42,19 @@ export default function LoginPage() {
   const [error, setError] = useState(code ? (ERRORS[code] ?? 'Something went wrong. Please try again.') : '')
   const [company, setCompany] = useState('')
   // The company's own logo, which the server shows to anyone before they sign in; the blue Y until it has loaded or if there is none.
-  const [logo, setLogo] = useState(`${import.meta.env.BASE_URL}favicon.svg`)
-  const [google, setGoogle] = useState(false)
-  const [yahoo, setYahoo] = useState(false)
+  const [logo, setLogo] = useState(`${import.meta.env.BASE_URL}brand/yalavarti-mark.svg`)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [rememberMe, setRememberMe] = useState(false)
   const [busy, setBusy] = useState(false)
+  // The check (CAPTCHA), once the server has asked for one; a new one is drawn after every try.
+  const [askCheck, setAskCheck] = useState(false)
+  const [check, setCheck] = useState<CaptchaValue | null>(null)
+  const [round, setRound] = useState(0)
 
   useEffect(() => {
-    api<{ company_name?: string; logo_url?: string }>('/api/public/brand', { quiet: true }).then((b) => { if (b?.company_name) setCompany(b.company_name); if (b?.logo_url) setLogo(b.logo_url) }).catch(() => undefined)
-    api<{ configured?: boolean }>('/api/auth/google/status', { quiet: true }).then((d) => setGoogle(!!d?.configured)).catch(() => undefined)
-    api<{ configured?: boolean }>('/api/auth/yahoo/status', { quiet: true }).then((d) => setYahoo(!!d?.configured)).catch(() => undefined)
+    api<{ company_name?: string; logo_url?: string }>('/api/public/brand', { quiet: true }).then((b) => { if (b?.company_name) setCompany(b.company_name); if (b?.logo_url) setLogo(apiUrl(b.logo_url)) }).catch(() => undefined)
     if (params.get('signedout')) {
       // Arrived from Sign out: end whatever sign-in this browser still holds, and show the form.
       for (const u of ['/api/client/logout', '/api/employee/auth/logout', '/api/portal/logout']) void api(u, { method: 'POST', quiet: true }).catch(() => undefined)
@@ -75,6 +76,7 @@ export default function LoginPage() {
     e.preventDefault()
     if (busy) return
     if (!email.trim() || !password) return setError('Enter your email and password.')
+    if (askCheck && !check) return setError('Complete the check below, then sign in.')
     setBusy(true)
     setError('')
     try {
@@ -87,38 +89,45 @@ export default function LoginPage() {
         else if (e.status !== 401 && !other) other = e
         return null
       }
-      const owner = await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, channel: native ? 'app' : 'web' }, quiet: true }).catch(none)
+      // The check, once the server has asked for it, goes with both doors: one solved check covers one sign-in.
+      const extra = check ?? {}
+      const owner = await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, channel: native ? 'app' : 'web', ...extra }, quiet: true }).catch(none)
       if (owner) return go(owner.is_onboarded === false ? nextTarget(appUrl('onboard')) : nextTarget(appUrl()))
-      const staff = await api('/api/employee/auth/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, channel: native ? 'app' : 'web', device_info: navigator.userAgent.slice(0, 200) }, quiet: true }).catch(none)
+      const staff = await api('/api/employee/auth/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, channel: native ? 'app' : 'web', device_info: navigator.userAgent.slice(0, 200), ...extra }, quiet: true }).catch(none)
       if (staff) return go(nextTarget(appUrl()))
       const refusal = other as ApiError | null
+      // Too many wrong tries from here, or against this account: from now on every try needs the check.
+      if (refusal?.status === 428 || askCheck) {
+        setAskCheck(true)
+        setRound((n) => n + 1)
+      }
       setError(
-        unreachable ? 'Could not reach the server. Check the connection and try again.'
-          : refusal && refusal.status >= 500 ? 'The server had a problem. Please try again in a moment.'
+        unreachable ? `Could not reach the server. Check the connection and try again. (${codeLine('YE-NET')})`
+          : refusal && refusal.status >= 500 ? `The server had a problem. Please try again in a moment. (${codeLine(refusal.code, refusal.ref)})`
           : refusal ? refusal.message
-          : 'That email and password did not match an account.')
+          : `That email and password did not match an account. (${codeLine('YE-AUTH-01')})`)
     } finally {
       setBusy(false)
     }
   }
 
   const pitch = (
-    <section aria-label="About Y ERP" className="hidden flex-col justify-between bg-gradient-to-br from-slate-900 via-slate-800 to-blue-900 p-10 text-slate-200 md:flex">
+    <section aria-label="About Y ERP" className="hidden flex-col justify-between bg-primary p-10 text-white md:flex">
       <div>
-        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-blue-300">Civil contracting ERP</p>
+        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-white/80">Civil contracting ERP</p>
         <h2 className="mb-2 mt-3 text-3xl font-extrabold leading-tight text-white">From the tender to the money, in one place.</h2>
-        <p className="max-w-[34ch] text-sm text-slate-300">Every link of a contract, and each one feeds the next. Nothing is typed twice, and nothing lives in a spreadsheet beside it.</p>
-        {company && <p className="mt-2 text-sm text-blue-200">The system of record for {company}.</p>}
+        <p className="max-w-[34ch] text-sm text-white/80">Every link of a contract, and each one feeds the next. Nothing is typed twice, and nothing lives in a spreadsheet beside it.</p>
+        {company && <p className="mt-2 text-sm text-white/80">The system of record for {company}.</p>}
         <ol className="mt-6 grid gap-3">
           {STEPS.map(([head, text], i) => (
             <li key={head} className="grid grid-cols-[30px_1fr] items-start gap-2.5 text-sm">
-              <span className="grid size-6 place-items-center rounded-lg bg-blue-300/15 text-xs font-bold text-blue-200">{i + 1}</span>
-              <span><b className="text-white">{head}</b><small className="block text-xs text-slate-400">{text}</small></span>
+              <span className="grid size-6 place-items-center rounded-lg bg-white/15 text-xs font-bold text-white/80">{i + 1}</span>
+              <span><b className="text-white">{head}</b><small className="block text-xs text-white/70">{text}</small></span>
             </li>
           ))}
         </ol>
       </div>
-      <p className="mt-7 text-xs text-slate-400"><b className="text-slate-200">No spreadsheets.</b> Grids paste and walk like a sheet, every table sorts and totals, every bill has a page that prints.</p>
+      <p className="mt-7 text-xs text-white/70"><b className="text-white">No spreadsheets.</b> Grids paste and walk like a sheet, every table sorts and totals, every bill has a page that prints.</p>
     </section>
   )
 
@@ -129,22 +138,23 @@ export default function LoginPage() {
       <form onSubmit={submit} className="grid gap-4">
         <Field label="Email address" htmlFor="email"><Input id="email" type="email" autoComplete="username" autoFocus required placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
         <Field label="Password" htmlFor="password"><Input id="password" type={showPassword ? 'text' : 'password'} autoComplete="current-password" required placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)}
-          trailing={<button type="button" onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} className="grid size-6 place-items-center rounded text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">{showPassword ? <Eye className="size-4" /> : <EyeOff className="size-4" />}</button>} /></Field>
+          trailing={<button type="button" onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} className="grid size-6 place-items-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">{showPassword ? <Eye className="size-4" /> : <EyeOff className="size-4" />}</button>} /></Field>
+        {askCheck && <CaptchaBox round={round} onChange={setCheck} />}
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
           <label htmlFor="rememberMe" className="flex w-fit cursor-pointer items-center gap-2 text-muted-foreground">
-            <input id="rememberMe" type="checkbox" className="size-4 cursor-pointer rounded border-border accent-primary" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
+            <input id="rememberMe" type="checkbox" className="size-4 cursor-pointer rounded-md border-border accent-primary" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
             Remember me
           </label>
           <a href={appUrl('forgot-password')} className="text-muted-foreground hover:text-primary">Forgot password?</a>
         </div>
         <Button type="submit" loading={busy} className="w-full">Sign in</Button>
       </form>
-      {(google || yahoo) && !native && (
+      {/* Always offered on the website. A server without Yahoo keys answers a click with "not set up yet" (yahoo_unconfigured). */}
+      {!native && (
         <>
           <div className="my-5 flex items-center gap-3 text-xs uppercase text-muted-foreground"><span className="h-px flex-1 bg-border" />or<span className="h-px flex-1 bg-border" /></div>
           <div className="grid gap-2">
-            {google && <Button type="button" variant="outline" className="w-full" onClick={() => go('/api/auth/google/start?next=' + encodeURIComponent(nextTarget(appUrl())))}>Continue with Google</Button>}
-            {yahoo && <Button type="button" variant="outline" className="w-full" onClick={() => go('/api/auth/yahoo/start?next=' + encodeURIComponent(nextTarget(appUrl())))}>Continue with Yahoo</Button>}
+            <Button type="button" variant="outline" className="w-full gap-2.5" onClick={() => go('/api/auth/yahoo/start?next=' + encodeURIComponent(nextTarget(appUrl())))}><YahooMark /> Continue with Yahoo</Button>
           </div>
         </>
       )}

@@ -327,7 +327,7 @@ export default function MeasurementBookPage() {
         }
       />
 
-      <div className="z-10 md:sticky md:top-[calc(4rem+env(safe-area-inset-top))] -mx-4 mb-6 border-b border-border bg-background/95 px-4 pb-3 pt-3 backdrop-blur sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+      <div className="z-10 md:sticky md:top-[calc(4rem+env(safe-area-inset-top))] -mx-4 mb-6 border-b border-border bg-background/95 px-4 pb-3 pt-3 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
         <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,42rem)_minmax(0,1fr)]">
           <div>
             <div className="flex flex-col gap-2 sm:flex-row">

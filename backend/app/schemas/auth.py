@@ -9,6 +9,9 @@ class ClientRegister(BaseModel):
     password: str
     company_name: Optional[str] = ""
     contact_name: Optional[str] = ""
+    # The CAPTCHA, when the page has been asked for one (app/core/login_guard.py).
+    captcha_token: Optional[str] = ""
+    captcha_answer: Optional[str] = ""
 
 
 class ClientLogin(BaseModel):
@@ -18,6 +21,9 @@ class ClientLogin(BaseModel):
     remember_me: bool = Field(False, alias="rememberMe")
     # "app" when the phone app signs in (it holds the session to the app's limits); anything else is the website.
     channel: str = "web"
+    # The CAPTCHA, when the page has been asked for one (app/core/login_guard.py).
+    captcha_token: Optional[str] = ""
+    captcha_answer: Optional[str] = ""
 
 
 class ClientOnboard(BaseModel):
@@ -37,6 +43,9 @@ class LogoUpdate(BaseModel):
 
 class ForgotPasswordIn(BaseModel):
     email: str
+    # The CAPTCHA, when the page has been asked for one (app/core/login_guard.py).
+    captcha_token: Optional[str] = ""
+    captcha_answer: Optional[str] = ""
 
 
 class ResetPasswordIn(BaseModel):

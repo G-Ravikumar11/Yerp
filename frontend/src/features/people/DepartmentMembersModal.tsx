@@ -1,18 +1,9 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { X } from 'lucide-react'
-import { Button, Input, Modal } from '@/components/ui'
+import { Button, Input } from '@/components/ui'
 import { addToDepartment, peopleKeys, removeFromDepartment, showDepartmentChange, useEmployees, type Department, type Employee } from '@/api/people'
 import { useAction } from '@/lib/mutate'
-
-/** Who is in a department: take people out, or bring them in - from no department or from another one. */
-export function DepartmentMembersModal({ dept, onClose }: { dept: Department | null; onClose: () => void }) {
-  return (
-    <Modal open={!!dept} onOpenChange={(o) => !o && onClose()} size="lg" title={dept ? `People in ${dept.name}` : ''} description="Adding somebody who is in another department moves them here.">
-      {dept && <Members key={dept.id} dept={dept} onClose={onClose} />}
-    </Modal>
-  )
-}
 
 export function Members({ dept, onClose }: { dept: Department; onClose: () => void }) {
   const qc = useQueryClient()

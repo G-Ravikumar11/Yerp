@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.common import DRAWING_STATUSES
 from app.constants.crm import OPEN_INVOICE_STATUSES
@@ -21,7 +21,7 @@ from app.core.config import logger
 from app.core.currency import DEFAULT_CURRENCY, money, totals_by_currency
 from app.core.gst import GST_STATES
 from app.core.queries import prime
-from app.core.serials import allocate_job_number
+from app.core.serials import allocate_job_number, typed_job_number
 from app.core.sheets import sheet_response
 from app.routers.files import list_files
 from app.schemas.projects import (
@@ -88,7 +88,7 @@ router = APIRouter()
 
 
 @router.get("/api/dashboard-summary")
-def get_dashboard_summary(request: Request, db: Session = Depends(get_db)):
+def get_dashboard_summary(request: Request, db: Session = Depends(get_read_db)):
 
     from datetime import datetime, timedelta
 
@@ -182,7 +182,7 @@ def get_dashboard_summary(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/jobs")
 def list_jobs(request: Request, status: str = "", q: str = "", open_only: bool = False, costing: bool = True,
-              db: Session = Depends(get_db)):
+              db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage"))
     _, emp = session_person(request, db)
     query = db.query(models.DBJob).filter(models.DBJob.client_id == client.id)
@@ -276,7 +276,8 @@ def create_job(body: JobIn, request: Request, db: Session = Depends(get_db)):
 
     job = models.DBJob(
         client_id=client.id,
-        number=allocate_job_number(db, client.id),
+        number=(typed_job_number(db, client.id, body.number) if (body.number or "").strip()
+                else allocate_job_number(db, client.id)),
         name=name,
         contact_id=contact_id,
         customer_name=customer_name,
@@ -311,6 +312,8 @@ def update_job(job_id: int, body: JobIn, request: Request, db: Session = Depends
         raise HTTPException(status_code=400, detail="Give the job a name")
 
     was_open = job.status not in JOB_CLOSED_STATUSES
+    if body.number is not None and " ".join(body.number.split()) != (job.number or ""):
+        job.number = typed_job_number(db, client.id, body.number, job.id)
     job.name = name
     job.customer_name = (body.customer_name or "").strip()
     # The jobs screen sends a name, never an id; taking the missing id as
@@ -383,7 +386,7 @@ def delete_job(job_id: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/jobs-summary")
-def jobs_summary(request: Request, db: Session = Depends(get_db)):
+def jobs_summary(request: Request, db: Session = Depends(get_read_db)):
     """The board: every live job with what it is making, worst margin first.
 
     Costed in bulk. Asking job_costing for each job in turn issued roughly
@@ -412,7 +415,7 @@ def jobs_summary(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/search")
 def global_search(request: Request, q: str = "", limit: int = 8,
-                  db: Session = Depends(get_db)):
+                  db: Session = Depends(get_read_db)):
     """Search everything the tenant owns, on the server.
 
     The old search ran in the browser over whatever lists happened to be
@@ -505,7 +508,7 @@ def set_job_state(job_id: int, body: JobStateIn, request: Request,
 
 @router.get("/api/diary")
 def list_diaries(request: Request, job_id: int = 0, date_from: str = "",
-                 date_to: str = "", db: Session = Depends(get_db)):
+                 date_to: str = "", db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     q = db.query(models.DBSiteDiary).filter(
         models.DBSiteDiary.client_id == client.id)
@@ -515,9 +518,10 @@ def list_diaries(request: Request, job_id: int = 0, date_from: str = "",
         q = q.filter(models.DBSiteDiary.diary_date >= date_from)
     if date_to:
         q = q.filter(models.DBSiteDiary.diary_date <= date_to)
-    rows = [diary_dict(db, d) for d in q.order_by(
-        models.DBSiteDiary.diary_date.desc(),
-        models.DBSiteDiary.id.desc()).limit(400).all()]
+    days = q.order_by(models.DBSiteDiary.diary_date.desc(), models.DBSiteDiary.id.desc()).limit(400).all()
+    prime(db, models.DBJob, [d.job_id for d in days])
+    prime(db, models.DBWorkOrder, [d.work_order_id for d in days])
+    rows = [diary_dict(db, d) for d in days]
     return {
         "diaries": rows,
         "summary": {
@@ -578,7 +582,7 @@ def create_diary(body: DiaryIn, request: Request, db: Session = Depends(get_db))
 
 
 @router.get("/api/diary/{diary_id}")
-def get_diary(diary_id: int, request: Request, db: Session = Depends(get_db)):
+def get_diary(diary_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return diary_dict(db, diary_or_404(db, client.id, diary_id), detail=True)
 
@@ -671,7 +675,7 @@ def delete_diary(diary_id: int, request: Request, db: Session = Depends(get_db))
 
 
 @router.get("/api/diary-labour/{job_id}")
-def labour_history(job_id: int, request: Request, db: Session = Depends(get_db)):
+def labour_history(job_id: int, request: Request, db: Session = Depends(get_read_db)):
     """Who has been on this site, by trade, over its whole life.
 
     The question a project manager asks on a Monday - am I carrying more
@@ -730,7 +734,7 @@ def labour_history(job_id: int, request: Request, db: Session = Depends(get_db))
 
 
 @router.get("/api/diary/{diary_id}/export.xlsx")
-def diary_export(diary_id: int, request: Request, db: Session = Depends(get_db)):
+def diary_export(diary_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     d = diary_or_404(db, client.id, diary_id)
     row = diary_dict(db, d, detail=True)
@@ -871,7 +875,7 @@ def whats_worth_a_look(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/jobs/{job_id}/equipment")
-def job_equipment(job_id: int, request: Request, db: Session = Depends(get_db)):
+def job_equipment(job_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The machines on one site and what they have cost it."""
     client = require_erp_read(request, db)
     job_or_404(db, client.id, job_id)
@@ -898,13 +902,13 @@ def job_equipment(job_id: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/jobs/{job_id}/schedule")
-def job_schedule(job_id: int, request: Request, db: Session = Depends(get_db)):
+def job_schedule(job_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return schedule_view(db, client.id, job_or_404(db, client.id, job_id))
 
 
 @router.get("/api/jobs/{job_id}/schedule/day")
-def job_schedule_day(job_id: int, request: Request, on: str = "", db: Session = Depends(get_db)):
+def job_schedule_day(job_id: int, request: Request, on: str = "", db: Session = Depends(get_read_db)):
     """The plan for one day (today when none is given): the work due, how far along it is, what is overdue, what is next."""
     client = require_erp_read(request, db)
     day = _d(on) if on else None
@@ -914,7 +918,7 @@ def job_schedule_day(job_id: int, request: Request, on: str = "", db: Session = 
 
 
 @router.get("/api/schedule/activities/{activity_id}")
-def get_activity(activity_id: int, request: Request, db: Session = Depends(get_db)):
+def get_activity(activity_id: int, request: Request, db: Session = Depends(get_read_db)):
     """One activity in full: its tasks on every day and the history of its progress."""
     client = require_erp_read(request, db)
     a = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.id == activity_id,
@@ -1048,12 +1052,22 @@ def report_progress(activity_id: int, body: ProgressIn, request: Request, db: Se
     if a.work_order_line_id:
         raise HTTPException(409, "%s takes its progress from the measurement book. "
                                  "Measure the work instead." % (a.code or a.name))
-    pct = float(body.percent or 0)
+    qty = (a.quantity or 0) if (a.quantity or 0) > 0 else 0
+    if body.qty_done is not None and qty:
+        if body.qty_done < 0:
+            raise HTTPException(400, "The quantity done cannot be below nothing.")
+        done = float(body.qty_done)
+        pct = min(100.0, done / qty * 100.0)
+    else:
+        pct = float(body.percent or 0)
+        done = pct * qty / 100.0 if qty else None
     if pct < 0 or pct > 100:
         raise HTTPException(400, "Progress is a percentage between 0 and 100.")
     on = (body.reported_on or datetime.now().strftime("%Y-%m-%d"))[:10]
-    db.add(models.DBScheduleProgress(client_id=client.id, activity_id=a.id, reported_on=on,
-                                     percent=pct, note=(body.note or "").strip(), by_name=actor_name))
+    db.add(models.DBScheduleProgress(client_id=client.id, activity_id=a.id, reported_on=on, percent=pct, qty_done=done,
+                                     note=(body.note or "").strip(), by_name=actor_name))
+    if done is not None:
+        a.qty_done = done
     if pct > 0 and not a.actual_start:
         a.actual_start = on
     if pct >= 100 and not a.actual_finish:
@@ -1139,7 +1153,7 @@ def schedule_from_work_order(job_id: int, wo_id: int, body: FromWorkOrderIn, req
 
 
 @router.get("/api/schedule-overview")
-def schedule_overview(request: Request, db: Session = Depends(get_db)):
+def schedule_overview(request: Request, db: Session = Depends(get_read_db)):
     """Every live project's planned against actual, worst first."""
     client = require_erp_read(request, db)
     out = []
@@ -1158,7 +1172,7 @@ def schedule_overview(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/jobs/{job_id}/photos")
 def job_photos(job_id: int, request: Request, kind: str = "photo", q: str = "", date_from: str = "",
-               date_to: str = "", by: str = "", source: str = "", db: Session = Depends(get_db)):
+               date_to: str = "", by: str = "", source: str = "", db: Session = Depends(get_read_db)):
     """Every photograph taken on a project - and, asked for, its drawings and
     documents too - newest first, with what each was of: a diary day, a
     variation, a work order. Filtered by type, words, dates, who added them
@@ -1185,7 +1199,7 @@ def job_photos(job_id: int, request: Request, kind: str = "photo", q: str = "", 
 
 
 @router.get("/api/jobs/{job_id}/drawings")
-def list_drawings(job_id: int, request: Request, db: Session = Depends(get_db)):
+def list_drawings(job_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     job = job_or_404(db, client.id, job_id)
     rows = [drawing_dict(db, d) for d in db.query(models.DBDrawing).filter(
@@ -1215,7 +1229,7 @@ def add_drawing(job_id: int, body: DrawingIn, request: Request, db: Session = De
 
 
 @router.get("/api/jobs/{job_id}/site-location")
-def get_site_location(job_id: int, request: Request, db: Session = Depends(get_db)):
+def get_site_location(job_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     job = job_or_404(db, client.id, job_id)
     g = db.query(models.DBSiteGeofence).filter(models.DBSiteGeofence.job_id == job.id).first()

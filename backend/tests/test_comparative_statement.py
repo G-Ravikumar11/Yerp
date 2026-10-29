@@ -138,3 +138,115 @@ def test_another_tenant_cannot_see_or_quote(tenant, second_tenant):
     r = rfq(tenant)
     assert second_tenant.get("/api/rfqs/%d" % r["rfq"]["id"]).status_code == 404
     assert second_tenant.get("/api/rfqs").json()["rfqs"] == []
+
+
+def _compared(tenant):
+    r = rfq(tenant)
+    quote(tenant, r, "ACC", 390, 62000)
+    quote(tenant, r, "UltraTech", 380, 63500, freight=1000)
+    quote(tenant, r, "Dalmia", 395, 61000)
+    return r["rfq"]["id"]
+
+
+def test_the_comparison_pdf_is_a_landscape_pdf(tenant):
+    res = tenant.get("/api/rfqs/%d/comparison.pdf" % _compared(tenant))
+    assert res.status_code == 200 and res.headers["content-type"] == "application/pdf"
+    assert res.content.startswith(b"%PDF")
+
+
+def test_the_comparison_can_be_narrowed_to_the_suppliers_chosen(tenant):
+    from app.services.procurement import narrow_statement
+    rid = _compared(tenant)
+    d = tenant.get("/api/rfqs/%d" % rid).json()
+    n = narrow_statement(d, ["ACC", "Dalmia"])
+    assert [s["supplier_name"] for s in n["suppliers"]] == ["ACC", "Dalmia"]
+    # UltraTech is out, so ACC is the lowest cement rate and L1 is worked out between the two left.
+    assert n["lines"][0]["lowest"] == "ACC" and n["lines"][0]["lowest_rate"] == 390
+    assert {s["supplier_name"]: s["rank"] for s in n["suppliers"]} == {"ACC": "L2", "Dalmia": "L1"}
+    assert n["l1"] == "Dalmia" and n["saving_vs_l2"] == round(1630000 * 1.18 - 1615000 * 1.18, 2)
+    assert narrow_statement(d, []) is d and narrow_statement(d, ["Nobody"]) is d
+
+
+def test_a_narrowed_comparison_still_downloads(tenant):
+    rid = _compared(tenant)
+    for ext in ("xlsx", "pdf"):
+        res = tenant.get("/api/rfqs/%d/comparison.%s?supplier=ACC&supplier=Dalmia" % (rid, ext))
+        assert res.status_code == 200, res.text
+
+
+def test_the_list_says_how_far_each_enquiry_has_got(tenant):
+    """Asked, answered, and the best full quote landed at site - the same figure the statement gives as L1."""
+    rid = _compared(tenant)
+    tenant.post("/api/rfqs/%d/invites" % rid, json={"supplier_name": "Shree Cement"})
+    row = tenant.get("/api/rfqs").json()["rfqs"][0]
+    d = tenant.get("/api/rfqs/%d" % rid).json()
+    assert row["quotes"] == 3 and row["lines"] == 2 and row["asked"] == 1 and row["waiting"] == 1
+    assert row["best"] == {"supplier_name": d["l1"], "landed": d["l1_landed"]}
+    assert row["awarded_to"] == [] and row["orders"] == 0
+
+
+def test_a_part_quote_is_never_the_best_in_the_list(tenant):
+    r = rfq(tenant)
+    quote(tenant, r, "Half", 1, 0)
+    assert tenant.get("/api/rfqs").json()["rfqs"][0]["best"] is None
+
+
+def test_an_award_names_its_orders_on_the_enquiry(tenant):
+    rid = _compared(tenant)
+    out = tenant.post("/api/rfqs/%d/award" % rid, json={"mode": "lowest_per_line"}).json()
+    st = tenant.get("/api/rfqs/%d/statement" % rid).json()
+    numbers = {o["number"] for o in out["orders"]}
+    assert {o["number"] for o in st["orders"]} == numbers
+    assert all(l["po_number"] in numbers for l in st["lines"])
+    row = tenant.get("/api/rfqs").json()["rfqs"][0]
+    assert row["orders"] == len(numbers) and set(row["awarded_to"]) == {o["supplier"] for o in out["orders"]}
+
+
+def test_an_enquiry_can_be_corrected_until_the_first_quote(tenant):
+    r = rfq(tenant)
+    rid = r["rfq"]["id"]
+    body = {"title": "Cement only", "needed_by": "2026-11-01", "lines": [
+        {"item_code": "RM-CEM", "description": "Cement OPC 53", "uom": "bags", "qty": 1200}]}
+    res = tenant.put("/api/rfqs/%d" % rid, json=body)
+    assert res.status_code == 200, res.text
+    d = tenant.get("/api/rfqs/%d" % rid).json()
+    assert d["rfq"]["title"] == "Cement only" and d["rfq"]["needed_by"] == "2026-11-01"
+    assert [(l["description"], l["uom"], l["qty"]) for l in d["lines"]] == [("Cement OPC 53", "Bags", 1200)]
+    quote(tenant, d, "ACC", 390, 0)
+    # Once a supplier has priced these lines, the title may still change, the items may not.
+    same = {**body, "title": "Cement for the raft"}
+    assert tenant.put("/api/rfqs/%d" % rid, json=same).status_code == 200
+    changed = {**body, "lines": [{**body["lines"][0], "qty": 1500}]}
+    res = tenant.put("/api/rfqs/%d" % rid, json=changed)
+    assert res.status_code == 409 and "Quotes are already in" in res.json()["detail"]
+    assert tenant.get("/api/rfqs/%d" % rid).json()["lines"][0]["qty"] == 1200
+
+
+def test_a_title_change_after_quotes_is_not_taken_for_a_change_of_items(tenant):
+    from app import db as database, models
+    d = rfq(tenant)
+    rid = d["rfq"]["id"]
+    quote(tenant, d, "ACC", 390, 61000)
+    # A line saved before units were tidied keeps the unit as it was typed.
+    with database.SessionLocal() as s:
+        s.query(models.DBRfqLine).filter(models.DBRfqLine.rfq_id == rid, models.DBRfqLine.item_code == "RM-CEM").update({"uom": "bags"})
+        s.commit()
+    # The same items, sent in another order, spaced and cased differently, with a blank row left on the screen.
+    body = {"title": "Cement and steel, Block A raft", "lines": [
+        {"item_code": "RM-STL", "description": "TMT  Fe500D 12mm ", "uom": "mt", "qty": 20},
+        {"item_code": "", "description": "", "uom": "", "qty": 0},
+        {"item_code": "RM-CEM", "description": "cement OPC 53", "uom": "Bags", "qty": 1000}]}
+    res = tenant.put("/api/rfqs/%d" % rid, json=body)
+    assert res.status_code == 200, res.text
+    after = tenant.get("/api/rfqs/%d" % rid).json()
+    assert after["rfq"]["title"] == "Cement and steel, Block A raft"
+    assert [l["rfq_line_id"] for l in after["lines"]] == [l["rfq_line_id"] for l in d["lines"]]      # the priced lines kept
+
+
+def test_a_cancelled_enquiry_cannot_be_changed(tenant):
+    r = rfq(tenant)
+    rid = r["rfq"]["id"]
+    assert tenant.post("/api/rfqs/%d/cancel" % rid, json={"reason": "bought locally"}).status_code == 200
+    res = tenant.put("/api/rfqs/%d" % rid, json={"title": "x", "lines": [{"description": "y", "qty": 1}]})
+    assert res.status_code == 409
+    assert tenant.get("/api/rfqs").json()["summary"]["cancelled"] == 1

@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 import { loadEnv } from 'vite'
+import { mobileUi } from './vite.mobile-ui.ts'
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig(({ mode, command }) => {
@@ -12,6 +13,7 @@ export default defineConfig(({ mode, command }) => {
   const api = env.VITE_API_TARGET || 'http://127.0.0.1:8931'
 
   const isMobile = mode === 'mobile' || env.VITE_MOBILE === 'true'
+  const build = String(Date.now())
 
   return {
     // Built for web, the app is served by the backend under /next/; in development it owns the root.
@@ -21,15 +23,20 @@ export default defineConfig(({ mode, command }) => {
     // Built into frontend/dist, which is not committed: the deploy builds it (see nixpacks.toml).
     build: { outDir: 'dist', emptyOutDir: true },
     // Each build gets its own stamp, so data saved on the device by an older build is never trusted by a newer one.
-    define: {
-      __BUILD__: JSON.stringify(String(Date.now())),
-      // The phone app's own layout (src/app-mobile) is in the mobile build and the dev server only: for the website's build
-      // this is false, so that folder is not in it at all and nothing done there can change the website.
-      __MOBILE_UI__: JSON.stringify(isMobile || command === 'serve'),
-    },
+    // The same stamp is written to dist/build.json: the server puts it on every answer, and an open app that sees a
+    // newer one loads it (src/lib/freshness.ts).
+    define: { __BUILD__: JSON.stringify(build) },
     plugins: [
+      {
+        name: 'yerp-build-stamp',
+        apply: 'build',
+        generateBundle() {
+          this.emitFile({ type: 'asset', fileName: 'build.json', source: JSON.stringify({ build }) })
+        },
+      },
       react(),
       tailwindcss(),
+      mobileUi(),
       VitePWA({
         // A new build takes over as soon as it is installed. The page in front of the person is not reloaded under
         // them (boot-app.tsx); the next page they open is simply the new one.
@@ -67,11 +74,27 @@ export default defineConfig(({ mode, command }) => {
           // last deploy until the page reloaded itself. The saved app shell is the answer only when the server cannot be
           // reached. The page itself is a couple of kilobytes; the scripts it names still come from the saved copy.
           navigateFallback: null,
+          // Not "/next/ is /next/index.html": that let the saved copy answer the home page itself, so after a deploy the
+          // Command Center came back as the old build however often it was reloaded. Every page asks the server first.
+          directoryIndex: '',
           runtimeCaching: [
             {
               urlPattern: ({ request, url }) => request.mode === 'navigate' && url.pathname.startsWith('/next'),
               handler: 'NetworkOnly',
-              options: { precacheFallback: { fallbackURL: '/next/index.html' } },
+              options: {
+                // No signal at all: the saved app shell opens. The server answering "bad gateway" / "unavailable" /
+                // "timed out" (it is restarting after an update): Railway's own error page would be shown, so ours is
+                // put in its place, from the saved copy, and reloads itself when the server is back.
+                precacheFallback: { fallbackURL: '/next/index.html' },
+                plugins: [{
+                  fetchDidSucceed: async ({ response }: { response: Response }) => {
+                    if (response.status !== 502 && response.status !== 503 && response.status !== 504) return response
+                    const store = (globalThis as unknown as { caches: { match: (url: string, o: object) => Promise<Response | undefined> } }).caches
+                    const saved = await store.match('/next/down.html', { ignoreSearch: true })
+                    return saved ?? response
+                  },
+                }],
+              },
             },
           ],
           maximumFileSizeToCacheInBytes: 3_000_000,

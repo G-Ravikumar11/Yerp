@@ -28,7 +28,7 @@ export interface CellEditorProps<T> {
 const arrows: Record<string, Move> = { ArrowDown: 'down', ArrowUp: 'up', ArrowRight: 'right', ArrowLeft: 'left' }
 
 /** Picks that start with what was typed first, then those that merely contain it. */
-export function filterOptions(options: readonly Option[], text: string): Option[] {
+function filterOptions(options: readonly Option[], text: string): Option[] {
   const w = text.trim().toLowerCase()
   if (!w) return options.slice()
   const starts: Option[] = []

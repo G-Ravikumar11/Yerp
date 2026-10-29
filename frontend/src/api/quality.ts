@@ -16,13 +16,13 @@ export interface Inspection {
   reinspection_number?: string; reinspection_result?: string; reinspection_of_number?: string
   ncrs?: { id: number; number: string; status: string }[]
 }
-export interface CubeResult {
+interface CubeResult {
   id: number; age_days: number; tested_on: string; strengths: number[]; average: number; evaluation: 'meets' | 'below' | 'no_criteria'
   ok: boolean; failed: boolean; spread_ok: boolean; verdict: string; criteria_min: number; criteria_single: number; criteria_ref: string
   lab: string; remarks: string; flagged: boolean; actual_age: number | null; recorded_by: string
 }
-export interface CubeDue { age_days: number; due_on: string; overdue: boolean; today: boolean }
-export interface CubeSchedule { age_days: number; due_on: string; state: 'tested' | 'due' | 'overdue' | 'upcoming' }
+interface CubeDue { age_days: number; due_on: string; overdue: boolean; today: boolean }
+interface CubeSchedule { age_days: number; due_on: string; state: 'tested' | 'due' | 'overdue' | 'upcoming' }
 export interface CubeSet {
   id: number; job_id: number; project?: string; number: string; cast_on: string; location: string; pour_ref: string; cube_ids: string
   supplier: string; docket: string; grade: string; fck: number; slump_mm: number; remarks: string; cast_by: string

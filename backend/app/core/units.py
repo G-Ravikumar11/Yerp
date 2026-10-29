@@ -16,6 +16,8 @@ import re
 ITEM_KINDS = ("RM", "FG")
 CATEGORY_BY_KIND = {"RM": "RAW MATERIAL", "FG": "FINISHED GOOD"}
 ITEM_TYPES = ("Purchased", "Service")
+# The wider list the item master form offers for BOQ work items. ITEM_TYPES stays as it was for sheets and stock.
+BOQ_ITEM_TYPES = ITEM_TYPES + ("Work", "Labour", "Equipment")
 # The permitted units. Same list drives the pickers and the validators, so a
 # value the form offers can never be one the server refuses.
 #
@@ -47,13 +49,15 @@ UNIT_ALIASES = {
     "meter": "Meters", "metre": "Meters", "mtr": "Meters", "m": "Meters",
     "no": "Nos", "each": "Nos", "ea": "Nos", "pcs": "Nos", "piece": "Nos",
     "pieces": "Nos", "unit": "Nos", "number": "Nos",
-    "kg": "Kgs", "kilogram": "Kgs", "kgs": "Kgs",
+    "kg": "Kgs", "kilogram": "Kgs", "kilograms": "Kgs", "kgs": "Kgs", "kilo": "Kgs", "kilos": "Kgs",
     "ton": "MT", "tonne": "MT", "tonnes": "MT", "mt": "MT", "metricton": "MT",
     "bag": "Bags", "qtl": "Quintal", "quintals": "Quintal",
     "ltr": "Litres", "litre": "Litres", "liter": "Litres", "l": "Litres",
     "hour": "Hours", "hr": "Hours", "hrs": "Hours",
     "day": "Days", "month": "Months", "set": "Sets",
     "lumpsum": "Lot", "ls": "Lot", "ls.": "Lot",
+    # A charge made once a month - site hire, a watchman - is counted in months.
+    "lumpsumpermonth": "Months", "permonth": "Months",
     "cubicfeet": "cft", "cuft": "cft", "squarefeet": "sqft", "sft": "sqft",
     "kiloliter": "KL", "kilolitre": "KL",
 }

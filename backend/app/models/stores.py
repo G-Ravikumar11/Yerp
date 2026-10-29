@@ -45,12 +45,41 @@ class DBItem(Base):
     # Below this, the store is running out. Zero means nobody set one, which
     # is not the same as "never reorder" - so it simply never warns.
     reorder_level = Column(Float, default=0.0)
+    # Where an item made from a BOQ line came from: that BOQ and the line's key. A reference only; nothing matches on it alone.
+    source_boq_id = Column(Integer, nullable=True)
+    source_boq_key = Column(String, default="")
     # What this code was last sold or bought at. Prices are not fixed on a
     # contract, so this is an offer rather than a rule: the next order opens
     # with it filled in and whoever is pricing can change it.
     last_rate = Column(Float, default=0.0)
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    # What the BOQ item master adds. `category`/`sub_category` above hold the kind label (RAW MATERIAL | FG) and are
+    # left alone; the work classification (Cement, PCC, Plastering ...) is kept apart from them, from the configurable list.
+    item_category = Column(String, default="", index=True)
+    item_subcategory = Column(String, default="")
+    specification = Column(String, default="")                 # grade / material / specification: M25, Fe550D, 53 grade
+    purchase_rate = Column(Float, default=0.0)                 # a default only: never overwrites a site's finalised rate
+    selling_rate = Column(Float, default=0.0)
+    preferred_supplier = Column(String, default="")
+    remarks = Column(String, default="")
+    created_by_name = Column(String, default="")
+    updated_by_name = Column(String, default="")
+    updated_at = Column(String, default="")
+
+
+class DBItemCategory(Base):
+    """The categories and subcategories an item can be filed under, kept by the business rather than in code.
+
+    A category has no parent; a subcategory points at its category."""
+    __tablename__ = "item_categories"
+    __table_args__ = (UniqueConstraint("client_id", "parent_id", "name", name="uq_item_category"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    parent_id = Column(Integer, ForeignKey("item_categories.id"), nullable=True, index=True)
+    name = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True)
 
 
 class DBCodeSequence(Base):
@@ -210,3 +239,22 @@ class DBStockBalance(Base):
     issued = Column(Float, default=0.0)          # lifetime out
     movements = Column(Integer, default=0)
     updated_at = Column(String, default="")
+
+
+class DBStoreCutover(Base):
+    """The day a company's old store (Stock & Issues, Goods Receipt) moved into the Store Hub.
+
+    Its closing stock became Hub opening stock that day. From then on the old store is a record only: nothing more
+    can be received, issued or moved in it, and its history stays readable and keeps counting in project costs.
+    """
+    __tablename__ = "store_cutovers"
+    __table_args__ = (
+        UniqueConstraint('client_id', name='uq_store_cutover_client'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    cutover_date = Column(String, nullable=False)        # YYYY-MM-DD: the Hub opening stock is as on this day
+    done_by_name = Column(String, default="")
+    done_at = Column(String, default="")
+    summary = Column(Text, default="")                   # JSON: what was carried into which Hub store

@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { Plus } from 'lucide-react'
+import { FileText, Plus } from 'lucide-react'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Button, Field, Input, Modal, NumField, Select, Stat, StatGrid } from '@/components/ui'
-import { createAccount, ledgerKeys, useAccounts, useBook, type Book } from '@/api/ledger'
+import { createAccount, ledgerKeys, useAccounts, useBook, voucherUrl, type Book } from '@/api/ledger'
 import { useAction } from '@/lib/mutate'
 import { formatDate, today } from '@/lib/format'
 import { compactINR, formatINR } from '@/lib/utils'
@@ -51,6 +51,7 @@ export function BankTab() {
     { id: 'in', header: 'In', align: 'right', cell: (r) => (r.received ? formatINR(r.received) : '') },
     { id: 'out', header: 'Out', align: 'right', cell: (r) => (r.paid ? formatINR(r.paid) : '') },
     { id: 'bal', header: 'Balance', align: 'right', cell: (r) => <span className="font-semibold">{formatINR(r.balance)}</span> },
+    { id: 'voucher', header: '', align: 'right', width: '3rem', cell: (r) => <Button size="icon-sm" variant="ghost" asChild><a href={voucherUrl(r.id)} target="_blank" rel="noreferrer" aria-label={`Voucher ${r.number}`} title="Print the voucher"><FileText /></a></Button> },
   ]
 
   return (
@@ -69,7 +70,7 @@ export function BankTab() {
             <Stat label="Paid out" value={compactINR(b?.paid)} loading={book.isPending} />
             <Stat label="Balance" value={compactINR(b?.closing)} loading={book.isPending} />
           </StatGrid>
-          <DataTable label="Bank book" rows={b?.rows ?? []} columns={columns} rowKey={(r) => r.number} loading={book.isPending} empty="Nothing through this account yet." />
+          <DataTable label="Bank book" rows={b?.rows ?? []} columns={columns} rowKey={(r) => r.id} loading={book.isPending} empty="Nothing through this account yet." />
         </>
       )}
       <AccountModal open={adding} onClose={() => setAdding(false)} onAdded={setPicked} />

@@ -1,7 +1,7 @@
-"""Incidents, toolbox talks and work permits."""
+"""Incidents, toolbox talks, work permits, and the screening of workers before they start."""
 from datetime import datetime
 
-from sqlalchemy import Column, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text
 
 from app.db.session import Base
 
@@ -71,4 +71,84 @@ class DBWorkPermit(Base):
     closed_at = Column(String, default="")
     closed_by = Column(String, default="")
     closure_note = Column(Text, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBWorkerScreening(Base):
+    """A worker screened before starting on site, after the company's own paper "Screening Of Worker" form: who
+    they are, their trade, their physical and education details, their previous work, and the proof - a photo and
+    a medical certificate, kept as files attached to this record (attached_type "worker")."""
+    __tablename__ = "worker_screenings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    number = Column(String, default="", index=True)             # WKR-0001, also the form's "Worker ID No"
+    name = Column(String, default="")
+    age = Column(Integer, default=0)
+    address = Column(Text, default="")
+    trade = Column(String, default="", index=True)              # one of WORKER_TRADES; the form's "Suitable for employment as"
+    screened_on = Column(String, default="", index=True)
+    screened_by = Column(String, default="")
+
+    contractor_name = Column(String, default="")                # Name of the Contractor / Sub-Contractor
+    father_name = Column(String, default="")                    # Father / Husband's Name
+    dob = Column(String, default="")
+    sex = Column(String, default="")
+    marital_status = Column(String, default="")
+    children = Column(Integer, default=0)
+    mother_tongue = Column(String, default="")
+    other_languages = Column(String, default="")
+    emergency_contact = Column(String, default="")
+    phone = Column(String, default="")                           # the worker's own mobile, 10 digits
+    identification_mark = Column(String, default="")
+
+    vision_normal = Column(Boolean, default=True)
+    vision_problem = Column(String, default="")
+    health_normal = Column(Boolean, default=True)
+    health_problem = Column(String, default="")
+    weight_kg = Column(Float, default=0.0)
+    height_cm = Column(Float, default=0.0)
+    blood_group = Column(String, default="")
+
+    education = Column(Text, default="[]")                      # [{exam, year, school}]
+    experience = Column(Text, default="[]")                     # [{organization, project_site, category, period, salary}]
+
+    pan = Column(String, default="")                             # ABCDE1234F
+    aadhaar = Column(String, default="")                         # 12 digits; shown masked, only the last four
+    signature = Column(Text, default="")                         # the photo of the worker's signature, a PNG data: URI
+    signed_at = Column(String, default="")
+    certificates_verified = Column(Boolean, default=False)
+    trial_briefed = Column(Boolean, default=False)              # seen and briefed the site's EHS rules
+    safety_officer_name = Column(String, default="")
+
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBEquipmentCheck(Base):
+    """One inspection of a tool, an extinguisher or an electrical board, on the company's paper checklist. The answers,
+    the readings and the sign-offs are kept as they were filled in; the photos are files attached to this record
+    (attached_type "equipment_check", caption "item:<key>")."""
+    __tablename__ = "equipment_checks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    number = Column(String, default="", index=True)             # CHK-0001
+    form_type = Column(String, default="", index=True)          # a key of EQUIPMENT_CHECKS
+    equipment_no = Column(String, default="", index=True)       # the equipment, extinguisher or board number
+    specs = Column(String, default="")
+    location = Column(String, default="")
+    extinguisher_type = Column(String, default="")
+    board_type = Column(String, default="")
+    contractor_name = Column(String, default="")
+    inspection_date = Column(String, default="", index=True)
+    next_inspection_date = Column(String, default="", index=True)
+    items = Column(Text, default="[]")                          # [{key, answer, remarks}]
+    readings = Column(Text, default="{}")                       # {wheel_rpm, machine_rpm, earth_resistance}
+    signoffs = Column(Text, default="{}")                       # {role: {name, date}}
+    decision = Column(String, default="")                       # "" | accepted | rejected  (the client / PMC review)
+    decision_by = Column(String, default="")
+    decision_on = Column(String, default="")
+    recorded_by = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))

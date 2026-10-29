@@ -47,7 +47,8 @@ export const usePortalMe = () =>
 
 export const usePortal = <T,>(key: string, url: string) => useQuery({ queryKey: ['portal', key, url], queryFn: () => get<T>(url) })
 
-export const portalLogin = (email: string, password: string) => api('/api/portal/login', { method: 'POST', body: { email, password }, quiet: true })
+export const portalLogin = (email: string, password: string, check?: { captcha_token: string; captcha_answer: string } | null) =>
+  api('/api/portal/login', { method: 'POST', body: { email, password, ...(check ?? {}) }, quiet: true })
 export const portalLogout = () => post('/api/portal/logout')
 export const portalInvite = (token: string) => api<PortalInvite>('/api/portal/invite?token=' + encodeURIComponent(token), { quiet: true })
 export const portalAcceptInvite = (token: string, password: string) => post('/api/portal/accept-invite', { token, password })

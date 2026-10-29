@@ -12,9 +12,11 @@ export interface FilterOptions<T> {
   date?: (row: T) => string
   /** Further things to narrow by - the project, the contractor, the trade - each a drop-down of what the list holds. */
   facets?: Record<string, { label: string; get: (row: T) => string }>
+  /** What the search box starts with: a link from another screen that names the record ("?q=PO-0004"). */
+  initialQ?: string
 }
 
-export interface Facet {
+interface Facet {
   key: string
   label: string
   value: string
@@ -46,12 +48,12 @@ export interface ListFilters<T> {
  * the app narrows the same way, so a person learns it once.
  */
 export function useListFilters<T>(rows: readonly T[] | undefined, opts: FilterOptions<T>): ListFilters<T> {
-  const [q, setQ] = useState('')
+  const [q, setQ] = useState(opts.initialQ ?? '')
   const [status, setStatus] = useState('')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [chosen, setChosen] = useState<Record<string, string>>({})
-  const list = rows ?? []
+  const list = useMemo(() => rows ?? [], [rows])
   const facetDefs = opts.facets ?? {}
 
   const statuses = useMemo(() => (opts.status ? [...new Set(list.map(opts.status).filter(Boolean))].sort() : []), [list, opts.status])
@@ -198,7 +200,7 @@ export function FilterBar<T>({ filters, placeholder = 'Search...', children }: {
       {chips.length > 0 && (
         <div className="flex flex-wrap items-center gap-2" aria-label="Filters in use">
           {chips.map((c) => (
-            <button key={c.key} type="button" onClick={c.off} aria-label={`Remove filter ${c.text}`} className="inline-flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary-soft px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-primary/20">
+            <button key={c.key} type="button" onClick={c.off} aria-label={`Remove filter ${c.text}`} className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary-soft px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-primary/20">
               {c.text} <X className="size-3" />
             </button>
           ))}

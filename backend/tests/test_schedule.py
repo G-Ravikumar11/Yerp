@@ -28,10 +28,30 @@ def test_an_activity_is_coded_in_tens(tenant):
     assert [a["code"] for a in s["activities"]] == ["A10", "A20"]
 
 
+def working(a, b):
+    """Working days from a to b, both counted: Sundays are off unless the project says otherwise."""
+    a, b = date.fromisoformat(a), date.fromisoformat(b)
+    return sum(1 for i in range((b - a).days + 1) if (a + timedelta(days=i)).isoweekday() != 7)
+
+
+def snap(day):
+    """A start that falls on a Sunday is moved to the Monday."""
+    x = date.fromisoformat(day)
+    return (x + timedelta(days=1)).isoformat() if x.isoweekday() == 7 else day
+
+
+def last_working(day):
+    """An end that falls on a Sunday comes back to the Saturday: its days are working days."""
+    x = date.fromisoformat(day)
+    return (x - timedelta(days=1)).isoformat() if x.isoweekday() == 7 else day
+
+
 def test_planned_progress_runs_across_the_span(tenant):
+    """A working day at a time: by the end of today, the share of its working days that have passed."""
     j = job(tenant)
     s = act(tenant, j, "Excavation", d(-10), d(10))
-    assert s["activities"][0]["planned_percent"] == 50.0
+    expected = round(working(d(-10), d(0)) / working(d(-10), d(10)) * 100, 1)
+    assert s["activities"][0]["planned_percent"] == expected
     assert s["activities"][0]["state"] == "behind"          # planned half, nothing done
 
 
@@ -103,7 +123,8 @@ def test_a_schedule_drawn_from_a_work_order(tenant):
     assert out.status_code == 200, out.text
     acts = out.json()["schedule"]["activities"]
     assert len(acts) == 1 and acts[0]["work_order_line_id"]
-    assert acts[0]["planned_start"] == d(0) and acts[0]["planned_finish"] == d(60)
+    # the programme does not start on a Sunday
+    assert acts[0]["planned_start"] == (d(1) if date.today().weekday() == 6 else d(0)) and acts[0]["planned_finish"] == (d(59) if (date.today() + timedelta(days=60)).weekday() == 6 else d(60))
     again = tenant.post("/api/jobs/%d/schedule/from-work-order/%d" % (job_id, wo["id"]),
                         json={"start": d(0), "finish": d(60)})
     assert again.status_code == 409
@@ -150,10 +171,16 @@ def test_the_day_plan_lists_what_is_due_overdue_and_next(tenant):
     act(tenant, j, "Handover", d(40), d(45))        # too far off to list
     day = tenant.get("/api/jobs/%d/schedule/day" % j["id"]).json()
     assert [a["name"] for a in day["today"]] == ["Excavation"]
-    assert [a["name"] for a in day["overdue"]] == ["Survey"] and day["overdue"][0]["days_late"] == 3
-    assert [a["name"] for a in day["soon"]] == ["Raft"] and day["soon"][0]["starts_in"] == 3
+    late = (date.today() - date.fromisoformat(last_working(d(-3)))).days
+    assert [a["name"] for a in day["overdue"]] == ["Survey"] and day["overdue"][0]["days_late"] == late
+    starts = (date.fromisoformat(snap(d(3))) - date.today()).days       # a Sunday start is the Monday
+    assert [a["name"] for a in day["soon"]] == ["Raft"] and day["soon"][0]["starts_in"] == starts
     work = day["today"][0]
-    assert work["target_today"] == 11.1 and work["actual_percent"] == 0 and work["to_catch_up"] == work["planned_percent"] > 0
+    # the day's share: a working day's worth of its working days (nothing on a Sunday)
+    s0, n = snap(d(-4)), None
+    n = working(s0, d(5))
+    target = round(round(working(s0, d(0)) / n * 100, 1) - round(working(s0, d(-1)) / n * 100, 1), 1)
+    assert work["target_today"] == target and work["actual_percent"] == 0 and work["to_catch_up"] == work["planned_percent"] > 0
     assert day["summary"]["working"] == 1 and day["summary"]["overdue"] == 1 and day["summary"]["starting_soon"] == 1
 
 
@@ -397,10 +424,14 @@ def test_the_chart_reports_overdue_work_delays_and_the_timeline(tenant):
     act(tenant, j, "Excavation", d(-20), d(-5))
     s = act(tenant, j, "Raft", d(-4), d(30), depends_on_id=tenant.get("/api/jobs/%d/schedule" % j["id"]).json()["activities"][0]["id"])
     late, ok = s["activities"]
-    assert late["overdue"] and late["days_late"] == 5 and late["delayed"]
+    # five days past its end - six when that end falls on a Sunday, which is no working day, so it ends the Saturday
+    late_by = (date.today() - date.fromisoformat(last_working(d(-5)))).days
+    assert late["overdue"] and late["days_late"] == late_by and late["delayed"]
     assert not ok["overdue"] and ok["delayed"]                  # it cannot start until the late one is done
     assert s["summary"]["overdue"] == 1
-    assert s["summary"]["start"] == d(-20) and s["summary"]["end"] == d(30) and s["summary"]["duration_days"] == 51
+    first, last = snap(d(-20)), last_working(d(30))           # a Sunday start or end moves to the working day
+    span = (date.fromisoformat(last) - date.fromisoformat(first)).days + 1
+    assert s["summary"]["start"] == first and s["summary"]["end"] == last and s["summary"]["duration_days"] == span
     # Finished work is not overdue, and a milestone is counted and tracked.
     tenant.post("/api/schedule/activities/%d/progress" % late["id"], json={"percent": 100})
     s = act(tenant, j, "Handover", d(31), d(31), is_milestone=True)
@@ -548,7 +579,7 @@ def test_an_activity_comes_with_its_tasks_on_every_day_and_its_history(tenant):
     assert out["job"]["id"] == j["id"] and a["name"] == "Excavation" and a["code"]
     assert [t["date"] for t in a["tasks"]] == [d(-1), d(0), d(2)], "every day, in date order"
     assert a["tasks_total"] == 3 and a["tasks_done"] == 1 and round(a["actual_percent"]) == 33
-    assert a["editable"] is True and a["planned_start"] == d(-4) and a["state"]
+    assert a["editable"] is True and a["planned_start"] == snap(d(-4)) and a["state"]
     assert out["history"][0]["percent"] == 33.3 and out["history"][0]["note"] == "From its tasks"
 
 

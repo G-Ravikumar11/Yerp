@@ -1,8 +1,8 @@
 """Hiring: requisitions, forms, interviews, offers and the documents asked of people."""
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import relationship
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy.orm import column_property, deferred, relationship
 
 from app.db.session import Base
 
@@ -203,7 +203,9 @@ class DBDocument(Base):
     file_name = Column(String, default="")
     file_type = Column(String, default="")
     file_size = Column(Integer, default=0)
-    file_data = Column(Text, default="")
+    # The file itself is read only when somebody opens it: a list of a person's documents
+    # otherwise carried every scan across the network to show their names.
+    file_data = deferred(Column(Text, default=""))
     uploaded_by = Column(String, default="HR")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
@@ -232,7 +234,9 @@ class DBDocumentRequirement(Base):
     # An optional blank form for the employee to download, complete and return.
     template_file_name = Column(String, default="")
     template_file_type = Column(String, default="")
-    template_file_data = Column(Text, default="")
+    # Read only to hand the form out; lists ask `has_template`, which the database answers without sending it.
+    template_file_data = deferred(Column(Text, default=""))
+    has_template = column_property(func.coalesce(func.length(template_file_data), 0) > 0)
 
     applies_to = Column(String, default="all")     # all | department | level
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)

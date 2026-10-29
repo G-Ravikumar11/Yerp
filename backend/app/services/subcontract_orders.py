@@ -242,17 +242,6 @@ def wo_involved_ids(db, client_id, emp_id):
         seen |= more
 
 
-def wo_visible_to(db, order, emp_id):
-    """Whether a member of staff may see this order.
-
-    Only the ones they have a hand in: they made it, sent it, or have it to sign (now or already).
-    Nobody sees the business's whole book but the owner.
-    """
-    if not emp_id:
-        return True
-    return order.id in wo_involved_ids(db, order.client_id, emp_id)
-
-
 def record_wo_action(db, client, order, actor_id, actor_name, action, was, comments=""):
     db.add(models.DBSubcontractApproval(
         order_id=order.id, client_id=client.id, actor_id=actor_id,
@@ -321,6 +310,11 @@ def wo_billing_schedule(db, order):
         rows.append({"head": "Retention", "rate": order.retention_percent,
                      "amount": money(order.retention_amount), "kind": "hold",
                      "note": "withheld from each bill, released after the defect period"})
+    if order.ld_percent_per_week:
+        rows.append({"head": "Liquidated damages", "rate": order.ld_percent_per_week, "amount": 0.0, "kind": "info",
+                     "note": "%g%% of the order value for each week past %s%s, taken off the bills" % (
+                         order.ld_percent_per_week, order.completion_date or "the completion date",
+                         (", up to %g%%" % order.ld_cap_percent) if order.ld_cap_percent else "")})
     rows.append({"head": "TDS on contractors (194C)", "rate": order.tds_rate or 0,
                  "amount": money(order.tds_amount), "kind": "less"})
     if order.labour_cess_percent:
@@ -368,10 +362,15 @@ def prime_wo_item_counts(db, order_ids):
     db.info["wo_item_counts"] = {i: got.get(i, 0) for i in ids}
 
 
+def _own(row, order):
+    """A related row only when it is this company's - an id from another company prints nothing of theirs."""
+    return row if row is not None and getattr(row, "client_id", None) == order.client_id else None
+
+
 def wo_dict(db, order, detail=False):
-    bu = by_id(db, models.DBBusinessUnit, order.business_unit_id)
-    con = by_id(db, models.DBContractor, order.contractor_id)
-    job = by_id(db, models.DBJob, order.job_id)
+    bu = _own(by_id(db, models.DBBusinessUnit, order.business_unit_id), order)
+    con = _own(by_id(db, models.DBContractor, order.contractor_id), order)
+    job = _own(by_id(db, models.DBJob, order.job_id), order)
     row = {
         "id": order.id, "wo_number": order.wo_number or "", "status": order.status,
         "submitted_by": order.submitted_by,
@@ -404,6 +403,16 @@ def wo_dict(db, order, detail=False):
         "billing_cycle": order.billing_cycle or "",
         "payment_days": order.payment_days or 0,
         "copied_from_id": order.copied_from_id,
+        "bank_guarantee_number": order.bank_guarantee_number or "",
+        "bank_guarantee_bank": order.bank_guarantee_bank or "",
+        "bank_guarantee_returned_at": order.bank_guarantee_returned_at or "",
+        "bank_guarantee_state": bg_state(order.bank_guarantee_validity, order.bank_guarantee_returned_at)
+        if order.bank_guarantee_applicable else "",
+        "ld_percent_per_week": order.ld_percent_per_week or 0,
+        "ld_cap_percent": order.ld_cap_percent or 0,
+        "actual_completion_date": order.actual_completion_date or "",
+        "closed_at": order.closed_at or "", "closed_by_name": order.closed_by_name or "",
+        "close_reason": order.close_reason or "",
         "rejection_reason": order.rejection_reason or "",
         "approved_at": order.approved_at or "", "executed_at": order.executed_at or "",
         "created_at": order.created_at or "",
@@ -439,6 +448,23 @@ def wo_dict(db, order, detail=False):
         row["pending_with"] = wo_waiting_names(db, owner_client, order)
         row["approval_route"] = wo_route(db, order)
         row["revision_blockers"] = wo_revision_blockers(db, order)
+        row["advance_outstanding"] = advance_outstanding(db, order)
+        # What approving it would run into, said before the approver presses the button.
+        if order.status in ("DRAFT", "PROVISIONAL"):
+            row["boq_warnings"] = boq_breaches(db, order)
+            short = tds_shortfall(db, order)
+            row["tds_warning"] = short or ""
+            row["compliance_warnings"] = compliance_problems(db, order.client_id, order.contractor_id)
+            row["unconfirmed_budgets"] = wo_unconfirmed_budgets(db, order)
+        else:
+            row["boq_warnings"], row["tds_warning"], row["compliance_warnings"] = [], "", []
+            row["unconfirmed_budgets"] = []
+        if order.status in ("APPROVED", "EXECUTED"):
+            row["close_blockers"] = close_blockers(db, order)
+        if order.status == "CLOSED":
+            row["billed_value"] = closed_order_billed_value(db, order)
+        statutory, why = statutory_tds(con)
+        row["statutory_tds"] = {"rate": statutory, "why": why} if statutory is not None else None
         if order.copied_from_id:
             src = db.query(models.DBSubcontractOrder.wo_number).filter(
                 models.DBSubcontractOrder.id == order.copied_from_id).first()
@@ -500,8 +526,11 @@ def contractor_dict(c):
         doc_files = json.loads(c.document_names or "{}")
     except Exception:
         doc_files = {}
+    tds_rate, tds_why = statutory_tds(c)
     return {"id": c.id, "company_name": c.company_name or "",
             "document_files": doc_files,
+            # The TDS the law sets for paying them, so a new order to them starts at it.
+            "tds_rate": tds_rate, "tds_basis": tds_why,
             "vendor_code": c.vendor_code or "", "contact_person": c.contact_person or "",
             "email": c.email or "", "phone_number": c.phone_number or "",
             "pan": c.pan or "", "gst_number": c.gst_number or "",
@@ -541,7 +570,7 @@ def next_vendor_code(db, client_id):
     return "%s%04d" % (prefix, highest + 1)
 
 
-def contractor_form_fields(con, body, fill_blanks_only=False):
+def contractor_form_fields(con, body):
     """The registration form's own boxes from a request onto the record."""
     for key in REGISTRATION_FIELDS:
         v = getattr(body, key, None)
@@ -647,9 +676,13 @@ def wo_committed_by_budget(db, client_id, exclude_order_id=None):
                      models.DBSubcontractItem.budget_id.isnot(None)))
     if exclude_order_id:
         query = query.filter(models.DBSubcontractOrder.id != exclude_order_id)
-    return {budget_id: money(total or 0)
-            for budget_id, total in query.group_by(
-                models.DBSubcontractItem.budget_id).all()}
+    out = {budget_id: money(total or 0)
+           for budget_id, total in query.group_by(
+               models.DBSubcontractItem.budget_id).all()}
+    # A closed order holds only what was billed on it; what it never did goes back to the allocation.
+    for budget_id, spent in closed_spend_by_budget(db, client_id, exclude_order_id).items():
+        out[budget_id] = money(out.get(budget_id, 0.0) + spent)
+    return out
 
 
 def wo_budget_rows(db, client_id, job_id, order=None):
@@ -686,6 +719,8 @@ def wo_budget_rows(db, client_id, job_id, order=None):
         rows.append({
             "id": b.id, "code": b.code or "", "name": b.name or "",
             "department": b.department or "", "notes": b.notes or "",
+            "set_by": b.set_by_name or "", "confirmed": b.confirmed is not False,
+            "confirmed_by": b.confirmed_by_name or "",
             "allocated": allocated,
             "committed": elsewhere,
             "this_order": this_order,
@@ -727,6 +762,29 @@ def wo_budget_breaches(db, client, order):
                    format_money_plain(row["allocated"]),
                    format_money_plain(row["committed"] + row["this_order"])))
     return breaches
+
+
+def wo_unconfirmed_budgets(db, order):
+    """Allocations this order spends that were set or raised by somebody who cannot approve orders and that no
+    approver has signed for yet. Approving the order confirms them, so the approver is told so beforehand."""
+    ids = {r[0] for r in db.query(models.DBSubcontractItem.budget_id).filter(
+        models.DBSubcontractItem.order_id == order.id, models.DBSubcontractItem.budget_id.isnot(None)).all()}
+    if not ids:
+        return []
+    return ["%s - %s set by %s; approving this order confirms it." % (
+                b.name or b.code or "A cost centre", format_money_plain(b.allocated_amount), b.set_by_name or "staff")
+            for b in db.query(models.DBProjectBudget).filter(
+                models.DBProjectBudget.id.in_(list(ids)), models.DBProjectBudget.client_id == order.client_id,
+                models.DBProjectBudget.confirmed.is_(False)).all()]
+
+
+def wo_confirm_budgets(db, order, actor_name):
+    ids = {r[0] for r in db.query(models.DBSubcontractItem.budget_id).filter(
+        models.DBSubcontractItem.order_id == order.id, models.DBSubcontractItem.budget_id.isnot(None)).all()}
+    for b in db.query(models.DBProjectBudget).filter(
+            models.DBProjectBudget.id.in_(list(ids) or [0]), models.DBProjectBudget.client_id == order.client_id,
+            models.DBProjectBudget.confirmed.is_(False)).all():
+        b.confirmed, b.confirmed_by_name = True, actor_name or ""
 
 
 def wo_copy_lines(db, source, target):
@@ -828,6 +886,7 @@ def wo_ready_to_submit(db, order):
     if not (order.completion_date or "").strip():
         missing.append("a completion date")
     missing += wo_budget_missing(db, order)
+    missing += bank_guarantee_missing(order)
     # On a project with a BOQ, every line given to a sub contractor must be a line of that BOQ, so what is given out adds up against it.
     items = db.query(models.DBSubcontractItem).filter(models.DBSubcontractItem.order_id == order.id).all()
     loose = boq_tie_subcontract_lines(db, order.client_id, order.job_id, items)
@@ -1123,23 +1182,45 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
                      "Approve it in Approvals first." % (
                          con.company_name, con.vendor_code or "no code",
                          "waiting for approval" if con.registration_status == "PENDING" else "sent back"))
-        # The budget is checked here and nowhere earlier. A draft may be priced
-        # at any figure - finding out it is too big is what pricing it is for -
-        # but approving it is the moment the business is committed, so it is
-        # the moment somebody has to knowingly overrun the allocation.
+        # Still complete: an allocation can have been changed since the order was sent.
+        missing = wo_budget_missing(db, order) + bank_guarantee_missing(order)
+        if missing:
+            raise HTTPException(409, "This order still needs " + ", ".join(missing) + ".")
+        # The contractor's papers: an order is not given to somebody who could not then be paid.
+        papers = compliance_gate(db, client.id, order.contractor_id, actor_id, comments, "given an order")
+        # TDS below what the law asks is the Master's to allow (a lower-deduction certificate), with the reason.
+        short = tds_shortfall(db, order)
+        if short:
+            if actor_id is not None:
+                raise HTTPException(409, short + " Put the right rate on the order, or ask the Master to approve it "
+                                                 "with the reason (a lower deduction certificate, say).")
+            if not (comments or "").strip():
+                raise HTTPException(409, short + " Say why it is lower - a lower deduction certificate, say - to "
+                                                 "approve it anyway.")
+        # The budget and the BOQ are checked here and nowhere earlier. A draft may be priced at any figure - finding
+        # out it is too big is what pricing it is for - but approving it is the moment the business is committed,
+        # so it is the moment somebody has to knowingly overrun the allocation or the client's BOQ.
         breaches = wo_budget_breaches(db, client, order)
-        if breaches and not override:
-            raise HTTPException(
-                409, "This order overruns the project allocation: "
-                     + "; ".join(breaches) + ". Approve with an override, "
-                     "saying why, to commit it anyway.")
-        if breaches:
+        boq = boq_breaches(db, order)
+        if (breaches or boq) and not override:
+            parts = []
+            if breaches:
+                parts.append("This order overruns the project allocation: " + "; ".join(breaches) + ".")
+            if boq:
+                parts.append("It goes past the project BOQ: " + "; ".join(boq) + ".")
+            raise HTTPException(409, " ".join(parts) + " Approve with an override, saying why, to commit it anyway.")
+        if breaches or boq:
             if not (comments or "").strip():
                 raise HTTPException(
                     400, "An overrun has to be explained. Say why the "
-                         "allocation is being exceeded.")
-            comments = "Budget override - " + comments.strip() + \
-                       " (" + "; ".join(breaches) + ")"
+                         "allocation or the BOQ is being exceeded.")
+            comments = ("Budget override - " if breaches else "BOQ override - ") + comments.strip() + \
+                " (" + "; ".join(breaches + boq) + ")"
+        elif short:
+            comments = "TDS below the statutory rate - " + comments.strip() + " (" + short + ")"
+        if papers:
+            comments = ((comments or "").strip() + " | " if (comments or "").strip() else "") + papers
+        wo_confirm_budgets(db, order, actor_name)
         if order.supersedes_id:
             predecessor = wo_take_over_history(db, client, order)
         order.approved_by = actor_id
@@ -1147,6 +1228,26 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
         order.rejection_reason = ""
     elif action == "EXECUTE":
         order.executed_at = now
+    elif action == "CLOSE":
+        blockers = close_blockers(db, order)
+        if blockers:
+            raise HTTPException(409, "%s cannot be closed yet. %s" % (order.wo_number, " ".join(blockers)))
+        if not (order.actual_completion_date or "").strip():
+            raise HTTPException(400, "When did the work actually finish? The defects period runs from that date.")
+        owed = advance_outstanding(db, order)
+        if owed > 0:
+            if actor_id is not None or not (comments or "").strip():
+                raise HTTPException(409, "%s of the mobilisation advance on %s has not been recovered. Take it on the "
+                                         "final bill%s." % (inr(owed), order.wo_number,
+                                                            ", or give a reason to close it regardless (it is then "
+                                                            "owed back outside the bills)" if actor_id is None
+                                                            else ", or ask the Master to close it with a reason"))
+            comments = "Closed with %s of advance unrecovered - %s" % (inr(owed), comments.strip())
+        if not (comments or "").strip():
+            raise HTTPException(400, "Say why it is being closed - finished, short-closed, terminated.")
+        order.closed_at = now
+        order.closed_by_name = actor_name or ""
+        order.close_reason = (comments or "").strip()[:1000]
     elif action == "CANCEL":
         # Work measured, billed or advanced against an order is a running
         # account with the contractor; cancelling the order left it pointing at
@@ -1190,17 +1291,19 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
 _FK_LOCK = threading.Lock()
 
 
-def _fk_map(db):
-    """Every foreign key in the live database, by the table it points at. Reading the schema is slow, so it is
-    kept until the set of tables changes - which is when it could have."""
+def _schema(db):
+    """The live database's foreign keys (by the table they point at) and each table's columns.
+
+    Read once and kept for as long as the server runs. Tables change only when the server starts and brings an older
+    database up to date - before any delete - so reading the schema again on every step of a delete (as this once did,
+    to see whether the tables had changed) only made each delete slower: on Postgres every such read is a slow
+    catalogue query. forget_schema() reads it again."""
     from sqlalchemy import inspect as sa_inspect
     bind = db.get_bind()
-    insp = sa_inspect(bind)
-    names = tuple(sorted(insp.get_table_names()))
-    key = (str(bind.url), names)
+    key = str(bind.url)
     with _FK_LOCK:
         if key not in _FK_CACHE:
-            _FK_CACHE.clear()
+            insp = sa_inspect(bind)
             graph = {}
             # One query per kind for the whole schema; reading it a table at a time was hundreds of round trips.
             columns = insp.get_multi_columns()
@@ -1213,8 +1316,25 @@ def _fk_map(db):
                     cols = fk.get("constrained_columns", [])
                     if len(cols) == 1 and fk.get("referred_table"):
                         graph.setdefault(fk["referred_table"], []).append((table, cols[0], nullable.get(cols[0], True), pk))
-            _FK_CACHE[key] = graph
+            _FK_CACHE[key] = {"graph": graph,
+                              "columns": {table: {c["name"] for c in cols} for (schema, table), cols in columns.items()}}
     return _FK_CACHE[key]
+
+
+def _fk_map(db):
+    """Every foreign key in the live database, by the table it points at."""
+    return _schema(db)["graph"]
+
+
+def table_columns(db, table):
+    """The columns a table has in the live database."""
+    return _schema(db)["columns"].get(table, set())
+
+
+def forget_schema():
+    """Read the schema again at the next delete. Only for a table made or dropped while the server runs (a test)."""
+    with _FK_LOCK:
+        _FK_CACHE.clear()
 
 
 def referrers_present(db, edges, ids):
@@ -1608,11 +1728,6 @@ def run_bulk_delete(ids, delete_one, db):
     return {"ok": not failed, "deleted": done, "gone": gone, "failed": failed, "message": ", ".join(parts) + "."}
 
 
-def contractor_released(db, client_id, order_id=0):
-    return money(sum(r.amount or 0 for r in _live_releases(db, client_id, "contractor")
-                     if not order_id or r.sub_order_id == order_id))
-
-
 def wo_variations(db, wo, cutoff):
     """The variations agreed on a client order drawn from a BOQ, up to a date: the order's value as first placed, each
     variation, and the value as varied. None for an order with no BOQ or no approved variation by then."""
@@ -1819,3 +1934,16 @@ from app.services.crm import advance_paid, next_item_code, norm_name, settled_on
 from app.services.invoicing import active_irn
 from app.services.subcontract_billing import _live_releases, released_retention, sub_gross_measured
 from app.services.boq import boq_of_job, boq_tie_subcontract_lines
+from app.services.subcontract_rules import (
+    advance_outstanding,
+    bank_guarantee_missing,
+    bg_state,
+    boq_breaches,
+    close_blockers,
+    closed_order_billed_value,
+    closed_spend_by_budget,
+    compliance_gate,
+    compliance_problems,
+    statutory_tds,
+    tds_shortfall,
+)

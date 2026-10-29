@@ -2,11 +2,11 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.items import BOM_COLUMNS, BOM_HEADERS, ITEM_COLUMNS, ITEM_HEADERS
 from app.core.audit import log_audit
@@ -24,7 +24,7 @@ from app.core.sheets import (
     sheet_note,
     sheet_response,
 )
-from app.core.units import CATEGORY_BY_KIND, ITEM_KINDS, ITEM_TYPES, UNITS_OF_MEASURE, canonical_unit
+from app.core.units import BOQ_ITEM_TYPES, CATEGORY_BY_KIND, ITEM_KINDS, ITEM_TYPES, UNITS_OF_MEASURE, canonical_unit
 from app.schemas.items import BomIn, ItemBulkIn, ItemCommitIn, ItemIn, MDDecision
 from app.services.approvals import set_approval_display_status
 from app.services.items import (
@@ -45,7 +45,7 @@ router = APIRouter()
 
 @router.get("/api/erp/items/template")
 def erp_item_template(kind: str = "RM", request: Request = None,
-                      db: Session = Depends(get_db)):
+                      db: Session = Depends(get_read_db)):
     require_items_access(request, db)
     kind = kind.upper()
     if kind not in ITEM_KINDS:
@@ -147,7 +147,7 @@ async def erp_items_analyse(request: Request, file: UploadFile = File(...),
             rows.append(row)
             continue
         row["_kind"] = row_kind
-        row["_repairs"] = repair_row(row, row_kind, set())
+        row["_repairs"] = repair_row(row, row_kind)
         repairs.extend(row["_repairs"])
         rows.append(row)
 
@@ -257,12 +257,13 @@ def erp_items_commit(body: ItemCommitIn, request: Request, db: Session = Depends
 
 
 @router.get("/api/erp/vocabulary")
-def erp_vocabulary(request: Request, db: Session = Depends(get_db)):
+def erp_vocabulary(request: Request, db: Session = Depends(get_read_db)):
     """Everything the pickers need, so the browser never invents an option."""
     require_erp_read(request, db)
     return {
         "kinds": list(ITEM_KINDS),
         "item_types": list(ITEM_TYPES),
+        "boq_item_types": list(BOQ_ITEM_TYPES),
         "units": list(UNITS_OF_MEASURE),
         "categories": CATEGORY_BY_KIND,
         "tax_rates": ["0%", "5%", "12%", "18%", "28%"],
@@ -271,7 +272,7 @@ def erp_vocabulary(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/erp/items/next-code")
 def erp_next_item_code(request: Request, kind: str = "RM",
-                       db: Session = Depends(get_db)):
+                       db: Session = Depends(get_read_db)):
     require_items_access(request, db)
     # Peek only: nothing is reserved until the item is saved, so a picker that
     # is opened and abandoned does not burn a code.
@@ -420,9 +421,16 @@ def erp_build_bom(body: BomIn, request: Request, db: Session = Depends(get_db)):
             "message": "Budget saved for %s: %d line(s)." % (wo.number, len(allocations))}
 
 
+def _kind_counts(db, client_id):
+    """How many items of each kind, in one query rather than one per kind."""
+    found = dict(db.query(models.DBItem.kind, func.count(models.DBItem.id)).filter(
+        models.DBItem.client_id == client_id).group_by(models.DBItem.kind).all())
+    return {k: found.get(k, 0) for k in ITEM_KINDS}
+
+
 @router.get("/api/erp/items")
 def erp_list_items(request: Request, kind: str = "", q: str = "",
-                   db: Session = Depends(get_db)):
+                   db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     query = db.query(models.DBItem).filter(models.DBItem.client_id == client.id)
     if kind:
@@ -439,12 +447,7 @@ def erp_list_items(request: Request, kind: str = "", q: str = "",
                    "item_tax_type": i.item_tax_type,
                    "last_rate": unit_rate(i.last_rate),
                    "reorder_level": money(i.reorder_level)} for i in items],
-        "counts": {
-            k: db.query(models.DBItem).filter(
-                models.DBItem.client_id == client.id,
-                models.DBItem.kind == k).count()
-            for k in ITEM_KINDS
-        },
+        "counts": _kind_counts(db, client.id),
     }
 
 
@@ -520,7 +523,7 @@ async def erp_bom_analyse(request: Request, file: UploadFile = File(...),
 
 
 @router.get("/api/erp/bom/template")
-def erp_bom_template(request: Request, db: Session = Depends(get_db)):
+def erp_bom_template(request: Request, db: Session = Depends(get_read_db)):
     require_workorder_access(request, db)
     return sheet_response(BOM_HEADERS,
                           [["FG0001", "RM0001", "20MM LMS PVC ISI CONDUIT", "5100", "Meters", "48.00"]],
@@ -567,7 +570,7 @@ async def erp_bom_upload(request: Request, file: UploadFile = File(...),
 
 
 @router.get("/api/erp/inquiry")
-def erp_work_order_inquiry(request: Request, db: Session = Depends(get_db)):
+def erp_work_order_inquiry(request: Request, db: Session = Depends(get_read_db)):
     """The screen the flow ends on.
 
     Every order with what it is worth, whether its budget has been allocated,
@@ -653,7 +656,7 @@ def erp_md_approval(wo_id: int, body: MDDecision, request: Request,
 # is meant to be replacing rather than feeding.
 @router.get("/api/erp/items.xlsx")
 def erp_items_xlsx(request: Request, kind: str = "", q: str = "",
-                   db: Session = Depends(get_db)):
+                   db: Session = Depends(get_read_db)):
     """The item master, filtered the same way the screen filters it."""
     client = require_erp_read(request, db)
     query = db.query(models.DBItem).filter(models.DBItem.client_id == client.id)

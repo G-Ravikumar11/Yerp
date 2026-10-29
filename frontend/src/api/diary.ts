@@ -25,7 +25,13 @@ export interface DiaryRow {
   editable: boolean
   lost_to_weather: boolean
 }
-export interface LabourLine { trade: string; agency: string; headcount: number; hours: number; rate: number }
+export interface LabourLine {
+  trade: string; agency: string; headcount: number; hours: number; rate: number
+  /** Set when this line was added "from Workers & Safety" rather than typed by hand: the headcount then always
+   * matches how many are named here, and they are shown by name, not just counted. */
+  worker_ids?: number[]
+  workers?: { id: number; name: string; trade: string }[]
+}
 export interface PlantLine { plant: string; worked_hours: number; idle_hours: number; rate: number }
 export interface DiaryDetail extends DiaryRow { labour: LabourLine[]; plant: PlantLine[] }
 export interface DiarySummary { days_recorded: number; mandays: number; labour_cost: number; plant_cost: number; days_lost_to_weather: number; not_yet_submitted: number }

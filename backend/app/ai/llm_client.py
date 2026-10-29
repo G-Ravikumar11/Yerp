@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from app.ai import config, pdf_text
+from app.ai import config, doc_text, pdf_text
 
 logger = logging.getLogger("app.ai")
 
@@ -201,6 +201,13 @@ def ask(system: str, prompt: str, attachments: Optional[List[Attachment]] = None
     if not config.enabled():
         return AiResult(False, reason="off")
     words, looks = _split(attachments or [])
+    if not config.anthropic_key() and any(a.media_type == "application/pdf" for a in looks):
+        # A scan with no Claude to read it: its pages are drawn as pictures for the model that reads photos.
+        drawn = []
+        for a in looks:
+            pages = doc_text.scan_pages(a.data) if a.media_type == "application/pdf" else []
+            drawn += [Attachment(page, "image/jpeg") for page in pages] if pages else [a]
+        looks = drawn[:GROQ_MAX_IMAGES]
     if words:
         prompt = prompt + "\n\nText of the document:\n" + "\n\n---\n\n".join(words)
     if use_local and config.local_url():

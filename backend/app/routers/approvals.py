@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.approvals import (
     APPROVAL_MODELS,
@@ -14,14 +14,16 @@ from app.constants.approvals import (
     WO_OWNER_SIGNS_KEY,
 )
 from app.core.audit import log_audit
+from app.core.queries import by_id, prime
 from app.core.cache import cached_read
 from app.core.auth import get_client_user, session_person
 from app.core.currency import DEFAULT_CURRENCY, money
 from app.core.permissions import PERMISSION_ROLES, employee_can, role_rank
-from app.core.tenant_settings import put_setting
+from app.core.tenant_settings import put_setting, tenant_setting
+from app.services.subcontract_rules import COMPLIANCE_BLOCKS_KEY
 from app.routers.boq import act_on_boq_variation
 from app.routers.client_billing import act_on_variation
-from app.routers.subcontract_billing import act_on_sub_bill
+from app.routers.subcontract_billing import act_on_sub_bill, cancel_release, certify_release
 from app.routers.subcontract_orders import decide_contractor_registration, wo_approve, wo_reject
 from app.schemas.approvals import ApprovalDecisionIn
 from app.schemas.client_billing import RAActionIn
@@ -88,7 +90,7 @@ def submit_for_approval(body: dict, request: Request, db: Session = Depends(get_
 
 
 @router.get("/api/approvals/pending")
-def get_pending_approvals(request: Request, db: Session = Depends(get_db)):
+def get_pending_approvals(request: Request, db: Session = Depends(get_read_db)):
     """Get all documents pending approval by the current user's employees."""
     client = get_client_user(request, db)
 
@@ -105,6 +107,7 @@ def get_pending_approvals(request: Request, db: Session = Depends(get_db)):
         models.DBApprovalChain.status == "pending",
     ).all()
 
+    prime(db, models.DBEmployee, [x for s in steps for x in (s.approver_id, s.employee_id)])
     result = []
     for s in steps:
         # Every kind of document on the chain, not only invoices and bills -
@@ -114,8 +117,8 @@ def get_pending_approvals(request: Request, db: Session = Depends(get_db)):
                 (doc.current_approval_step or 0) != s.step:
             continue
 
-        approver = db.query(models.DBEmployee).filter(models.DBEmployee.id == s.approver_id).first()
-        submitter = db.query(models.DBEmployee).filter(models.DBEmployee.id == s.employee_id).first()
+        approver = by_id(db, models.DBEmployee, s.approver_id)
+        submitter = by_id(db, models.DBEmployee, s.employee_id)
 
         # Get total chain length
         total_steps = db.query(models.DBApprovalChain).filter(
@@ -153,7 +156,7 @@ def get_pending_approvals(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/approvals/my-submissions")
-def get_my_submissions(request: Request, db: Session = Depends(get_db)):
+def get_my_submissions(request: Request, db: Session = Depends(get_read_db)):
     """Get all documents the current user's employees have submitted for approval."""
     client = get_client_user(request, db)
 
@@ -231,7 +234,7 @@ def get_my_submissions(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/approvals/history/{entity_type}/{entity_id}")
-def get_approval_history(entity_type: str, entity_id: int, request: Request, db: Session = Depends(get_db)):
+def get_approval_history(entity_type: str, entity_id: int, request: Request, db: Session = Depends(get_read_db)):
     """Get the full approval chain history for a document."""
     client = get_client_user(request, db)
     # Only a document of this company: ids run in sequence across every company, so counting through them
@@ -263,7 +266,7 @@ def approval_action(step_id: int, body: dict, request: Request, db: Session = De
 
 
 @router.get("/api/approval-rules")
-def get_approval_rules(request: Request, db: Session = Depends(get_db)):
+def get_approval_rules(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     auto_below, finance_above = approval_thresholds(db, client.id)
     purse = finance_approver_for(db, client.id, set())
@@ -272,6 +275,9 @@ def get_approval_rules(request: Request, db: Session = Depends(get_db)):
         "finance_above": finance_above,
         "owner_signs_work_orders": wo_owner_signs(db, client.id),
         "owner_signs_sub_bills": sub_bill_owner_signs(db, client.id),
+        # Refuse to approve, certify or pay a contractor whose labour licence, PF, ESI or insurance is missing or
+        # lapsed (the Master can still go ahead, with a reason).
+        "compliance_blocks_payment": (tenant_setting(db, client.id, COMPLIANCE_BLOCKS_KEY, "1") or "1") != "0",
         "currency": client.currency or DEFAULT_CURRENCY,
         # Naming who would be added makes the rule checkable rather than
         # something that quietly does nothing because nobody holds the access.
@@ -313,6 +319,8 @@ def set_approval_rules(request: Request, body: dict = None, db: Session = Depend
         put_setting(db, client.id, WO_OWNER_SIGNS_KEY, "1" if body.get("owner_signs_work_orders") else "0")
     if "owner_signs_sub_bills" in body:
         put_setting(db, client.id, SUB_BILL_OWNER_SIGNS_KEY, "1" if body.get("owner_signs_sub_bills") else "0")
+    if "compliance_blocks_payment" in body:
+        put_setting(db, client.id, COMPLIANCE_BLOCKS_KEY, "1" if body.get("compliance_blocks_payment") else "0")
     for key, value in ((AUTO_BELOW_KEY, auto_below), (FINANCE_ABOVE_KEY, finance_above)):
         setting = db.query(models.DBSettings).filter(
             models.DBSettings.client_id == client.id,
@@ -377,6 +385,10 @@ def approvals_decide(body: ApprovalDecisionIn, request: Request, db: Session = D
     if kind == "sub_bill":
         return act_on_sub_bill(body.id, "certify" if decision == "approve" else "reject",
                                request, {"comments": note}, db)
+    if kind == "retention_release":
+        if decision == "approve":
+            return certify_release(body.id, request, {"comments": note}, db)
+        return cancel_release(body.id, request, {"reason": note}, db)
     if kind == "contractor":
         return decide_contractor_registration(body.id, "approve" if decision == "approve" else "reject",
                                               request, {"comments": note}, db)
@@ -384,6 +396,12 @@ def approvals_decide(body: ApprovalDecisionIn, request: Request, db: Session = D
         return act_on_boq_variation(body.id, "approve" if decision == "approve" else "reject", request, {"comments": note}, db)
     if kind == "variation":
         return act_on_variation(body.id, decision, request, {"comments": note}, db)
+    if kind == "site_cash":
+        from app.routers.money import _decide_site_expense
+        return _decide_site_expense(db, client, emp, body.id, decision, note, request)
+    if kind == "payment_request":
+        from app.routers.money import _colleague, _decide_payment
+        return _decide_payment(db, client, emp, body.id, decision, note, request, member=_colleague(request, db))
     if kind == "leave":
         leave = db.query(models.DBLeaveRequest).filter(
             models.DBLeaveRequest.id == body.id,
@@ -458,7 +476,7 @@ def approvals_sent(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/approvals/who-approves")
-def approvals_who(request: Request, db: Session = Depends(get_db)):
+def approvals_who(request: Request, db: Session = Depends(get_read_db)):
     """The routing, spelled out: who each kind of paper goes to when its
     raiser has no manager set. For the owner to check the set-up against."""
     client = get_client_user(request, db)

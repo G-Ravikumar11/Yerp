@@ -25,7 +25,7 @@ export interface LineRow {
   boq_key: string
 }
 
-export const blankLine = (): LineRow => ({ activity_no: '', item_code: '', item_description: '', technical_spec: '', uom: '', quantity: null, unit_rate: null, tolerance_percent: null, budget_id: '', is_header: false, boq_key: '' })
+const blankLine = (): LineRow => ({ activity_no: '', item_code: '', item_description: '', technical_spec: '', uom: '', quantity: null, unit_rate: null, tolerance_percent: null, budget_id: '', is_header: false, boq_key: '' })
 
 export const linesFrom = (o: Order): LineRow[] =>
   (o.items ?? []).map((i) => ({

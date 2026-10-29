@@ -388,6 +388,62 @@ def form_pdf_response(spec, name):
                                       "Content-Length": str(len(pdf))})
 
 
+def rfq_comparison_form_spec(db, client, d):
+    """The comparative statement on one landscape sheet: each line against each supplier with the lowest in each
+    row marked, then each supplier's basic, tax, freight and landed total, its rank, and its terms."""
+    from app.documents import form_pdf as fp
+    rfq, sups = d["rfq"], d["suppliers"]
+    company = letterhead(db, client)
+    job = db.query(models.DBJob).filter(models.DBJob.id == rfq["job_id"]).first() if rfq.get("job_id") else None
+    num = lambda v: fp.plain_number(v)  # noqa: E731
+    cols = [("#", 6, "C"), ("Item", 56, "L"), ("Qty", 20, "R")] + [(s["supplier_name"], 34, "R") for s in sups]
+    rows = []
+    for i, l in enumerate(d["lines"], 1):
+        by = {o["supplier_name"]: o for o in l["offers"]}
+        cells = []
+        for s in sups:
+            o = by.get(s["supplier_name"])
+            if not o:
+                cells.append("not quoted")
+            else:
+                mark = "*" if o["rate"] <= l["lowest_rate"] + 0.0001 else ""
+                cells.append("%s%s\n%s +%g%%" % (num(o["rate"]), mark, num(o["amount"]), o["tax_percent"] or 0))
+        rows.append([str(i), (l["description"] + (("\n" + l["item_code"]) if l["item_code"] else "")),
+                     "%s %s" % (fp.qty_text(l["qty"]), l["uom"])] + cells)
+    foot = [["", "Basic", ""] + [num(s["basic"]) for s in sups],
+            ["", "GST / tax", ""] + [num(s["tax"]) for s in sups],
+            ["", "Freight", ""] + [num(s["freight"]) for s in sups],
+            ["", "LANDED AT SITE", ""] + [num(s["landed"]) for s in sups],
+            ["", "Rank", ""] + [s.get("rank") or "part quote" for s in sups],
+            ["", "Delivery", ""] + [("%d days" % s["delivery_days"]) if s["delivery_days"] else "-" for s in sups],
+            ["", "Payment", ""] + [s["payment_terms"] or "-" for s in sups]]
+    summary = []
+    if d["l1"]:
+        summary.append("L1 landed: %s at Rs %s%s." % (d["l1"], num(d["l1_landed"]),
+                       (", Rs %s under L2" % num(d["saving_vs_l2"])) if d["saving_vs_l2"] > 0 else ""))
+    summary.append("Lowest in every line, from whoever quoted it: Rs %s basic.  * marks the lowest rate in its line."
+                   % num(d["lowest_per_line_basic"]))
+    if rfq.get("award_reason"):
+        summary.append("Why not the lowest: %s" % rfq["award_reason"])
+    blocks = [
+        {"type": "header", "company": company, "title": "COMPARATIVE STATEMENT",
+         "facts": [("Enquiry", rfq["number"]), ("Date", form_pdf.date_text(rfq.get("created_at", "")[:10]) or "-"),
+                   ("Needed By", form_pdf.date_text(rfq.get("needed_by")) or "-"),
+                   ("Project", (job.number if job else "") or "General")]},
+        {"type": "pairs", "cols": 1, "rows": [("For", rfq.get("title") or "-"), ("Suppliers compared", str(len(sups)))]},
+        {"type": "table", "columns": cols, "rows": rows, "foot": foot},
+        {"type": "text", "text": "\n".join(summary), "style": "small"},
+    ]
+    sig = doc_signatories(db, client.id)
+    signatures, seal = sign_boxes(db, client.id, [("Prepared By", _sig_line(sig["prepared"])),
+                                                  ("Recommended By", _sig_line(sig["recommended"])),
+                                                  ("Authorized Signatory", _sig_line(sig["authorised"]))], None)
+    blocks.append({"type": "signatures", "boxes": signatures, "seal": seal})
+    return {"title": "Comparative statement %s" % rfq["number"], "author": company["name"], "landscape": True,
+            "watermark": "", "blocks": blocks,
+            "footer": "%s  |  %s  |  Printed %s" % (rfq["number"], company["name"], datetime.now().strftime("%d/%m/%Y %H:%M"))}
+
+
 def po_form_spec(db, client, order):
     """The purchase order: supplier with GSTIN, the lines with their GST, the
     total in words, delivery and payment, and the signatures."""
@@ -473,10 +529,11 @@ def _bill_figures(bill):
     # Back-charges printed with the other recoveries: the certificate has one row for them.
     adv, other = money(bill.advance_recovery), money(money(bill.other_deductions) + money(bill.back_charges))
     ret, tds, cess = money(bill.retention_amount), money(bill.tds_amount), money(bill.labour_cess_amount)
+    ld = money(getattr(bill, "ld_amount", 0) or 0)
     return {"work": work, "mob": 0.0, "mat": 0.0, "debit": debit, "gross": gross,
             "sgst": money(bill.sgst_amount), "cgst": money(bill.cgst_amount), "igst": money(bill.igst_amount),
             "gst": gst, "total": money(gross + gst), "adv": adv, "other": other, "ret": ret, "tds": tds,
-            "cess": cess, "ded": money(adv + other + ret + tds + cess), "net": money(bill.net_payable)}
+            "cess": cess, "ld": ld, "ded": money(adv + other + ret + tds + cess + ld), "net": money(bill.net_payable)}
 
 
 def short_entry_code(entry):
@@ -557,9 +614,14 @@ def sub_bill_certificate(db, client, bill):
         fig("5.03", "Recovery of Retention @ %g %% " % (bill.retention_percent or 0), "ret"),
         fig("5.04", "Tax Deduction at Source @ %.2f%% " % (bill.tds_percent or 0), "tds", "Accounts"),
     ]
+    sl = 5
     if cess_on:
         money_rows.append(fig("5.05", "Labour Welfare Cess @ %g%%" % (bill.labour_cess_percent or 0), "cess", "Accounts"))
-    money_rows.append(fig("5.06" if cess_on else "5.05", "Total Deduction ", "ded", bold=True))
+        sl = 6
+    if this["ld"] or prev["ld"]:
+        money_rows.append(fig("5.%02d" % sl, "Liquidated Damages", "ld"))
+        sl += 1
+    money_rows.append(fig("5.%02d" % sl, "Total Deduction ", "ded", bold=True))
     net_row = fig("", "Net Amount for Payment ", "net", bold=True)
     net_row["span_label"] = True
     money_rows.append(net_row)
@@ -930,6 +992,172 @@ def statement_form_spec(client, party_name, party_label, s, date_from="", date_t
             "footer": "Statement of account  |  %s  |  %s" % (party_name, company["name"])}
 
 
+DOC_LABEL = {"ra_bill": "RA bill", "sub_bill": "Sub contractor's RA bill", "supplier_bill": "Supplier bill",
+             "sub_advance": "Mobilisation advance", "retention_release": "Retention release"}
+PARTY_LABEL = {"client": "Client", "contractor": "Sub Contractor", "supplier": "Supplier"}
+
+
+def money_voucher_spec(db, client, e, accounts, job=None):
+    """A receipt, a payment, an expense or a transfer as the voucher the accounts office files and the other side
+    signs for: the company's letterhead, who, how much in figures and in words, what it was for, through which
+    account, and the signatures. Money received carries the authorised signatory's signature and seal - it is the
+    receipt the payer keeps; money paid carries the preparer's and leaves the rest for a pen, the receiver's last."""
+    company = letterhead(db, client)
+    fi = form_pdf.inr
+    contra = e.doc_type == "contra"
+    incoming = e.direction == "IN"
+    title = ("CONTRA VOUCHER" if contra else "EXPENSE VOUCHER" if e.doc_type == "expense"
+             else "RECEIPT VOUCHER" if incoming else "PAYMENT VOUCHER")
+    account = accounts.get(e.account_id)
+    acct_text = ("%s%s" % (account.name or "", (" - A/c %s" % account.account_no) if account and account.account_no else "")
+                 if account else "")
+    facts = [("Voucher No", e.number or ""), ("Date", form_pdf.date_text(e.paid_on)), ("Mode", e.mode or "")]
+    if e.reference:
+        facts.append(("Cheque / UTR" if e.mode in ("Cheque", "Bank transfer", "UPI") else "Reference", e.reference))
+    blocks = [{"type": "header", "company": company, "title": title, "facts": facts}]
+
+    if contra:
+        src, dst = (e.party_name or "", acct_text) if incoming else (acct_text, e.party_name or "")
+        blocks.append({"type": "pairs", "cols": 2, "rows": [("From account", src), ("To account", dst)]})
+        particulars = "Funds transferred from %s to %s" % (src, dst)
+    else:
+        card = party_card(db, client.id, e.party_name or "") if e.party_type in PARTY_LABEL else {}
+        label = ("Received from" if incoming else "Paid to") + \
+            ((" (%s)" % PARTY_LABEL[e.party_type]) if e.party_type in PARTY_LABEL else "")
+        # A fuel pump or a tea stall has no PAN on file: no empty boxes for it.
+        facts = [f for f in party_facts(card.get("gstin"), card.get("pan"), card.get("state")) if f[1]]
+        blocks.append({"type": "party", "label": label, "name": e.party_name or "", "address": card.get("address") or "",
+                       "facts": facts})
+        if e.doc_type in ("expense", "income"):
+            against = "%s (%s)" % (e.head or "", "expense" if e.doc_type == "expense" else "sundry receipt")
+            particulars = "%s%s" % (e.head or "", (" - " + e.note) if e.note else "")
+        elif e.doc_type == "on_account":
+            against = "On account (advance; to be set against a bill)"
+            particulars = ("Advance received on account" if incoming else "Advance paid on account") + \
+                ((" - " + e.note) if e.note else "")
+        else:
+            against = "%s %s" % (DOC_LABEL.get(e.doc_type, "Bill"), e.doc_number or "")
+            particulars = ("Received against " if incoming else "Paid against ") + against
+        rows = [("Against", against)]
+        if job is not None:
+            rows.append(("Project", ("%s %s" % (job.number or "", job.name or "")).strip()))
+        rows.append(("Received into" if incoming else "Paid from", acct_text or "-"))
+        blocks.append({"type": "pairs", "rows": rows, "label_width": 34})
+
+    blocks += [
+        {"type": "table", "columns": [("#", 8, "C"), ("Particulars", 136, "L"), ("Amount", 38, "R")],
+         "rows": [["1", particulars, fi(e.amount)]], "totals": [("TOTAL", fi(e.amount), True)]},
+        {"type": "words", "label": "Rupees", "text": _words(e.amount)},
+    ]
+    if e.note and e.doc_type not in ("expense", "income", "on_account"):
+        blocks.append({"type": "pairs", "rows": [("Narration", e.note)], "label_width": 34})
+    if e.voided:
+        blocks.append({"type": "text", "style": "bold", "text": "VOID - %s" % (e.void_reason or "cancelled")})
+
+    sig = doc_signatories(db, client.id)
+    prepared = e.recorded_by_name or ""
+    if incoming and not contra:
+        boxes, seal = sign_boxes(db, client.id, [("Prepared By", prepared),
+                                                 ("Authorized Signatory", _sig_line(sig["authorised"]) or company["name"])],
+                                 "" if e.voided else "approved")
+    else:
+        from app.services.payment_requests import request_for_entry
+        asked = request_for_entry(db, e.id)
+        boxes = [("Prepared By", prepared), ("Checked By", asked.checked_by_name if asked else ""),
+                 ("Approved By", (asked.approved_by_name if asked else "") or _sig_line(sig["authorised"]))]
+        if not contra:
+            boxes.append(("Receiver's Signature", e.party_name or ""))
+        boxes, seal = sign_boxes(db, client.id, boxes, "" if e.voided else ("approved" if asked else "submitted"))
+        if asked:
+            blocks.append({"type": "text", "style": "small", "text": "Approved on payment request %s%s." % (
+                asked.number, (" - checked by %s, approved by %s" % (asked.checked_by_name, asked.approved_by_name))
+                if asked.checked_by_name else "")})
+    blocks.append({"type": "signatures", "boxes": boxes, "seal": seal})
+    return {"title": "%s %s" % (title.title(), e.number or ""), "author": company["name"], "blocks": blocks,
+            "watermark": "VOID" if e.voided else "",
+            "footer": "%s  |  %s  |  %s" % (e.number or "", title.title(), company["name"])}
+
+
+def brs_spec(db, client, account, b):
+    """The bank reconciliation statement on a day, as the auditor files it: the balance in the books, the cheques written
+    and not yet presented added back, the deposits not yet credited taken off, the balance the bank should show - and
+    the balance it does show, and any difference still to find."""
+    company = letterhead(db, client)
+    fi = form_pdf.inr
+    row = lambda r: [form_pdf.date_text(r["paid_on"]), r["number"], r["party"], ("%s %s" % (r["mode"], r["reference"])).strip(),
+                     fi(r["amount"])]
+    cols = [("Date", 20, "C"), ("Voucher", 24, "L"), ("Party", 66, "L"), ("Cheque / ref", 40, "L"), ("Amount", 32, "R")]
+    acct = "%s%s" % (account.name or "", (" - A/c %s" % account.account_no) if account.account_no else "")
+    blocks = [
+        {"type": "header", "company": company, "title": "BANK RECONCILIATION",
+         "facts": [("Account", acct), ("As on", form_pdf.date_text(b["as_of"])),
+                   ("Printed", datetime.now().strftime("%d/%m/%Y"))]},
+        {"type": "sums", "rows": [("Balance as per the books", fi(b["books"]), True),
+                                  ("Add: cheques issued, not yet presented", fi(b["not_presented_total"]), False),
+                                  ("Less: deposits made, not yet credited", fi(-b["not_credited_total"]), False),
+                                  ("BALANCE THE BANK SHOULD SHOW", fi(b["bank_should_show"]), True)]
+                                 + ([("Balance as per the bank's statement (%s)" % form_pdf.date_text(b["statement_date"]),
+                                      fi(b["statement_balance"]), True),
+                                     ("Difference still to be found", fi(b["difference"]), True)]
+                                    if b["statement_balance"] is not None else [])},
+        {"type": "band", "text": "Cheques issued, not yet presented"},
+        {"type": "table", "columns": cols, "rows": [row(r) for r in b["not_presented"]] or [["", "", "None", "", ""]],
+         "totals": [("TOTAL", fi(b["not_presented_total"]), True)]},
+        {"type": "band", "text": "Deposits made, not yet credited"},
+        {"type": "table", "columns": cols, "rows": [row(r) for r in b["not_credited"]] or [["", "", "None", "", ""]],
+         "totals": [("TOTAL", fi(b["not_credited_total"]), True)]},
+    ]
+    if b["unbooked"]:
+        blocks += [
+            {"type": "band", "text": "On the bank's statement, not in the books yet"},
+            {"type": "table", "columns": [("Date", 20, "C"), ("Narration", 102, "L"), ("Debit", 30, "R"), ("Credit", 30, "R")],
+             "rows": [[form_pdf.date_text(l["txn_date"]), l["narration"], fi(l["debit"]) if l["debit"] else "",
+                       fi(l["credit"]) if l["credit"] else ""] for l in b["unbooked"]]},
+        ]
+    blocks.append({"type": "signatures", "boxes": [("Prepared By", ""), ("Checked By", ""), ("Approved By", "")]})
+    return {"title": "Bank reconciliation - %s - %s" % (account.name or "", b["as_of"]), "author": company["name"],
+            "blocks": blocks, "footer": "Bank reconciliation  |  %s  |  %s" % (acct, company["name"])}
+
+
+def cash_statement_spec(db, client, box, book, pending, custodian, job, date_from="", date_to=""):
+    """A site's cash book for a period, as the custodian signs it and accounts keep it: what came into the box, what
+    went out of it, the balance, and - beside the books - what has been spent and not yet checked, so the cash that
+    should be in the box can be counted against it."""
+    company = letterhead(db, client)
+    fi = form_pdf.inr
+    rows = [[form_pdf.date_text(r["date"]), r["number"], ("%s - %s" % (r["against"], r["party"])) if r["party"] else r["against"],
+             fi(r["received"]) if r["received"] else "", fi(r["paid"]) if r["paid"] else "", fi(r["balance"])]
+            for r in book["rows"]]
+    closing = book["closing"]
+    sums = [("Balance in the books", fi(closing), True)]
+    if pending:
+        sums.append(("Less: spent, waiting to be checked", fi(-pending), False))
+    sums.append(("CASH THAT SHOULD BE IN THE BOX", fi(closing - pending), True))
+    if box.imprest_amount:
+        sums.append(("Top-up to bring the float back to %s" % fi(box.imprest_amount),
+                     fi(max(0.0, box.imprest_amount - closing)), False))
+    blocks = [
+        {"type": "header", "company": company, "title": "SITE CASH BOOK",
+         "facts": [("Cash box", box.name or ""), ("From", form_pdf.date_text(date_from) or "Beginning"),
+                   ("To", form_pdf.date_text(date_to) or datetime.now().strftime("%d/%m/%Y")),
+                   ("Printed", datetime.now().strftime("%d/%m/%Y"))]},
+        {"type": "pairs", "cols": 2, "rows": [("Project", ("%s %s" % (job.number or "", job.name or "")).strip() if job else "-"),
+                                             ("Custodian", custodian or "-"),
+                                             ("Float (imprest)", fi(box.imprest_amount or 0)),
+                                             ("Opening balance", fi(book["opening"]))]},
+        {"type": "table", "columns": [("Date", 18, "C"), ("Voucher", 24, "L"), ("Particulars", 70, "L"),
+                                      ("Received", 23, "R"), ("Paid", 23, "R"), ("Balance", 24, "R")],
+         "rows": rows or [["", "", "Nothing through the box in this period.", "", "", ""]],
+         "totals": [("Total received into the box", fi(book["received"]), False),
+                    ("Total paid out of the box", fi(book["paid"]), False)]},
+        {"type": "sums", "rows": sums},
+        {"type": "words", "label": "Cash in the box, Rupees", "text": _words(max(0.0, closing - pending))},
+        {"type": "signatures", "boxes": [("Custodian", custodian or ""), ("Checked By", ""), ("Approved By", "")]},
+    ]
+    return {"title": "Site cash book - %s" % (box.name or ""), "author": company["name"], "blocks": blocks,
+            "footer": "Site cash book  |  %s  |  %s" % (box.name or "", company["name"])}
+
+
 def _cell_text(v):
     if v is None:
         return ""
@@ -946,8 +1174,8 @@ def _cell_text(v):
     return text
 
 
-def sheet_report_spec(headers, rows, filename, preamble=None, closing=None, client=None, logo_watermark=False):
-    """A workbook's rows as a ruled report."""
+def sheet_report_spec(headers, rows, filename, preamble=None, closing=None, client=None, logo_watermark=False, portrait=False):
+    """A workbook's rows as a ruled report. portrait: keep it upright on A4 however wide it is."""
     pre = [list(r) for r in (preamble or []) if r and any(str(x).strip() for x in r)]
     title = str(pre[0][0]).strip() if pre else re.sub(r"[_\-]+", " ", filename.rsplit(".", 1)[0]).upper()
     facts, notes = [], []
@@ -971,7 +1199,7 @@ def sheet_report_spec(headers, rows, filename, preamble=None, closing=None, clie
         pref.append(max(6, min(longest, 46)))
     numeric = [all((not r[i]) or re.match(r"^[\(\-]?[\d,]+(\.\d+)?\)?%?$", r[i]) for r in body[:300] if i < len(r))
                for i in range(n)]
-    landscape = n > 7 or sum(pref) > 110
+    landscape = not portrait and (n > 7 or sum(pref) > 110)
     columns = [(str(h), p, "R" if numeric[i] and body else "L") for i, (h, p) in enumerate(zip(headers, pref))]
     foot = []
     for r in closing or []:

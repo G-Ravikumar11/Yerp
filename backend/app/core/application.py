@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from app import models
 from app.db import SessionLocal, engine, ensure_columns, migrate_sqlite
+from app.db.migrations import create_missing_tables
 
 from app.core.auth import ensure_admin_user, ensure_super_admin
 from app.core.config import logger
@@ -24,7 +25,7 @@ from app.core.scheduler import SCHEDULER_TICK_SECONDS, scheduler_loop
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ok = True
-    for label, fn in (("create tables", lambda: models.Base.metadata.create_all(bind=engine)),
+    for label, fn in (("create tables", lambda: create_missing_tables(models.Base.metadata, engine)),
                       ("add missing columns", ensure_columns),
                       ("migrate sqlite", migrate_sqlite),
                       ("admin user", ensure_admin_user),
@@ -34,6 +35,8 @@ async def lifespan(app: FastAPI):
     if ok:
         convert_legacy_holds_all()
         _boot_step("number the entries of the measurement book", backfill_entry_codes)
+        from app.services.hr import apply_india_onboarding_all
+        _boot_step("onboarding documents", apply_india_onboarding_all)
     DB_READY["ok"] = ok
     if ok:
         # Reading the schema's foreign keys is what the first delete after a restart used to wait for.
@@ -43,6 +46,20 @@ async def lifespan(app: FastAPI):
             with SessionLocal() as db:
                 _fk_map(db)
         _boot_step("read the schema for deletes", lambda: threading.Thread(target=warm, daemon=True).start())
+
+        def warm_holidays():
+            # The festival dates take about a second to work out; done here, nobody's first calendar waits for it.
+            from datetime import datetime
+            from app.routers.holiday_calendar import holidays_for
+            for year in (datetime.now().year, datetime.now().year + 1):
+                holidays_for(year)
+        _boot_step("work out this year's holidays", lambda: threading.Thread(target=warm_holidays, daemon=True).start())
+        if engine.dialect.name == "postgresql":
+            # Every round trip to a far-away database counts: a few connections ready for the first screen's requests,
+            # and the next one kept warm while the app is in use.
+            from app.db.session import keep_warm, open_spare_connections
+            _boot_step("open spare database connections", lambda: open_spare_connections(engine))
+            _boot_step("keep a database connection warm", lambda: keep_warm(engine))
         DB_READY["error"] = ""
         logger.info("Database initialized successfully")
     else:

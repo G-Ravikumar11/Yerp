@@ -1,15 +1,18 @@
 """The stores endpoints."""
 from datetime import datetime
+from typing import Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.documents import form_pdf
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.core.audit import log_audit
 from app.core.auth import require_erp_read, wo_actor
+from app.core.store_auth import store_actor, store_errors
 from app.core.currency import inr, money, unit_rate
 from app.core.sheets import sheet_response
 from app.documents.forms import _field_doc, form_pdf_response
@@ -29,6 +32,8 @@ from app.services.stores import (
     stock_movement,
     store_holding,
 )
+from app.services import store_cutover
+from app.services.store_cutover import refuse_if_moved
 from app.services.subcontract_orders import wo_or_404, work_order_or_404, work_order_to_dict
 
 
@@ -153,6 +158,7 @@ def create_stock_issue(body: StockIssueIn, request: Request,
                        db: Session = Depends(get_db)):
     """Draw up an issue note, priced at what the store's stock actually cost."""
     client, actor_id, actor_name = wo_actor(request, db, "site.record")
+    refuse_if_moved(db, client.id)
     wo = None
     if body.work_order_id:
         wo = work_order_or_404(db, client.id, body.work_order_id)
@@ -329,7 +335,7 @@ def adjust_stock(body: AdjustmentIn, request: Request,
 
 @router.get("/api/stock/consumption/{work_order_id}")
 def material_consumption(work_order_id: int, request: Request,
-                         db: Session = Depends(get_db)):
+                         db: Session = Depends(get_read_db)):
     """BOM against actual issues - the wastage report.
 
     The BOM is what the contract was costed on. The issues are what the site
@@ -416,7 +422,7 @@ def stock_export(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/stock/stores")
-def list_stores(request: Request, db: Session = Depends(get_db)):
+def list_stores(request: Request, db: Session = Depends(get_read_db)):
     """Every store that has ever held anything, with what it holds now."""
     client = require_erp_read(request, db)
     names = sorted({s for (s,) in db.query(models.DBStockMovement.store).filter(
@@ -476,7 +482,7 @@ def transfer_stock(body: TransferIn, request: Request, db: Session = Depends(get
 
 
 @router.get("/api/stock/transfers")
-def list_transfers(request: Request, db: Session = Depends(get_db)):
+def list_transfers(request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     out = {}
     for m in db.query(models.DBStockMovement).filter(
@@ -516,3 +522,37 @@ def stock_issue_pdf(issue_id: int, request: Request, db: Session = Depends(get_d
                                         [("Issue No", d["number"]), ("Date", form_pdf.date_text(d["issued_on"])),
                                          ("Status", d["status"])], blocks, sig, d["number"],
                                         "DRAFT - NOT POSTED" if d["status"] == "DRAFT" else ""), d["number"])
+
+
+# --- moving into the Store Hub ----------------------------------------------------------------------------------------
+
+@router.get("/api/stock/cutover")
+def cutover_status(request: Request, brief: bool = False, db: Session = Depends(get_db)):
+    """Whether the old store has moved into the Store Hub and, until it has, what moving it would carry: each old
+    store's closing stock, what stops it, and the Hub stores it can go to. `brief` answers only whether it has moved."""
+    client = require_erp_read(request, db)
+    if brief:
+        return {"done": store_cutover.cutover_dict(store_cutover.cutover_of(db, client.id))}
+    return store_cutover.preview(db, client.id)
+
+
+class CutoverIn(BaseModel):
+    cutover_date: str
+    stores: Dict[str, Optional[int]] = {}        # old store name -> Hub store id
+
+
+@router.post("/api/stock/cutover")
+def run_cutover(body: CutoverIn, request: Request, db: Session = Depends(get_db)):
+    """Carry the old store's closing stock into the Hub as posted opening stock, and close the old store for new
+    entries. Once only, and only by a Store admin."""
+    actor = store_actor(request, db, "store.admin")
+    with store_errors():
+        carried = store_cutover.run(db, actor, body.cutover_date, body.stores or {})
+    log_audit(db, actor.client.id, "store_cutover", "store_cutover", actor.client.id, body.cutover_date,
+              "%d opening stock document%s" % (len(carried), "" if len(carried) == 1 else "s"), request=request,
+              user_type="employee" if actor.employee is not None else "client", user_name=actor.name)
+    db.commit()
+    value = money(sum(c["value"] for c in carried))
+    return {"ok": True, "done": store_cutover.cutover_dict(store_cutover.cutover_of(db, actor.client.id)),
+            "message": "The old store has moved into the Store Hub: %s carried as opening stock into %d store%s." % (
+                inr(value), len(carried), "" if len(carried) == 1 else "s")}

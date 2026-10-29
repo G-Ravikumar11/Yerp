@@ -10,8 +10,6 @@ import { useSession } from '@/lib/session'
 import { formatINR } from '@/lib/utils'
 import { ProjectFormModal } from './ProjectFormModal'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
-
-export const marginClass = (percent: number, hasRevenue: boolean) => (!hasRevenue ? 'text-muted-foreground' : percent < 0 ? 'text-danger' : percent < 10 ? 'text-warning' : 'text-success')
 const tone = (s: string) => (s === 'complete' ? 'success' : s === 'cancelled' ? 'danger' : s === 'on_hold' ? 'warning' : 'neutral') as 'success' | 'danger' | 'warning' | 'neutral'
 
 /** Each site's budget, how much of it is used, and what is left. */

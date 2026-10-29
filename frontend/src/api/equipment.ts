@@ -46,7 +46,7 @@ export interface Machine {
 export type IntervalType = 'Both' | 'Meter' | 'Days' | 'None'
 export type ServiceStatus = 'Overdue' | 'Service due' | 'Due soon' | 'Upcoming' | 'Incomplete' | 'Not scheduled'
 /** Where a machine stands on its schedule, as the server works it out - the register, the machine and the dashboard read the same. */
-export interface Schedule {
+interface Schedule {
   type: IntervalType; unit: string; every_meter: number; every_days: number
   reminder_meter: number; reminder_days: number; reminder_meter_set: boolean; reminder_days_set: boolean
   last_service_on: string; last_service_meter: number | null
@@ -54,13 +54,13 @@ export interface Schedule {
   status: ServiceStatus; reasons: string[]; missing: string[]
 }
 export interface Register { assets: Machine[]; categories: string[]; summary: { machines: number; deployed: number; idle_in_yard: number; service_due: number; service_soon: number; cost_to_date: number; service_status?: Record<ServiceStatus, number> } }
-export interface MachineLog { log_date: string; job: string; hours_worked: number; idle_hours: number; fuel_litres: number; fuel_cost: number; hire_cost: number; operator: string; work_done: string }
-export interface MachineService {
+interface MachineLog { log_date: string; job: string; hours_worked: number; idle_hours: number; fuel_litres: number; fuel_cost: number; hire_cost: number; operator: string; work_done: string }
+interface MachineService {
   id: number; number: string; service_on: string; kind: string; status: string; description: string; vendor: string; meter_at_service: number | null; downtime_hours: number
   work_performed: string; parts_used: string; parts_cost: number; labour_cost: number; total_cost: number; next_service_meter: number | null; next_service_on: string; by: string
 }
-export interface MachineMove { moved_on: string; from: string; to: string; note: string }
-export interface ScheduleEvent { at: string; action: string; details: string; by: string }
+interface MachineMove { moved_on: string; from: string; to: string; note: string }
+interface ScheduleEvent { at: string; action: string; details: string; by: string }
 export interface MachineDetail extends Machine { utilisation_percent: number; litres_per_hour: number; logs: MachineLog[]; services: MachineService[]; moves: MachineMove[]; schedule_history: ScheduleEvent[] }
 export type MachineInput = Omit<Machine, 'id' | 'code' | 'current_job_id' | 'current_job' | 'status' | 'service' | 'cost_to_date' | 'ownership_label' | 'is_archived' | 'location_type' | 'location_id' | 'where'> & { code: string; location_type?: LocationType; location_id?: number }
 

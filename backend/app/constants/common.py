@@ -104,6 +104,13 @@ DRAWING_STATUSES = ("For information", "For approval", "Approved", "Good for con
 # stood through it, and dangerous work - hot work, heights, confined spaces -
 # only on a permit that says until when, on which precautions, and is closed
 # when the work stops.
+# The trades a worker is screened for, in the order the site lists them.
+WORKER_TRADES = ("Carpenter", "Carpenter helper", "Fitter", "Fitter helper", "Mason", "Mason helper",
+                 "Skilled NMR labour", "Unskilled NMR labour")
+WORKER_MIN_AGE = 18          # nobody under 18 works on a construction site
+WORKER_SEX = ("Male", "Female", "Other")
+WORKER_MARITAL_STATUS = ("Single", "Married", "Widow", "Widower")
+
 INCIDENT_KINDS = ("Near miss", "Unsafe act", "Unsafe condition", "First aid", "Medical treatment",
                   "Restricted work case", "Lost time injury", "Occupational illness", "Fall from height",
                   "Fire or explosion", "Electrical incident", "Vehicle or plant accident",

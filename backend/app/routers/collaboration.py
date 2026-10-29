@@ -18,7 +18,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.common import CHAT_MAX_BODY
 from app.core.config import logger
@@ -29,14 +29,10 @@ from app.schemas.collaboration import (
 from app.services.collaboration import (
     _last_read,
     _mark_read,
-    _post_message,
-    chat_actor,
     chat_people,
     find_mentions,
     meeting_rooms,
-    message_dict,
     signaling,
-    thread_dict,
     thread_or_404,
 )
 from app.services.chat_work import (
@@ -272,7 +268,7 @@ def _thread_fields(db, sc, body, t=None):
 @router.get("/api/chat/threads")
 def chat_threads(request: Request, job_id: int = 0, q: str = "", category: str = "", priority: str = "",
                  status: str = "", member: str = "", date_from: str = "", date_to: str = "", unread: bool = False,
-                 task_status: str = "", db: Session = Depends(get_db)):
+                 task_status: str = "", db: Session = Depends(get_read_db)):
     """The threads of one project, or of every project the reader is on, busiest first - narrowed by whatever is asked."""
     sc = chat_scope(request, db)
     T, M = models.DBProjectThread, models.DBProjectMessage
@@ -314,7 +310,7 @@ def chat_threads(request: Request, job_id: int = 0, q: str = "", category: str =
 
 
 @router.get("/api/chat/unread")
-def chat_unread(request: Request, db: Session = Depends(get_db)):
+def chat_unread(request: Request, db: Session = Depends(get_read_db)):
     """For the badge on the menu: messages I have not opened, and notices I have not read."""
     sc = chat_scope(request, db)
     total = 0
@@ -331,7 +327,7 @@ def chat_unread(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/chat/people")
-def chat_people_list(request: Request, db: Session = Depends(get_db)):
+def chat_people_list(request: Request, db: Session = Depends(get_read_db)):
     sc = chat_scope(request, db)
     return {"people": chat_people(db, sc.client.id), "me": sc.me, "my_name": sc.name}
 
@@ -548,7 +544,7 @@ def make_task(thread_id: int, body: TaskIn, request: Request, db: Session = Depe
 
 @router.get("/api/chat/tasks")
 def list_tasks(request: Request, job_id: int = 0, thread_id: int = 0, status: str = "", mine: bool = False,
-               db: Session = Depends(get_db)):
+               db: Session = Depends(get_read_db)):
     sc = chat_scope(request, db)
     q = db.query(models.DBChatTask).filter(models.DBChatTask.client_id == sc.client.id)
     if sc.jobs is not None:

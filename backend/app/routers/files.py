@@ -11,7 +11,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import defer, Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.core.audit import log_audit
 from app.core.auth import get_client_user, require_erp_read, require_items_access, session_employee, wo_actor
@@ -66,7 +66,7 @@ async def erp_inspect_sheet(request: Request, file: UploadFile = File(...),
 
 @router.get("/api/registers/tds")
 def tds_register(request: Request, year: str = "", quarter: str = "",
-                 db: Session = Depends(get_db)):
+                 db: Session = Depends(get_read_db)):
     """TDS both ways, by quarter.
 
     Deducted: what we withheld from the contractors' bills under 194C, which has to
@@ -150,7 +150,7 @@ def tds_register(request: Request, year: str = "", quarter: str = "",
 
 
 @router.get("/api/registers/guarantees")
-def guarantee_register(request: Request, db: Session = Depends(get_db)):
+def guarantee_register(request: Request, db: Session = Depends(get_read_db)):
     """Every bank guarantee held against a subcontractor, and when it lapses.
 
     A guarantee that expires while the defects period is still running is
@@ -164,7 +164,10 @@ def guarantee_register(request: Request, db: Session = Depends(get_db)):
     for o in db.query(models.DBSubcontractOrder).filter(
             models.DBSubcontractOrder.client_id == client.id,
             models.DBSubcontractOrder.bank_guarantee_applicable.is_(True),
-            models.DBSubcontractOrder.status.in_(("APPROVED", "EXECUTED"))).all():
+            # A closed order's guarantee is still held through the defects period - until it is handed back.
+            models.DBSubcontractOrder.status.in_(("APPROVED", "EXECUTED", "CLOSED"))).all():
+        if o.bank_guarantee_returned_at:
+            continue
         con = contractors.get(o.contractor_id)
         valid = (o.bank_guarantee_validity or "")[:10]
         days = None
@@ -175,6 +178,8 @@ def guarantee_register(request: Request, db: Session = Depends(get_db)):
                 days = None
         rows.append({
             "order_id": o.id, "order": o.wo_number or "", "contractor": con.company_name if con else "",
+            "number": o.bank_guarantee_number or "", "bank": o.bank_guarantee_bank or "",
+            "order_status": o.status or "",
             "amount": money(o.bank_guarantee_amount), "valid_until": valid, "days_left": days,
             "completion_date": o.completion_date or "",
             "defect_liability_months": o.defect_liability_months or 0,
@@ -194,7 +199,7 @@ def guarantee_register(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/registers/advances")
-def advance_register(request: Request, db: Session = Depends(get_db)):
+def advance_register(request: Request, db: Session = Depends(get_read_db)):
     """Mobilisation advances given to the contractors, and how much has come back.
 
     Summed from the bills, not stored: a cancelled bill gives its recovery
@@ -247,8 +252,22 @@ def upload_file(request: Request, file: UploadFile = File(...), thumb: Optional[
                 kind: str = Form(""), caption: str = Form(""), taken_on: str = Form(""),
                 db: Session = Depends(get_db)):
     """A photo or a document, kept against the record it proves."""
-    client, _, actor_name = wo_actor(request, db, "site.record")
-    job_id, _locked = attachment_target(db, client.id, attached_type, attached_id)
+    if (attached_type or "").startswith("store_"):
+        # A store record: the right is the Store's own, and the person must work in the store it belongs to.
+        from app.core.store_auth import store_actor
+        from app.services import store_files
+        from app.services.stock_ledger import assert_store_access
+        if not store_files.is_store_type(attached_type):
+            raise HTTPException(400, "That is not something the Store keeps files against.")
+        who = store_actor(request, db, store_files.right_for(attached_type))
+        client, actor_name = who.client, who.name
+        job_id, _locked, store_id = store_files.target(db, client.id, attached_type, attached_id)
+        assert_store_access(who.user, store_id)
+        if _locked:
+            raise HTTPException(409, "That document is posted, closed or cancelled, so its papers are kept as they are.")
+    else:
+        client, _, actor_name = wo_actor(request, db, "site.record")
+        job_id, _locked = attachment_target(db, client.id, attached_type, attached_id)
     data = file.file.read()
     small = thumb.file.read() if thumb is not None else None
     ctype = (file.content_type or "").lower()
@@ -259,14 +278,16 @@ def upload_file(request: Request, file: UploadFile = File(...), thumb: Optional[
                    taken_on=taken_on or date.today().isoformat(), by=actor_name, thumb=small)
     log_audit(db, client.id, "file_added", attached_type, attached_id, f.name,
               "%s, %d KB" % (f.kind, f.size // 1024), request)
+    # Answered from the row in hand: after the commit it would be read back again, thumbnail bytes and all.
+    out = {"file": file_dict(f)}
     db.commit()
-    return {"file": file_dict(f)}
+    return out
 
 
 @router.get("/api/files")
 def list_files(request: Request, attached_type: str = "", attached_id: int = 0, job_id: int = 0,
                kind: str = "", q: str = "", date_from: str = "", date_to: str = "", by: str = "",
-               db: Session = Depends(get_db)):
+               db: Session = Depends(get_read_db)):
     """The files kept against something, filtered the way they are looked
     for: drawings or photos, words in the name or caption, when they were
     taken, who added them."""
@@ -333,7 +354,7 @@ def _file_response(db, f, download=0, cache="private, max-age=86400"):
 
 
 @router.get("/api/files/{fid}")
-def get_file(fid: int, request: Request, download: int = 0, db: Session = Depends(get_db)):
+def get_file(fid: int, request: Request, download: int = 0, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     f = _file_or_404(db, client.id, fid, bytes_too=True)
     app_limits.check_stored_file(request, f.content_type)
@@ -356,7 +377,7 @@ def file_link(fid: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/files/{fid}/shared")
-def get_shared_file(fid: int, t: str = "", db: Session = Depends(get_db)):
+def get_shared_file(fid: int, t: str = "", db: Session = Depends(get_read_db)):
     try:
         file_id, client_id = _file_links.loads(t, max_age=FILE_LINK_SECONDS)
     except BadSignature:
@@ -367,7 +388,7 @@ def get_shared_file(fid: int, t: str = "", db: Session = Depends(get_db)):
 
 
 @router.get("/api/files/{fid}/thumb")
-def get_file_thumb(fid: int, request: Request, db: Session = Depends(get_db)):
+def get_file_thumb(fid: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     # The picture copy only; the full file is read below if there is no copy.
     f = db.query(models.DBFile).options(defer(models.DBFile.data)).filter(
@@ -385,7 +406,15 @@ def get_file_thumb(fid: int, request: Request, db: Session = Depends(get_db)):
 
 @router.delete("/api/files/{fid}")
 def delete_file(fid: int, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db)
+    mine = db.query(models.DBFile.attached_type).filter(models.DBFile.id == fid).first()
+    if mine is not None and (mine[0] or "").startswith("store_"):
+        from app.core.store_auth import store_actor
+        from app.services import store_files
+        if not store_files.is_store_type(mine[0]):
+            raise HTTPException(404, "File not found")
+        client = store_actor(request, db, store_files.right_for(mine[0])).client
+    else:
+        client, _, _ = wo_actor(request, db)
     f = _file_or_404(db, client.id, fid)
     if f.attached_id:
         _, locked = attachment_target(db, client.id, f.attached_type, f.attached_id)
@@ -411,7 +440,7 @@ def delete_file(fid: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/documents/signatories")
-def get_doc_signatories(request: Request, db: Session = Depends(get_db)):
+def get_doc_signatories(request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     sig = doc_signatories(db, client.id)
     seal = doc_seal(db, client.id)
@@ -445,7 +474,7 @@ def save_doc_signatories(request: Request, body: dict = None, db: Session = Depe
 
 
 @router.get("/api/sheets/{kind}/template.xlsx")
-def sheet_template(kind: str, request: Request, db: Session = Depends(get_db)):
+def sheet_template(kind: str, request: Request, db: Session = Depends(get_read_db)):
     require_erp_read(request, db)
     spec = _sheet_kind(kind)
     return sheet_response([label for _, label in spec["columns"]], [spec["example"]],
@@ -585,7 +614,7 @@ def import_subcontract_orders(body: dict, request: Request, db: Session = Depend
 
 
 @router.get("/api/registers/tds.xlsx")
-def tds_export(request: Request, year: str = "", quarter: str = "", db: Session = Depends(get_db)):
+def tds_export(request: Request, year: str = "", quarter: str = "", db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     d = tds_register(request, year, quarter, db)
     rows = []
@@ -605,7 +634,7 @@ def tds_export(request: Request, year: str = "", quarter: str = "", db: Session 
 
 
 @router.get("/api/registers/guarantees.xlsx")
-def guarantees_export(request: Request, db: Session = Depends(get_db)):
+def guarantees_export(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     d = guarantee_register(request, db)
     keys = [k for k in (d["guarantees"][0].keys() if d["guarantees"] else ["number", "bank", "amount", "valid_until", "status"])
@@ -616,7 +645,7 @@ def guarantees_export(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/registers/advances.xlsx")
-def advances_export(request: Request, db: Session = Depends(get_db)):
+def advances_export(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     d = advance_register(request, db)
     rows = [(a["order"], a["contractor"], a["agreed"], a["advance"], a["recovery_percent"], a["recovered"],

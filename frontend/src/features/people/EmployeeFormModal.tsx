@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Button, Field, Input, Modal, NumField, Select } from '@/components/ui'
-import { createEmployee, peopleKeys, setAccess, useDepartments, useEmployees, useHrCatalogue, useSuggestedEmail, type EmployeeInput } from '@/api/people'
+import { createEmployee, peopleKeys, useDepartments, useEmployees, useHrCatalogue, useSuggestedEmail, type EmployeeInput } from '@/api/people'
 import { useJobOptions } from '@/api/clientOrders'
 import { useAction } from '@/lib/mutate'
 import { today } from '@/lib/format'
 import { useSession } from '@/lib/session'
+import { useDebounced } from '@/lib/hooks'
 import { AccessPicker } from './AccessPicker'
+import { PASSWORD_RULE, PasswordField, passwordProblem } from '@/features/auth/PasswordField'
 
-const blank = (): EmployeeInput => ({ first_name: '', last_name: '', email: '', org_email: '', password: '', phone: '', job_title: '', department_id: null, reports_to: null, level: '', role: 'employee', permission_role: 'staff', site_ids: [], employment_type: 'full_time', pay_frequency: 'monthly', salary: 0, tax_rate: 0, start_date: today(), emergency_contact: '', emergency_phone: '' })
+export const GENDERS = ['Male', 'Female', 'Other', 'Prefer not to say']
+
+const blank = (): EmployeeInput => ({ first_name: '', last_name: '', email: '', org_email: '', password: '', phone: '', job_title: '', department_id: null, reports_to: null, level: '', role: '', permission_role: 'staff', site_ids: [], employment_type: 'full_time', pay_frequency: 'monthly', salary: 0, tax_rate: 0, start_date: today(), emergency_contact: '', emergency_phone: '' })
 
 /** A new member of staff: who they are, the department they belong to, what they may do, and a login if they need one. */
 export function EmployeeFormModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -21,26 +26,71 @@ export function EmployeeFormModal({ open, onClose }: { open: boolean; onClose: (
 function Form({ onClose }: { onClose: () => void }) {
   const [f, setF] = useState<EmployeeInput>(blank)
   const [granted, setGranted] = useState<string[]>([])
+  const [confirm, setConfirm] = useState('')
   const [given, setGiven] = useState<{ id: string; email: string; password: string; sites: string } | null>(null)
   const cat = useHrCatalogue()
-  const { isOwner } = useSession()
+  const { can } = useSession()
+  const canManage = can('people.manage')
   const depts = useDepartments()
   const people = useEmployees('')
   const jobs = useJobOptions(false)
-  const suggested = useSuggestedEmail(f.first_name, f.last_name)
+  // Not on every letter: the address is asked for once the name has stopped changing.
+  const suggested = useSuggestedEmail(useDebounced(f.first_name, 400), useDebounced(f.last_name, 400))
   const set = (k: keyof EmployeeInput) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((s) => ({ ...s, [k]: e.target.value }))
+  // The reporting line runs up the levels: somebody can report to the same level or above, never below. People with no level yet are not ruled out.
+  const rank = (code: string) => cat.data?.levels.find((l) => l.code === code)?.rank ?? 0
+  const managers = (people.data ?? []).filter((p) => !f.level || !p.level || rank(p.level) >= rank(f.level))
+  // Choosing a role fills in its level. The reporting line follows the role too: the Master sees who it will be and may pick somebody else; for everyone else the server sets it when the employee is saved.
+  // Access follows the role and the level, so the Master does not tick it all again: the access level the role carries is
+  // chosen and its rights ticked at once, and can still be changed below. Only the Master gives access; for anybody else the server's default stands.
+  const giveAccess = (access?: string) => {
+    const level = canManage && access ? cat.data?.permission_roles.find((x) => x.code === access) : undefined
+    if (!level) return
+    setF((s) => ({ ...s, permission_role: level.code }))
+    setGranted(level.permissions)
+  }
+  const pickRole = (code: string) => {
+    const r = cat.data?.roles.find((x) => x.code === code)
+    setF((s) => {
+      const boss = canManage && r?.reports_to ? (people.data ?? []).find((p) => p.role === r.reports_to) : undefined
+      return { ...s, role: code, level: r?.level || s.level, reports_to: boss?.id ?? s.reports_to }
+    })
+    giveAccess(r?.access)
+  }
+  // A level on its own gives access too: the level is named for its main role ("L4 - Project Manager", "L6 - Site Engineer"),
+  // so that role's access is used; the role can then be chosen to refine it. Where no role fits the name, an access every
+  // role at the level shares is used, and otherwise nothing is guessed.
+  const pickLevel = (level: string) => {
+    const here = (cat.data?.roles ?? []).filter((r) => r.level === level)
+    setF((s) => ({ ...s, level, role: here.some((r) => r.code === s.role) ? s.role : '' }))
+    const name = (cat.data?.levels.find((l) => l.code === level)?.label ?? '').toLowerCase()
+    const main = here.find((r) => name.includes(r.label.toLowerCase()))
+    const shared = [...new Set(here.map((r) => r.access).filter(Boolean))]
+    giveAccess(main?.access ?? (shared.length === 1 ? shared[0] : undefined))
+  }
   const num = (k: keyof EmployeeInput) => (n: number) => setF((s) => ({ ...s, [k]: n }))
   // Their own address follows their name until somebody types one.
   const [typed, setTyped] = useState(false)
   useEffect(() => { if (!typed && suggested.data) setF((s) => ({ ...s, email: suggested.data })) }, [suggested.data, typed])
   useEffect(() => { const r = cat.data?.permission_roles.find((x) => x.code === f.permission_role); if (r && granted.length === 0) setGranted(r.permissions) }, [cat.data]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const save = useAction(async () => {
-    const made = await createEmployee({ ...f, password: f.password?.trim() })
-    if (isOwner) await setAccess(made.id, { permission_role: f.permission_role, permissions: granted })
-    return made
-  }, { invalidate: [peopleKeys.all], success: (r) => r.message || 'Employee created', onSuccess: (r) => setGiven({ id: r.employee_id, email: f.email, password: f.password ?? '', sites: (r.site_names ?? []).join(', ') || 'Every site' }) })
-  const ready = f.first_name.trim() && f.last_name.trim() && (!f.password?.trim() || f.email.trim())
+  const qc = useQueryClient()
+  // One request: the access the Master ticked is saved with the employee. The People lists then
+  // refresh behind the details screen rather than holding it until every one has reloaded.
+  const save = useAction(() => createEmployee({ ...f, password: f.password?.trim(), ...(canManage ? { permissions: granted } : {}) }), {
+    success: (r) => r.message || 'Employee created',
+    onSuccess: (r) => {
+      setGiven({ id: r.employee_id, email: f.email, password: f.password ?? '', sites: (r.site_names ?? []).join(', ') || 'Every site' })
+      void qc.invalidateQueries({ queryKey: peopleKeys.all })
+    },
+  })
+  const pass = f.password?.trim() ?? ''
+  // A login needs an email, a password that passes the rule, and the same password typed twice. Staff who never sign in need none of it.
+  const passError = pass ? passwordProblem(pass) : ''
+  const confirmError = pass && confirm !== pass ? 'Those two do not match.' : ''
+  // The one thing every new starter must have: somebody to call in an emergency, by name and number.
+  const emergencyOk = f.emergency_contact.trim() !== '' && f.emergency_phone.replace(/\D/g, '').length >= 7
+  const ready = f.first_name.trim() && f.last_name.trim() && emergencyOk && (!pass || (f.email.trim() && !passError && !confirmError))
 
   if (given)
     return (
@@ -52,7 +102,7 @@ function Form({ onClose }: { onClose: () => void }) {
           <dt className="text-muted-foreground">Password</dt><dd className="font-semibold">{given.password || '(no login)'}</dd>
           <dt className="text-muted-foreground">Sites</dt><dd>{given.sites}</dd>
         </dl>
-        <p className="mt-3 text-xs text-muted-foreground">The password is stored hashed and cannot be shown again. If it is lost, reset it from their profile.</p>
+        <p className="mt-3 text-xs text-muted-foreground">The password is stored hashed and cannot be shown again. If it is lost, set a new one from their record (Set password).</p>
         <div className="mt-4 flex justify-end"><Button onClick={onClose}>Done</Button></div>
       </div>
     )
@@ -63,28 +113,31 @@ function Form({ onClose }: { onClose: () => void }) {
         <Field label="First name *" htmlFor="ef-first"><Input id="ef-first" value={f.first_name} onChange={set('first_name')} autoFocus /></Field>
         <Field label="Last name *" htmlFor="ef-last"><Input id="ef-last" value={f.last_name} onChange={set('last_name')} /></Field>
         <Field label="Employee ID" htmlFor="ef-eid" hint="Leave blank to number it."><Input id="ef-eid" value={f.employee_id ?? ''} onChange={set('employee_id')} /></Field>
-        <Field label="Personal email" htmlFor="ef-email"><Input id="ef-email" type="email" value={f.email} onChange={(e) => { setTyped(true); set('email')(e) }} /></Field>
-        <Field label="Organization email (Yahoo sign-in)" htmlFor="ef-org-email"><Input id="ef-org-email" type="email" value={f.org_email ?? ''} onChange={set('org_email')} /></Field>
-        <Field label="Password" htmlFor="ef-pass" hint="Leave blank for site staff who are paid without signing in."><Input id="ef-pass" type="text" autoComplete="off" value={f.password ?? ''} onChange={set('password')} /></Field>
+        <Field label="Personal email" htmlFor="ef-email"><Input id="ef-email" type="email" autoComplete="off" value={f.email} onChange={(e) => { setTyped(true); set('email')(e) }} /></Field>
+        <Field label="Organization email (Yahoo sign-in)" htmlFor="ef-org-email"><Input id="ef-org-email" type="email" autoComplete="off" value={f.org_email ?? ''} onChange={set('org_email')} /></Field>
+        <PasswordField id="ef-pass" label="Password" value={f.password ?? ''} onChange={(v) => setF((s) => ({ ...s, password: v }))} error={pass && passError ? passError : undefined} hint={`They sign in with their email and this password - nothing is emailed. ${PASSWORD_RULE} Leave blank for site staff who are paid without signing in.`} />
+        {pass && <PasswordField id="ef-pass2" label="Confirm password" value={confirm} onChange={setConfirm} error={confirm ? confirmError || undefined : undefined} placeholder="Type it again" />}
         <Field label="Phone" htmlFor="ef-phone"><Input id="ef-phone" type="tel" value={f.phone} onChange={set('phone')} /></Field>
         <Field label="Job title" htmlFor="ef-title"><Input id="ef-title" value={f.job_title} onChange={set('job_title')} /></Field>
-        <Field label="Department" htmlFor="ef-dept" hint={isOwner ? undefined : 'Only the Master places people in departments.'}><Select id="ef-dept" disabled={!isOwner} value={f.department_id ?? ''} onChange={(e) => setF((s) => ({ ...s, department_id: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={(depts.data ?? []).filter((d) => d.site_ids.length > 0 || d.id === f.department_id).map((d) => ({ value: d.id, label: d.name }))} /></Field>
-        <Field label="Reports to" htmlFor="ef-mgr"><Select id="ef-mgr" value={f.reports_to ?? ''} onChange={(e) => setF((s) => ({ ...s, reports_to: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={(people.data ?? []).map((p) => ({ value: p.id, label: p.full_name }))} /></Field>
-        <Field label="Level" htmlFor="ef-level"><Select id="ef-level" value={f.level} onChange={set('level')} placeholder="Not set" options={(cat.data?.levels ?? []).map((l) => ({ value: l.code, label: l.label }))} /></Field>
-        <Field label="Reporting role" htmlFor="ef-role"><Select id="ef-role" value={f.role} onChange={set('role')} options={(cat.data?.roles ?? [{ code: 'employee', label: 'Employee' }]).map((r) => ({ value: r.code, label: r.label }))} /></Field>
+        <Field label="Department" htmlFor="ef-dept" hint={canManage ? undefined : 'Only the Master or HR places people in departments.'}><Select id="ef-dept" disabled={!canManage} value={f.department_id ?? ''} onChange={(e) => setF((s) => ({ ...s, department_id: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={(depts.data ?? []).filter((d) => d.site_ids.length > 0 || d.id === f.department_id).map((d) => ({ value: d.id, label: d.name }))} /></Field>
+        <Field label="Reports to" htmlFor="ef-mgr" hint={canManage ? 'Follows the role; change it if needed.' : 'Set automatically from the role. Only the Master or HR can change it.'}><Select id="ef-mgr" disabled={!canManage} value={f.reports_to ?? ''} onChange={(e) => setF((s) => ({ ...s, reports_to: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={managers.map((p) => ({ value: p.id, label: p.level ? `${p.full_name} (${p.level})` : p.full_name }))} /></Field>
+        <Field label="Level" htmlFor="ef-level"><Select id="ef-level" value={f.level} onChange={(e) => pickLevel(e.target.value)} placeholder="Not set" options={(cat.data?.levels ?? []).map((l) => ({ value: l.code, label: l.label }))} /></Field>
+        <Field label="Reporting role" htmlFor="ef-role"><Select id="ef-role" value={f.role} onChange={(e) => pickRole(e.target.value)} placeholder="Not set" options={(cat.data?.roles ?? []).filter((r) => !f.level || r.level === f.level).map((r) => ({ value: r.code, label: r.label }))} /></Field>
         <Field label="Start date" htmlFor="ef-start"><Input id="ef-start" type="date" value={f.start_date} onChange={set('start_date')} /></Field>
         <Field label="Type" htmlFor="ef-type"><Select id="ef-type" value={f.employment_type} onChange={set('employment_type')} options={[['full_time', 'Full time'], ['part_time', 'Part time'], ['contract', 'Contract'], ['intern', 'Intern']].map(([v, l]) => ({ value: v, label: l }))} /></Field>
         <Field label="Paid" htmlFor="ef-freq"><Select id="ef-freq" value={f.pay_frequency} onChange={set('pay_frequency')} options={[['monthly', 'Monthly'], ['biweekly', 'Every two weeks'], ['weekly', 'Weekly'], ['hourly', 'Hourly']].map(([v, l]) => ({ value: v, label: l }))} /></Field>
         <Field label="Salary" htmlFor="ef-salary"><NumField id="ef-salary" value={f.salary} onValue={num('salary')} /></Field>
         <Field label="Tax rate %" htmlFor="ef-tax"><NumField id="ef-tax" value={f.tax_rate} onValue={num('tax_rate')} /></Field>
-        <Field label="Emergency contact" htmlFor="ef-em"><Input id="ef-em" value={f.emergency_contact} onChange={set('emergency_contact')} /></Field>
+        <Field label="Gender" htmlFor="ef-gender" hint="Optional."><Select id="ef-gender" value={f.gender ?? ''} placeholder="Not given" onChange={set('gender')} options={GENDERS.map((g) => ({ value: g, label: g }))} /></Field>
+        <Field label="Emergency contact name *" htmlFor="ef-em" hint="Required: who to call in an emergency."><Input id="ef-em" value={f.emergency_contact} onChange={set('emergency_contact')} /></Field>
+        <Field label="Emergency contact phone *" htmlFor="ef-emp" error={f.emergency_phone && !emergencyOk && f.emergency_contact ? 'Enter a phone number.' : undefined}><Input id="ef-emp" type="tel" value={f.emergency_phone} onChange={set('emergency_phone')} /></Field>
         <Field label="Sites" htmlFor="ef-sites" hint="None ticked means every site." className="sm:col-span-2 lg:col-span-3">
           <div className="flex flex-wrap gap-x-4 gap-y-1" id="ef-sites">
             {(jobs.data ?? []).map((j) => <label key={j.id} className="flex items-center gap-1.5 text-[13px]"><input type="checkbox" className="size-4 accent-[var(--primary)]" checked={f.site_ids.includes(j.id)} onChange={(e) => setF((s) => ({ ...s, site_ids: e.target.checked ? [...s.site_ids, j.id] : s.site_ids.filter((x) => x !== j.id) }))} />{j.number} {j.name}</label>)}
           </div>
         </Field>
       </div>
-      {isOwner && cat.data && <div className="mt-5"><AccessPicker catalogue={cat.data} role={f.permission_role} granted={granted} onRole={(code, rights) => { setF((s) => ({ ...s, permission_role: code })); setGranted(rights) }} onGranted={setGranted} /></div>}
+      {canManage && cat.data && <div className="mt-5"><AccessPicker catalogue={cat.data} role={f.permission_role} granted={granted} onRole={(code, rights) => { setF((s) => ({ ...s, permission_role: code })); setGranted(rights) }} onGranted={setGranted} /></div>}
       <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
         {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
         <Button variant="ghost" onClick={onClose}>Cancel</Button>

@@ -109,3 +109,23 @@ curl https://your-app.up.railway.app/api/health
 `{"status":"ok","database":"ok"}` means the process is up and the database
 answered. Anything else, read the deploy logs: both start-up refusals above
 print exactly what is missing and where to set it.
+
+## After a deploy: how devices get the new version
+
+Nobody has to clear anything or press reload:
+
+- Pages are always asked of the server first (the offline copy is used only with no signal), and the script files
+  are named by their contents, so a page opened after a deploy is the new build.
+- Every answer from `/api` carries `X-App-Build`, the stamp of the build being served (`frontend/dist/build.json`,
+  written by `npm run build`). An app left open that sees a newer stamp loads the new build at the next change of
+  screen - never in the middle of a form - and only once.
+- Data kept on the device by an older build is thrown away by the newer one.
+
+If a device still shows something wrong:
+
+- **One device:** open `/next/reset`. It clears the saved copy of the app, its service worker, the kept data and the
+  browser's own cache for the site, then goes back into the app. The person stays signed in, and saves made offline
+  that are not yet sent are kept. The same link is offered on the "This page hit a problem" screen.
+- **Every device:** set the Railway variable `CLIENT_RESET` to any new value (today's date will do). Each device does
+  the same reset once, the next time it talks to the server. Change the value again to repeat it; leave it alone
+  otherwise.

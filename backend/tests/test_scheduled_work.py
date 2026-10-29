@@ -230,6 +230,18 @@ def overdue_invoice(tenant, days, status="Awaiting Payment", email="payer@exampl
     return inv
 
 
+@pytest.fixture(autouse=True)
+def _reminders_on(monkeypatch):
+    monkeypatch.setenv("OVERDUE_REMINDERS_ENABLED", "1")
+
+
+def test_overdue_reminders_are_off_by_default(tenant, monkeypatch):
+    monkeypatch.delenv("OVERDUE_REMINDERS_ENABLED")
+    inv = overdue_invoice(tenant, days=8)
+    main.run_due_jobs(only="overdue_reminders")
+    assert tenant.get(f"/api/invoices/{inv['number']}/reminders").json() == []
+
+
 def test_the_ladder_picks_the_rung_reached():
     assert main.reminder_stage_for(0) is None
     assert main.reminder_stage_for(1) == 1

@@ -77,7 +77,9 @@ FILE_TYPES = ("image/jpeg", "image/png", "image/webp", "image/gif", "application
               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
               "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
               "application/octet-stream")
-FILE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf", ".dwg", ".dxf", ".xlsx", ".docx")
+# Office files old and new, text and OpenOffice too: a supplier's quotation arrives in whatever he uses.
+FILE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf", ".dwg", ".dxf", ".xlsx", ".docx",
+                   ".doc", ".docm", ".xls", ".xlsm", ".csv", ".txt", ".rtf", ".odt", ".ods", ".bmp", ".tif", ".tiff")
 
 
 def file_dict(f):
@@ -94,6 +96,10 @@ def attachment_target(db, client_id, attached_type, attached_id):
     """(job_id, locked) for what a file is being kept against - refused if
     it is not this company's."""
     t = attached_type or "job"
+    if t.startswith("store_"):
+        from app.services import store_files
+        job_id, locked, _store = store_files.target(db, client_id, t, attached_id)
+        return job_id, locked
     if t == "job":
         job = job_or_404(db, client_id, attached_id)
         return job.id, False
@@ -143,6 +149,18 @@ def attachment_target(db, client_id, attached_type, attached_id):
         if not x:
             raise HTTPException(404, "Incident not found")
         return x.job_id, False
+    if t == "worker":
+        w = db.query(models.DBWorkerScreening).filter(models.DBWorkerScreening.id == attached_id,
+                                                      models.DBWorkerScreening.client_id == client_id).first()
+        if not w:
+            raise HTTPException(404, "Worker not found")
+        return w.job_id, False
+    if t == "equipment_check":
+        c = db.query(models.DBEquipmentCheck).filter(models.DBEquipmentCheck.id == attached_id,
+                                                     models.DBEquipmentCheck.client_id == client_id).first()
+        if not c:
+            raise HTTPException(404, "Inspection not found")
+        return c.job_id, False
     if t == "ncr":
         n = db.query(models.DBNcr).filter(models.DBNcr.id == attached_id,
                                           models.DBNcr.client_id == client_id).first()

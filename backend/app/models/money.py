@@ -21,6 +21,10 @@ class DBBankAccount(Base):
     opening_date = Column(String, default="")
     is_active = Column(Boolean, default=True)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    # A site's cash box (imprest): the site it is for, who holds it, and the float it is topped back up to.
+    job_id = Column(Integer, nullable=True, index=True)
+    custodian_id = Column(Integer, nullable=True, index=True)
+    imprest_amount = Column(Float, default=0.0)
 
 
 class DBMoneyEntry(Base):
@@ -53,6 +57,14 @@ class DBMoneyEntry(Base):
     void_reason = Column(String, default="")
     recorded_by_name = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    # An expense or sundry receipt: the head it is booked under (EXPENSE_HEADS / INCOME_HEADS).
+    head = Column(String, default="")
+    # A transfer between our own accounts is two entries, one out of each side and one into the other; each names the other.
+    pair_id = Column(Integer, nullable=True, index=True)
+    # The day the bank actually moved the money (a cheque clears days after it is written), and the statement line
+    # it was matched to. Blank until it shows on the bank's statement.
+    cleared_on = Column(String, default="")
+    statement_line_id = Column(Integer, nullable=True, index=True)
 
 
 # RETENTION RELEASED
@@ -86,7 +98,14 @@ class DBRetentionRelease(Base):
     net_amount = Column(Float, default=0.0)        # what moves: the release and its tax
 
     # CERTIFIED (due) | PAID | CANCELLED
+    # SUBMITTED (a contractor's retention raised by staff, waiting for somebody else to certify it) | CERTIFIED |
+    # PAID | CANCELLED
     status = Column(String, default="CERTIFIED", index=True)
+    raised_by = Column(Integer, nullable=True)
+    certified_by_name = Column(String, default="")
+    certified_at = Column(String, default="")
+    # Why it went ahead though a check said not yet (defects period still running, a back-charge open...).
+    override_note = Column(Text, default="")
     notes = Column(Text, default="")
     cancel_reason = Column(String, default="")
     created_by_name = Column(String, default="")
@@ -151,3 +170,97 @@ class DBCreditNoteLine(Base):
     qty = Column(Float, default=0.0)
     rate = Column(Float, default=0.0)
     amount = Column(Float, default=0.0)
+
+
+# PAYMENTS WAIT FOR A SIGNATURE
+#
+# A bill approved is a bill owed, not a bill to be paid today: what goes out this week is the accounts head's call,
+# and a large one the MD's. A payment request is that decision on paper - asked for by accounts, checked by the
+# accounts head, released by the MD over a limit - and only a released request is paid. Off unless the company
+# turns it on (Settings > Company > Payment approval).
+class DBPaymentRequest(Base):
+    __tablename__ = "payment_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    number = Column(String, default="", index=True)              # PRQ-0001
+    doc_type = Column(String, default="", index=True)            # sub_bill | supplier_bill | sub_advance | on_account | expense
+    doc_id = Column(Integer, nullable=True, index=True)
+    doc_number = Column(String, default="")
+    party_type = Column(String, default="")
+    party_name = Column(String, default="")
+    party_id = Column(Integer, nullable=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    head = Column(String, default="")                             # an expense's head
+    amount = Column(Float, default=0.0)
+    account_id = Column(Integer, ForeignKey("bank_accounts.id"), nullable=True)
+    mode = Column(String, default="")
+    note = Column(String, default="")
+    # PENDING (with the accounts head) -> AWAITING_MD (over the limit) -> APPROVED -> PAID; or REJECTED / CANCELLED
+    status = Column(String, default="PENDING", index=True)
+    requested_by = Column(Integer, nullable=True)                 # the member of staff; None for the Master
+    requested_by_member = Column(Integer, nullable=True)          # a colleague of the Master's (team_members), who signs in as the company
+    requested_by_name = Column(String, default="")
+    requested_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    checked_by_name = Column(String, default="")
+    checked_at = Column(String, default="")
+    approved_by_name = Column(String, default="")
+    approved_at = Column(String, default="")
+    rejected_by_name = Column(String, default="")
+    reject_reason = Column(String, default="")
+    entry_id = Column(Integer, nullable=True, index=True)         # the payment that settled it
+
+
+# SITE CASH (IMPREST)
+#
+# A site runs on a cash box: head office tops it up, the site engineer pays the diesel, the lorry, the tea out of it,
+# and keeps the bills. Each payment is entered from site - with a photo of the bill - and checked by accounts; only a
+# checked expense is booked (as an expense voucher out of the box, charged to the site), and the box is topped back
+# up to its float. Until it is checked it is cash the box no longer holds but the books do not know of yet.
+class DBSiteCashExpense(Base):
+    __tablename__ = "site_cash_expenses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    number = Column(String, default="", index=True)                 # SCE-0001
+    account_id = Column(Integer, ForeignKey("bank_accounts.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    spent_on = Column(String, default="")
+    head = Column(String, default="")
+    paid_to = Column(String, default="")
+    amount = Column(Float, default=0.0)
+    note = Column(String, default="")
+    bill_no = Column(String, default="")
+    status = Column(String, default="SUBMITTED", index=True)         # SUBMITTED -> APPROVED | REJECTED
+    submitted_by = Column(Integer, nullable=True)                    # the member of staff; None for the Master
+    submitted_by_name = Column(String, default="")
+    submitted_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    checked_by_name = Column(String, default="")
+    checked_at = Column(String, default="")
+    reject_reason = Column(String, default="")
+    entry_id = Column(Integer, nullable=True, index=True)           # the expense voucher it was booked as
+
+
+# THE BANK'S OWN STATEMENT
+#
+# What the books say is in the bank and what the bank says are never the same on a given day: cheques written and not
+# yet presented, cheques deposited and not yet credited, charges and interest the bank booked on its own. The bank's
+# statement is read in line by line, each line matched to the entry it is, and what is left over is the
+# reconciliation.
+class DBBankStatementLine(Base):
+    __tablename__ = "bank_statement_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    account_id = Column(Integer, ForeignKey("bank_accounts.id"), nullable=False, index=True)
+    txn_date = Column(String, default="", index=True)
+    narration = Column(String, default="")
+    reference = Column(String, default="")             # cheque number, UTR
+    debit = Column(Float, default=0.0)                 # out of the account
+    credit = Column(Float, default=0.0)                # into it
+    balance = Column(Float, nullable=True)             # as the bank printed it, when it did
+    status = Column(String, default="UNMATCHED", index=True)    # UNMATCHED | MATCHED | IGNORED
+    entry_id = Column(Integer, nullable=True, index=True)
+    file_name = Column(String, default="")
+    imported_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    imported_by_name = Column(String, default="")

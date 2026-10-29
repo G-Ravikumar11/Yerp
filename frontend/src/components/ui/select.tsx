@@ -2,7 +2,7 @@ import * as React from 'react'
 import { ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-export interface SelectOption {
+interface SelectOption {
   value: string | number
   label: string
   disabled?: boolean
@@ -21,7 +21,7 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(({ option
       ref={ref}
       className={cn(
         'h-10 w-full appearance-none rounded-md border border-input bg-transparent pl-3 pr-9 text-sm text-foreground',
-        'transition-[border-color,box-shadow] duration-150 hover:border-subtle/60',
+        'transition-[border-color,box-shadow] duration-150',
         'focus-visible:border-ring focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/15',
         'disabled:cursor-not-allowed disabled:opacity-50 aria-[invalid=true]:border-danger',
         className,

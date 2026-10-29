@@ -7,6 +7,7 @@ from app import models
 
 from app.constants.items import ITEM_TYPE_ALIASES
 from app.core.currency import money, unit_rate
+from datetime import datetime
 from app.core.serials import CODE_ALPHABET, CODE_LENGTH, encode_serial, next_serial, normalise_code
 from app.core.units import (
     CATEGORY_BY_KIND,
@@ -72,7 +73,7 @@ def normalise_tax(value):
     return text if text != raw else None
 
 
-def repair_row(row, kind, taken_codes):
+def repair_row(row, kind):
     """Correct what has exactly one right answer; leave the rest alone.
 
     Every change is returned so it can be shown. A silent correction to a
@@ -161,10 +162,6 @@ def codes_in_use(db, codes) -> set:
     return found
 
 
-def code_is_free(db, code) -> bool:
-    return normalise_code(code) not in codes_in_use(db, [code])
-
-
 def issue_item_code(db, taken=None) -> str:
     """The next unused code.
 
@@ -182,6 +179,31 @@ def issue_item_code(db, taken=None) -> str:
             continue
         return code
     raise HTTPException(500, "Could not issue a free code; the series may need resetting.")
+
+
+def issue_item_codes(db, n, taken=None):
+    """n unused codes at once: the sequence is locked and read once, and the candidates are checked against the
+    items table in one query per round, not one per code (a BOQ of two thousand lines was two thousand round trips)."""
+    claimed = {normalise_code(c) for c in (taken or set())}
+    out = []
+    for _ in range(64):
+        if len(out) >= n:
+            return out
+        row = db.query(models.DBCodeSequence).filter(models.DBCodeSequence.name == "item").with_for_update().first()
+        if not row:
+            row = models.DBCodeSequence(name="item", next_value=1)
+            db.add(row)
+            db.flush()
+        first, want = row.next_value or 1, n - len(out)
+        row.next_value = first + want
+        row.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        batch = [encode_serial(first + i) for i in range(want)]
+        used = set()
+        for at in range(0, len(batch), 500):
+            used |= {c for (c,) in db.query(models.DBItem.item_code).filter(
+                models.DBItem.item_code.in_(batch[at:at + 500])).all()}
+        out += [c for c in batch if c not in claimed and c not in used]
+    raise HTTPException(500, "Could not issue free codes; the series may need resetting.")
 
 
 def build_item(db, client_id, body, taken):

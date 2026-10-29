@@ -36,8 +36,9 @@ export const useUI = create<UIState>()(
   ),
 )
 
+/** Light or dark on the page; "system" follows the device. The colours match the pre-paint script in index.html. */
 export function applyTheme(theme: Theme) {
   const dark = theme === 'dark' || (theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
   document.documentElement.classList.toggle('dark', dark)
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#0b0b0e' : '#fbfaf8')
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#111827' : '#f9fafb')
 }

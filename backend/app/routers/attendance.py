@@ -5,10 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
-from app.core.auth import get_client_user, require_erp_read
+from app.core.auth import get_client_user, require_erp_read, require_items_access
+from app.core.queries import by_id, prime
 from app.core.dates import DEFAULT_WORKING_DAYS
+from app.services.holidays import custom_holidays
 from app.validators.common import clean_working_days
 
 
@@ -75,17 +77,18 @@ def clock_out(request: Request, body: dict = None, db: Session = Depends(get_db)
 
 
 @router.get("/api/attendance")
-def get_attendance(request: Request, employee_id: int = 0, date: str = "", db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+def get_attendance(request: Request, employee_id: int = 0, date: str = "", db: Session = Depends(get_read_db)):
+    client = require_items_access(request, db, ("attendance.view_team", "people.manage"))
     query = db.query(models.DBAttendance).filter(models.DBAttendance.client_id == client.id)
     if employee_id:
         query = query.filter(models.DBAttendance.employee_id == employee_id)
     if date:
         query = query.filter(models.DBAttendance.date == date)
     records = query.order_by(models.DBAttendance.date.desc(), models.DBAttendance.clock_in.desc()).limit(200).all()
+    prime(db, models.DBEmployee, [a.employee_id for a in records])
     result = []
     for a in records:
-        emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == a.employee_id).first()
+        emp = by_id(db, models.DBEmployee, a.employee_id)
         result.append({
             "id": a.id, "employee_id": a.employee_id,
             "employee_name": f"{emp.first_name} {emp.last_name}" if emp else "",
@@ -98,16 +101,17 @@ def get_attendance(request: Request, employee_id: int = 0, date: str = "", db: S
 
 
 @router.get("/api/attendance/today")
-def get_today_attendance(request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+def get_today_attendance(request: Request, db: Session = Depends(get_read_db)):
+    client = require_items_access(request, db, ("attendance.view_team", "people.manage"))
     today = datetime.now().strftime("%Y-%m-%d")
     records = db.query(models.DBAttendance).filter(
         models.DBAttendance.client_id == client.id,
         models.DBAttendance.date == today,
     ).all()
+    prime(db, models.DBEmployee, [a.employee_id for a in records])
     result = []
     for a in records:
-        emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == a.employee_id).first()
+        emp = by_id(db, models.DBEmployee, a.employee_id)
         result.append({
             "id": a.id, "employee_id": a.employee_id,
             "employee_name": f"{emp.first_name} {emp.last_name}" if emp else "",
@@ -118,8 +122,8 @@ def get_today_attendance(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/attendance/stats")
-def get_attendance_stats(request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+def get_attendance_stats(request: Request, db: Session = Depends(get_read_db)):
+    client = require_items_access(request, db, ("attendance.view_team", "people.manage"))
     today = datetime.now().strftime("%Y-%m-%d")
     total_employees = db.query(models.DBEmployee).filter(
         models.DBEmployee.client_id == client.id,
@@ -130,7 +134,9 @@ def get_attendance_stats(request: Request, db: Session = Depends(get_db)):
         models.DBAttendance.date == today,
     ).all()
     present = sum(1 for r in today_records if r.status in ("present", "completed"))
-    absent = total_employees - present
+    # Nobody is absent on a day the business has marked as a holiday.
+    holiday = custom_holidays(db, client.id, today, today).get(today)
+    absent = 0 if holiday else total_employees - present
     avg_hours = 0.0
     if today_records:
         avg_hours = round(sum(r.total_hours for r in today_records) / len(today_records), 2)
@@ -138,14 +144,15 @@ def get_attendance_stats(request: Request, db: Session = Depends(get_db)):
         "total_employees": total_employees,
         "present": present,
         "absent": max(0, absent),
+        "holiday": holiday or "",
         "avg_hours": avg_hours,
         "date": today,
     }
 
 
 @router.get("/api/attendance/live")
-def get_live_attendance(request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+def get_live_attendance(request: Request, db: Session = Depends(get_read_db)):
+    client = require_items_access(request, db, ("attendance.view_team", "people.manage"))
     today = datetime.now().strftime("%Y-%m-%d")
     all_active = db.query(models.DBEmployee).filter(
         models.DBEmployee.client_id == client.id,
@@ -156,12 +163,13 @@ def get_live_attendance(request: Request, db: Session = Depends(get_db)):
         models.DBAttendance.date == today,
     ).all()
     record_map = {r.employee_id: r for r in today_records}
+    prime(db, models.DBDepartment, [e.department_id for e in all_active])
     result = []
     for emp in all_active:
         rec = record_map.get(emp.id)
         dept_name = ""
         if emp.department_id:
-            dept = db.query(models.DBDepartment).filter(models.DBDepartment.id == emp.department_id).first()
+            dept = by_id(db, models.DBDepartment, emp.department_id)
             dept_name = dept.name if dept else ""
         result.append({
             "id": emp.id, "employee_id": emp.employee_id,
@@ -180,8 +188,8 @@ def get_live_attendance(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/attendance/analytics")
-def get_attendance_analytics(request: Request, days: int = 30, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+def get_attendance_analytics(request: Request, days: int = 30, db: Session = Depends(get_read_db)):
+    client = require_items_access(request, db, ("attendance.view_team", "people.manage"))
     from datetime import timedelta
     start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     records = db.query(models.DBAttendance).filter(
@@ -226,17 +234,18 @@ def get_attendance_analytics(request: Request, days: int = 30, db: Session = Dep
 
 
 @router.get("/api/attendance/export")
-def export_attendance(request: Request, start_date: str = "", end_date: str = "", db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+def export_attendance(request: Request, start_date: str = "", end_date: str = "", db: Session = Depends(get_read_db)):
+    client = require_items_access(request, db, ("attendance.view_team", "people.manage"))
     query = db.query(models.DBAttendance).filter(models.DBAttendance.client_id == client.id)
     if start_date:
         query = query.filter(models.DBAttendance.date >= start_date)
     if end_date:
         query = query.filter(models.DBAttendance.date <= end_date)
     records = query.order_by(models.DBAttendance.date.desc()).limit(1000).all()
+    prime(db, models.DBEmployee, [r.employee_id for r in records])      # one read, not one per row (up to 1000)
     rows = []
     for r in records:
-        emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == r.employee_id).first()
+        emp = by_id(db, models.DBEmployee, r.employee_id)
         rows.append({
             "Employee": f"{emp.first_name} {emp.last_name}" if emp else "",
             "Email": emp.email if emp else "",
@@ -250,7 +259,7 @@ def export_attendance(request: Request, start_date: str = "", end_date: str = ""
 
 @router.post("/api/attendance/overtime/announce")
 def announce_overtime(request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, ("attendance.view_team", "people.manage"))
     if not body or not body.get("employee_id") or not body.get("hours"):
         raise HTTPException(status_code=400, detail="employee_id and hours required")
     emp = db.query(models.DBEmployee).filter(
@@ -283,14 +292,15 @@ def announce_overtime(request: Request, body: dict = None, db: Session = Depends
 
 
 @router.get("/api/attendance/overtime/logs")
-def get_overtime_logs(request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+def get_overtime_logs(request: Request, db: Session = Depends(get_read_db)):
+    client = require_items_access(request, db, ("attendance.view_team", "people.manage"))
     logs = db.query(models.DBOvertimeLog).filter(
         models.DBOvertimeLog.client_id == client.id
     ).order_by(models.DBOvertimeLog.created_at.desc()).limit(100).all()
+    prime(db, models.DBEmployee, [l.employee_id for l in logs])
     result = []
     for l in logs:
-        emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == l.employee_id).first()
+        emp = by_id(db, models.DBEmployee, l.employee_id)
         result.append({
             "id": l.id, "employee_id": l.employee_id,
             "employee_name": f"{emp.first_name} {emp.last_name}" if emp else "",
@@ -303,7 +313,7 @@ def get_overtime_logs(request: Request, db: Session = Depends(get_db)):
 
 @router.put("/api/attendance/settings")
 def update_attendance_settings(request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    client = require_items_access(request, db, ("attendance.view_team", "people.manage"))
     settings = db.query(models.DBAttendanceSettings).filter(models.DBAttendanceSettings.client_id == client.id).first()
     if not settings:
         settings = models.DBAttendanceSettings(client_id=client.id)
@@ -322,8 +332,8 @@ def update_attendance_settings(request: Request, body: dict = None, db: Session 
 
 
 @router.get("/api/attendance/settings")
-def get_attendance_settings(request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+def get_attendance_settings(request: Request, db: Session = Depends(get_read_db)):
+    client = require_items_access(request, db, ("attendance.view_team", "people.manage"))
     settings = db.query(models.DBAttendanceSettings).filter(models.DBAttendanceSettings.client_id == client.id).first()
     if not settings:
         return {
@@ -346,7 +356,7 @@ def get_attendance_settings(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/attendance/by-site")
-def attendance_by_site(request: Request, day: str = "", db: Session = Depends(get_db)):
+def attendance_by_site(request: Request, day: str = "", db: Session = Depends(get_read_db)):
     """Who clocked in where on a day: each site with the people inside its
     circle, and anybody who clocked in outside every site."""
     client = require_erp_read(request, db)

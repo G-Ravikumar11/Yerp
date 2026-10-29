@@ -127,6 +127,9 @@ class DBDiaryLabour(Base):
     rate = Column(Float, default=0.0)            # per manday
     amount = Column(Float, default=0.0)
     display_order = Column(Integer, default=0)
+    # Comma-separated worker_screenings ids, when this line was added "from Workers & Safety" rather than typed by
+    # hand - the headcount then always matches how many are named here, and the diary shows them by name.
+    worker_ids = Column(Text, default="")
 
 
 class DBDiaryPlant(Base):
@@ -175,6 +178,85 @@ class DBScheduleActivity(Base):
     status = Column(String, default="")                          # Not Started | In Progress | Completed | Delayed, as set by hand
     notes = Column(Text, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    # The programme as the office's Excel schedule has it (app/services/programme_engine.py works it out). Rows nest
+    # under a parent to any depth: block, unit, activity, sub-activity. A parent's dates are worked out from its
+    # sub-items, never kept as typed. A leaf keeps what was typed: planned_start, and duration_days (working days) or,
+    # when there are none, planned_finish.
+    parent_id = Column(Integer, ForeignKey("schedule_activities.id"), nullable=True, index=True)
+    description = Column(Text, default="")             # the BOQ's full wording; `name` is the short one shown
+    boq_ref = Column(String, default="")               # the client's item number, I-2.1.1 (the sheet's V.NO)
+    uom = Column(String, default="")
+    quantity = Column(Float, default=0.0)
+    rate = Column(Float, default=0.0)
+    amount = Column(Float, default=0.0)
+    labour_required = Column(Float, default=0.0)
+    duration_days = Column(Integer, nullable=True)     # working days, as typed
+    not_before = Column(String, default="")            # never starts before this date
+    productivity = Column(Boolean, default=False)      # days = quantity / (output per gang per day x gangs)
+    output_per_day = Column(Float, default=0.0)        # per gang
+    gangs = Column(Float, default=0.0)
+    qty_done = Column(Float, default=0.0)              # progress in the row's unit; % done = qty_done / quantity
+
+
+class DBScheduleLink(Base):
+    """One row waiting on another: FS (after it ends), SS (after it starts), FF (ends after it ends) or SF (ends
+    after it starts), with a lag in working days - negative for a lead. A row may wait on several."""
+    __tablename__ = "schedule_links"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    activity_id = Column(Integer, ForeignKey("schedule_activities.id"), nullable=False, index=True)      # the one that waits
+    predecessor_id = Column(Integer, ForeignKey("schedule_activities.id"), nullable=False, index=True)
+    kind = Column(String, default="FS")
+    lag = Column(Integer, default=0)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBScheduleCalendar(Base):
+    """A project's working week: which weekdays are off (ISO numbers, Sunday 7), or every day counted."""
+    __tablename__ = "schedule_calendars"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True, unique=True)
+    calendar_days = Column(Boolean, default=False)
+    weekly_off = Column(String, default="7")
+    updated_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBScheduleHoliday(Base):
+    """A day the project's site does not work, skipped like a Sunday."""
+    __tablename__ = "schedule_holidays"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    holiday_on = Column(String, default="", index=True)
+    name = Column(String, default="")
+
+
+class DBScheduleBaseline(Base):
+    """The programme as it was agreed, kept so today's dates can be read against it."""
+    __tablename__ = "schedule_baselines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    label = Column(String, default="")
+    saved_by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBScheduleBaselineRow(Base):
+    __tablename__ = "schedule_baseline_rows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    baseline_id = Column(Integer, ForeignKey("schedule_baselines.id"), nullable=False, index=True)
+    activity_id = Column(Integer, ForeignKey("schedule_activities.id"), nullable=False, index=True)
+    start = Column(String, default="")
+    finish = Column(String, default="")
+    days = Column(Integer, default=0)
 
 
 class DBScheduleTask(Base):
@@ -207,6 +289,7 @@ class DBScheduleProgress(Base):
     activity_id = Column(Integer, ForeignKey("schedule_activities.id"), nullable=False, index=True)
     reported_on = Column(String, default="", index=True)
     percent = Column(Float, default=0.0)
+    qty_done = Column(Float, nullable=True)            # in the row's unit, when it has a quantity
     note = Column(String, default="")
     by_name = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))

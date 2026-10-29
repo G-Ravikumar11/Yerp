@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { FileSpreadsheet, PackagePlus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { OldStoreBanner, useCutover } from '@/features/store/OldStore'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, Stat, StatGrid } from '@/components/ui'
 import { VERDICT, useMatch, useReceipts, type GrnRow, type MatchRow } from '@/api/grn'
@@ -15,6 +16,7 @@ const tone = (s: string) => (s === 'POSTED' ? 'success' : s === 'CANCELLED' ? 'd
 
 /** What arrived at the gate, and whether the order, the delivery and the bill agree. */
 export default function GrnPage() {
+  const moved = !!useCutover().data
   const q = useReceipts()
   const [exceptions, setExceptions] = useState(false)
   const match = useMatch(exceptions)
@@ -47,7 +49,8 @@ export default function GrnPage() {
   })
   return (
     <>
-      <PageHeader eyebrow="Store" title="Goods Receipt & Match" description="What actually arrived at the gate, and whether the order, the delivery and the bill agree." actions={<Button onClick={() => setReceiving(true)}><PackagePlus /> Receive a delivery</Button>} />
+      <PageHeader eyebrow="Store" title="Goods Receipt & Match" description="What actually arrived at the gate, and whether the order, the delivery and the bill agree." actions={moved ? undefined : <Button onClick={() => setReceiving(true)}><PackagePlus /> Receive a delivery</Button>} />
+      <OldStoreBanner hub="/store/hub/inward/grn" />
       <StatGrid className="lg:grid-cols-4 xl:grid-cols-4">
         <Stat label="Receipts" value={s?.count ?? 0} loading={q.isPending} />
         <Stat label="Not yet posted" value={s?.awaiting_posting ?? 0} loading={q.isPending} />

@@ -1,7 +1,10 @@
 import { useState } from 'react'
-import { Sparkles } from 'lucide-react'
+import { AiMark } from '@/components/ui/ai-mark'
+import { Link } from 'react-router-dom'
+
 import { Badge, Button, Field, Input, Modal, Select } from '@/components/ui'
-import { applyDraft, askPlan, draftProgramme, reviewPlan, suggestDay, type DayIdeas, type PlanAnswer, type PlanDraft, type PlanReview } from '@/api/aiPlanning'
+import { applyDraft, askPlan, draftProgramme, reviewPlan, suggestDay, type DayIdeas, type DraftSource, type PlanAnswer, type PlanDraft, type PlanReview } from '@/api/aiPlanning'
+import { useBoqs } from '@/api/boq'
 import { addTask, schKeys, useWorkOrdersOf } from '@/api/schedule'
 import { useAction } from '@/lib/mutate'
 import { formatDate, today } from '@/lib/format'
@@ -20,7 +23,7 @@ export function AiPlanPanel({ job }: { job: number }) {
   return (
     <div className="mb-5 rounded-lg border border-border px-4 py-3 text-[13.5px]">
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="outline" loading={run.isPending} onClick={() => run.mutate()}><Sparkles /> Check for delays</Button>
+        <Button size="sm" variant="outline" loading={run.isPending} onClick={() => run.mutate()}><AiMark /> Check for delays</Button>
         {!review && <span className="text-muted-foreground">Looks for late and slipping activities and work waiting on something behind.</span>}
       </div>
       {review && (
@@ -37,7 +40,7 @@ export function AiPlanPanel({ job }: { job: number }) {
           <Input aria-label="Ask about this plan" className="h-9 min-w-56 flex-1" placeholder="Ask about this plan, e.g. what is holding it back?" value={q} onChange={(e) => setQ(e.target.value)} />
           <Button size="sm" type="submit" variant="outline" loading={go.isPending} disabled={!q.trim()}>Ask</Button>
         </form>
-        <div className="mt-2 flex flex-wrap gap-1.5">{QUESTIONS.map((s) => <button key={s} type="button" className="rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground hover:text-foreground" onClick={() => ask(s)}>{s}</button>)}</div>
+        <div className="mt-2 flex flex-wrap gap-1.5">{QUESTIONS.map((s) => <button key={s} type="button" className="rounded-md border border-border px-2.5 py-0.5 text-xs text-muted-foreground hover:text-foreground" onClick={() => ask(s)}>{s}</button>)}</div>
         {answer && <p aria-label="Answer" className="mt-2 text-sm">{answer.available ? answer.answer : <span className="text-muted-foreground">{answer.message}</span>}</p>}
       </div>
     </div>
@@ -55,7 +58,7 @@ export function AiDayTasks({ job, on, canAdd }: { job: number; on: string; canAd
   return (
     <div className="mb-4 rounded-lg border border-border px-4 py-3 text-[13.5px]">
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="outline" loading={run.isPending} onClick={() => run.mutate()}><Sparkles /> Suggest tasks for {on === today() ? 'today' : formatDate(on)}</Button>
+        <Button size="sm" variant="outline" loading={run.isPending} onClick={() => run.mutate()}><AiMark /> Suggest tasks for {on === today() ? 'today' : formatDate(on)}</Button>
         {!ideas && <span className="text-muted-foreground">Turns what is running, overdue and starting into a short list. You choose which to add.</span>}
       </div>
       {ideas && (
@@ -76,26 +79,37 @@ export function AiDayTasks({ job, on, canAdd }: { job: number; on: string; canAd
 
 const plus = (days: number) => { const d = new Date(); d.setDate(d.getDate() + days); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 
-/** Ask for a programme from a placed work order. The proposal is shown for checking and saved only on the button. */
+/** Ask for a programme from the project's BOQ - for this business, the client's order - or from a placed work order.
+ * The proposal is shown for checking and saved only on the button. */
 export function AiDraftModal({ job, open, onClose }: { job: number; open: boolean; onClose: () => void }) {
   const orders = useWorkOrdersOf(job)
-  const [wo, setWo] = useState('')
+  const boqs = useBoqs()
+  const [from, setFrom] = useState('')
   const [start, setStart] = useState(today())
   const [finish, setFinish] = useState(() => plus(90))
   const [draft, setDraft] = useState<PlanDraft | null>(null)
-  const list = orders.data ?? []
-  const pick = wo || (list[0] ? String(list[0].id) : '')
-  const make = useAction(() => draftProgramme(job, Number(pick), start, finish), { success: false, onSuccess: setDraft })
-  const save = useAction(() => applyDraft(job, Number(pick), draft?.activities ?? []), { invalidate: [schKeys.all], onSuccess: () => { setDraft(null); onClose() } })
+  const boq = (boqs.data?.boqs ?? []).find((b) => b.job_id === job)
+  const sources = [
+    ...(boq ? [{ value: 'boq', label: `${boq.number} - the BOQ` }] : []),
+    ...(orders.data ?? []).map((w) => ({ value: String(w.id), label: `${w.number} - work order` })),
+  ]
+  const pick = from || sources[0]?.value || ''
+  const source: DraftSource = pick === 'boq' ? { boq: true } : { work_order_id: Number(pick) }
+  // A list that could not be read (no right to the BOQs, say) is simply not a source; only a list still coming is waited for.
+  const loading = (boqs.isPending && boqs.fetchStatus !== 'idle') || (orders.isPending && orders.fetchStatus !== 'idle')
+  const make = useAction(() => draftProgramme(job, source, start, finish), { success: false, onSuccess: setDraft })
+  const save = useAction(() => applyDraft(job, source, draft?.activities ?? []), { invalidate: [schKeys.all], onSuccess: () => { setDraft(null); onClose() } })
   const rows = draft?.available ? draft.activities : []
   return (
-    <Modal open={open} onOpenChange={(o) => !o && onClose()} size="lg" title="Draft a programme with AI" description="Suggests an order of work and dates for each line of a work order. Check it before adding it.">
-      {list.length === 0 && !orders.isPending ? <p className="text-sm">This project has no placed work order to draft from.</p> : (
+    <Modal open={open} onOpenChange={(o) => !o && onClose()} size="lg" title="Draft a programme with AI" description="Suggests an order of work and dates for each line of the BOQ or a work order. Check it before adding it.">
+      {sources.length === 0 && !loading ? (
+        <p className="text-sm">This project has no BOQ yet to draft from. Make its BOQ first, then draft the programme from it. <Link className="font-medium text-primary hover:underline" to="/projects/boq" onClick={onClose}>Open BOQ</Link></p>
+      ) : (
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Work order" htmlFor="ad-wo" className="sm:col-span-2"><Select id="ad-wo" value={pick} onChange={(e) => { setWo(e.target.value); setDraft(null) }} options={list.map((w) => ({ value: w.id, label: w.number }))} /></Field>
+          <Field label="Draft from" htmlFor="ad-wo" className="sm:col-span-2"><Select id="ad-wo" value={pick} onChange={(e) => { setFrom(e.target.value); setDraft(null) }} options={sources} /></Field>
           <Field label="The work starts on" htmlFor="ad-start"><Input id="ad-start" type="date" value={start} onChange={(e) => { setStart(e.target.value); setDraft(null) }} /></Field>
           <Field label="And finishes by" htmlFor="ad-finish"><Input id="ad-finish" type="date" value={finish} onChange={(e) => { setFinish(e.target.value); setDraft(null) }} /></Field>
-          <div className="sm:col-span-2"><Button variant="outline" loading={make.isPending} disabled={!pick || !start || !finish} onClick={() => make.mutate()}><Sparkles /> Suggest a programme</Button></div>
+          <div className="sm:col-span-2"><Button variant="outline" loading={make.isPending} disabled={!pick || !start || !finish} onClick={() => make.mutate()}><AiMark /> Suggest a programme</Button></div>
         </div>
       )}
       {draft && !draft.available && <p role="alert" className="mt-4 text-sm text-muted-foreground">{draft.message}</p>}

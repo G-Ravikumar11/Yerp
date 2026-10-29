@@ -116,6 +116,59 @@ def test_a_line_pasted_with_the_name_of_an_existing_item_takes_that_items_code(t
     assert [l for l in res["lines"] if l["group_code"] == "NEW"][0]["item_code"] == code
 
 
+def _master(tenant):
+    res = tenant.get("/api/erp/items", params={"kind": "FG"}).json()
+    return {i["item_code"]: i for i in (res["items"] if isinstance(res, dict) else res)}
+
+
+def test_lines_that_open_alike_but_differ_in_spec_stay_separate_items_with_their_own_text(tenant):
+    _, boq = make_boq(tenant)
+    lines = [
+        {"kind": "item", "group_code": "A", "description": "Providing RCC\nM20 grade, 12 mm bars", "uom": "cum", "quantity": 5, "rate": 7000},
+        {"kind": "item", "group_code": "B", "description": "Providing RCC\nM30 grade, 16 mm bars", "uom": "cum", "quantity": 6, "rate": 8000},
+        {"kind": "item", "group_code": "C", "description": "Providing RCC\nM30 grade, 16 mm bars", "uom": "cum", "quantity": 7, "rate": 8000},
+    ]
+    res = tenant.put("/api/boqs/%d/lines" % boq["id"], json={"lines": lines, "issue_codes": True}).json()
+    got = res["lines"]
+    codes = [l["item_code"] for l in got]
+    assert len(set(codes)) == 3                       # identical rows are still separate BOQ entries
+    master = _master(tenant)
+    for src, l in zip(lines, got):
+        assert master[l["item_code"]]["description"] == src["description"] and l["description"] == src["description"]
+        assert master[l["item_code"]]["item_name"] == "Providing RCC"
+    # saved again from a fresh BOQ-less state: a different spec must not take an existing item's code
+    again = {"kind": "item", "group_code": "D", "description": "Providing RCC\nM40 grade, 20 mm bars", "uom": "cum", "quantity": 1, "rate": 9000}
+    res2 = tenant.put("/api/boqs/%d/lines" % boq["id"], json={"lines": [again], "issue_codes": True}).json()
+    code = res2["lines"][0]["item_code"]
+    assert code not in codes and _master(tenant)[code]["description"] == again["description"]
+    assert _master(tenant)[codes[0]]["description"] == lines[0]["description"]      # the old item is untouched
+
+
+def test_the_same_words_in_another_unit_are_not_the_same_item(tenant):
+    _, boq = make_boq(tenant)
+    first = saved(tenant, boq)
+    code = first["lines"][1]["item_code"]
+    rest = [l for l in first["lines"] if l["item_code"] != code]
+    line = {"kind": "item", "group_code": "NEW", "description": "Excavation in all types of soil", "uom": "sqm", "quantity": 10, "rate": 200}
+    res = tenant.put("/api/boqs/%d/lines" % boq["id"], json={"lines": rest + [line], "issue_codes": True}).json()
+    assert [l for l in res["lines"] if l["group_code"] == "NEW"][0]["item_code"] != code
+
+
+def test_an_item_made_from_a_boq_line_is_a_work_item(tenant):
+    _, boq = make_boq(tenant)
+    out = saved(tenant, boq)
+    master = _master(tenant)
+    assert {master[l["item_code"]]["item_type"] for l in out["lines"] if l["kind"] in ("item", "sub")} == {"Work"}
+
+
+def test_a_blank_description_row_is_dropped_and_never_borrows_another_lines_text(tenant):
+    _, boq = make_boq(tenant)
+    lines = [{"kind": "item", "group_code": "A", "description": "Anchor bolts M16", "uom": "nos", "quantity": 4, "rate": 90},
+             {"kind": "item", "group_code": "B", "description": "   ", "uom": "nos", "quantity": 4, "rate": 90}]
+    res = tenant.put("/api/boqs/%d/lines" % boq["id"], json={"lines": lines, "issue_codes": True}).json()
+    assert [l["description"] for l in res["lines"]] == ["Anchor bolts M16"]
+
+
 def test_one_boq_to_a_project_and_negative_figures_are_refused(tenant):
     jid, boq = make_boq(tenant)
     assert tenant.post("/api/boqs", json={"job_id": jid}).status_code == 409

@@ -31,7 +31,7 @@ export function NotificationBell() {
         {unread > 0 && <span className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-danger px-1 text-[10px] font-bold leading-4 text-white">{unread > 99 ? '99+' : unread}</span>}
       </button>
       {open && (
-        <div role="dialog" aria-label="Notifications" className="absolute right-0 z-40 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-card shadow-lg">
+        <div role="dialog" aria-label="Notifications" className="absolute right-0 z-40 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-card shadow-md">
           <div className="flex items-center justify-between border-b border-border px-4 py-3"><h2 className="text-sm font-semibold">Notifications</h2>{unread > 0 && <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => all.mutate()}>Mark all read</button>}</div>
           <ul className="max-h-80 overflow-y-auto">
             {notes.length === 0 && <li className="p-6 text-center text-sm text-muted-foreground">Nothing yet</li>}

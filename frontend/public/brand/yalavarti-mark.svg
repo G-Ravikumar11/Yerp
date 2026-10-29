@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="171.5 51 172 172">
+  <!-- The Yalavarti Y, from the company's logo, as the app shows it on a white tile (the tab icon is favicon.svg). -->
+  <defs>
+    <linearGradient id="blue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2AA3F6"/>
+      <stop offset="0.45" stop-color="#1A7FE6"/>
+      <stop offset="1" stop-color="#0A57C0"/>
+    </linearGradient>
+    <linearGradient id="navy" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#062A4D"/>
+      <stop offset="1" stop-color="#0B3560"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#navy)" d="M174 68 L217 68 C228 83 240 99 251 113 C248 130 244 146 238 163 Z"/>
+  <path d="M341 60 C301 66 273 82 262 106 C250 131 248 160 236 185 C230 198 221 207 207 214 C251 206 278 185 289 155 C299 120 306 82 341 60 Z" fill="url(#blue)"/>
+</svg>

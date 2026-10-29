@@ -99,7 +99,7 @@ export function ClockCard() {
   const breakToday = (c?.break_minutes ?? 0) * 60 + (onBreak ? breakNow : 0)
   const target = c?.target_hours ?? 8
   const tone = done ? 'done' : onBreak ? 'break' : working ? 'working' : 'idle'
-  const note = done ? 'Done for the day' : onBreak ? `On a break · ${hm(breakNow)}` : working ? `Working · in since ${c?.clock_in?.slice(0, 5)}` : c?.is_working_day === false ? 'Not a working day' : 'Not started'
+  const note = done ? 'Done for the day' : onBreak ? `On a break · ${hm(breakNow)}` : working ? `Working · in since ${c?.clock_in?.slice(0, 5)}` : c?.holiday ? `Holiday · ${c.holiday}` : c?.is_working_day === false ? 'Not a working day' : 'Not started'
   const site = today.data?.clock.site
   const current = jobs.data?.find((j) => j.name === site)
 

@@ -4,14 +4,42 @@ from datetime import datetime, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy import func as sqlfunc
+from sqlalchemy.orm import joinedload
 
 from app import models
 
-from app.constants.hr import DEFAULT_DOCUMENT_REQUIREMENTS, DEFAULT_ONBOARDING_ITEMS, ORG_DOMAIN_KEY
+from app.constants.approvals import GONE_STATUSES
+from app.constants.hr import DEFAULT_DOCUMENT_REQUIREMENTS, DEFAULT_ONBOARDING_ITEMS, ORG_DOMAIN_KEY, emergency_contact_required
 from app.core.currency import money
 from app.core.dates import _parse_date
+from app.core.permissions import EMPLOYEE_ROLES
 from app.core.security import validate_password_strength
 from app.core.tenant_settings import tenant_setting
+
+
+_ROLE_BOSS = {r["code"]: r["reports_to"] for r in EMPLOYEE_ROLES}
+
+
+def automatic_reports_to(db, client_id, role, department_id=None, exclude_id=None):
+    """Who a person in `role` reports to when nobody has said: the holder of the role above theirs.
+
+    If nobody holds that role it climbs to the one above, so a Store Assistant with no Store Executive
+    reports to the Project Manager. A holder in the same department wins, then the longest-serving.
+    None when no role above is held; the Master can then set the line by hand.
+    """
+    seen = set()
+    code = _ROLE_BOSS.get(role)
+    while code and code not in seen:
+        seen.add(code)
+        holders = db.query(models.DBEmployee).filter(
+            models.DBEmployee.client_id == client_id, models.DBEmployee.role == code,
+            models.DBEmployee.id != (exclude_id or 0),
+            models.DBEmployee.status.notin_(GONE_STATUSES)).order_by(models.DBEmployee.id).all()
+        if holders:
+            same = [h for h in holders if department_id and h.department_id == department_id]
+            return (same or holders)[0].id
+        code = _ROLE_BOSS.get(code)
+    return None
 
 
 def validated_staff_password(password):
@@ -19,47 +47,73 @@ def validated_staff_password(password):
     return password
 
 
-def start_onboarding(db, client_id, emp):
+def start_onboarding(db, client_id, emp, *, new=False):
     """Give a new starter their checklist and their document requests.
 
     Both ways in have to do this. Hiring from recruitment used to create the
     employee and stop, so anyone who came through the pipeline arrived with an
     empty checklist and nothing asked of them, while the same person added by
     hand got both.
+
+    `new` is for somebody created in this same transaction: they can have no
+    checklist and no requests yet, so neither is looked for. On a database
+    across an ocean each look is a third of a second.
     """
-    existing = db.query(models.DBOnboardingItem).filter(
-        models.DBOnboardingItem.employee_id == emp.id).count()
-    if not existing:
+    if new or not db.query(models.DBOnboardingItem).filter(
+            models.DBOnboardingItem.employee_id == emp.id).count():
         for title, category, assignee in DEFAULT_ONBOARDING_ITEMS:
             db.add(models.DBOnboardingItem(
                 client_id=client_id, employee_id=emp.id,
                 title=title, category=category, assigned_to=assignee,
             ))
-    seed_default_requirements(db, client_id)
-    assign_document_requests(db, client_id, emp)
+    # Every requirement in one read; the defaults are seeded only when there are none at all.
+    rules = db.query(models.DBDocumentRequirement).filter(
+        models.DBDocumentRequirement.client_id == client_id,
+    ).order_by(models.DBDocumentRequirement.sort_order.asc()).all()
+    rules = [r for r in rules if r.is_active] if rules else seed_default_requirements(db, client_id)
+    assign_document_requests(db, client_id, emp, rules, existing=set() if new else None)
 
 
-def onboarding_snapshot(db, emp, today=None):
+def onboarding_snapshots(db, emps, today=None):
+    """{employee id: onboarding_snapshot} for many people, in two queries however many there are."""
+    ids = [e.id for e in emps]
+    items, reqs = {i: [] for i in ids}, {i: [] for i in ids}
+    if ids:
+        for row in db.query(models.DBOnboardingItem).filter(models.DBOnboardingItem.employee_id.in_(ids)).all():
+            items[row.employee_id].append(row)
+        for row in db.query(models.DBDocumentRequest).filter(models.DBDocumentRequest.employee_id.in_(ids)).all():
+            reqs[row.employee_id].append(row)
+    return {e.id: onboarding_snapshot(db, e, today, items=items[e.id], reqs=reqs[e.id]) for e in emps}
+
+
+def onboarding_snapshot(db, emp, today=None, *, items=None, reqs=None):
     """Where one person has got to, worked out from their actual records
-    rather than a status column that has to be kept in step."""
+    rather than a status column that has to be kept in step. `items` and
+    `reqs` are theirs when the caller has already read them for everybody."""
     today = today or datetime.now().date()
     today_str = today.strftime("%Y-%m-%d")
 
-    items = db.query(models.DBOnboardingItem).filter(
-        models.DBOnboardingItem.employee_id == emp.id).all()
+    if items is None:
+        items = db.query(models.DBOnboardingItem).filter(
+            models.DBOnboardingItem.employee_id == emp.id).all()
     done_items = sum(1 for i in items if i.is_completed)
     overdue_items = sum(
         1 for i in items
         if not i.is_completed and i.due_date and i.due_date < today_str)
 
-    reqs = db.query(models.DBDocumentRequest).filter(
-        models.DBDocumentRequest.employee_id == emp.id).all()
+    if reqs is None:
+        reqs = db.query(models.DBDocumentRequest).filter(
+            models.DBDocumentRequest.employee_id == emp.id).all()
     mandatory = [r for r in reqs if r.is_mandatory]
-    awaiting_employee = [r for r in mandatory if r.status in ("pending", "rejected")]
+    awaiting_employee = [r.name for r in mandatory if r.status in ("pending", "rejected")]
+    # The one thing onboarding always insists on: somebody to call in an emergency (a name and a number).
+    has_emergency = bool((emp.emergency_contact or "").strip()) and bool((emp.emergency_phone or "").strip())
+    if not has_emergency and emergency_contact_required():
+        awaiting_employee.insert(0, "Emergency contact")
     awaiting_hr = [r for r in reqs if r.status == "submitted"]
     approved = [r for r in mandatory if r.status == "approved"]
     overdue_docs = [
-        r for r in awaiting_employee if r.due_date and r.due_date < today_str]
+        r for r in mandatory if r.status in ("pending", "rejected") and r.due_date and r.due_date < today_str]
 
     checklist_done = bool(items) and done_items == len(items)
     documents_done = not awaiting_employee and not awaiting_hr
@@ -83,7 +137,8 @@ def onboarding_snapshot(db, emp, today=None):
         "items_overdue": overdue_items,
         "docs_total": len(mandatory),
         "docs_approved": len(approved),
-        "awaiting_employee": [r.name for r in awaiting_employee],
+        "awaiting_employee": awaiting_employee,
+        "emergency_contact_given": has_emergency,
         "awaiting_hr": [r.name for r in awaiting_hr],
         "docs_overdue": [r.name for r in overdue_docs],
         "checklist_done": checklist_done,
@@ -252,11 +307,11 @@ def move_to_department(db, client_id, emp, dept_id, *, checked=False, goals=None
     fetched again for every person.
     """
     dept_id = dept_id or None
-    if dept_id is not None and not checked:
-        department_or_404(db, client_id, dept_id)
     old = emp.department_id
     if old == dept_id:
-        return old
+        return old                     # staying put: nothing to look up
+    if dept_id is not None and not checked:
+        department_or_404(db, client_id, dept_id)
     emp.department_id = dept_id
     if dept_id is None:
         return old
@@ -279,8 +334,8 @@ def suggest_org_email(db, client_id, first_name, last_name) -> str:
     stem = ".".join(p for p in (part(first_name), part(last_name)) if p) or "staff"
     candidate = f"{stem}@{domain}"
     taken = {
-        (e.email or "").lower()
-        for e in db.query(models.DBEmployee).filter(
+        (email or "").lower()
+        for (email,) in db.query(models.DBEmployee.email).filter(
             models.DBEmployee.client_id == client_id).all()
     }
     if candidate not in taken:
@@ -335,6 +390,24 @@ def resolve_basic_pay(emp, requested_basic, hours_worked):
     return 0.0
 
 
+def ytd_totals(db, client_id, emp_id, year=""):
+    """Year-to-date totals for one employee - required on most statutory payslip formats. One read, of only the
+    columns that are added up."""
+    year = year or datetime.now().strftime("%Y")
+    P = models.DBPayslip
+    slips = db.query(P.period_end, P.pay_date, P.gross_pay, P.tax_amount, P.total_deductions, P.net_pay).filter(
+        P.client_id == client_id, P.employee_id == emp_id, P.status != "Void").all()
+    in_year = [s for s in slips if (s.period_end or s.pay_date or "").startswith(year)]
+    return {
+        "year": year,
+        "payslip_count": len(in_year),
+        "gross_pay": money(sum(s.gross_pay or 0 for s in in_year)),
+        "tax_amount": money(sum(s.tax_amount or 0 for s in in_year)),
+        "total_deductions": money(sum(s.total_deductions or 0 for s in in_year)),
+        "net_pay": money(sum(s.net_pay or 0 for s in in_year)),
+    }
+
+
 def employee_name(emp) -> str:
     if not emp:
         return ""
@@ -370,36 +443,37 @@ def resolve_employee_job_id(db, emp, raw):
     return job_id
 
 
-def set_employee_sites(db, client_id, emp, job_ids):
-    """Replace this person's site list. None leaves it alone."""
+def set_employee_sites(db, client_id, emp, job_ids, *, new=False):
+    """Replace this person's site list. None leaves it alone. Returns the sites
+    kept, as (id, number, name), so the answer needs no second look; `new` is
+    for somebody created in this transaction, who has no list to clear."""
     if job_ids is None:
-        return
+        return None
     wanted = set()
     for raw in job_ids:
         try:
             wanted.add(int(raw))
         except (TypeError, ValueError):
             continue
+    jobs = []
     if wanted:
-        real = {j.id for j in db.query(models.DBJob.id).filter(
-            models.DBJob.client_id == client_id, models.DBJob.id.in_(wanted)).all()}
-        wanted = {j for j in wanted if j in real}
-    db.query(models.DBEmployeeSite).filter(
-        models.DBEmployeeSite.employee_id == emp.id).delete(synchronize_session=False)
-    for job_id in sorted(wanted):
+        jobs = db.query(models.DBJob.id, models.DBJob.number, models.DBJob.name).filter(
+            models.DBJob.client_id == client_id, models.DBJob.id.in_(wanted)).order_by(models.DBJob.id).all()
+    if not new:
+        db.query(models.DBEmployeeSite).filter(
+            models.DBEmployeeSite.employee_id == emp.id).delete(synchronize_session=False)
+    for job in jobs:
         db.add(models.DBEmployeeSite(
-            client_id=client_id, employee_id=emp.id, job_id=job_id))
+            client_id=client_id, employee_id=emp.id, job_id=job.id))
+    return jobs
 
 
-def employee_sites_payload(db, emp):
-    rows = db.query(models.DBEmployeeSite.job_id).filter(
-        models.DBEmployeeSite.employee_id == emp.id).all()
-    ids = [r[0] for r in rows]
-    if not ids:
+def sites_payload(jobs):
+    """The site part of an employee's answer from (id, number, name) rows. None of them is every site."""
+    if not jobs:
         return {"site_ids": [], "site_names": [], "all_sites": True}
-    jobs = db.query(models.DBJob).filter(models.DBJob.id.in_(ids)).all()
     return {
-        "site_ids": ids,
+        "site_ids": [j.id for j in jobs],
         "site_names": [((j.number + " ") if j.number else "") + (j.name or "") for j in jobs],
         "all_sites": False,
     }
@@ -412,13 +486,21 @@ def requirement_to_dict(r):
         "due_days": r.due_days, "applies_to": r.applies_to,
         "requires_expiry": bool(r.requires_expiry),
         "expiry_reminder_days": r.expiry_reminder_days or 30,
-        "has_template": bool(r.template_file_data),
+        "has_template": bool(r.has_template),
         "template_file_name": r.template_file_name or "",
         "department_id": r.department_id,
         "department_name": r.department.name if r.department else "",
         "level": r.level or "", "is_active": bool(r.is_active),
         "sort_order": r.sort_order, "created_at": r.created_at,
     }
+
+
+def with_request_links(query):
+    """Document requests with their requirement and their file record joined in, for `request_to_dict`.
+
+    Each row otherwise fetched both on its own - two trips per document across the
+    ocean. Neither brings the file itself: that is read only when it is opened."""
+    return query.options(joinedload(models.DBDocumentRequest.requirement), joinedload(models.DBDocumentRequest.document))
 
 
 def request_to_dict(req, include_file=False):
@@ -434,7 +516,7 @@ def request_to_dict(req, include_file=False):
     }
     # The employee needs to know a blank form exists before they can fetch it.
     rule = getattr(req, "requirement", None)
-    data["has_template"] = bool(rule is not None and rule.template_file_data)
+    data["has_template"] = bool(rule is not None and rule.has_template)
 
     doc = req.document
     if doc:
@@ -523,20 +605,22 @@ def sync_requirement_to_requests(db, client_id, req):
     return touched
 
 
-def assign_document_requests(db, client_id, emp, requirements=None):
+def assign_document_requests(db, client_id, emp, requirements=None, existing=None):
     """Create the outstanding requests for one employee, skipping any they
-    already have so this is safe to re-run after a department or level change."""
+    already have so this is safe to re-run after a department or level change.
+    `existing` is the requirement ids they already hold, when the caller knows."""
     if requirements is None:
         requirements = db.query(models.DBDocumentRequirement).filter(
             models.DBDocumentRequirement.client_id == client_id,
             models.DBDocumentRequirement.is_active == True,
         ).order_by(models.DBDocumentRequirement.sort_order.asc()).all()
 
-    existing = {
-        r.requirement_id for r in db.query(models.DBDocumentRequest).filter(
-            models.DBDocumentRequest.employee_id == emp.id
-        ).all() if r.requirement_id
-    }
+    if existing is None:
+        existing = {
+            rid for (rid,) in db.query(models.DBDocumentRequest.requirement_id).filter(
+                models.DBDocumentRequest.employee_id == emp.id
+            ).all() if rid
+        }
     start = _parse_date(emp.start_date) or datetime.now().date()
     created = []
     for req in requirements:
@@ -570,8 +654,56 @@ def seed_default_requirements(db, client_id):
         )
         db.add(row)
         rows.append(row)
+    # Starting from today's defaults, so the one-time move to them (apply_india_onboarding) has nothing to do here.
+    db.add(models.DBSettings(client_id=client_id, key=INDIA_ONBOARDING_KEY, value="1", description="Onboarding documents brought to the current defaults"))
     db.flush()
     return rows
+
+
+INDIA_ONBOARDING_KEY = "onboarding_documents_v2"
+
+
+def apply_india_onboarding(db, client_id):
+    """Bring one company's onboarding paperwork to the way it is meant to work now, once: an emergency contact is the only
+    thing compulsory, and a new starter is asked (not required) to upload Aadhaar, PAN, UAN, a photo, bank details and the
+    contract. What HR has set up is kept - nothing is deleted - but every requirement, and every request still waiting, stops
+    being mandatory, and the ones the company lacks are added and given to anybody who is still being onboarded.
+    Recorded in the company's settings, so HR making a document mandatory again later is not undone at the next start."""
+    done = db.query(models.DBSettings).filter(models.DBSettings.client_id == client_id, models.DBSettings.key == INDIA_ONBOARDING_KEY).first()
+    if done:
+        return 0
+    rules = db.query(models.DBDocumentRequirement).filter(models.DBDocumentRequirement.client_id == client_id).all()
+    added = []
+    if rules:                                              # a company with none gets the defaults when it first needs them
+        have = {r.name.strip().lower() for r in rules}
+        top = max((r.sort_order or 0 for r in rules), default=0)
+        for name, desc, dtype, _mandatory, days in DEFAULT_DOCUMENT_REQUIREMENTS:
+            if name.lower() in have or (name == "Aadhaar card" and any("aadhaar" in h or "aadhar" in h for h in have)):
+                continue
+            top += 1
+            row = models.DBDocumentRequirement(client_id=client_id, name=name, description=desc, doc_type=dtype,
+                                               is_mandatory=False, due_days=days, sort_order=top)
+            db.add(row)
+            added.append(row)
+        for r in rules:
+            r.is_mandatory = False
+        db.query(models.DBDocumentRequest).filter(
+            models.DBDocumentRequest.client_id == client_id, models.DBDocumentRequest.status.in_(("pending", "rejected")),
+        ).update({"is_mandatory": False}, synchronize_session=False)
+        db.flush()
+        if added:
+            for emp in db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client_id, models.DBEmployee.status == "onboarding").all():
+                assign_document_requests(db, client_id, emp, added)
+    db.add(models.DBSettings(client_id=client_id, key=INDIA_ONBOARDING_KEY, value="1", description="Onboarding documents brought to the current defaults"))
+    db.commit()
+    return len(added)
+
+
+def apply_india_onboarding_all():
+    from app.db import SessionLocal
+    with SessionLocal() as db:
+        for (cid,) in db.query(models.DBClient.id).all():
+            apply_india_onboarding(db, cid)
 
 
 # Names this module only needs once it is running. They come from modules that in turn need this one,

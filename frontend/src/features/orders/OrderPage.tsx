@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Copy, Download, FileText, Save, Share2, Trash2 } from 'lucide-react'
+import { ArrowLeft, Copy, Download, FileText, Mail, Save, Share2, Trash2 } from 'lucide-react'
 import { ShareOrderDialog } from './ShareOrderDialog'
-import { Badge, Button, ConfirmDialog, Skeleton, Stat, StatGrid, StatusBadge, Tabs } from '@/components/ui'
+import { SendEmailDialog } from '@/components/data/SendEmailDialog'
+import { Badge, Button, ConfirmDialog, Field, Input, Skeleton, Stat, StatGrid, StatusBadge, Tabs } from '@/components/ui'
 import {
+  closeOrder,
   copyOrder,
   moveOrder,
   orderKeys,
@@ -18,7 +20,7 @@ import {
 } from '@/api/orders'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
-import { formatDate } from '@/lib/format'
+import { daysAgo, formatDate, today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { ApiError } from '@/lib/api'
 import { DeleteOrderDialog } from '@/features/deleteorder/DeleteOrderDialog'
@@ -60,13 +62,14 @@ export default function OrderPage() {
   return <OrderEditor key={`${order.data.id}:${seed}`} order={order.data} reseed={() => setSeed((s) => s + 1)} />
 }
 
-const MOVE_LABEL: Record<string, string> = { SUBMIT: 'Submit for approval', APPROVE: 'Approve', REJECT: 'Send back', EXECUTE: 'Mark as executed', AMEND: 'Amend', CANCEL: 'Cancel order' }
+const MOVE_LABEL: Record<string, string> = { SUBMIT: 'Submit for approval', APPROVE: 'Approve', REJECT: 'Send back', EXECUTE: 'Mark as executed', AMEND: 'Amend', CANCEL: 'Cancel order', CLOSE: 'Close order' }
 
 function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
   const nav = useNavigate()
   const { can, isOwner, user } = useSession()
   const [deleting, setDeleting] = useState(false)
   const [sharing, setSharing] = useState(false)
+  const [emailing, setEmailing] = useState(false)
   const vocab = useOrderVocabulary()
 
   // A new order on a project with a BOQ opens straight on its schedule, with the BOQ to pick its lines from.
@@ -76,7 +79,9 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
   const [head, setHead] = useState(() => headFrom(order))
   const [lines, setLines] = useState(() => linesFrom(order))
   const [terms, setTerms] = useState<OrderTerm[]>(() => (order.terms ?? []).map((t) => ({ clause_category: t.clause_category, clause_text: t.clause_text })))
-  const [dialog, setDialog] = useState<'approve' | 'reject' | 'cancel' | 'amend' | 'execute' | 'self-approve' | null>(null)
+  const [dialog, setDialog] = useState<'approve' | 'reject' | 'cancel' | 'amend' | 'execute' | 'self-approve' | 'close' | null>(null)
+  const [finished, setFinished] = useState(() => daysAgo(1))
+  const [todayIso] = useState(today)
   const [override, setOverride] = useState(false)
   const [costCentre, setCostCentre] = useState(false)
 
@@ -132,11 +137,21 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
   )
 
   const copy = useAction(() => copyOrder(order.id), { invalidate: [orderKeys.all], onSuccess: (res) => nav(`/subcontractors/work-orders/${res.order.id}`) })
+  const closing = useAction((comments: string) => closeOrder(order.id, { actual_completion_date: finished, comments }), {
+    invalidate: [orderKeys.all],
+    onSuccess: () => {
+      setDialog(null)
+      reseed()
+    },
+  })
 
   // Once signed, the steps that follow get a tab of their own.
-  const live = order.status === 'APPROVED' || order.status === 'EXECUTED'
+  const live = order.status === 'APPROVED' || order.status === 'EXECUTED' || order.status === 'CLOSED'
   const steps: OrderTab[] = live ? ['details', 'schedule', 'terms', 'approval', 'next'] : ['details', 'schedule', 'terms', 'approval']
   const budgetWarnings = order.budget_warnings ?? []
+  // Everything an approver signs past - the allocation, the client's BOQ - is overridden with one reason.
+  const overrideWarnings = [...budgetWarnings, ...(order.boq_warnings ?? [])]
+  const masterOnly = [...(order.tds_warning ? [order.tds_warning] : []), ...(order.compliance_warnings ?? [])]
   const label = (s: string) => MOVE_LABEL[s] ?? s
 
   return (
@@ -167,6 +182,11 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
                 <FileText /> PDF
               </a>
             </Button>
+            {can('workorders.manage') && ['APPROVED', 'EXECUTED', 'CLOSED'].includes(order.status) && (
+              <Button variant="outline" size="sm" onClick={() => setEmailing(true)}>
+                <Mail /> Send email
+              </Button>
+            )}
             <Button variant="outline" size="sm" asChild>
               <a href={`/api/wo/orders/${order.id}/boq.xlsx`}>
                 <Download /> Schedule
@@ -232,13 +252,25 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
         </div>
       )}
 
-      {budgetWarnings.length > 0 && (
-        <div role="alert" className="mb-5 rounded-xl border border-warning/30 bg-warning-soft p-3.5 text-[13.5px] text-warning">
-          {budgetWarnings.map((w) => (
+      {overrideWarnings.length + masterOnly.length + (order.unconfirmed_budgets ?? []).length > 0 && (
+        <div role="alert" className="mb-5 space-y-1 rounded-xl border border-warning/30 bg-warning-soft p-3.5 text-[13.5px] text-warning">
+          {overrideWarnings.map((w) => (
+            <p key={w}>{w}</p>
+          ))}
+          {masterOnly.map((w) => (
+            <p key={w}>{w} Only the Master can approve past this, with a reason.</p>
+          ))}
+          {(order.unconfirmed_budgets ?? []).map((w) => (
             <p key={w}>{w}</p>
           ))}
         </div>
       )}
+      {order.bank_guarantee_state === 'expired' || order.bank_guarantee_state === 'expiring' ? (
+        <div role="alert" className="mb-5 rounded-xl border border-danger/30 bg-danger-soft p-3.5 text-[13.5px] text-danger">
+          The bank guarantee {order.bank_guarantee_number && `${order.bank_guarantee_number} `}
+          {order.bank_guarantee_state === 'expired' ? 'ran out' : 'runs out'} on {formatDate(order.bank_guarantee_validity)}. Have it extended, or encash it.
+        </div>
+      ) : null}
 
       <StatGrid className="lg:grid-cols-4 xl:grid-cols-4">
         <Stat label="Basic value" value={formatINR(order.gross_amount)} sub={`${order.item_count} lines`} />
@@ -268,7 +300,7 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
       )}
       {tab === 'terms' && <TermsTab terms={terms} onTerms={setTerms} disabled={!editable} vocab={vocab.data} />}
       {tab === 'approval' && <ApprovalTab order={order} />}
-      {tab === 'next' && <NextSteps order={order} canExecute={has('EXECUTE')} onExecute={() => setDialog('execute')} />}
+      {tab === 'next' && <NextSteps order={order} canExecute={has('EXECUTE')} onExecute={() => setDialog('execute')} canClose={has('CLOSE') && canDecide} onClose={() => setDialog('close')} />}
       <StepNav steps={steps} tab={tab} onGo={(t) => { setTab(t); window.scrollTo({ top: 0, behavior: 'smooth' }) }} dirty={!!editable && dirty} saving={save.isPending} onSave={() => save.mutateAsync()} />
 
       <CostCentreModal open={costCentre} onOpenChange={setCostCentre} jobId={order.job_id} orderId={order.id} />
@@ -279,14 +311,17 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
         title={dialog === 'self-approve' ? 'Approve and issue this order?' : `Approve ${order.wo_number}?`}
         description={dialog === 'self-approve' ? 'You are raising and signing it yourself. It is checked as any order is, and the history says so.' : `${formatINR(order.net_order_value)} to ${order.contractor || 'the contractor'}.`}
         confirmLabel="Approve"
-        reason={{ label: budgetWarnings.length && override ? 'Why is the allocation being exceeded?' : 'Note (optional)', required: !!budgetWarnings.length && override }}
+        reason={{
+          label: overrideWarnings.length && override ? 'Why is it being approved past these?' : masterOnly.length && isOwner ? 'Why is it being approved regardless?' : 'Note (optional)',
+          required: (!!overrideWarnings.length && override) || (!!masterOnly.length && isOwner),
+        }}
         loading={move.isPending}
         onConfirm={(comments) => move.mutate({ action: dialog === 'self-approve' ? 'self-approve' : 'approve', comments, override })}
       >
-        {budgetWarnings.length > 0 && (
+        {overrideWarnings.length > 0 && (
           <label className="flex items-start gap-2.5 rounded-lg bg-warning-soft p-3 text-[13px] text-warning">
             <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} className="mt-0.5 size-4 accent-[var(--warning)]" />
-            <span>This order overruns its project allocation. Approve it anyway - the reason is kept beside the figures.</span>
+            <span>{budgetWarnings.length ? 'This order overruns its project allocation' : 'This order goes past the project BOQ'}. Approve it anyway - the reason is kept beside the figures.</span>
           </label>
         )}
       </ConfirmDialog>
@@ -317,9 +352,24 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
         title="Amend this order?"
         description="A revision opens as a draft carrying everything across. This order stays live for measuring and billing until the revision is approved, and then its measurements and bills move to it."
         confirmLabel="Open a revision"
+        reason={{ label: 'Why is it being amended?', placeholder: 'More quantity, a new completion date, a changed rate', required: true }}
         loading={move.isPending}
-        onConfirm={() => move.mutate({ action: 'amend' })}
+        onConfirm={(comments) => move.mutate({ action: 'amend', comments })}
       />
+      <ConfirmDialog
+        open={dialog === 'close'}
+        onOpenChange={(o) => !o && setDialog(null)}
+        title={`Close ${order.wo_number}?`}
+        description="Nothing more is measured or billed against it. What was ordered and never done goes back to the budget and the BOQ."
+        confirmLabel="Close the order"
+        reason={{ label: order.advance_outstanding ? 'Why close it with the advance not recovered?' : 'Why is it being closed?', placeholder: 'Finished; short-closed; terminated', required: true }}
+        loading={closing.isPending}
+        onConfirm={(comments) => closing.mutate(comments)}
+      >
+        <Field label="The work actually finished on" htmlFor="close-date" hint="The defects period, and the retention due at its end, run from this date.">
+          <Input id="close-date" type="date" value={finished} max={todayIso} onChange={(e) => setFinished(e.target.value)} />
+        </Field>
+      </ConfirmDialog>
       <ConfirmDialog
         open={dialog === 'execute'}
         onOpenChange={(o) => !o && setDialog(null)}
@@ -329,6 +379,7 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
         loading={move.isPending}
         onConfirm={() => move.mutate({ action: 'execute' })}
       />
+      <SendEmailDialog open={emailing} onOpenChange={setEmailing} title={`Email ${order.wo_number}`} draftUrl={`/api/wo/orders/${order.id}/email-draft`} sendUrl={`/api/wo/orders/${order.id}/send-email`} />
       <ShareOrderDialog open={sharing} onOpenChange={setSharing} orderId={order.id} number={order.wo_number} />
       <DeleteOrderDialog open={deleting} onOpenChange={setDeleting} kind="subcontract" id={order.id} number={order.wo_number} onDeleted={() => nav('/subcontractors/work-orders')} />
     </>

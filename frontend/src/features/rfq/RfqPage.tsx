@@ -1,62 +1,118 @@
 import { useState } from 'react'
-import { Plus } from 'lucide-react'
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
+import { Columns3, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
-import { Badge, Button, Stat, StatGrid } from '@/components/ui'
-import { useRfqs, useStatement, type Rfq } from '@/api/rfq'
-import { formatDate } from '@/lib/format'
-import { AwardModal } from './AwardModal'
-import { NewRfqModal } from './NewRfqModal'
-import type { ReadQuote } from '@/api/aiPurchasing'
-import { ReadQuoteModal } from './AiQuotes'
-import { QuoteModal } from './QuoteModal'
-import { StatementPanel } from './StatementPanel'
 import { FilterBar, useListFilters } from '@/components/data/filters'
+import { Badge, Button, Tabs } from '@/components/ui'
+import { useRfqs, type RfqRow } from '@/api/rfq'
+import { stage } from '@/lib/rfqCompare'
+import { formatDate } from '@/lib/format'
+import { formatINR } from '@/lib/utils'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
+import { EnquiryFormModal } from './EnquiryFormModal'
 
-const tone = (s: string) => (s === 'AWARDED' ? 'success' : s === 'OPEN' ? 'warning' : 'neutral') as 'success' | 'warning' | 'neutral'
+type Show = 'open' | 'awarded' | 'cancelled' | 'all'
+const STATUS: Record<Exclude<Show, 'all'>, string> = { open: 'OPEN', awarded: 'AWARDED', cancelled: 'CANCELLED' }
 
-/** Three suppliers asked, their answers side by side, the lowest landed at site - and an award that makes the orders. */
+/** Who has been asked and who has answered, in a few words. */
+function suppliersText(r: RfqRow) {
+  if (!r.quotes && !r.asked) return <span className="text-muted-foreground">None asked yet</span>
+  return (
+    <span>
+      <span className="font-medium">{r.quotes} {r.quotes === 1 ? 'quote' : 'quotes'}</span>
+      {r.waiting > 0 && <span className="text-muted-foreground"> · {r.waiting} waiting</span>}
+    </span>
+  )
+}
+
+/** Every enquiry, by where it has got. Opening one goes to its own page: the items, the suppliers, the comparison. */
 export default function RfqPage() {
   const q = useRfqs()
+  const navigate = useNavigate()
+  const [params, setParams] = useSearchParams()
   const [creating, setCreating] = useState(false)
-  const [open, setOpen] = useState<number | null>(null)
-  const [quoting, setQuoting] = useState(false)
-  const [reading, setReading] = useState(false)
-  const [prefill, setPrefill] = useState<ReadQuote | null>(null)
-  const [awarding, setAwarding] = useState(false)
-  const statement = useStatement(open)
-  const s = q.data?.summary
-  const columns: TableColumn<Rfq>[] = [
-    { id: 'no', header: 'No.', cell: (r) => <span className="font-mono font-semibold">{r.number}</span> },
-    { id: 'for', header: 'For', cell: (r) => <div>{r.title}<div className="text-xs text-muted-foreground">{r.project}</div></div> },
-    { id: 'lines', header: 'Lines', hideBelow: 'md', align: 'right', cell: (r) => r.lines },
-    { id: 'quotes', header: 'Quotes', align: 'right', cell: (r) => <span>{r.quotes}{r.status === 'OPEN' && r.quotes < 3 && <span className="ml-1 text-[11px] text-warning">need 3</span>}</span> },
-    { id: 'need', header: 'Needed by', hideBelow: 'md', cell: (r) => (r.needed_by ? formatDate(r.needed_by) : '-') },
-    { id: 'st', header: 'Status', cell: (r) => <Badge tone={tone(r.status)} dot>{r.status === 'OPEN' ? 'Open' : r.status === 'AWARDED' ? 'Awarded' : 'Cancelled'}</Badge> },
-    { id: 'a', header: '', align: 'right', cell: (r) => <Button size="sm" variant={r.status === 'OPEN' ? 'primary' : 'outline'} onClick={() => setOpen(r.id)}>{r.status === 'OPEN' ? 'Quotes & compare' : 'Statement'}</Button> },
-    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="rfq" id={r.id} label={String(r.number)} noun="enquiry" /> },
-  ]
-  const filters = useListFilters(q.data?.rfqs, {
-    search: (r) => [r.number, r.title, r.project, r.status].join(' '),
-    status: (r) => r.status,
-    date: (r) => r.needed_by,
+  const show = (['open', 'awarded', 'cancelled', 'all'].includes(params.get('show') ?? '') ? params.get('show') : 'open') as Show
+  const rows = (q.data?.rfqs ?? []).filter((r) => show === 'all' || r.status === STATUS[show])
+  const filters = useListFilters(rows, {
+    search: (r) => [r.number, r.title, r.project, ...r.awarded_to, r.best?.supplier_name ?? ''].join(' '),
+    facets: { project: { label: 'Project', get: (r) => r.project } },
   })
+  // An old link to one enquiry (from a notification, say) opens its page.
+  const legacy = Number(params.get('id'))
+  if (legacy) return <Navigate to={`/store/enquiries/${legacy}`} replace />
+
+  const s = q.data?.summary
+  const columns: TableColumn<RfqRow>[] = [
+    {
+      id: 'for',
+      header: 'Enquiry',
+      sort: (r) => r.id,
+      cell: (r) => (
+        <div className="max-w-[26rem]">
+          <div className="flex items-baseline gap-2">
+            <span className="shrink-0 font-mono text-xs text-muted-foreground">{r.number}</span>
+            <span className="truncate font-medium">{r.title}</span>
+          </div>
+          <div className="truncate text-xs text-muted-foreground">
+            {[r.project, `${r.lines} ${r.lines === 1 ? 'item' : 'items'}`, r.needed_by && `needed by ${formatDate(r.needed_by)}`].filter(Boolean).join(' · ')}
+          </div>
+        </div>
+      ),
+    },
+    { id: 'sup', header: 'Suppliers', hideBelow: 'sm', sort: (r) => r.quotes, cell: suppliersText },
+    {
+      id: 'best',
+      header: 'Best quote',
+      hideBelow: 'md',
+      align: 'right',
+      sort: (r) => r.best?.landed ?? Number.POSITIVE_INFINITY,
+      cell: (r) =>
+        r.status === 'AWARDED' && r.awarded_to.length ? (
+          <div className="ml-auto max-w-[13rem] text-right">
+            <div className="truncate text-[13px]">to {r.awarded_to.join(', ')}</div>
+            <div className="text-xs text-muted-foreground">{r.orders} purchase {r.orders === 1 ? 'order' : 'orders'}</div>
+          </div>
+        ) : r.best ? (
+          <div className="ml-auto max-w-[13rem] text-right">
+            <div className="font-medium tabular">{formatINR(r.best.landed)}</div>
+            <div className="truncate text-xs text-muted-foreground">{r.best.supplier_name}</div>
+          </div>
+        ) : <span className="text-muted-foreground">-</span>,
+    },
+    { id: 'stage', header: 'Stage', width: '11rem', cell: (r) => { const st = stage(r); return <Badge tone={st.tone} dot>{st.label}</Badge> } },
+    {
+      id: 'compare',
+      header: '',
+      align: 'right',
+      width: '8rem',
+      cell: (r) => (
+        <Button variant="outline" size="sm" disabled={!r.quotes} title={r.quotes ? 'Compare the quotes side by side' : 'No quotes to compare yet'}
+          onClick={(e) => { e.stopPropagation(); navigate(`/store/enquiries/${r.id}?view=compare`) }}><Columns3 /> Comparison</Button>
+      ),
+    },
+    { id: 'master-del', header: '', align: 'right', width: '3rem', cell: (r) => <MasterDelete kind="rfq" id={r.id} label={r.number} noun="enquiry" /> },
+  ]
+  const setShow = (v: Show) => setParams((p) => { const n = new URLSearchParams(p); if (v === 'open') n.delete('show'); else n.set('show', v); return n }, { replace: true })
+
   return (
     <>
-      <PageHeader eyebrow="Store" title="Enquiries & Comparison" description="Three suppliers asked, their answers side by side, the lowest landed at site - and an award that makes the orders." actions={<Button onClick={() => setCreating(true)}><Plus /> Enquiry</Button>} />
-      <StatGrid className="lg:grid-cols-3 xl:grid-cols-3">
-        <Stat label="Open enquiries" value={s?.open ?? 0} loading={q.isPending} />
-        <Stat label="Fewer than three quotes" value={s?.waiting_for_quotes ?? 0} tone={s?.waiting_for_quotes ? 'warning' : undefined} loading={q.isPending} />
-        <Stat label="Awarded" value={s?.awarded ?? 0} loading={q.isPending} />
-      </StatGrid>
-      <FilterBar filters={filters} placeholder="Search by enquiry, title, project..." />
-      <DataTable label="Enquiries" rows={filters.filtered} columns={columns} rowKey={(r) => r.id} loading={q.isPending} empty="No enquiries yet. Ask three suppliers before an order goes out." />
-      {open && <StatementPanel id={open} onClose={() => setOpen(null)} onQuote={() => { setPrefill(null); setQuoting(true) }} onRead={() => setReading(true)} onAward={() => setAwarding(true)} />}
-      <NewRfqModal open={creating} onClose={() => setCreating(false)} onOpened={(id) => { setCreating(false); setOpen(id) }} />
-      <QuoteModal statement={statement.data ?? null} open={quoting} prefill={prefill} onClose={() => setQuoting(false)} />
-      {statement.data && <ReadQuoteModal key={statement.data.rfq.id} statement={statement.data} open={reading} onClose={() => setReading(false)} onUse={(q) => { setPrefill(q); setReading(false); setQuoting(true) }} />}
-      <AwardModal statement={statement.data ?? null} open={awarding} onClose={() => setAwarding(false)} />
+      <PageHeader eyebrow="Store" title="Enquiries & Comparison" description="Ask suppliers for their rates, compare the quotes side by side, and turn the best one into a purchase order."
+        actions={<Button onClick={() => setCreating(true)}><Plus /> New enquiry</Button>} />
+      <div className="mb-4 w-fit max-w-full">
+        <Tabs label="Show" value={show} onChange={setShow} items={[
+          { value: 'open', label: 'Open', count: s?.open ?? 0 },
+          { value: 'awarded', label: 'Awarded', count: s?.awarded ?? 0 },
+          { value: 'cancelled', label: 'Cancelled', count: s?.cancelled ?? 0 },
+          { value: 'all', label: 'All', count: q.data?.rfqs.length ?? 0 },
+        ]} />
+      </div>
+      <FilterBar filters={filters} placeholder="Search by number, title, project or supplier..." />
+      <DataTable label="Enquiries" rows={filters.filtered} columns={columns} rowKey={(r) => r.id} loading={q.isPending} onRowClick={(r) => navigate(`/store/enquiries/${r.id}`)}
+        empty={show === 'open' && !filters.active
+          ? <div className="py-4"><p className="font-medium text-foreground">No open enquiries</p><p className="mt-1">Press New enquiry, list what you need, then ask suppliers for their rates.</p></div>
+          : 'Nothing matches.'} />
+      <EnquiryFormModal open={creating} onClose={() => setCreating(false)} onSaved={(id) => { setCreating(false); navigate(`/store/enquiries/${id}`) }} />
     </>
   )
 }

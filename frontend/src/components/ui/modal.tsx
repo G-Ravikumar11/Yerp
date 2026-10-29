@@ -32,7 +32,7 @@ export function Modal({ open, onOpenChange, title, description, size = 'md', foo
           <Dialog.Portal forceMount>
             <Dialog.Overlay asChild forceMount>
               <motion.div
-                className="fixed inset-0 z-50 bg-black/55 backdrop-blur-[3px]"
+                className="fixed inset-0 z-50 bg-black/55"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
@@ -51,7 +51,7 @@ export function Modal({ open, onOpenChange, title, description, size = 'md', foo
                 <motion.div
                   className={cn(
                     'pointer-events-auto flex max-h-[92dvh] w-full flex-col overflow-hidden border border-border bg-popover shadow-pop',
-                    'rounded-t-2xl sm:rounded-2xl',
+                    'rounded-t-2xl sm:rounded-lg',
                     sizes[size],
                   )}
                   initial={{ opacity: 0, y: 28, scale: 0.97 }}

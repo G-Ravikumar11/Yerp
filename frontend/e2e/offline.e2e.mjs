@@ -1,4 +1,4 @@
-import { launch, open, signIn, sleep, BASE, clickText, waitForToast } from './lib.mjs'
+import { launch, open, signIn, sleep, BASE } from './lib.mjs'
 
 // Going offline makes the browser log failed requests; that is the point of the test.
 const { page, check, done } = await launch({ allow: [/net::ERR|Failed to fetch/i] })

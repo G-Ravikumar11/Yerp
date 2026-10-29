@@ -50,3 +50,67 @@ class PermitIn(BaseModel):
 class PermitCloseIn(BaseModel):
     note: Optional[str] = ""
     cancel: Optional[bool] = False
+
+
+class WorkerIn(BaseModel):
+    job_id: int
+    name: str
+    age: int
+    address: Optional[str] = ""
+    trade: str
+    screened_on: Optional[str] = ""
+    contractor_name: Optional[str] = ""
+    father_name: Optional[str] = ""
+    dob: Optional[str] = ""
+    sex: Optional[str] = ""
+    marital_status: Optional[str] = ""
+    children: Optional[int] = 0
+    mother_tongue: Optional[str] = ""
+    other_languages: Optional[str] = ""
+    emergency_contact: Optional[str] = ""
+    phone: Optional[str] = ""
+    identification_mark: Optional[str] = ""
+    vision_normal: Optional[bool] = True
+    vision_problem: Optional[str] = ""
+    health_normal: Optional[bool] = True
+    health_problem: Optional[str] = ""
+    weight_kg: Optional[float] = 0
+    height_cm: Optional[float] = 0
+    blood_group: Optional[str] = ""
+    education: Optional[list] = None
+    experience: Optional[list] = None
+    pan: Optional[str] = ""
+    aadhaar: Optional[str] = ""
+    signature: Optional[str] = ""
+    certificates_verified: Optional[bool] = False
+    trial_briefed: Optional[bool] = False
+    safety_officer_name: Optional[str] = ""
+
+
+class CheckItemIn(BaseModel):
+    key: str
+    answer: Optional[str] = ""
+    remarks: Optional[str] = ""
+
+
+class CheckIn(BaseModel):
+    job_id: int
+    form_type: str
+    equipment_no: str
+    specs: Optional[str] = ""
+    location: Optional[str] = ""
+    extinguisher_type: Optional[str] = ""
+    board_type: Optional[str] = ""
+    contractor_name: Optional[str] = ""
+    inspection_date: Optional[str] = ""
+    next_inspection_date: Optional[str] = ""
+    items: list[CheckItemIn]
+    readings: Optional[dict] = None
+    signoffs: Optional[dict] = None
+
+
+class CheckSignoffIn(BaseModel):
+    role: str                         # a sign-off role of the form, or "review" for the client / PMC decision
+    name: str
+    date: Optional[str] = ""
+    decision: Optional[str] = ""      # for "review": accepted | rejected

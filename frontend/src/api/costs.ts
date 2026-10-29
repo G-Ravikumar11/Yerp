@@ -38,8 +38,8 @@ export interface ProjectCosts extends CostRow {
   subcontract_list: { number: string; status: string; net: number }[]
   bill_list: { number: string; supplier: string; status: string; approval: string; total: number }[]
 }
-export interface PnlRow { job_id: number; number: string; name: string; customer_name: string; order_value: number; revenue: number; incurred: number; committed: number; margin: number; margin_percent: number; mandays: number; losing: boolean; over_budget: boolean; status: string }
-export interface Pnl { summary: { projects: number; order_value: number; revenue: number; incurred: number; margin: number; owed_to_us: number }; projects: PnlRow[] }
+export interface PnlRow { job_id: number; number: string; name: string; customer_name: string; order_value: number; revenue: number; incurred: number; committed: number; margin: number; margin_percent: number; mandays: number; losing: boolean; over_budget: boolean; outstanding?: number; status: string }
+export interface Pnl { summary: { projects: number; order_value: number; revenue: number; incurred: number; margin: number; owed_to_us: number; losing_money?: number }; projects: PnlRow[] }
 
 export const useCosts = (enabled = true) => useQuery({ queryKey: ['costs', 'list'], enabled, queryFn: () => get<{ projects: CostRow[]; summary: CostSummary }>('/api/costs/by-project') })
 export const useProjectCosts = (id: number) => useQuery({ queryKey: ['costs', 'one', id], enabled: id > 0, queryFn: () => get<ProjectCosts>(`/api/costs/by-project/${id}`) })

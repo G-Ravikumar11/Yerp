@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { Play, Plus } from 'lucide-react'
+import { Download, Play, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
 import { Badge, Button } from '@/components/ui'
-import { payKeys, setAutoPayroll, useAutoPayroll, usePayslips, type PayslipRow } from '@/api/payroll'
+import { payKeys, payrollRegister, setAutoPayroll, useAutoPayroll, usePayslips, type PayslipRow } from '@/api/payroll'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
@@ -16,7 +16,8 @@ import { RunPayrollModal } from './RunPayrollModal'
 
 /** Whether the month's payslips draft themselves on the 1st. Anybody can see it; the Master changes it. */
 function AutoPayroll() {
-  const { isOwner } = useSession()
+  const { can } = useSession()
+  const canManage = can('people.manage')
   const q = useAutoPayroll()
   const set = useAction((on: boolean) => setAutoPayroll(on), { invalidate: [payKeys.all], success: (r) => r.message })
   const on = q.data?.enabled ?? true
@@ -26,7 +27,7 @@ function AutoPayroll() {
         <p className="text-sm font-medium">Automatic monthly payroll</p>
         <p className="text-[13px] text-muted-foreground">{on ? "On. When a month ends, everyone's payslip for it is drafted for you to review and pay." : 'Off. Payslips are only created when you run payroll yourself.'}</p>
       </div>
-      <button type="button" role="switch" aria-checked={on} aria-label="Automatic monthly payroll" disabled={!isOwner || q.isPending || set.isPending} onClick={() => set.mutate(!on)}
+      <button type="button" role="switch" aria-checked={on} aria-label="Automatic monthly payroll" disabled={!canManage || q.isPending || set.isPending} onClick={() => set.mutate(!on)}
         className={'relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-50 ' + (on ? 'bg-[var(--primary)]' : 'bg-muted-foreground/30')}>
         <span className={'absolute top-0.5 size-4 rounded-full bg-white transition-all ' + (on ? 'left-[18px]' : 'left-0.5')} />
       </button>
@@ -53,7 +54,7 @@ export default function PayrollPage() {
   ]
   return (
     <>
-      <PageHeader eyebrow="People" title="Payroll" description="Payslips and payment. Run everyone's at once, or write one for a single person." actions={<><Button variant="outline" onClick={() => setRunning(true)}><Play /> Run payroll</Button><Button onClick={() => setCreating(true)}><Plus /> New payslip</Button></>} />
+      <PageHeader eyebrow="People" title="Payroll" description="Payslips and payment. Run everyone's at once, or write one for a single person." actions={<>{filters.filtered.length > 0 && <Button variant="outline" asChild><a href={payrollRegister(filters.filtered.map((p) => p.id))} title="Every payslip shown below, one row each, all columns"><Download /> Excel ({filters.filtered.length})</a></Button>}<Button variant="outline" onClick={() => setRunning(true)}><Play /> Run payroll</Button><Button onClick={() => setCreating(true)}><Plus /> New payslip</Button></>} />
       <AutoPayroll />
       <FilterBar filters={filters} placeholder="Search by number, employee or status..." />
       <DataTable label="Payslips" rows={filters.filtered} columns={columns} rowKey={(p) => p.id} onRowClick={(p) => setOpen(p.id)} loading={q.isPending} empty={filters.active ? 'Nothing matches those filters.' : 'No payslips yet. Run payroll to create one for everybody.'} />

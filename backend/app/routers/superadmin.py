@@ -8,8 +8,9 @@ from sqlalchemy import func, func as sqlfunc
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
+from app.core import login_guard
 from app.core.audit import log_audit, log_login
 from app.core.auth import require_superadmin
 from app.core.currency import DEFAULT_CURRENCY, PLATFORM_CURRENCY, currency_symbol, money, to_major, to_minor
@@ -36,6 +37,7 @@ def superadmin_login(request: Request, body: dict = None, db: Session = Depends(
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
     body = body or {}
     identifier = (body.get("identifier") or body.get("username") or "").strip().lower()
+    login_guard.guard(request, identifier, body)
     password = body.get("password", "")
     env_pwd = os.getenv("SUPERADMIN_PASSWORD", "")
     sa = None
@@ -50,10 +52,12 @@ def superadmin_login(request: Request, body: dict = None, db: Session = Depends(
         elif env_pwd:
             ok = verify_password(password, hash_password(env_pwd))
         if ok:
+            login_guard.succeeded(request, identifier)
             request.session['superadmin_id'] = sa.id
             log_login(db, None, identifier or sa.email, "superadmin", "password", request, "success")
             return {"ok": True, "username": sa.username, "email": sa.email}
     log_login(db, None, identifier or "superadmin", "superadmin", "password", request, "failed")
+    login_guard.failed(request, identifier if sa else "")
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
@@ -81,7 +85,7 @@ def superadmin_logout(request: Request):
 
 
 @router.get("/api/superadmin/me")
-def superadmin_me(request: Request, db: Session = Depends(get_db)):
+def superadmin_me(request: Request, db: Session = Depends(get_read_db)):
     sa_id = request.session.get("superadmin_id")
     if not sa_id:
         raise HTTPException(status_code=401, detail="Not logged in")
@@ -92,7 +96,7 @@ def superadmin_me(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/superadmin/platform-stats")
-def superadmin_platform_stats(request: Request, db: Session = Depends(get_db)):
+def superadmin_platform_stats(request: Request, db: Session = Depends(get_read_db)):
     """Platform-wide numbers across every module, not just invoicing.
 
     The original insights endpoint only counted invoices, so HR and
@@ -116,13 +120,18 @@ def superadmin_platform_stats(request: Request, db: Session = Depends(get_db)):
     now = datetime.now()
     month_prefix = now.strftime("%Y-%m")
     # Super admin and employee logins carry a NULL client_id; counting them
-    # would inflate the tenant activity figure.
-    active_30d = db.query(models.DBClientLoginLog.client_id).filter(
+    # would inflate the tenant activity figure. Likewise, old logs can point at
+    # deleted tenants, so only count ids that still exist in clients.
+    active_30d = db.query(
+        sqlfunc.count(sqlfunc.distinct(models.DBClientLoginLog.client_id))
+    ).join(
+        models.DBClient, models.DBClient.id == models.DBClientLoginLog.client_id
+    ).filter(
         models.DBClientLoginLog.status == "success",
         models.DBClientLoginLog.user_type == "client",
         models.DBClientLoginLog.client_id.isnot(None),
         models.DBClientLoginLog.created_at >= (now - timedelta(days=30)).strftime("%Y-%m-%d"),
-    ).distinct().count()
+    ).scalar() or 0
 
     return {
         "tenants": {
@@ -164,7 +173,7 @@ def superadmin_platform_stats(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/superadmin/clients/{client_id}/overview")
-def superadmin_client_overview(client_id: int, request: Request, db: Session = Depends(get_db)):
+def superadmin_client_overview(client_id: int, request: Request, db: Session = Depends(get_read_db)):
     """Everything the operator needs to answer 'how is this tenant doing?'
     without impersonating them."""
     sa_id = request.session.get("superadmin_id")
@@ -239,7 +248,7 @@ def superadmin_client_overview(client_id: int, request: Request, db: Session = D
 
 
 @router.get("/api/superadmin/clients")
-def superadmin_clients(request: Request, db: Session = Depends(get_db)):
+def superadmin_clients(request: Request, db: Session = Depends(get_read_db)):
     sa_id = request.session.get("superadmin_id")
     if not sa_id:
         raise HTTPException(status_code=401, detail="Not authorized")
@@ -272,7 +281,7 @@ def superadmin_clients(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/superadmin/insights")
-def superadmin_insights(request: Request, db: Session = Depends(get_db)):
+def superadmin_insights(request: Request, db: Session = Depends(get_read_db)):
     sa_id = request.session.get("superadmin_id")
     if not sa_id:
         raise HTTPException(status_code=401, detail="Not authorized")
@@ -293,7 +302,7 @@ def superadmin_insights(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/superadmin/login-logs")
-def superadmin_login_logs(request: Request, limit: int = 100, db: Session = Depends(get_db)):
+def superadmin_login_logs(request: Request, limit: int = 100, db: Session = Depends(get_read_db)):
     sa_id = request.session.get("superadmin_id")
     if not sa_id:
         raise HTTPException(status_code=401, detail="Not authorized")
@@ -307,7 +316,7 @@ def superadmin_login_logs(request: Request, limit: int = 100, db: Session = Depe
 
 
 @router.get("/api/superadmin/login-stats")
-def superadmin_login_stats(request: Request, db: Session = Depends(get_db)):
+def superadmin_login_stats(request: Request, db: Session = Depends(get_read_db)):
     sa_id = request.session.get("superadmin_id")
     if not sa_id:
         raise HTTPException(status_code=401, detail="Not authorized")
@@ -391,7 +400,7 @@ def superadmin_impersonate(client_id: int, request: Request, db: Session = Depen
 
 
 @router.get("/api/superadmin/trends")
-def superadmin_trends(request: Request, db: Session = Depends(get_db)):
+def superadmin_trends(request: Request, db: Session = Depends(get_read_db)):
     sa_id = request.session.get("superadmin_id")
     if not sa_id:
         raise HTTPException(status_code=401, detail="Not authorized")
@@ -418,7 +427,7 @@ def superadmin_trends(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/superadmin/clients/{client_id}")
-def superadmin_get_client(client_id: int, request: Request, db: Session = Depends(get_db)):
+def superadmin_get_client(client_id: int, request: Request, db: Session = Depends(get_read_db)):
     sa_id = request.session.get("superadmin_id")
     if not sa_id:
         raise HTTPException(status_code=401, detail="Not authorized")
@@ -452,7 +461,7 @@ def superadmin_run_jobs(request: Request, job: str = ""):
 
 
 @router.get("/api/superadmin/job-runs")
-def superadmin_job_runs(request: Request, limit: int = 50, db: Session = Depends(get_db)):
+def superadmin_job_runs(request: Request, limit: int = 50, db: Session = Depends(get_read_db)):
     require_superadmin(request)
     rows = db.query(models.DBJobRun).order_by(
         models.DBJobRun.id.desc()).limit(min(limit, 200)).all()
@@ -639,7 +648,7 @@ def create_pricing(request: Request, body: PricingRuleIn, db: Session = Depends(
 
 
 @router.get("/api/superadmin/wallets")
-def list_wallets(request: Request, db: Session = Depends(get_db)):
+def list_wallets(request: Request, db: Session = Depends(get_read_db)):
     require_superadmin(request)
     clients = db.query(models.DBClient).all()
     wallets = {w.client_id: w for w in db.query(models.DBWallet).all()}
@@ -708,7 +717,7 @@ def adjust_wallet(client_id: int, request: Request, body: dict = None,
 
 
 @router.get("/api/superadmin/revenue")
-def platform_revenue(request: Request, months: int = 6, db: Session = Depends(get_db)):
+def platform_revenue(request: Request, months: int = 6, db: Session = Depends(get_read_db)):
     """What the platform has actually earned, by month and by action."""
     require_superadmin(request)
     months = max(1, min(months, 24))

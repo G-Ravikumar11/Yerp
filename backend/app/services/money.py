@@ -92,7 +92,8 @@ def job_money(db, client_id, job, pre=None):
     committed = money(sum(p.total or 0 for p in open_pos))
 
     subs = pre["subs"].get(job.id, [])
-    live_subs = [x for x in subs if (x.status or "") not in ("CANCELLED", "AMENDED")]
+    # A closed order has nothing left to bill: what it never did is no longer a commitment.
+    live_subs = [x for x in subs if (x.status or "") not in ("CANCELLED", "AMENDED", "CLOSED")]
     # What the contractors have still to bill. Their bills are incurred already;
     # counting the whole order on top counted every rupee billed twice.
     contractor_billed = {}
@@ -175,6 +176,8 @@ def job_money(db, client_id, job, pre=None):
                                      - c["material_recovered_from_contractors"])
     by_category["subcontract"] = money(by_category["subcontract"] + c["subcontractors"] + subcontracted)
     by_category["plant"] = money(by_category["plant"] + c["plant"] + c["equipment"])
+    # Expense vouchers charged to the site (diesel, transport, sundries) are in incurred, so in the headings too.
+    by_category["other"] = money(by_category["other"] + c.get("site_expenses", 0.0))
     for p in open_pos:
         by_category["materials"] = money(by_category["materials"] + (p.total or 0))
 
@@ -232,7 +235,8 @@ def account_dict(a):
     return {"id": a.id, "name": a.name or "", "kind": a.kind or "Bank",
             "bank_name": a.bank_name or "", "account_no": a.account_no or "",
             "ifsc": a.ifsc or "", "opening_balance": money(a.opening_balance),
-            "opening_date": a.opening_date or "", "is_active": bool(a.is_active)}
+            "opening_date": a.opening_date or "", "is_active": bool(a.is_active),
+            "job_id": a.job_id, "custodian_id": a.custodian_id, "imprest_amount": money(a.imprest_amount)}
 
 
 def account_balance(db, client_id, account):
@@ -331,12 +335,18 @@ def _settle_doc(db, client_id, doc_type, doc, worth, on):
     return got
 
 
-def next_money_number(db, client_id, direction):
-    stem = "RCT-" if direction == "IN" else "PMT-"
-    n = db.query(models.DBMoneyEntry).filter(
-        models.DBMoneyEntry.client_id == client_id,
-        models.DBMoneyEntry.direction == direction).count()
-    return "%s%04d" % (stem, n + 1)
+def next_money_number(db, client_id, direction, stem=None):
+    """The next voucher number in its own series: RCT- for money in, PMT- for money out, CON- for a transfer between
+    our own accounts. Read from the highest number in the series, so a transfer's two legs do not push the receipts
+    and payments along."""
+    stem = stem or ("RCT-" if direction == "IN" else "PMT-")
+    top = 0
+    for (number,) in db.query(models.DBMoneyEntry.number).filter(
+            models.DBMoneyEntry.client_id == client_id, models.DBMoneyEntry.number.like(stem + "%")).all():
+        tail = (number or "")[len(stem):]
+        if tail.isdigit():
+            top = max(top, int(tail))
+    return "%s%04d" % (stem, top + 1)
 
 
 def money_entry_dict(e, accounts=None):
@@ -348,7 +358,8 @@ def money_entry_dict(e, accounts=None):
             "account": acc.name if acc else "", "amount": money(e.amount),
             "paid_on": e.paid_on or "", "mode": e.mode or "", "reference": e.reference or "",
             "note": e.note or "", "voided": bool(e.voided), "void_reason": e.void_reason or "",
-            "recorded_by_name": e.recorded_by_name or "", "created_at": e.created_at or ""}
+            "recorded_by_name": e.recorded_by_name or "", "created_at": e.created_at or "",
+            "head": e.head or "", "pair_id": e.pair_id, "cleared_on": e.cleared_on or ""}
 
 
 def _doc_for_any(db, client_id, doc_type, doc_id):

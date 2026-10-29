@@ -11,26 +11,63 @@ TEAM_ROLES = ("owner", "admin", "viewer")
 # `level` is the seniority band; `role` is the person's place in the reporting
 # line. They are deliberately separate: a senior engineer (L4) and a team lead
 # can be the same band but different roles.
+#
+# L1 is the top of the ladder, as in the company's own org notes, so a HIGHER rank is a MORE senior level.
 EMPLOYEE_LEVELS = [
-    {"code": "L1", "label": "L1 - Intern / Trainee", "rank": 1},
-    {"code": "L2", "label": "L2 - Junior", "rank": 2},
-    {"code": "L3", "label": "L3 - Mid", "rank": 3},
-    {"code": "L4", "label": "L4 - Senior", "rank": 4},
-    {"code": "L5", "label": "L5 - Lead", "rank": 5},
-    {"code": "L6", "label": "L6 - Principal / Manager", "rank": 6},
-    {"code": "L7", "label": "L7 - Director", "rank": 7},
-    {"code": "L8", "label": "L8 - Executive", "rank": 8},
+    {"code": "L1", "label": "L1 - HOD", "rank": 7},
+    {"code": "L2", "label": "L2 - MD", "rank": 6},
+    {"code": "L3", "label": "L3 - Coordinator / HO", "rank": 5},
+    {"code": "L4", "label": "L4 - Project Manager", "rank": 4},
+    {"code": "L5", "label": "L5 - Site Director / Sr. Engineer", "rank": 3},
+    {"code": "L6", "label": "L6 - Site Engineer", "rank": 2},
+    {"code": "L7", "label": "L7 - Engineer / Assistant", "rank": 1},
 ]
 LEVEL_CODES = {lvl["code"] for lvl in EMPLOYEE_LEVELS}
 LEVEL_RANK = {lvl["code"]: lvl["rank"] for lvl in EMPLOYEE_LEVELS}
+
+# The designations. `level` is where the role sits; `reports_to` is the role it normally reports to (the
+# default reporting line, which HR still sets person by person); `access` is the access level (a
+# PERMISSION_ROLES code) the Master would normally give it. Nothing here grants access by itself: the
+# Master sets each person's access, as before.
 EMPLOYEE_ROLES = [
-    {"code": "employee", "label": "Employee"},
-    {"code": "team_lead", "label": "Team Lead"},
-    {"code": "manager", "label": "Manager"},
-    {"code": "department_head", "label": "Department Head"},
-    {"code": "hr_admin", "label": "HR Admin"},
-    {"code": "executive", "label": "Executive"},
+    {"code": "hod", "label": "HOD", "level": "L1", "department": "Management",
+     "reports_to": None, "access": "head_projects"},
+    {"code": "md", "label": "MD", "level": "L2", "department": "Management",
+     "reports_to": "hod", "access": "owner"},
+    {"code": "coordinator", "label": "Coordinator", "level": "L3", "department": "Head office",
+     "reports_to": "md", "access": "ho_coordinator"},
+    {"code": "ho_planning_head", "label": "HO Planning Head", "level": "L3", "department": "Head office",
+     "reports_to": "md", "access": "ho_coordinator"},
+    {"code": "ho_qs", "label": "HO QS", "level": "L3", "department": "Head office",
+     "reports_to": "md", "access": "ho_qs"},
+    {"code": "store_coordinator", "label": "Coordinator Store / Sr. Store", "level": "L3",
+     "department": "Store", "reports_to": "hod", "access": "store_incharge"},
+    {"code": "hr", "label": "HR", "level": "L3", "department": "HR",
+     "reports_to": "hod", "access": "hr"},
+    {"code": "project_manager", "label": "Project Manager", "level": "L4", "department": "Projects",
+     "reports_to": "ho_planning_head", "access": "project_manager"},
+    {"code": "safety_head", "label": "Safety Head", "level": "L4", "department": "Site",
+     "reports_to": "ho_planning_head", "access": "construction"},
+    {"code": "tpt", "label": "TPT (Transport)", "level": "L4", "department": "Transport",
+     "reports_to": "hod", "access": "staff"},
+    {"code": "site_director", "label": "Site Director", "level": "L5", "department": "Site",
+     "reports_to": "project_manager", "access": "construction"},
+    {"code": "sr_engineer", "label": "Sr. Engineer", "level": "L5", "department": "Site",
+     "reports_to": "project_manager", "access": "construction"},
+    {"code": "site_engineer", "label": "Site Engineer", "level": "L6", "department": "Site",
+     "reports_to": "site_director", "access": "construction"},
+    {"code": "store_executive", "label": "Store Executive", "level": "L6", "department": "Store",
+     "reports_to": "project_manager", "access": "stores"},
+    {"code": "engineer", "label": "Engineer", "level": "L7", "department": "Site",
+     "reports_to": "site_engineer", "access": "staff"},
+    {"code": "store_assistant", "label": "Store Assistant", "level": "L7", "department": "Store",
+     "reports_to": "store_executive", "access": "stores"},
 ]
+ROLE_LEVEL = {r["code"]: r["level"] for r in EMPLOYEE_ROLES}
+# Roles that can be held but never handed out: they are not in the role picker and no create, update or
+# hire can give one to anybody. Whoever already holds one keeps it.
+FIXED_ROLES = frozenset({"hod", "md", "coordinator", "ho_planning_head", "ho_qs", "store_coordinator", "hr"})
+ASSIGNABLE_ROLES = [r for r in EMPLOYEE_ROLES if r["code"] not in FIXED_ROLES]
 ROLE_CODES = {r["code"] for r in EMPLOYEE_ROLES}
 
 
@@ -41,6 +78,15 @@ ROLE_CODES = {r["code"] for r in EMPLOYEE_ROLES}
 PORTAL_PERMISSIONS = [
     {"key": "self.service", "group": "Everyone",
      "label": "My timesheet, payslips and leave"},
+    # WHICH PORTALS A PERSON SEES. One right for each part of the menu that is not everybody's: with it the
+    # group is in the person's sidebar, without it the group is not. What they may do inside is decided by
+    # the rights below, as before. Calendar, Approvals and My work are everybody's; People and Settings are
+    # the Master's; the HO portal has its own right (ho.view_all).
+    {"key": "projects.view", "group": "Portals", "label": "Projects portal"},
+    {"key": "clients.view", "group": "Portals", "label": "Clients portal"},
+    {"key": "subcontractors.view", "group": "Portals", "label": "Subcontractors portal"},
+    {"key": "store.view", "group": "Portals", "label": "Store portal"},
+    {"key": "money.view", "group": "Portals", "label": "Money portal"},
     {"key": "bills.submit", "group": "Costs",
      "label": "Raise bills & expenses"},
     {"key": "bills.approve", "group": "Costs",
@@ -49,6 +95,10 @@ PORTAL_PERMISSIONS = [
      "label": "View all bills"},
     {"key": "bills.pay", "group": "Costs",
      "label": "Pay approved bills"},
+    {"key": "payments.approve", "group": "Costs",
+     "label": "Check payments before they are made (accounts head)"},
+    {"key": "payments.approve_high", "group": "Costs",
+     "label": "Release payments over the MD's limit"},
     {"key": "invoices.manage", "group": "Sales",
      "label": "Invoices & quotes"},
     {"key": "reports.view", "group": "Sales",
@@ -57,14 +107,22 @@ PORTAL_PERMISSIONS = [
      "label": "Team attendance"},
     {"key": "leave.approve", "group": "People",
      "label": "Approve leave"},
-    {"key": "people.manage", "group": "People",
+    # Employee records and payslips are changed by HR and the Master and nobody else, however the boxes were
+    # ticked (see HR_ONLY): the way to give somebody them is to make that person HR.
+    {"key": "people.manage", "group": "People", "only_role": "hr",
      "label": "Manage employees & access"},
-    {"key": "payroll.manage", "group": "People",
+    {"key": "payroll.manage", "group": "People", "only_role": "hr",
      "label": "Payroll & payslips"},
     {"key": "recruitment.manage", "group": "People",
      "label": "Recruitment"},
     {"key": "items.manage", "group": "Contracts",
      "label": "Item master"},
+    {"key": "siteprices.view", "group": "Contracts",
+     "label": "View site item prices"},
+    {"key": "siteprices.edit", "group": "Contracts",
+     "label": "Edit site item prices"},
+    {"key": "siteprices.finalize", "group": "Contracts",
+     "label": "Finalise and reopen site item prices"},
     {"key": "workorders.manage", "group": "Contracts",
      "label": "Work orders & budgets"},
     {"key": "customers.manage", "group": "Contracts",
@@ -132,11 +190,32 @@ PORTAL_PERMISSIONS = [
     {"key": "app.download_excel", "group": "Phone app",
      "label": "Download Excel reports in the app"},
 ]
+
+# THE STORE MODULE: store.<slice>.<action>. The six slices and five actions are every combination, so a new screen
+# never has to add a right; the four extras are the ones worth deciding on their own and are never part of a card.
+STORE_SLICES = ("masters", "enquiry", "inward", "outward", "control", "reports")
+STORE_ACTIONS = ("view", "create", "approve", "post", "cancel")
+STORE_EXTRAS = [
+    {"key": "store.outward.direct_issue", "group": "Store module", "label": "Issue material without a requisition"},
+    {"key": "store.control.reveal_count", "group": "Store module", "label": "See system quantity during a stock count"},
+    {"key": "store.control.approve_high_value", "group": "Store module", "label": "Approve high-value adjustments and transfers"},
+    # One tick that opens every store and every Store right, whatever the stores the person is assigned to. The Master alone sets
+    # rights (hr.set_permissions); the warning is shown where it is ticked, so it is never given without being meant.
+    {"key": "store.admin", "group": "Store module", "label": "Store administrator (every store, every right)",
+     "warning": "Opens every store and every Store right - receiving, issuing, approving, cancelling and posting - whatever stores "
+                "this person is assigned to. Give it only to whoever runs the stores for the whole company."},
+]
+STORE_KEYS = [f"store.{sl}.{act}" for sl in STORE_SLICES for act in STORE_ACTIONS]
+PORTAL_PERMISSIONS += [{"key": k, "group": "Store module", "label": "Store %s: %s" % (k.split(".")[1], k.split(".")[2])}
+                       for k in STORE_KEYS] + STORE_EXTRAS
 PERMISSION_KEYS = {p["key"] for p in PORTAL_PERMISSIONS}
 
 # The rights only HO QS (and the Master) can hold, whatever else is ticked.
 HO_QS_ONLY = frozenset(p["key"] for p in PORTAL_PERMISSIONS if p.get("only_role") == "ho_qs")
 HO_QS_ONLY_ROLES = frozenset({"ho_qs", "owner"})
+# The rights only HR (and the Master) can hold: the people records and the payroll.
+HR_ONLY = frozenset(p["key"] for p in PORTAL_PERMISSIONS if p.get("only_role") == "hr")
+HR_ONLY_ROLES = frozenset({"hr", "owner"})
 # The HO Coordinator follows up and keeps drafts current; it starts nothing new: no project, tender, bill
 # or variation. (It still edits what is already open.)
 HO_FOLLOW_UP_ONLY_ROLES = frozenset({"ho_coordinator"})
@@ -155,24 +234,47 @@ HO_QS_ONLY_REFUSAL = {
 # no manager set: it goes to the nearest rank above them that holds the right
 # to approve it, and from the top of the staff to the owner.
 _SITE = ["site.record"]
+# Every portal, for the roles that oversee the whole business. The ladder is the hierarchy: the further up it, the
+# more of the portals a role is given, and from the project manager (rank 3) up it is all of them. Nobody higher
+# holds fewer portals than somebody below (tests/test_portal_access.py holds that).
+MANAGEMENT_RANK = 3
+_ALL_PORTALS = ["projects.view", "clients.view", "subcontractors.view", "store.view", "money.view"]
 _PROJECT_MANAGER = ["self.service", "bills.submit", "bills.approve", "bills.view_all",
                     "attendance.view_team", "leave.approve", "reports.view",
                     "site.record", "site.signoff", "stores.receive",
                     "workorders.manage", "billing.manage", "subcontracts.approve",
-                    "customers.manage", "items.manage"]
+                    "customers.manage", "items.manage", "siteprices.view", "siteprices.edit"] + _ALL_PORTALS
 # What "workorders.manage" used to open on its own. The older presets keep all
 # of it, so nobody already on one loses a screen the day the split lands.
 _SPLIT_OUT = ["billing.manage", "purchase.manage", "stores.manage", "accounts.manage"]
 # What both people at head office hold: every site's orders, BOQs and bills in
 # sight, and the right to keep them up to date.
 _HEAD_OFFICE = ["self.service", "bills.submit", "bills.view_all", "reports.view",
-                "workorders.manage", "billing.manage", "customers.manage", "ho.view_all"]
+                "workorders.manage", "billing.manage", "customers.manage", "ho.view_all"] + _ALL_PORTALS
+# THE STORE HUB, BY JOB. Every Hub screen asks for store.<slice>.<action>; the old store's rights (stores.receive,
+# stores.manage) open none of them. Each bundle is what that job does in the Hub - and staff still work only in the
+# stores they are assigned to.
+_STORE_VIEW = ["store.%s.view" % s for s in STORE_SLICES]
+# Asks for material and looks up stock: raises an indent (a draft issue too, which somebody else posts).
+_STORE_REQUEST = ["store.enquiry.view", "store.outward.view", "store.outward.create"]
+# Keeps a store: receives, issues, returns, moves and counts stock and posts it - but approves nothing.
+_STORE_KEEPER = _STORE_VIEW + ["store.inward.create", "store.inward.post", "store.outward.create", "store.outward.post",
+                               "store.control.create", "store.control.post"]
+# Runs the stores: approves and cancels what the keepers raise, sets up stores and items, and the counts' controls.
+_STORE_INCHARGE = _STORE_KEEPER + ["store.%s.%s" % (s, a) for s in ("inward", "outward", "control") for a in ("approve", "cancel")] + [
+    "store.masters.create", "store.masters.approve", "store.reports.create", "store.outward.direct_issue",
+    "store.control.reveal_count", "store.control.approve_high_value"]
+# Approves the indents and issues of a project and reads its material cost.
+_STORE_APPROVE_PROJECT = ["store.enquiry.view", "store.inward.view", "store.outward.view", "store.outward.create",
+                          "store.outward.approve", "store.reports.view"]
+_PROJECT_MANAGER = _PROJECT_MANAGER + _STORE_APPROVE_PROJECT
+_HEAD_OFFICE = _HEAD_OFFICE + _STORE_VIEW
 PERMISSION_ROLES = [
     {
         "code": "staff", "label": "Site staff", "rank": 1,
         "description": "Their own timesheet, leave and payslips; records site work "
                        "and sends a cost up for approval.",
-        "permissions": ["self.service", "bills.submit"] + _SITE,
+        "permissions": ["self.service", "bills.submit", "projects.view"] + _SITE,
     },
     {
         "code": "construction", "label": "Construction management team", "rank": 2,
@@ -181,7 +283,8 @@ PERMISSION_ROLES = [
                        "their crew's costs, leave and attendance.",
         "permissions": ["self.service", "bills.submit", "bills.approve",
                         "attendance.view_team", "leave.approve", "stores.receive",
-                        "site.record", "site.signoff"],
+                        "site.record", "site.signoff",
+                        "projects.view", "subcontractors.view", "store.view"] + _STORE_REQUEST,
     },
     {
         "code": "planning_billing", "label": "Planning & Billing", "rank": 2,
@@ -191,13 +294,15 @@ PERMISSION_ROLES = [
                        "approve them.",
         "permissions": ["self.service", "bills.submit", "billing.manage",
                         "workorders.manage", "items.manage", "customers.manage",
-                        "reports.view"] + _SITE,
+                        "reports.view", "projects.view", "clients.view",
+                        "subcontractors.view", "store.view", "store.enquiry.view", "store.reports.view"] + _SITE,
     },
     {
         "code": "purchase", "label": "Purchase", "rank": 2,
         "description": "Enquiries, quote comparison, purchase orders and suppliers. "
                        "An order goes for approval before it is placed.",
-        "permissions": ["self.service", "bills.submit", "purchase.manage", "items.manage"],
+        "permissions": ["self.service", "bills.submit", "purchase.manage", "items.manage",
+                        "projects.view", "store.view", "store.enquiry.view", "store.inward.view", "store.reports.view"],
     },
     {
         "code": "stores", "label": "Stores", "rank": 2,
@@ -205,7 +310,17 @@ PERMISSION_ROLES = [
                        "transfers and adjusts stock, keeps the item master and the "
                        "plant register.",
         "permissions": ["self.service", "bills.submit", "stores.receive",
-                        "stores.manage", "items.manage"] + _SITE,
+                        "stores.manage", "items.manage",
+                        "projects.view", "store.view"] + _SITE + _STORE_KEEPER,
+    },
+    {
+        "code": "store_incharge", "label": "Store in-charge", "rank": 2,
+        "description": "Runs the stores: everything a storekeeper does, plus approving and cancelling "
+                       "receipts, issues, transfers, counts and scrap, setting up stores and items, and "
+                       "the stock-count controls.",
+        "permissions": ["self.service", "bills.submit", "stores.receive",
+                        "stores.manage", "items.manage",
+                        "projects.view", "store.view"] + _SITE + _STORE_INCHARGE,
     },
     {
         "code": "accounts", "label": "Accounts", "rank": 2,
@@ -214,15 +329,18 @@ PERMISSION_ROLES = [
                        "does not approve it.",
         "permissions": ["self.service", "bills.submit", "bills.view_all", "bills.pay",
                         "invoices.manage", "reports.view", "accounts.manage",
-                        "customers.manage"],
+                        "customers.manage",
+                        "projects.view", "clients.view", "subcontractors.view", "store.view", "money.view",
+                        "store.enquiry.view", "store.inward.view", "store.reports.view"],
     },
     {
-        "code": "hr_admin", "label": "HR admin", "rank": 2,
-        "description": "Looks after people. Adds employees, decides what each "
-                       "can do, runs payroll, hiring and leave.",
-        "permissions": ["self.service", "bills.submit", "attendance.view_team",
-                        "leave.approve", "people.manage", "payroll.manage",
-                        "recruitment.manage"],
+        "code": "hr", "label": "HR", "rank": 2,
+        "description": "Looks after people: employees, payroll, hiring, attendance and leave. "
+                       "Can see every other portal but change nothing in them.",
+        "permissions": ["self.service", "people.manage", "payroll.manage", "recruitment.manage",
+                        "attendance.view_team", "leave.approve",
+                        "projects.view", "clients.view", "subcontractors.view", "store.view",
+                        "money.view", "bills.view_all"] + _STORE_VIEW,
     },
     {
         "code": "project_manager", "label": "Project manager", "rank": 3,
@@ -252,7 +370,8 @@ PERMISSION_ROLES = [
                        "and the Master.",
         "permissions": _HEAD_OFFICE + ["items.manage", "bills.approve",
                                        "subcontracts.approve", "vendors.create",
-                                       "workorders.create", "boq.create"],
+                                       "workorders.create", "boq.create", "siteprices.view",
+                                       "siteprices.edit", "siteprices.finalize"],
     },
     {
         "code": "ho_coordinator", "label": "HO Coordinator", "rank": 2, "head_office": True,
@@ -270,7 +389,8 @@ PERMISSION_ROLES = [
                        "their crew's costs, leave and attendance.",
         "permissions": ["self.service", "bills.submit", "bills.approve",
                         "attendance.view_team", "leave.approve",
-                        "stores.receive", "site.record", "site.signoff"],
+                        "stores.receive", "site.record", "site.signoff",
+                        "projects.view", "subcontractors.view", "store.view"],
     },
     {
         "code": "manager", "label": "Manager", "rank": 3, "retired": True,
@@ -281,7 +401,7 @@ PERMISSION_ROLES = [
                         "leave.approve", "reports.view",
                         "items.manage", "workorders.manage",
                         "customers.manage", "subcontracts.approve",
-                        "stores.receive", "site.record", "site.signoff"] + _SPLIT_OUT,
+                        "stores.receive", "site.record", "site.signoff"] + _SPLIT_OUT + _ALL_PORTALS,
     },
     {
         "code": "finance", "label": "Finance", "rank": 3, "retired": True,
@@ -290,7 +410,7 @@ PERMISSION_ROLES = [
         "permissions": ["self.service", "bills.submit", "bills.approve",
                         "bills.view_all", "bills.pay", "invoices.manage",
                         "reports.view", "items.manage", "workorders.manage",
-                        "customers.manage", "subcontracts.approve"] + _SPLIT_OUT,
+                        "customers.manage", "subcontracts.approve"] + _SPLIT_OUT + _ALL_PORTALS,
     },
     {
         "code": "owner", "label": "Master", "rank": 6,
@@ -315,6 +435,48 @@ for _role in PERMISSION_ROLES:
         if _needs is None or _held & _needs:
             _held.add(_key)
     _role["permissions"] = sorted(_held)
+
+
+# THE PORTALS, AS THE MASTER SEES THEM. Each is a card with three settings: No access, Read only, Read & write.
+# They are not new rights but a way of setting the rights above together, so every check in the app is
+# unchanged and a role's preset already says which setting it is:
+#   read  - the right that puts the portal in the menu, and any right its screens need just to open;
+#   write - the rights that let somebody create or change things in it.
+# No access holds none of the portal's rights, Read only holds `read` alone, Read & write holds both.
+# A right belongs to one portal only, so setting one card never moves another. Rights in none of them
+# (approving a team's bills, signing off leave, the head office rights) stay as the role or the Master set them.
+PORTALS = [
+    {"code": "projects", "label": "Projects Portal",
+     "blurb": "Sites, drawings, quality, safety and the site diary.",
+     "read": ["projects.view"], "write": ["site.record", "site.signoff"]},
+    {"code": "clients", "label": "Clients Portal",
+     "blurb": "Tenders, estimates, BOQs, measurement and billing the client.",
+     "read": ["clients.view"], "write": ["billing.manage", "customers.manage"]},
+    {"code": "subcontractors", "label": "Subcontractors Portal",
+     "blurb": "Contractors, work orders, the measurement book and RA bills.",
+     "read": ["subcontractors.view"], "write": ["workorders.manage", "subcontracts.approve"]},
+    {"code": "store", "label": "Store & Supplies",
+     "blurb": "Items, enquiries, purchase orders, goods received and stock.",
+     "read": ["store.view"] + [k for k in STORE_KEYS if k.endswith(".view")],
+     "write": ["items.manage", "purchase.manage", "stores.manage", "stores.receive"]
+              + [k for k in STORE_KEYS if not k.endswith(".view")]},
+    {"code": "money", "label": "Money Portal",
+     "blurb": "Supplier bills, payments, GST, assets and the registers.",
+     "read": ["money.view", "bills.view_all"], "write": ["bills.pay", "invoices.manage", "accounts.manage"]},
+    {"code": "people", "label": "People Portal",
+     "blurb": "Employees, departments, attendance, leave and payroll.",
+     "read": ["people.manage"],
+     "write": ["payroll.manage", "recruitment.manage", "attendance.view_team", "leave.approve"]},
+]
+PORTAL_KEYS = {k for pt in PORTALS for k in pt["read"] + pt["write"]}
+
+
+def portal_level(held, portal) -> str:
+    """"none", "read" or "write": where a set of rights stands on one portal card."""
+    if not portal["read"] or portal["read"][0] not in held:
+        return "none"
+    return "write" if any(k in held for k in portal["write"]) else "read"
+
 
 ROLE_PERMISSIONS = {r["code"]: set(r["permissions"]) for r in PERMISSION_ROLES}
 ROLE_RANK = {r["code"]: r.get("rank", 1) for r in PERMISSION_ROLES}
@@ -353,6 +515,8 @@ def permissions_for(emp) -> set:
         # Ticked by hand for somebody who is not HO QS: not honoured. Opening
         # codes and orders stays with one desk however the boxes were set.
         held -= HO_QS_ONLY
+    if role not in HR_ONLY_ROLES:
+        held -= HR_ONLY            # the same for the people records and payroll: HR and the Master only
     return held
 
 

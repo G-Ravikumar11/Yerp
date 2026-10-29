@@ -2,7 +2,6 @@ import { Link, Navigate } from 'react-router-dom'
 import { Bell, BookOpen, ChevronRight, ListChecks, PackageCheck, Ruler, ShieldAlert, type LucideIcon } from 'lucide-react'
 import { useInbox } from '@/api/approvals'
 import { attentionHref, useAttention } from '@/api/dashboard'
-import { useProjects } from '@/api/projects'
 import { useDayPlan } from '@/api/schedule'
 import { useIdentity } from '@/api/identity'
 import { CompanyMark } from '@/components/company/CompanyMark'
@@ -10,7 +9,7 @@ import { Skeleton } from '@/components/ui'
 import { today } from '@/lib/format'
 import { useSession } from '@/lib/session'
 import { cn, compactINR } from '@/lib/utils'
-import { useSite } from './site'
+import { useCurrentSite, useSite } from './site'
 import { Label, LargeTitle, Pill, Sheet } from './ui'
 
 const greeting = () => {
@@ -35,7 +34,7 @@ const QUICK: { label: string; path: string; perm?: string; icon: LucideIcon; ton
   { label: 'Diary', path: '/projects/diary', perm: 'site.record', icon: BookOpen, tone: 'bg-primary/15 text-primary' },
   { label: 'Tasks', path: '/projects/programme', icon: ListChecks, tone: 'bg-success/15 text-success' },
   { label: 'Measure', path: '/subcontractors/measurement-book', perm: 'site.record', icon: Ruler, tone: 'bg-primary/15 text-primary' },
-  { label: 'Goods in', path: '/store/goods-receipt', perm: 'stores.receive', icon: PackageCheck, tone: 'bg-warning/15 text-warning' },
+  { label: 'Goods in', path: '/store/hub/inward/grn/new', perm: 'store.inward.create', icon: PackageCheck, tone: 'bg-warning/15 text-warning' },
   { label: 'Safety', path: '/projects/safety', icon: ShieldAlert, tone: 'bg-danger/15 text-danger' },
 ]
 
@@ -43,14 +42,12 @@ const QUICK: { label: string; path: string; perm?: string; icon: LucideIcon; ton
 export default function TodayPage() {
   const { user, can, isLoading } = useSession()
   const identity = useIdentity()
-  const projects = useProjects()
-  const { id: chosen, set } = useSite()
-  const list = (projects.data ?? []).filter((p) => !['complete', 'cancelled'].includes(p.status))
-  const site = list.find((p) => p.id === chosen) ?? list[0]
+  const { site, sites: list, isPending: loadingSites } = useCurrentSite()
+  const set = useSite((s) => s.set)
   const plan = useDayPlan(site?.id ?? 0, today())
   const attention = useAttention()
   const inbox = useInbox()
-  if (isLoading) return <Skeleton className="mt-4 h-64 w-full rounded-3xl" />
+  if (isLoading) return <Skeleton className="mt-4 h-64 w-full rounded-lg" />
   if (user?.headOffice) return <Navigate to="/ho" replace />
 
   const tasks = plan.data?.tasks ?? []
@@ -79,11 +76,11 @@ export default function TodayPage() {
 
       <LargeTitle title="Today" sub={new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })} />
 
-      {projects.isPending ? <Skeleton className="h-9 w-2/3 rounded-full" /> : list.length > 0 && (
-        <div role="tablist" aria-label="Site" className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none]">
+      {loadingSites ? <Skeleton className="h-9 w-2/3 rounded-full" /> : list.length > 0 && (
+        <div role="tablist" aria-label="Site" className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {list.map((p) => (
             <button key={p.id} role="tab" aria-selected={p.id === site?.id} type="button" onClick={() => set(p.id)}
-              className={cn('h-9 shrink-0 rounded-full px-4 text-sm font-medium', p.id === site?.id ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground')}>
+              className={cn('h-9 shrink-0 rounded-md px-4 text-sm font-medium', p.id === site?.id ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground')}>
               {p.name}
             </button>
           ))}
@@ -91,7 +88,7 @@ export default function TodayPage() {
       )}
 
       {site && (
-        <Link to={`/projects/programme?job=${site.id}`} className="mt-4 flex items-center gap-4 rounded-[26px] border border-border bg-gradient-to-br from-primary/25 via-card to-card p-4">
+        <Link to={`/projects/programme?job=${site.id}`} className="mt-4 flex items-center gap-4 rounded-lg border border-border bg-card p-4">
           {plan.isPending ? <Skeleton className="size-24 rounded-full" /> : <Ring percent={percent} />}
           <div className="min-w-0">
             <div className="text-[17px] font-semibold">{tasks.length ? `${done} of ${tasks.length} tasks done` : 'Work done so far'}</div>
@@ -104,9 +101,9 @@ export default function TodayPage() {
       {quick.length > 0 && (
         <>
           <Label>Quick actions</Label>
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-3 gap-2 min-[360px]:grid-cols-5">
             {quick.map(({ label, path, icon: Icon, tone }) => (
-              <Link key={label} to={path} className="flex h-[84px] flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-card text-[11.5px] font-medium active:scale-95">
+              <Link key={label} to={path} className="flex h-[84px] flex-col items-center justify-center gap-2 rounded-lg border border-border bg-card text-[11.5px] font-medium active:scale-95">
                 <span className={cn('grid size-9 place-items-center rounded-xl', tone)}><Icon className="size-[18px]" /></span>{label}
               </Link>
             ))}
@@ -130,7 +127,7 @@ export default function TodayPage() {
             <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
           </Link>
         ))}
-        {waiting === 0 && items.length === 0 && (attention.isPending ? <Skeleton className="my-3 h-12 w-full" /> : <p className="py-4 text-center text-sm text-muted-foreground">Nothing needs you right now.</p>)}
+        {waiting === 0 && items.length === 0 && (attention.isPending ? <Skeleton className="my-3 h-12 w-full" /> : <p className="py-4 text-center text-sm text-muted-foreground">{attention.isError ? 'Could not load this. Pull down or reopen the app to try again.' : 'Nothing needs you right now.'}</p>)}
       </Sheet>
     </div>
   )

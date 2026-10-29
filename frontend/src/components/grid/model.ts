@@ -44,7 +44,7 @@ export function rowIsBlank<T>(columns: readonly Column<T>[], row: T, index: numb
   return columns.every((c) => !countsAsData(c) || isEmptyValue(getValue(c, row, index)))
 }
 
-export function emptyFor<T>(col: Column<T>): CellValue {
+function emptyFor<T>(col: Column<T>): CellValue {
   if (col.empty !== undefined) return col.empty
   switch (col.type) {
     case 'number':
@@ -120,8 +120,6 @@ export function coerce<T>(col: Column<T>, raw: string): Parsed<CellValue> {
 export function makeRange(a: Cell, b: Cell): Range {
   return { r0: Math.min(a.r, b.r), r1: Math.max(a.r, b.r), c0: Math.min(a.c, b.c), c1: Math.max(a.c, b.c) }
 }
-
-export const inRange = (rg: Range, r: number, c: number) => r >= rg.r0 && r <= rg.r1 && c >= rg.c0 && c <= rg.c1
 
 /** Every cell of the range as unformatted text, ready for the clipboard. */
 export function rangeText<T>(columns: readonly Column<T>[], rows: Rows<T>, rg: Range): string {

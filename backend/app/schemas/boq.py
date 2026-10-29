@@ -7,6 +7,7 @@ from pydantic import BaseModel
 class ProjectBoqLineIn(BaseModel):
     key: Optional[str] = ""
     kind: Optional[str] = "item"
+    item_no: Optional[str] = ""
     group_code: Optional[str] = ""
     description: Optional[str] = ""
     uom: Optional[str] = ""

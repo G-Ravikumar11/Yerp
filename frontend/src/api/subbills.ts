@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { get, post, put } from '@/lib/api'
 
-export type BillStatus = 'DRAFT' | 'SUBMITTED' | 'CERTIFIED' | 'PAID' | 'CANCELLED'
-export type BillAction = 'SUBMIT' | 'CERTIFY' | 'REJECT' | 'PAY' | 'CANCEL'
+type BillStatus = 'DRAFT' | 'SUBMITTED' | 'CERTIFIED' | 'PAID' | 'CANCELLED'
+type BillAction = 'SUBMIT' | 'CERTIFY' | 'REJECT' | 'PAY' | 'CANCEL'
 
 export interface BillLine {
   id: number
@@ -19,7 +19,7 @@ export interface BillLine {
   upto_date_amount: number
 }
 
-export interface BillStep {
+interface BillStep {
   step: number
   name: string
   owner: boolean
@@ -56,6 +56,12 @@ export interface SubBill {
   advance_recovery: number
   other_deductions: number
   deduction_notes: string
+  /** Liquidated damages taken off this bill, why, and whether somebody set the figure by hand. */
+  ld_amount: number
+  ld_note: string
+  ld_set_by_hand?: boolean
+  /** Why a rule that would have stopped it was signed past, in the words of whoever did. */
+  override_note?: string
   gst_percent: number
   gst_amount: number
   cgst_amount: number
@@ -99,11 +105,17 @@ export interface SubBill {
   /** What a contractor's missing or lapsed papers say, and the back-charges on this bill and waiting for the next (detail only). */
   back_charges?: number
   compliance_warnings?: string[]
+  /** The papers that stop it being certified or paid (the Master can still, with a reason). */
+  compliance_blocks?: string[]
+  /** Lines that take what contractors are billed for past the project BOQ. */
+  boq_warnings?: string[]
+  /** What the liquidated damages come to on this draft, worked out from the order's completion date. */
+  ld_worked?: { amount: number; why: string }
   open_back_charges?: { id: number; number: string; kind: string; reason: string; amount: number }[]
   applied_back_charges?: { id: number; number: string; kind: string; reason: string; amount: number }[]
   hardcopy?: { name: string; type: string; size: number; amount: number | null; by: string; at: string; difference: number | null } | null
   entries?: { id: number; code: string; kind: string; quantity: number; activity_no: string; location: string; measured_on: string }[]
-  order_detail?: { number: string; subject: string; value: number; retention_percent: number; commencement_date: string; completion_date: string }
+  order_detail?: { number: string; subject: string; value: number; retention_percent: number; commencement_date: string; completion_date: string; ld_percent_per_week?: number; ld_cap_percent?: number }
 }
 
 export interface BillSummary {
@@ -126,6 +138,8 @@ export interface BillEdit {
   advance_recovery: number
   other_deductions: number
   deduction_notes: string
+  ld_amount: number
+  ld_note: string
 }
 
 export const billKeys = {

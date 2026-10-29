@@ -1,5 +1,6 @@
 """Request limits, idempotency, security headers and timing, in the order they wrap a request."""
 import asyncio
+import secrets
 import contextvars
 import json
 import os
@@ -7,6 +8,7 @@ import re
 import time
 from datetime import datetime, timedelta
 
+import itsdangerous
 from fastapi import HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
@@ -21,6 +23,8 @@ from app.core.application import app
 from app.core.auth import WRITE_METHODS
 from app.core.cache import _WRITE_VERSION
 from app.core.config import (
+    CLIENT_RESET,
+    current_build,
     BODY_LIMIT_APPLICATION,
     BODY_LIMIT_DEFAULT,
     BODY_LIMIT_FORMS,
@@ -51,6 +55,32 @@ class SessionExpiryMiddleware:
             elif "exp" not in session:
                 session["exp"] = now + SESSION_MAX_AGE
         await self.app(scope, receive, send)
+
+
+class _ClockSafeSigner(itsdangerous.TimestampSigner):
+    """The session cookie's signer, untroubled by a clock put back a little.
+
+    The cookie carries the second it was signed, and itsdangerous takes one signed "in the future" as expired. When
+    the clock is stepped back (Windows did it by 2 s mid-run; a server's time sync can too), a cookie signed just
+    before the step was refused and the person was signed out between two clicks. A stamp up to CLOCK_STEP ahead of
+    the clock is taken as now; anything older than its lifetime is refused as before."""
+
+    CLOCK_STEP = 300
+
+    def unsign(self, value, max_age=None, return_timestamp=False):
+        try:
+            return super().unsign(value, max_age=max_age, return_timestamp=return_timestamp)
+        except itsdangerous.SignatureExpired as e:
+            ahead = e.date_signed.timestamp() - time.time() if e.date_signed else -1
+            if 0 < ahead <= self.CLOCK_STEP:
+                return super().unsign(value, max_age=None, return_timestamp=return_timestamp)
+            raise
+
+
+class ClockSafeSessionMiddleware(SessionMiddleware):
+    def __init__(self, app, secret_key, **kwargs):
+        super().__init__(app, secret_key, **kwargs)
+        self.signer = _ClockSafeSigner(str(secret_key))
 
 
 class SessionCookieLifetimeMiddleware:
@@ -87,7 +117,7 @@ class SessionCookieLifetimeMiddleware:
 
 app.add_middleware(SessionExpiryMiddleware)
 app.add_middleware(
-    SessionMiddleware,
+    ClockSafeSessionMiddleware,
     secret_key=SECRET_KEY,
     same_site=SESSION_SAMESITE,
     https_only=COOKIE_SECURE,
@@ -101,6 +131,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
+    # The installed phone app talks to the server from another origin; these are read by lib/freshness.ts.
+    expose_headers=["X-App-Build", "X-Client-Reset"],
 )
 
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
@@ -126,7 +158,7 @@ class BodyLimitMiddleware:
         limit = body_limit_for(scope["path"])
         declared = dict(scope["headers"]).get(b"content-length", b"")
         if declared.isdigit() and int(declared) > limit:
-            await JSONResponse(status_code=413, content={"detail": "That is too large to send."})(scope, receive, send)
+            await JSONResponse(status_code=413, content={"detail": "That is too large to send.", "code": "YE-FILE-01", "ref": secrets.token_hex(4).upper()})(scope, receive, send)
             return
         seen = [0]
 
@@ -247,6 +279,18 @@ async def security_middleware(request: Request, call_next):
         # fixes, and the person has no way to tell that is what they are
         # looking at. One conditional request is a cheap price for that.
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    if path.startswith("/api/"):
+        # Which build is live, on every answer: an open app that sees a newer one loads it at the next change of screen
+        # (frontend/src/lib/freshness.ts). Costs no extra request.
+        build = current_build()
+        if build:
+            response.headers["X-App-Build"] = build
+        if CLIENT_RESET:
+            response.headers["X-Client-Reset"] = CLIENT_RESET
+    if path.rstrip("/") == "/next/reset":
+        # The page that starts a device clean also empties the browser's own HTTP cache for this site. Only the cache:
+        # storage holds offline saves not yet sent, and cookies the sign-in; the page itself clears what is safe to.
+        response.headers["Clear-Site-Data"] = '"cache"'
     response.headers["X-Content-Type-Options"] = "nosniff"
     # A PDF may be shown inside the app's own pages - so what is on screen is
     # the document that prints - but never framed by anybody else's site.
@@ -254,6 +298,57 @@ async def security_middleware(request: Request, call_next):
         "SAMEORIGIN" if response.headers.get("content-type", "").startswith("application/pdf") else "DENY")
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    # Only our own pages may frame ours (the PDF beside a bill), whatever an old browser makes of X-Frame-Options.
+    response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'self'")
+    # The camera (scanning, bill photos) and location (attendance) for this site only; nothing else asked for.
+    response.headers["Permissions-Policy"] = "camera=(self), geolocation=(self), microphone=(), payment=(), usb=()"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
+    response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
     if request.url.scheme == "https":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
+
+
+# A FLOOD OF REQUESTS
+#
+# One address asking the API more than API_FLOOD_PER_MINUTE times a minute is not a person: the rest of that minute it
+# is told to wait (429). Generous - a whole site office behind one connection, every screen open, does not come near
+# it - so it only stops a script. 0 turns it off. Counted per real address (ClientAddressMiddleware runs first).
+class FloodMiddleware:
+    def __init__(self, app):
+        self.app = app
+        self.windows = {}
+
+    @staticmethod
+    def limit():
+        try:
+            return int(os.getenv("API_FLOOD_PER_MINUTE", "1200"))
+        except ValueError:
+            return 1200
+
+    async def __call__(self, scope, receive, send):
+        limit = self.limit()
+        if limit > 0 and scope["type"] == "http" and scope.get("path", "").startswith("/api/") \
+                and scope.get("path") != "/api/health":
+            ip = (scope.get("client") or ("unknown",))[0]
+            minute = int(time.time() // 60)
+            seen = self.windows.get(ip)
+            if not seen or seen[0] != minute:
+                if len(self.windows) > 50000:
+                    self.windows = {k: v for k, v in self.windows.items() if v[0] == minute}
+                seen = [minute, 0]
+                self.windows[ip] = seen
+            seen[1] += 1
+            if seen[1] > limit:
+                response = JSONResponse({"detail": "Too many requests from this connection. Wait a minute and try again.",
+                                         "code": "YE-BUSY-01"}, status_code=429, headers={"Retry-After": "60"})
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
+from app.core.login_guard import ClientAddressMiddleware  # noqa: E402
+
+# Added last, so they run first: the real address is put in place, then the flood is counted against it.
+app.add_middleware(FloodMiddleware)
+app.add_middleware(ClientAddressMiddleware)

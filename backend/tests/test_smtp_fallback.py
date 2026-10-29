@@ -1,7 +1,12 @@
 """Reset mail goes out through the server's SMTP account when no Gmail is connected, and says so when it cannot."""
 import smtplib
 
+import pytest
+
 from app.core import notifications
+
+# These test the SMTP sender itself, so they run it - against FakeSMTP below, never a real server.
+pytestmark = pytest.mark.fake_smtp
 
 
 class FakeSMTP:
@@ -27,6 +32,7 @@ def send(monkeypatch, host="smtp.example.com"):
     monkeypatch.setattr(smtplib, "SMTP", FakeSMTP)
     monkeypatch.setattr(notifications, "get_stored_refresh_token", lambda db, client_id=None: "")
     monkeypatch.setenv("SMTP_HOST", host)
+    monkeypatch.setenv("SMTP_PORT", "587")
     monkeypatch.setenv("SMTP_USER", "sender@example.com")
     monkeypatch.setenv("SMTP_PASSWORD", "app-password")
 

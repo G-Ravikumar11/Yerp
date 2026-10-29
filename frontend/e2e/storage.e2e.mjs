@@ -1,4 +1,4 @@
-import { clickText, launch, open, signIn, sleep } from './lib.mjs'
+import { clickText, launch, open, signIn } from './lib.mjs'
 
 // The owner sees what takes space and what can be cleared.
 const { page, check, done } = await launch({ allow: [] })

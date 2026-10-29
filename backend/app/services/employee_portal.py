@@ -32,8 +32,8 @@ def attendance_settings_for(db: Session, client_id: int) -> Optional[models.DBAt
     ).first()
 
 
-def is_working_day(settings: Optional[models.DBAttendanceSettings], on_date: Any = None) -> bool:
-    """Check whether a given date is a working day under tenant settings."""
+def is_working_day(settings: Optional[models.DBAttendanceSettings], on_date: Any = None, holidays: Any = ()) -> bool:
+    """Check whether a given date is a working day under tenant settings, and not one of `holidays` (YYYY-MM-DD)."""
     if on_date is None:
         target = datetime.now().date()
     elif isinstance(on_date, str):
@@ -45,6 +45,8 @@ def is_working_day(settings: Optional[models.DBAttendanceSettings], on_date: Any
     else:
         target = datetime.now().date()
 
+    if target.isoformat() in holidays:
+        return False
     raw = getattr(settings, "working_days", None) if settings else None
     return target.isoweekday() in parse_working_days(raw or DEFAULT_WORKING_DAYS)
 
@@ -237,8 +239,11 @@ def working_days_between(
     start_date: Any,
     end_date: Any,
     settings: Optional[models.DBAttendanceSettings] = None,
+    holidays: Any = (),
 ) -> float:
-    """Calculate working days between two dates under tenant attendance rules."""
+    """Calculate working days between two dates under tenant attendance rules.
+
+    `holidays` are YYYY-MM-DD dates the business has marked off: they are not working days even on a weekday."""
     start = _parse_date(start_date) if isinstance(start_date, str) else start_date
     end = _parse_date(end_date) if isinstance(end_date, str) else end_date
 
@@ -256,14 +261,15 @@ def working_days_between(
     days = 0
     cursor = start
     while cursor <= end:
-        if cursor.isoweekday() in allowed_days:
+        if cursor.isoweekday() in allowed_days and cursor.isoformat() not in holidays:
             days += 1
         cursor += timedelta(days=1)
     return float(days)
 
 
-def leave_balance_for(db: Session, emp: models.DBEmployee, for_year: Optional[int] = None) -> Dict[str, float]:
-    """Calculate leave entitlement and remaining balance bounded to the calendar year."""
+def leave_balance_for(db: Session, emp: models.DBEmployee, for_year: Optional[int] = None, leaves=None) -> Dict[str, float]:
+    """Calculate leave entitlement and remaining balance bounded to the calendar year.
+    `leaves` is the person's leave requests when the caller has already read them (any years: only this one counts)."""
     if not emp:
         return {
             "annual_total": 0.0, "annual_taken": 0.0, "annual_pending": 0.0, "annual_remaining": 0.0,
@@ -273,11 +279,14 @@ def leave_balance_for(db: Session, emp: models.DBEmployee, for_year: Optional[in
     year = for_year or datetime.now().year
     year_prefix = f"{year}-"
 
-    leaves = db.query(models.DBLeaveRequest).filter(
-        models.DBLeaveRequest.employee_id == emp.id,
-        models.DBLeaveRequest.client_id == emp.client_id,
-        models.DBLeaveRequest.start_date.like(f"{year_prefix}%"),
-    ).all()
+    if leaves is None:
+        leaves = db.query(models.DBLeaveRequest).filter(
+            models.DBLeaveRequest.employee_id == emp.id,
+            models.DBLeaveRequest.client_id == emp.client_id,
+            models.DBLeaveRequest.start_date.like(f"{year_prefix}%"),
+        ).all()
+    else:
+        leaves = [l for l in leaves if l.client_id == emp.client_id and (l.start_date or "").startswith(year_prefix)]
 
     def taken(kind: str, statuses: tuple) -> float:
         return round(sum(float(l.days or 0) for l in leaves if l.leave_type == kind and l.status in statuses), 2)

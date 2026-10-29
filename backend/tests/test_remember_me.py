@@ -38,6 +38,17 @@ def test_the_server_enforces_the_shorter_lifetime(account, monkeypatch):
     assert c2.get("/api/client/me").status_code == 200
 
 
+def test_a_clock_put_back_a_little_does_not_sign_anyone_out(account, monkeypatch):
+    # The machine's clock stepped back 2 s mid-run once, and a test was signed out between two requests.
+    c, _ = sign_in(account)
+    real = time.time
+    monkeypatch.setattr(time, "time", lambda: real() - 3)
+    assert c.get("/api/client/me").status_code == 200
+    # A cookie stamped an hour ahead of the clock is not one of those: it is refused.
+    monkeypatch.setattr(time, "time", lambda: real() - 3600)
+    assert c.get("/api/client/me").status_code == 401
+
+
 def test_logout_ends_the_session(account):
     c, _ = sign_in(account, rememberMe=True)
     c.post("/api/client/logout")

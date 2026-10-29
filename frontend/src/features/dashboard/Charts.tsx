@@ -51,24 +51,6 @@ function Tip({ active, label, title, rows }: { active?: boolean; label?: string;
 const legend = (value: string) => <span className="text-xs text-muted-foreground">{value}</span>
 
 
-/** Soft top-to-bottom fills, so bars read as solid shapes rather than flat blocks. */
-const Fills = () => (
-  <defs>
-    {[
-      ['gRev', REVENUE],
-      ['gCost', COST],
-      ['gIn', RECEIVED],
-      ['gOut', PAID],
-      ['gPlan', 'var(--chart-3)'],
-    ].map(([id, c]) => (
-      <linearGradient key={id} id={id} x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stopColor={c} stopOpacity={0.95} />
-        <stop offset="100%" stopColor={c} stopOpacity={0.55} />
-      </linearGradient>
-    ))}
-  </defs>
-)
-
 const SLICES = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)']
 
 type ProjectRow = ProjectPnl & { label: string }
@@ -109,7 +91,6 @@ export function ProfitChart({ projects }: { projects: ProjectPnl[] }) {
     'Money earned and spent by project',
     240,
     <BarChart data={data} margin={{ top: 22, right: 12, left: 0, bottom: 4 }} barGap={6} barCategoryGap="22%">
-      <Fills />
       <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="2 6" strokeOpacity={0.7} />
       <XAxis dataKey="label" interval={0} height={wide ? 40 : 24} tick={<ProjectTick names={names} narrow={!wide} />} axisLine={false} tickLine={false} />
       <YAxis tickFormatter={compactINR} tick={TICK} axisLine={false} tickLine={false} width={wide ? 64 : 78} tickCount={5} />
@@ -132,10 +113,10 @@ export function ProfitChart({ projects }: { projects: ProjectPnl[] }) {
         }}
       />
       <Legend verticalAlign={wide ? 'top' : 'bottom'} align={wide ? 'right' : 'left'} iconType="circle" iconSize={8} formatter={legend} wrapperStyle={wide ? undefined : { paddingTop: 8 }} />
-      <Bar name="Money earned" dataKey="revenue" fill="url(#gRev)" radius={[8, 8, 2, 2]} maxBarSize={36} isAnimationActive={!calm}>
+      <Bar name="Money earned" dataKey="revenue" fill={REVENUE} radius={[8, 8, 2, 2]} maxBarSize={36} isAnimationActive={!calm}>
         {wide && <LabelList dataKey="revenue" position="top" formatter={label} style={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />}
       </Bar>
-      <Bar name="Money spent" dataKey="incurred" fill="url(#gCost)" radius={[8, 8, 2, 2]} maxBarSize={36} isAnimationActive={!calm}>
+      <Bar name="Money spent" dataKey="incurred" fill={COST} radius={[8, 8, 2, 2]} maxBarSize={36} isAnimationActive={!calm}>
         {wide && <LabelList dataKey="incurred" position="top" formatter={label} style={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />}
       </Bar>
     </BarChart>,
@@ -150,7 +131,6 @@ export function IncidentsChart({ kinds }: { kinds: { kind: string; count: number
     'Safety incidents by kind',
     210,
     <BarChart data={data} layout="vertical" margin={{ top: 4, right: 40, left: 0, bottom: 4 }} barCategoryGap="28%">
-      <Fills />
       <CartesianGrid horizontal={false} stroke={GRID} strokeDasharray="2 6" strokeOpacity={0.7} />
       <XAxis type="number" allowDecimals={false} tick={TICK} axisLine={false} tickLine={false} />
       <YAxis type="category" dataKey="kind" width={150} tick={TICK} axisLine={false} tickLine={false} tickFormatter={(v: string) => short(v, 24)} />
@@ -167,7 +147,7 @@ export function IncidentsChart({ kinds }: { kinds: { kind: string; count: number
           )
         }}
       />
-      <Bar dataKey="count" fill="url(#gOut)" radius={[2, 8, 8, 2]} maxBarSize={26} isAnimationActive={!calm}>
+      <Bar dataKey="count" fill={PAID} radius={[2, 8, 8, 2]} maxBarSize={26} isAnimationActive={!calm}>
         <LabelList dataKey="count" position="right" style={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />
       </Bar>
     </BarChart>,
@@ -186,7 +166,6 @@ export function MarginChart({ projects }: { projects: ProjectPnl[] }) {
     'Profit or loss by project',
     210,
     <BarChart data={data} layout="vertical" margin={{ top: 4, right: 56, left: 0, bottom: 4 }} barCategoryGap="28%">
-      <Fills />
       <CartesianGrid horizontal={false} stroke={GRID} strokeDasharray="2 6" strokeOpacity={0.7} />
       <ReferenceLine x={0} stroke="var(--muted-foreground)" strokeOpacity={0.5} />
       <XAxis type="number" tickFormatter={compactINR} tick={TICK} axisLine={false} tickLine={false} />
@@ -222,7 +201,6 @@ export function BudgetChart({ projects }: { projects: CostRow[] }) {
     'Budget against spend by project',
     210,
     <BarChart data={data} margin={{ top: 12, right: 16, left: 0, bottom: 0 }} barGap={4} barCategoryGap="30%">
-      <Fills />
       <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="2 6" strokeOpacity={0.7} />
       <XAxis dataKey="label" tick={TICK} axisLine={false} tickLine={false} tickFormatter={(v: string) => short(v, 10)} />
       <YAxis tickFormatter={compactINR} tick={TICK} axisLine={false} tickLine={false} width={78} />
@@ -246,9 +224,9 @@ export function BudgetChart({ projects }: { projects: CostRow[] }) {
         }}
       />
       <Legend verticalAlign="top" align={wide ? 'right' : 'left'} iconType="circle" iconSize={8} formatter={legend} />
-      <Bar name="Contract amount" dataKey="contract_value" fill="url(#gRev)" radius={[8, 8, 2, 2]} maxBarSize={18} isAnimationActive={!calm} />
-      <Bar name="Expected cost" dataKey="forecast_cost" fill="url(#gPlan)" radius={[8, 8, 2, 2]} maxBarSize={18} isAnimationActive={!calm} />
-      <Bar name="Spent so far" dataKey="incurred" fill="url(#gCost)" radius={[8, 8, 2, 2]} maxBarSize={18} isAnimationActive={!calm} />
+      <Bar name="Contract amount" dataKey="contract_value" fill={REVENUE} radius={[8, 8, 2, 2]} maxBarSize={18} isAnimationActive={!calm} />
+      <Bar name="Expected cost" dataKey="forecast_cost" fill={'var(--chart-3)'} radius={[8, 8, 2, 2]} maxBarSize={18} isAnimationActive={!calm} />
+      <Bar name="Spent so far" dataKey="incurred" fill={COST} radius={[8, 8, 2, 2]} maxBarSize={18} isAnimationActive={!calm} />
     </BarChart>,
   )
 }
@@ -287,13 +265,6 @@ export function CashFlowChart({ months }: { months: MonthFlow[] }) {
     <figure aria-label="Cash flow by month" className="m-0 h-full min-h-[210px]">
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={months} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={4} barCategoryGap="30%">
-          <Fills />
-          <defs>
-            <linearGradient id="balanceFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={BALANCE} stopOpacity={0.28} />
-              <stop offset="100%" stopColor={BALANCE} stopOpacity={0} />
-            </linearGradient>
-          </defs>
           <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="2 6" strokeOpacity={0.7} />
           <ReferenceLine y={0} stroke="var(--muted-foreground)" strokeOpacity={0.5} />
           <XAxis dataKey="label" tick={TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" />
@@ -318,9 +289,9 @@ export function CashFlowChart({ months }: { months: MonthFlow[] }) {
             }}
           />
           <Legend verticalAlign="top" align={wide ? 'right' : 'left'} iconType="circle" iconSize={8} formatter={legend} />
-          <Bar name="Money in" dataKey="received" fill="url(#gIn)" radius={[8, 8, 2, 2]} maxBarSize={16} isAnimationActive={!calm} />
-          <Bar name="Money out" dataKey="paid" fill="url(#gOut)" radius={[8, 8, 2, 2]} maxBarSize={16} isAnimationActive={!calm} />
-          <Area name="Balance" type="monotone" dataKey="running" stroke="none" fill="url(#balanceFill)" legendType="none" isAnimationActive={!calm} />
+          <Bar name="Money in" dataKey="received" fill={RECEIVED} radius={[8, 8, 2, 2]} maxBarSize={16} isAnimationActive={!calm} />
+          <Bar name="Money out" dataKey="paid" fill={PAID} radius={[8, 8, 2, 2]} maxBarSize={16} isAnimationActive={!calm} />
+          <Area name="Balance" type="monotone" dataKey="running" stroke="none" fill={BALANCE} fillOpacity={0.12} legendType="none" isAnimationActive={!calm} />
           <Line name="Balance" type="monotone" dataKey="running" stroke={BALANCE} strokeWidth={2.5} dot={{ r: 3, strokeWidth: 2, fill: 'var(--card)' }} activeDot={{ r: 5 }} isAnimationActive={!calm} />
         </ComposedChart>
       </ResponsiveContainer>
@@ -337,7 +308,6 @@ export function AgeingChart({ receivable, payable }: { receivable: Record<string
     <figure aria-label="Money to receive and money to pay, by age" className="m-0 h-full min-h-[210px]">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={rows} margin={{ top: 20, right: 8, left: 0, bottom: 0 }} barGap={3}>
-      <Fills />
           <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="2 6" strokeOpacity={0.7} />
           <XAxis dataKey="bucket" tick={TICK} axisLine={false} tickLine={false} />
           <YAxis tickFormatter={compactINR} tick={TICK} axisLine={false} tickLine={false} width={78} />
@@ -352,10 +322,10 @@ export function AgeingChart({ receivable, payable }: { receivable: Record<string
             )}
           />
           <Legend verticalAlign="top" align={wide ? 'right' : 'left'} iconType="circle" iconSize={8} formatter={legend} />
-          <Bar name="Money to receive" dataKey="receivable" fill="url(#gIn)" radius={[8, 8, 2, 2]} maxBarSize={22} isAnimationActive={!calm}>
+          <Bar name="Money to receive" dataKey="receivable" fill={RECEIVED} radius={[8, 8, 2, 2]} maxBarSize={22} isAnimationActive={!calm}>
             <LabelList dataKey="receivable" position="top" formatter={label} fill="currentColor" fontSize={11} className="text-muted-foreground" />
           </Bar>
-          <Bar name="Money to pay" dataKey="payable" fill="url(#gOut)" radius={[8, 8, 2, 2]} maxBarSize={22} isAnimationActive={!calm}>
+          <Bar name="Money to pay" dataKey="payable" fill={PAID} radius={[8, 8, 2, 2]} maxBarSize={22} isAnimationActive={!calm}>
             <LabelList dataKey="payable" position="top" formatter={label} fill="currentColor" fontSize={11} className="text-muted-foreground" />
           </Bar>
         </BarChart>

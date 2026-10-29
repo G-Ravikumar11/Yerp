@@ -1,5 +1,4 @@
 """The access endpoints."""
-import os
 import re
 from datetime import datetime
 
@@ -8,14 +7,13 @@ from sqlalchemy import func as sqlfunc
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.common import PORTAL_INVITE_DAYS, PORTAL_PARTY_TYPES
 from app.core.audit import log_audit
 from app.core.auth import current_role, get_client_user, require_erp_read, require_owner, wo_actor
-from app.core.notifications import default_from_email, send_email_background
 from app.core.references import release_references
-from app.core.security import RESET_TOKEN_TTL_MINUTES, issue_reset_token
+from app.core.security import hash_password, validate_password_strength
 from app.schemas.access import PortalInviteIn, TeamInvite, TeamUpdate
 from app.services.access import (
     _invite_link,
@@ -25,7 +23,6 @@ from app.services.access import (
     member_to_dict,
     portal_user_dict,
 )
-from app.services.auth import reset_email_bodies
 from app.services.subcontract_billing import portal_party
 from app.validators.common import validate_email_address
 
@@ -34,7 +31,7 @@ router = APIRouter()
 
 
 @router.get("/api/team")
-def list_team(request: Request, db: Session = Depends(get_db)):
+def list_team(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     rows = db.query(models.DBTeamMember).filter(
         models.DBTeamMember.client_id == client.id
@@ -52,13 +49,11 @@ def list_team(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/api/team/invite")
-def invite_member(body: TeamInvite, background_tasks: BackgroundTasks,
-                  request: Request, db: Session = Depends(get_db)):
-    """Add a colleague and email them a link to set their own password.
+def invite_member(body: TeamInvite, request: Request, db: Session = Depends(get_db)):
+    """Add a colleague with the password the Master gives them.
 
-    Reuses the password-reset machinery rather than inventing a second kind of
-    token, so an invite is single-use and expires like any other link, and no
-    password ever travels by email.
+    No email goes out: the Master hands over the address and the password, and the colleague signs in with them
+    straight away. Only the hash of the password is kept, and it is never sent back.
     """
     client = get_client_user(request, db)
     require_owner(request, db)
@@ -77,28 +72,19 @@ def invite_member(body: TeamInvite, background_tasks: BackgroundTasks,
         sqlfunc.lower(models.DBTeamMember.email) == email,
     ).first():
         raise HTTPException(status_code=400, detail="They are already on the team")
+    if not body.password:
+        raise HTTPException(status_code=400, detail="Give them a password to sign in with")
+    validate_password_strength(body.password)
 
     member = models.DBTeamMember(
-        client_id=client.id, email=email, name=(body.name or "").strip(), role=role)
+        client_id=client.id, email=email, name=(body.name or "").strip(), role=role,
+        password_hash=hash_password(body.password),
+        # Given a password by the Master, they can sign in at once: there is no invitation left to accept.
+        accepted_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     db.add(member)
     db.flush()
-
-    token = issue_reset_token(db, "member", member.id, request.client.host if request.client else "")
     log_audit(db, client.id, "team_invited", "team", member.id, email, role, request)
     db.commit()
-
-    base = (os.getenv("APP_BASE_URL") or str(request.base_url)).rstrip("/")
-    link = f"{base}/next/reset-password?token={token}&portal=team"
-    who = client.company_name or "the team"
-    text_body, html_body = reset_email_bodies(link, who, RESET_TOKEN_TTL_MINUTES)
-    text_body = text_body.replace("Someone asked to reset the password for",
-                                  "You have been invited to")
-    from_email = default_from_email()
-    background_tasks.add_task(
-        send_email_background, email, f"You have been added to {who} on Y ERP",
-        text_body, f"Y ERP <{from_email}>", html_body, None, "", "",
-        client_id=client.id)
-
     return member_to_dict(member)
 
 
@@ -123,6 +109,13 @@ def update_member(member_id: int, body: TeamUpdate, request: Request,
         member.is_active = bool(body.is_active)
     if body.name is not None:
         member.name = body.name.strip()
+    if body.password:
+        validate_password_strength(body.password)
+        member.password_hash = hash_password(body.password)
+        member.accepted_at = member.accepted_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_audit(db, client.id, "team_password_set", "team", member.id, member.email, "", request)
+        from app.core import login_guard
+        login_guard.clear_account(member.email)       # the Master has just given them a new password
 
     log_audit(db, client.id, "team_updated", "team", member.id, member.email,
               member.role, request)
@@ -157,7 +150,7 @@ def remove_member(member_id: int, request: Request, db: Session = Depends(get_db
 
 
 @router.get("/api/portal-access")
-def list_portal_access(request: Request, db: Session = Depends(get_db)):
+def list_portal_access(request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     users = [portal_user_dict(db, u) for u in db.query(models.DBPortalUser).filter(
         models.DBPortalUser.client_id == client.id).order_by(models.DBPortalUser.id.desc()).all()]

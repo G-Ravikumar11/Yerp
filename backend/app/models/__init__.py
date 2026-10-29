@@ -47,6 +47,7 @@ from app.models.boq import (
     DBBoqVariation,
     DBBoqVariationLine,
 )
+from app.models.budgeting import DBBoqBudget, DBBoqBudgetItem
 from app.models.client_orders import (
     DBWorkOrder,
     DBWorkOrderLine,
@@ -91,6 +92,7 @@ from app.models.hr import (
     DBLeaveRequest,
     DBEmployeeSite,
     DBDepartmentSite,
+    DBCustomHoliday,
     DBSiteGeofence,
 )
 from app.models.invoicing import (
@@ -115,6 +117,9 @@ from app.models.money import (
     DBRetentionRelease,
     DBCreditNote,
     DBCreditNoteLine,
+    DBPaymentRequest,
+    DBSiteCashExpense,
+    DBBankStatementLine,
 )
 from app.models.procurement import (
     DBPurchaseOrder,
@@ -126,6 +131,15 @@ from app.models.procurement import (
     DBRfqLine,
     DBRfqQuote,
     DBRfqQuoteLine,
+    DBRfqInvite,
+)
+from app.models.invoice_tracker import (
+    DBTrackerInvoice,
+    DBTrackerBlock,
+    DBTrackerNote,
+    DBTrackerCharge,
+    DBTrackerInvoiceNote,
+    DBTrackerWorkingRate,
 )
 from app.models.projects import (
     DBJob,
@@ -133,6 +147,11 @@ from app.models.projects import (
     DBDiaryLabour,
     DBDiaryPlant,
     DBScheduleActivity,
+    DBScheduleBaseline,
+    DBScheduleBaselineRow,
+    DBScheduleCalendar,
+    DBScheduleHoliday,
+    DBScheduleLink,
     DBScheduleProgress,
     DBScheduleTask,
     DBProjectThread,
@@ -163,20 +182,42 @@ from app.models.recruitment import (
     DBDocumentRequirement,
     DBDocumentRequest,
 )
+from app.models.error_log import DBErrorLog  # noqa: F401
+from app.models.material_voucher import DBMaterialVoucher  # noqa: F401
 from app.models.safety import (
+    DBEquipmentCheck,
     DBSafetyIncident,
     DBToolboxTalk,
     DBWorkPermit,
+    DBWorkerScreening,
+)
+from app.models.site_rates import (
+    DBSiteItemRate,
+    DBRateAuditLog,
 )
 from app.models.stores import (
     DBItem,
+    DBItemCategory,
     DBCodeSequence,
     DBBomLine,
     DBStockMovement,
     DBStockIssue,
     DBStockIssueLine,
     DBStockBalance,
+    DBStoreCutover,
 )
+from app.models.store_core import (
+    DBStore,
+    DBStoreBin,
+    DBStoreUserAssignment,
+    DBStoreItemSettings,
+    DBStoreUomConversion,
+    DBStoreFreeze,
+    DBStoreDocSequence,
+    DBStoreStockLedger,
+    DBStoreStockBalance,
+)
+from app.models import store_inward, store_outward, store_control, store_reports, store_extras  # noqa: F401  (the Store slices' own tables)
 from app.models.subcontracts import (
     DBBusinessUnit,
     DBWorkType,

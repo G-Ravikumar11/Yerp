@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api } from '@/lib/api'
+import { api, apiUrl } from '@/lib/api'
 import { appUrl } from '@/lib/paths'
 
 interface Job {
@@ -35,7 +35,7 @@ export default function JobsPage() {
   return (
     <main className="mx-auto min-h-screen max-w-3xl bg-background px-4 py-10">
       <header className="mb-6 flex items-center gap-4">
-        {board?.logo_url && <img src={board.logo_url} alt={board.company ?? ''} className="size-14 rounded-lg object-contain" />}
+        {board?.logo_url && <img src={apiUrl(board.logo_url)} alt={board.company ?? ''} className="size-14 rounded-lg object-contain" />}
         <div><h1 className="text-2xl font-bold">{board?.company || 'Careers'}</h1><p className="text-sm text-muted-foreground">Open roles</p></div>
       </header>
       {error && <p role="alert" className="py-10 text-center text-muted-foreground">{error}</p>}
@@ -56,8 +56,8 @@ export default function JobsPage() {
             <article key={j.reference} className="rounded-xl border border-border bg-card p-5">
               <div className="flex items-start justify-between gap-3"><h2 className="text-lg font-semibold">{j.title}</h2><span className="text-xs text-muted-foreground">{j.reference}</span></div>
               <div className="my-2 flex flex-wrap gap-1.5 text-xs">
-                {chips.map((c) => <span key={c} className="rounded-full bg-muted px-2.5 py-0.5">{c}</span>)}
-                {pay(j) && <span className="rounded-full bg-success-soft px-2.5 py-0.5 text-success">{pay(j)}</span>}
+                {chips.map((c) => <span key={c} className="rounded-md bg-muted px-2.5 py-0.5">{c}</span>)}
+                {pay(j) && <span className="rounded-md bg-success-soft px-2.5 py-0.5 text-success">{pay(j)}</span>}
               </div>
               {j.description && <p className="whitespace-pre-line text-sm">{j.description}</p>}
               {j.requirements && <details className="mt-2 text-sm"><summary className="cursor-pointer font-medium">What we are looking for</summary><p className="mt-1 whitespace-pre-line text-muted-foreground">{j.requirements}</p></details>}

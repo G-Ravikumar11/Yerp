@@ -72,7 +72,7 @@ export default function ApprovalsPage() {
 
           {items.length === 0 ? (
             <Card className="grid place-items-center gap-3 py-20 text-center">
-              <span className="grid size-14 place-items-center rounded-2xl bg-success-soft text-success">
+              <span className="grid size-14 place-items-center rounded-lg bg-success-soft text-success">
                 <CheckCheck className="size-6" />
               </span>
               <p className="text-lg font-semibold">Nothing is waiting</p>
@@ -176,7 +176,7 @@ export default function ApprovalsPage() {
         reason={
           pending?.mode === 'reject'
             ? { label: 'What needs putting right?', required: true }
-            : { label: item?.overrun && override ? 'Why is the allocation being exceeded?' : 'Note (optional)', required: !!item?.overrun && override }
+            : { label: item?.overrun && override ? 'Why is it being approved past the budget or the BOQ?' : 'Note (optional)', required: !!item?.overrun && override }
         }
         loading={send.isPending}
         onConfirm={(note) => item && pending && send.mutate({ kind: item.kind, id: item.id, decision: pending.mode, note, override })}
@@ -184,7 +184,7 @@ export default function ApprovalsPage() {
         {pending?.mode === 'approve' && item?.overrun && (
           <label className="flex items-start gap-2.5 rounded-lg bg-warning-soft p-3 text-[13px] text-warning">
             <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} className="mt-0.5 size-4 accent-[var(--warning)]" />
-            <span>This overruns the project allocation. Approve it anyway - the reason is kept beside the figures.</span>
+            <span>This goes past the project allocation or the client&apos;s BOQ (see the notes above). Approve it anyway - the reason is kept beside the figures.</span>
           </label>
         )}
       </ConfirmDialog>

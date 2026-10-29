@@ -7,7 +7,8 @@ from sqlalchemy import func as sqlfunc
 from app import models
 
 from app.constants.hr import EMPLOYEE_MONEY_FIELDS, PERMISSION_ROLE_CODES, _DOMAIN_RE
-from app.core.permissions import DEFAULT_PERMISSION_ROLE, LEVEL_CODES, ROLE_CODES
+from app.core.auth import require_people_admin
+from app.core.permissions import DEFAULT_PERMISSION_ROLE, FIXED_ROLES, LEVEL_CODES, LEVEL_RANK, ROLE_CODES
 
 
 def validate_permission_role(role):
@@ -33,21 +34,26 @@ def validate_level(level):
     return level
 
 
-def validate_role(role):
+def validate_role(request, db, role, current=""):
+    """A known designation. The fixed ones are hidden from the picker, and only the Master or HR may give one out."""
     role = (role or "").strip().lower()
     if role and role not in ROLE_CODES:
         raise HTTPException(
             status_code=400,
             detail=f"Unknown role '{role}'. Expected one of: {', '.join(sorted(ROLE_CODES))}",
         )
-    return role or "employee"
+    if role in FIXED_ROLES and role != (current or ""):
+        require_people_admin(request, db)
+    return role
 
 
-def validate_manager(db, client_id, employee_id, manager_id):
-    """A reporting line must stay a tree.
+def validate_manager(db, client_id, employee_id, manager_id, level=""):
+    """A reporting line must stay a tree, and run upwards through the levels.
 
-    Without this an admin could point A at B and B at A; the org chart renderer
-    walks children recursively and would spin forever on the cycle.
+    Without the first an admin could point A at B and B at A; the org chart renderer
+    walks children recursively and would spin forever on the cycle. `level` is the
+    employee's own: a manager may share it but not sit below it. Blank on either
+    side is not checked.
     """
     if not manager_id:
         return None
@@ -58,6 +64,12 @@ def validate_manager(db, client_id, employee_id, manager_id):
     ).first()
     if not manager:
         raise HTTPException(status_code=400, detail="Manager not found")
+    if LEVEL_RANK.get(level) and LEVEL_RANK.get(manager.level) and LEVEL_RANK[manager.level] < LEVEL_RANK[level]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{manager.first_name} {manager.last_name} is {manager.level}, below this employee's "
+                   f"{level}; a manager must be at the same level or higher",
+        )
     # Walk up from the proposed manager; hitting this employee means a cycle.
     seen = set()
     cursor = manager
@@ -223,3 +235,65 @@ def validate_requirement(body, db, client_id):
 # so they are imported last, after everything above has been defined.
 from app.services.hr import org_domain_for
 from app.validators.common import validate_email_address
+
+
+def clean_gender(value):
+    """One of the listed answers, or nothing. Optional everywhere."""
+    from app.constants.hr import GENDERS
+    value = (value or "").strip()
+    if not value:
+        return ""
+    for g in GENDERS:
+        if g.lower() == value.lower():
+            return g
+    raise HTTPException(status_code=400, detail="Gender must be one of: %s." % ", ".join(GENDERS))
+
+
+def _digits(value):
+    return re.sub(r"[\s-]", "", (value or ""))
+
+
+def clean_aadhaar(value):
+    """12 digits (spaces and dashes allowed on the way in), not starting with 0 or 1; or nothing."""
+    d = _digits(value)
+    if not d:
+        return ""
+    if not re.fullmatch(r"[2-9][0-9]{11}", d):
+        raise HTTPException(status_code=400, detail="An Aadhaar number is 12 digits and does not start with 0 or 1.")
+    return d
+
+
+def clean_pan(value):
+    """Five letters, four digits, a letter (ABCDE1234F); or nothing."""
+    p = (value or "").strip().upper()
+    if not p:
+        return ""
+    if not re.fullmatch(r"[A-Z]{5}[0-9]{4}[A-Z]", p):
+        raise HTTPException(status_code=400, detail="A PAN is five letters, four digits and a letter, like ABCDE1234F.")
+    return p
+
+
+def clean_uan(value):
+    """The EPFO Universal Account Number: 12 digits; or nothing."""
+    d = _digits(value)
+    if not d:
+        return ""
+    if not re.fullmatch(r"[0-9]{12}", d):
+        raise HTTPException(status_code=400, detail="A UAN is 12 digits.")
+    return d
+
+
+def clean_emergency(name, phone, required=None):
+    """(name, phone) of somebody to call if the employee is hurt or cannot be reached. Both, or - when it is not
+    required - neither."""
+    from app.constants.hr import emergency_contact_required
+    if required is None:
+        required = emergency_contact_required()
+    name, phone = (name or "").strip(), (phone or "").strip()
+    if not name and not phone and not required:
+        return "", ""
+    if not name:
+        raise HTTPException(status_code=400, detail="An emergency contact is required: give the name of the person to call.")
+    if len(re.sub(r"\D", "", phone)) < 7:
+        raise HTTPException(status_code=400, detail="An emergency contact is required: give a phone number for %s." % name)
+    return name[:120], phone[:30]
