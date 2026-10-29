@@ -273,6 +273,7 @@ def get_employee_user(request: Request, db: Session):
     # anybody else sees the ones they have a hand in.
     STAFF_VIEWER.set(None if employee_can(emp, "ho.view_all") else emp.id)
     CURRENT_CLIENT_ID.set(client.id)
+    ACTING_EMPLOYEE.set(emp)
     return emp
 
 
@@ -281,6 +282,10 @@ def get_employee_user(request: Request, db: Session):
 # route passing the person down. Unset for the owner, and for head office,
 # which sees every site's orders and bills. One per request.
 STAFF_VIEWER = contextvars.ContextVar("staff_viewer", default=None)
+
+# The member of staff this request is for, as a whole record - so the site rule (core/site_scope.py) can narrow every query for
+# project records to the sites that person is put on. Unset for the owner and the Master's colleagues, who are never limited.
+ACTING_EMPLOYEE = contextvars.ContextVar("acting_employee", default=None)
 
 
 def require_employee_permission(request: Request, db: Session, permission: str):
