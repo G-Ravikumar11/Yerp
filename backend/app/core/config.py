@@ -90,6 +90,19 @@ SMALL_FORM_PATHS = ("/api/client/login", "/api/client/register", "/api/client/fo
 
 SLOW_REQUEST_MS = int(os.getenv("SLOW_REQUEST_MS", "1500"))
 
+
+def _count_setting(name, default):
+    try:
+        return max(0, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+# Sign-ins one address may make a minute (the owner's door, the staff door and the partner portal). Thirty people at a site
+# office share one public address and all sign in within the same few minutes at the start of the day, so ten was too few.
+# Wrong passwords are limited separately and much harder (login_guard: a CAPTCHA after three, a lock after ten).
+LOGIN_PER_MINUTE = _count_setting("LOGIN_PER_MINUTE", 60)
+
 # The React app, compiled by `npm run build` in frontend/. Not committed: the deploy builds it (nixpacks.toml).
 FRONTEND_DIST = os.path.join(BACKEND_DIR, "..", "frontend", "dist")
 # Files the server sends itself rather than the React app: see app/static/README.md.
