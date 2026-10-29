@@ -24,6 +24,8 @@ interface Group {
 
 type Left = 'all' | 'open' | 'none' | 'part' | 'full'
 
+const NO_HEADING = 'Items not under a heading'
+
 const LEFT_FILTERS: { value: Left; label: string }[] = [
   { value: 'all', label: 'All lines' },
   { value: 'open', label: 'Still to give' },
@@ -65,13 +67,15 @@ export function BoqPicker({ orderId, jobId, open, onOpenChange, onAdd, startMode
     let head = ''
     let code = ''
     let title = ''
+    let place = 0
     return (avail.data?.lines ?? []).map((l) => {
       if (l.kind === 'section') {
         head = `${l.group_code} ${l.description}`.trim()
         code = l.group_code
         title = l.description
+        place += 1
       }
-      return { line: l, head, code, title }
+      return { line: l, head, code, title, place }
     })
   }, [avail.data])
 
@@ -79,12 +83,13 @@ export function BoqPicker({ orderId, jobId, open, onOpenChange, onAdd, startMode
   const groups = useMemo(() => {
     const q = search.trim().toLowerCase()
     const out = new Map<string, Group>()
-    for (const { line: l, head, code, title } of all) {
-      if (l.kind === 'section' || (l.left ?? 0) <= 0 || !head) continue
+    for (const { line: l, head, code, title, place } of all) {
+      if (l.kind === 'section' || (l.left ?? 0) <= 0) continue
       if (section && head !== section) continue
       if (q && !`${head} ${l.description}`.toLowerCase().includes(q)) continue
-      const id = `${head}||${(l.uom ?? '').trim().toLowerCase()}`
-      const g = out.get(id) ?? { id, code, title, uom: l.uom ?? '', lines: [], left: 0 }
+      // Lines above the first heading are a group of their own, not left out.
+      const id = `${place}||${(l.uom ?? '').trim().toLowerCase()}`
+      const g = out.get(id) ?? { id, code, title: title || NO_HEADING, uom: l.uom ?? '', lines: [], left: 0 }
       g.lines.push(l)
       g.left += l.left ?? 0
       out.set(id, g)
@@ -122,39 +127,30 @@ export function BoqPicker({ orderId, jobId, open, onOpenChange, onAdd, startMode
   const allTaken = takeable.length > 0 && takeable.every((r) => picks[r.line.key!])
   const filtered = !!search || !!section || left !== 'open' || onlyTicked
 
-  const add = useAction(
-    () => pullBoqLines(orderId, ticked.map(([key, p]) => ({ key, quantity: Number(p.quantity), rate: Number(p.rate) }))),
-    {
-      onSuccess: (r) => {
-        onAdd(r.lines)
-        r.warnings.forEach((w) => toast.info(w))
-        setPicks({})
-        onOpenChange(false)
-      },
-    },
-  )
-
   const gticked = groups.filter((g) => g.id in gpicks)
   const gincomplete = gticked.some((g) => !(Number(gpicks[g.id]) > 0))
   const gvalue = gticked.reduce((n, g) => n + g.left * (Number(gpicks[g.id]) || 0), 0)
-  const addGroups = useAction(
+  const headings = mode === 'headings'
+  const count = ticked.length + gticked.length
+  const total = value + gvalue
+  const add = useAction(
     () =>
       pullBoqLines(
         orderId,
-        [],
+        ticked.map(([key, p]) => ({ key, quantity: Number(p.quantity), rate: Number(p.rate) })),
         gticked.map((g) => ({ description: g.title, group_code: g.code, rate: Number(gpicks[g.id]), parts: g.lines.map((l) => ({ key: l.key!, quantity: l.left ?? 0 })) })),
       ),
     {
       onSuccess: (r) => {
         onAdd(r.lines)
         r.warnings.forEach((w) => toast.info(w))
+        setPicks({})
         setGpicks({})
         onOpenChange(false)
       },
     },
   )
-  const headings = mode === 'headings'
-  const count = headings ? gticked.length : ticked.length
+  const ticks = [ticked.length && `${ticked.length} ${ticked.length === 1 ? 'line' : 'lines'}`, gticked.length && `${gticked.length} ${gticked.length === 1 ? 'heading' : 'headings'}`].filter(Boolean).join(' and ')
 
   const toggle = (key: string, room: number, on: boolean) =>
     setPicks((s) => {
@@ -193,8 +189,8 @@ export function BoqPicker({ orderId, jobId, open, onOpenChange, onAdd, startMode
           <div className="text-[13px] text-muted-foreground">
             {count ? (
               <>
-                <span className="font-medium text-foreground">{count}</span> {headings ? (count === 1 ? 'heading' : 'headings') : count === 1 ? 'line' : 'lines'} ticked
-                {(headings ? gvalue : value) > 0 && <> · <span className="tabular font-medium text-foreground">{formatINR(headings ? gvalue : value)}</span> at contractor rates</>}
+                <span className="font-medium text-foreground">{ticks}</span> ticked
+                {total > 0 && <> · <span className="tabular font-medium text-foreground">{formatINR(total)}</span> at contractor rates</>}
               </>
             ) : headings ? (
               'Tick the headings this contractor is to do. Each becomes one line.'
@@ -206,7 +202,7 @@ export function BoqPicker({ orderId, jobId, open, onOpenChange, onAdd, startMode
             <Button variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button loading={add.isPending || addGroups.isPending} disabled={!count || (headings ? gincomplete : incomplete)} onClick={() => (headings ? addGroups.mutate() : add.mutate())}>
+            <Button loading={add.isPending} disabled={!count || incomplete || gincomplete} onClick={() => add.mutate()}>
               Add {count || ''} {count === 1 ? 'line' : 'lines'} to the work order
             </Button>
           </div>

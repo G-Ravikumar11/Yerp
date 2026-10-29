@@ -7,9 +7,9 @@ def test_orders_come_in_as_drafts_matched_by_name(tenant):
             {"contractor": "Unknown Contractor", "project": "", "department": "", "subject": "Painting", "commencement_date": "", "completion_date": ""}]
     res = tenant.post("/api/sheets/subcontract_orders/import", json={"rows": rows})
     assert res.status_code == 200, res.text
-    assert res.json()["count"] == 2 and "Unknown Contractor" in res.json()["message"]
+    # a work order is always for somebody: the row with a contractor not on file is left out and named
+    assert res.json()["count"] == 1 and "Unknown Contractor" in res.json()["message"] and "left out" in res.json()["message"]
     orders = tenant.get("/api/wo/orders").json()["orders"]
     a = [o for o in orders if o["subject"] == "Shuttering, tower C"][0]
     assert a["status"] == "DRAFT" and a["contractor"] == "Rani Labour Contractors" and a["job_id"] == job["id"]
-    b = [o for o in orders if o["subject"] == "Painting"][0]
-    assert b["contractor_id"] is None
+    assert not [o for o in orders if o["subject"] == "Painting"]
