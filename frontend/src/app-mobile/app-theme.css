@@ -54,7 +54,7 @@ html.app-ui {
 
   /* What the shell's own pieces use (the tab bar, the home card): a blue gradient, a glass bar, a soft card shadow. */
   --app-grad: linear-gradient(135deg, #1a62b8 0%, #3e93ea 100%);
-  --app-glass: rgb(255 255 255 / 0.82);
+  --app-glass: rgb(255 255 255 / 0.94);
   --app-card-shadow: 0 1px 2px rgb(16 24 40 / 0.05), 0 6px 18px rgb(16 24 40 / 0.06);
   --app-bar-shadow: 0 10px 30px rgb(16 24 40 / 0.18);
   --shadow-card: var(--app-card-shadow);
@@ -95,7 +95,7 @@ html.app-ui.dark {
   --sidebar-border: #1d2434;
 
   --app-grad: linear-gradient(135deg, #2f6feb 0%, #4fa3ff 100%);
-  --app-glass: rgb(20 25 38 / 0.78);
+  --app-glass: rgb(20 25 38 / 0.94);
   --app-card-shadow: none;
   --app-bar-shadow: 0 10px 30px rgb(0 0 0 / 0.55);
 }

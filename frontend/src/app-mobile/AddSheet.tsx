@@ -45,7 +45,7 @@ export function AddSheet({ open, onClose }: { open: boolean; onClose: () => void
             {/* Two rows of three on a phone held upright; one row of six where there is width, or too little height for two rows. */}
             <div className="grid grid-cols-3 gap-2.5 md:grid-cols-6 [@media(max-height:480px)]:grid-cols-6">
               {tiles.map(({ label, hint, path, icon: Icon, from, to }) => (
-                <button key={label} type="button" onClick={() => { onClose(); go(path) }} className="flex min-h-[108px] flex-col items-center justify-center gap-2 rounded-[20px] bg-muted px-1.5 py-3 text-center active:scale-95">
+                <button key={label} type="button" onClick={() => { onClose(); go(path) }} className="flex min-h-[108px] flex-col items-center justify-start gap-2 rounded-[20px] bg-muted px-1.5 py-3.5 text-center active:scale-95">
                   <span className="grid size-11 place-items-center rounded-[15px] text-white" style={{ background: `linear-gradient(135deg, ${from}, ${to})` }}><Icon className="size-5" /></span>
                   <span className="text-[13px] font-semibold leading-tight">{label}</span>
                   <span className="text-[11px] leading-tight text-muted-foreground">{hint}</span>
