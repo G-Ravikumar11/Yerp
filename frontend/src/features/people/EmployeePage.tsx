@@ -10,6 +10,7 @@ import { useSession } from '@/lib/session'
 import { EmployeeAccess } from './EmployeeAccess'
 import { EmployeeDocuments } from './EmployeeDocuments'
 import { GENDERS } from './EmployeeFormModal'
+import { LoginEmail } from './LoginEmail'
 import { SalaryIncrement } from './SalaryIncrement'
 import { SetPasswordModal } from './SetPasswordModal'
 import { EMPLOYEE_TONE } from './EmployeesPage'
@@ -53,6 +54,7 @@ function Profile({ e, ready, onPassword }: { e: EmployeeDetail; ready: boolean; 
       {canManage && <div className="mb-4 flex justify-end"><Button variant="outline" disabled={!ready} onClick={() => setEditing(true)}>Edit</Button></div>}
       {group('Personal details', personal, true)}
       {group('Company details', company)}
+      {hrOnly && canManage && <LoginEmail e={e} />}
       {hrOnly && canManage && <SalaryIncrement e={e} />}
       {hrOnly && <EmployeeDocuments id={e.id} canManage={canManage} />}
     </div>

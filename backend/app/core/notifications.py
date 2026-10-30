@@ -68,16 +68,14 @@ def prepare_email_message(to_email, subject, body_text, html_body, from_email, l
     from email.mime.text import MIMEText
     from email.mime.base import MIMEBase
     from email import encoders as _encoders
+    from email.utils import formatdate
 
     msg = MIMEMultipart('mixed')
     msg['Subject'] = subject
     msg['From'] = from_email
     msg['To'] = to_email
     msg['Reply-To'] = from_email
-    msg['Date'] = datetime.now().strftime('%a, %d %b %Y %H:%M:%S %z')
-    if (os.getenv("FROM_EMAIL", "") or "").strip():
-        msg['List-Unsubscribe'] = '<mailto:%s?subject=unsubscribe>' % os.getenv("FROM_EMAIL").strip()
-    msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
+    msg['Date'] = formatdate(localtime=True)
 
     alt_part = MIMEMultipart('alternative')
     alt_part.attach(MIMEText(body_text, 'plain', 'utf-8'))
@@ -104,7 +102,9 @@ def prepare_email_message(to_email, subject, body_text, html_body, from_email, l
         else:
             pass
 
-    alt_part.attach(MIMEText(html_body, 'html', 'utf-8'))
+    # A mail app shows the last part it can: an empty HTML part would leave a plain-text email looking blank.
+    if html_body:
+        alt_part.attach(MIMEText(html_body, 'html', 'utf-8'))
     msg.attach(alt_part)
 
     if pdf_bytes:

@@ -5,7 +5,7 @@ from collections import namedtuple
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy import and_, case, delete as sa_delete, func, func as sqlfunc, or_, select, update
 from sqlalchemy.orm import Session, aliased, joinedload, undefer
 
@@ -33,7 +33,8 @@ from app.core.permissions import (
     permission_list,
     permissions_for,
 )
-from app.core.security import validate_password_strength
+from app.core.security import rate_limiter, validate_password_strength
+from app.services.login_email import deliver_login_email, login_email, login_url, resend_login_email
 from app.schemas.hr import DepartmentCreate, DepartmentMembersIn, DocumentRequirementIn, EmployeeCreate, RequirementTemplateIn
 from app.services.store_staff import release_on_leaving
 from app.services.employee_portal import leave_balance_for
@@ -472,7 +473,7 @@ def _access_detail(old_role, new_role, before, after):
 
 
 @router.post("/api/employees")
-def create_employee(request: Request, body: EmployeeCreate, db: Session = Depends(get_db)):
+def create_employee(request: Request, body: EmployeeCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """A new member of staff, with their checklist, document requests, sites and access, in one
     transaction. Every step is a trip to a database across an ocean, so nothing is looked up twice,
     nothing is looked for that cannot be there yet, and the answer is built before the one commit."""
@@ -537,6 +538,12 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
         start_date=body.start_date, status="onboarding",
         password_hash=passwords.hash_password(validated_staff_password(body.password)) if body.password else "",
     )
+    # The password is in hand only now: the login email is written here, and it goes no further than that.
+    login_mail = None
+    if body.password and org_email:
+        emp.credentials_email_status = "sending"
+        company = client.company_name or "Our office"
+        login_mail = login_email(company, f"{first_name} {last_name}", emp_number, org_email, login_url(request), password=body.password)
     db.add(emp)
     db.flush()
     if dept_id:
@@ -556,11 +563,14 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
         "id": emp.id, "employee_id": emp_number,
         "first_name": first_name, "last_name": last_name,
         "email": email, "org_email": org_email or "", "status": "onboarding", "level": level or "", "role": role,
+        "credentials_email_status": "sending" if login_mail else "",
         "permission_role": permission_role or DEFAULT_PERMISSION_ROLE,
         "department_id": dept_id, "reports_to": reports_to,
         "message": "Employee created. Onboarding checklist generated.",
     }
     db.commit()
+    if login_mail:
+        background_tasks.add_task(deliver_login_email, client_id, out["id"], company, org_email, login_mail)
     return out
 
 
@@ -609,6 +619,7 @@ def _profile(emp, dept_name, manager_name, sites):
         "email": emp.email, "org_email": emp.org_email or "", "phone": emp.phone, "address": emp.address,
         # Whether they can sign in yet; the password itself (or its hash) is never sent.
         "has_password": bool(emp.password_hash),
+        "credentials_email_status": emp.credentials_email_status or "", "credentials_email_at": emp.credentials_email_at or "",
         "department_id": emp.department_id, "department_name": dept_name,
         "reports_to": emp.reports_to, "manager_name": manager_name,
         "job_title": emp.job_title, "role": emp.role, "level": emp.level or "",
@@ -1448,6 +1459,28 @@ def set_employee_password(emp_id: int, request: Request, body: dict = None, db: 
     from app.core import login_guard
     login_guard.clear_account(emp.email)              # the Master has just given them a new password
     return {"message": "Password set. They can sign in with their email and this password."}
+
+
+@router.post("/api/employees/{emp_id}/login-email")
+def send_employee_login_email(emp_id: int, request: Request, db: Session = Depends(get_db)):
+    """Send the login email again: no new account, and their password stands until they use the link."""
+    client = require_items_access(request, db, "people.manage")
+    require_people_admin(request, db)
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    _guard_the_master(request, emp)
+    if not emp.org_email:
+        raise HTTPException(status_code=400, detail="Give them an organization email first - the login email goes only there")
+    if emp.status == "terminated":
+        raise HTTPException(status_code=400, detail="This person has left - they cannot sign in")
+    if rate_limiter.is_rate_limited("login-email:%d" % emp.id, max_requests=5, window=600):
+        raise HTTPException(status_code=429, detail="Too many login emails for this person. Try again in a few minutes.")
+    to = emp.org_email
+    log_audit(db, client.id, "employee_login_email_sent", "employee", emp.id, to, "", request)
+    ok = resend_login_email(request, db, client.company_name or "Our office", emp)
+    return {"ok": ok, "credentials_email_status": emp.credentials_email_status, "credentials_email_at": emp.credentials_email_at,
+            "message": ("Login email sent to %s." % to) if ok else "The login email could not be sent. Check the Gmail connection and try again."}
 
 
 @router.get("/api/onboarding/requirements")

@@ -35,7 +35,7 @@ class DBEmployee(Base):
     first_name = Column(String, nullable=False)
     last_name = Column(String, nullable=False)
     email = Column(String, nullable=False)
-    # The address the organisation issued, used only to sign in with Yahoo; `email` is their personal one.
+    # The address the organisation issued, for signing in and for their login email; `email` is their personal one.
     org_email = Column(String, default="", index=True)
     phone = Column(String, default="")
     address = Column(String, default="")
@@ -86,6 +86,9 @@ class DBEmployee(Base):
     sick_leave_entitlement = Column(Float, default=10.0)
 
     password_hash = Column(String, default="")
+    # How the login email went: "" never sent, then sending, sent or failed. Never the password.
+    credentials_email_status = Column(String, default="")
+    credentials_email_at = Column(String, default="")
     work_location = Column(String, default="")
     latitude = Column(Float, default=0.0)
     longitude = Column(Float, default=0.0)

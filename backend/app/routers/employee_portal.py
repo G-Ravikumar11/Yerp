@@ -134,6 +134,9 @@ def employee_login(request: Request, body: dict = None, db: Session = Depends(ge
     email = body["email"].strip().lower()
     login_guard.guard(request, email, body)
     emp = db.query(models.DBEmployee).filter(sqlfunc.lower(models.DBEmployee.email) == email).first()
+    if not emp and email:
+        # The organisation's address is the one on their login email, so it signs them in as well.
+        emp = db.query(models.DBEmployee).filter(sqlfunc.lower(models.DBEmployee.org_email) == email).first()
     request.state.error_who = email                  # for the error log, if this sign-in fails
     request.state.error_client_id = emp.client_id if emp else None
     if not emp:
