@@ -232,6 +232,14 @@ export const pullBoqLines = (
     ...(current ? { current } : {}),
   })
 
+/**
+ * The schedule on screen made cumulative: its BOQ lines added up into one line per heading at `level` (0 the main
+ * headings, 1 the sub-headings), per unit and, with `keep_grades`, per grade - or with `split` put back as BOQ lines.
+ * The order's value does not move; each line keeps the BOQ lines it adds up.
+ */
+export const cumulativeSchedule = (orderId: number, rows: Partial<ScheduleRow>[], opts: { level?: number; keep_grades?: boolean; split?: boolean }) =>
+  post<{ rows: ScheduleRow[] }>(`/api/wo/orders/${orderId}/schedule/cumulative`, { rows, ...opts })
+
 /** The schedule on screen in the BOQ's order, under its headings, numbered (the blank numbers, or all with `renumber`). */
 export const arrangeSchedule = (orderId: number, rows: Partial<ScheduleRow>[], renumber: boolean) =>
   post<{ rows: ScheduleRow[] }>(`/api/wo/orders/${orderId}/schedule/arrange`, { rows, renumber })

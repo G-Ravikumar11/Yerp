@@ -208,3 +208,58 @@ def test_the_printed_order_and_its_workbook_carry_the_headings_and_grades(tenant
     assert tower[header.index("Material")] == "M60"
     heading = next(r for r in cells if r and r[2] == "REINFORCED CEMENT CONCRETE")
     assert heading[header.index("Amount")] in ("", None)
+
+
+# --- the grade read off the heading, and the schedule made cumulative where it stands ------------------------------------
+
+def test_a_line_with_no_grade_takes_the_one_its_heading_names(tenant):
+    _, _, by = sheet_boq(tenant)
+    assert by["Footings"]["material"] == "M10"                                  # "... Mix (1:3:6) or M10 grade" over it
+    assert by["Tower Columns(Found to Plinth)"]["material"] == "M60"            # its own grade wins
+    assert by["Shuttering to columns"]["material"] == ""                        # nothing names one
+    order = draft(tenant, job_id=job_of_key(by["Footings"]["key"]))
+    rows = pull(tenant, order, lines=[{"key": by["Footings"]["key"], "quantity": 10, "rate": 1}])["rows"]
+    assert rows[1]["material"] == "M10"
+    # A line already on a schedule without its grade gets it when the schedule is arranged.
+    bare = [dict(rows[1], material="")]
+    arranged = tenant.post("/api/wo/orders/%d/schedule/arrange" % order["id"], json={"rows": bare}).json()["rows"]
+    assert arranged[1]["material"] == "M10"
+
+
+def test_lines_already_on_the_schedule_are_made_cumulative_and_split_back(tenant):
+    _, boq, by = sheet_boq(tenant)
+    order = draft(tenant, job_id=job_of_key(by["Footings"]["key"]))
+    picks = [("Footings", 277, 600), ("Flooring", 764, 650), ("Retaining wall", 23, 700),
+             ("Tower Columns(Found to Plinth)", 61, 950), ("Podium Columns(Found to Plinth)", 4, 1000), ("Podium beams", 10, 900),
+             ("Tower Columns(Above Plinth to 1st Slab)", 71, 980)]
+    rows = pull(tenant, order, lines=[{"key": by[n]["key"], "quantity": q, "rate": r} for n, q, r in picks])["rows"]
+    value = round(sum(q * r for _, q, r in picks), 2)
+    url = "/api/wo/orders/%d/schedule/cumulative" % order["id"]
+
+    main_level = tenant.post(url, json={"rows": rows, "level": 0, "keep_grades": True}).json()["rows"]
+    got = [(r["activity_no"], r["item_description"], r["material"], r["quantity"]) for r in main_level]
+    assert got == [("1", "PLAIN CEMENT CONCRETE - M10", "M10", 1064), ("2", "REINFORCED CEMENT CONCRETE - M60", "M60", 136),
+                   ("3", "REINFORCED CEMENT CONCRETE - M40", "M40", 10)]
+    assert round(sum(r["quantity"] * r["unit_rate"] for r in main_level), 0) == round(value, 0)     # the order's value holds
+    assert len(main_level[1]["boq_parts"]) == 3
+
+    sub_level = tenant.post(url, json={"rows": rows, "level": 1, "keep_grades": True}).json()["rows"]
+    assert [(r["activity_no"], r["item_description"]) for r in sub_level] == [
+        ("1", "PLAIN CEMENT CONCRETE - M10"), ("2", "REINFORCED CEMENT CONCRETE"),
+        ("2.1", "Basement-02(Grade Slab Lvl) - M60"), ("2.2", "Basement-02(Grade Slab Lvl) - M40"),
+        ("2.3", "Basement-01(1st slab Lvl) - M60")]
+
+    together = tenant.post(url, json={"rows": rows, "level": 0, "keep_grades": False}).json()["rows"]
+    assert [r["item_description"] for r in together] == ["PLAIN CEMENT CONCRETE", "REINFORCED CEMENT CONCRETE"]
+
+    saved = tenant.put("/api/wo/orders/%d/boq" % order["id"], json={"lines": main_level})
+    assert saved.status_code == 200, saved.text
+    left = {l["description"]: l["left"] for l in tenant.get("/api/boqs/%d/available" % boq["id"]).json()["lines"] if l["kind"] != "section"}
+    assert left["Flooring"] == 0 and left["Podium beams"] == 0                  # every BOQ line still counted
+
+    back = tenant.post(url, json={"rows": main_level, "split": True}).json()["rows"]
+    lines = [r for r in back if not r["is_header"]]
+    assert sorted(r["item_description"] for r in lines) == sorted(n for n, _, _ in picks)
+    assert {r["item_description"]: r["quantity"] for r in lines}["Flooring"] == 764
+    assert [r["item_description"] for r in back if r["is_header"]] == ["PLAIN CEMENT CONCRETE", "REINFORCED CEMENT CONCRETE",
+                                                                         "Basement-02(Grade Slab Lvl)", "Basement-01(1st slab Lvl)"]

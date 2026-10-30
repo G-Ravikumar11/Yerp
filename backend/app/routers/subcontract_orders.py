@@ -84,7 +84,10 @@ from app.services.boq_outline import (
     boq_current_lines,
     boq_outline,
     header_row,
+    line_materials,
+    make_cumulative,
     rate_suggestions,
+    split_cumulative,
     schedule_row_out,
 )
 from app.services.crm import norm_name
@@ -1806,6 +1809,7 @@ def wo_add_boq_lines(order_id: int, body: dict, request: Request, db: Session = 
     groups = body.get("groups") or []
     every = boq_current_lines(db, client.id, order.job_id)
     heads, path, place = boq_outline(every)
+    grade_of = line_materials(every, heads, path)
     found = {l.key: l for l in every if l.kind in BOQ_PRICED}
     keys = {str(w.get("key") or "") for w in wanted} | {str(p.get("key") or "") for g in groups for p in (g.get("parts") or [])}
     given = boq_given_to_contractors(db, client.id, keys)
@@ -1834,7 +1838,7 @@ def wo_add_boq_lines(order_id: int, body: dict, request: Request, db: Session = 
                 rate, source = unit_rate(g.get("rate") or 0), ""
             else:
                 rate, source = blended_rate([(l.key, q) for l, q in members], suggest)
-            grades = {(l.material or "").strip() for l, _ in members}
+            grades = {grade_of.get(l.key, "") for l, _ in members}
             out.append({"boq_key": heading, "boq_parts": [{"key": l.key, "qty": q} for l, q in members],
                         "activity_no": str(g.get("group_code") or ""), "item_code": "",
                         "item_description": str(g.get("description") or (heads[heading]["description"] if heading else members[0][0].description))
@@ -1856,7 +1860,7 @@ def wo_add_boq_lines(order_id: int, body: dict, request: Request, db: Session = 
             rate, source = suggest.get(l.key, (0.0, ""))
         out.append({"boq_key": l.key, "activity_no": l.item_no or l.group_code or "", "item_code": l.item_code or "",
                     "item_description": l.description, "technical_spec": l.remarks or "", "uom": l.uom or "",
-                    "quantity": qty, "unit_rate": rate, "rate_from": source, "material": l.material or "",
+                    "quantity": qty, "unit_rate": rate, "rate_from": source, "material": grade_of.get(l.key, ""),
                     "boq_parts": [], "heading_level": 0})
         check(l, qty)
 
@@ -1867,7 +1871,8 @@ def wo_add_boq_lines(order_id: int, body: dict, request: Request, db: Session = 
                 above.append(h)
     reply = {"lines": out, "headings": [header_row(heads, h) for h in sorted(above, key=lambda k: place[k])], "warnings": warn}
     if isinstance(body.get("current"), list):
-        reply["rows"] = [schedule_row_out(r) for r in arrange_schedule(list(body["current"]) + out, heads, path, place)]
+        reply["rows"] = [schedule_row_out(r) for r in arrange_schedule(list(body["current"]) + out, heads, path, place,
+                                                                       materials=grade_of)]
     return reply
 
 
@@ -1877,6 +1882,29 @@ def wo_arrange_schedule(order_id: int, body: dict, request: Request, db: Session
     they are missing), and numbered - the blank numbers, or all of them with `renumber`. Nothing is saved."""
     client, _, _ = wo_actor(request, db)
     order = wo_or_404(db, client.id, order_id)
-    heads, path, place = boq_outline(boq_current_lines(db, client.id, order.job_id))
-    rows = arrange_schedule(list(body.get("rows") or []), heads, path, place, renumber=bool(body.get("renumber")))
+    every = boq_current_lines(db, client.id, order.job_id)
+    heads, path, place = boq_outline(every)
+    rows = arrange_schedule(list(body.get("rows") or []), heads, path, place, renumber=bool(body.get("renumber")),
+                            materials=line_materials(every, heads, path))
+    return {"rows": [schedule_row_out(r) for r in rows]}
+
+
+@router.post("/api/wo/orders/{order_id}/schedule/cumulative")
+def wo_cumulative_schedule(order_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
+    """The schedule on screen made cumulative: its BOQ lines added up into one line per heading (`level` 0 the main
+    headings, 1 the sub-headings ...), per unit and, with `keep_grades`, per grade - or, with `split`, every such line
+    put back as the BOQ lines it stands for. The order's value stays as it was. Laid out and numbered; nothing saved."""
+    client, _, _ = wo_actor(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    every = boq_current_lines(db, client.id, order.job_id)
+    heads, path, place = boq_outline(every)
+    materials = line_materials(every, heads, path)
+    rows = list(body.get("rows") or [])
+    if body.get("split"):
+        rows = split_cumulative(rows, {l.key: l for l in every if l.kind in BOQ_PRICED}, materials)
+    else:
+        rows = make_cumulative(arrange_schedule(rows, heads, path, place, materials=materials), heads, path,
+                               level=max(0, int(body.get("level") or 0)), keep_grades=body.get("keep_grades", True) is not False,
+                               materials=materials)
+    rows = arrange_schedule(rows, heads, path, place, renumber=True, materials=materials)
     return {"rows": [schedule_row_out(r) for r in rows]}

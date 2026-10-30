@@ -15,6 +15,10 @@ from app.services.boq import boq_of_job, boq_items_naming, boq_shares_of
 
 NUMBERED = re.compile(r"^\d+(\.\d+)*$")
 ROMAN = re.compile(r"^[IVXLC]+$")
+# A grade as a BOQ writes it: a concrete grade (M10, M 25, M-60), a steel grade (Fe500, Fe 550D), or a mix (1:3:6).
+CONCRETE_GRADE = re.compile(r"\bM\s?-?\s?(\d{2,3})\b")
+STEEL_GRADE = re.compile(r"\bFe\s?-?\s?(\d{3}\s?D?)\b", re.I)
+MIX = re.compile(r"\b(1\s?:\s?\d+(?:\.\d+)?\s?:\s?\d+(?:\.\d+)?)\b")
 # Orders whose rates were agreed: a draft's rate is still somebody's guess.
 COMMITTED = ("PROVISIONAL", "APPROVED", "EXECUTED", "CLOSED")
 
@@ -86,6 +90,35 @@ def boq_outline(lines):
     return heads, path, place
 
 
+def grade_in(text):
+    """The grade a piece of BOQ text names, or nothing: M10 before a mix (the sheet says "Mix (1:3:6) or M10 grade")."""
+    text = text or ""
+    m = CONCRETE_GRADE.search(text)
+    if m:
+        return "M%s" % m.group(1)
+    m = STEEL_GRADE.search(text)
+    if m:
+        return "Fe%s" % m.group(1).replace(" ", "").upper()
+    m = MIX.search(text)
+    return m.group(1).replace(" ", "") if m else ""
+
+
+def line_materials(lines, heads, path):
+    """{BOQ key: grade} for every priced line: its own Material, else what its description says, else what the
+    nearest heading over it says (its name or the text under it). A line that names no grade anywhere has none."""
+    out = {}
+    for l in lines:
+        if l.kind not in BOQ_PRICED:
+            continue
+        grade = (l.material or "").strip() or grade_in(l.description)
+        for h in reversed(path.get(l.key, [])):
+            if grade:
+                break
+            grade = grade_in(heads[h]["description"]) or grade_in(" ".join(heads[h]["notes"]))
+        out[l.key] = grade
+    return out
+
+
 def last_given_rates(db, client_id, keys):
     """{BOQ key: the contractor rate it was last given at}, from orders whose rates were agreed - the newest first."""
     keys = {k for k in keys if k}
@@ -141,7 +174,7 @@ def _is_header(r):
     return bool(r.get("is_header"))
 
 
-def arrange_schedule(rows, heads, path, place, renumber=False):
+def arrange_schedule(rows, heads, path, place, renumber=False, materials=None):
     """A work order's schedule in the BOQ's order, each line under its headings, numbered.
 
     `rows` are schedule lines as the screen holds them. A line from the BOQ goes where the sheet has it; a heading the
@@ -149,6 +182,10 @@ def arrange_schedule(rows, heads, path, place, renumber=False):
     whole heading goes where that heading is; a line typed in by hand stays behind the line it was typed under. Blank
     activity numbers are filled in (1, 1.1, 1.1.1 by the headings), or all of them when `renumber` is asked for."""
     rows = [dict(r) for r in rows if (r.get("item_description") or "").strip()]
+    for r in rows:                                       # a line from the BOQ with no grade on it takes the BOQ's
+        if materials and not _is_header(r) and not (r.get("material") or "").strip():
+            grades = {materials.get(p.get("key"), "") for p in r.get("boq_parts") or []} if r.get("boq_parts") else {materials.get(r.get("boq_key") or "", "")}
+            r["material"] = grades.pop() if len(grades) == 1 else ""
     have = {r.get("boq_key") for r in rows if _is_header(r) and r.get("boq_key") in heads}
     wanted = []
     for r in rows:
@@ -191,6 +228,97 @@ def arrange_schedule(rows, heads, path, place, renumber=False):
     number_schedule(out, renumber)
     for r in out:
         r.pop("_level", None)
+    return out
+
+
+def make_cumulative(rows, heads, path, level=0, keep_grades=True, materials=None):
+    """The schedule on screen with its BOQ lines added up per heading - at the main headings (level 0), the
+    sub-headings (1) and so on - into one line each, per unit and (unless they are put together) per grade.
+
+    Each line keeps the BOQ lines it adds up, so what is given against each is still counted; its rate is what the
+    lines it replaces came to, divided by the quantity, so the order's value does not move - as an Excel abstract, every
+    BOQ line under the heading goes into its line, even where there is only one. A line typed in by hand is left as it
+    is. The heading a line now stands for is not repeated as a heading row above it."""
+    materials = materials or {}
+    out, groups = [], {}
+    for r in rows:
+        r = dict(r)
+        if _is_header(r) or not (r.get("item_description") or "").strip():
+            out.append(r)
+            continue
+        key = r.get("boq_key") or ""
+        if r.get("boq_parts"):
+            trail = (heads[key]["path"] + [key]) if key in heads else []
+            parts = [(p["key"], float(p.get("qty") or 0)) for p in r["boq_parts"] if p.get("key")]
+        elif key in path:
+            trail = path[key]
+            parts = [(key, float(r.get("quantity") or 0))]
+        else:
+            out.append(r)                                  # typed in by hand: not the BOQ's to add up
+            continue
+        if not trail:
+            out.append(r)
+            continue
+        anchor = trail[min(level, len(trail) - 1)]
+        grade = (r.get("material") or "").strip() or (materials.get(parts[0][0], "") if len(parts) == 1 else "")
+        gid = (anchor, (r.get("uom") or "").strip().lower(), grade.lower() if keep_grades else "")
+        if gid not in groups:
+            groups[gid] = {"rows": [], "at": len(out)}
+            out.append(gid)                                # the combined line goes where its first line was
+        groups[gid]["rows"].append((r, parts, grade))
+    result = []
+    for item in out:
+        if not isinstance(item, tuple):
+            result.append(item)
+            continue
+        members = groups[item]["rows"]
+        anchor, uom, _ = item
+        qty = sum(float(r.get("quantity") or 0) for r, _, _ in members)
+        value = sum(float(r.get("quantity") or 0) * float(r.get("unit_rate") or 0) for r, _, _ in members)
+        merged = {}
+        for _, parts, _ in members:
+            for k, q in parts:
+                merged[k] = merged.get(k, 0.0) + q
+        grades = {g for _, _, g in members}
+        grade = grades.pop() if len(grades) == 1 else ""
+        first = members[0][0]
+        budgets = {r.get("budget_id") for r, _, _ in members}
+        result.append({
+            "is_header": False, "boq_key": anchor, "boq_parts": [{"key": k, "qty": money(q)} for k, q in merged.items()],
+            "item_description": heads[anchor]["description"] + ((" - " + grade) if keep_grades and grade else ""),
+            "technical_spec": "\n".join(heads[anchor]["notes"]), "material": grade, "uom": first.get("uom") or "",
+            "quantity": money(qty), "unit_rate": unit_rate(value / qty) if qty else 0.0, "activity_no": "",
+            "item_code": "", "tolerance_percent": first.get("tolerance_percent") or 0,
+            "budget_id": budgets.pop() if len(budgets) == 1 else first.get("budget_id"), "heading_level": 0})
+    # The heading a line now stands for is not a heading row over it as well, and a BOQ heading with nothing left under
+    # it goes too; a heading typed in by hand stays.
+    under = {}
+    for r in result:
+        if not _is_header(r):
+            key = r.get("boq_key") or ""
+            for h in (heads[key]["path"] if r.get("boq_parts") and key in heads else path.get(key, [])):
+                under[h] = under.get(h, 0) + 1
+    return [r for r in result if not (_is_header(r) and r.get("boq_key") in heads and not under.get(r.get("boq_key")))]
+
+
+def split_cumulative(rows, lines_by_key, materials=None):
+    """Each line that adds up a heading put back as the BOQ lines it stands for, at its rate, each with its own
+    quantity, grade and item code."""
+    materials = materials or {}
+    out = []
+    for r in rows:
+        if _is_header(r) or not r.get("boq_parts"):
+            out.append(dict(r))
+            continue
+        for p in r["boq_parts"]:
+            l = lines_by_key.get(p.get("key"))
+            if l is None:
+                continue
+            out.append({"is_header": False, "boq_key": l.key, "boq_parts": [], "item_description": l.description,
+                        "item_code": l.item_code or "", "activity_no": "", "technical_spec": l.remarks or "",
+                        "material": materials.get(l.key, ""), "uom": l.uom or "", "quantity": money(p.get("qty") or 0),
+                        "unit_rate": unit_rate(r.get("unit_rate") or 0), "tolerance_percent": r.get("tolerance_percent") or 0,
+                        "budget_id": r.get("budget_id"), "heading_level": 0})
     return out
 
 

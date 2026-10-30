@@ -1,9 +1,9 @@
 import { useMemo, useRef, useState } from 'react'
-import { FileUp, Landmark, Layers, ListOrdered, ListTree, Sigma } from 'lucide-react'
+import { FileUp, Landmark, Layers, ListOrdered, ListTree, Merge, Sigma, Split } from 'lucide-react'
 import { DataGrid, type Column } from '@/components/grid'
-import { Badge, Button, ConfirmDialog, Select } from '@/components/ui'
+import { Badge, Button, ConfirmDialog, Field, Modal, Select } from '@/components/ui'
 import { chargeBudget, importSchedule, orderKeys, type Order, type OrderItem, type Vocabulary } from '@/api/orders'
-import { arrangeSchedule, type ScheduleRow } from '@/api/boq'
+import { arrangeSchedule, cumulativeSchedule, type ScheduleRow } from '@/api/boq'
 import { useAction } from '@/lib/mutate'
 import { cn, formatINR } from '@/lib/utils'
 import { toast } from '@/stores/toast'
@@ -160,6 +160,9 @@ export function ScheduleTab({
   const [pending, setPending] = useState<File | null>(null)
   const [picking, setPicking] = useState(startPicking)
   const [byHeading, setByHeading] = useState(false)
+  const [combining, setCombining] = useState(false)
+  const [level, setLevel] = useState('0')
+  const [keepGrades, setKeepGrades] = useState(true)
   const offBoq = rows.filter((r) => !r.is_header && r.item_description.trim() && !r.boq_key && !r.boq_parts?.length).length
   const onlyBudget = budgets.length === 1 ? String(budgets[0].id) : ''
   const subtotals = useMemo(() => headingTotals(rows), [rows])
@@ -259,6 +262,21 @@ export function ScheduleTab({
   )
 
   const charge = useAction(() => chargeBudget(order.id, Number(chargeTo), false), { invalidate: [orderKeys.all], success: (r) => r.message, onSuccess: onCharged })
+  // The lines already on the schedule added up per heading, as one line each - or put back as their BOQ lines.
+  const levels = Math.max(1, ...rows.filter((r) => r.is_header).map((r) => r.heading_level || 1))
+  const fromBoq = rows.filter((r) => !r.is_header && (r.boq_key || r.boq_parts?.length)).length
+  const totals = rows.filter((r) => !r.is_header && r.boq_parts?.length).length
+  const combine = useAction(() => cumulativeSchedule(order.id, toPayload(rows), { level: Number(level), keep_grades: keepGrades }), {
+    success: 'Added up per heading. The order value is unchanged.',
+    onSuccess: (r) => {
+      onRows(r.rows.map((x) => fromServer(x, onlyBudget)))
+      setCombining(false)
+    },
+  })
+  const split = useAction(() => cumulativeSchedule(order.id, toPayload(rows), { split: true }), {
+    success: 'Put back as the BOQ lines',
+    onSuccess: (r) => onRows(r.rows.map((x) => fromServer(x, onlyBudget))),
+  })
   // In the BOQ's order under its headings, every line numbered again - as the sheet would be.
   const arrange = useAction(() => arrangeSchedule(order.id, toPayload(rows), true), {
     success: 'Laid out like the BOQ and numbered',
@@ -305,6 +323,22 @@ export function ScheduleTab({
             >
               <ListOrdered /> Arrange &amp; number
             </Button>
+            {order.job_id ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={fromBoq < 2}
+                title="Add up the BOQ lines already on the schedule into one line per heading - the order value stays the same"
+                onClick={() => setCombining(true)}
+              >
+                <Merge /> Make cumulative
+              </Button>
+            ) : null}
+            {totals > 0 && (
+              <Button variant="ghost" size="sm" loading={split.isPending} title="Put each added-up line back as the BOQ lines it stands for" onClick={() => split.mutate()}>
+                <Split /> Split into lines
+              </Button>
+            )}
             <Button variant="outline" size="sm" loading={read.isPending} onClick={() => file.current?.click()}>
               <FileUp /> Import from Excel
             </Button>
@@ -378,6 +412,39 @@ export function ScheduleTab({
         onOpenChange={(o) => { setPicking(o); if (!o) onPicked?.() }}
         onAdd={(laid) => onRows(laid.map((r) => fromServer(r, onlyBudget)))}
       />
+      <Modal
+        open={combining}
+        onOpenChange={setCombining}
+        title="Make the schedule cumulative"
+        description="The BOQ lines on this schedule are added up into one line per heading, as in an Excel abstract. Each line keeps the BOQ lines it stands for, and its rate is set so the order's value stays the same. Different units are never added together. Nothing is saved until you save the schedule."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setCombining(false)}>
+              Cancel
+            </Button>
+            <Button loading={combine.isPending} onClick={() => combine.mutate()}>
+              <Merge /> Add up
+            </Button>
+          </>
+        }
+      >
+        <div className="grid gap-4">
+          <Field label="Add up under" htmlFor="cum-level">
+            <Select
+              id="cum-level"
+              value={level}
+              onChange={(e) => setLevel(e.target.value)}
+              options={['Main headings (e.g. PLAIN CEMENT CONCRETE)', 'Sub-headings (e.g. Basement-02)', 'Third-level headings', 'Fourth-level headings']
+                .slice(0, Math.max(2, levels))
+                .map((label, i) => ({ value: String(i), label }))}
+            />
+          </Field>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" className="size-4 accent-[var(--primary)]" checked={keepGrades} onChange={(e) => setKeepGrades(e.target.checked)} />
+            Keep each grade separate (M60 and M40 as their own lines)
+          </label>
+        </div>
+      </Modal>
       <ConfirmDialog
         open={!!pending}
         onOpenChange={(o) => !o && setPending(null)}
