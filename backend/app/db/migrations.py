@@ -634,6 +634,7 @@ def ensure_columns():
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS aadhaar_no VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS pan_no VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS uan_no VARCHAR DEFAULT ''",
+                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS date_of_birth VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS esi_no VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS latitude FLOAT DEFAULT 0.0",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS longitude FLOAT DEFAULT 0.0",
