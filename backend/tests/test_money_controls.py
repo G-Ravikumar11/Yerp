@@ -109,11 +109,13 @@ def test_a_matched_line_is_unmatched_before_it_is_matched_again_and_it_is_all_lo
     with database.SessionLocal() as db:
         line = db.query(models.DBBankStatementLine).filter(models.DBBankStatementLine.account_id == acc["id"]).first()
         lid, matched_to = line.id, line.entry_id
-    assert matched_to == a["id"]
-    again = tenant.post("/api/bank-reco/lines/%d/match" % lid, json={"entry_id": b["id"]})
+    # Both entries fit the line (same amount, a day apart): auto-match takes one of them; the other is matched by hand.
+    assert matched_to in (a["id"], b["id"])
+    other = b if matched_to == a["id"] else a
+    again = tenant.post("/api/bank-reco/lines/%d/match" % lid, json={"entry_id": other["id"]})
     assert again.status_code == 409 and "Unmatch" in again.json()["detail"]
     assert tenant.post("/api/bank-reco/lines/%d/unmatch" % lid).status_code == 200
-    assert tenant.post("/api/bank-reco/lines/%d/match" % lid, json={"entry_id": b["id"]}).status_code == 200
+    assert tenant.post("/api/bank-reco/lines/%d/match" % lid, json={"entry_id": other["id"]}).status_code == 200
     assert tenant.post("/api/bank-reco/lines/%d/ignore" % lid).status_code == 200
     assert [audited(a, acc["id"]) for a in ("bank_line_unmatched", "bank_line_matched", "bank_line_ignored")] == [1, 1, 1]
 

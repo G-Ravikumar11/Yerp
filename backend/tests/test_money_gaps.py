@@ -78,7 +78,9 @@ def test_an_invoice_with_money_received_is_not_deleted(tenant):
 def test_a_sent_invoice_keeps_its_number(tenant):
     inv = make_invoice(tenant)
     with database.SessionLocal() as db:
-        row = db.query(models.DBInvoice).filter(models.DBInvoice.number == inv["number"]).first()
+        # Every test company numbers its invoices from INV-0001: the newest one with this number is this test's.
+        row = db.query(models.DBInvoice).filter(models.DBInvoice.number == inv["number"]).order_by(
+            models.DBInvoice.id.desc()).first()
         row.sent, row.status = "2026-01-02", "Sent"
         db.commit()
     res = tenant.put("/api/invoices/%s" % inv["number"], json={

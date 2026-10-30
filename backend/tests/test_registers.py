@@ -227,7 +227,7 @@ def test_a_guarantee_that_ends_before_the_defects_period_is_called_out(tenant):
 
 def test_no_pan_is_section_206aa_at_20_percent(tenant):
     unit = tenant.post("/api/wo/business-units", json={"name": "YP", "code": "YP"}).json()
-    con = tenant.post("/api/wo/contractors", json={"company_name": "No PAN Contractor", "gst_number": "36AAAPB1234C1Z5"}).json()
+    con = tenant.post("/api/wo/contractors", json={"company_name": "No PAN Contractor", "gst_number": "36AAAPB1234C1ZP"}).json()
     job = tenant.post("/api/jobs", json={"name": "Site", "customer_name": "X"}).json()
     order, bill = certified_sub_bill(tenant, business_unit_id=unit["id"], contractor_id=con["id"], job_id=job["id"])
     with main.SessionLocal() as db:

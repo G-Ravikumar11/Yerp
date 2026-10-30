@@ -155,8 +155,10 @@ def test_outward_carries_the_tax_invoices_with_the_recipient(tenant):
     assert tenant.put("/api/gst/settings", json={"gstin": OUR_GSTIN}).status_code == 200
     tenant.post("/api/contacts", json={"name": "Customer Ltd", "gstin": "36AAACL1234H1ZW"})
     make_invoice(tenant, status="Awaiting Payment", issue_date=date.today().isoformat(),
+                 due_date=(date.today() + timedelta(days=30)).isoformat(),
                  line_items=[{"description": "Shuttering hire", "qty": 1, "price": 1000.0, "tax_rate": "18% GST"}])
-    make_invoice(tenant, issue_date=date.today().isoformat())                     # a draft is not a supply
+    make_invoice(tenant, issue_date=date.today().isoformat(),
+                 due_date=(date.today() + timedelta(days=30)).isoformat())       # a draft is not a supply
     out = tenant.get("/api/gst/outward").json()
     rows = [r for r in out["supplies"] if r["kind"] == "Tax invoice"]
     assert len(rows) == 1

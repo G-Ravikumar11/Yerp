@@ -54,7 +54,9 @@ def test_an_invoice_with_no_due_date_is_not_lost(tenant):
 
 
 def test_a_paid_invoice_is_not_owed(tenant):
-    owed(tenant, days_ago(60), status="Paid")
+    # Paid by recording the money against it - an invoice is no longer saved as "Paid" by its status.
+    inv = owed(tenant, days_ago(60))
+    assert tenant.post("/api/invoices/%s/mark-paid" % inv["number"]).status_code == 200
     assert tenant.get("/api/money/receivables").json()["summary"]["owed"] == 0
 
 
