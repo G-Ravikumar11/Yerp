@@ -23,6 +23,10 @@ export interface OrderItem {
   boq_key?: string
   /** For a line that stands for a whole heading of the BOQ: the BOQ lines it adds up. */
   boq_parts?: { key: string; qty: number }[]
+  /** The grade or material the BOQ gives the line (M60, Fe550). */
+  material?: string
+  /** A heading: 1 a main heading, 2 the sub-heading under it. */
+  heading_level?: number
   /** Ordered plus its tolerance: the most that may be measured. */
   max_quantity: number
 }

@@ -17,7 +17,7 @@ new drawing code.
     {"type": "party", "label": ..., "name": ..., "address": ..., "facts": [(label, value)]}
     {"type": "pairs", "rows": [(label, value), ...], "cols": 1 | 2}
     {"type": "band", "text": ...}                      a shaded title bar
-    {"type": "table", "columns": [(title, width_mm, "L"|"C"|"R")], "rows": [[...]],
+    {"type": "table", "columns": [(title, width_mm, "L"|"C"|"R")], "rows": [[...]], "bold_rows": [row index, ...],
                       "totals": [(label, value, bold)]}
     {"type": "words", "label": "Rupees", "text": ...}
     {"type": "text", "text": ..., "style": "body" | "small" | "bold"}
@@ -208,11 +208,15 @@ def _table(block, st):
     align = {"L": st["body"], "C": st["centre"], "R": st["right"]}
     head = [Paragraph(_esc(t), st["centrebold"]) for t, _, _ in cols]
     data = [head]
-    for row in block.get("rows") or []:
-        data.append([Paragraph(_br(v), align[a]) for v, (_, _, a) in zip(row, cols)])
+    bold = {"L": st["bold"], "C": st["centrebold"], "R": st["rightbold"]}
+    strong = set(block.get("bold_rows") or ())          # headings: in bold on a shaded band
+    for at, row in enumerate(block.get("rows") or []):
+        data.append([Paragraph(_br(v), (bold if at in strong else align)[a]) for v, (_, _, a) in zip(row, cols)])
     if not block.get("rows"):
         data.append([Paragraph("-", st["centre"])] + [""] * (len(cols) - 1))
     extra = [("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(SHADE)), ("VALIGN", (0, 1), (-1, -1), "TOP")]
+    for at in strong:
+        extra.append(("BACKGROUND", (0, at + 1), (-1, at + 1), colors.HexColor(SHADE)))
     # Totals laid under their own columns: a label, then each figure where its
     # column is - "Mandays 10 ... Amount 9,000" rather than one number for both.
     for foot in block.get("foot") or []:

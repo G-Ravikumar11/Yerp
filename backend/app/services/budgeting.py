@@ -111,6 +111,16 @@ def boq_headings(db, boq, lines):
     return out
 
 
+def unit_costs(db, client_id, job_id):
+    """{BOQ key: {"MATERIAL": .., "LABOUR": .., "OTHER": ..}} - what one unit of each budgeted line is planned to cost."""
+    out = {}
+    for i in db.query(models.DBBoqBudgetItem).filter(models.DBBoqBudgetItem.client_id == client_id,
+                                                  models.DBBoqBudgetItem.job_id == job_id).all():
+        unit = out.setdefault(i.boq_key, {"MATERIAL": 0.0, "LABOUR": 0.0, "OTHER": 0.0})
+        unit[i.kind if i.kind in unit else "OTHER"] += (i.coefficient or 0) * (i.rate or 0)
+    return out
+
+
 def budget_view(db, client_id, job):
     """The whole budget for a project: every priced BOQ line with its cost and profit, and the totals."""
     boq = boq_of_job(db, client_id, job.id)

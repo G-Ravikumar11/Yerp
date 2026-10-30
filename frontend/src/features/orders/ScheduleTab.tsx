@@ -1,10 +1,11 @@
 import { useMemo, useRef, useState } from 'react'
-import { FileUp, Landmark, Layers, ListTree, Sigma } from 'lucide-react'
+import { FileUp, Landmark, Layers, ListOrdered, ListTree, Sigma } from 'lucide-react'
 import { DataGrid, type Column } from '@/components/grid'
 import { Badge, Button, ConfirmDialog, Select } from '@/components/ui'
 import { chargeBudget, importSchedule, orderKeys, type Order, type OrderItem, type Vocabulary } from '@/api/orders'
+import { arrangeSchedule, type ScheduleRow } from '@/api/boq'
 import { useAction } from '@/lib/mutate'
-import { formatINR } from '@/lib/utils'
+import { cn, formatINR } from '@/lib/utils'
 import { toast } from '@/stores/toast'
 import { ApiError } from '@/lib/api'
 import { BoqPicker } from './BoqPicker'
@@ -25,9 +26,47 @@ export interface LineRow {
   boq_key: string
   /** A line for a whole heading: the BOQ lines it adds up. */
   boq_parts: { key: string; qty: number }[]
+  /** The grade or material the BOQ gives it (M60, Fe550). */
+  material: string
+  /** A heading: 1 a main heading, 2 the sub-heading under it. */
+  heading_level: number
 }
 
-const blankLine = (): LineRow => ({ activity_no: '', item_code: '', item_description: '', technical_spec: '', uom: '', quantity: null, unit_rate: null, tolerance_percent: null, budget_id: '', is_header: false, boq_key: '', boq_parts: [] })
+const blankLine = (): LineRow => ({
+  activity_no: '',
+  item_code: '',
+  item_description: '',
+  technical_spec: '',
+  uom: '',
+  quantity: null,
+  unit_rate: null,
+  tolerance_percent: null,
+  budget_id: '',
+  is_header: false,
+  boq_key: '',
+  boq_parts: [],
+  material: '',
+  heading_level: 0,
+})
+
+/** A line the server laid out, as the sheet holds it. With one cost centre on the order, a line without one is charged to it. */
+const fromServer = (r: ScheduleRow, onlyBudget: string): LineRow => ({
+  ...blankLine(),
+  activity_no: r.activity_no ?? '',
+  item_code: r.item_code ?? '',
+  item_description: r.item_description ?? '',
+  technical_spec: r.technical_spec ?? '',
+  uom: r.uom ?? '',
+  quantity: r.is_header ? null : (r.quantity ?? null),
+  unit_rate: r.is_header ? null : (r.unit_rate ?? null),
+  tolerance_percent: r.tolerance_percent || null,
+  budget_id: r.budget_id ? String(r.budget_id) : r.is_header ? '' : onlyBudget,
+  is_header: !!r.is_header,
+  boq_key: r.boq_key ?? '',
+  boq_parts: r.boq_parts ?? [],
+  material: r.material ?? '',
+  heading_level: r.heading_level ?? 0,
+})
 
 export const linesFrom = (o: Order): LineRow[] =>
   (o.items ?? []).map((i) => ({
@@ -43,6 +82,8 @@ export const linesFrom = (o: Order): LineRow[] =>
     is_header: i.is_header,
     boq_key: i.boq_key ?? '',
     boq_parts: i.boq_parts ?? [],
+    material: i.material ?? '',
+    heading_level: i.heading_level ?? 0,
   }))
 
 /** What the server takes: every line with a description, numbers filled in, the cost centre as an id. */
@@ -62,9 +103,26 @@ export const toPayload = (rows: LineRow[]): Partial<OrderItem>[] =>
       is_header: r.is_header,
       boq_key: r.boq_key || '',
       boq_parts: r.boq_parts ?? [],
+      material: r.is_header ? '' : r.material || '',
+      heading_level: r.is_header ? r.heading_level || 1 : 0,
     }))
 
 const amount = (r: LineRow) => (r.is_header || !r.quantity || !r.unit_rate ? null : Math.round(r.quantity * r.unit_rate * 100) / 100)
+
+/** What each heading adds up to, as the sheet would show it: the lines under it, down to the next heading as high as it. */
+export function headingTotals(rows: LineRow[]): (number | null)[] {
+  return rows.map((r, i) => {
+    if (!r.is_header) return null
+    const level = r.heading_level || 1
+    let sum = 0
+    for (let j = i + 1; j < rows.length; j++) {
+      const o = rows[j]
+      if (o.is_header && (o.heading_level || 1) <= level) break
+      sum += amount(o) ?? 0
+    }
+    return Math.round(sum * 100) / 100
+  })
+}
 
 /**
  * The schedule of quantities: what the contractor is to build, in what quantity, at
@@ -103,12 +161,16 @@ export function ScheduleTab({
   const [picking, setPicking] = useState(startPicking)
   const [byHeading, setByHeading] = useState(false)
   const offBoq = rows.filter((r) => !r.is_header && r.item_description.trim() && !r.boq_key && !r.boq_parts?.length).length
+  const onlyBudget = budgets.length === 1 ? String(budgets[0].id) : ''
+  const subtotals = useMemo(() => headingTotals(rows), [rows])
 
   const columns = useMemo<Column<LineRow>[]>(
     () => [
       { id: 'activity_no', header: 'Activity', hint: 'No.', width: 88, mono: true, pin: true, placeholder: '1.0' },
       { id: 'item_code', header: 'Item code', hint: 'Shown in the Measurement Book', width: 120, mono: true, placeholder: 'STR001' },
       { id: 'item_description', header: 'Description of work', hint: 'What the contractor is to do', width: 400, required: true, placeholder: 'What is the work?' },
+      { id: 'material', header: 'Material', hint: 'Grade or material', width: 110, readOnly: (r) => r.is_header, placeholder: 'M25' },
+      { id: 'technical_spec', header: 'Specification', hint: "The BOQ heading's text, or the line's own", width: 240 },
       { id: 'uom', header: 'Unit', type: 'select', freeText: true, width: 96, options: vocab?.uoms ?? [], readOnly: (r) => r.is_header },
       {
         id: 'quantity',
@@ -135,9 +197,10 @@ export function ScheduleTab({
         type: 'number',
         width: 150,
         readOnly: true,
-        get: (r) => amount(r),
+        // A heading shows what the lines under it add up to; the total counts the lines only, once.
+        get: (r, i) => (r.is_header ? (subtotals[i] ?? null) : amount(r)),
         format: (v) => (typeof v === 'number' ? formatINR(v) : ''),
-        summary: 'sum',
+        summary: (all) => formatINR(all.reduce((n, r) => n + (amount(r) ?? 0), 0)),
       },
       {
         id: 'tolerance_percent',
@@ -164,10 +227,10 @@ export function ScheduleTab({
         hint: 'Against the project BOQ?',
         width: 110,
         readOnly: true,
-        get: (r) => (r.is_header || !r.item_description.trim() ? '' : r.boq_parts?.length ? `${r.boq_parts.length} BOQ lines` : r.boq_key ? 'In BOQ' : 'Not in BOQ'),
+        get: (r) => (r.is_header || !r.item_description.trim() ? '' : r.boq_parts?.length ? `${r.boq_parts.length} BOQ ${r.boq_parts.length === 1 ? 'line' : 'lines'}` : r.boq_key ? 'In BOQ' : 'Not in BOQ'),
       },
     ],
-    [vocab, budgets],
+    [vocab, budgets, subtotals],
   )
 
   const read = useAction(
@@ -185,6 +248,7 @@ export function ScheduleTab({
             item_code: l.item_code ?? '',
             item_description: l.item_description ?? '',
             technical_spec: l.technical_spec ?? '',
+            material: l.material ?? '',
             uom: l.uom ?? '',
             quantity: l.quantity ?? null,
             unit_rate: l.unit_rate ?? null,
@@ -195,6 +259,11 @@ export function ScheduleTab({
   )
 
   const charge = useAction(() => chargeBudget(order.id, Number(chargeTo), false), { invalidate: [orderKeys.all], success: (r) => r.message, onSuccess: onCharged })
+  // In the BOQ's order under its headings, every line numbered again - as the sheet would be.
+  const arrange = useAction(() => arrangeSchedule(order.id, toPayload(rows), true), {
+    success: 'Laid out like the BOQ and numbered',
+    onSuccess: (r) => onRows(r.rows.map((x) => fromServer(x, onlyBudget))),
+  })
 
   return (
     <div>
@@ -226,6 +295,16 @@ export function ScheduleTab({
             ) : (
               <span className="text-[13px] text-muted-foreground">Choose and save the project, then build this order from its BOQ.</span>
             )}
+            <Button
+              variant="outline"
+              size="sm"
+              loading={arrange.isPending}
+              disabled={!rows.some((r) => r.item_description.trim())}
+              title="Put the lines in the BOQ's order under their headings, add any heading that is missing, and number them all"
+              onClick={() => arrange.mutate()}
+            >
+              <ListOrdered /> Arrange &amp; number
+            </Button>
             <Button variant="outline" size="sm" loading={read.isPending} onClick={() => file.current?.click()}>
               <FileUp /> Import from Excel
             </Button>
@@ -287,7 +366,7 @@ export function ScheduleTab({
         autoGrow={!disabled}
         minRows={disabled ? 0 : 8}
         maxHeight={520}
-        rowClassName={(r) => (r.is_header ? 'font-semibold bg-surface/50' : undefined)}
+        rowClassName={(r) => (r.is_header ? cn('font-semibold', (r.heading_level || 1) > 1 ? 'bg-surface/30' : 'bg-surface/60') : undefined)}
         emptyText="There are no lines on this order."
       />
       <BoqPicker
@@ -295,8 +374,9 @@ export function ScheduleTab({
         jobId={order.job_id ?? 0}
         open={picking}
         startMode={byHeading ? 'headings' : 'lines'}
+        current={toPayload(rows) as Partial<ScheduleRow>[]}
         onOpenChange={(o) => { setPicking(o); if (!o) onPicked?.() }}
-        onAdd={(added) => onRows([...rows.filter((r) => r.item_description.trim()), ...added.map((l) => ({ ...blankLine(), ...l }) as LineRow)])}
+        onAdd={(laid) => onRows(laid.map((r) => fromServer(r, onlyBudget)))}
       />
       <ConfirmDialog
         open={!!pending}
