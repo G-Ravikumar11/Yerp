@@ -57,8 +57,11 @@ function Form({ statement, onClose, onSaved }: { statement: Statement | null; on
     { id: 'qty', header: 'Quantity', type: 'number', width: 110, align: 'right' },
   ], [rm.data, master, vocab.data])
 
-  const lines = rows.filter((x) => (x.qty ?? 0) > 0 && (x.description.trim() || x.item_code))
-  const half = rows.filter((x) => (x.description.trim() || x.item_code) && !((x.qty ?? 0) > 0)).length
+  // The items as they are on screen, counting a quantity still being typed into a cell.
+  const [draft, setDraft] = useState<Row[] | null>(null)
+  const live = draft ?? rows
+  const lines = live.filter((x) => (x.qty ?? 0) > 0 && (x.description.trim() || x.item_code))
+  const half = live.filter((x) => (x.description.trim() || x.item_code) && !((x.qty ?? 0) > 0)).length
   const body = () => ({ title: title.trim(), job_id: job ? Number(job) : null, needed_by: needed, notes: notes.trim(),
     lines: lines.map((x) => ({ item_code: x.item_code, description: (x.description || master.get(x.item_code)?.item_name || x.item_code).trim(), uom: x.uom, qty: x.qty ?? 0 })) })
   const save = useAction(
@@ -67,7 +70,20 @@ function Form({ statement, onClose, onSaved }: { statement: Statement | null; on
     { invalidate: [rfqKeys.all], onSuccess: (x) => onSaved(x.id) },
   )
   const fromOrder = !statement && from === 'order'
-  const ready = fromOrder ? !!wo : !!title.trim() && lines.length > 0
+  // Why the button is greyed out, in words: the first box still to fill.
+  const missing = (() => {
+    if (fromOrder) return wo ? null : 'choose the work order'
+    if (!title.trim()) return 'fill in What is it for'
+    if (lines.length) return null
+    const started = live.map((x, i) => ({ x, n: i + 1 })).filter(({ x }) => x.item_code || x.description.trim() || x.qty)
+    if (!started.length) return 'add an item - choose one from the master or type a Description'
+    for (const { x, n } of started) {
+      if (!x.item_code && !x.description.trim()) return `line ${n} needs an Item or a Description`
+      if (!((x.qty ?? 0) > 0)) return `line ${n} needs a Quantity`
+    }
+    return 'add an item with a quantity'
+  })()
+  const ready = !missing
 
   return (
     <div className="grid gap-5">
@@ -105,7 +121,7 @@ function Form({ statement, onClose, onSaved }: { statement: Statement | null; on
                 </ul>
               </div>
             ) : (
-              <DataGrid aria-label="Enquiry items" columns={columns} rows={rows} onRowsChange={setRows} newRow={blank} minRows={4} maxHeight={300} />
+              <DataGrid aria-label="Enquiry items" columns={columns} rows={rows} onRowsChange={setRows} onDraft={setDraft} newRow={blank} minRows={4} maxHeight={300} />
             )}
           </div>
           <Field label="Notes for suppliers" htmlFor="rn-notes" hint="Optional: delivery address, brand wanted, unloading. Suppliers see this on their link.">
@@ -115,6 +131,7 @@ function Form({ statement, onClose, onSaved }: { statement: Statement | null; on
       )}
       <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
         {save.error ? <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>
+          : missing ? <p className="mr-auto text-[13px] text-muted-foreground">To {statement ? 'save' : 'open it'}, {missing}.</p>
           : !fromOrder && !locked && <p className="mr-auto text-xs text-muted-foreground">{lines.length} {lines.length === 1 ? 'item' : 'items'}{half ? ` · ${half} without a quantity, left out` : ''}</p>}
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
         <Button loading={save.isPending} disabled={!ready} onClick={() => save.mutate()}>{statement ? 'Save changes' : 'Open the enquiry'}</Button>
