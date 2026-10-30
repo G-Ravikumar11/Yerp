@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { storeGet } from '@/api/store'
 
 /** The reports, in menu order. The key is the path under /api/store/reports and under /store/hub/reports. */
-export type ReportKey = 'valuation' | 'movement' | 'consumption' | 'norm-variance' | 'slow-moving' | 'reorder'
+export type ReportKey = 'valuation' | 'movement' | 'consumption' | 'norm-variance' | 'slow-moving' | 'reorder' | 'abc' | 'ageing' | 'reconciliation'
 export const REPORTS: { key: ReportKey; label: string; blurb: string }[] = [
   { key: 'valuation', label: 'Stock valuation', blurb: 'What each store holds and what it is worth, today or on any past date.' },
   { key: 'movement', label: 'Stock movement', blurb: 'Opening stock, what moved in each group, and closing stock, for a period.' },
@@ -10,6 +10,9 @@ export const REPORTS: { key: ReportKey; label: string; blurb: string }[] = [
   { key: 'norm-variance', label: 'Norms against use', blurb: 'What each BOQ item should have consumed by its norms, against what was actually issued.' },
   { key: 'slow-moving', label: 'Slow-moving stock', blurb: 'Stock that has not moved for a while, and what is tied up in it.' },
   { key: 'reorder', label: 'Reorder', blurb: 'Items at or below their reorder level, with a suggested quantity.' },
+  { key: 'abc', label: 'ABC analysis', blurb: 'Items ranked by what was used of them: A is the few items that make up 70% of the spend, B the next 20%, C the rest.' },
+  { key: 'ageing', label: 'Stock ageing', blurb: 'What each store holds, split by how long ago it came in. The oldest stock is taken to have gone out first.' },
+  { key: 'reconciliation', label: 'Site reconciliation', blurb: "One statement per item for a project's site: received, transferred, returned, issued, wasted and the balance left, against what the BOQ needs by its norms." },
 ]
 export const reportOf = (key: string | undefined) => REPORTS.find((r) => r.key === key)
 
@@ -29,6 +32,10 @@ export interface ReportData {
   by_category?: { category: string; lines: number; value: string }[]
   over?: number
   days?: number
+  method?: 'average' | 'fifo'
+  classes?: { class: 'A' | 'B' | 'C'; items: number; value: string; share_pct: string }[]
+  site_stores?: { id: number; code: string; name: string }[]
+  balance_value?: string
 }
 export interface Saved { id: number; name: string; report: ReportKey; params: Record<string, string>; created_by: string }
 export interface Norm {

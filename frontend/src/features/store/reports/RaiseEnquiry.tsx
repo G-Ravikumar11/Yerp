@@ -8,18 +8,20 @@ import { useAction } from '@/lib/mutate'
 import { today } from '@/lib/format'
 import { num, type Row } from './api'
 
-interface Line { key: string; item_code: string; item_name: string; uom: string; qty: string; stores: string[]; on: boolean }
+/** One item to ask suppliers for: `note` says where the need came from ("low in CS01", "short on IND-0004"). */
+export interface EnquiryLine { key: string; item_code: string; item_name: string; uom: string; qty: string; note: string; on: boolean }
 
 /** The items the Reorder report shows, one line each (the same item low in two stores is one line, for both). */
-function linesOf(rows: Row[]): Line[] {
-  const out = new Map<string, Line>()
+function linesOf(rows: Row[]): EnquiryLine[] {
+  const out = new Map<string, EnquiryLine & { stores: string[] }>()
   for (const r of rows) {
     const code = String(r.item_code)
     const got = out.get(code)
     if (got) {
       got.qty = String(Number(got.qty) + Number(r.suggested_qty ?? 0))
       got.stores.push(String(r.store_code))
-    } else out.set(code, { key: code, item_code: code, item_name: String(r.item_name), uom: String(r.base_uom ?? ''), qty: String(Number(r.suggested_qty ?? 0)), stores: [String(r.store_code)], on: true })
+      got.note = `low in ${got.stores.join(', ')}`
+    } else out.set(code, { key: code, item_code: code, item_name: String(r.item_name), uom: String(r.base_uom ?? ''), qty: String(Number(r.suggested_qty ?? 0)), stores: [String(r.store_code)], note: `low in ${r.store_code}`, on: true })
   }
   return [...out.values()]
 }
@@ -27,27 +29,40 @@ function linesOf(rows: Row[]): Line[] {
 /** From the Reorder report straight to a purchase enquiry for what is running low, at the suggested quantities. */
 export function RaiseEnquiry({ rows }: { rows: Row[] }) {
   const [open, setOpen] = useState(false)
+  const lines = open ? linesOf(rows) : []
+  const stores = [...new Set(rows.map((r) => String(r.store_code)))]
   return (
     <>
       <Button onClick={() => setOpen(true)} disabled={!rows.length}><ShoppingCart /> Raise purchase enquiry</Button>
-      <Modal open={open} onOpenChange={(o) => !o && setOpen(false)} size="lg" title="Raise a purchase enquiry"
-        description="An enquiry for the items running low, at the quantity that brings each back up. Change what is needed, then ask suppliers for quotes from the enquiry.">
-        {open && <Form rows={rows} onClose={() => setOpen(false)} />}
-      </Modal>
+      {open && (
+        <EnquiryFromLines lines={lines} title={`Reorder - ${stores.join(', ')}`} notes={`Raised from the Store Hub's Reorder report for ${stores.join(', ')}.`}
+          description="An enquiry for the items running low, at the quantity that brings each back up. Change what is needed, then ask suppliers for quotes from the enquiry." onClose={() => setOpen(false)} />
+      )}
     </>
   )
 }
 
-function Form({ rows, onClose }: { rows: Row[]; onClose: () => void }) {
+/** A purchase enquiry for the lines given: the buyer can untick a line or change its quantity before it is raised. */
+export function EnquiryFromLines({ lines: start, title, jobId = 0, neededBy = '', notes, description, onClose }: {
+  lines: EnquiryLine[]; title: string; jobId?: number; neededBy?: string; notes: string; description: string; onClose: () => void
+}) {
+  return (
+    <Modal open onOpenChange={(o) => !o && onClose()} size="lg" title="Raise a purchase enquiry" description={description}>
+      <Form start={start} title={title} jobId={jobId} neededBy={neededBy} notes={notes} onClose={onClose} />
+    </Modal>
+  )
+}
+
+function Form({ start, title, jobId, neededBy, notes, onClose }: { start: EnquiryLine[]; title: string; jobId: number; neededBy: string; notes: string; onClose: () => void }) {
   const nav = useNavigate()
   const projects = useProjects()
-  const [lines, setLines] = useState(() => linesOf(rows))
-  const stores = [...new Set(lines.flatMap((l) => l.stores))]
-  const [f, setF] = useState({ title: `Reorder - ${stores.join(', ')}`.slice(0, 120), job_id: 0, needed_by: '' })
+  const [lines, setLines] = useState(start)
+  // A needed-by date already gone is no use to a supplier: the buyer picks a new one.
+  const [f, setF] = useState({ title: title.slice(0, 120), job_id: jobId, needed_by: neededBy && neededBy >= today() ? neededBy : '' })
   const chosen = lines.filter((l) => l.on && Number(l.qty) > 0)
-  const upd = (key: string, patch: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)))
+  const upd = (key: string, patch: Partial<EnquiryLine>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)))
   const save = useAction(
-    () => openRfq({ title: f.title.trim(), job_id: f.job_id || null, needed_by: f.needed_by, notes: `Raised from the Store Hub's Reorder report for ${stores.join(', ')}.`,
+    () => openRfq({ title: f.title.trim(), job_id: f.job_id || null, needed_by: f.needed_by, notes,
       lines: chosen.map((l) => ({ item_code: l.item_code, description: l.item_name, uom: l.uom, qty: Number(l.qty) })) }),
     { success: (d) => d.message, onSuccess: (d) => { onClose(); nav(`/store/enquiries/${d.rfq.id}`) } },
   )
@@ -62,7 +77,7 @@ function Form({ rows, onClose }: { rows: Row[]; onClose: () => void }) {
         {lines.map((l) => (
           <li key={l.key} className="flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-2 text-sm">
             <input type="checkbox" aria-label={`Include ${l.item_name}`} checked={l.on} onChange={(e) => upd(l.key, { on: e.target.checked })} />
-            <div className="min-w-0 flex-1"><div className="font-medium">{l.item_name}</div><div className="text-xs text-muted-foreground"><span className="font-mono">{l.item_code}</span> - low in {l.stores.join(', ')}</div></div>
+            <div className="min-w-0 flex-1"><div className="font-medium">{l.item_name}</div><div className="text-xs text-muted-foreground"><span className="font-mono">{l.item_code}</span> - {l.note}</div></div>
             <label className="flex items-center gap-2">Qty <Input aria-label={`Quantity of ${l.item_name}`} inputMode="decimal" className="h-9 w-28 text-right" value={l.qty} disabled={!l.on} onChange={(e) => upd(l.key, { qty: e.target.value })} /> {l.uom}</label>
           </li>
         ))}

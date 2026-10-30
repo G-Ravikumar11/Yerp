@@ -78,3 +78,18 @@ def test_a_cancelled_indent_frees_its_stock(account):
     assert _position(t, central)["available"] == "1000.000"
     ok(t.post("/api/store/outward/indent/%d/cancel" % indent["id"], json={"reason": "Not needed"}))
     assert _position(t, central)["reserved"] == "0.000"
+
+
+def test_an_indent_shows_what_the_store_can_spare_and_what_must_be_bought(account):
+    t, tag = account["client"], uuid.uuid4().hex[:6]
+    w = _company(account, tag)
+    central = _hub(t, w, tag)
+    _receive(t, central, w, 100)                                       # 5000 kg on hand
+    _indent(t, central, w, 70)                                         # another indent holds 3500 kg
+    mine = _indent(t, central, w, 50)                                  # this one wants 2500 kg: 1500 can be spared, 1000 is short
+    [line] = ok(t.get("/api/store/outward/indent/%d" % mine["id"]))["lines"]
+    assert (line["pending"], line["available"], line["short"]) == ("2500.000", "1500.000", "1000.000")
+    # A draft has nothing approved yet, so nothing is short.
+    draft = ok(t.post("/api/store/outward/indent", json={"store_id": central["id"], "project_id": w["job"], "activity": "Plaster", "lines": [{"item_id": w["item"], "qty": "1", "uom": "bag"}]}))
+    [d] = ok(t.get("/api/store/outward/indent/%d" % draft["id"]))["lines"]
+    assert d["available"] is None and d["short"] is None

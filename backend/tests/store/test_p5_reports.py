@@ -441,3 +441,97 @@ def test_one_company_cannot_see_anothers_stock(account, second_tenant):
     assert second_tenant.get(API + "/norms").json()["items"] == []
     assert second_tenant.get(API + "/pick/boq-items", params={"project_id": w.proj}).status_code == 404
     assert tenant.get("%s/valuation" % API).json()["total_value"] == "192350.00"
+
+
+# --- FIFO valuation, ABC analysis, stock ageing, site material reconciliation -----------------------------------------------------------
+
+def test_fifo_values_what_is_left_as_the_newest_receipts_and_ignores_a_reversed_one(account):
+    tenant = account["client"]
+    w = world(account)
+    with database.SessionLocal() as s:
+        # Central holds 4010 kg cement at 7. In come 1000 kg at 9, then 1000 kg go out at the average.
+        put(s, w, MovementType.GRN_IN, w.central, "cement", "1000", "9", day=TODAY - timedelta(days=2), doc=("GRN", 1))
+        put(s, w, MovementType.ISSUE_OUT, w.central, "cement", "1000", day=TODAY - timedelta(days=1), doc=("ISSUE", 20), project_id=w.proj)
+        # A receipt at a silly rate that was put in and then undone is no receipt at all.
+        put(s, w, MovementType.GRN_IN, w.central, "cement", "500", "100", day=TODAY, doc=("GRN", 2))
+        reverse_document(s, ref_doc_type="GRN", ref_doc_id=2, user_id=None, reason="keyed twice")
+        s.commit()
+    pick = lambda rep: next(r for r in rep["rows"] if r["store_id"] == w.central and r["item_id"] == w.item["cement"])
+    avg, fifo = pick(get(tenant, "valuation")), pick(get(tenant, "valuation", method="fifo"))
+    assert avg["qty"] == fifo["qty"] == "4010.000"
+    assert fifo["value"] == "30070.00"                      # the newest 1000 kg at 9, then 3010 kg at 7
+    assert avg["value"] != fifo["value"]
+    assert get(tenant, "valuation", method="fifo")["method"] == "fifo"
+    assert tenant.get(API + "/valuation", params={"method": "lifo"}).status_code == 400
+
+
+def test_abc_ranks_items_by_what_was_used_and_classes_the_tail(account):
+    tenant = account["client"]
+    w = world(account)
+    with database.SessionLocal() as s:
+        put(s, w, MovementType.ISSUE_OUT, w.central, "plate", "1", day=TODAY - timedelta(days=2), doc=("ISSUE", 21), project_id=w.proj)
+        s.commit()
+    rep = get(tenant, "abc")
+    rows = [(r["item_id"], r["value"], r["class"]) for r in rep["rows"] if r["item_id"] in w.item.values()]
+    # steel 6820, cement 4830, plate 450 of 12100: steel and cement make the first 70%, the plate is the tail.
+    assert rows == [(w.item["steel"], "6820.00", "A"), (w.item["cement"], "4830.00", "A"), (w.item["plate"], "450.00", "C")]
+    assert rep["rows"][-1]["cumulative_pct"] == "100.00"
+    assert {c["class"]: c["items"] for c in rep["classes"]} == {"A": 2, "B": 0, "C": 1}
+    # The period counts: nothing was used a year and more ago.
+    old = get(tenant, "abc", from_date=(TODAY - timedelta(days=800)).isoformat(), to_date=(TODAY - timedelta(days=400)).isoformat())
+    assert old["rows"] == [] and old["total_value"] == "0.00"
+
+
+def test_ageing_splits_stock_by_how_long_ago_it_came_in_and_adds_up_to_the_valuation(account):
+    tenant = account["client"]
+    w = world(account)
+    with database.SessionLocal() as s:
+        put(s, w, MovementType.OPENING_IN, w.site, "steel", "10", "62", day=TODAY - timedelta(days=200), doc=("OPENING", 2))
+        put(s, w, MovementType.OPENING_IN, w.site, "steel", "5", "62", day=TODAY - timedelta(days=60), doc=("OPENING", 3))
+        s.commit()
+    rep = get(tenant, "ageing")
+    site_steel = next(r for r in rep["rows"] if r["store_id"] == w.site and r["item_id"] == w.item["steel"])
+    assert (site_steel["qty"], site_steel["d31_90_qty"], site_steel["d181_365_qty"], site_steel["d0_30_qty"]) == ("15.000", "5.000", "10.000", "0.000")
+    assert site_steel["oldest"] == (TODAY - timedelta(days=200)).isoformat()
+    site_cement = next(r for r in rep["rows"] if r["store_id"] == w.site and r["item_id"] == w.item["cement"])
+    assert site_cement["d0_30_qty"] == "300.000"                # came in by transfer 4 days ago
+    total = D(rep["total_value"])
+    assert sum(D(v) for v in rep["totals"].values()) == total
+    assert total == D(get(tenant, "valuation")["total_value"])
+    assert rep["rows"][0]["item_id"] == w.item["steel"] and rep["rows"][0]["store_id"] == w.site     # the oldest money first
+
+
+def test_site_reconciliation_balances_to_what_the_site_holds_and_compares_with_the_boq(account):
+    tenant = account["client"]
+    w = world(account)
+    norm(tenant, w)                                             # BOQ item 1 needs 525 kg cement
+    with database.SessionLocal() as s:
+        put(s, w, MovementType.GRN_IN, w.site, "cement", "200", "7", day=TODAY - timedelta(days=2), doc=("GRN", 3))
+        put(s, w, MovementType.ISSUE_OUT, w.site, "cement", "120", day=TODAY - timedelta(days=1), doc=("ISSUE", 22), project_id=w.proj, boq_item_id=w.boq[0])
+        put(s, w, MovementType.WASTAGE_OUT, w.site, "cement", "5", day=TODAY - timedelta(days=1), doc=("SCRAP", 3), project_id=w.proj)
+        s.commit()
+    rep = get(tenant, "reconciliation", project_id=w.proj)
+    assert [st["id"] for st in rep["site_stores"]] == [w.site]
+    c = next(r for r in rep["rows"] if r["item_id"] == w.item["cement"])
+    assert (c["received"], c["transfers"], c["issued"], c["wasted"], c["balance"]) == ("200.000", "300.000", "120.000", "5.000", "375.000")
+    assert D(c["received"]) + D(c["transfers"]) - D(c["returned"]) - D(c["issued"]) - D(c["wasted"]) + D(c["adjusted"]) == D(c["balance"])
+    with database.SessionLocal() as s:
+        held = s.query(DBStoreStockBalance).filter(DBStoreStockBalance.store_id == w.site, DBStoreStockBalance.item_id == w.item["cement"]).one()
+        assert D(c["balance"]) == D(str(held.qty)).quantize(D("0.001"))
+    # Straight from the central store to the project: 500 - 50 + 200 (the reversed 100 nets out).
+    assert c["issued_elsewhere"] == "650.000" and c["total_issued"] == "770.000"
+    assert (c["required"], c["still_to_issue"], c["status"]) == ("525.000", "0.000", "OVER") and rep["over"] == 1
+    steel = next(r for r in rep["rows"] if r["item_id"] == w.item["steel"])
+    assert (steel["issued_elsewhere"], steel["required"], steel["status"]) == ("100.000", None, "NO_NORM")
+    assert tenant.get(API + "/reconciliation").status_code == 400
+    assert get(tenant, "reconciliation", project_id=w.other_proj)["rows"] == []
+
+
+def test_the_new_reports_export_and_print(account):
+    tenant = account["client"]
+    w = world(account)
+    for report, p in {"abc": {}, "ageing": {}, "reconciliation": {"project_id": w.proj}, "valuation": {"method": "fifo"}}.items():
+        xl = tenant.get("%s/%s/export" % (API, report), params=p)
+        assert xl.status_code == 200 and "spreadsheetml" in xl.headers["content-type"], (report, xl.text[:200])
+        pdf = tenant.get("%s/%s/print" % (API, report), params=p)
+        assert pdf.status_code == 200 and pdf.content[:4] == b"%PDF", (report, pdf.text[:200])

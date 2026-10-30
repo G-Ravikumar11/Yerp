@@ -1,5 +1,5 @@
-"""Store module - reports under /api/store/reports: stock valuation, stock movement, material consumption, norms against actual use, slow-moving
-stock and reorder, each as JSON, Excel and PDF; the material norms that feed the norms report; and saved report filters. Owned by P5.
+"""Store module - reports under /api/store/reports: stock valuation (average or FIFO), stock movement, material consumption, norms against actual
+use, slow-moving stock, reorder, ABC analysis, stock ageing and site material reconciliation, each as JSON, Excel and PDF; the material norms that feed the norms report; and saved report filters. Owned by P5.
 
 Rights: store.reports.view runs every report; store.reports.create sets norms and saves filters. A member of staff's reports cover only the
 stores they are assigned to (store.admin and the account holder see the whole company). Reports are read-only views of the stock ledger, so they
@@ -7,7 +7,7 @@ have no draft, approval or posting of their own.
 """
 import io
 import json
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import List, Optional
 
@@ -33,7 +33,7 @@ from app.services.stock_ledger import assert_store_access
 router = APIRouter(prefix="/api/store/reports", tags=["store-reports"])
 ZERO = Decimal("0")
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-REPORTS = ("valuation", "movement", "consumption", "norm-variance", "slow-moving", "reorder")
+REPORTS = ("valuation", "movement", "consumption", "norm-variance", "slow-moving", "reorder", "abc", "ageing", "reconciliation")
 
 
 # --- request bodies ---------------------------------------------------------------------------------------------------
@@ -126,8 +126,10 @@ def run_report(db, actor, report, p):
     if report == "valuation":
         as_on = svc.parse_day(p.get("as_on"), "As-on date")
         category = (p.get("category") or "").strip().upper()
-        data = svc.valuation(db, actor.client.id, stores, as_on, category, p.get("q") or "", str(p.get("include_zero")).lower() in ("1", "true", "yes"))
-        return data, ", ".join(where + (["category %s" % category] if category else []) + (["matching '%s'" % p["q"]] if p.get("q") else []))
+        method = (p.get("method") or "average").strip().lower()
+        data = svc.valuation(db, actor.client.id, stores, as_on, category, p.get("q") or "", str(p.get("include_zero")).lower() in ("1", "true", "yes"), method)
+        return data, ", ".join(where + (["category %s" % category] if category else []) + (["matching '%s'" % p["q"]] if p.get("q") else [])
+                               + (["FIFO"] if method == "fifo" else []))
     if report == "movement":
         end = svc.parse_day(p.get("to_date"), "To date") or date.today()
         start = svc.parse_day(p.get("from_date"), "From date") or end.replace(day=1)
@@ -153,6 +155,20 @@ def run_report(db, actor, report, p):
         except ValueError:
             raise HTTPException(400, "Days is not a number.") from None
         return svc.slow_moving(db, actor.client.id, stores, days), ", ".join(where + ["idle %d days" % days])
+    if report == "abc":
+        end = svc.parse_day(p.get("to_date"), "To date") or date.today()
+        # A year of use unless asked otherwise: one month is too few issues to rank items by.
+        start = svc.parse_day(p.get("from_date"), "From date") or end - timedelta(days=364)
+        return svc.abc(db, actor.client.id, stores, start, end), ", ".join(where + ["%s to %s" % (start.isoformat(), end.isoformat())])
+    if report == "ageing":
+        return svc.ageing(db, actor.client.id, stores), ", ".join(where)
+    if report == "reconciliation":
+        project = int(p.get("project_id") or 0)
+        if not project:
+            raise HTTPException(400, "Choose a project.")
+        job = _project(db, actor, project)
+        as_on = svc.parse_day(p.get("as_on"), "As-on date")
+        return svc.reconciliation(db, actor.client.id, project, stores, as_on), ", ".join(where + ["%s - %s" % (job.number, job.name)] + (["as on %s" % as_on.isoformat()] if as_on else []))
     return svc.reorder(db, actor.client.id, stores), ", ".join(where)
 
 

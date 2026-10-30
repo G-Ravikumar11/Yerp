@@ -565,16 +565,41 @@ def indent_dict(db, indent, detail=False):
            "overdue": bool(indent.required_by and indent.required_by < date.today() and indent.status in ("OPEN", "PARTIAL")), "created_at": indent.created_at.isoformat(timespec="seconds") if indent.created_at else ""}
     if detail:
         items = _items(db, [l.item_id for l in lines])
+        spare = _spare_stock(db, indent, lines)
         notes = {n.indent_line_id: n for n in db.query(DBStoreIndentLineNote).filter(DBStoreIndentLineNote.indent_line_id.in_([l.id for l in lines] or [0])).all()}
         out["lines"] = [{"id": l.id, "item_id": l.item_id, "item_code": items[l.item_id].item_code, "item_name": items[l.item_id].item_name, "base_uom": svc.base_uom_of(db, items[l.item_id]),
                          "entry_uom": l.entry_uom or "", "entry_qty": svc.s3(l.entry_qty), "qty": svc.s3(l.qty), "approved_qty": None if l.approved_qty is None else svc.s3(l.approved_qty),
                          "fulfilled": svc.s3(done.get(l.id, ZERO)), "pending": svc.s3(max(ZERO, Decimal(str(l.approved_qty or 0)) - done.get(l.id, ZERO))) if l.approved_qty is not None else None,
-                         "purpose": l.purpose or "", "reason": notes[l.id].reason or "" if l.id in notes else "", "substitute_for_line_id": notes[l.id].substitute_for_line_id if l.id in notes else None}
+                         "purpose": l.purpose or "", "reason": notes[l.id].reason or "" if l.id in notes else "", "substitute_for_line_id": notes[l.id].substitute_for_line_id if l.id in notes else None,
+                         **_shortfall(l, done, spare)}
                         for l in lines]
         out["history"] = [{"action": h.action, "from": h.from_status, "to": h.to_status, "by": h.user_name, "at": h.at.isoformat(timespec="seconds") if h.at else "", "note": h.note or ""}
                           for h in db.query(DBStoreOutwardLog).filter(DBStoreOutwardLog.doc_type == INDENT, DBStoreOutwardLog.doc_id == indent.id).order_by(DBStoreOutwardLog.id).all()]
         out["issues"] = [{"id": i.id, "number": i.number, "status": i.status} for i in db.query(DBStoreIssue).filter(DBStoreIssue.indent_id == indent.id).order_by(DBStoreIssue.id).all()]
     return out
+
+
+def _spare_stock(db, indent, lines):
+    """{item_id: what the indent's store can give it}: on hand, less what other open indents are holding."""
+    from app.models.store_core import DBStoreStockBalance
+    from app.services.store_reservations import reserved_map
+    ids = [l.item_id for l in lines]
+    held = {i: Decimal(str(q or 0)) for i, q in db.query(DBStoreStockBalance.item_id, DBStoreStockBalance.qty).filter(
+        DBStoreStockBalance.store_id == indent.store_id, DBStoreStockBalance.item_id.in_(ids or [0])).all()}
+    others = reserved_map(db, [indent.store_id], ids, exclude_indent_id=indent.id)
+    return {i: max(ZERO, held.get(i, ZERO) - others.get((indent.store_id, i), ZERO)) for i in ids}
+
+
+def _shortfall(line, done, spare):
+    """For an approved line still to be issued: what the store can spare toward it, and what it is short - the part to buy."""
+    if line.approved_qty is None:
+        return {"available": None, "short": None}
+    pending = max(ZERO, Decimal(str(line.approved_qty)) - done.get(line.id, ZERO))
+    can = spare.get(line.item_id, ZERO)
+    # Two lines of the same item draw on the same stock: what one takes, the next cannot.
+    give = min(pending, can)
+    spare[line.item_id] = can - give
+    return {"available": svc.s3(give), "short": svc.s3(pending - give)}
 
 
 def _indent_values(db, actor, body):

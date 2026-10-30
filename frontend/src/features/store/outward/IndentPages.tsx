@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, FileSpreadsheet, PackageOpen, Pencil, Plus, Printer, Trash2 } from 'lucide-react'
+import { ArrowLeft, FileSpreadsheet, PackageOpen, Pencil, Plus, Printer, ShoppingCart, Trash2 } from 'lucide-react'
 import { Badge, Button, ConfirmDialog, Field, Input, Modal, Select, Skeleton, Textarea } from '@/components/ui'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { useProjects, projectLabel } from '@/api/projects'
@@ -8,6 +8,7 @@ import { useSession } from '@/lib/session'
 import { useAction } from '@/lib/mutate'
 import { storeDelete, storePerm, storePost, storePut, type StoreItemOption } from '@/api/store'
 import { ItemPicker, StorePicker, UomQtyInput } from '../shared'
+import { EnquiryFromLines } from '../reports/RaiseEnquiry'
 import { dmy, num, outwardKeys, qs, today, useBoqItems, useIndent, useIndents, useWorkOrders, type Indent, type IndentLine } from './api'
 
 const TONE = { DRAFT: 'neutral', SUBMITTED: 'info', OPEN: 'warning', PARTIAL: 'warning', CLOSED: 'success', CANCELLED: 'danger' } as const
@@ -115,6 +116,7 @@ export function IndentPage() {
   const { can } = useSession()
   const q = useIndent(Number(id))
   const [approving, setApproving] = useState(false)
+  const [buying, setBuying] = useState(false)
   const [reason, setReason] = useState<'cancel' | 'close' | null>(null)
   const [why, setWhy] = useState('')
   const [discarding, setDiscarding] = useState(false)
@@ -126,12 +128,15 @@ export function IndentPage() {
   if (q.isPending) return <div>{back}<Skeleton className="h-40 w-full" /></div>
   if (q.isError || !d) return <div>{back}<p role="alert" className="text-sm text-danger">Could not load this indent.</p></div>
   const open = d.status === 'OPEN' || d.status === 'PARTIAL'
+  // What the store cannot give from what it holds: the part of the indent to buy.
+  const short = open ? (d.lines ?? []).filter((l) => Number(l.short ?? 0) > 0) : []
   const columns: TableColumn<IndentLine>[] = [
     { id: 'item', header: 'Item', cell: (l) => <div><div className="font-medium">{l.item_name}</div><div className="font-mono text-xs text-muted-foreground">{l.item_code}</div></div> },
     { id: 'ask', header: 'Asked', align: 'right', width: '8rem', cell: (l) => `${num(l.qty)} ${l.base_uom}` },
     { id: 'app', header: 'Approved', align: 'right', width: '8rem', cell: (l) => (l.approved_qty == null ? '-' : <span className={Number(l.approved_qty) < Number(l.qty) ? 'text-warning' : ''}>{num(l.approved_qty)} {l.base_uom}</span>) },
     { id: 'iss', header: 'Issued', align: 'right', width: '8rem', cell: (l) => `${num(l.fulfilled)} ${l.base_uom}` },
     { id: 'pen', header: 'Pending', align: 'right', width: '8rem', cell: (l) => (l.pending == null ? '-' : `${num(l.pending)} ${l.base_uom}`) },
+    ...(open ? [{ id: 'short', header: 'Short in store', align: 'right' as const, width: '9rem', cell: (l: IndentLine) => (Number(l.short ?? 0) > 0 ? <span className="font-medium text-danger">{num(l.short)} {l.base_uom}</span> : <span className="text-muted-foreground">-</span>) }] : []),
     { id: 'why', header: 'Purpose', hideBelow: 'md', cell: (l) => <div>{l.purpose || '-'}{l.reason && <div className="text-xs text-warning">{l.substitute_for_line_id ? 'Substituted: ' : 'Cut back: '}{l.reason}</div>}</div> },
   ]
   const facts: [string, string][] = [['Store', `${d.store_code} - ${d.store_name}`], ['Raised', `${dmy(d.date)} by ${d.requested_by}`], ['Needed by', d.required_by ? dmy(d.required_by) : '-'], ['Project', d.project], ['Work order', d.work_order || '-'],
@@ -146,12 +151,14 @@ export function IndentPage() {
           {d.status === 'DRAFT' && can(storePerm('outward', 'create')) && (<><Button variant="outline" onClick={() => nav(`/store/hub/outward/indent/${d.id}/edit`)}><Pencil /> Edit</Button><Button variant="ghost" onClick={() => setDiscarding(true)}><Trash2 /> Delete draft</Button><Button loading={act.isPending} onClick={() => act.mutate('submit')}>Submit for approval</Button></>)}
           {d.status === 'SUBMITTED' && can(storePerm('outward', 'approve')) && <Button onClick={() => setApproving(true)}>Review and approve</Button>}
           {open && can(storePerm('outward', 'create')) && <Button onClick={() => nav(`/store/hub/outward/issue/new?indent=${d.id}`)}><PackageOpen /> Issue against it</Button>}
+          {short.length > 0 && can('purchase.manage') && <Button variant="outline" onClick={() => setBuying(true)}><ShoppingCart /> Buy the short items</Button>}
           {open && can(storePerm('outward', 'approve')) && <Button variant="outline" onClick={() => setReason('close')}>Close short</Button>}
           {(d.status === 'DRAFT' || d.status === 'SUBMITTED' || d.status === 'OPEN') && can(storePerm('outward', 'create')) && <Button variant="ghost" onClick={() => setReason('cancel')}>Cancel</Button>}
         </div>
       </div>
       {d.status === 'CANCELLED' && <p role="status" className="mb-4 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">Cancelled: {d.cancel_reason}.</p>}
       {d.short_closed && <p role="status" className="mb-4 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">Closed short: {d.cancel_reason}.</p>}
+      {short.length > 0 && <p role="status" className="mb-4 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">{d.store_code} cannot fill {short.length === 1 ? '1 line' : `${short.length} lines`} from what it holds{can('purchase.manage') ? ' - press Buy the short items to raise a purchase enquiry for the rest.' : '. Ask purchasing to buy the rest.'}</p>}
       {d.status === 'SUBMITTED' && <p role="status" className="mb-4 rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">Waiting for the project manager. They can reduce the quantities when they approve.</p>}
       <dl className="mb-5 grid gap-x-6 gap-y-2 rounded-xl border border-border bg-card p-4 text-sm sm:grid-cols-2 lg:grid-cols-3">{facts.map(([k, v]) => <div key={k}><dt className="text-xs uppercase tracking-wide text-muted-foreground">{k}</dt><dd className="font-medium">{v}</dd></div>)}</dl>
       <DataTable label="Indent lines" rows={d.lines ?? []} columns={columns} rowKey={(l) => l.id} />
@@ -159,6 +166,13 @@ export function IndentPage() {
       <section aria-labelledby="in-history" className="mt-6"><h3 id="in-history" className="mb-2 border-b pb-1 text-sm font-semibold">History</h3>
         <ul className="space-y-1 text-sm">{(d.history ?? []).map((h, i) => <li key={i}><span className="font-medium capitalize">{h.action}</span> by {h.by || 'the account holder'} on {dmy(h.at)}{h.note ? ` - ${h.note}` : ''}</li>)}</ul></section>
       {approving && <ApproveModal indent={d} onClose={() => setApproving(false)} />}
+      {buying && (
+        <EnquiryFromLines title={`${d.number} - short items for ${d.activity || d.project}`} jobId={d.project_id} neededBy={d.required_by}
+          notes={`Raised from indent ${d.number} (${d.store_code}): what the store could not give from stock.`}
+          description={`The items ${d.store_code} is short of for ${d.number}, at the quantity still to find. Change what is needed, then ask suppliers for quotes from the enquiry.`}
+          lines={short.map((l) => ({ key: String(l.id), item_code: l.item_code, item_name: l.item_name, uom: l.base_uom, qty: String(Number(l.short)), note: `short by ${num(l.short)} ${l.base_uom} on ${d.number}`, on: true }))}
+          onClose={() => setBuying(false)} />
+      )}
       <Modal open={!!reason} onOpenChange={(o) => !o && setReason(null)} title={reason === 'close' ? 'Close this indent short?' : 'Cancel this indent?'} description={reason === 'close' ? 'What is still pending will not be issued.' : 'Nothing has been issued against it.'}>
         <form onSubmit={(e) => { e.preventDefault(); if (why.trim().length > 2 && reason) act.mutate(reason) }} className="grid gap-4">
           <Field label="Why" htmlFor="in-why"><Input id="in-why" value={why} onChange={(e) => setWhy(e.target.value)} autoFocus maxLength={200} /></Field>

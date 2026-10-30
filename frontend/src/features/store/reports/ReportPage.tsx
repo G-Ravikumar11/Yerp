@@ -17,15 +17,17 @@ const storeCol = C('store', 'Store', (r) => <span className="font-mono text-[13p
 const nr = (id: string, header: string, key: string, fmt: (v: unknown) => string = num, extra: Partial<TableColumn<Row>> = {}) =>
   C(id, header, (r) => (r[key] == null || r[key] === '' ? '-' : fmt(r[key])), { align: 'right', width: '8rem', sort: (r) => Number(r[key] ?? 0), ...extra })
 const level = { OVER: 'danger', UNDER: 'info', OK: 'success' } as const
+const abcTone = { A: 'danger', B: 'warning', C: 'neutral' } as const
+const pct = (v: unknown) => `${Number(v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}%`
 
 /** Which filters each report takes, and how its result is laid out. */
-const CONFIG: Record<ReportKey, { filters: ('store' | 'project' | 'as_on' | 'range' | 'category' | 'q' | 'group' | 'tolerance' | 'days' | 'zero')[]; need?: 'project'; columns: (d: ReportData) => TableColumn<Row>[]; key: (r: Row) => string | number; total?: (d: ReportData) => string | null }> = {
+const CONFIG: Record<ReportKey, { filters: ('store' | 'project' | 'as_on' | 'range' | 'category' | 'q' | 'group' | 'tolerance' | 'days' | 'zero' | 'method')[]; need?: 'project'; columns: (d: ReportData) => TableColumn<Row>[]; key: (r: Row) => string | number; total?: (d: ReportData) => string | null }> = {
   valuation: {
-    filters: ['store', 'as_on', 'category', 'q', 'zero'],
+    filters: ['store', 'as_on', 'method', 'category', 'q', 'zero'],
     columns: () => [storeCol, C('item', 'Item', code, { sort: (r) => String(r.item_name) }), C('cat', 'Category', (r) => String(r.category), { width: '8rem', hideBelow: 'md' }), nr('qty', 'Quantity', 'qty'),
       nr('rate', 'Avg rate', 'avg_rate', money, { hideBelow: 'sm', width: '7rem' }), nr('val', 'Value', 'value', money)],
     key: (r) => `${r.store_id}-${r.item_id}`,
-    total: (d) => `Total value ${money(d.total_value)}`,
+    total: (d) => `Total value ${money(d.total_value)}${d.method === 'fifo' ? ' (FIFO)' : ''}`,
   },
   movement: {
     filters: ['store', 'range', 'q'],
@@ -56,6 +58,31 @@ const CONFIG: Record<ReportKey, { filters: ('store' | 'project' | 'as_on' | 'ran
       nr('order', 'Order about', 'suggested_qty', num), C('flag', '', (r) => (r.below_minimum ? <Badge tone="danger" dot>Below minimum</Badge> : null), { width: '9rem' })],
     key: (r) => `${r.store_id}-${r.item_id}`,
   },
+  abc: {
+    filters: ['store', 'range'],
+    columns: () => [C('cls', 'Class', (r) => <Badge tone={abcTone[r.class as keyof typeof abcTone]}>{String(r.class)}</Badge>, { width: '5rem', sort: (r) => String(r.class) }), C('item', 'Item', code),
+      nr('qty', 'Used', 'qty', num, { hideBelow: 'sm' }), nr('val', 'Value', 'value', money, { width: '9rem' }), nr('share', 'Share', 'share_pct', pct, { width: '6rem' }), nr('cum', 'Running', 'cumulative_pct', pct, { width: '6rem', hideBelow: 'sm' })],
+    key: (r) => String(r.item_id),
+    total: (d) => (d.classes ?? []).map((c) => `${c.class}: ${c.items} item${c.items === 1 ? '' : 's'}, ${c.share_pct}% of ${money(d.total_value)}`).join(' - ') || null,
+  },
+  ageing: {
+    filters: ['store'],
+    columns: (d) => [storeCol, C('item', 'Item', code), nr('qty', 'Quantity', 'qty', num, { hideBelow: 'md', width: '7rem' }), nr('val', 'Value', 'value', money, { width: '8rem' }),
+      ...(d.buckets ?? []).map((b, i) => nr(b.key, b.label, `${b.key}_value`, money, { width: '8rem', hideBelow: i < 2 ? 'sm' : 'lg' })),
+      C('oldest', 'Oldest lot', (r) => (r.oldest ? dmy(r.oldest) : '-'), { width: '8rem', hideBelow: 'md' })],
+    key: (r) => `${r.store_id}-${r.item_id}`,
+    total: (d) => `Total ${money(d.total_value)}` + ((d.buckets ?? []).length ? ' - ' + (d.buckets ?? []).map((b) => `${b.label} ${money(d.totals?.[`${b.key}_value`])}`).join(', ') : ''),
+  },
+  reconciliation: {
+    filters: ['store', 'project', 'as_on'],
+    need: 'project',
+    columns: () => [C('item', 'Item', code), nr('rec', 'Received', 'received'), nr('tr', 'Transfers', 'transfers', num, { hideBelow: 'lg' }), nr('ret', 'Returned', 'returned', num, { hideBelow: 'lg' }),
+      nr('iss', 'Issued', 'issued'), nr('was', 'Wasted', 'wasted', num, { hideBelow: 'md' }), nr('adj', 'Adjusted', 'adjusted', num, { hideBelow: 'lg' }), nr('bal', 'Balance', 'balance'),
+      nr('else', 'Issued from other stores', 'issued_elsewhere', num, { hideBelow: 'md', width: '9rem' }), nr('req', 'BOQ needs', 'required'), nr('left', 'Still to issue', 'still_to_issue'),
+      C('st', '', (r) => (r.status === 'OVER' ? <Badge tone="danger" dot>Over BOQ</Badge> : r.status === 'NO_NORM' ? <Badge tone="neutral">No norm</Badge> : <Badge tone="success" dot>Within</Badge>), { width: '7rem' })],
+    key: (r) => String(r.item_id),
+    total: (d) => `Site stores: ${(d.site_stores ?? []).map((s) => s.code).join(', ') || 'none'} - balance worth ${money(d.balance_value)} - ${d.over ?? 0} item${d.over === 1 ? '' : 's'} over the BOQ`,
+  },
 }
 
 /** One report: its filters, the result as a table, Excel and PDF of the same figures, and saving the filters under a name. */
@@ -85,6 +112,7 @@ export default function ReportPage({ report }: { report: ReportKey }) {
       <div className="mb-4 flex flex-wrap items-end gap-3">
         {has('store') && <Field label="Store" htmlFor="rp-store" className="w-52"><StorePicker id="rp-store" value={Number(p.store_id) || null} placeholder="All my stores" onChange={(id) => set('store_id', id ? String(id) : '')} /></Field>}
         {has('project') && <Field label="Project" htmlFor="rp-proj" className="w-60"><Select id="rp-proj" value={p.project_id ?? ''} placeholder={cfg.need ? 'Choose a project' : 'All projects'} onChange={(e) => set('project_id', e.target.value)} options={(projects.data ?? []).map((x) => ({ value: x.id, label: projectLabel(x) }))} /></Field>}
+        {has('method') && <Field label="Value at" htmlFor="rp-method" className="w-48"><Select id="rp-method" value={p.method ?? 'average'} onChange={(e) => set('method', e.target.value === 'average' ? '' : e.target.value)} options={[{ value: 'average', label: 'Weighted average (books)' }, { value: 'fifo', label: 'FIFO - first in, first out' }]} /></Field>}
         {has('as_on') && <Field label="As on" htmlFor="rp-ason" className="w-40"><Input id="rp-ason" type="date" value={p.as_on ?? ''} onChange={(e) => set('as_on', e.target.value)} /></Field>}
         {has('range') && <><Field label="From" htmlFor="rp-from" className="w-40"><Input id="rp-from" type="date" value={p.from_date ?? ''} onChange={(e) => set('from_date', e.target.value)} /></Field>
           <Field label="To" htmlFor="rp-to" className="w-40"><Input id="rp-to" type="date" min={p.from_date || undefined} value={p.to_date ?? ''} onChange={(e) => set('to_date', e.target.value)} /></Field></>}
@@ -116,7 +144,7 @@ export default function ReportPage({ report }: { report: ReportKey }) {
           )}
         </div>
       )}
-      {!ready ? <p className="text-sm text-muted-foreground">Choose a project to compare its norms with what was issued.</p> : q.isError ? <p role="alert" className="text-sm text-danger">Could not run the report.</p> : (
+      {!ready ? <p className="text-sm text-muted-foreground">{report === 'reconciliation' ? "Choose a project to see its site's material statement." : 'Choose a project to compare its norms with what was issued.'}</p> : q.isError ? <p role="alert" className="text-sm text-danger">Could not run the report.</p> : (
         <DataTable label={REPORT_LABEL[report]} rows={rows} loading={q.isPending} columns={columns} rowKey={(r) => (report === 'consumption' ? String(r.item_id) : cfg.key(r))} rowClassName={(r) => (r._group ? 'bg-muted/40' : undefined)} empty="Nothing to show for these filters."
           footer={data && cfg.total && cfg.total(data) ? <p className="px-3 py-2 text-right text-sm font-medium">{cfg.total(data)}</p> : undefined} />
       )}
@@ -127,4 +155,5 @@ export default function ReportPage({ report }: { report: ReportKey }) {
   )
 }
 
-const REPORT_LABEL: Record<ReportKey, string> = { valuation: 'Stock valuation', movement: 'Stock movement', consumption: 'Material consumption', 'norm-variance': 'Norms against use', 'slow-moving': 'Slow-moving stock', reorder: 'Reorder' }
+const REPORT_LABEL: Record<ReportKey, string> = { valuation: 'Stock valuation', movement: 'Stock movement', consumption: 'Material consumption', 'norm-variance': 'Norms against use', 'slow-moving': 'Slow-moving stock', reorder: 'Reorder',
+  abc: 'ABC analysis', ageing: 'Stock ageing', reconciliation: 'Site material reconciliation' }
