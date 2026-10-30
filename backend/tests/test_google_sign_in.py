@@ -291,3 +291,19 @@ def test_connecting_gmail_asks_only_to_send_mail_and_the_console_only_who_somebo
     new_browser().get("/api/auth/login", params={"role": "superadmin"}, follow_redirects=False)
     assert asked["scope"] == "openid email profile"
     assert main.GMAIL_SCOPES == ["https://www.googleapis.com/auth/gmail.send"]
+
+
+def test_a_laptop_names_its_own_return_address_for_connecting_gmail(google, monkeypatch):
+    asked = {}
+
+    async def redirect(request, redirect_uri, **kw):
+        from starlette.responses import RedirectResponse
+        asked["uri"] = redirect_uri
+        return RedirectResponse("https://accounts.google.com/o/oauth2/auth?fake=1")
+    monkeypatch.setattr(main.oauth.google, "authorize_redirect", redirect)
+    monkeypatch.setenv("GOOGLE_REDIRECT_URI", " http://localhost:5173/api/auth/callback ")
+    new_browser().get("/api/auth/login", params={"portal": "settings"}, follow_redirects=False)
+    assert asked["uri"] == "http://localhost:5173/api/auth/callback"
+    monkeypatch.delenv("GOOGLE_REDIRECT_URI")
+    new_browser().get("/api/auth/login", params={"portal": "settings"}, follow_redirects=False)
+    assert asked["uri"].endswith("/api/auth/callback") and "5173" not in asked["uri"]

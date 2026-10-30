@@ -105,7 +105,7 @@ def hash_reset_token(token: str) -> str:
     return hashlib.sha256((token or "").encode()).hexdigest()
 
 
-def issue_reset_token(db, user_type, subject_id, ip=""):
+def issue_reset_token(db, user_type, subject_id, ip="", minutes=RESET_TOKEN_TTL_MINUTES):
     """Start a new link and spend any earlier one, so a forwarded old email
     stops working the moment a fresh link is asked for."""
     q = db.query(models.DBPasswordReset).filter(
@@ -123,7 +123,7 @@ def issue_reset_token(db, user_type, subject_id, ip=""):
     row = models.DBPasswordReset(
         user_type=user_type,
         token_hash=hash_reset_token(token),
-        expires_at=(datetime.now() + timedelta(minutes=RESET_TOKEN_TTL_MINUTES)
+        expires_at=(datetime.now() + timedelta(minutes=minutes)
                     ).strftime("%Y-%m-%d %H:%M:%S"),
         requested_ip=ip,
     )

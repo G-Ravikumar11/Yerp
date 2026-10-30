@@ -629,6 +629,8 @@ def ensure_columns():
             alter_statements = [
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS password_hash VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS org_email VARCHAR DEFAULT ''",
+                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS credentials_email_status VARCHAR DEFAULT ''",
+                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS credentials_email_at VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS work_location VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS gender VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS aadhaar_no VARCHAR DEFAULT ''",
@@ -1619,6 +1621,8 @@ def ensure_columns():
                     ("bills", "rejection_reason", "VARCHAR DEFAULT ''"),
                     ("employees", "permission_role", "VARCHAR DEFAULT 'staff'"),
                     ("employees", "org_email", "VARCHAR DEFAULT ''"),
+                    ("employees", "credentials_email_status", "VARCHAR DEFAULT ''"),
+                    ("employees", "credentials_email_at", "VARCHAR DEFAULT ''"),
                     # Job costing. Nullable throughout: a business that does not
                     # work job-by-job is unaffected.
                     ("invoices", "job_id", "INTEGER"),
@@ -1978,6 +1982,8 @@ def migrate_sqlite():
             # What a member of staff is allowed to do in the portal, set by HR.
             add_col("employees", "permission_role", "VARCHAR DEFAULT 'staff'")
             add_col("employees", "org_email", "VARCHAR DEFAULT ''")
+            add_col("employees", "credentials_email_status", "VARCHAR DEFAULT ''")
+            add_col("employees", "credentials_email_at", "VARCHAR DEFAULT ''")
 
             # Job costing: what each document was for.
             add_col("invoices", "job_id", "INTEGER")

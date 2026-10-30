@@ -235,7 +235,9 @@ async def login(request: Request, role: str = "client", portal: str = None):
     request.session['oauth_role'] = role
     if portal:
         request.session['oauth_portal'] = portal
-    redirect_uri = str(request.url_for('auth_callback'))
+    # GOOGLE_REDIRECT_URI is sent exactly as written: the address registered on the Google client (a laptop behind the
+    # dev proxy, say). Without it the address is worked out from the request, as on the live site.
+    redirect_uri = (os.getenv("GOOGLE_REDIRECT_URI") or "").strip() or str(request.url_for('auth_callback'))
     if redirect_uri.startswith('http://') and 'localhost' not in redirect_uri:
         redirect_uri = redirect_uri.replace('http://', 'https://', 1)
     # Connecting Gmail asks only to send mail (GMAIL_SCOPES). The platform console's sign-in asks only who somebody is,
